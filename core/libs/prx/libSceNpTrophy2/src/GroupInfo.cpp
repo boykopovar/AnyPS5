@@ -1,3 +1,4 @@
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>

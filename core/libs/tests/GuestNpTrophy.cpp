@@ -1,3 +1,4 @@
+#include "prx/libSceNpTrophy/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -9,22 +10,12 @@
 #include <string>
 #include <vector>
 
-extern "C" {
-int APS5_VABI sceNpTrophyCreateContext(int* context, int userId, std::uint32_t serviceLabel, std::uint64_t options);
-int APS5_VABI sceNpTrophyDestroyContext(int context);
-int APS5_VABI sceNpTrophyCreateHandle(int* handle);
-int APS5_VABI sceNpTrophyDestroyHandle(int handle);
-int APS5_VABI sceNpTrophyRegisterContext(int context, int handle, std::uint64_t options);
-int APS5_VABI sceNpTrophyGetTrophyUnlockState(int context, int handle, std::uint32_t* flags, std::uint32_t* count);
-int APS5_VABI sceNpTrophyUnlockTrophy(int context, int handle, int trophyId, int* platinumId);
-int APS5_VABI sceNpTrophyGetGameIcon(int context, int handle, void* buffer, std::uint64_t* size);
-int APS5_VABI sceNpTrophyGetTrophyIcon(int context, int handle, int trophyId, void* buffer, std::uint64_t* size);
-}
-
 namespace {
 
 constexpr int InvalidArgument = static_cast<int>(0x80551604u);
 constexpr int InsufficientBuffer = static_cast<int>(0x80551605u);
+constexpr int Abort = static_cast<int>(0x80551607u);
+constexpr int InvalidHandle = static_cast<int>(0x80551608u);
 constexpr int InvalidContext = static_cast<int>(0x80551609u);
 constexpr int InvalidTrophyId = static_cast<int>(0x8055160au);
 constexpr int AlreadyUnlocked = static_cast<int>(0x8055160cu);
@@ -78,10 +69,10 @@ int main() {
     Require(sceNpTrophyCreateHandle(&handle) == 0, "create the handle");
 
     std::uint32_t flags[4] = {}, count = 0;
-    Require(sceNpTrophyGetTrophyUnlockState(context, handle, flags, &count) == NotRegistered, "state before registration");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == NotRegistered, "state before registration");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == 0, "register the context");
     Require(sceNpTrophyRegisterContext(context, handle, 0) == AlreadyRegistered, "register twice");
-    Require(sceNpTrophyGetTrophyUnlockState(context, handle, flags, &count) == 0 && count == 2 && flags[0] == 0, "two trophies, none unlocked");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && count == 2 && flags[0] == 0, "two trophies, none unlocked");
 
     std::uint64_t size = 0;
     Require(sceNpTrophyGetGameIcon(context, handle, nullptr, &size) == 0 && size == 9, "game icon size");
@@ -96,7 +87,7 @@ int main() {
     Require(sceNpTrophyUnlockTrophy(context, handle, 2, &platinum) == InvalidTrophyId, "unlock a trophy past the count");
     Require(sceNpTrophyUnlockTrophy(context, handle, 1, &platinum) == 0 && platinum == -1, "unlock trophy 1");
     Require(sceNpTrophyUnlockTrophy(context, handle, 1, &platinum) == AlreadyUnlocked, "unlock trophy 1 twice");
-    Require(sceNpTrophyGetTrophyUnlockState(context, handle, flags, &count) == 0 && flags[0] == 2u, "trophy 1 unlocked");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && flags[0] == 2u, "trophy 1 unlocked");
     size = sizeof(icon);
     Require(sceNpTrophyGetTrophyIcon(context, handle, 1, icon, &size) == 0 && size == 6 && std::memcmp(icon, "second", 6) == 0, "icon of the unlocked trophy");
     int saved = -1;
@@ -108,8 +99,27 @@ int main() {
 
     Require(sceNpTrophyCreateContext(&missing, 1, 1, 0) == 0, "context for a label without a package");
     Require(sceNpTrophyRegisterContext(missing, handle, 0) == TitleConfNotInstalled, "register without a trophy package");
+    Require(sceNpTrophyCreateHandle(nullptr) == InvalidArgument, "null handle creation");
+    Require(sceNpTrophyCreateContext(nullptr, 1, 0, 0) == InvalidArgument, "null context creation");
+    Require(sceNpTrophyGetGameIcon(context, handle, icon, nullptr) == InvalidArgument, "null game icon size pointer");
+    Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null group icon size pointer");
+    Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
+    Require(sceNpTrophyDestroyHandle(-1) == InvalidHandle, "invalid handle destruction");
     Require(sceNpTrophyDestroyContext(missing) == 0, "destroy the second context");
+    int live = 0;
+    Require(sceNpTrophyCreateHandle(&live) == 0, "second handle");
+    Require(sceNpTrophyAbortHandle(handle) == 0, "abort a live handle");
+    size = sizeof(icon);
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == Abort, "unlock state through an aborted handle");
+    Require(sceNpTrophyGetGameIcon(context, handle, icon, &size) == Abort, "game icon through an aborted handle");
+    Require(sceNpTrophyUnlockTrophy(context, handle, 0, &platinum) == Abort, "unlock through an aborted handle");
+    Require(sceNpTrophyRegisterContext(context, handle, 0) == Abort, "register through an aborted handle");
+    Require(sceNpTrophyAbortHandle(handle) == 0, "abort the handle again");
+    Require(sceNpTrophyGetTrophyUnlockState(context, live, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0, "the other handle still works");
+    Require(sceNpTrophyDestroyHandle(live) == 0, "destroy the second handle");
+    Require(sceNpTrophyAbortHandle(999) == InvalidHandle && sceNpTrophyAbortHandle(-1) == InvalidHandle, "abort an unknown handle");
     Require(sceNpTrophyDestroyHandle(handle) == 0 && sceNpTrophyDestroyContext(context) == 0, "destroy the handle and context");
+    Require(sceNpTrophyAbortHandle(handle) == InvalidHandle, "abort a destroyed handle");
     Require(sceNpTrophyDestroyContext(context) == InvalidContext, "destroy the context twice");
 
     std::filesystem::current_path(root.parent_path());

@@ -1,3 +1,4 @@
+#include "prx/libScePngDec/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -144,10 +145,8 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
     const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader(png);
     if (!header) return SCE_PNG_DEC_ERROR_INVALID_DATA;
     if (imageInfo) fillImageInfo(*header, imageInfo);
-    if (header->bitDepth == 16 && context->attribute == ATTRIBUTE_BIT_DEPTH_16) {
-        throw std::runtime_error("scePngDecDecode: 16-bit output is not implemented");
-    }
-
+    const bool packedDimensions = header->width <= MAX_PACKED_DIMENSION && header->height <= MAX_PACKED_DIMENSION;
+    if (!imageInfo && !packedDimensions) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     const std::uint64_t rowSize = static_cast<std::uint64_t>(header->width) * BYTES_PER_PIXEL;
     const std::uint64_t pitch = param->image_pitch == 0 ? rowSize : param->image_pitch;
     if (param->image_pitch != 0 && (pitch < rowSize || (pitch & 3u) != 0)) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
@@ -159,6 +158,7 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
     const std::uint64_t alignedWidth = (static_cast<std::uint64_t>(header->width) + 7u) & ~std::uint64_t{7u};
     const std::uint64_t alignedMaxWidth = (static_cast<std::uint64_t>(context->maxImageWidth) + 7u) & ~std::uint64_t{7u};
     if (alignedWidth > alignedMaxWidth) return SCE_PNG_DEC_ERROR_INVALID_WORK_MEMORY;
+    if (header->bitDepth > (8u << (context->attribute & 31u))) return SCE_PNG_DEC_ERROR_INVALID_WORK_MEMORY;
 
     const std::optional<Decoder::Png::Image> image = Decoder::Png::Decode(png);
     if (!image || image->width != header->width || image->height != header->height) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
@@ -178,7 +178,7 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
         }
     }
 
-    if (header->width > MAX_PACKED_DIMENSION || header->height > MAX_PACKED_DIMENSION) return 0;
+    if (!packedDimensions) return 0;
     return static_cast<std::int32_t>(header->width << 16 | header->height);
 }
 

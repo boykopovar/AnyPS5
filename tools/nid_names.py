@@ -51,7 +51,7 @@ def load_db(path):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         print("downloading NID database to %s ..." % path, file=sys.stderr)
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as download:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".nid-db-", suffix=".tmp", delete=False) as download:
             temporary = Path(download.name)
         try:
             urllib.request.urlretrieve(DB_URL, str(temporary))
@@ -181,10 +181,13 @@ def symbol_file(path):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="Suggest real names for Unknown NID stubs")
     parser.add_argument("--db", default=os.environ.get("ANYPS5_NID_DB"),
-                        help="NID database CSV (downloaded to a cache dir by default)")
+                        help="NID database CSV; defaults to $ANYPS5_NID_DB, then to a copy downloaded to a cache dir")
     parser.add_argument("--nid", action="append", default=None,
                         help="resolve only these NIDs instead of scanning the tree")
     parser.add_argument("--name", "--symbol", dest="name", action="append", default=None,
@@ -222,7 +225,7 @@ def main(argv=None):
 
     db_path = Path(args.db) if args.db else DEFAULT_CACHE
     try:
-        db = load_db(db_path)
+        db = {} if requested_nids and not args.nid else load_db(db_path)
         if requested_nids:
             unknowns = {nid: "<cli>" for nid in (args.nid or [])}
         else:
@@ -261,7 +264,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
     sys.exit(main())

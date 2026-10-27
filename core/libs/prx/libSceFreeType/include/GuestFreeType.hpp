@@ -8,6 +8,8 @@
 
 namespace FreeType {
 
+struct GuestLibrary;
+
 struct GuestGeneric {
     void* data;
     void (APS5_VABI *finalizer)(void*);
@@ -16,6 +18,13 @@ struct GuestGeneric {
 struct GuestVector {
     std::int64_t x;
     std::int64_t y;
+};
+
+struct GuestMatrix {
+    std::int64_t xx;
+    std::int64_t xy;
+    std::int64_t yx;
+    std::int64_t yy;
 };
 
 struct GuestBBox {
@@ -67,6 +76,14 @@ struct GuestSizeRec {
     void* internal;
 };
 
+struct GuestSizeRequestRec {
+    std::uint32_t type;
+    std::int64_t width;
+    std::int64_t height;
+    std::uint32_t horiResolution;
+    std::uint32_t vertResolution;
+};
+
 struct GuestGlyphMetrics {
     std::int64_t width;
     std::int64_t height;
@@ -96,6 +113,15 @@ struct GuestOutline {
     unsigned char* tags;
     std::uint16_t* contours;
     std::int32_t flags;
+};
+
+struct GuestOutlineFuncs {
+    int (APS5_VABI *move_to)(const GuestVector*, void*);
+    int (APS5_VABI *line_to)(const GuestVector*, void*);
+    int (APS5_VABI *conic_to)(const GuestVector*, const GuestVector*, void*);
+    int (APS5_VABI *cubic_to)(const GuestVector*, const GuestVector*, const GuestVector*, void*);
+    std::int32_t shift;
+    std::int64_t delta;
 };
 
 struct GuestGlyphSlotRec {
@@ -158,13 +184,17 @@ struct GuestFaceRec {
     void* internal;
 };
 
+static_assert(sizeof(GuestMatrix) == 32 && offsetof(GuestMatrix, xy) == 8 && offsetof(GuestMatrix, yx) == 16 && offsetof(GuestMatrix, yy) == 24);
 static_assert(sizeof(GuestGeneric) == 16 && offsetof(GuestGeneric, finalizer) == 8);
 static_assert(sizeof(GuestBitmapSize) == 32 && offsetof(GuestBitmapSize, size) == 8);
 static_assert(sizeof(GuestCharMapRec) == 16 && offsetof(GuestCharMapRec, platform_id) == 12);
 static_assert(sizeof(GuestSfntName) == 24 && offsetof(GuestSfntName, string) == 8 && offsetof(GuestSfntName, string_len) == 16);
 static_assert(sizeof(GuestSizeMetrics) == 56 && offsetof(GuestSizeMetrics, x_scale) == 8);
 static_assert(sizeof(GuestSizeRec) == 88 && offsetof(GuestSizeRec, metrics) == 24);
+static_assert(sizeof(GuestSizeRequestRec) == 32 && offsetof(GuestSizeRequestRec, width) == 8 && offsetof(GuestSizeRequestRec, height) == 16);
+static_assert(offsetof(GuestSizeRequestRec, horiResolution) == 24 && offsetof(GuestSizeRequestRec, vertResolution) == 28);
 static_assert(sizeof(GuestBitmap) == 40 && offsetof(GuestBitmap, buffer) == 16 && offsetof(GuestBitmap, palette) == 32);
+static_assert(sizeof(GuestOutlineFuncs) == 48 && offsetof(GuestOutlineFuncs, shift) == 32 && offsetof(GuestOutlineFuncs, delta) == 40);
 static_assert(sizeof(GuestOutline) == 40 && offsetof(GuestOutline, points) == 8 && offsetof(GuestOutline, flags) == 32);
 static_assert(offsetof(GuestGlyphSlotRec, glyph_index) == 0x18 && offsetof(GuestGlyphSlotRec, metrics) == 0x30);
 static_assert(offsetof(GuestGlyphSlotRec, advance) == 0x80 && offsetof(GuestGlyphSlotRec, format) == 0x90);

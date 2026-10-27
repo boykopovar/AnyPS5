@@ -1,3 +1,4 @@
+#include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <chrono>
@@ -8,29 +9,6 @@
 #include <iterator>
 #include <thread>
 #include <vector>
-
-extern "C" {
-void APS5_VABI sceAudio3dGetDefaultOpenParameters(Audio3dOpenParameters* parameters);
-int APS5_VABI sceAudio3dInitialize(std::int64_t reserved);
-int APS5_VABI sceAudio3dTerminate();
-int APS5_VABI sceAudio3dPortOpen(int user_id, const Audio3dOpenParameters* parameters, std::uint32_t* id);
-int APS5_VABI sceAudio3dPortClose(std::uint32_t port_id);
-int APS5_VABI sceAudio3dPortSetAttribute(std::uint32_t port_id, std::uint32_t attribute_id, const void* attribute, std::size_t attribute_size);
-int APS5_VABI sceAudio3dPortGetAttributesSupported(std::uint32_t port_id, std::uint32_t* attributes, std::uint32_t* num_attributes);
-int APS5_VABI sceAudio3dPortGetQueueLevel(std::uint32_t port_id, std::uint32_t* queue_level, std::uint32_t* queue_available);
-int APS5_VABI sceAudio3dPortAdvance(std::uint32_t port_id);
-int APS5_VABI sceAudio3dPortPush(std::uint32_t port_id, std::uint32_t blocking);
-int APS5_VABI sceAudio3dPortFlush(std::uint32_t port_id);
-int APS5_VABI sceAudio3dObjectReserve(std::uint32_t port_id, std::uint32_t* object_id);
-int APS5_VABI sceAudio3dObjectUnreserve(std::uint32_t port_id, std::uint32_t object_id);
-int APS5_VABI sceAudio3dObjectSetAttributes(std::uint32_t port_id, std::uint32_t object_id, std::uint64_t num_attributes, const Audio3dAttribute* attribute_array);
-int APS5_VABI sceAudio3dBedWrite(std::uint32_t port_id, std::uint32_t num_channels, std::uint32_t format, const void* buffer, std::uint32_t num_samples);
-int APS5_VABI sceAudio3dBedWrite2(std::uint32_t port_id, std::uint32_t num_channels, std::uint32_t format, const void* buffer, std::uint32_t num_samples, std::uint32_t output_route, bool restricted);
-int APS5_VABI sceAudio3dAudioOutOpen(std::uint32_t port_id, int user_id, std::int32_t type, std::int32_t index, std::uint32_t len, std::uint32_t freq, std::uint32_t param);
-int APS5_VABI sceAudio3dAudioOutClose(std::int32_t handle);
-int APS5_VABI sceAudio3dAudioOutOutput(std::int32_t handle, const void* ptr);
-int APS5_VABI sceAudio3dAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num);
-}
 
 namespace {
 
@@ -211,6 +189,8 @@ void CheckQueue() {
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, nullptr) == INVALID_PARAMETER, "both outputs null");
     std::uint32_t available = 0;
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, &available) == 0 && available == 2, "level pointer is optional");
+    std::uint32_t level = 99;
+    Require(sceAudio3dPortGetQueueLevel(0, &level, nullptr) == 0 && level == 0, "available pointer is optional");
     RequireLevel(0, 2, "empty queue");
     Require(sceAudio3dPortPush(0, 1) == 0, "push of an empty queue");
     RequireLevel(0, 2, "empty push queues nothing");

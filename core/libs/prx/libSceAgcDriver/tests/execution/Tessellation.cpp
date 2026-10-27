@@ -157,6 +157,22 @@ alignas(256) constexpr std::array<std::uint32_t, 29> LocalIndexAsData{
     0x0000030a, 0xd8340010, 0x0000070a, 0xbf8cc07f, 0xbefd2106,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 7> LocalInactiveIndex{
+    0x7e108704, 0x7da80b02, 0x160e06a8, 0x7e060302, 0xd9340020, 0x00000207, 0xbe802006,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 8> LocalRestoredIndex{
+    0x7e108704, 0x160e06a8, 0x7da80b02, 0x7e060302, 0xbefe04c1, 0xd9340020, 0x00000207, 0xbe802006,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 7> LocalObservedWindow{
+    0xbefc0383, 0x7da80b02, 0x160e06a8, 0x7e108704, 0xd9340020, 0x00000807, 0xbe802006,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 9> LocalNegatedConjunction{
+    0x7d880b02, 0x160e06a8, 0x02100e80, 0x7da20d02, 0x87fe6a7e, 0xbefe087e, 0xd9340020, 0x00000807, 0xbe802006,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 50> HullDescendingRecords{
     0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0xbf8a0000, 0x7da206f9, 0x81060000, 0xd5480014,
     0x02151101, 0x362402ff, 0x000000ff, 0x160028a0, 0xd5430015, 0x040224ff, 0x00000060, 0xdbfc0000,
@@ -348,6 +364,47 @@ alignas(256) constexpr std::array<std::uint32_t, 87> MergedHullCode{
     0x7e300306, 0x7e320306, 0x7e340306, 0x7e360306, 0x34142484, 0xbefe0414, 0xe0781000, 0x0403180a,
     0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b, 0xbf810000,
 };
+
+alignas(256) constexpr auto MergedHullHalfWords = [] {
+    std::array<std::uint32_t, MergedHullCode.size() + 4u> code{};
+    std::size_t at = 0;
+    for (std::size_t index = 0; index < MergedHullCode.size(); ++index) {
+        const auto word = MergedHullCode[index];
+        if (word == 0xbf88001cu) {
+            code[at++] = 0xbf88001eu;
+        } else if (word == 0xd8340010u || word == 0xd8d80048u) {
+            const bool write = word == 0xd8340010u;
+            const auto operands = MergedHullCode[++index];
+            code[at++] = write ? 0xd87c0010u : 0xd8f00048u;
+            code[at++] = operands;
+            code[at++] = write ? 0xda840012u : 0xda9c004au;
+            code[at++] = operands;
+        } else {
+            code[at++] = word;
+        }
+    }
+    return code;
+}();
+
+alignas(256) constexpr auto MergedHullHalfRecord = [] {
+    std::array<std::uint32_t, MergedHullCode.size() + 6u> code{};
+    std::size_t at = 0;
+    for (std::size_t index = 0; index < MergedHullCode.size(); ++index) {
+        const auto word = MergedHullCode[index];
+        if (word == 0xbf88001cu) {
+            code[at++] = 0xbf880020u;
+        } else if (word == 0xd9340000u) {
+            ++index;
+            for (const auto value : {0xda840002u, 0x0000080au, 0xd87c0000u, 0x0000080au, 0xd8340004u, 0x0000090au}) code[at++] = value;
+        } else if (word == 0xd8d80048u) {
+            const auto operands = MergedHullCode[++index];
+            for (const auto value : {0xd8f00048u, operands, 0xda9c004au, operands}) code[at++] = value;
+        } else {
+            code[at++] = word;
+        }
+    }
+    return code;
+}();
 
 alignas(256) constexpr std::array<std::uint32_t, 87> MergedHullRegisters{
     0xbefe04c1, 0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0x7da206f9, 0x80060000, 0xbf88001c,
@@ -1005,6 +1062,13 @@ int main() {
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainNeighbourPoint, "neither its patch's control points nor a patch-constant record", RecordPatches);
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainCulledPrimitive, "passthrough primitive");
         ExpectRefusal(target, ShaderStage::Local, LocalIndexAsData, "outside a tessellation ring or LDS address");
+        {
+            std::uint32_t cursor = 0;
+            Require(!Compile(target, ShaderStage::Local, LocalInactiveIndex, cursor).spirv.empty(), "a local program whose relative index survives only on inactive lanes was not compiled");
+        }
+        ExpectRefusal(target, ShaderStage::Local, LocalRestoredIndex, "outside a tessellation ring or LDS address");
+        ExpectRefusal(target, ShaderStage::Local, LocalObservedWindow, "outside a tessellation ring or LDS address");
+        ExpectRefusal(target, ShaderStage::Local, LocalNegatedConjunction, "outside a tessellation ring or LDS address");
         ExpectRefusal(target, ShaderStage::TessellationControl, HullRelativeData, "GE_CNTL.PRIM_GRP_SIZE is 0", RecordPatches);
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainRelativeData, "GE_CNTL.PRIM_GRP_SIZE is 0", RecordPatches);
         ExpectRefusal(target, ShaderStage::TessellationControl, HullCode, "outside its patch's quad factors", {{3u, 3u, 2u, 2u, 2u}, Indices});
@@ -1029,6 +1093,8 @@ int main() {
         RequireMergedHullConstantIndices(target);
         RequirePatches(*device, target, MergedHullCode, "merged hull program", MergedTriangles, MergedHullCode);
         RequirePatches(*device, target, MergedHullRegisters, "merged hull program storing its local part's registers", MergedTriangles, MergedHullRegisters);
+        RequirePatches(*device, target, MergedHullHalfWords, "merged hull program passing a value through 16-bit LDS writes and reads", MergedTriangles, MergedHullHalfWords);
+        RequirePatches(*device, target, MergedHullHalfRecord, "merged hull program writing its own record's position in 16-bit halves", MergedTriangles, MergedHullHalfRecord);
         RequireCounterClockwise(*device, target);
         RequireLevelClamps(*device, target);
         RequireIntegerPartitioning(*device, target);

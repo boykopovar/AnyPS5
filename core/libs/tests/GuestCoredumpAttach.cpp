@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -7,18 +8,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stackSize, uint64_t context);
-int APS5_VABI sceCoredumpUnregisterCoredumpHandler(void);
-int APS5_VABI sceCoredumpAttachMemoryRegion(uint32_t userValue, const void* mem, std::int32_t size);
-int APS5_VABI sceCoredumpAttachUserMemoryFile(uint32_t userValue, const void* mem, std::int32_t size);
-int APS5_VABI sceCoredumpGetStopInfoCpu(void* info, size_t size);
-int APS5_VABI sceCoredumpGetThreadContextInfo(void* threadContextInfo, size_t threadContextInfoSize);
-int APS5_VABI sceCoredumpGetStopInfoGpu_Agc(void* info, size_t size);
-int APS5_VABI sceCoredumpWriteUserString(uint32_t first, const char* text, int third);
-int APS5_VABI sceCoredumpConfigDumpMode(int mode);
-}
 
 namespace {
 alignas(16) std::array<std::byte, 0x40> process{};

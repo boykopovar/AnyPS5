@@ -1,3 +1,4 @@
+#include "prx/libSceGameLiveStreaming/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -15,18 +16,6 @@ static constexpr int ErrorAlreadyInitialized = static_cast<int>(0x80A00003);
 static constexpr int ErrorNotInitialized = static_cast<int>(0x80A00004);
 static constexpr std::size_t ProgramInfoSize = 0x134C;
 
-struct GameLiveStreamingProgramInfo;
-
-struct GameLiveStreamingStatus2 {
-    std::int32_t userId;
-    bool isOnAir;
-    std::uint8_t align[3];
-    std::uint32_t spectatorCounts;
-    std::uint32_t textMessageCounts;
-    std::uint32_t commandMessageCounts;
-    std::uint32_t broadcastVideoResolution;
-    std::uint8_t reserved[48];
-};
 static_assert(sizeof(GameLiveStreamingStatus2) == 72);
 
 extern "C" {
@@ -108,7 +97,7 @@ int APS5_VABI sceGameLiveStreamingSetMaxBitrate(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingGetCurrentStatus(void) {
+int APS5_VABI sceGameLiveStreamingGetCurrentStatus(GameLiveStreamingStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

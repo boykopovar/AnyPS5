@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceSysmodule/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceSysmodule/ModuleTable.hpp"
@@ -17,20 +19,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id);
-int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id);
-int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id);
-int APS5_VABI sceSysmoduleLoadModuleInternal(std::uint32_t id);
-int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id);
-int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id);
-int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret);
-int APS5_VABI sceSysmoduleUnloadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret);
-int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info);
-int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t* handle);
-int APS5_VABI sceKernelDlsym(std::int32_t handle, const char* symbol, void** addr);
-}
 
 namespace {
 
@@ -110,6 +98,7 @@ void CheckUnwindInfo() {
     bool threw = false;
     try {
         sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(gap), 0, &info);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -128,12 +117,16 @@ void CheckUnknownIds() {
     const std::uint16_t id = UnknownModuleId();
     const std::uint32_t internalId = id | kInternalFlag;
     Require(kModuleTable.find(internalId) == kModuleTable.end());
-    Require(sceSysmoduleIsLoaded(id) == 0);
-    Require(sceSysmoduleLoadModule(id) == 0);
-    Require(sceSysmoduleIsLoaded(id) == 0);
-    Require(sceSysmoduleUnloadModule(id) == 0);
-    Require(sceSysmoduleUnloadModule(id) == 0);
-    Require(sceSysmoduleIsLoaded(id) == 0);
+    for (const std::uint16_t rejected : {id, std::uint16_t{0x0001}, std::uint16_t{0x0080}, std::uint16_t{0x00c5}, std::uint16_t{0x0100}, std::uint16_t{0x8000}}) {
+        Require(sceSysmoduleIsLoaded(rejected) == kInvalidValue);
+        Require(sceSysmoduleLoadModule(rejected) == kInvalidValue);
+        Require(sceSysmoduleIsLoaded(rejected) == kInvalidValue);
+        Require(sceSysmoduleUnloadModule(rejected) == kInvalidValue);
+    }
+    Require(kModuleTable.find(0x0111) == kModuleTable.end());
+    Require(sceSysmoduleIsLoaded(0x0111) == 0);
+    Require(sceSysmoduleLoadModule(0x0111) == 0);
+    Require(sceSysmoduleUnloadModule(0x0111) == 0);
     Require(ThrowsRuntimeError([internalId] { sceSysmoduleLoadModuleInternal(internalId); }));
     Require(ThrowsRuntimeError([internalId] { sceSysmoduleUnloadModuleInternal(internalId); }));
     int result = 0x5a5a5a5a;

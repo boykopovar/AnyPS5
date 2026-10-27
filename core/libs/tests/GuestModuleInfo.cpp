@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
@@ -11,18 +12,7 @@
 #include <source_location>
 #include <string>
 #include <vector>
-extern "C" {
-void* APS5_VABI dlopen_nid_postfix(const char*, int);
-void* APS5_VABI dlsym_nid_postfix(void*, const char*);
-int APS5_VABI dlclose_nid_postfix(void*);
-int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t, int, ModuleInfoEx*);
-int APS5_VABI sceKernelGetModuleList(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleInfo(KernelModule, ModuleInfo*);
-int APS5_VABI sceKernelGetModuleList2(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleInfo2(KernelModule, ModuleInfo*);
-std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void**, std::size_t*);
-std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(InternalSegmentInfo*);
-}
+
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (!value) {
         std::fprintf(stderr, "module info check failed at line %u\n", location.line());
@@ -41,7 +31,7 @@ static bool ThrowsInvalidArgument(TFunction function) {
 static ModuleInfoEx Query(const void* address, int expected) {
     ModuleInfoEx info{};
     info.st_size = sizeof(ModuleInfoEx);
-    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(address), 2, &info) == expected);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(address), 1, &info) == expected);
     return info;
 }
 int main(int argc, char** argv) {
@@ -51,7 +41,7 @@ int main(int argc, char** argv) {
     const void* add = dlsym_nid_postfix(module, "GuestModuleAdd");
     Require(add != nullptr);
     const auto info = Query(add, 0);
-    Require(info.st_size == sizeof(ModuleInfoEx));
+    Require(info.st_size == 0);
     Require(info.id == static_cast<KernelModule>(reinterpret_cast<std::intptr_t>(module)));
     Require(std::string(info.name) == std::string(argv[1]).substr(std::string(argv[1]).find_last_of("/\\") + 1));
     Require(info.segment_count > 0 && info.segment_count <= 4 && info.ref_count == 1);
@@ -93,7 +83,9 @@ int main(int argc, char** argv) {
     Require(sceKernelGetModuleList(shorter.data(), count - 1, &untouched) == SCE_KERNEL_ERROR_ENOMEM);
     Require(untouched == 99 && shorter.back() == -1 && std::equal(handles.begin(), handles.end() - 1, shorter.begin()));
     Require(sceKernelGetModuleList(nullptr, 0, &untouched) == SCE_KERNEL_ERROR_EFAULT);
-    Require(sceKernelGetModuleList(handles.data(), handles.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    std::vector<KernelModule> written(count, -1);
+    Require(sceKernelGetModuleList(written.data(), written.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(written == handles);
     const auto kernelEx = Query(reinterpret_cast<const void*>(&sceKernelGetModuleInfo), 0);
     ModuleInfo kernelInfo{};
     kernelInfo.st_size = sizeof(ModuleInfo);
@@ -169,10 +161,34 @@ int main(int argc, char** argv) {
     Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 2, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     ModuleInfoEx invalid{};
     invalid.st_size = sizeof(ModuleInfoEx);
-    Require(ThrowsInvalidArgument([&] { sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 1, &invalid); }));
+    for (const int flags : {-1, 0, 3, 4, 8}) {
+        std::memset(&invalid, 0xbb, sizeof(invalid));
+        Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), flags, &invalid) == SCE_KERNEL_ERROR_EINVAL);
+        Require(std::all_of(reinterpret_cast<const unsigned char*>(&invalid), reinterpret_cast<const unsigned char*>(&invalid + 1), [](unsigned char value) { return value == 0; }));
+    }
+    Require(ThrowsInvalidArgument([&] { sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 0, nullptr); }));
+    std::vector<KernelModule> everyModule(64);
+    std::vector<KernelModule> titleOnlyModules(64);
+    std::size_t everyCount = 0;
+    std::size_t titleOnlyCount = 0;
+    Require(sceKernelGetModuleList(everyModule.data(), everyModule.size(), &everyCount) == 0);
+    Require(sceKernelGetModuleList2(titleOnlyModules.data(), titleOnlyModules.size(), &titleOnlyCount) == 0);
+    const auto systemModule = std::find_if(everyModule.begin(), everyModule.begin() + static_cast<std::ptrdiff_t>(everyCount),
+        [&](KernelModule handle) { return std::find(titleOnlyModules.begin(), titleOnlyModules.begin() + static_cast<std::ptrdiff_t>(titleOnlyCount), handle) == titleOnlyModules.begin() + static_cast<std::ptrdiff_t>(titleOnlyCount); });
+    Require(systemModule != everyModule.begin() + static_cast<std::ptrdiff_t>(everyCount));
+    ModuleInfo systemInfo{};
+    systemInfo.st_size = sizeof(ModuleInfo);
+    Require(sceKernelGetModuleInfo(*systemModule, &systemInfo) == 0 && systemInfo.segment_count > 0);
+    const auto systemAddress = static_cast<std::uintptr_t>(systemInfo.segments[0].address);
+    ModuleInfoEx anyModule{};
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(&Query), 2, &anyModule) == 0 && anyModule.segment_count > 0 && anyModule.st_size == 0);
+    Require(sceKernelGetModuleInfoFromAddr(systemAddress, 1, &anyModule) == 0 && anyModule.id == *systemModule);
+    std::memset(&anyModule, 0xbb, sizeof(anyModule));
+    Require(sceKernelGetModuleInfoFromAddr(systemAddress, 2, &anyModule) == SCE_KERNEL_ERROR_ESRCH && anyModule.segment_count == 0 && anyModule.name[0] == 0);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 1, &anyModule) == 0 && anyModule.id == info.id);
     ModuleInfoEx unset{};
     unset.st_size = 0xf0000;
-    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 2, &unset) == 0 && unset.st_size == sizeof(ModuleInfoEx));
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 1, &unset) == 0 && unset.st_size == 0);
     const auto again = Query(add, 0);
     Require(again.eh_frame_hdr_addr == info.eh_frame_hdr_addr && again.eh_frame_hdr_size == info.eh_frame_hdr_size);
     Require(again.eh_frame_addr == info.eh_frame_addr && again.eh_frame_size == info.eh_frame_size);

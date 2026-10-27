@@ -343,10 +343,8 @@ void CopyPendingImage(std::size_t bytes, const char* phase) {
 int main() {
 #ifdef _WIN32
     _putenv_s("APS5_PIPELINED_DRAWS", "1");
-    _putenv_s("APS5_PIPELINE_DMA", "1");
 #else
     setenv("APS5_PIPELINED_DRAWS", "1", 1);
-    setenv("APS5_PIPELINE_DMA", "1", 1);
 #endif
     try {
         {
@@ -373,6 +371,11 @@ int main() {
         AgcDriverWaitIdle_nid_postfix();
         Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "queued index read: the image write left no pending result to order against");
         Require(IndicesIntact(), "queued index read: the image's results reached guest memory before any consumer asked");
+        const auto copiedAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Copied));
+        const auto heldQueries = AgcDriver::DriverDetail::DrawPipeline::HeldReadQueries();
+        Require(!AgcDriver::Graphics::StorageTexture::FlushPending(copiedAddress, PoolBytes), "queued index read: a flush over memory without pending results stored something");
+        Require(AgcDriver::DriverDetail::DrawPipeline::HeldReadQueries() == heldQueries, "queued index read: a flush with nothing to store asked the draw pipeline for held reads");
+        Require(IndicesIntact(), "queued index read: a flush over other memory stored the image's results");
         GateUntilQueued();
         std::fill_n(ColorMemory, ColorBytes, std::byte{0});
         Submit(Draw(Vertices.data(), Vertices.size()), "the indexed draw");

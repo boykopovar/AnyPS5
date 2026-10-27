@@ -1,9 +1,11 @@
+import ctypes
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "configure_seed.py"
@@ -16,11 +18,20 @@ project(mini C)
 include(CheckIncludeFile)
 include(CheckSymbolExists)
 include(CheckCSourceCompiles)
+include(CheckTypeSize)
 check_include_file(stdio.h MINI_HAVE_STDIO_H)
 check_include_file(mini_missing_header.h MINI_HAVE_MISSING_H)
 check_symbol_exists(printf stdio.h MINI_HAVE_PRINTF)
 check_c_source_compiles("int main(void) { return 0; }" MINI_COMPILES)
 check_c_source_compiles("int main(void) { return undefined_name; }" MINI_FAILS)
+check_type_size(int MINI_SIZEOF_INT)
+check_type_size(mini_no_such_type_t MINI_SIZEOF_NONE)
+if(NOT HAVE_MINI_SIZEOF_INT OR NOT MINI_SIZEOF_INT)
+    message(FATAL_ERROR "Unsupported integer size: int")
+endif()
+if(HAVE_MINI_SIZEOF_NONE OR NOT "${MINI_SIZEOF_NONE}" STREQUAL "")
+    message(FATAL_ERROR "A missing type has a size")
+endif()
 set(MINI_OPTION "value" CACHE STRING "An option, not a check result")
 """
 
@@ -157,8 +168,9 @@ class ConfigureSeedProject(unittest.TestCase):
 class ConfigureSeedTests(ConfigureSeedProject):
     def test_only_check_results_are_seeded(self):
         found = configure_seed.checks(self.root / "fresh" / "CMakeCache.txt")
-        self.assertEqual({n for n in found if n.startswith("MINI_")},
-                         {"MINI_HAVE_STDIO_H", "MINI_HAVE_MISSING_H", "MINI_HAVE_PRINTF", "MINI_COMPILES", "MINI_FAILS"})
+        self.assertEqual({n for n in found if "MINI_" in n},
+                         {"MINI_HAVE_STDIO_H", "MINI_HAVE_MISSING_H", "MINI_HAVE_PRINTF", "MINI_COMPILES", "MINI_FAILS",
+                          "HAVE_MINI_SIZEOF_INT", "MINI_SIZEOF_INT", "HAVE_MINI_SIZEOF_NONE", "MINI_SIZEOF_NONE"})
         self.assertNotIn("CMAKE_C_COMPILER", found)
 
     def test_cache_without_checks_writes_an_empty_seed(self):
@@ -201,13 +213,17 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         self.assertNotIn("HAVE:INTERNAL=", seeded.read_text(encoding="utf-8"))
 
     def test_seeded_configure_runs_no_check_and_gets_the_same_results(self):
-        self.assertRegex(self.fresh, r"Looking for|Performing Test")
+        self.assertRegex(self.fresh, r"Looking for|Performing Test|Check size of")
         output = self.configure("seeded", "-C", str(self.seed(self.root / "fresh" / "CMakeCache.txt", "seed.cmake")))
-        self.assertNotRegex(output, r"Looking for|Performing Test")
+        self.assertNotRegex(output, r"Looking for|Performing Test|Check size of")
         fresh = configure_seed.checks(self.root / "fresh" / "CMakeCache.txt")
         self.assertEqual(configure_seed.checks(self.root / "seeded" / "CMakeCache.txt"), fresh)
         self.assertEqual(fresh["MINI_HAVE_STDIO_H"][0], "1")
         self.assertEqual(fresh["MINI_FAILS"][0], "")
+        self.assertEqual(fresh["HAVE_MINI_SIZEOF_INT"][0], "TRUE")
+        self.assertEqual(fresh["MINI_SIZEOF_INT"][0], str(ctypes.sizeof(ctypes.c_int)))
+        self.assertEqual(fresh["HAVE_MINI_SIZEOF_NONE"][0], "FALSE")
+        self.assertEqual(fresh["MINI_SIZEOF_NONE"][0], "")
 
     def test_values_with_cmake_syntax_round_trip(self):
         cache = self.root / "odd" / "CMakeCache.txt"
@@ -222,12 +238,93 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
 
 
 class ChecksParsingTests(unittest.TestCase):
+    def test_architecture_dependent_sizes_leave_compile_guards_to_cmake(self):
+        entries = {
+            "ARCH_SIZE": ("0", "CHECK_TYPE_SIZE: sizeof(architecture_type)"),
+            "SECOND_SIZE": ("0", "CHECK_TYPE_SIZE: sizeof(other_type)"),
+            "HAVE_ARCH_SIZE": ("TRUE", "Result of TRY_COMPILE"),
+            "CUSTOM_RESULT": ("TRUE", "Result of TRY_COMPILE"),
+            "UNRELATED_COMPILE": ("FALSE", "Result of TRY_COMPILE"),
+            "CONSTANT_SIZE": ("8", "CHECK_TYPE_SIZE: sizeof(long long)"),
+            "MISSING_SIZE": ("", "CHECK_TYPE_SIZE: missing_type unknown"),
+            "HAVE_HEADER": ("1", "Have include stdio.h"),
+            "SIMPLE_TEST": ("1", "Test SIMPLE_TEST"),
+            "RUN_RESULT": ("0", "Result of TRY_RUN"),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            cache.write_text("".join(f"//{doc}\n{name}:INTERNAL={value}\n"
+                                     for name, (value, doc) in entries.items()), encoding="utf-8")
+            expected = {name: entry for name, entry in entries.items()
+                        if name in {"CONSTANT_SIZE", "MISSING_SIZE", "HAVE_HEADER", "SIMPLE_TEST", "RUN_RESULT"}}
+            self.assertEqual(configure_seed.checks(cache), expected)
+
+    def test_compile_guards_are_retained_without_architecture_dependent_sizes(self):
+        entries = {
+            "CONSTANT_SIZE": ("8", "CHECK_TYPE_SIZE: sizeof(long long)"),
+            "HAVE_CONSTANT_SIZE": ("TRUE", "Result of TRY_COMPILE"),
+            "MISSING_SIZE": ("", "CHECK_TYPE_SIZE: missing_type unknown"),
+            "CUSTOM_RESULT": ("FALSE", "Result of TRY_COMPILE"),
+            "ZERO_TEST": ("0", "Test ZERO_TEST"),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            cache.write_text("".join(f"//{doc}\n{name}:INTERNAL={value}\n"
+                                     for name, (value, doc) in entries.items()), encoding="utf-8")
+            self.assertEqual(configure_seed.checks(cache), entries)
+
+    def test_filters_cannot_seed_architecture_dependent_compile_guards(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache, seed = Path(directory) / "CMakeCache.txt", Path(directory) / "seed.cmake"
+            cache.write_text("//CHECK_TYPE_SIZE: sizeof(architecture_type)\nARCH_SIZE:INTERNAL=0\n"
+                             "//Result of TRY_COMPILE\nHAVE_ARCH_SIZE:INTERNAL=TRUE\n"
+                             "//Result of TRY_COMPILE\nCUSTOM_RESULT:INTERNAL=TRUE\n"
+                             "//Have include stdio.h\nHAVE_HEADER:INTERNAL=1\n", encoding="utf-8")
+            for options in ((), ("--include", "*RESULT"), ("--include", "HAVE_*"),
+                            ("--include", "ARCH_SIZE"), ("--exclude", "ARCH_SIZE")):
+                with self.subTest(options=options):
+                    result = subprocess.run([sys.executable, str(TOOL), str(cache), str(seed), *options],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    text = seed.read_text(encoding="utf-8")
+                    self.assertNotIn("ARCH_SIZE", text)
+                    self.assertNotIn("CUSTOM_RESULT", text)
+                    if not options or options in (("--include", "HAVE_*"), ("--exclude", "ARCH_SIZE")):
+                        self.assertIn("HAVE_HEADER", text)
+
     def test_checks_reads_cache_with_utf8_bom(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "CMakeCache.txt"
             cache.write_bytes(b"\xef\xbb\xbf//Test FIRST_CHECK\nFIRST_CHECK:INTERNAL=1\n")
             found = configure_seed.checks(cache)
             self.assertEqual(found, {"FIRST_CHECK": ("1", "Test FIRST_CHECK")})
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(configure_seed.sys, "stdout", out), mock.patch.object(configure_seed.sys, "stderr", err):
+            try:
+                configure_seed.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

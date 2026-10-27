@@ -1,8 +1,6 @@
+#include "prx/libSceKeyboard/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
-
-struct KeyboardDeviceInfo;
-struct KeyboardProcessFocus;
 
 extern "C" {
 
@@ -51,8 +49,7 @@ int APS5_VABI sceKeyboardDeviceOpen(std::uint64_t deviceId, std::int32_t index, 
 }
 
 int APS5_VABI sceKeyboardDisconnectAll(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Keyboard::DisconnectAll();
 }
 
 int APS5_VABI sceKeyboardDisconnectDevice(std::int32_t deviceId) {

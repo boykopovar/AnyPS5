@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/System/include/ThermalSensors.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -238,6 +240,11 @@ int ReadStorageTemperature() {
 
 #endif
 
+int Fail(int error) {
+    *__error_nid_postfix() = error;
+    return SceKernelError(error);
+}
+
 void ReadHostSensors(int celsius[3]) {
 #ifdef _WIN32
     celsius[2] = ReadStorageTemperature();
@@ -254,20 +261,21 @@ void ReadHostSensors(int celsius[3]) {
 extern "C" {
 
 int APS5_VABI sceKernelGetCpuTemperature(int* outCelsius) {
-    if (outCelsius == nullptr) return SCE_KERNEL_ERROR_EFAULT;
+    if (outCelsius == nullptr) return Fail(14);
     int celsius[3];
     ReadHostSensors(celsius);
-    if (celsius[0] < 0) return SCE_KERNEL_ERROR_EINVAL;
+    if (celsius[0] < 0) return Fail(22);
     *outCelsius = celsius[0];
     return 0;
 }
 
 int APS5_VABI sceKernelGetSocSensorTemperature(int sensorId, int* outCelsius) {
-    if (outCelsius == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    if (sensorId < 0 || sensorId >= 3) return SCE_KERNEL_ERROR_EINVAL;
+    if (sensorId < 0 || sensorId > 64) return Fail(22);
+    if (outCelsius == nullptr) return Fail(14);
+    if (sensorId >= 3) throw std::runtime_error("sceKernelGetSocSensorTemperature: channels 3 to 64 have no host sensor");
     int celsius[3];
     ReadHostSensors(celsius);
-    if (celsius[sensorId] < 0) return SCE_KERNEL_ERROR_EINVAL;
+    if (celsius[sensorId] < 0) return Fail(22);
     *outCelsius = celsius[sensorId];
     return 0;
 }

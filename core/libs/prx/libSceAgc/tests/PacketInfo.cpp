@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Misc/include/PacketInfo.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
@@ -6,8 +7,6 @@
 #include <cstdio>
 #include <stdexcept>
 #include <utility>
-
-extern "C" std::uint32_t APS5_VABI sceAgcGetPacketSize(std::uint32_t* packet);
 
 namespace {
 

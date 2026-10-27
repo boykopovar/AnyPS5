@@ -1,3 +1,25 @@
+#include "prx/libSceAgc/include/Agc.hpp"
+#include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
+#include "prx/libSceAgc/Patch/include/WaitRegMem.hpp"
+#include "prx/libSceAgc/Patch/include/Nop.hpp"
+#include "prx/libSceAgc/Misc/include/Suspend.hpp"
+#include "prx/libSceAgc/Misc/include/RegisterDefaults.hpp"
+#include "prx/libSceAgc/Misc/include/PacketInfo.hpp"
+#include "prx/libSceAgc/Misc/include/Debug.hpp"
+#include "prx/libSceAgc/DcbState/include/Workload.hpp"
+#include "prx/libSceAgc/DcbState/include/Marker.hpp"
+#include "prx/libSceAgc/DcbState/include/Init.hpp"
+#include "prx/libSceAgc/DcbState/include/Display.hpp"
+#include "prx/libSceAgc/DcbState/include/ContextState.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Sync.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Control.hpp"
+#include "prx/libSceAgc/DcbDraw/include/Instancing.hpp"
+#include "prx/libSceAgc/DcbDraw/include/IndexBuffer.hpp"
+#include "prx/libSceAgc/DcbDraw/include/DrawIndexed.hpp"
+#include "prx/libSceAgc/DcbDraw/include/DrawNonIndexed.hpp"
+#include "prx/libSceAgc/Cb/include/Registers.hpp"
+#include "prx/libSceAgc/Acb/include/Control.hpp"
+#include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/RegisterDefaults.hpp"
@@ -9,53 +31,6 @@
 #include <stdexcept>
 #include <cstring>
 #include <string>
-
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address);
-extern "C" std::uint64_t APS5_VABI sceAgcDcbEventWriteGetSize(std::uint8_t eventType);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbResetQueue(CommandBuffer* buf, std::uint32_t op, std::uint32_t state);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbClearState(CommandBuffer* buf, std::uint32_t command);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetFlip(CommandBuffer* buf, std::uint32_t handle, std::int32_t index, std::uint32_t mode, std::int64_t argument);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbWaitUntilSafeForRendering(CommandBuffer* buf, std::uint32_t handle, std::uint32_t index);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t handle, std::int32_t index, std::uint32_t mode, std::int64_t argument);
-extern "C" int APS5_VABI sceAgcSuspendPoint();
-extern "C" int APS5_VABI sceAgcInit(std::uint32_t version);
-extern "C" void* APS5_VABI sceAgcGetRegisterDefaults();
-extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2(std::uint32_t version);
-extern "C" void* APS5_VABI sceAgcGetRegisterDefaultsInternal();
-extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2Internal(std::uint32_t version);
-extern "C" int APS5_VABI sceAgcGetDefaultCxStateFlat(void* out_state, std::uint32_t size);
-extern "C" int APS5_VABI sceAgcInit_0090(std::uint32_t* state, std::uint32_t version);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexAuto(CommandBuffer* buf, std::uint32_t indexCount, std::uint64_t modifier);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirect(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint64_t modifier);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbDrawIndexIndirectMulti(CommandBuffer* buf, std::uint32_t dataOffsetInBytes, std::uint32_t countIndirect, std::uint32_t maxCountOrCount, const volatile void* countAddress, std::uint32_t strideInBytes, std::uint64_t modifier);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchAddress(std::uint32_t* cmd, const volatile void* address);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchCompareFunction(std::uint32_t* cmd, std::uint8_t compareFunction);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchReference(std::uint32_t* cmd, std::uint32_t reference);
-extern "C" int APS5_VABI sceAgcWaitRegMemPatchMask(std::uint32_t* cmd, std::uint32_t mask);
-extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddress_0090(std::uint32_t** addr, std::uint32_t* cmd, int type);
-extern "C" std::uint32_t* APS5_VABI sceAgcCbSetShRegisterRangeDirect(CommandBuffer* buf, std::uint32_t offset, const std::uint32_t* values, std::uint32_t numValues);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateOp_0100(CommandBuffer* buf, std::uint32_t operation);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbPushMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbPopMarker(CommandBuffer* buf);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetWorkloadComplete(CommandBuffer* buf, std::uint32_t stream_id, std::uint32_t workload_id);
-extern "C" int APS5_VABI sceAgcDriverRegisterWorkloadStream(std::uint32_t stream_id, const void* stream);
-extern "C" int APS5_VABI sceAgcDriverUnregisterWorkloadStream(std::uint32_t stream_id);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetWorkloadsActive(CommandBuffer* buf, std::uint32_t stream_id, const std::uint32_t* workload_ids, std::uint32_t workload_count);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetWorkloadStreamInactive(CommandBuffer* buf, std::uint32_t streamId);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadsActive(CommandBuffer* buf, std::uint32_t streamId, const std::uint32_t* workloadIds, std::uint32_t workloadCount);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadComplete(CommandBuffer* buf, std::uint32_t streamId, std::uint32_t workloadId);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadStreamInactive(CommandBuffer* buf, std::uint32_t streamId);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbSetMarker(CommandBuffer* buf, const char* str, std::uint32_t color);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexBuffer(CommandBuffer* buf, std::uint64_t indexAddress);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetIndexIndirectArgs(CommandBuffer* buf, std::uint64_t attributeAddress, std::uint32_t attributeIndex);
-extern "C" std::uint32_t APS5_VABI sceAgcDcbSetIndexIndirectArgsGetSize();
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbSetBaseIndirectArgs(CommandBuffer* buf, std::uint32_t shaderType, const volatile void* indirectBaseAddr);
-extern "C" std::uint32_t* APS5_VABI sceAgcSetNop(CommandBuffer* buf, std::uint32_t sizeDw);
-extern "C" int APS5_VABI sceAgcDebugRaiseException(std::uint32_t exceptionId);
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbAtomicGds_0900(CommandBuffer* buf, std::uint32_t control, std::uint32_t mode, std::uint32_t gdsOp, std::uint32_t src, std::uint16_t offset, std::uint16_t index, std::uint32_t mask, std::uint32_t data, std::uint64_t compareData, std::uint64_t extraData);
 
 namespace {
 
@@ -194,14 +169,50 @@ void testIndexedIndirectDraws() {
     alignas(4) std::uint32_t count = 0;
     const auto* multi = sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0x80, 1, 8, &count, 20, 0);
     const auto address = reinterpret_cast<std::uintptr_t>(&count);
-    const std::array<std::uint32_t, 10> expectedMulti{0xc0083800u, 0x80, 0x280, 0x280, 0x40000280u, 8, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 20, 0};
+    const std::array<std::uint32_t, 16> expectedMulti{0xc0017904u, 0x342, 0xc6000005u, 0xc0083800u, 0x80, 0x280, 0x280, 0x40000280u, 8, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 20, 0, 0xc0017904u, 0x342, 0xc6000000u};
     check(multi == storage.words.data() + expectedSingle.size() && std::equal(expectedMulti.begin(), expectedMulti.end(), multi), "indexed indirect multi draw packet mismatch");
     check(storage.buffer.cursor_up == storage.words.data() + expectedSingle.size() + expectedMulti.size(), "incorrect indexed indirect cursor advance");
+    check(sceAgcDcbDrawIndexIndirectMultiGetSize() == expectedMulti.size() * sizeof(std::uint32_t), "indexed indirect multi draw size differs from its packets");
     const auto before = storage.words;
     expectFailure([&] { sceAgcDcbDrawIndexIndirect(&storage.buffer, 2, 0); });
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 1, 8, &count, 16, 0); });
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 0, 8, &count, 20, 0); });
     check(storage.words == before, "invalid indexed indirect draw modified packet memory");
+}
+
+void testTagHeaders() {
+    Storage draw;
+    const auto* multi = sceAgcDcbDrawIndirectMulti(&draw.buffer, 0x40, 0, 5, nullptr, 16, 0);
+    const std::array<std::uint32_t, 16> expectedMulti{0xc0017904u, 0x342u, 0xc6000008u, 0xc0082c00u, 0x40u, 0x280u, 0x280u, 0x280u, 5u, 0u, 0u, 16u, 2u, 0xc0017904u, 0x342u, 0xc6000000u};
+    check(multi == draw.words.data() && std::equal(expectedMulti.begin(), expectedMulti.end(), multi), "indirect multi draw tag words mismatch");
+    alignas(8) std::uint64_t label = 0;
+    const auto address = reinterpret_cast<std::uintptr_t>(&label);
+    const auto low = static_cast<std::uint32_t>(address);
+    const auto high = static_cast<std::uint32_t>(address >> 32u);
+    for (const bool compute : {false, true}) {
+        const auto tagFlags = compute ? 0u : 4u;
+        const std::array<std::uint32_t, 14> expected32{0xc0027900u | tagFlags, 0x342u, 0xc8010000u | high, low, 0xc0053c00u, 0x13u, low, high, 1u, 0xffffffffu, 4u, 0xc0017900u | tagFlags, 0x342u, 0xc8000000u};
+        const std::array<std::uint32_t, 16> expected64{0xc0027900u | tagFlags, 0x342u, 0xc8020000u | high, low, 0xc0079300u, 0x13u, low, high, 1u, 0u, 0xffffffffu, 0xffffffffu, 4u, 0xc0017900u | tagFlags, 0x342u, 0xc8000000u};
+        Storage storage;
+        auto* wait32 = compute ? sceAgcAcbWaitRegMem(&storage.buffer, 0, 3, 0, &label, 1, 0xffffffffu, 0x40) : sceAgcDcbWaitRegMem(&storage.buffer, 0, 3, 0, 0, &label, 1, 0xffffffffu, 0x40);
+        auto* wait64 = compute ? sceAgcAcbWaitRegMem(&storage.buffer, 1, 3, 0, &label, 1, ~0ull, 0x40) : sceAgcDcbWaitRegMem(&storage.buffer, 1, 3, 0, 0, &label, 1, ~0ull, 0x40);
+        check(wait32 == storage.words.data() && std::equal(expected32.begin(), expected32.end(), wait32), "32-bit wait tag words mismatch");
+        check(wait64 == wait32 + expected32.size() && std::equal(expected64.begin(), expected64.end(), wait64), "64-bit wait tag words mismatch");
+        check(sceAgcWaitRegMemPatchReference(wait32, 2) == 0 && wait32[8] == 2u, "wait reference patch refused the queue's tag headers");
+        check(sceAgcWaitRegMemPatchReference(wait64, 3) == 0 && wait64[8] == 3u, "64-bit wait reference patch refused the queue's tag headers");
+        for (const auto header : {0xc0027901u, 0xc0027902u}) {
+            const auto start = wait32[0];
+            wait32[0] = header;
+            const auto before = storage.words;
+            expectFailure([&] { sceAgcWaitRegMemPatchReference(wait32, 5); });
+            check(storage.words == before, "a wait with another tag header was patched");
+            wait32[0] = start;
+        }
+        wait32[11] ^= 4u;
+        const auto before = storage.words;
+        expectFailure([&] { sceAgcWaitRegMemPatchReference(wait32, 5); });
+        check(storage.words == before, "a wait whose end tag header differs from its wrapper was patched");
+    }
 }
 
 void testMarkers() {
@@ -223,6 +234,29 @@ void testMarkers() {
     expectFailure([] { sceAgcAcbPushMarker(nullptr, "frame", 0); });
     expectFailure([] { sceAgcAcbPopMarker(nullptr); });
     expectFailure([] { sceAgcAcbSetMarker(nullptr, "frame", 0); });
+}
+
+void testMarkerSpans() {
+    Storage dcb;
+    Storage acb;
+    const char text[] = "framebuffer";
+    const auto* acbPush = sceAgcAcbPushMarkerSpan(&acb.buffer, text, 5, 0x00ff00u);
+    const auto* dcbPush = sceAgcDcbPushMarkerSpan(&dcb.buffer, text, 5, 0xff0000u);
+    check(acbPush == acb.words.data() && acbPush[0] == Agc::Command::Header(0x10, 3, 0x0bu << 2u), "ACB push marker span header mismatch");
+    check(std::strcmp(reinterpret_cast<const char*>(acbPush + 1), "frame") == 0, "ACB push marker span does not stop at its length");
+    check(dcbPush == dcb.words.data(), "DCB push marker span did not return its packet");
+    const auto* acbSet = sceAgcAcbSetMarkerSpan(&acb.buffer, nullptr, 0, 0);
+    const auto* dcbSet = sceAgcDcbSetMarkerSpan(&dcb.buffer, nullptr, 0, 0);
+    check(acbSet == acb.words.data() + 3 && dcbSet == dcb.words.data() + 3, "set marker span did not return its push packet");
+    check(acbSet[0] == Agc::Command::Header(0x10, 2, 0x0bu << 2u) && acbSet[1] == 0 && acbSet[2] == Agc::Command::Header(0x10, 2, 0x0cu << 2u), "ACB set marker span is not a push and pop pair");
+    check(dcb.words == acb.words && acb.buffer.cursor_up == acb.words.data() + 7, "ACB and DCB marker spans differ");
+    Storage plain;
+    sceAgcAcbPushMarker(&plain.buffer, "frame", 0);
+    check(std::equal(plain.words.begin(), plain.words.begin() + 3, acb.words.begin()), "marker span differs from the same text pushed whole");
+    expectFailure([] { sceAgcAcbPushMarkerSpan(nullptr, "frame", 5, 0); });
+    expectFailure([] { sceAgcAcbPushMarker(nullptr, reinterpret_cast<const char*>(std::uintptr_t{0x10}), 0); });
+    expectFailure([] { sceAgcDcbSetMarkerSpan(nullptr, "frame", 5, 0); });
+    expectFailure([&] { sceAgcDcbPushMarkerSpan(&dcb.buffer, nullptr, 4, 0); });
 }
 
 void testWorkloads() {
@@ -528,12 +562,12 @@ void testMemory() {
     const std::array<std::uint32_t, 7> expected{0xc0055000u, 0xc0000001u, 0x12345678, 0, 0x2000, 0, 0x80000010u};
     check(std::equal(expected.begin(), expected.end(), storage.words.begin()), "DMA packet mismatch");
     std::uint64_t value = 0;
-    auto* packet = Agc::Command::WriteWait(&storage.buffer, 1, 3, 0, 0, &value, 0x1122334455667788ull, 0xffffffffffffffffull, 32, __func__);
-    check(packet[0] == 0xc0027901u && packet[4] == 0xc0079300u && packet[5] == 0x13u, "wait packet header mismatch");
+    auto* packet = Agc::Command::WriteWait(&storage.buffer, false, 1, 3, 0, 0, &value, 0x1122334455667788ull, 0xffffffffffffffffull, 32, __func__);
+    check(packet[0] == 0xc0027904u && packet[4] == 0xc0079300u && packet[5] == 0x13u, "wait packet header mismatch");
     check(packet[8] == 0x55667788u && packet[9] == 0x11223344u && packet[12] == 2u, "wait reference or poll interval mismatch");
     sceAgcWaitRegMemPatchReference(packet, 7);
     check(packet[8] == 7 && packet[9] == 0x11223344u, "reference patch changed the high word");
-    auto* truncated = Agc::Command::WriteWait(&storage.buffer, 0, 3, 0, 0, &value, 0x100000000ull, 0xffffffff00000001ull, 32, __func__);
+    auto* truncated = Agc::Command::WriteWait(&storage.buffer, false, 0, 3, 0, 0, &value, 0x100000000ull, 0xffffffff00000001ull, 32, __func__);
     check(truncated[8] == 0u && truncated[9] == 1u, "32-bit wait did not keep the low halves of the reference and mask");
     sceAgcWaitRegMemPatchMask(packet, 0x0f0f0f0fu);
     check(packet[10] == 0x0f0f0f0fu && packet[11] == 0xffffffffu && packet[8] == 7, "64-bit mask patch changed the wrong word");
@@ -703,15 +737,13 @@ void testDefaults() {
     expectFailure([] { Agc::Command::GetRegisterDefaults(0xffffffffu, true, __func__); });
 }
 
-struct DefaultsType {
-    std::uint32_t key;
-    std::uint32_t bankIndex;
-};
+constexpr std::size_t PairEntryBytes = 8;
+constexpr std::size_t CompactEntryBytes = 12;
 
-std::uint32_t colourTargetBlock(const void* root) {
+std::uint32_t colourTargetBlock(const void* root, std::size_t entryBytes) {
     const auto* bytes = static_cast<const unsigned char*>(root);
     ShaderRegister** contextBlocks = nullptr;
-    const DefaultsType* types = nullptr;
+    const unsigned char* types = nullptr;
     std::uint32_t count = 0;
     std::memcpy(&contextBlocks, bytes, sizeof(contextBlocks));
     std::memcpy(&types, bytes + 0x30, sizeof(types));
@@ -721,12 +753,17 @@ std::uint32_t colourTargetBlock(const void* root) {
     std::uint32_t matches = 0;
     std::uint32_t block = 0;
     for (std::uint32_t entry = 0; entry < count; ++entry) {
-        if ((types[entry].bankIndex & 3u) == 0)
+        std::uint32_t key = 0;
+        std::uint32_t bankIndex = 0;
+        std::memcpy(&key, types + entry * entryBytes, sizeof(key));
+        std::memcpy(&bankIndex, types + entry * entryBytes + 4, sizeof(bankIndex));
+        bankIndex &= 0x3ffu;
+        if ((bankIndex & 3u) == 0)
             ++contexts;
-        if (types[entry].key != 0x38e92c91u)
+        if (key != 0x38e92c91u)
             continue;
-        check((types[entry].bankIndex & 3u) == 0, "MRT0 defaults are not in the context bank");
-        block = types[entry].bankIndex >> 2;
+        check((bankIndex & 3u) == 0, "MRT0 defaults are not in the context bank");
+        block = bankIndex >> 2;
         ++matches;
     }
     check(matches == 1 && block < contexts && contextBlocks[block] != nullptr, "MRT0 defaults key is missing, repeated or outside the context blocks");
@@ -739,7 +776,11 @@ std::uint32_t colourTargetBlock(const void* root) {
 void testDefaultsTypes() {
     const auto* legacy = sceAgcGetRegisterDefaults();
     check(legacy != sceAgcGetRegisterDefaults2(13), "legacy register defaults reused the compact versioned table");
-    check(colourTargetBlock(legacy) == 78, "MRT0 defaults are not block 78 of the 137-entry table");
+    check(colourTargetBlock(legacy, PairEntryBytes) == 78, "MRT0 defaults are not block 78 of the 137-entry table");
+    check(colourTargetBlock(sceAgcGetRegisterDefaults2(13), CompactEntryBytes) == 78, "versioned MRT0 defaults are not block 78 of the compact 137-entry table");
+    check(colourTargetBlock(sceAgcGetRegisterDefaults2(10), CompactEntryBytes) == 73, "versioned MRT0 defaults are not block 73 of the compact 128-entry table");
+    for (std::uint32_t version = 4; version < 14; ++version)
+        colourTargetBlock(sceAgcGetRegisterDefaults2(version), CompactEntryBytes);
 
     const auto checkCompactTypes = [](const void* root, std::uint32_t count, std::uint32_t key,
                                       std::uint32_t packedType, std::uint32_t extra) {
@@ -814,7 +855,9 @@ int main(int argc, char** argv) {
         testNop();
         testClearState();
         testIndexedIndirectDraws();
+        testTagHeaders();
         testMarkers();
+        testMarkerSpans();
         testWorkloads();
         testWorkloadStreams();
         testIndexBuffer();

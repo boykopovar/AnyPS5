@@ -4,7 +4,7 @@ import re
 import sys
 from pathlib import Path
 
-CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|TEST_BIG_ENDIAN|check_))")
+CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|TEST_BIG_ENDIAN|check_)|CHECK_TYPE_SIZE: )")
 ENTRY = re.compile(r"^([^#/:][^:]*):([A-Z]+)=(.*)$")
 
 
@@ -18,6 +18,11 @@ def checks(cache):
         if match and match.group(2) == "INTERNAL" and CHECK.match(doc):
             found[match.group(1)] = (match.group(3), doc[2:])
         doc = ""
+    architecture_sizes = {name for name, (value, doc) in found.items()
+                          if value == "0" and doc.startswith("CHECK_TYPE_SIZE: ")}
+    if architecture_sizes:
+        return {name: entry for name, entry in found.items()
+                if name not in architecture_sizes and not entry[1].startswith("Result of TRY_COMPILE")}
     return found
 
 
@@ -28,7 +33,7 @@ def quote(value):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Write the configure check results of a CMake cache as an initial cache file")
     parser.add_argument("cache", help="CMakeCache.txt of a configured tree")
     parser.add_argument("seed", help="file to pass to cmake -C")

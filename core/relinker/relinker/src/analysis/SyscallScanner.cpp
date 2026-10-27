@@ -128,27 +128,53 @@ static ForbiddenInstruction ClassifyForbiddenInstruction(const std::vector<std::
     return ForbiddenInstruction::None;
 }
 
-static std::optional<std::uint32_t> ConstantRaxLoad(const std::uint8_t* bytes, const std::size_t length) {
+static std::optional<std::uint64_t> ConstantRaxLoad(const std::uint8_t* bytes, const std::size_t length) {
     const std::size_t opcode = Codegen::DecodedInstruction{bytes, length}.OpcodeOffset();
     const bool hasRex = opcode > 0 && (bytes[opcode - 1] & 0xF0) == 0x40;
     const std::uint8_t rex = hasRex ? bytes[opcode - 1] : 0;
 
     if (hasRex && rex == 0x48 && length - opcode == 6 && bytes[opcode] == 0xC7 && bytes[opcode + 1] == 0xC0) {
-        std::uint32_t value = 0;
-        std::memcpy(&value, bytes + opcode + 2, sizeof(value));
+        std::int32_t immediate = 0;
+        std::memcpy(&immediate, bytes + opcode + 2, sizeof(immediate));
+        return static_cast<std::uint64_t>(static_cast<std::int64_t>(immediate));
+    }
+
+    if (hasRex && rex == 0x48 && length - opcode == 9 && bytes[opcode] == 0xB8) {
+        std::uint64_t value = 0;
+        std::memcpy(&value, bytes + opcode + 1, sizeof(value));
         return value;
     }
 
-    if (!hasRex && length - opcode == 5 && bytes[opcode] == 0xB8) {
+    if ((rex & 0x09) == 0 && length - opcode == 5 && bytes[opcode] == 0xB8) {
         std::uint32_t value = 0;
         std::memcpy(&value, bytes + opcode + 1, sizeof(value));
         return value;
     }
 
+    if ((rex & 0x05) == 0 && length - opcode == 2 && (bytes[opcode] == 0x31 || bytes[opcode] == 0x33) && bytes[opcode + 1] == 0xC0
+        && std::find(bytes, bytes + opcode, 0x66) == bytes + opcode)
+        return 0;
+
     return std::nullopt;
 }
 
-static std::optional<std::uint32_t> ConstantSyscallNumber(const std::vector<std::uint8_t>& codeSection, const FileByteOffset codeSectionOffset, const RecentInstructions& recent) {
+static bool MovesOtherRegisterThanRax(const std::uint8_t* bytes, const std::size_t length) {
+    const std::uint8_t rex = length == 3 ? bytes[0] : 0;
+    if (length == 3 && (rex & 0xF0) != 0x40)
+        return false;
+    const std::uint8_t opcode = bytes[length - 2];
+    const std::uint8_t modrm = bytes[length - 1];
+    if ((modrm & 0xC0) != 0xC0)
+        return false;
+    const bool writesRm = opcode == 0x89 || opcode == 0x31;
+    const bool writesReg = opcode == 0x8B || opcode == 0x33;
+    if (!writesRm && !writesReg)
+        return false;
+    const unsigned written = writesRm ? (modrm & 7u) | ((rex & 1u) << 3) : ((modrm >> 3) & 7u) | ((rex & 4u) << 1);
+    return written != 0;
+}
+
+static std::optional<std::uint64_t> ConstantSyscallNumber(const std::vector<std::uint8_t>& codeSection, const FileByteOffset codeSectionOffset, const RecentInstructions& recent) {
     FileByteOffset next = recent.Before(0).Offset;
     for (std::size_t step = 1; step <= SYSCALL_NUMBER_LOOKBACK && step < recent.count; ++step) {
         const auto& match = recent.Before(step);
@@ -166,11 +192,8 @@ static std::optional<std::uint32_t> ConstantSyscallNumber(const std::vector<std:
             return value;
 
         const std::size_t opcode = Codegen::DecodedInstruction{bytes, match.Length}.OpcodeOffset();
-        const bool hasRex = opcode > 0 && (bytes[opcode - 1] & 0xF0) == 0x40;
-        const bool movesFirstSyscallArgument = hasRex && bytes[opcode - 1] == 0x49
-            && match.Length - opcode == 2 && bytes[opcode] == 0x89 && bytes[opcode + 1] == 0xCA;
-
-        if (!movesFirstSyscallArgument)
+        const std::size_t begin = opcode > 0 && (bytes[opcode - 1] & 0xF0) == 0x40 ? opcode - 1 : opcode;
+        if (match.Length - opcode != 2 || !MovesOtherRegisterThanRax(bytes + begin, match.Length - begin))
             return std::nullopt;
     }
 
@@ -209,22 +232,6 @@ static std::optional<LowRaxWrite> ImmediateLowRaxWriteEndingAt(const std::vector
     if (end >= 4 && code[end - 4] == 0x66 && code[end - 3] == 0xB8)
         return LowRaxWrite{4, 0xFFFF, static_cast<std::uint64_t>(code[end - 2]) | static_cast<std::uint64_t>(code[end - 1]) << 8};
     return std::nullopt;
-}
-
-static bool MovesOtherRegisterThanRax(const std::uint8_t* bytes, const std::size_t length) {
-    const std::uint8_t rex = length == 3 ? bytes[0] : 0;
-    if (length == 3 && (rex & 0xF0) != 0x40)
-        return false;
-    const std::uint8_t opcode = bytes[length - 2];
-    const std::uint8_t modrm = bytes[length - 1];
-    if ((modrm & 0xC0) != 0xC0)
-        return false;
-    const bool writesRm = opcode == 0x89 || opcode == 0x31;
-    const bool writesReg = opcode == 0x8B || opcode == 0x33;
-    if (!writesRm && !writesReg)
-        return false;
-    const unsigned written = writesRm ? (modrm & 7u) | ((rex & 1u) << 3) : ((modrm >> 3) & 7u) | ((rex & 4u) << 1);
-    return written != 0;
 }
 
 static std::optional<std::uint64_t> ConstantSyscallNumberInBytes(const std::vector<std::uint8_t>& code, const std::size_t syscall) {
