@@ -392,6 +392,26 @@ void Async(int ssl) {
     Require(sceKernelDeleteEqueue(eq) == 0, "delete async equeue");
 }
 
+void AsyncWithoutQueue(int ssl) {
+    std::fprintf(stderr, "HTTP2 async without a kernel queue scenario\n");
+    Server server(Mode::Normal);
+    Client client(ssl);
+    Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify queueless async host name");
+    client.Create(server.Url("localhost"));
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, nullptr, nullptr) == 0, "queueless async send submission");
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "queueless async send completion");
+    Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "queueless async send result");
+    std::array<char, 64> buffer{};
+    Require(sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), nullptr, nullptr) == 0, "queueless async read submission");
+    Http2AsyncResult readResult{};
+    Require(sceHttp2WaitAsync(client.request, &readResult, nullptr, nullptr) == 0, "queueless async read completion");
+    Require(readResult.req_id == client.request && readResult.result == 13 && readResult.event_type == 1, "queueless async read result");
+    Require(std::string(buffer.data(), 13) == "response body", "queueless async read body");
+    server.Join();
+    Require(server.Negotiated(), "queueless async h2 ALPN");
+}
+
 struct AsyncQueue {
     KernelEqueue eq = 0;
     int tag = 0;
@@ -757,6 +777,7 @@ int main(int argc, char** argv) {
         Refused(ssl);
         Capacity(ssl);
         Async(ssl);
+        AsyncWithoutQueue(ssl);
         AsyncDelete(ssl, false);
         AsyncDelete(ssl, true);
         AsyncTwoWaiters(ssl);
