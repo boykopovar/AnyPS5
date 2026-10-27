@@ -8250,7 +8250,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTcAAAA=", "new requests did not use serialization version 55");
+    require(requestPrefix(encoded, 8u) == "NVNQQTgAAAA=", "new requests did not use serialization version 56");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -8371,7 +8371,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTgAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTkAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -8490,9 +8490,9 @@ void verifyDepthExportClamp() {
         const auto both = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(tail));
         require(both.request.target.largePixelFunctionLdsBuffer && both.request.target.pixelFunctionStorageDwords == 2048u &&
                     both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
-            "depth export: a version 55 request lost the bounds or the version 45 target tail");
+            "depth export: a version 56 request lost the bounds or the version 45 target tail");
         auto bytes = decodeBase64(RequestSerializer{}.Serialize(tail));
-        require(bytes.size() > 8u && bytes[4] == 55u, "depth export: a depth exporting request did not use serialization version 55");
+        require(bytes.size() > 8u && bytes[4] == 56u, "depth export: a depth exporting request did not use serialization version 56");
         const auto eraseVersion55MergeFields = [](std::vector<std::uint8_t>& serialized, RecompileRequest marked) {
             static constexpr std::array<std::uint8_t, 4> marker{0xefu, 0xcdu, 0xabu, 0x89u};
             marked.context.pixel->targetMerges.assign(1u, {});
@@ -8506,7 +8506,7 @@ void verifyDepthExportClamp() {
         eraseVersion55MergeFields(bytes, tail);
         static constexpr std::array<std::uint8_t, 8> boundBytes{0x00u, 0x00u, 0x80u, 0x3eu, 0x00u, 0x00u, 0x40u, 0x3fu};
         auto version49 = bytes;
-        version49.resize(version49.size() - 5u);
+        version49.resize(version49.size() - 6u);
         version49[4] = 49u;
         const auto replay49 = RequestSerializer{}.Deserialize(encodeBase64(version49));
         require(replay49.request.context.pixel->depthExportMin == 0.25f && replay49.request.context.pixel->depthExportMax == 0.75f && replay49.request.target.pixelFunctionStorageDwords == 2048u, "depth export: a version 49 request lost the bounds or the version 45 target tail");
@@ -8514,6 +8514,7 @@ void verifyDepthExportClamp() {
         require(found != bytes.end() && std::search(found + 1, bytes.end(), boundBytes.begin(), boundBytes.end()) == bytes.end(),
             "depth export: the clamp bounds were not written exactly once");
         bytes.erase(found, found + boundBytes.size());
+        bytes.pop_back();
         bytes.pop_back();
         bytes.pop_back();
         bytes.pop_back();
@@ -8538,13 +8539,14 @@ void verifyDepthExportClamp() {
             ditheredPixel.ditheredAlphaSamples = 2u;
             dithered.context.pixel = ditheredPixel;
             auto ditheredBytes = decodeBase64(RequestSerializer{}.Serialize(dithered));
-            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 55u, "a two-sample dithered request did not use serialization version 55");
+            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 56u, "a two-sample dithered request did not use serialization version 56");
             eraseVersion55MergeFields(ditheredBytes, dithered);
             if (depthExport) {
                 const auto bounds = std::search(ditheredBytes.begin(), ditheredBytes.end(), boundBytes.begin(), boundBytes.end());
                 require(bounds != ditheredBytes.end(), "a two-sample dithered depth exporting request lacks the clamp bounds");
                 ditheredBytes.erase(bounds, bounds + boundBytes.size());
             }
+            ditheredBytes.pop_back();
             ditheredBytes.pop_back();
             ditheredBytes.pop_back();
             ditheredBytes.pop_back();
@@ -8619,6 +8621,7 @@ void verifyVertexInfoVersion19() {
     version20Vertex.pop_back();
     version20Vertex.pop_back();
     version20Vertex.pop_back();
+    version20Vertex.pop_back();
     version20Vertex.resize(version20Vertex.size() - sizeof(std::uint32_t));
     version20Vertex.pop_back();
     version20Vertex.pop_back();
@@ -8633,6 +8636,7 @@ void verifyVertexInfoVersion19() {
     const auto layered = serializer.Deserialize(serializer.Serialize(vertex));
     require(layered.request.context.vertex.has_value() && layered.request.context.vertex->paClVsOutCntl == vertex.context.vertex->paClVsOutCntl, "a layered vertex info lost its clip distances or render target index");
     auto legacy = plain;
+    legacy.pop_back();
     legacy.pop_back();
     legacy.pop_back();
     legacy.pop_back();
@@ -8690,6 +8694,7 @@ void verifyVertexInfoVersion19() {
     require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && mergingBytes[mergeOffset + 40] == 0u && mergingBytes[mergeOffset + 41] == static_cast<std::uint8_t>(ColorExportPacking::Float11_11_10) && mergingBytes[mergeOffset + 42] == 0x01u && mergingBytes[mergeOffset + 45] == 0x20u && mergingBytes[mergeOffset + 46] == 1u && mergingBytes[mergeOffset + 47] == 2u && mergingBytes[mergeOffset + 51] == 0x05u && mergingBytes[mergeOffset + 52] == 0x01u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 55 bytes the version 54 pixel info adds after the sample order");
     require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerges == merging.context.pixel->targetMerges, "a serialized request lost its color target merge");
     auto version54 = mergingBytes;
+    version54.pop_back();
     version54.erase(version54.begin() + mergeOffset + 40, version54.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
     version54[4] = 54u;
     auto version53 = version54;
@@ -8727,7 +8732,7 @@ void verifyVertexInfoVersion19() {
     };
     auto blendVersion49 = blendMergingBytes;
     blendRecordToVersion49(blendVersion49, mergeOffset);
-    blendVersion49.resize(blendVersion49.size() - 5u);
+    blendVersion49.resize(blendVersion49.size() - 6u);
     blendVersion49[4] = 49u;
     require(serializer.Deserialize(encodeBase64(blendVersion49)).request.context.pixel->targetMerges == blendMerging.context.pixel->targetMerges, "a version 49 color target blend flagged in the merge mask word was not read as an unpacked blend");
     auto twoMerging = blendMerging;
@@ -8739,7 +8744,7 @@ void verifyVertexInfoVersion19() {
     auto twoVersion49 = twoMergingBytes;
     blendRecordToVersion49(twoVersion49, mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes));
     blendRecordToVersion49(twoVersion49, mergeOffset);
-    twoVersion49.resize(twoVersion49.size() - 5u);
+    twoVersion49.resize(twoVersion49.size() - 6u);
     twoVersion49[4] = 49u;
     require(serializer.Deserialize(encodeBase64(twoVersion49)).request.context.pixel->targetMerges == twoMerging.context.pixel->targetMerges, "a version 49 request with a second color target merge counted in the first merge word was not read as two unpacked blends");
     auto unmasked = twoMergingBytes;
@@ -8756,7 +8761,7 @@ void verifyVertexInfoVersion19() {
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
         require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");
         bytes.erase(bytes.begin() + mergeOffset, bytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
-        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 8u);
+        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 9u);
         return bytes;
     };
     auto version42 = version43Bytes(plainPixel);
@@ -8918,9 +8923,10 @@ void verifyDepthRemapRequests() {
     const auto plainBytes = decodeBase64(plain);
     const auto remappedBytes = decodeBase64(remapped);
     constexpr std::size_t pointTailBytes = 13u;
-    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 19u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 19 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 12 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 12 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag, the tessellation evaluation subgroup flag, the host interpolation first flag, the shader image minimum LOD flag and the f16 conversion NaN flags of a vertex request");
+    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 20u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 20 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 13 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 13 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag, the tessellation evaluation subgroup flag, the host interpolation first flag, the shader image minimum LOD flag, the f16 conversion NaN flags and the coupled f16 and f64 denormal flag of a vertex request");
     for (const std::uint8_t legacyVersion : {32u, 34u}) {
         auto legacyBytes = remappedBytes;
+        legacyBytes.pop_back();
         legacyBytes.pop_back();
         legacyBytes.pop_back();
         legacyBytes.pop_back();
@@ -8938,6 +8944,7 @@ void verifyDepthRemapRequests() {
         require(serializer.Serialize(legacy.request) == plain, ("a version " + std::to_string(legacyVersion) + " vertex request misread the fields before the depth remap").c_str());
     }
     auto version35 = remappedBytes;
+    version35.pop_back();
     version35.pop_back();
     version35.pop_back();
     version35.pop_back();
@@ -8995,8 +9002,8 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 60u + pointTailBytes && legacy[4] == 55u, "a merged hull request did not use serialization version 55");
-    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 7u - pointTailBytes);
+    require(legacy.size() > 61u + pointTailBytes && legacy[4] == 56u, "a merged hull request did not use serialization version 56");
+    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 8u - pointTailBytes);
     legacy.pop_back();
     legacy.pop_back();
     require(legacy[legacy.size() - 52u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
