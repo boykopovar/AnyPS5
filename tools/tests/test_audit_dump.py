@@ -317,16 +317,19 @@ class AuditDumpTests(unittest.TestCase):
                 work = dump / "work" if name == "work-in-dump" else root
                 self.assert_overlap_rejected(dump, work)
 
-    def assert_report_rejected(self, report):
+    def assert_report_rejected(self, report, expected_error=None):
         work = self.root / "report-work"
         marker = work / "source" / "preserve"
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_bytes(b"previous work")
         original = (self.dump / "eboot.bin").read_bytes()
+        errors = io.StringIO()
         with mock.patch.object(audit_dump, "prepare", return_value=([], [])) as prepare, mock.patch.object(audit_dump, "convert", return_value=subprocess.CompletedProcess([], 0)) as convert, mock.patch.object(audit_dump.import_audit, "main", return_value=0) as audit:
-            with self.assertRaises(SystemExit) as error:
-                self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work, "--json", report)
+            with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                audit_dump.main([str(arg) for arg in (self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work, "--json", report)])
         self.assertEqual(error.exception.code, 2)
+        if expected_error is not None:
+            self.assertIn(expected_error, errors.getvalue())
         prepare.assert_not_called()
         convert.assert_not_called()
         audit.assert_not_called()
@@ -336,14 +339,14 @@ class AuditDumpTests(unittest.TestCase):
     def test_json_outputs_inside_the_dump_are_rejected_before_staging(self):
         for relative in (".", "eboot.bin", "report.json", "new/directory/report.json"):
             with self.subTest(relative=relative):
-                self.assert_report_rejected(self.dump / relative)
+                self.assert_report_rejected(self.dump / relative, "JSON output overlaps the input dump")
 
     def test_json_output_directory_or_missing_parent_is_rejected_before_staging(self):
         directory = self.root / "report-dir"
         directory.mkdir()
-        self.assert_report_rejected(directory)
+        self.assert_report_rejected(directory, "JSON output is a directory")
         missing_parent = self.root / "no-such-parent" / "report.json"
-        self.assert_report_rejected(missing_parent)
+        self.assert_report_rejected(missing_parent, "no such directory")
 
     def test_json_output_symlink_aliases_of_the_dump_are_rejected(self):
         for name, target, directory in (("file", self.dump / "eboot.bin", False), ("directory", self.dump, True), ("missing", self.dump / "not-created.json", False)):
