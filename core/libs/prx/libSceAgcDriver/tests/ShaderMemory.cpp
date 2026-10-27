@@ -7542,8 +7542,8 @@ void verifyInt64AtomicCapabilities() {
     const std::vector<std::uint32_t> bufferOr{0xe1685000u, 0x80012803u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferAnd{0xe1645000u, 0x80012803u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferXor{0xe16c5000u, 0x80012803u, 0xbf810000u};
-    const std::vector<std::uint32_t> bufferOrStored{0xe1685000u, 0x80012803u, 0xe0741000u, 0x80012803u, 0xbf810000u};
-    const std::vector<std::uint32_t> bufferAdd{0xe1485000u, 0x80012803u, 0xbf810000u};
+    const std::vector<std::uint32_t> bufferOrTwice{0xe1685000u, 0x80012803u, 0xe1685000u, 0x80012a03u, 0xbf810000u};
+    const std::vector<std::uint32_t> bufferOrAnd{0xe1685000u, 0x80012803u, 0xe1645000u, 0x80012a03u, 0xbf810000u};
     const auto compile = [&](std::span<const std::uint32_t> code, spv::Capability added) {
         const std::array<std::uint32_t, 4> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, static_cast<std::uint32_t>(added)};
         RecompileRequest request{};
@@ -7617,8 +7617,9 @@ void verifyInt64AtomicCapabilities() {
         verifySplit(split, atomic);
         require(declares(compile(*code, spv::CapabilityInt64Atomics), spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic does not use the 64-bit atomic where the device has it");
     }
-    expectFailure([&] { static_cast<void>(compile(bufferOrStored, spv::CapabilityShader)); }, "64-bit buffer atomics need shaderBufferInt64Atomics", "64-bit atomics: a buffer_atomic_or_x2 whose result is stored compiled without shaderBufferInt64Atomics");
-    expectFailure([&] { static_cast<void>(compile(bufferAdd, spv::CapabilityShader)); }, "64-bit buffer atomics need shaderBufferInt64Atomics", "64-bit atomics: a buffer_atomic_add_x2 compiled without shaderBufferInt64Atomics");
+    require(!declares(compile(bufferOrTwice, spv::CapabilityShader), spv::CapabilityInt64Atomics), "64-bit atomics: two buffer_atomic_or_x2 of one program declare Int64Atomics on a device without it");
+    expectFailure([&] { static_cast<void>(compile(bufferOrAnd, spv::CapabilityShader)); }, "64-bit buffer atomics need shaderBufferInt64Atomics", "64-bit atomics: a buffer_atomic_or_x2 and a buffer_atomic_and_x2 of one program compiled without shaderBufferInt64Atomics");
+    require(declares(compile(bufferOrAnd, spv::CapabilityInt64Atomics), spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_or_x2 and a buffer_atomic_and_x2 of one program do not use the 64-bit atomics where the device has them");
     expectFailure([&] { static_cast<void>(compile(imageAtomic, spv::CapabilityShader)); }, "64-bit image atomics need VK_EXT_shader_image_atomic_int64", "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics");
     require(declares(compile(imageAtomic, spv::CapabilityInt64ImageEXT), spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
 }
