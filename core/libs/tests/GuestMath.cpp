@@ -834,6 +834,74 @@ static void CheckTanhConsoleBits() {
     }
 }
 
+static bool AcoshWithinUlps(std::uint64_t result, std::uint64_t expected, std::uint64_t ulps) {
+    return ((result ^ expected) >> 63) == 0 && (result > expected ? result - expected : expected - result) <= ulps;
+}
+
+static void CheckAcoshMsunBits() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x3ff0000000000000ull, 0x0000000000000000ull}, {0x3ff0000000000001ull, 0x3e56a09e667f3bcdull},
+        {0x3ff0000000000002ull, 0x3e5fffffffffffffull}, {0x3ff8000000000000ull, 0x3feecc2caec5160aull},
+        {0x3fffffffffffffffull, 0x3ff5124271980434ull}, {0x4000000000000000ull, 0x3ff5124271980434ull},
+        {0x4000000000000001ull, 0x3ff5124271980436ull}, {0x40000000ffffffffull, 0x3ff5124399326c3cull},
+        {0x40000000fbde15b0ull, 0x3ff51243946cd958ull}, {0x400000000418a99eull, 0x3ff512427652e85bull},
+        {0x4000000049cdc80bull, 0x3ff51242c6d0ac08ull}, {0x41affffe1875063dull, 0x403419eca7d66c3full},
+        {0x41affffed8c77cb7ull, 0x403419ecadd9003cull}, {0x41affffe82caf2bbull, 0x403419ecab291bd0ull},
+        {0x41afffffffffffffull, 0x403419ecb712c481ull}, {0x41b0000000000000ull, 0x403419ecb712c480ull},
+        {0x41b00000fbde15b0ull, 0x403419ecc6d0a55full}, {0x41b0000027529ad0ull, 0x403419ecb987ee2aull},
+        {0x41b00000271687b2ull, 0x403419ecb9842cf8ull}, {0x3ff06becd269ef68ull, 0x3fcd51cd72fe08a8ull},
+        {0x3ff0a687f2435ebeull, 0x3fd2304f9f133c75ull}, {0x3ff0eb7905f7151dull, 0x3fd599403c5a8239ull},
+        {0x3ff1161ccb04e92dull, 0x3fd773f6216285ceull}, {0x3ff16bc6d36377daull, 0x3fdac7072b54095cull},
+        {0x3ff209220864e706ull, 0x3fdff38800c252f2ull}, {0x3ff713d9f1ce8636ull, 0x3fed163d290d3144ull},
+        {0x3ff805f34a0230c9ull, 0x3feed6cf40d76ca6ull}, {0x3ff8b19d1d5f320aull, 0x3ff000fba85d5e4full},
+        {0x3ff989c5a79473bfull, 0x3ff0b3aed39a99a3ull}, {0x3ffa1b81b29136c8ull, 0x3ff126bd6ee075c6ull},
+        {0x3ffb4967a0d80962ull, 0x3ff208ddd2415adaull},
+    };
+    for (const auto& [input, expected] : cases) {
+        const std::uint64_t result = std::bit_cast<std::uint64_t>(acosh_nid_postfix(std::bit_cast<double>(input)));
+        if (result != expected) {
+            std::fprintf(stderr, "Guest acosh failed for %016llx: got %016llx, expected %016llx\n", static_cast<unsigned long long>(input), static_cast<unsigned long long>(result), static_cast<unsigned long long>(expected));
+            std::abort();
+        }
+    }
+}
+
+static void CheckAcoshLargeArguments() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x4000000100000000ull, 0x3ff5124399326c3dull}, {0x4000000100000001ull, 0x3ff5124399326c3eull},
+        {0x4008000000000000ull, 0x3ffc34366179d426ull}, {0x4024000000000000ull, 0x4007f21ed1ce05d4ull},
+        {0x408f400000000000ull, 0x401e6752e8a84ed4ull}, {0x4202a05f20000000ull, 0x4037b810429a7c2aull},
+        {0x54b249ad2594c37dull, 0x406cde73f84a4f2cull}, {0x7fefffffffffffffull, 0x408633ce8fb9f87dull},
+    };
+    for (const auto& [input, expected] : cases) {
+        const std::uint64_t result = std::bit_cast<std::uint64_t>(acosh_nid_postfix(std::bit_cast<double>(input)));
+        if (!AcoshWithinUlps(result, expected, 4)) {
+            std::fprintf(stderr, "Guest acosh failed for %016llx: got %016llx, expected %016llx\n", static_cast<unsigned long long>(input), static_cast<unsigned long long>(result), static_cast<unsigned long long>(expected));
+            std::abort();
+        }
+    }
+}
+
+static void CheckAcoshDomainErrno() {
+    constexpr int sentinel = 1234;
+    for (const std::uint64_t input : {0x3fe0000000000000ull, 0x3fefffffffffffffull, 0x0000000000000000ull, 0x8000000000000000ull, 0xbff0000000000000ull, 0xfff0000000000000ull, 0xffefffffffffffffull}) {
+        errno = sentinel;
+        const double result = acosh_nid_postfix(std::bit_cast<double>(input));
+        if (!std::isnan(result) || errno != EDOM) {
+            std::fprintf(stderr, "Guest acosh domain failed for %016llx: errno %d\n", static_cast<unsigned long long>(input), errno);
+            std::abort();
+        }
+    }
+    for (const std::uint64_t input : {0x3ff0000000000000ull, 0x4000000000000000ull, 0x7ff0000000000000ull, 0x7ff8000000000000ull, 0x7fefffffffffffffull}) {
+        errno = sentinel;
+        const double result = acosh_nid_postfix(std::bit_cast<double>(input));
+        if (errno != sentinel || (input == 0x3ff0000000000000ull && std::bit_cast<std::uint64_t>(result) != 0) || (input == 0x7ff0000000000000ull && result != std::numeric_limits<double>::infinity()) || (input == 0x7ff8000000000000ull && !std::isnan(result))) {
+            std::fprintf(stderr, "Guest acosh changed errno or result for %016llx: errno %d\n", static_cast<unsigned long long>(input), errno);
+            std::abort();
+        }
+    }
+}
+
 static void CheckRoundingNaNConsoleBits() {
     constexpr std::uint64_t cases[][2] = {
         {0x7ff0000000000001ull, 0x7ff8000000000001ull}, {0xfff4000000000123ull, 0xfffc000000000123ull}, {0x7ff8000000000456ull, 0x7ff8000000000456ull},
@@ -2207,6 +2275,9 @@ int main() {
     CheckLog1pConsoleBits();
     CheckNextafterConsoleBits();
     CheckTanhConsoleBits();
+    CheckAcoshMsunBits();
+    CheckAcoshLargeArguments();
+    CheckAcoshDomainErrno();
     CheckRoundingNaNConsoleBits();
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
