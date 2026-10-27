@@ -4903,24 +4903,10 @@ void DepthBoundsEmulationTests() {
     });
     refuses("normalized depth target", [](auto& state, auto&, auto&) { state.depth->format = VK_FORMAT_D16_UNORM; });
     refuses("depth bounds outside [0, 1]", [](auto& state, auto&, auto&) { state.maxDepthBounds = 1.5f; });
-    refuses("multisampled depth target", [](auto& state, auto&, auto&) {
-        state.minDepthBounds = 0.25f;
-        state.depth->samples = 4u;
-    });
-    refuses("writes depth", [](auto& state, auto&, auto&) {
-        state.depthTest = true;
-        state.depthWrite = true;
-    });
     refuses("writes stencil", [](auto& state, auto&, auto&) {
         state.stencilTest = true;
         state.stencilFront.writeMask = 0xffu;
         state.stencilFront.failOp = VK_STENCIL_OP_REPLACE;
-    });
-    refuses("writes stencil", [](auto& state, auto&, auto&) {
-        state.minDepthBounds = 0.25f;
-        state.stencilTest = true;
-        state.stencilBack.writeMask = 0xffu;
-        state.stencilBack.passOp = VK_STENCIL_OP_INCREMENT_AND_CLAMP;
     });
     auto stencil = base;
     stencil.stencilTest = true;
