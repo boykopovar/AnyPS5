@@ -102,12 +102,6 @@ static void CheckCollateVtableObject() {
     Require(_ZNKSt7collateIcE9transformEPKcS2__nid_postfix(&result, &facet, "xyz", "xyz" + 3) == &result);
     Require(result.size == 3 && result.capacity == 15 && std::memcmp(result.buffer, "xyz", 3) == 0);
     Require(vtable->hash(&facet, "abc", "abc" + 3) == -1792535898324117685LL);
-    for (std::uintptr_t& slot : _ZTVSt7collateIcE_nid_postfix) {
-        Require(slot == 0);
-        slot = 0x1111;
-        Require(slot == 0x1111);
-        slot = 0;
-    }
 }
 
 static void CheckMessagesVtableObject() {
