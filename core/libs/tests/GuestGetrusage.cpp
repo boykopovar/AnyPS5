@@ -41,6 +41,11 @@ int main() {
     RequireFailure(0, nullptr, 14);
     RequireFailure(1, nullptr, 14);
     RequireFailure(-1, nullptr, 14);
+    auto* const invalid = reinterpret_cast<GuestResourceUsage*>(static_cast<std::uintptr_t>(1));
+    RequireFailure(2, invalid, 22);
+    RequireFailure(0, invalid, 14);
+    RequireFailure(1, invalid, 14);
+    RequireFailure(-1, invalid, 14);
     GuestResourceUsage children;
     std::memset(&children, 0xff, sizeof(children));
     Require(getrusage_nid_postfix(-1, &children) == 0);

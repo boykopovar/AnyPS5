@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 // Guest FreeBSD errno numbering, not the host CRT's numbering.
@@ -43,37 +44,36 @@ constexpr const char* messages[] = {
     "Previous owner died"
 };
 static_assert(sizeof(messages) / sizeof(messages[0]) == 97);
-bool Known(int error) { return error >= 0 && error < 97; }
 bool NamedByStrerror(int error) { return error > 0 && error < 95; }
+
+void Describe(int error, char (&text)[128]) {
+    if (error == 0) std::snprintf(text, sizeof(text), "No error");
+    else if (NamedByStrerror(error)) std::snprintf(text, sizeof(text), "%s", messages[error]);
+    else std::snprintf(text, sizeof(text), "error_code=0x%08x", static_cast<unsigned>(error));
+}
 }
 
 extern "C" {
 char* APS5_VABI strerror_nid_postfix(int error) {
     thread_local char buffer[128];
-    if (error == 0) std::snprintf(buffer, sizeof(buffer), "No error");
-    else if (NamedByStrerror(error)) std::snprintf(buffer, sizeof(buffer), "%s", messages[error]);
-    else std::snprintf(buffer, sizeof(buffer), "error_code=0x%08x", static_cast<unsigned>(error));
+    Describe(error, buffer);
     return buffer;
 }
 
 int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t length) {
+    if (length < 23) return 34;
+    if (!buffer) throw std::invalid_argument("strerror_r: a null buffer of 23 bytes or more, which the console writes through");
     const int saved = *__error_nid_postfix();
-    char temporary[128];
-    if (Known(error)) std::snprintf(temporary, sizeof(temporary), "%s", messages[error]);
-    else std::snprintf(temporary, sizeof(temporary), "Unknown error: %d", error);
-    const auto required = std::strlen(temporary) + 1;
-    int result = Known(error) ? 0 : 22;
-    if (Known(error) && (!buffer || length < required)) result = 34;
-    if (buffer && length) {
-        const auto count = required <= length ? required - 1 : length - 1;
-        std::memcpy(buffer, temporary, count);
-        buffer[count] = '\0';
-    }
+    char text[128];
+    Describe(error, text);
     *__error_nid_postfix() = saved;
-    return result;
+    std::strncpy(buffer, text, length - 1);
+    buffer[length - 1] = '\0';
+    return 0;
 }
 
 void APS5_VABI perror_nid_postfix(const char* prefix) {
+    if (!_Stderr_nid_postfix.IsOpen()) return;
     const int saved = *__error_nid_postfix();
     char message[128];
     strerror_r_nid_postfix(saved, message, sizeof(message));

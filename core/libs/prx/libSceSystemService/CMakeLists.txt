@@ -39,6 +39,7 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_system_exit_tests)
     add_test(NAME guest_system_exit_parameters COMMAND guest_system_exit_tests)
     add_test(NAME guest_system_exit COMMAND guest_system_exit_tests --exit)
+    add_test(NAME guest_lnc_util_load_exec_exit COMMAND guest_system_exit_tests --lnc-exit)
     add_test(NAME guest_requested_exit COMMAND guest_system_exit_tests --requested-exit-driver)
     add_test(NAME guest_quick_exit COMMAND guest_system_exit_tests --quick-exit)
     add_test(NAME guest_immediate_exit COMMAND guest_system_exit_tests --immediate)
@@ -48,7 +49,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_system_relaunch COMMAND guest_system_exit_tests --relaunch-driver)
     add_test(NAME guest_nested_exit COMMAND guest_system_exit_tests --nested-exit-driver)
     add_test(NAME guest_exit_finalizers_before_shutdown COMMAND guest_system_exit_tests --exit-order-driver)
-    set_tests_properties(guest_system_exit guest_requested_exit PROPERTIES
+    set_tests_properties(guest_system_exit guest_lnc_util_load_exec_exit guest_requested_exit PROPERTIES
         PASS_REGULAR_EXPRESSION "Guest shutdown completed"
         FAIL_REGULAR_EXPRESSION "Guest exit handler ran|Guest thread resumed during exit")
     set_tests_properties(guest_requested_exit PROPERTIES TIMEOUT 10)
@@ -68,7 +69,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_system_load_exec_standard_error PROPERTIES TIMEOUT 20)
     endif()
     if(WIN32)
-        set_tests_properties(guest_system_exit guest_requested_exit guest_system_exit_parameters guest_immediate_exit guest_immediate_exit_drain guest_return_from_main guest_quick_exit guest_system_relaunch guest_nested_exit guest_exit_finalizers_before_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_system_exit guest_lnc_util_load_exec_exit guest_requested_exit guest_system_exit_parameters guest_immediate_exit guest_immediate_exit_drain guest_return_from_main guest_quick_exit guest_system_relaunch guest_nested_exit guest_exit_finalizers_before_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_system_service_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemService.cpp)

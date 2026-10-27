@@ -61,6 +61,7 @@ int main() {
     for (const auto byte : vrr) Require(byte == std::byte{0xff});
 
     Require(Rejects(handle, nullptr));
+    Require(Rejects(-1, nullptr));
     Require(Rejects(0, &status));
     Require(Rejects(-1, &status));
     Require(Rejects(NEVER_OPENED_HANDLE, &status));

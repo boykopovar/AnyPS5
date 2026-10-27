@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceLibreSsl/include/Api.hpp"
 
 extern "C" {
 
@@ -81,7 +82,7 @@ int APS5_VABI X509_get_version_nid_postfix(void);
 int APS5_VABI X509_getm_notAfter_nid_postfix(void);
 int APS5_VABI X509_getm_notBefore_nid_postfix(void);
 int APS5_VABI X509_up_ref_nid_postfix(void);
-int APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void);
+void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char** input, std::int64_t length);
 int APS5_VABI d2i_ECParameters_nid_postfix(void);
 int APS5_VABI d2i_PKCS7_nid_postfix(void);
 int APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(void);

@@ -212,13 +212,11 @@ int APS5_VABI sceFsDrfsResumeSocket() {
 }
 
 int APS5_VABI sceFsErriCtl() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x8002002d);
 }
 
 int APS5_VABI sceFsErriGetState() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x8002002d);
 }
 
 int APS5_VABI sceFsExfatMkfsExternalHdd() {

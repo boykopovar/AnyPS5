@@ -1,7 +1,9 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -61,14 +63,22 @@ int main() {
     Require(fallback[0] == 55 && fallback[1] == -1 && fallback[2] == -1);
     std::filesystem::remove_all(skipped);
 
-    int value = 0;
-    Require(sceKernelGetCpuTemperature(nullptr) == SCE_KERNEL_ERROR_EFAULT);
-    Require(sceKernelGetSocSensorTemperature(0, nullptr) == SCE_KERNEL_ERROR_EFAULT);
-    Require(sceKernelGetSocSensorTemperature(-1, &value) == SCE_KERNEL_ERROR_EINVAL);
-    Require(sceKernelGetSocSensorTemperature(3, &value) == SCE_KERNEL_ERROR_EINVAL);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelGetCpuTemperature(nullptr) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelGetSocSensorTemperature(0, nullptr) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
+    for (const int invalid : {-1, 65, 256, INT_MAX, INT_MIN}) {
+        int untouched = -12345;
+        *__error_nid_postfix() = 0;
+        Require(sceKernelGetSocSensorTemperature(invalid, &untouched) == SCE_KERNEL_ERROR_EINVAL && *__error_nid_postfix() == 22 && untouched == -12345);
+        *__error_nid_postfix() = 0;
+        Require(sceKernelGetSocSensorTemperature(invalid, nullptr) == SCE_KERNEL_ERROR_EINVAL && *__error_nid_postfix() == 22);
+    }
+    for (const int unmapped : {3, 15, 32, 64}) {
+        *__error_nid_postfix() = 0;
+        Require(sceKernelGetSocSensorTemperature(unmapped, nullptr) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
+    }
 
-    int sentinel = -12345;
-    Require(sceKernelGetSocSensorTemperature(15, &sentinel) == SCE_KERNEL_ERROR_EINVAL && sentinel == -12345);
     int probe = -12345;
     const int result = sceKernelGetSocSensorTemperature(0, &probe);
     Require(result == 0 ? (probe >= 0 && probe <= 130) : (result == SCE_KERNEL_ERROR_EINVAL && probe == -12345));

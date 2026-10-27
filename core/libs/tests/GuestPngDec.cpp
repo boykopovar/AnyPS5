@@ -4,21 +4,18 @@
 #include "Decoder/Png.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
+#include <initializer_list>
+#include <source_location>
+#include <span>
 #include <vector>
 
-static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: PNG decoder assertion failed\n", location.file_name(), location.line());
+    std::abort();
 }
 
 static const std::uint8_t PALETTE_TRNS[] = {
@@ -36,6 +33,44 @@ static const std::uint8_t GRAY16[] = {
     0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x10, 0x00, 0x00, 0x00, 0x00, 0x81, 0xD9, 0xFC,
     0x15, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x10, 0x32, 0x59, 0x7D,
     0x16, 0x00, 0x03, 0x0C, 0x01, 0xBF, 0x6E, 0xB9, 0xC6, 0x5D, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+};
+
+static const std::uint8_t GRAY16_TRNS[] = {
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x10, 0x00, 0x00, 0x00, 0x00, 0x07, 0x4D, 0x8E,
+    0xBB, 0x00, 0x00, 0x00, 0x02, 0x74, 0x52, 0x4E, 0x53, 0x12, 0x34, 0x2F, 0xD3, 0x49, 0x5E, 0x00,
+    0x00, 0x00, 0x12, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x10, 0x32, 0x11, 0x5A, 0xCD, 0xB0,
+    0xFA, 0x2C, 0x03, 0x03, 0x00, 0x0B, 0xDF, 0x02, 0x7C, 0x4E, 0x3C, 0x25, 0x55, 0x00, 0x00, 0x00,
+    0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+};
+
+static const std::uint8_t RGB16_TRNS[] = {
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x10, 0x02, 0x00, 0x00, 0x00, 0xAD, 0x44, 0x46,
+    0x30, 0x00, 0x00, 0x00, 0x06, 0x74, 0x52, 0x4E, 0x53, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0x89,
+    0xE4, 0x4E, 0xE6, 0x00, 0x00, 0x00, 0x23, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x10, 0x32,
+    0x09, 0xAB, 0x98, 0xB5, 0x47, 0xE8, 0x7F, 0xD8, 0xFF, 0x59, 0xFF, 0x19, 0xFE, 0x33, 0x30, 0x30,
+    0x36, 0x30, 0x32, 0x30, 0x34, 0x30, 0xFC, 0xFF, 0x0F, 0x00, 0x88, 0xFB, 0x0A, 0x69, 0xC3, 0x3F,
+    0x47, 0x19, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+};
+
+static const std::uint8_t GRAY_ALPHA16[] = {
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x10, 0x04, 0x00, 0x00, 0x00, 0x88, 0x2F, 0x19,
+    0xEC, 0x00, 0x00, 0x00, 0x19, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x10, 0x32, 0xB9, 0xF7,
+    0x61, 0xF5, 0x59, 0x06, 0x20, 0xF8, 0xF7, 0xFF, 0xFF, 0x7F, 0xC6, 0x86, 0x46, 0x00, 0x48, 0x58,
+    0x08, 0x8A, 0x8F, 0xC8, 0x5C, 0x92, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42,
+    0x60, 0x82,
+};
+
+static const std::uint8_t RGBA16[] = {
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x10, 0x06, 0x00, 0x00, 0x00, 0x22, 0x26, 0xD1,
+    0x67, 0x00, 0x00, 0x00, 0x2D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x01, 0x22, 0x00, 0xDD, 0xFF,
+    0x00, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0x0D, 0xEF, 0xAB, 0xCD, 0x20, 0x01, 0xEE, 0xFE, 0xFF,
+    0xFF, 0x00, 0x00, 0x01, 0x80, 0x40, 0xFF, 0xAB, 0x00, 0x00, 0xFF, 0xFF, 0x01, 0x02, 0x7F, 0xFE,
+    0x80, 0xFF, 0x07, 0xD0, 0x10, 0x52, 0x90, 0xA2, 0xAC, 0x25, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
     0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 };
 
@@ -61,6 +96,121 @@ static PngDecDecodeParam DecodeParam(const std::vector<std::uint8_t>& png, std::
     param.alpha_value = 0x77;
     param.image_pitch = 0;
     return param;
+}
+
+static void Check16BitImage(void* limitedHandle, void* enabledHandle, std::span<const std::uint8_t> png,
+                            std::initializer_list<std::uint8_t> expected, std::uint16_t colorSpace,
+                            std::uint32_t flags, std::uint32_t height = 2) {
+    constexpr std::int32_t invalidSize = static_cast<std::int32_t>(0x80690002);
+    constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80690003);
+    constexpr std::int32_t invalidWorkMemory = static_cast<std::int32_t>(0x80690005);
+    const std::vector<std::uint8_t> input(png.begin(), png.end());
+    const std::vector<std::uint8_t> expectedPixels(expected);
+    Require(expectedPixels.size() == 2 * height * 4);
+    for (const std::uint16_t format : {0, 1}) {
+        for (const std::uint32_t padding : {0, 8}) {
+            const std::uint32_t pitch = 8 + padding;
+            const std::uint32_t size = pitch * height;
+            std::vector<std::uint8_t> output(size + 16, 0xCC);
+            PngDecDecodeParam decode = DecodeParam(input, output);
+            decode.pixel_format = format;
+            decode.image_pitch = padding == 0 ? 0 : pitch;
+            decode.image_mem_size = size;
+            PngDecImageInfo info{};
+            Require(scePngDecDecode(limitedHandle, &decode, &info) == invalidWorkMemory);
+            Require(info.image_width == 2 && info.image_height == height && info.bit_depth == 16);
+            Require(info.color_space == colorSpace && info.image_flag == flags);
+            Require(std::all_of(output.begin(), output.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+            Require(scePngDecDecode(enabledHandle, &decode, format == 0 ? &info : nullptr) == static_cast<std::int32_t>(2 << 16 | height));
+            Require(info.image_width == 2 && info.image_height == height && info.bit_depth == 16);
+            Require(info.color_space == colorSpace && info.image_flag == flags);
+            for (std::uint32_t y = 0; y < height; ++y) {
+                for (std::uint32_t x = 0; x < 2; ++x) {
+                    for (std::uint32_t channel = 0; channel < 4; ++channel) {
+                        const std::uint32_t inputChannel = format == 1 && channel < 3 ? 2 - channel : channel;
+                        Require(output[y * pitch + x * 4 + channel] == expectedPixels[y * 8 + x * 4 + inputChannel]);
+                    }
+                }
+                for (std::uint32_t offset = 8; offset < pitch; ++offset) Require(output[y * pitch + offset] == 0xCC);
+            }
+            Require(std::all_of(output.begin() + size, output.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+            std::fill(output.begin(), output.end(), 0xCC);
+            decode.image_mem_size = size - 1;
+            for (void* handle : {limitedHandle, enabledHandle}) {
+                Require(scePngDecDecode(handle, &decode, &info) == (padding == 0 ? invalidSize : invalidParam));
+                Require(std::all_of(output.begin(), output.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+                const auto validPitch = decode.image_pitch;
+                decode.image_pitch = 7;
+                Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
+                Require(std::all_of(output.begin(), output.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+                decode.image_pitch = validPitch;
+            }
+        }
+    }
+}
+
+static void CheckDimensionReporting(std::uint32_t width, std::uint32_t height) {
+    constexpr std::int32_t invalidAddr = static_cast<std::int32_t>(0x80690001);
+    constexpr std::int32_t invalidSize = static_cast<std::int32_t>(0x80690002);
+    constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80690003);
+    constexpr std::int32_t invalidData = static_cast<std::int32_t>(0x80690010);
+    std::vector<std::uint8_t> rgb(static_cast<std::size_t>(width) * height * 3);
+    for (std::size_t i = 0; i < rgb.size(); ++i) rgb[i] = static_cast<std::uint8_t>(i * 13 + 7);
+    const auto png = Decoder::Png::Encode(rgb, width, height, 3);
+    const PngDecCreateParam create{sizeof(PngDecCreateParam), 0, width};
+    const auto memorySize = scePngDecQueryMemorySize(&create);
+    Require(memorySize > 0);
+    std::vector<std::uint8_t> memory(memorySize);
+    void* handle = nullptr;
+    Require(scePngDecCreate(&create, memory.data(), memorySize, &handle) == 0);
+    const bool packed = width <= 32767 && height <= 32767;
+    const auto result = packed ? static_cast<std::int32_t>(width << 16 | height) : 0;
+    for (const std::uint16_t format : {0, 1}) {
+        for (const std::uint32_t padding : {0, 8}) {
+            const std::uint32_t pitch = width * 4 + padding;
+            const std::uint32_t size = pitch * height;
+            std::vector<std::uint8_t> image(size + 16, 0xCC);
+            auto decode = DecodeParam(png, image);
+            decode.pixel_format = format;
+            decode.image_pitch = padding == 0 ? 0 : pitch;
+            decode.image_mem_size = size;
+            Require(scePngDecDecode(handle, &decode, nullptr) == (packed ? result : invalidAddr));
+            if (!packed) Require(std::all_of(image.begin(), image.end(), [](auto byte) { return byte == 0xCC; }));
+            PngDecImageInfo info{};
+            Require(scePngDecDecode(handle, &decode, &info) == result);
+            Require(info.image_width == width && info.image_height == height && info.color_space == 3 && info.bit_depth == 8 && info.image_flag == 0);
+            for (std::uint32_t y = 0; y < height; ++y) {
+                for (std::uint32_t x = 0; x < width; ++x) {
+                    for (std::uint32_t channel = 0; channel < 3; ++channel) {
+                        const auto inputChannel = format == 0 ? channel : 2 - channel;
+                        Require(image[y * pitch + x * 4 + channel] == rgb[(static_cast<std::size_t>(y) * width + x) * 3 + inputChannel]);
+                    }
+                    Require(image[y * pitch + x * 4 + 3] == 0x77);
+                }
+                for (std::uint32_t offset = width * 4; offset < pitch; ++offset) Require(image[y * pitch + offset] == 0xCC);
+            }
+            Require(std::all_of(image.begin() + size, image.end(), [](auto byte) { return byte == 0xCC; }));
+            if (packed) continue;
+            std::fill(image.begin(), image.end(), 0xCC);
+            decode.image_mem_size = 1;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidAddr);
+            Require(scePngDecDecode(handle, &decode, &info) == (padding == 0 ? invalidSize : invalidParam));
+            decode.image_mem_size = size;
+            decode.image_pitch = 1;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidAddr);
+            Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
+            decode.image_mem_size = 0;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidSize);
+            decode.image_mem_size = size;
+            decode.pixel_format = 2;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidParam);
+            decode.pixel_format = format;
+            decode.png_mem_size = 8;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidData);
+            Require(std::all_of(image.begin(), image.end(), [](auto byte) { return byte == 0xCC; }));
+        }
+    }
+    Require(scePngDecDelete(handle) == 0);
 }
 
 int main() {
@@ -198,10 +348,10 @@ int main() {
     Require(info.image_flag == 2);
 
     const std::vector<std::uint8_t> gray16Png(GRAY16, GRAY16 + sizeof(GRAY16));
-    std::vector<std::uint8_t> gray16Image(2 * 4);
+    std::vector<std::uint8_t> gray16Image(2 * 4, 0xCC);
     decode = DecodeParam(gray16Png, gray16Image);
-    Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 1));
-    Require(gray16Image == std::vector<std::uint8_t>({0x12, 0x12, 0x12, 0x77, 0xAB, 0xAB, 0xAB, 0x77}));
+    Require(scePngDecDecode(handle, &decode, &info) == invalidWorkMemory);
+    Require(std::all_of(gray16Image.begin(), gray16Image.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
     Require(info.bit_depth == 16);
 
     decode = DecodeParam(rgbPng, image);
@@ -251,8 +401,11 @@ int main() {
     Require(deepSize == 85136);
     std::vector<unsigned char> deepMemory(static_cast<std::size_t>(deepSize));
     Require(scePngDecCreate(&deepParam, deepMemory.data(), static_cast<std::uint32_t>(deepSize), &deepHandle) == 0);
-    decode = DecodeParam(gray16Png, gray16Image);
-    Require(ThrowsRuntimeError([&] { scePngDecDecode(deepHandle, &decode, &info); }));
+    Check16BitImage(handle, deepHandle, GRAY16, {0x12, 0x12, 0x12, 0x77, 0xAB, 0xAB, 0xAB, 0x77}, 2, 0, 1);
+    Check16BitImage(handle, deepHandle, GRAY16_TRNS, {0x12, 0x12, 0x12, 0, 0x12, 0x12, 0x12, 0xFF, 0xAB, 0xAB, 0xAB, 0xFF, 0, 0, 0, 0xFF}, 2, 2);
+    Check16BitImage(handle, deepHandle, RGB16_TRNS, {0x12, 0x56, 0x9A, 0, 0x12, 0x56, 0x9A, 0xFF, 0xFF, 0, 0x80, 0xFF, 0, 0x80, 0xFF, 0xFF}, 3, 2);
+    Check16BitImage(handle, deepHandle, GRAY_ALPHA16, {0x12, 0x12, 0x12, 0xDE, 0xAB, 0xAB, 0xAB, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x80}, 18, 0);
+    Check16BitImage(handle, deepHandle, RGBA16, {0x12, 0x56, 0x9A, 0x0D, 0xAB, 0x20, 0xEE, 0xFF, 0, 0x80, 0xFF, 0, 0xFF, 1, 0x7F, 0x80}, 19, 0);
     decode = DecodeParam(rgbPng, image);
     Require(scePngDecDecode(deepHandle, &decode, &info) == (3 << 16 | 2));
     Require(scePngDecDelete(deepHandle) == 0);
@@ -263,5 +416,9 @@ int main() {
     Require(scePngDecDelete(handle) == invalidHandle);
     Require(scePngDecDecode(handle, &decode, &info) == invalidHandle);
 
+    for (const std::uint32_t dimension : {32767, 32768, 65536}) {
+        CheckDimensionReporting(dimension, 1);
+        CheckDimensionReporting(1, dimension);
+    }
     return 0;
 }
