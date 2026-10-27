@@ -6057,7 +6057,7 @@ void StorageTexture::PrepareLinearDraw() {
     FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), this, "linear draw baseline");
     linearDrawOriginal.reset();
     uploadReason = "linear draw baseline";
-    upload();
+    Refresh();
     auto* recorder = Recorder::Active();
     Require(recorder != nullptr, "a recorded linear target needs an active recorder");
     const auto bytes = sliceLinearBytes * arrayLayers;
