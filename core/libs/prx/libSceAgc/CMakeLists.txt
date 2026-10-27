@@ -333,6 +333,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+add_test_executable(agc_lod_stats_tests EXCLUDE_FROM_ALL tests/LodStats.cpp)
+target_include_directories(agc_lod_stats_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_lod_stats_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_lod_stats_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_lod_stats_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME agc_lod_stats COMMAND agc_lod_stats_tests)
+    if(WIN32)
+        set_tests_properties(agc_lod_stats PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 add_test_executable(agc_interpolant_mapping_tests EXCLUDE_FROM_ALL
         tests/InterpolantMapping.cpp
         Shader/src/InterpolantMapping.cpp

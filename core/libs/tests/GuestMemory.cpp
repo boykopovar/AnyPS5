@@ -812,6 +812,42 @@ static void CheckGetDirectMemoryType() {
     Require(sceKernelGetDirectMemoryType(second, &type, &start, &end) == SCE_KERNEL_ERROR_ENOENT);
 }
 
+static void CheckDirectMemoryQuery() {
+    struct QueryInfo {
+        std::int64_t start;
+        std::int64_t end;
+        int memoryType;
+    };
+    constexpr std::size_t page = 0x4000;
+    std::int64_t first = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 5, 0, 3, &first) == 0);
+    Require(sceKernelReleaseDirectMemory(first + page * 2, page * 3) == 0);
+    std::int64_t second = 0;
+    Require(sceKernelAllocateDirectMemory(first + page * 4, first + page * 5, page, 0, 1, &second) == 0 && second == first + page * 4);
+    QueryInfo info{-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first, 0, &info, sizeof(info)) == 0);
+    Require(info.start == first && info.end == first + page * 2 && info.memoryType == 3);
+    info = {-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first + page * 2 - 1, 0, &info, sizeof(info)) == 0);
+    Require(info.start == first && info.end == first + page * 2 && info.memoryType == 3);
+    info = {-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first + page, 1, &info, sizeof(info)) == 0);
+    Require(info.start == first && info.end == first + page * 2 && info.memoryType == 3);
+    info = {-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first + page * 2, 0, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
+    Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
+    Require(sceKernelDirectMemoryQuery(first + page * 3, 1, &info, sizeof(info)) == 0);
+    Require(info.start == second && info.end == second + page && info.memoryType == 1);
+    info = {-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first, 0, nullptr, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelDirectMemoryQuery(-1, 1, &info, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelDirectMemoryQuery(first, 0, &info, sizeof(info) - 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
+    Require(sceKernelReleaseDirectMemory(first, page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(second, page) == 0);
+    Require(sceKernelDirectMemoryQuery(first, 0, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
+}
+
 static void CheckMtypeprotect() {
     constexpr std::size_t page = 0x4000;
     std::int64_t phys = 0;
@@ -3565,6 +3601,7 @@ int main(int argc, char** argv) {
     CheckMlock();
     CheckSharedDirectMemoryLifecycle();
     CheckGetDirectMemoryType();
+    CheckDirectMemoryQuery();
     CheckMtypeprotect();
     CheckHeapAlignment();
     CheckHeapAfterMappingReuse();

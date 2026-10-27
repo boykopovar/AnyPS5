@@ -116,6 +116,21 @@ const void* APS5_VABI __std_find_trivial_unsized_1_nid_postfix(const void* first
 const void* APS5_VABI __std_find_trivial_unsized_2_nid_postfix(const void* first, std::uint16_t value) { return FindUnsized(first, value); }
 const void* APS5_VABI __std_find_trivial_unsized_4_nid_postfix(const void* first, std::uint32_t value) { return FindUnsized(first, value); }
 const void* APS5_VABI __std_find_trivial_unsized_8_nid_postfix(const void* first, std::uint64_t value) { return FindUnsized(first, value); }
+
+std::int64_t APS5_VABI __std_max_8i_nid_postfix(const void* first, const void* last) {
+    const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
+    const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::int64_t) != 0) NotImplemented_nid_no_patch(__func__);
+    auto* current = static_cast<const unsigned char*>(first);
+    const auto* end = static_cast<const unsigned char*>(last);
+    std::int64_t maximum = Read<std::int64_t>(current);
+    for (current += sizeof(std::int64_t); current != end; current += sizeof(std::int64_t)) {
+        const auto value = Read<std::int64_t>(current);
+        if (value > maximum) maximum = value;
+    }
+    return maximum;
+}
+
 std::size_t APS5_VABI __std_count_trivial_1_nid_postfix(const void* first, const void* last, std::uint8_t value) { return Count(first, last, value); }
 std::size_t APS5_VABI __std_count_trivial_2_nid_postfix(const void* first, const void* last, std::uint16_t value) { return Count(first, last, value); }
 std::size_t APS5_VABI __std_count_trivial_4_nid_postfix(const void* first, const void* last, std::uint32_t value) { return Count(first, last, value); }
@@ -162,6 +177,20 @@ MinMaxPointers APS5_VABI __std_minmax_element_2_nid_postfix(const void* first, c
 MinMaxPointers APS5_VABI __std_minmax_element_4_nid_postfix(const void* first, const void* last, bool isSigned) { return MinMaxBySign<std::uint32_t>(first, last, isSigned, true, true); }
 MinMaxPointers APS5_VABI __std_minmax_element_8_nid_postfix(const void* first, const void* last, bool isSigned) { return MinMaxBySign<std::uint64_t>(first, last, isSigned, true, true); }
 
+std::uint32_t APS5_VABI __std_min_4u_nid_postfix(const void* first, const void* last) {
+    const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
+    const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::uint32_t) != 0) NotImplemented_nid_no_patch(__func__);
+    auto* current = static_cast<const unsigned char*>(first);
+    const auto* end = static_cast<const unsigned char*>(last);
+    std::uint32_t minimum = Read<std::uint32_t>(current);
+    for (current += sizeof(std::uint32_t); current != end; current += sizeof(std::uint32_t)) {
+        const auto value = Read<std::uint32_t>(current);
+        if (value < minimum) minimum = value;
+    }
+    return minimum;
+}
+
 void APS5_VABI __std_reverse_trivially_swappable_1_nid_postfix(void* first, void* last) { Reverse<1>(first, last); }
 void APS5_VABI __std_reverse_trivially_swappable_2_nid_postfix(void* first, void* last) { Reverse<2>(first, last); }
 void APS5_VABI __std_reverse_trivially_swappable_4_nid_postfix(void* first, void* last) { Reverse<4>(first, last); }
@@ -180,6 +209,20 @@ void APS5_VABI __std_swap_ranges_trivially_swappable_noalias_nid_postfix(void* f
         left[i] = right[i];
         right[i] = byte;
     }
+}
+
+std::int64_t APS5_VABI __std_min_8i_nid_postfix(const void* first, const void* last) {
+    const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
+    const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::int64_t) != 0) NotImplemented_nid_no_patch(__func__);
+    auto* current = static_cast<const unsigned char*>(first);
+    const auto* end = static_cast<const unsigned char*>(last);
+    std::int64_t minimum = Read<std::int64_t>(current);
+    for (current += sizeof(std::int64_t); current != end; current += sizeof(std::int64_t)) {
+        const auto value = Read<std::int64_t>(current);
+        if (value < minimum) minimum = value;
+    }
+    return minimum;
 }
 
 }

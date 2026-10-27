@@ -392,6 +392,21 @@ if(BUILD_TESTING)
     add_test(NAME param_json_utf8 COMMAND param_json_utf8_tests)
     set_tests_properties(param_json_utf8 PROPERTIES TIMEOUT 20)
 
+    if(WIN32)
+        add_test_executable(windows_file_writer_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/WindowsFileWriterTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+        )
+        target_include_directories(windows_file_writer_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        )
+        add_test(NAME windows_file_writer_binary COMMAND windows_file_writer_tests binary)
+        add_test(NAME windows_file_writer_text COMMAND windows_file_writer_tests text)
+        set_tests_properties(windows_file_writer_binary windows_file_writer_text PROPERTIES TIMEOUT 20)
+    endif()
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test_executable(file_writer_tests
             ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/FileWriterTests.cpp

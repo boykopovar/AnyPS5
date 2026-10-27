@@ -333,6 +333,15 @@ int main(int argc, char** argv) {
         empty = ApplicationHeapReallocate_nid_no_patch(nullptr, 0);
         require(empty != nullptr);
         ApplicationHeapFree_nid_no_patch(empty);
+        pointer = static_cast<unsigned char*>(reallocarray_nid_postfix(nullptr, 4, 10));
+        require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 40);
+        std::memset(pointer, 0x5a, 40);
+        pointer = static_cast<unsigned char*>(reallocarray_nid_postfix(pointer, 5, 20));
+        require(pointer != nullptr && ApplicationHeapUsableSize_nid_no_patch(pointer) == 100);
+        for (unsigned i = 0; i < 40; ++i) require(pointer[i] == 0x5a);
+        *__error_nid_postfix() = 0;
+        require(reallocarray_nid_postfix(pointer, 2, SIZE_MAX) == nullptr && *__error_nid_postfix() == 12);
+        ApplicationHeapFree_nid_no_patch(pointer);
         for (std::size_t alignment : {16, 64, 4096}) {
             auto* aligned = ApplicationHeapAlign_nid_no_patch(alignment, 37);
             require(reinterpret_cast<std::uintptr_t>(aligned) % alignment == 0);

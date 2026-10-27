@@ -223,11 +223,6 @@ void APS5_VABI CRYPTO_THREADID_set_numeric_nid_postfix(CryptoThreadId* id, std::
     id->val = value;
 }
 
-int APS5_VABI CRYPTO_cleanup_all_ex_data_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI CRYPTO_num_locks_nid_postfix(void) {
     return CryptoNumLocks;
 }
@@ -994,11 +989,6 @@ int APS5_VABI SSL_CTX_get_ex_data_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI SSL_CTX_get_ex_new_index_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1205,16 +1195,6 @@ int APS5_VABI SSL_get_error_nid_postfix(void) {
 }
 
 int APS5_VABI SSL_get_ex_data_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_get_ex_data_X509_STORE_CTX_idx_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI SSL_get_ex_new_index_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1473,32 +1453,7 @@ int APS5_VABI X509_STORE_CTX_get1_chain_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509_STORE_CTX_get_chain_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_STORE_CTX_get_current_cert_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI X509_STORE_CTX_get_ex_data_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_STORE_CTX_set_error_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

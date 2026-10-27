@@ -253,6 +253,7 @@ void* APS5_VABI malloc_nid_postfix(size_t size);
 void APS5_VABI free_nid_postfix(void* ptr);
 void* APS5_VABI realloc_nid_postfix(void* ptr, size_t newSize);
 void* APS5_VABI reallocf_nid_postfix(void* ptr, size_t newSize);
+void* APS5_VABI reallocarray_nid_postfix(void* ptr, size_t nmemb, size_t size);
 void* APS5_VABI memalign_nid_postfix(size_t alignment, size_t size);
 void* APS5_VABI aligned_alloc_nid_postfix(size_t alignment, size_t size);
 void* APS5_VABI reallocalign_nid_postfix(void* ptr, size_t size, size_t alignment);
@@ -1113,6 +1114,7 @@ const void* APS5_VABI __std_find_trivial_unsized_1_nid_postfix(const void* first
 const void* APS5_VABI __std_find_trivial_unsized_2_nid_postfix(const void* first, std::uint16_t value);
 const void* APS5_VABI __std_find_trivial_unsized_4_nid_postfix(const void* first, std::uint32_t value);
 const void* APS5_VABI __std_find_trivial_unsized_8_nid_postfix(const void* first, std::uint64_t value);
+std::int64_t APS5_VABI __std_max_8i_nid_postfix(const void* first, const void* last);
 std::size_t APS5_VABI __std_count_trivial_1_nid_postfix(const void* first, const void* last, std::uint8_t value);
 std::size_t APS5_VABI __std_count_trivial_2_nid_postfix(const void* first, const void* last, std::uint16_t value);
 std::size_t APS5_VABI __std_count_trivial_4_nid_postfix(const void* first, const void* last, std::uint32_t value);
@@ -1131,6 +1133,7 @@ MinMaxPointers APS5_VABI __std_minmax_element_1_nid_postfix(const void* first, c
 MinMaxPointers APS5_VABI __std_minmax_element_2_nid_postfix(const void* first, const void* last, bool isSigned);
 MinMaxPointers APS5_VABI __std_minmax_element_4_nid_postfix(const void* first, const void* last, bool isSigned);
 MinMaxPointers APS5_VABI __std_minmax_element_8_nid_postfix(const void* first, const void* last, bool isSigned);
+std::uint32_t APS5_VABI __std_min_4u_nid_postfix(const void* first, const void* last);
 void APS5_VABI __std_reverse_trivially_swappable_1_nid_postfix(void* first, void* last);
 void APS5_VABI __std_reverse_trivially_swappable_2_nid_postfix(void* first, void* last);
 void APS5_VABI __std_reverse_trivially_swappable_4_nid_postfix(void* first, void* last);
@@ -1140,6 +1143,7 @@ void APS5_VABI __std_reverse_copy_trivially_copyable_2_nid_postfix(const void* f
 void APS5_VABI __std_reverse_copy_trivially_copyable_4_nid_postfix(const void* first, const void* last, void* destination);
 void APS5_VABI __std_reverse_copy_trivially_copyable_8_nid_postfix(const void* first, const void* last, void* destination);
 void APS5_VABI __std_swap_ranges_trivially_swappable_noalias_nid_postfix(void* first1, void* last1, void* first2);
+std::int64_t APS5_VABI __std_min_8i_nid_postfix(const void* first, const void* last);
 void APS5_VABI ignore_handler_s_nid_postfix(const char* message, void* pointer, int error);
 void* APS5_VABI set_constraint_handler_s_nid_postfix(void* handler);
 std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const std::uint16_t* source, std::size_t capacity);

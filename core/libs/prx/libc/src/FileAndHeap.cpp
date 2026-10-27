@@ -649,6 +649,14 @@ void* APS5_VABI reallocf_nid_postfix(void* ptr, size_t newSize) {
     return result;
 }
 
+void* APS5_VABI reallocarray_nid_postfix(void* ptr, size_t nmemb, size_t size) {
+    if (size != 0 && nmemb > std::numeric_limits<size_t>::max() / size) {
+        errno = 12;
+        return nullptr;
+    }
+    return realloc_nid_postfix(ptr, nmemb * size);
+}
+
 void* APS5_VABI memalign_nid_postfix(size_t alignment, size_t size) {
     if (!ApplicationHeapDefault_nid_no_patch()) {
         if (!validAlignment(alignment)) {
