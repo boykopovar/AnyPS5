@@ -184,7 +184,7 @@ int APS5_VABI sceNpGetOnlineId(int userId, NpOnlineId* onlineId);
 int APS5_VABI sceNpGetState(int userId, uint32_t* state);
 int APS5_VABI sceNpHasSignedUp(int userId, bool* hasSignedUp);
 int APS5_VABI sceNpPollAsync(int reqId, int* result);
-int APS5_VABI sceNpWaitAsync(void);
+int APS5_VABI sceNpWaitAsync(int reqId, int* result);
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata);
 int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void* callback, void* userdata);
 int APS5_VABI sceNpUnregisterNpReachabilityStateCallback(void);

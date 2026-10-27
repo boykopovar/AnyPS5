@@ -213,6 +213,9 @@ void CheckAsyncRequestLifecycle() {
         Require(result == resultSentinel, "poll must not touch the result for an absent or deleted id");
         Require(sceNpPollAsync(id, nullptr) == InvalidArgument,
             "poll must reject a null result before the id");
+        Require(sceNpWaitAsync(id, &result) == RequestNotFound, "wait must reject an absent or deleted id");
+        Require(result == resultSentinel, "wait must not touch the result for an absent or deleted id");
+        Require(sceNpWaitAsync(id, nullptr) == InvalidArgument, "wait must reject a null result before the id");
         Require(sceNpAbortRequest(id) == RequestNotFound, "abort must reject an absent or deleted id");
         Require(sceNpDeleteRequest(id) == RequestNotFound, "delete must reject an absent or deleted id");
     }
@@ -220,6 +223,9 @@ void CheckAsyncRequestLifecycle() {
     int result = resultSentinel;
     Require(sceNpPollAsync(unusedAsyncResult, &result) == 0, "poll on a live async request");
     Require(result == SignedOut, "poll must report the signed-out result on a live async request");
+    result = resultSentinel;
+    Require(sceNpWaitAsync(unusedAsyncResult, &result) == 0, "wait on a live async request");
+    Require(result == SignedOut, "wait must report the signed-out result on a live async request");
     Require(sceNpAbortRequest(unusedAsyncResult) == 0, "abort on a live request");
     Require(sceNpDeleteRequest(unusedAsyncResult) == 0, "delete after abort");
     Require(sceNpDeleteRequest(unusedAsyncResult) == RequestNotFound, "second delete");
