@@ -90,7 +90,7 @@ std::string StoredGzip(const std::string& payload) {
 
 class Server {
 public:
-    explicit Server(Mode mode) : mode(mode) {
+    explicit Server(Mode mode, const char* bindHost = "127.0.0.1") : mode(mode) {
         mbedtls_net_init(&listener);
         mbedtls_entropy_init(&entropy);
         mbedtls_ctr_drbg_init(&random);
@@ -107,15 +107,16 @@ public:
         mbedtls_ssl_conf_authmode(&config, MBEDTLS_SSL_VERIFY_NONE);
         mbedtls_ssl_conf_read_timeout(&config, 2000);
         if (mode != Mode::NoAlpn) Require(mbedtls_ssl_conf_alpn_protocols(&config, Protocols) == 0, "server ALPN");
-        Require(mbedtls_net_bind(&listener, "127.0.0.1", "0", MBEDTLS_NET_PROTO_TCP) == 0, "server bind");
-        sockaddr_in address{};
+        Require(mbedtls_net_bind(&listener, bindHost, "0", MBEDTLS_NET_PROTO_TCP) == 0, "server bind");
+        sockaddr_storage address{};
 #ifdef _WIN32
         int size = sizeof(address);
 #else
         socklen_t size = sizeof(address);
 #endif
         Require(getsockname(listener.fd, reinterpret_cast<sockaddr*>(&address), &size) == 0, "server port");
-        port = ntohs(address.sin_port);
+        port = address.ss_family == AF_INET6 ? ntohs(reinterpret_cast<sockaddr_in6*>(&address)->sin6_port)
+                                            : ntohs(reinterpret_cast<sockaddr_in*>(&address)->sin_port);
         worker = std::thread([this] { Serve(); });
     }
 
@@ -367,7 +368,7 @@ struct Client {
 
 void Success(int ssl, Mode mode, bool disableCa = false) {
     std::fprintf(stderr, "HTTP2 success scenario %d\n", static_cast<int>(mode));
-    Server server(mode);
+    Server server(mode, mode == Mode::Normal && !disableCa ? "localhost" : "127.0.0.1");
     Client client(ssl);
     if (disableCa) Require(sceHttp2SslDisableOption(client.tmpl, 0x20) == 0, "disable known CA check");
     if (mode == Mode::Normal && !disableCa) Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify localhost certificate name");
@@ -508,7 +509,7 @@ void GzipFailure(int ssl, Mode mode, const char* message) {
 
 void Async(int ssl) {
     std::fprintf(stderr, "HTTP2 async scenario\n");
-    Server server(Mode::Normal);
+    Server server(Mode::Normal, "localhost");
     Client client(ssl);
     Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify async host name");
     client.Create(server.Url("localhost"));
