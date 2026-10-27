@@ -1,8 +1,6 @@
 #include "prx/libc/include/ScanWideField.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <cstring>
-
 namespace {
 
 std::size_t DecodeUtf8(const char* text, char32_t* point) {
@@ -66,8 +64,8 @@ bool InWideScanset(const std::string& specifier, char32_t point) {
     return member != negated;
 }
 
-void RequireNoPositionalWideScan(const char* format) {
-    if (std::strchr(format, '$') != nullptr) NotImplemented_nid_no_patch("sscanf positional arguments with a 16-bit wide conversion on Linux");
+void RejectPositionalScan(const char* what) {
+    NotImplemented_nid_no_patch(what);
 }
 
 }

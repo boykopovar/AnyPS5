@@ -142,6 +142,10 @@ static void CheckNarrowFormatWideFields() {
     Require(ScanNarrowInput(" %C", &letter) == 1 && letter == u'c', "vscanf %C reads the guest standard input");
     __stdinp_nid_postfix = standardInput;
     Close(stream);
+
+    stream = Open("7 \xc5\xbe z");
+    Require(fscanf_nid_postfix(stream, "%3$d %1$ls %2$lc", word, &letter, &value) == 3 && value == 7 && std::u16string(word) == u"\u017e" && letter == u'z', "fscanf positional wide fields");
+    Close(stream);
 }
 #endif
 
