@@ -108,6 +108,15 @@ class SelectTests(unittest.TestCase):
         self.assertIn("CMakeLists.txt", output)
         self.assertFalse((self.build / "select.tests").exists())
 
+    def test_nul_changed_paths_select_from_the_configured_build(self):
+        changed = self.build / "changed-nul.txt"
+        changed.write_bytes(b"alpha/alpha.h\0")
+        self.tool("select", self.build, self.graph, changed)
+        indices = (self.build / "select.tests").read_text(encoding="utf-8").strip()
+        shown = subprocess.run(["ctest", "--test-dir", str(self.build), "-N", "-I", indices],
+                               check=True, capture_output=True, text=True).stdout
+        self.assertEqual(set(re.findall(r"Test +#\d+: (\S+)", shown)), {"alpha", "alpha_data", "script"})
+
     def test_missing_graph_runs_everything(self):
         self.assertIsNone(self.select("alpha/alpha.h", graph=self.build / "missing.json")[1])
 
@@ -421,6 +430,54 @@ class BuildErrorTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             data = json.loads(result.stdout)
             self.assertEqual(data["tests"], ["unit"])
+
+
+class GitChangedPathTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_git_nul_preserves_a_leading_bom_in_the_first_filename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+            name = "\ufeffleading.h"
+            source = root / name
+            source.write_text("before\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True)
+            source.write_text("after\n", encoding="utf-8")
+            changed = root / "changed"
+            changed.write_bytes(subprocess.check_output(["git", "diff", "--name-only", "-z", "--"], cwd=root))
+            self.assertEqual(select_tests.changed_paths(changed), [name])
+
+    @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_git_nul_paths_select_the_changed_headers(self):
+        names = ["größe.h", " leading.h", "with space.h"]
+        if os.name != "nt":
+            names += ['quote".h', "tab\t.h", "line\n.h", "carriage\r.h", "trailing.h "]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+            source = root / "src"
+            source.mkdir()
+            for name in names:
+                (source / name).write_text("before\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True)
+            for name in names:
+                (source / name).write_text("after\n", encoding="utf-8")
+            changed = root / "changed"
+            changed.write_bytes(subprocess.check_output(["git", "diff", "--name-only", "-z", "--"], cwd=root))
+            graph = {"closures": {}, "tests": {}}
+            for index, name in enumerate(names):
+                target = f"unit_{index}"
+                graph["closures"][target] = ["src/" + name]
+                graph["tests"][target] = {"target": target, "registered": ["src/CMakeLists.txt"],
+                                           "arguments": [], "requires": [], "sets": [], "depends": []}
+            graph_path = root / "graph.json"
+            graph_path.write_text(json.dumps(graph), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(TOOL), "explain", str(graph_path), str(changed)],
+                                    check=True, capture_output=True, text=True)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["tests"], sorted(graph["tests"]))
+            for index, name in enumerate(names):
+                self.assertEqual(report["reasons"][f"unit_{index}"], ["input: src/" + name])
 
 
 class CaseInsensitivePathTests(unittest.TestCase):

@@ -33,6 +33,23 @@
 namespace AgcDriver::Graphics {
 namespace {
 
+VkFormat uintStorageViewFormat(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8G8_SINT: return VK_FORMAT_R8G8_UINT;
+        case VK_FORMAT_R8G8B8A8_SINT: return VK_FORMAT_R8G8B8A8_UINT;
+        case VK_FORMAT_R16_SINT:
+        case VK_FORMAT_R16_SFLOAT: return VK_FORMAT_R16_UINT;
+        case VK_FORMAT_R16G16_SINT:
+        case VK_FORMAT_R16G16_SFLOAT: return VK_FORMAT_R16G16_UINT;
+        case VK_FORMAT_R16G16B16A16_SINT:
+        case VK_FORMAT_R16G16B16A16_SFLOAT: return VK_FORMAT_R16G16B16A16_UINT;
+        case VK_FORMAT_R32_SINT: return VK_FORMAT_R32_UINT;
+        case VK_FORMAT_R32G32_SINT: return VK_FORMAT_R32G32_UINT;
+        case VK_FORMAT_R32G32B32A32_SINT: return VK_FORMAT_R32G32B32A32_UINT;
+        default: return VK_FORMAT_UNDEFINED;
+    }
+}
+
 std::uint32_t MultisampledBlockLog2(ColorTileMode mode) {
     switch (mode) {
         case ColorTileMode::Standard4KB: return 12u;
@@ -146,12 +163,19 @@ public:
         Check(context.imageFormatProperties(context.physical, target.format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, orderFlags, &supported), "vkGetPhysicalDeviceImageFormatProperties multisampled target");
         Require((supported.sampleCounts & samples) != 0 && target.extent.width <= supported.maxExtent.width && target.extent.height <= supported.maxExtent.height, "multisampled render target exceeds device image limits");
         storageFormat = HostStorageFormat(context, target.format);
-        storageFlags = storageFormat != target.format ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT : 0u;
+        const auto uintFormat = uintStorageViewFormat(storageFormat);
+        storageFlags = storageFormat != target.format || (uintFormat != VK_FORMAT_UNDEFINED && uintFormat != target.format) ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT : 0u;
         const auto storageSupports = [&](VkFormat format, VkImageUsageFlags formatUsage, VkImageCreateFlags flags) {
             VkImageFormatProperties properties{};
             return context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, formatUsage, flags, &properties) == VK_SUCCESS && (properties.sampleCounts & samples) != 0;
         };
-        if (storageFormat != VK_FORMAT_UNDEFINED && (!context.storageImageMultisample || !storageSupports(storageFormat, VK_IMAGE_USAGE_STORAGE_BIT, 0u) || !storageSupports(target.format, usage | VK_IMAGE_USAGE_STORAGE_BIT, storageFlags))) storageFormat = VK_FORMAT_UNDEFINED;
+        const auto uintStorageSupported = [&] {
+            if (uintFormat == VK_FORMAT_UNDEFINED) return true;
+            VkFormatProperties uintProperties{};
+            context.formatProperties(context.physical, uintFormat, &uintProperties);
+            return (uintProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0 && storageSupports(uintFormat, VK_IMAGE_USAGE_STORAGE_BIT, 0u);
+        };
+        if (storageFormat != VK_FORMAT_UNDEFINED && (!context.storageImageMultisample || !storageSupports(storageFormat, VK_IMAGE_USAGE_STORAGE_BIT, 0u) || !storageSupports(target.format, usage | VK_IMAGE_USAGE_STORAGE_BIT, storageFlags) || !uintStorageSupported())) storageFormat = VK_FORMAT_UNDEFINED;
         twinFormat = colorTwinFormat(context, target.format);
         if (twinFormat != VK_FORMAT_UNDEFINED) {
             VkFormatProperties twinProperties{};
@@ -355,7 +379,7 @@ public:
         });
     }
 
-    VkImageView Storage(VkFormat format) {
+    VkImageView Storage(VkFormat format, bool uintStorage) {
         Require(storageFormat != VK_FORMAT_UNDEFINED, "the device cannot write the multisampled color target's format as a storage image at its sample count");
         Require(format == storageFormat, "a storage image access to a multisampled color target in another format than the target's storage form is not implemented");
         Require(cmask.Refusal().empty(), cmask.Refusal());
@@ -366,20 +390,28 @@ public:
         Keep();
         makeStorable(*recording);
         ApplyFastClear(target);
-        if (storageView == VK_NULL_HANDLE) {
+        const auto uintFormat = uintStorage ? uintStorageViewFormat(storageFormat) : VK_FORMAT_UNDEFINED;
+        const bool useUintStorage = uintStorage && uintFormat != VK_FORMAT_UNDEFINED;
+        auto& selectedView = useUintStorage ? uintStorageView : storageView;
+        if (selectedView == VK_NULL_HANDLE) {
             VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
             viewInfo.image = image;
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            viewInfo.format = storageFormat;
+            viewInfo.format = useUintStorage ? uintFormat : storageFormat;
             viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &storageView), "vkCreateImageView multisampled target storage");
+            VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+            if (useUintStorage) {
+                viewUsage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+                viewInfo.pNext = &viewUsage;
+            }
+            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &selectedView), "vkCreateImageView multisampled target storage");
         }
         recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             if (recorder != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 1);
         });
         storageWritten = true;
-        return storageView;
+        return selectedView;
     }
 
     bool Storable() const {
@@ -528,6 +560,7 @@ private:
     VkImageView twinView = VK_NULL_HANDLE;
     std::vector<Allocation> retired;
     VkImageView storageView = VK_NULL_HANDLE;
+    VkImageView uintStorageView = VK_NULL_HANDLE;
     bool storageWritten = false;
     VkDeviceSize allocationBytes = 0;
     std::optional<GuestMemory::UnchangedQuery> fmaskRange;
@@ -717,6 +750,7 @@ private:
         if (orderView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, orderView, nullptr);
         if (twinView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, twinView, nullptr);
         if (storageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, storageView, nullptr);
+        if (uintStorageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uintStorageView, nullptr);
         destroy({image, memory, view});
         for (const auto& allocation : retired) destroy(allocation);
     }
@@ -1297,7 +1331,7 @@ void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget
     acquire(context, target);
 }
 
-VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource) {
+VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage) {
     std::lock_guard lock(targetsMutex());
     discardRetiredTargets();
     const auto format = ResolveTextureFormat(resource.format);
@@ -1308,13 +1342,13 @@ VkImageView MultisampleTargetStorageView(const Context& context, const GuestText
         const auto& rendered = target->target;
         if (sameStorageForm(context, rendered.format, format) && rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0) {
             if (!holdHostOnly(*target)) continue;
-            return target->Storage(StorageFormatForGuest(context, resource.format));
+            return target->Storage(StorageFormatForGuest(context, resource.format), uintStorage);
         }
         other = target.get();
     }
     if (other == nullptr) {
         Require(Recorder::Active() != nullptr, "a multisampled color target is only written by recorded dispatches");
-        return createFilled(context, resource, format, "writing", true).Storage(StorageFormatForGuest(context, resource.format));
+        return createFilled(context, resource, format, "writing", true).Storage(StorageFormatForGuest(context, resource.format), uintStorage);
     }
     char text[320];
     std::snprintf(text, sizeof(text), "AGC graphics: storage image access to multisampled color target 0x%llx (%ux%u, %u samples, vk format %d) as a %ux%u texture of %u samples and guest format %u (vk %d) is not implemented", static_cast<unsigned long long>(resource.baseAddress), other->target.extent.width, other->target.extent.height, other->target.samples, static_cast<int>(other->target.format), resource.width, resource.height, resource.samples, resource.format, static_cast<int>(format));

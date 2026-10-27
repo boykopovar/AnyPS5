@@ -315,6 +315,9 @@ RelinkResult RelinkerPipeline::Relink() {
         if (symOff < dynSymTabOffset || symOff > raw.size() || raw.size() - symOff < symEntSize
             || (dynSymTabSize && (off > *dynSymTabSize || symEntSize > *dynSymTabSize - off)))
             throw RelinkerException("Symbol table entry out of bounds", symOff);
+        if (symIdx == 0 && std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
+                                       [](const std::uint8_t byte) { return byte != 0; }))
+            throw RelinkerException("Dynamic symbol table entry 0 is not a null symbol entry", symOff);
         return symOff;
     };
 

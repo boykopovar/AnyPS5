@@ -13,6 +13,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
     endif()
 
+    add_test_executable(guest_ime_pad_route_tests ${LIBS_INCLUDE_DIR}/tests/GuestImePadRoute.cpp)
+    target_include_directories(guest_ime_pad_route_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_pad_route_tests PRIVATE libSceIme libc)
+    configure_windows_unwind(guest_ime_pad_route_tests)
+    add_test(NAME guest_ime_pad_route COMMAND guest_ime_pad_route_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_pad_route PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
+    endif()
+
     add_test_executable(guest_ime_keyboard_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeKeyboard.cpp)
     target_include_directories(guest_ime_keyboard_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_ime_keyboard_tests PRIVATE libSceIme libc)

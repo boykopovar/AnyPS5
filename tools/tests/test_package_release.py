@@ -775,6 +775,26 @@ class ReleaseNotesEdgeCaseTests(unittest.TestCase):
             self.assertIn(input_dir.name, stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
 
+    def test_main_reports_error_for_unexpected_json_shapes(self):
+        for shape in ("{}", "[]", "null"):
+            with self.subTest(shape=shape):
+                with tempfile.TemporaryDirectory() as directory:
+                    directory = Path(directory)
+                    source_path = directory / "source.json"
+                    source_path.write_text(shape, encoding="utf-8")
+                    body_path = directory / "body.md"
+                    body_path.write_text("pre-existing body", encoding="utf-8")
+                    full_path = directory / "full.md"
+                    full_path.write_text("pre-existing full", encoding="utf-8")
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                        prepare_release_notes.main(["--input", str(source_path), "--body", str(body_path), "--full", str(full_path)])
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertIn("must be a JSON object with a body field", stderr.getvalue())
+                    self.assertNotIn("Traceback", stderr.getvalue())
+                    self.assertEqual(body_path.read_text(encoding="utf-8"), "pre-existing body")
+                    self.assertEqual(full_path.read_text(encoding="utf-8"), "pre-existing full")
+
     def test_main_reconfigures_streams(self):
         class Stream:
             def __init__(self):

@@ -445,6 +445,9 @@ void testMultiAcbs() {
     check(sceAgcDriverSubmitMultiAcbs(0, nullptr, nullptr, 0) == 0, "empty multi-ACB submit checked its queue");
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, nullptr, sizes.data(), 1); });
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, addresses.data(), nullptr, 1); });
+    std::array<std::uint32_t*, 1> nullAcbs{nullptr};
+    std::array<std::uint32_t, 1> nonZeroAcbSizes{4};
+    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, nullAcbs.data(), nonZeroAcbSizes.data(), 1); });
     check(value == 0, "a rejected multi-ACB submit ran a command buffer");
     for (std::uint32_t queue : {0x20u, 0x57u}) {
         value = 0;
@@ -500,6 +503,11 @@ void testMultiSubmissions() {
     expectFailure([&] { sceAgcDriverAgrSubmitMultiDcbs(invalidAddresses.data(), nullptr, 1); });
     expectFailure([&] { sceAgcDriverSubmitMultiDcbs(invalidAddresses.data(), invalidSizes.data(), 1); });
     expectFailure([&] { sceAgcDriverAgrSubmitMultiDcbs(invalidAddresses.data(), invalidSizes.data(), 1); });
+    std::array<std::uint32_t*, 1> nullAddresses{nullptr};
+    std::array<std::uint32_t, 1> nonZeroSizes{4};
+    expectFailure([&] { sceAgcDriverSubmitMultiDcbs(nullAddresses.data(), nonZeroSizes.data(), 1); });
+    expectFailure([&] { sceAgcDriverAgrSubmitMultiDcbs(nullAddresses.data(), nonZeroSizes.data(), 1); });
+    expectFailure([&] { sceAgcDriverSubmitMultiDcbs(invalidAddresses.data(), invalidSizes.data(), std::numeric_limits<std::uint32_t>::max()); });
     for (bool agr : {false, true}) {
         value = 0;
         done = 0;

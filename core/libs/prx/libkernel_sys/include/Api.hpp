@@ -138,7 +138,7 @@ int APS5_VABI mdbg_call_nid_postfix(void);
 int APS5_VABI mdbg_service_nid_postfix(void);
 int APS5_VABI mount_nid_postfix(void);
 int APS5_VABI openintr_nid_postfix(void);
-int APS5_VABI profil_nid_postfix(void);
+int APS5_VABI profil_nid_postfix(void* samples, std::size_t size, std::size_t offset, unsigned int scale);
 int APS5_VABI pthread_attr_getaffinity_np_nid_postfix(void);
 int APS5_VABI pthread_attr_getsolosched_np_nid_postfix(void);
 int APS5_VABI pthread_attr_setaffinity_np_nid_postfix(void);

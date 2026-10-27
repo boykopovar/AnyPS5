@@ -31,7 +31,9 @@ int main() {
 
     Require(sceMsgDialogTerminate() == kErrNotInitialized);
     Require(sceMsgDialogClose() == kErrNotRunning);
+    Require(sceMsgDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceMsgDialogOpen(param) == kErrNotInitialized);
+    Require(sceMsgDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceMsgDialogGetResult(&result) == kErrNotInitialized);
     Require(sceMsgDialogUpdateStatus() == 0);
     Require(sceMsgDialogGetStatus() == 0);
@@ -49,6 +51,8 @@ int main() {
     Require(sceMsgDialogOpen(param) == 0);
     Require(sceMsgDialogUpdateStatus() == kStatusFinished);
     Require(sceMsgDialogGetStatus() == kStatusFinished);
+    Require(sceMsgDialogOpen(nullptr) == kErrArgNull);
+    Require(sceMsgDialogOpen(param) == 0);
     Require(sceMsgDialogProgressBarInc(0, 10) == kErrNotRunning);
     Require(sceMsgDialogProgressBarSetMsg(0, "progress") == kErrNotRunning);
     Require(sceMsgDialogProgressBarSetValue(0, 100) == kErrNotRunning);
@@ -64,7 +68,9 @@ int main() {
 
     Require(sceMsgDialogTerminate() == 0);
     Require(sceMsgDialogTerminate() == kErrNotInitialized);
+    Require(sceMsgDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceMsgDialogOpen(param) == kErrNotInitialized);
+    Require(sceMsgDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceMsgDialogGetResult(&result) == kErrNotInitialized);
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogGetStatus() == 0);
