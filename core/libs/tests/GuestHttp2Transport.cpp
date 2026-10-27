@@ -55,7 +55,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, StallResponse, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 const char* Http1Protocols[] = {"http/1.1", nullptr};
 
@@ -237,6 +237,7 @@ private:
         Require(!responded, "one response per request");
         responded = true;
         if (mode == Mode::StallHeaders) { Stage(2); Stall(); return; }
+        if (mode == Mode::StallResponse) { Stage(2); Stall(); }
         if (mode == Mode::Reset) { Require(nghttp2_submit_rst_stream(session, 0, stream, NGHTTP2_REFUSED_STREAM) == 0, "server reset"); return; }
         body = (mode == Mode::Large || mode == Mode::EarlyLarge) ? std::string(200000, 'x') : "response body";
         const bool redirect = mode == Mode::Redirect || mode == Mode::GzipRedirectEmpty || mode == Mode::GzipRedirectBody || (mode == Mode::RedirectOnce && accepted == 1);
@@ -1145,6 +1146,130 @@ void Async(int ssl) {
     Require(sceKernelDeleteEqueue(eq) == 0, "delete async equeue");
 }
 
+struct AsyncQueue {
+    KernelEqueue eq = 0;
+    int tag = 0;
+    Http2AsyncOption option{};
+    explicit AsyncQueue(int request) {
+        Require(sceKernelCreateEqueue(&eq, "http2-async") == 0, "async equeue");
+        Require(sceKernelAddUserEventEdge(eq, request) == 0, "async user event");
+        option.equeue = eq;
+        option.user_event_id = request;
+        option.user_data = &tag;
+    }
+    AsyncQueue(const AsyncQueue&) = delete;
+    AsyncQueue& operator=(const AsyncQueue&) = delete;
+    ~AsyncQueue() {
+        Require(sceKernelDeleteUserEvent(eq, option.user_event_id) == 0, "delete async user event");
+        Require(sceKernelDeleteEqueue(eq) == 0, "delete async equeue");
+    }
+    void ExpectEvent() {
+        KernelEvent event{};
+        int count = 0;
+        const KernelUseconds timeout = 2000000;
+        Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1, "async event");
+        Require(event.ident == static_cast<std::uintptr_t>(option.user_event_id) && event.udata == option.user_data, "async event payload");
+    }
+    void ExpectNoEvent() {
+        KernelEvent event{};
+        int count = 0;
+        const KernelUseconds timeout = 200000;
+        Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) != 0, "deleted request drops completion");
+    }
+};
+
+void AsyncDelete(int ssl, bool waiter) {
+    std::fprintf(stderr, "HTTP2 async delete scenario waiter %d\n", waiter ? 1 : 0);
+    Server server(Mode::StallHeaders);
+    Client client(ssl);
+    client.Create(server.Url());
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async delete submission");
+    server.WaitStage(2);
+    int waitResult = -1;
+    std::atomic<bool> entered{false};
+    std::thread waiting;
+    if (waiter) {
+        waiting = std::thread([&] {
+            Http2AsyncResult result{};
+            entered.store(true);
+            waitResult = sceHttp2WaitAsync(client.request, &result, nullptr, nullptr);
+        });
+        while (!entered.load()) std::this_thread::yield();
+    }
+    Require(sceHttp2DeleteRequest(client.request) == 0, "delete in-flight async request");
+    if (waiter) {
+        waiting.join();
+        Require(waitResult == static_cast<int>(0x817b1100), "deleted async wait returns invalid id");
+    }
+    server.Release();
+    server.Join();
+    queue.ExpectNoEvent();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == static_cast<int>(0x817b1100), "deleted async request stays invalid");
+}
+
+void AsyncTwoWaiters(int ssl) {
+    std::fprintf(stderr, "HTTP2 async two-waiter scenario\n");
+    Server server(Mode::StallResponse);
+    Client client(ssl);
+    client.Create(server.Url());
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "two-waiter submission");
+    server.WaitStage(2);
+    std::atomic<int> successes{0};
+    std::atomic<int> entered{0};
+    int codes[2] = {-1, -1};
+    const auto consume = [&](int index) {
+        Http2AsyncResult result{};
+        entered.fetch_add(1);
+        codes[index] = sceHttp2WaitAsync(client.request, &result, nullptr, nullptr);
+        if (codes[index] == 0) successes.fetch_add(1);
+    };
+    std::thread first(consume, 0);
+    std::thread second(consume, 1);
+    while (entered.load() != 2) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    server.Release();
+    while (successes.load() == 0) std::this_thread::yield();
+    Require(sceHttp2DeleteRequest(client.request) == 0, "delete after last completion");
+    first.join();
+    second.join();
+    Require(successes.load() == 1, "one waiter consumes the completion");
+    Require(codes[0] == static_cast<int>(0x817b1100) || codes[1] == static_cast<int>(0x817b1100), "the other waiter observes deletion");
+    server.Join();
+}
+
+void AsyncTeardown(int ssl) {
+    std::fprintf(stderr, "HTTP2 async teardown scenario\n");
+    Server server(Mode::StallHeaders);
+    Client client(ssl);
+    client.Create(server.Url());
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async teardown submission");
+    server.WaitStage(2);
+    Require(sceHttp2Term(client.context) == 0, "term context with in-flight async request");
+    client.context = 0;
+    server.Release();
+    server.Join();
+    queue.ExpectNoEvent();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == static_cast<int>(0x817b1100), "torn-down async request stays invalid");
+}
+
+void AsyncFailure(int ssl) {
+    std::fprintf(stderr, "HTTP2 async failure scenario\n");
+    Server server(Mode::Redirect);
+    Client client(ssl);
+    client.Create(server.Url());
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async failure submission");
+    queue.ExpectEvent();
+    Http2AsyncResult result{};
+    Require(Throws([&] { sceHttp2WaitAsync(client.request, &result, nullptr, nullptr); }), "async worker failure reaches waiter");
+    server.Join();
+}
+
 void Failure(int ssl, Mode mode) {
     std::fprintf(stderr, "HTTP2 failure scenario %d\n", static_cast<int>(mode));
     Server server(mode);
@@ -1451,6 +1576,11 @@ int main(int argc, char** argv) {
         Capacity(ssl);
         Retries(ssl);
         Async(ssl);
+        AsyncDelete(ssl, false);
+        AsyncDelete(ssl, true);
+        AsyncTwoWaiters(ssl);
+        AsyncTeardown(ssl);
+        AsyncFailure(ssl);
         const int untrusted = sceSslInit_nid_postfix(8 * 1024 * 1024);
         Require(untrusted > 0, "untrusted SSL context");
         Handshake(untrusted, Mode::Normal, static_cast<int>(0x8095f00c));
