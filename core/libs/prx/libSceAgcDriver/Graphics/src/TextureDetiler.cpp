@@ -231,13 +231,15 @@ void TextureDetiler::checkWindow(const TileMipLayout& layout, const DetileWindow
     if (!(window.columnBegin < columnEnd && window.rowBegin < rowEnd)) Require(false, "texture detiling window lies outside the mip: columns " + std::to_string(window.columnBegin) + ".." + std::to_string(columnEnd) + ", rows " + std::to_string(window.rowBegin) + ".." + std::to_string(rowEnd) + " of " + std::to_string(layout.width) + "x" + std::to_string(layout.height));
 }
 
-void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout, bool retile, std::uint32_t slice, bool thick, const DetileWindow& window) {
+void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode, std::uint32_t elementBytes, VkBuffer source, std::uint64_t sourceOffset, VkBuffer destination, std::uint64_t destinationOffset, const TileMipLayout& layout, bool retile, std::uint32_t slice, bool thick, const DetileWindow& window, std::uint64_t originalOffset) {
     Require(commands != VK_NULL_HANDLE, "texture detiling requires an active command buffer");
     Require(window.rangeBegin < window.rangeEnd && window.tiledBase <= window.rangeBegin, "texture detiling window is empty");
     Require(source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "texture detiling requires source and destination buffers");
     std::uint32_t columnEnd = 0, rowEnd = 0;
     checkWindow(layout, window, columnEnd, rowEnd);
-    const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thick);
+    const bool changedOnly = originalOffset != 0;
+    Require(!changedOnly || (retile && tileMode == TextureTileMode::kLinear && !thick), "changed texture write-back requires a linear retile");
+    const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thick, false, changedOnly);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto sourceDescriptorOffset = sourceOffset - sourceOffset % alignment;
     const auto destinationDescriptorOffset = destinationOffset - destinationOffset % alignment;
@@ -248,7 +250,16 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     // range can touch (linear).
     const std::uint64_t tiledBytes = window.rangeEnd == 0xffffffffu ? layout.tiledSize : std::min<std::uint64_t>(layout.tiledSize, window.rangeEnd) - window.tiledBase;
     const std::uint64_t linearBytes = window.linearBytes != 0 ? window.linearBytes : layout.linearSize - std::min<std::uint64_t>(window.linearBase, layout.linearSize);
+    const auto originalDescriptorOffset = changedOnly ? originalOffset - originalOffset % alignment : sourceDescriptorOffset;
+    const auto originalBase = changedOnly ? originalOffset - originalDescriptorOffset : 0;
+    if (changedOnly) {
+        Require(originalOffset >= sourceOffset && originalOffset - sourceOffset >= linearBytes, "texture write-back baseline overlaps its current bytes");
+        Require(originalBase <= UINT32_MAX && linearBytes <= UINT32_MAX - originalBase, "texture write-back baseline exceeds addressable range");
+        Require(linearBytes <= UINT64_MAX - originalOffset, "texture write-back baseline exceeds its buffer address range");
+    }
     const auto sourceRange = (sourceBase + (retile ? linearBytes : tiledBytes) + 3) / 4 * 4;
+    const auto originalRange = changedOnly ? (originalBase + linearBytes + 3) / 4 * 4 : sourceRange;
+    Require(originalRange <= context.limits.maxStorageBufferRange && originalRange <= UINT64_MAX - originalDescriptorOffset, "texture write-back baseline buffer range exceeds device limits");
     const auto destinationRange = (destinationBase + (retile ? tiledBytes : linearBytes) + 3) / 4 * 4;
     Require(sourceRange <= context.limits.maxStorageBufferRange && destinationRange <= context.limits.maxStorageBufferRange, "texture detiling buffer range exceeds device limits");
     const auto set = allocateSet();
