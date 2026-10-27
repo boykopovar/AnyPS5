@@ -6051,6 +6051,43 @@ bool StorageTexture::unchangedSinceBaseline(std::uint64_t from, std::uint64_t to
     return GuestMemory::EqualsCommittedUnsynced(from, std::span<const std::byte>(baseline).subspan(offset, static_cast<std::size_t>(to - from)));
 }
 
+void StorageTexture::PrepareLinearDraw() {
+    if (descriptor.tileMode != TextureTileMode::kLinear) return;
+    WriteBack();
+    FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), this, "linear draw baseline");
+    linearDrawOriginal.reset();
+    uploadReason = "linear draw baseline";
+    upload();
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr, "a recorded linear target needs an active recorder");
+    const auto bytes = sliceLinearBytes * arrayLayers;
+    Require(bytes <= std::numeric_limits<std::size_t>::max() / 2, "a linear target snapshot exceeds addressable memory");
+    auto snapshot = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(bytes * 2), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    auto regions = CopyRegions();
+    for (auto& region : regions) region.bufferOffset += bytes;
+    recorder->Keep(snapshot);
+    recorder->KeepBytes(snapshot.get(), snapshot->Size());
+    const auto commands = recorder->Commands();
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, descriptor.mipCount, 0, geometry.imageLayers};
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, snapshot->Handle(), static_cast<std::uint32_t>(regions.size()), regions.data());
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    Recorder::CountBarriers(Recorder::CommandClass::Draw, 2);
+    linearDrawOriginal = std::move(snapshot);
+}
+
 void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     CaptureTrace::Log("writeback image=%llx generation=%llu reason=%s units=%zu", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(generation), flushReason, static_cast<std::size_t>(std::count(layers.begin(), layers.end(), true)));
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
