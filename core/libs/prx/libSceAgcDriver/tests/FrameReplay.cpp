@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <atomic>
@@ -80,6 +81,9 @@ Layout allocate() {
     auto* const block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
     check(block != nullptr, "cannot allocate guest memory");
     GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, 0x04, BlockBytes);
+#ifdef __linux__
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+#endif
     {
         GuestAllocations::Mutation mutation;
         mutation.Add(block, BlockBytes, true, true, true);
@@ -184,8 +188,11 @@ void testCaptureAndReplay(const std::filesystem::path& tool) {
 
     const auto firstDump = capture / "first.bin";
     const auto secondDump = capture / "second.bin";
-    const auto command = "\"\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(layout.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" + firstDump.string() +
-                         "\" --dump " + std::to_string(at(late.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" + secondDump.string() + "\"\"";
+    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(layout.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" + firstDump.string() +
+                   "\" --dump " + std::to_string(at(late.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" + secondDump.string() + "\"";
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+#endif
     const auto code = std::system(command.c_str());
     check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
     check(readFile(firstDump) == first, "the replay did not reproduce the first copy");
@@ -241,7 +248,10 @@ void testConcurrentCopies(const std::filesystem::path& tool) {
     check(memory != 0, "the capture holds no memory deltas");
 
     const auto dump = capture / "targets.bin";
-    const auto command = "\"\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(targets)) + ":" + std::to_string(Copies * DataBytes) + ":\"" + dump.string() + "\"\"";
+    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(targets)) + ":" + std::to_string(Copies * DataBytes) + ":\"" + dump.string() + "\"";
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+#endif
     const auto code = std::system(command.c_str());
     check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
     const auto replayed = readFile(dump);

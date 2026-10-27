@@ -184,17 +184,21 @@ std::int32_t APS5_VABI getwchar_nid_postfix() { return fgetwc_nid_postfix(__stdi
 int APS5_VABI getchar_unlocked_nid_postfix() { return getc_unlocked_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
-    const int result = std::fputc(value, GetNativeStream(stream));
+    auto* native = GetNativeStream(stream);
+    if (!stream->SwitchToWriting()) return -1;
+    const int result = std::fputc(value, native);
     stream->SyncStatus();
     return result;
 }
 int APS5_VABI putc_nid_postfix(int value, FileStream* stream) { return fputc_nid_postfix(value, stream); }
 int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    auto* native = GetNativeStream(stream);
+    if (!stream->SwitchToWritingUnlocked()) return -1;
 #ifdef _WIN32
-    const int result = _fputc_nolock(value, GetNativeStream(stream));
+    const int result = _fputc_nolock(value, native);
 #else
-    const int result = putc_unlocked(value, GetNativeStream(stream));
+    const int result = putc_unlocked(value, native);
 #endif
     stream->SyncUnlockedStatus();
     return result;

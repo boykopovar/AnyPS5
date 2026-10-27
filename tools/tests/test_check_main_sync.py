@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_main_sync
@@ -266,6 +267,16 @@ class CheckMainSyncTests(unittest.TestCase):
 
     def test_conflicting_unicode_report_preserves_exit_status_and_output_encoding(self):
         self.check_unicode_output(True)
+
+    def test_git_without_write_tree_names_the_version_it_needs(self):
+        def old_git(repo, *args, check=True):
+            if args[0] == "version":
+                return subprocess.CompletedProcess(["git", *args], 0, stdout="git version 2.30.0.windows.2\n", stderr="")
+            return subprocess.CompletedProcess(["git", *args], 129, stdout="", stderr="usage: git merge-tree <base-tree> <branch1> <branch2>")
+
+        with unittest.mock.patch.object(check_main_sync, "git", old_git):
+            with self.assertRaisesRegex(RuntimeError, r"needs git 2\.38 or newer; this git is 2\.30$"):
+                check_main_sync.conflicts(self.repo.path, "main", "HEAD")
 
     def test_missing_base_is_an_error_not_a_pass(self):
         result = subprocess.run([sys.executable, str(TOOL), "--repo", self.directory.name, "--base", "upstream/main"], capture_output=True, text=True)

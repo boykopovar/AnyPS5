@@ -996,6 +996,17 @@ extern "C" int DuplicateHostDescriptor_nid_no_patch(int descriptor) {
 }
 #endif
 
+namespace {
+
+std::atomic<std::uint64_t> notImplementedCalls{0};
+
+}
+
 extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName) {
+    notImplementedCalls.fetch_add(1, std::memory_order_relaxed);
     throw std::runtime_error(std::string(funcName) + " not implemented");
+}
+
+extern "C" std::uint64_t NotImplementedCalls_nid_no_patch() {
+    return notImplementedCalls.load(std::memory_order_relaxed);
 }

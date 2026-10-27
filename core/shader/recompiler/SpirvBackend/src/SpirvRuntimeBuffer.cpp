@@ -205,8 +205,9 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     const auto unaligned = nonzero(state, misalignment);
     const auto next = EmitAddU32(state, index, ConstantU32(state, 1u));
     const auto last = Select(state, TypeU32(state), unaligned, next, index);
-    const auto bounds = EmitMemoryElementInBounds(state, access, last);
-    const auto inBounds = enable != 0u ? both(state, enable, bounds) : bounds;
+    const bool exact = state.exactRobustLoads && LoadsSelectable(state, access);
+    const auto bounds = exact ? 0u : EmitMemoryElementInBounds(state, access, last);
+    const auto inBounds = exact ? 0u : (enable != 0u ? both(state, enable, bounds) : bounds);
     const auto load = [&](std::uint32_t word) {
         const auto value = state.module.AllocateId();
         const auto pointer = EmitMemoryElementPointer(state, access, word);
@@ -224,6 +225,18 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
         return EmitAndConstant(state, value, bits == 32u ? 0xffffffffu : (1u << bits) - 1u);
     };
     const auto highShift = Binary(state, spv::OpISub, TypeU32(state), ConstantU32(state, 32u), shift);
+    if (exact) {
+        auto guard = enable;
+        if (access.kind != ResourceKind::ScalarBuffer) {
+            const auto nextFits = Binary(state, spv::OpLogicalOr, TypeBool(state), Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), EmitMemoryElementInBounds(state, access, next));
+            guard = guard != 0u ? both(state, guard, nextFits) : nextFits;
+        }
+        const auto lowIndex = guard != 0u ? GuardedElementIndex(state, access, guard, index) : index;
+        const auto highIndex = Select(state, TypeU32(state), guard != 0u ? both(state, guard, unaligned) : unaligned, next, lowIndex);
+        const auto low = Binary(state, spv::OpShiftRightLogical, TypeU32(state), load(lowIndex), shift);
+        const auto high = EmitValueOrZero(state, unaligned, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), load(highIndex), highShift));
+        return combine(low, high);
+    }
     if (!LoadsSelectable(state, access)) {
         return EmitValueOrZeroIfCondition(state, inBounds, [&] {
             const auto low = Binary(state, spv::OpShiftRightLogical, TypeU32(state), load(index), shift);

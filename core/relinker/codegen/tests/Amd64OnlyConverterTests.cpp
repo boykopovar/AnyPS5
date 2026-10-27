@@ -1022,6 +1022,32 @@ void converterClaimedFollower() {
     }
 }
 
+void converterWideStoreIslandAcrossInt64Max() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    Bytes text = {0xE8, 0x00, 0x00, 0x00, 0x00, 0xC5, 0xFC, 0x11, 0x07, 0xC3, 0xEB, 0xFD};
+    for (int index = 0; index < 4; ++index)
+        text.insert(text.end(), {0x48, 0x83, 0xC1, 0x01});
+    const auto convertAt = [&](const std::uint64_t base) {
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        return converter->Convert(file, {{1, 5, 0x200, base, 0, text.size(), text.size(), 16}});
+    };
+    const auto low = convertAt(0x1000);
+    const auto high = convertAt(0x8000000000000000 - 0x10);
+    require(high.Trampolines.size() == 2 && high.KeptCount == 0, "A 256-bit store just below 2^63 was not lowered through an island above it");
+    require(high.Bytes == low.Bytes, "An island across 2^63 changed the segment bytes");
+    for (std::size_t index = 0; index < 2; ++index) {
+        const auto& site = high.Trampolines[index];
+        const auto& reference = low.Trampolines[index];
+        require(site.Offset == reference.Offset && site.Length == reference.Length && site.Body == reference.Body, "An island across 2^63 changed a trampoline");
+        require(site.Relocations.size() == reference.Relocations.size(), "An island across 2^63 changed the number of relocations");
+        for (std::size_t relocation = 0; relocation < site.Relocations.size(); ++relocation)
+            require(site.Relocations[relocation].DisplacementOffset == reference.Relocations[relocation].DisplacementOffset &&
+                    site.Relocations[relocation].SiteTarget == reference.Relocations[relocation].SiteTarget, "An island across 2^63 changed where a stub jumps");
+    }
+    require(Bytes(high.Bytes.begin() + 0x205, high.Bytes.begin() + 0x207) == Bytes{0xEB, 0x0D}, "The short jump to an island across 2^63 has the wrong displacement");
+}
+
 void converterJumpTableTargets() {
     const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
     const Bytes leaTable = {0x48, 0x8D, 0x0D, 0xF9, 0x1F, 0x00, 0x00};
@@ -2322,6 +2348,7 @@ int main() {
         clwbExecution();
         wideStoreSplit();
         converterWideStoreWindows();
+        converterWideStoreIslandAcrossInt64Max();
         converterClaimedFollower();
         converterJumpTableTargets();
         converterReciprocal();

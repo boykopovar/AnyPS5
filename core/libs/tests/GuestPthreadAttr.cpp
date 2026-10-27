@@ -165,14 +165,7 @@ static void CheckSchedulingAttributes() {
 
     Require(pthread_attr_getscope_nid_postfix(&attr, nullptr) == GUEST_EINVAL);
 
-    bool threw = false;
-    try {
-        pthread_attr_getinheritsched_nid_postfix(&attr, nullptr);
-
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
+    Require(pthread_attr_getinheritsched_nid_postfix(&attr, nullptr) == GUEST_EINVAL);
 
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == GUEST_EINVAL);
@@ -353,6 +346,11 @@ int main() {
     Require(reported.stackSize == STACK_SIZE);
     Require(reported.detachState == DETACH_JOINABLE);
 
+    for (const int rejected : {-1, 0, 255, 768, 895, 960, 1023, 131840}) Require(scePthreadSetprio(thread, rejected) == SCE_KERNEL_ERROR_EINVAL);
+    for (const int accepted : {256, 900, 959, 65792, -65280}) {
+        Require(scePthreadSetprio(thread, accepted) == SCE_OK);
+        Require(Query(thread).priority == accepted);
+    }
     Require(scePthreadSetprio(thread, UPDATED_PRIORITY) == SCE_OK);
     Require(scePthreadSetaffinity(thread, UPDATED_AFFINITY) == SCE_OK);
     reported = Query(thread);
