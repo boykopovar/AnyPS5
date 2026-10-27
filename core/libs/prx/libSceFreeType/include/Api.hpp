@@ -7,6 +7,7 @@
 extern "C" {
 
 std::int32_t APS5_VABI FT_Sqrt32_nid_postfix(std::int32_t value);
+int APS5_VABI sceFreeTypeOtSqrt32_nid_no_patch();
 
 std::int32_t APS5_VABI FT_Outline_GetInsideBorder_nid_postfix(const FreeType::GuestOutline* outline);
 std::int32_t APS5_VABI FT_Outline_GetOutsideBorder_nid_postfix(const FreeType::GuestOutline* outline);
