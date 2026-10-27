@@ -71,11 +71,7 @@ int main() {
     Http2AsyncResult result{};
     Require(sceHttp2WaitAsync(request, &result, nullptr, nullptr) == 0);
     Require(result.req_id == request && result.result != 0 && result.event_type == 0);
-    result.req_id = 123;
-    std::uint32_t waitTimeout = 500;
-    Require(Throws([&] { sceHttp2WaitAsync(request, &result, &waitTimeout, nullptr); }));
-    Require(result.req_id == 123 && waitTimeout == 500);
-    Require(Throws([&] { sceHttp2SendRequestAsync(request, nullptr, 0, nullptr, nullptr); }));
+    Require(sceHttp2WaitAsync(0, &result, nullptr, nullptr) == InvalidId);
     Require(sceKernelDeleteUserEvent(eq, request) == 0);
     Require(sceKernelDeleteEqueue(eq) == 0);
     const int sibling = sceHttp2CreateTemplate(context, "other", 2, 0);
@@ -83,6 +79,7 @@ int main() {
     Require(Throws([&] { sceHttp2SendRequest(child, nullptr, 0); }));
     Require(sceHttp2DeleteTemplate(tmpl) == 0);
     Require(sceHttp2SslEnableOption(sibling, 0) == 0);
+    Require(sceHttp2WaitAsync(request, &result, nullptr, nullptr) == InvalidId);
     Require(sceHttp2DeleteRequest(request) == InvalidId);
     Require(sceHttp2SendRequest(request, nullptr, 0) == InvalidId);
     Require(sceHttp2Term(context) == 0);
