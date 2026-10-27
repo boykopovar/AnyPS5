@@ -68,11 +68,19 @@ test('setting names canonicalize like the native parser', () => {
     assert.deepEqual(imported.settings, [{name: 'LeftStickDeadzone', value: '8'}, {name: 'MouseSensitivity', value: '1e0'}]);
 });
 
+test('a signed zero deadzone imports like the native parser', () => {
+    const imported = parseIni('LeftStickDeadzone = -0\nRightStickDeadzone = -00\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.settings, [{name: 'LeftStickDeadzone', value: '-0'}, {name: 'RightStickDeadzone', value: '-00'}]);
+    assert.equal(serialize(imported.entries, imported.settings), 'LeftStickDeadzone = -0\nRightStickDeadzone = -00\n');
+});
+
 test('out-of-range and malformed setting values report their line', () => {
     const cases = {
         'LeftStickDeadzone = 91': 'LeftStickDeadzone must be a whole percentage from 0 to 90.',
         'LeftStickDeadzone = 12.5': 'LeftStickDeadzone must be a whole percentage from 0 to 90.',
         'LeftStickDeadzone = +12': 'LeftStickDeadzone must be a whole percentage from 0 to 90.',
+        'LeftStickDeadzone = -1': 'LeftStickDeadzone must be a whole percentage from 0 to 90.',
         'MouseSensitivity = 0': 'MouseSensitivity must be a number greater than 0 and at most 10.',
         'MouseSensitivity = 10.1': 'MouseSensitivity must be a number greater than 0 and at most 10.',
         'MouseSensitivity = abc': 'MouseSensitivity must be a number greater than 0 and at most 10.',
