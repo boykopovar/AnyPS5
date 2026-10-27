@@ -203,6 +203,16 @@ void loadElement(uvec2 p, uint dst) {
 }
 #else
 void copyElement(uint src, uint dst) {
+#ifdef BYTE_OUTPUT
+    const uint original = params.originalBase + src - params.srcBase;
+    for (uint offset = 0u; offset < ELEMENT_BYTES; ++offset) {
+        const uint currentAddress = src + offset;
+        const uint originalAddress = original + offset;
+        const uint current = (inputBuffer.data[currentAddress >> 2] >> ((currentAddress & 3u) * 8u)) & 0xffu;
+        const uint before = (originalBuffer.data[originalAddress >> 2] >> ((originalAddress & 3u) * 8u)) & 0xffu;
+        if (current != before) outputBuffer.data[dst + offset] = uint8_t(current);
+    }
+#else
     if (ELEMENT_BYTES >= 4u) {
         for (uint i = 0u; i < ELEMENT_BYTES; i += 4u) {
             outputBuffer.data[(dst + i) >> 2] = inputBuffer.data[(src + i) >> 2];
@@ -214,6 +224,7 @@ void copyElement(uint src, uint dst) {
         atomicAnd(outputBuffer.data[dst >> 2], ~(mask << shift));
         atomicOr(outputBuffer.data[dst >> 2], value << shift);
     }
+#endif
 }
 #endif
 
