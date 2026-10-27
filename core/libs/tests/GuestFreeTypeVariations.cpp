@@ -1,4 +1,5 @@
 #include "FontFixture.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -15,18 +16,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Get_MM_Var_nid_postfix(GuestFaceRec*, void**);
-int APS5_VABI FT_Done_MM_Var_nid_postfix(GuestLibrary*, void*);
-int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
-int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, std::int64_t*);
-int APS5_VABI FT_Set_Var_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
-int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, std::int64_t*);
-int APS5_VABI FT_Set_MM_Blend_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
-int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(GuestFaceRec*, std::uint32_t, const std::int64_t*);
-int APS5_VABI FT_Get_Multi_Master_nid_postfix(GuestFaceRec*, void*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
