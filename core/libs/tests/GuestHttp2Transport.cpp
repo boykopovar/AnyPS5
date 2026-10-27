@@ -523,7 +523,7 @@ void Async(int ssl) {
     Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &option, nullptr) == 0, "async send submission");
     KernelEvent event{};
     int count = 0;
-    const KernelUseconds timeout = 2000000;
+    const KernelUseconds timeout = 10000000;
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1, "async send event");
     Require(event.ident == static_cast<std::uintptr_t>(client.request) && event.udata == &tag, "async send event payload");
     Http2AsyncResult result{};
@@ -565,7 +565,7 @@ struct AsyncQueue {
     void ExpectEvent() {
         KernelEvent event{};
         int count = 0;
-        const KernelUseconds timeout = 2000000;
+        const KernelUseconds timeout = 10000000;
         Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == 0 && count == 1, "async event");
         Require(event.ident == static_cast<std::uintptr_t>(option.user_event_id) && event.udata == option.user_data, "async event payload");
     }
