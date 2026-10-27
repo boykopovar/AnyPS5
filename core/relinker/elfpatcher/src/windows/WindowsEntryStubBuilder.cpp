@@ -744,10 +744,15 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             code.PatchBranch(weakDone, code.GetRva());
             continue;
         }
-        if (lazyBinding && imports[index].Function) {
+        if (lazyBinding && imports[index].Lazy) {
             lazyUnresolvedImports.push_back(index);
             const auto skipGotWrite = code.Branch({0xe9});
             patchResolved();
+            if (imports[index].Addend != 0) {
+                code.Emit({0x48, 0xba});
+                code.U64(imports[index].Addend);
+                code.Emit({0x48, 0x01, 0xd0});
+            }
             guestStartup.WriteImport(code, imports[index], handles);
             code.PatchBranch(skipGotWrite, code.GetRva());
             continue;
