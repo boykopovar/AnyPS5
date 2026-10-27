@@ -69,6 +69,8 @@ def publish_libraries(output, release=None):
                 files = archive.infolist()
                 if not files or len(files) > 4096:
                     raise ValueError("Invalid library archive")
+                if any(file.flag_bits & 1 for file in files):
+                    raise ValueError(f"Encrypted release archive {asset['name']} is not supported")
                 names = {}
                 for file in files:
                     if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
@@ -91,7 +93,7 @@ def publish_libraries(output, release=None):
             path = f"libraries/{platform}-{checksum}.zip"
             temporary.replace(output / path)
             manifest["platforms"][platform] = {"path": path, "size": size, "expandedBytes": expanded, "sha256": checksum}
-        except zipfile.BadZipFile as error:
+        except (zipfile.BadZipFile, NotImplementedError) as error:
             raise ValueError(f"Invalid release archive {asset['name']}: {error}") from error
         finally:
             temporary.unlink(missing_ok=True)
@@ -133,6 +135,8 @@ def publish_release(output):
             expected = {*WEB_FILES, "web-release.json"}
             if len(files) != len(expected) or {file.filename for file in files} != expected:
                 raise ValueError("Invalid web release archive layout")
+            if any(file.flag_bits & 1 for file in files):
+                raise ValueError(f"Encrypted release archive {asset['name']} is not supported")
             if any(file.file_size == 0 for file in files) or sum(file.file_size for file in files) > 128 * 1024 * 1024:
                 raise ValueError("Invalid expanded web release archive size")
             metadata = json.loads(archive.read("web-release.json"))
@@ -161,7 +165,7 @@ def publish_release(output):
                     raise RuntimeError(f"Could not restore release output. Previous site is preserved at {previous}") from error
             raise
         published = True
-    except zipfile.BadZipFile as error:
+    except (zipfile.BadZipFile, NotImplementedError) as error:
         raise ValueError(f"Invalid release archive {asset['name']}: {error}") from error
     finally:
         if published or not previous.exists():

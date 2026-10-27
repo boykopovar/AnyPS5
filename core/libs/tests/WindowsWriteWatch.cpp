@@ -4,6 +4,7 @@
 #include <atomic>
 #include <iostream>
 #include <set>
+#include <string>
 #include <thread>
 
 namespace {
@@ -345,6 +346,51 @@ void CheckForgottenSectionKeepsNoPages() {
     CloseHandle(section);
 }
 
+void CheckReleasedPrivateAllocation() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    std::array<void*, 32> pages{};
+    std::size_t count = pages.size();
+    Require(mappings.Collect(address, Bytes, pages.data(), &count, true), "a collect over a committed private allocation failed");
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0, "cannot release the private allocation behind the mappings");
+    bool collected = true;
+    try {
+        count = pages.size();
+        collected = mappings.Collect(address, Bytes, pages.data(), &count, true);
+    } catch (const std::exception& error) {
+        Require(false, (std::string("a collect over a private allocation released behind the mappings threw: ") + error.what()).c_str());
+    }
+    Require(!collected, "a collect over a private allocation released behind the mappings succeeded");
+}
+
+void CheckVerifiedPrivateCollect() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    std::array<void*, 64> pages{};
+    std::size_t available = pages.size();
+    Require(mappings.Collect(address, Bytes, pages.data(), &available, true), "a verified collect over a private allocation failed");
+    static_cast<volatile unsigned char*>(memory)[Small] = 1;
+    available = pages.size();
+    Require(mappings.Collect(address, Bytes, pages.data(), &available, true) && available == 1 && reinterpret_cast<std::uintptr_t>(pages[0]) == address + Small, "a verified collect over a recorded private allocation lost its write");
+    Require(VirtualFree(memory + 2 * Small, Small, MEM_DECOMMIT) != 0, "cannot decommit a private page in place");
+    bool collected = false;
+    try {
+        available = pages.size();
+        collected = mappings.Collect(address, Bytes, pages.data(), &available, true);
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()).find("APS5_VERIFY_DIRECT_COLLECT") != std::string::npos, error.what());
+    }
+    Require(!collected, "a collect over a recorded private allocation with a page decommitted in place succeeded under APS5_VERIFY_DIRECT_COLLECT");
+    mappings.Reset(memory, Bytes);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
 void CheckConcurrentWrites() {
     Region region;
     std::atomic<bool> start{false};
@@ -630,12 +676,60 @@ void CheckSharedRunIsOneView() {
     VirtualFree(other, 0, MEM_RELEASE);
     CloseHandle(section);
 }
+
+void CheckCommitResetsEveryPageOfARunView() {
+    auto& mappings = Mappings::Get();
+    constexpr std::size_t Page = 16384;
+    constexpr std::size_t Span = 4 * Page;
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Span, nullptr);
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Span));
+    Require(section && memory, "cannot allocate recommitted run test memory");
+    mappings.ForgetSection(section);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    const auto collect = [&](std::size_t page, std::size_t count, Collection collection) {
+        std::array<void*, 32> pages{};
+        std::size_t available = pages.size();
+        Require(mappings.Collect(address + page * Page, count * Page, pages.data(), &available, true, collection), "recommitted run collection failed");
+        std::set<std::size_t> result;
+        for (std::size_t i = 0; i < available; ++i) result.insert((reinterpret_cast<std::uintptr_t>(pages[i]) - address) / Small);
+        return result;
+    };
+    mappings.Map(memory, Span, section, 0, PAGE_READWRITE);
+    Require(MappedViews(memory, Span) == 1, "the recommitted run was not mapped as one view");
+    Require(collect(0, 4, Collection::All) == Pages(0, Span / Small), "the run's first collection did not report its fresh pages");
+    MEMORY_BASIC_INFORMATION armed{};
+    Require(VirtualQuery(memory, &armed, sizeof(armed)) == sizeof(armed) && armed.Protect == PAGE_READONLY && armed.RegionSize == Span, "collection did not arm every page of the run alike");
+    mappings.Commit(memory, Span, PAGE_READWRITE, Page, false);
+    Require(ProtectionAt(memory + 3 * Page) == PAGE_READWRITE, "Commit did not reprotect the whole run");
+    memory[Page + 8] = 0x5a;
+    Require(collect(1, 1, Collection::Armed) == Pages(4, 8), "a store into the second page of a run that Commit reprotected was not collected");
+    Require(ProtectionAt(memory + Page) == PAGE_READONLY, "collection did not arm the second page of the recommitted run again");
+    const auto before = faults.load();
+    memory[Page + Small + 8] = 0x5b;
+    Require(faults == before + 1, "a store into the rearmed second page of the run did not fault");
+    Require(collect(1, 1, Collection::Armed) == Pages(5, 6), "a store into the rearmed second page of the run was not collected once");
+    mappings.Commit(memory, Span, PAGE_READONLY, Page, false);
+    for (std::size_t page = 0; page < 4; ++page) {
+        std::uint32_t protection = 0;
+        Require(mappings.Protection(address + page * Page, &protection) && protection == PAGE_READONLY, ("Commit left page " + std::to_string(page) + " of a run with its old guest protection").c_str());
+    }
+    mappings.Reset(memory, Span);
+    VirtualFree(memory, 0, MEM_RELEASE);
+    mappings.ForgetSection(section);
+    CloseHandle(section);
+}
 }
 
-int main() {
+int main(int argc, char** argv) {
     auto* handler = AddVectoredExceptionHandler(1, HandleWrite);
     try {
         Require(handler != nullptr, "cannot install test handler");
+        if (argc > 1 && std::string(argv[1]) == "--verify-direct") {
+            CheckVerifiedPrivateCollect();
+            std::cout << "Windows verified private collect tests passed\n";
+            RemoveVectoredExceptionHandler(handler);
+            return 0;
+        }
         CheckArmed();
         CheckFresh();
         CheckAliasesAndCapacity();
@@ -646,6 +740,7 @@ int main() {
         CheckForgottenSectionKeepsNoPages();
         CheckSharedMapQueriesPerMapping();
         CheckSharedRunIsOneView();
+        CheckReleasedPrivateAllocation();
         CheckComparedWhenShared();
         CheckResidentOnlyComparedWhenShared();
         CheckComparedWhenSharedRemapped();
@@ -653,6 +748,7 @@ int main() {
         CheckPrivateCommitCarvesPlaceholders();
         CheckPrivateCommitEdgeLayouts();
         CheckPrivateCommitTails();
+        CheckCommitResetsEveryPageOfARunView();
         std::cout << "Windows deferred write-watch tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

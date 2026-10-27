@@ -349,6 +349,8 @@ int Run(const int argc, char* argv[]) {
 
         const auto checkOutputInputs = [&](const std::filesystem::path& path, const char* kind) {
             if (!std::filesystem::exists(path)) return;
+            if (std::filesystem::is_directory(path))
+                throw Domain::RelinkerException(std::string(kind) + " output is a directory: " + Io::Utf8Path(path));
             for (const auto& input : metadataInputs)
                 if (std::filesystem::exists(input) && SameOutputFile(input, path))
                     throw Domain::RelinkerException(std::string(kind) + " output would overwrite input metadata: " + Io::Utf8Path(path));

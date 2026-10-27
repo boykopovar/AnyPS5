@@ -1,4 +1,5 @@
 import contextlib
+from functools import lru_cache
 import gzip
 import io
 import json
@@ -45,6 +46,71 @@ SUMMARY = {"commit": "abc", "dirty": False, "env": {"APS5_TRACE_FRAMES": "600:3"
 
 STACKS = "# samples=5 depth=64 truncated=1\n# module a.prx 0x1000 0x1\nntdll.dll+0x1;a.prx+0x10;a.prx+0x20 3\nntdll.dll+0x1;a.prx+0x10;a.prx+0x30 1\n[truncated];a.prx+0x40;a.prx+0x30 1\n"
 
+
+@lru_cache(maxsize=2)
+def excessive_trace_json(opening, closing):
+    depth = sys.getrecursionlimit() + 64
+    for _ in range(8):
+        value = opening * depth + "0" + closing * depth
+        try:
+            json.loads(value)
+        except RecursionError:
+            return opening * (depth + 128) + "0" + closing * (depth + 128)
+        depth *= 2
+    raise AssertionError("JSON decoder accepted every bounded nesting probe")
+
+
+class TraceJsonNestingTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.trace = Path(self.directory.name) / "baseline.json"
+        self.trace.write_text(json.dumps({"traceEvents": EVENTS}), encoding="utf-8")
+
+    def test_excessive_trace_json_nesting_has_a_path_qualified_error(self):
+        for opening, closing in (("[", "]"), ('{"nested":', "}")):
+            data = ('{"traceEvents": [], "extra": ' + excessive_trace_json(opening, closing) + "}").encode("utf-8")
+            for compressed in (False, True):
+                with self.subTest(opening=opening, compressed=compressed):
+                    path = Path(self.directory.name) / ("deep-\u00e9.json.gz" if compressed else "deep-\u00e9.json")
+                    original = gzip.compress(data) if compressed else data
+                    path.write_bytes(original)
+                    with self.assertRaisesRegex(ValueError, "trace JSON nesting is too deep") as error:
+                        trace_digest.load_trace(path)
+                    self.assertIn(str(path), str(error.exception))
+                    self.assertIsInstance(error.exception.__cause__, RecursionError)
+                    self.assertEqual(path.read_bytes(), original)
+
+    def test_excessive_trace_json_nesting_produces_only_a_cli_error(self):
+        for opening, closing, compressed, args in (("[", "]", False, ()), ('{"nested":', "}", True, ("--json",)),
+                                                   ("[", "]", True, ()), ('{"nested":', "}", False, ("--json",))):
+            with self.subTest(opening=opening, compressed=compressed, args=args):
+                path = Path(self.directory.name) / ("deep-\u00e9.json.gz" if compressed else "deep-\u00e9.json")
+                data = ('{"traceEvents": [], "extra": ' + excessive_trace_json(opening, closing) + "}").encode("utf-8")
+                original = gzip.compress(data) if compressed else data
+                path.write_bytes(original)
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(path), *args],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(f"FAIL: {path}: trace JSON nesting is too deep", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(path.read_bytes(), original)
+
+    def test_supported_nested_trace_metadata_preserves_the_digest(self):
+        expected = trace_digest.digest(trace_digest.load_trace(self.trace), SUMMARY, None, 5, 10)
+        metadata = {"value": 7}
+        for _ in range(16):
+            metadata = {"nested": [metadata]}
+        data = json.dumps({"traceEvents": EVENTS, "extra": metadata}).encode("utf-8")
+        for compressed in (False, True):
+            with self.subTest(compressed=compressed):
+                path = Path(self.directory.name) / ("nested.json.gz" if compressed else "nested.json")
+                original = gzip.compress(data) if compressed else data
+                path.write_bytes(original)
+                trace = trace_digest.load_trace(path)
+                self.assertEqual(trace_digest.digest(trace, SUMMARY, None, 5, 10), expected)
+                self.assertEqual(path.read_bytes(), original)
 
 class TraceDigestTests(unittest.TestCase):
     def test_summary_jsonl_record_shapes_are_validated(self):
