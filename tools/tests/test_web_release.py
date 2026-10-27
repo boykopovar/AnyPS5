@@ -2,6 +2,7 @@ import contextlib
 import hashlib
 import io
 import json
+import struct
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,48 @@ def zipped(entries):
 
 
 class WebReleaseTests(unittest.TestCase):
+    def unsupported_zip(self, payload, encrypted):
+        data = bytearray(payload)
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            local = archive.infolist()[0].header_offset
+            central = archive.start_dir
+        if encrypted:
+            for position in (local + 6, central + 8):
+                struct.pack_into("<H", data, position, struct.unpack_from("<H", data, position)[0] | 1)
+        else:
+            for position in (local + 8, central + 10):
+                struct.pack_into("<H", data, position, 99)
+        return bytes(data)
+
+    def test_unsupported_zip_members_preserve_previous_site_and_allow_retry(self):
+        originals = dict(self.responses)
+        for encrypted in (False, True):
+            for name in ("web-v1.zip", "prx-windows-v1.zip", "prx-linux-v1.zip"):
+                with self.subTest(encrypted=encrypted, asset=name):
+                    original = originals["https://example.test/" + name]
+                    self.set_asset(name, self.unsupported_zip(original, encrypted))
+                    self.requests.clear()
+                    self.assert_rejected("[Aa]rchive|[Ee]ncrypted")
+                    self.set_asset(name, original)
+                    self.requests.clear()
+                    self.publish()
+                    self.assertEqual(json.loads((self.output / "release.json").read_text())["revision"], REVISION)
+                    self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
+    def test_cli_reports_unsupported_zip_without_traceback_or_site_changes(self):
+        name = "web-v1.zip"
+        self.set_asset(name, self.unsupported_zip(self.responses["https://example.test/" + name], False))
+        self.seed_previous()
+        previous = self.snapshot()
+        errors = io.StringIO()
+        with patch.object(build_web, "request", self.request), contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+            build_web.main(["--build", str(self.build), "--release"])
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("Invalid release archive", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
+        self.assertEqual(self.snapshot(), previous)
+        self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

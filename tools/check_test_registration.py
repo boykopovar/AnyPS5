@@ -79,7 +79,7 @@ def commands(content):
             argument = token.group(0)
             if argument.startswith('"'):
                 argument = re.sub(r"\\(\r?\n|.)",
-                                  lambda match: {"\n": "", "\r\n": "", "n": "\n", "r": "\r", "t": "\t"}.get(match[1], match[1]),
+                                  lambda match: {"\n": "", "\r\n": "", "n": "\n", "r": "\r", "t": "\t", ";": r"\;"}.get(match[1], match[1]),
                                   argument[1:-1], flags=re.S)
             elif token.group("equals") is not None:
                 width = len(token.group("equals")) + 2
