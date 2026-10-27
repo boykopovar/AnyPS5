@@ -400,8 +400,18 @@ int main() {
         const char path[] = "a/b/c";
         require(rindex_nid_postfix(path, '/') == path + 3 && rindex_nid_postfix(path, 'x') == nullptr);
         require(rindex_nid_postfix(path, 0) == path + 5);
+        require(ffs_nid_postfix(0) == 0 && ffs_nid_postfix(1) == 1 && ffs_nid_postfix(0x80) == 8);
+        require(ffs_nid_postfix(0x1000) == 13 && ffs_nid_postfix(INT_MIN) == 32 && ffs_nid_postfix(-1) == 1);
+        require(ffsl_nid_postfix(0) == 0 && ffsl_nid_postfix(1) == 1 && ffsl_nid_postfix(0x80) == 8);
+        require(ffsl_nid_postfix(0x100000000ll) == 33 && ffsl_nid_postfix(INT64_MIN) == 64 && ffsl_nid_postfix(-1) == 1);
+        require(ffsll_nid_postfix(0) == 0 && ffsll_nid_postfix(1) == 1 && ffsll_nid_postfix(0x80) == 8);
+        require(ffsll_nid_postfix(0x100000000ll) == 33 && ffsll_nid_postfix(LLONG_MIN) == 64 && ffsll_nid_postfix(-1) == 1);
+        require(fls_nid_postfix(0) == 0 && fls_nid_postfix(1) == 1 && fls_nid_postfix(0x80) == 8);
+        require(fls_nid_postfix(0x40000000) == 31 && fls_nid_postfix(INT_MIN) == 32 && fls_nid_postfix(-1) == 32);
         require(flsl_nid_postfix(0) == 0 && flsl_nid_postfix(1) == 1 && flsl_nid_postfix(0x80) == 8);
         require(flsl_nid_postfix(0x100000000ll) == 33 && flsl_nid_postfix(INT64_MIN) == 64 && flsl_nid_postfix(-1) == 64);
+        require(flsll_nid_postfix(0) == 0 && flsll_nid_postfix(1) == 1 && flsll_nid_postfix(0x80) == 8);
+        require(flsll_nid_postfix(0x100000000ll) == 33 && flsll_nid_postfix(LLONG_MIN) == 64 && flsll_nid_postfix(-1) == 64);
     }
     return 0;
 }

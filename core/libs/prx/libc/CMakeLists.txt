@@ -23,6 +23,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(guest_stream_purge_tests ${LIBS_INCLUDE_DIR}/tests/GuestStreamPurge.cpp)
+    target_include_directories(guest_stream_purge_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_stream_purge_tests PRIVATE libc)
+    configure_windows_unwind(guest_stream_purge_tests)
+    add_test(NAME guest_stream_purge COMMAND guest_stream_purge_tests)
+    set_tests_properties(guest_stream_purge PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_stream_purge PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_safe_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestSafeErrors.cpp)
     target_include_directories(guest_safe_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_safe_error_tests PRIVATE libc)
@@ -71,6 +81,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileLock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StandardStreams.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/StreamPurge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestAllocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestArena.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestStacks.cpp
@@ -115,6 +126,17 @@ target_include_directories(libc PRIVATE
 
 target_link_libraries(libc PRIVATE zarchive)
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(libc PRIVATE -ffp-contract=off)
+    if(BUILD_TESTING AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND NOT MSVC)
+        add_test(NAME libc_floating_point_contraction
+                COMMAND ${CMAKE_COMMAND} -DCOMPILER=${CMAKE_CXX_COMPILER}
+                    "-DOPTIONS=$<JOIN:$<TARGET_PROPERTY:libc,COMPILE_OPTIONS>, >"
+                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}/libc_floating_point_contraction
+                    -P ${LIBS_INCLUDE_DIR}/tests/LibcFloatingPointContraction.cmake)
+    endif()
+endif()
+
 if(BUILD_TESTING)
     add_test_executable(guest_update_env_tests ${LIBS_INCLUDE_DIR}/tests/GuestUpdateEnv.cpp)
     target_include_directories(guest_update_env_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -124,7 +146,7 @@ if(BUILD_TESTING)
     foreach(bit RANGE 0 5)
         foreach(source RANGE 0 2)
             add_test(NAME guest_update_env_pending_${bit}_${source} COMMAND guest_update_env_tests $<TARGET_FILE:libc> ${bit} ${source})
-            set_tests_properties(guest_update_env_pending_${bit}_${source} PROPERTIES TIMEOUT 10)
+            set_tests_properties(guest_update_env_pending_${bit}_${source} PROPERTIES TIMEOUT 10 SKIP_RETURN_CODE 77)
             if(WIN32)
                 set_tests_properties(guest_update_env_pending_${bit}_${source} PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
@@ -140,6 +162,21 @@ endif()
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPoint.cpp)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_raise_except_tests ${LIBS_INCLUDE_DIR}/tests/GuestRaiseExcept.cpp)
+    target_include_directories(guest_raise_except_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_raise_except_tests PRIVATE libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_raise_except_tests)
+    add_test(NAME guest_raise_except COMMAND guest_raise_except_tests $<TARGET_FILE:libc>)
+    set(raiseExceptTests guest_raise_except)
+    foreach(exceptionBit RANGE 0 5)
+        add_test(NAME guest_raise_except_trap_${exceptionBit} COMMAND guest_raise_except_tests $<TARGET_FILE:libc> ${exceptionBit})
+        list(APPEND raiseExceptTests guest_raise_except_trap_${exceptionBit})
+    endforeach()
+    set_tests_properties(${raiseExceptTests} PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(${raiseExceptTests} PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_floating_point_tests ${LIBS_INCLUDE_DIR}/tests/GuestFloatingPoint.cpp)
     target_include_directories(guest_floating_point_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_floating_point_tests PRIVATE libc ${CMAKE_DL_LIBS})
@@ -392,6 +429,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_math COMMAND guest_math_tests)
     if(WIN32)
         set_tests_properties(guest_math PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_strtod_subnormal_tests ${LIBS_INCLUDE_DIR}/tests/GuestStrtodSubnormal.cpp)
+    target_include_directories(guest_strtod_subnormal_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_strtod_subnormal_tests PRIVATE libc)
+    configure_windows_unwind(guest_strtod_subnormal_tests)
+    add_test(NAME guest_strtod_subnormal COMMAND guest_strtod_subnormal_tests)
+    if(WIN32)
+        set_tests_properties(guest_strtod_subnormal PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_random_state_tests ${LIBS_INCLUDE_DIR}/tests/GuestRandomState.cpp)
@@ -697,6 +743,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_qsort PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_cxa_guard_tests ${LIBS_INCLUDE_DIR}/tests/GuestCxaGuard.cpp)
+    target_include_directories(guest_cxa_guard_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_cxa_guard_tests PRIVATE libc)
+    configure_windows_unwind(guest_cxa_guard_tests)
+    add_test(NAME guest_cxa_guard COMMAND guest_cxa_guard_tests)
+    set_tests_properties(guest_cxa_guard PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_cxa_guard PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_strftime_tests ${LIBS_INCLUDE_DIR}/tests/GuestStrftime.cpp)
     target_include_directories(guest_strftime_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_strftime_tests PRIVATE libc)
@@ -735,6 +791,11 @@ if(BUILD_TESTING)
     add_test(NAME guest_standard_streams_exclusive_stdout COMMAND guest_standard_stream_tests --exclusive-stdout)
     if(WIN32)
         set_tests_properties(guest_standard_streams guest_standard_streams_closed_stdout guest_standard_streams_exclusive_stdout PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME guest_standard_streams_update_stdout COMMAND guest_standard_stream_tests --update-stdout)
+    if(WIN32)
+        set_tests_properties(guest_standard_streams_update_stdout PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_gets_tests ${LIBS_INCLUDE_DIR}/tests/GuestGets.cpp)
@@ -847,6 +908,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_generic_category PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_future_category_tests ${LIBS_INCLUDE_DIR}/tests/GuestFutureCategory.cpp)
+    target_include_directories(guest_future_category_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_future_category_tests PRIVATE libc)
+    configure_windows_unwind(guest_future_category_tests)
+    add_test(NAME guest_future_category COMMAND guest_future_category_tests)
+    set_tests_properties(guest_future_category PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_future_category PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME guest_new_handler COMMAND guest_new_handler_tests)
     if(WIN32)
         set_tests_properties(guest_new_handler PROPERTIES ENVIRONMENT_MODIFICATION
@@ -906,6 +977,7 @@ if(BUILD_TESTING)
     target_include_directories(unwind_callback_abi_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(unwind_callback_abi_tests PRIVATE libc)
     configure_windows_unwind(unwind_callback_abi_tests)
+    configure_macos_unwind(unwind_callback_abi_tests)
     foreach(callback IN ITEMS backtrace forced_unwind delete_exception end_catch end_catch_gnu)
         add_test(NAME unwind_callback_abi_${callback} COMMAND unwind_callback_abi_tests ${callback})
         if(WIN32)
@@ -926,6 +998,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_bad_optional_access_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_bad_optional_access_tests PRIVATE libc)
     configure_windows_unwind(guest_bad_optional_access_tests)
+    configure_macos_unwind(guest_bad_optional_access_tests)
     add_test(NAME guest_bad_optional_access COMMAND guest_bad_optional_access_tests)
     if(WIN32)
         set_tests_properties(guest_bad_optional_access PROPERTIES ENVIRONMENT_MODIFICATION
@@ -1048,7 +1121,7 @@ if(BUILD_TESTING)
         target_include_directories(cpu_topology_tests PRIVATE ${LIBS_INCLUDE_DIR})
         add_test(NAME cpu_topology COMMAND cpu_topology_tests)
     endif()
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR WIN32)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE OR WIN32)
         add_test_executable(guest_backtrace_tests ${LIBS_INCLUDE_DIR}/tests/GuestBacktrace.cpp)
         target_include_directories(guest_backtrace_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_backtrace_tests PRIVATE libc)
@@ -1100,6 +1173,18 @@ if(WIN32)
         add_test(NAME guest_heap_rounding_overflow COMMAND guest_heap_rounding_tests)
         set_tests_properties(guest_heap_rounding_overflow PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(NOT WIN32)
+    add_test_executable(guest_allocations_oom_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestAllocationsOom.cpp)
+    target_include_directories(guest_allocations_oom_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    set_target_properties(guest_allocations_oom_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_link_libraries(guest_allocations_oom_tests PRIVATE libc)
+    if(BUILD_TESTING)
+        set_target_properties(guest_allocations_oom_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+        add_test(NAME guest_allocations_oom COMMAND guest_allocations_oom_tests)
+        set_tests_properties(guest_allocations_oom PROPERTIES TIMEOUT 60)
     endif()
 endif()
 
@@ -1235,7 +1320,7 @@ if(MINGW)
         add_test(NAME windows_crash_stack_words COMMAND windows_backtrace_report_tests fault)
         set_tests_properties(windows_crash_stack_words PROPERTIES TIMEOUT 20
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;APS5_CRASH_STACK_BYTES=set:2048"
-            PASS_REGULAR_EXPRESSION "FATAL: unhandled exception 0xc0000005[^~]*stack words from rsp[^~]*data at stack words that point outside the stack[^~]*c0ffee0000000000 c0ffee0000000001 c0ffee0000000002 c0ffee0000000003 c0ffee0000000004 c0ffee0000000005 c0ffee0000000006 c0ffee0000000007")
+            PASS_REGULAR_EXPRESSION "FATAL: unhandled exception 0xc0000005.*stack words from rsp.*data at stack words that point outside the stack.*c0ffee0000000000 c0ffee0000000001 c0ffee0000000002 c0ffee0000000003 c0ffee0000000004 c0ffee0000000005 c0ffee0000000006 c0ffee0000000007")
         add_test(NAME windows_crash_without_stack_words COMMAND windows_backtrace_report_tests fault)
         set_tests_properties(windows_crash_without_stack_words PROPERTIES TIMEOUT 20
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;APS5_CRASH_STACK_BYTES=unset:"

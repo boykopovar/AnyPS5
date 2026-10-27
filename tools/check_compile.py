@@ -24,6 +24,7 @@ WITH_VALUE = ("-I", "-L", "-F", "-B", "-D", "-U", "-x", "-include", "--include",
 WITHOUT_VALUE = (*DROP, *PREPROCESSING, "-S", "-fsyntax-only", "-Werror", "-Wall", "-Wextra",
                  "-pedantic", "-pedantic-errors", "-pthread", "-pipe", "-v")
 JOINED_OPTIONS = ("-I", "-L", "-F", "-B", "-D", "-U", "-O", "-g", "-W")
+MAX_RESPONSE_FILE_DEPTH = 20
 
 
 def capture(command, cwd=None, encoding="utf-8"):
@@ -160,6 +161,55 @@ def syntax_only(entry, source):
     return syntax_arguments(arguments, directory, source)
 
 
+def response_arguments(text):
+    if "\0" in text or "\x1a" in text:
+        raise ValueError("unsupported response-file control character")
+    quote = None
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if quote is None and character in "\v\f":
+            raise ValueError("unsupported response-file control character")
+        if quote is not None and character == "\r" and text[index + 1:index + 2] == "\n":
+            raise ValueError("quoted response-file CRLF has compiler-specific meanings")
+        if character == "\\":
+            following = text[index + 1:index + 2]
+            if quote == "'" or following in ("\r", "\n") or (quote == '"' and following not in ('"', "\\", "")):
+                raise ValueError("response-file escape has different GCC and Clang meanings")
+            index += 2
+            continue
+        if character == quote:
+            quote = None
+        elif quote is None and character in ("'", '"'):
+            quote = character
+        index += 1
+    if text.startswith("\ufeff"):
+        raise ValueError("response-file byte order marks have different GCC and Clang meanings")
+    arguments = shlex.split(text)
+    if "" in arguments:
+        raise ValueError("empty response-file options have different GCC and Clang meanings")
+    return arguments
+
+
+def expand_response_files(arguments, directory, seen=frozenset()):
+    expanded = []
+    for argument in arguments:
+        if argument.startswith("@") and len(argument) > 1:
+            response = Path(argument[1:])
+            if not response.is_absolute():
+                response = directory / response
+            resolved = response.resolve()
+            if resolved in seen:
+                raise ValueError(f"response file cycle at {resolved}")
+            if len(seen) >= MAX_RESPONSE_FILE_DEPTH:
+                raise ValueError(f"response file nesting exceeds {MAX_RESPONSE_FILE_DEPTH} levels at {resolved}")
+            nested = response_arguments(response.read_bytes().decode("utf-8"))
+            expanded.extend(expand_response_files(nested, directory, seen | {resolved}))
+        else:
+            expanded.append(argument)
+    return expanded
+
+
 def preprocessor_arguments(argument):
     forwarded = argument[4:].split(",")
     if any(option.startswith("@") for option in forwarded):
@@ -188,9 +238,11 @@ def preprocessor_arguments(argument):
 
 def syntax_arguments(arguments, directory, source):
     validate_arguments(arguments)
-    for argument in arguments[1:]:
-        if argument.startswith("@"):
-            raise ValueError(f"unexpanded response file {argument[1:]}; provide expanded compile arguments before checking syntax")
+    if any(argument.startswith("@") for argument in arguments[1:]):
+        compiler = Path(arguments[0]).stem.lower()
+        if compiler in ("cl", "clang-cl") or any(argument in ("--driver-mode=cl", "--rsp-quoting=windows") for argument in arguments):
+            raise ValueError("Windows-style compiler response files are unsupported; provide expanded arguments")
+    arguments = [arguments[0], *expand_response_files(arguments[1:], directory)]
     wanted = source.resolve()
     trimmed = [arguments[0]]
     index = 1

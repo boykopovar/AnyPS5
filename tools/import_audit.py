@@ -127,16 +127,18 @@ def elf_program_dynamic_symbols(path, data):
         bucket_data = take(data, bucket_offset, buckets * 4, path, "GNU hash buckets")
         chain_offset = bucket_offset + buckets * 4
         maximum = first_symbol - 1
+        visited_chain_entries = set()
         for index in struct.unpack(f"<{buckets}I", bucket_data) if buckets else ():
             if index == 0:
                 continue
             if index < first_symbol:
                 raise AuditError(f"{path}: GNU hash bucket index {index} precedes symbol offset {first_symbol}")
             symbol_index = index
-            while True:
+            while symbol_index not in visited_chain_entries:
                 chain_address = dynamic[0x6ffffef5] + (chain_offset - hash_offset) + (symbol_index - first_symbol) * 4
                 chain_file_offset = file_offset(chain_address, 4, "GNU hash chain")
                 chain_value = unpack("<I", data, chain_file_offset, path, "GNU hash chain entry")[0]
+                visited_chain_entries.add(symbol_index)
                 maximum = max(maximum, symbol_index)
                 if chain_value & 1:
                     break
@@ -722,12 +724,19 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         if name:
             for suffix in (".sprx", ".suprx", ".debug_prx"):
                 if name.endswith(suffix):
-                    normalized = name.removesuffix(suffix) + ".prx"
+                    normalized = name[:-len(suffix)] + ".prx"
                     candidates = windows_names.get(normalized.casefold(), ())
                     if normalized in candidates:
                         return normalized
                     if len(candidates) == 1:
                         return next(iter(candidates))
+            if name.casefold().endswith(".prx"):
+                normalized = name[:-4] + ".prx"
+                candidates = windows_names.get(normalized.casefold(), ())
+                if normalized in candidates:
+                    return normalized
+                if len(candidates) == 1:
+                    return next(iter(candidates))
         return name
 
     def available(name):

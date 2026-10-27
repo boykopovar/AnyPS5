@@ -546,6 +546,19 @@ void KqueueDescriptorClosed(int descriptor) {
     }
 }
 
+void KqueueDescriptorReadShut(int descriptor) {
+    std::vector<KernelEqueueRef> queues;
+    {
+        std::lock_guard lock(g_kqueueMutex);
+        for (const auto& [kqueueDescriptor, queue] : g_kqueues) {
+            queues.push_back(queue);
+        }
+    }
+    for (const auto& queue : queues) {
+        queue->WakeReadWaiters(static_cast<std::uintptr_t>(descriptor));
+    }
+}
+
 extern "C" {
 
 int APS5_VABI kqueue_nid_postfix() {
