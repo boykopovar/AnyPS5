@@ -54,6 +54,7 @@ struct WaiterNode {
     uint32_t waitMode = 0;
     uint64_t resultPattern = 0;
     Outcome outcome = Outcome::Pending;
+    TimedWait::Condition wake;
     WaiterNode* prev = nullptr;
     WaiterNode* next = nullptr;
 };
@@ -226,9 +227,9 @@ int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef) {
     for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
         if (waiter->outcome == WaiterNode::Outcome::Pending) {
             waiter->outcome = WaiterNode::Outcome::Deleted;
+            waiter->wake.NotifyOne();
         }
     }
-    flag->_changed.NotifyAll();
     flag->_changed.Wait(lock, [&] { return flag->_waiters == 0; });
     lock.unlock();
     RetireEventFlag(ef, entry);
@@ -252,9 +253,9 @@ int APS5_VABI sceKernelSetEventFlag(KernelEventFlag ef, uint64_t bit_pattern) {
             } else if (waiter->waitMode & EVF_WAITMODE_CLEAR_PAT) {
                 flag->_pattern &= ~waiter->bitPattern;
             }
+            waiter->wake.NotifyOne();
         }
     }
-    flag->_changed.NotifyAll();
     return SCE_OK;
 }
 
@@ -283,9 +284,9 @@ int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, uint64_t set_pattern,
     for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
         if (waiter->outcome == WaiterNode::Outcome::Pending) {
             waiter->outcome = WaiterNode::Outcome::Canceled;
+            waiter->wake.NotifyOne();
         }
     }
-    flag->_changed.NotifyAll();
     return SCE_OK;
 }
 
@@ -343,7 +344,7 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
         ~WaiterGuard() {
             flag->removeWaiter(node);
             --flag->_waiters;
-            flag->_changed.NotifyAll();
+            if (flag->_deleted) flag->_changed.NotifyAll();
         }
     } waiterGuard{flag, &waiter};
     const auto released = [&] { return waiter.outcome != WaiterNode::Outcome::Pending; };
@@ -351,10 +352,10 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
     const auto waitStart = std::chrono::steady_clock::now();
     if (timeout) {
         const std::uint64_t deadline = TimedWait::DeadlineNanos(*timeout);
-        timedOut = !flag->_changed.WaitUntil(lock, deadline, released);
+        timedOut = !waiter.wake.WaitUntil(lock, deadline, released);
         *timeout = static_cast<KernelUseconds>(TimedWait::RemainingMicros(deadline));
     } else {
-        flag->_changed.Wait(lock, released);
+        waiter.wake.Wait(lock, released);
     }
     KernelTraceWait_nid_postfix("evf", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
     if (waiter.outcome == WaiterNode::Outcome::Satisfied) {
