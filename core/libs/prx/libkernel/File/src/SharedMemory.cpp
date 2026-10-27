@@ -130,9 +130,12 @@ bool IsHostSharedMemoryDescriptor(int descriptor) {
     const std::string_view path(objectPath);
     const auto slash = path.rfind('/');
     if (slash == std::string_view::npos || !path.substr(slash + 1).starts_with("anyps5-shm-")) return false;
-    std::error_code error;
-    const auto directory = std::filesystem::canonical(std::filesystem::temp_directory_path(error), error);
-    return !error && std::string_view(objectPath, slash) == directory.string();
+    static const std::string directory = [] {
+        std::error_code error;
+        auto canonical = std::filesystem::canonical(std::filesystem::temp_directory_path(error), error);
+        return error ? std::string{} : canonical.string();
+    }();
+    return !directory.empty() && std::string_view(objectPath, slash) == directory;
 #else
     (void)descriptor;
     return false;
