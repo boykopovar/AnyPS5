@@ -159,6 +159,7 @@ int APS5_VABI FT_New_Memory_Face_nid_postfix(GuestLibrary* library, const unsign
 int APS5_VABI FT_Open_Face_nid_postfix(GuestLibrary* library, const GuestOpenArgs* args, std::int64_t faceIndex, GuestFaceRec** aface) {
     if (!args) return FT_Err_Invalid_Argument;
     if (!library) return FT_Err_Invalid_Library_Handle;
+    if ((args->flags & FT_OPEN_MEMORY) && (args->flags & FT_OPEN_PATHNAME)) return FT_Err_Invalid_Argument;
     if (args->flags & (FT_OPEN_STREAM | FT_OPEN_DRIVER | FT_OPEN_PARAMS)) {
         throw std::runtime_error("FT_Open_Face: opening from a stream, driver or parameters is not implemented");
     }
