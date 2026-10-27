@@ -102,6 +102,30 @@ void RejectProgramHeaders(Bytes bytes) {
     throw std::runtime_error("Invalid program header was accepted");
 }
 
+void RejectDynamicTags(Bytes bytes, const Relinker::ProgramHeader& header, const std::string& expectedMessage = "") {
+    try {
+        Relinker::ElfReader(std::move(bytes)).ReadDynamicTags(header);
+    } catch (const Relinker::RelinkerException& error) {
+        if (!expectedMessage.empty()) {
+            Require(std::string(error.what()).find(expectedMessage) != std::string::npos);
+        }
+        return;
+    }
+    throw std::runtime_error("Invalid dynamic segment was accepted");
+}
+
+void RejectSegment(Bytes bytes, const Relinker::ProgramHeader& header, const std::string& expectedMessage = "") {
+    try {
+        Relinker::ElfReader(std::move(bytes)).ReadSegment(header);
+    } catch (const Relinker::RelinkerException& error) {
+        if (!expectedMessage.empty()) {
+            Require(std::string(error.what()).find(expectedMessage) != std::string::npos);
+        }
+        return;
+    }
+    throw std::runtime_error("Invalid segment was accepted");
+}
+
 }
 
 int main() {
@@ -358,6 +382,54 @@ int main() {
             Require(reader.TranslateVirtualAddress(0x1000) == 0x240);
             Require(reader.TranslateVirtualAddress(0x101f) == 0x25f);
             RejectAddress(Fixture(), 0x1020);
+        }},
+        {"dynamic segment out of bounds", [] {
+            for (const auto& [offset, size] : {
+                std::pair<std::uint64_t, std::uint64_t>{0x301, 16},
+                std::pair<std::uint64_t, std::uint64_t>{0x2f8, 16},
+                std::pair<std::uint64_t, std::uint64_t>{std::numeric_limits<std::uint64_t>::max() - 15, 32}
+            }) {
+                Relinker::ProgramHeader dynamicHeader{};
+                dynamicHeader.Offset = offset;
+                dynamicHeader.FileSize = size;
+                RejectDynamicTags(Fixture(), dynamicHeader, "Dynamic segment out of bounds");
+            }
+        }},
+        {"unterminated dynamic segment", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 0x240, 1);
+            Write<std::uint64_t>(bytes, 0x248, 10);
+            Write<std::uint64_t>(bytes, 0x250, 2);
+            Write<std::uint64_t>(bytes, 0x258, 20);
+            Relinker::ProgramHeader unterminated{};
+            unterminated.Offset = 0x240;
+            unterminated.FileSize = 32;
+            RejectDynamicTags(bytes, unterminated, "Unterminated dynamic segment");
+            Relinker::ProgramHeader empty{};
+            empty.Offset = 0x240;
+            empty.FileSize = 8;
+            RejectDynamicTags(bytes, empty, "Unterminated dynamic segment");
+            Write<std::uint64_t>(bytes, 0x250, 0);
+            Write<std::uint64_t>(bytes, 0x258, 0);
+            const auto tags = Relinker::ElfReader(std::move(bytes)).ReadDynamicTags(unterminated);
+            Require(tags.size() == 1 && tags[0].Tag == 1 && tags[0].Value == 10);
+        }},
+        {"segment offset out of bounds", [] {
+            for (const auto& [offset, size] : {
+                std::pair<std::uint64_t, std::uint64_t>{0x301, 0},
+                std::pair<std::uint64_t, std::uint64_t>{0x2f8, 16},
+                std::pair<std::uint64_t, std::uint64_t>{std::numeric_limits<std::uint64_t>::max() - 15, 32}
+            }) {
+                Relinker::ProgramHeader header{};
+                header.Offset = offset;
+                header.FileSize = size;
+                RejectSegment(Fixture(), header, "Segment offset out of bounds");
+            }
+            Relinker::ProgramHeader valid{};
+            valid.Offset = 0x240;
+            valid.FileSize = 32;
+            const auto segment = Relinker::ElfReader(Fixture()).ReadSegment(valid);
+            Require(segment.size() == 32);
         }},
     };
     std::size_t failures = 0;
