@@ -54,6 +54,7 @@ constexpr std::uint32_t Width = 64;
 constexpr std::uint32_t Height = 16;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Rgba32FloatInfo = 0x8738u;
+constexpr std::uint32_t Rgba8Info = 0x8028u;
 constexpr std::uint32_t LinearAttrib3 = 0x09000000u;
 constexpr std::uint32_t Float32AbgrExport = 9;
 constexpr std::uint32_t NoInput = 0xffffffffu;
@@ -66,7 +67,12 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 16>, 4> Programs{};
+constexpr std::array<std::array<float, 4>, 6> LeftHalf{{
+    {-1.0f, -1.0f, 0.5f, 1.0f}, {0.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 1.0f, 0.5f, 1.0f},
+    {0.0f, -1.0f, 0.5f, 1.0f}, {0.0f, 1.0f, 0.5f, 1.0f}, {-1.0f, 1.0f, 0.5f, 1.0f}
+}};
+
+alignas(256) std::array<std::array<std::uint32_t, 16>, 15> Programs{};
 std::size_t programCount = 0;
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -74,7 +80,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-std::span<const std::uint32_t> Program(std::uint32_t fixedVgpr, std::uint32_t stippleVgpr) {
+std::span<const std::uint32_t> Program(std::uint32_t fixedVgpr, std::uint32_t stippleVgpr, std::uint32_t blueConstant = 0x80u) {
     Require(programCount < Programs.size(), "too many test programs");
     auto& code = Programs[programCount++];
     std::size_t at = 0;
@@ -83,7 +89,7 @@ std::span<const std::uint32_t> Program(std::uint32_t fixedVgpr, std::uint32_t st
     code[at++] = 0x2c000000u | (21u << 17u) | (fixedVgpr << 9u) | 0x90u;
     code[at++] = 0x7e000c00u | (20u << 17u) | (256u + 20u);
     code[at++] = 0x7e000c00u | (21u << 17u) | (256u + 21u);
-    code[at++] = stippleVgpr == NoInput ? 0x7e000280u | (22u << 17u) : 0x7e000c00u | (22u << 17u) | (256u + stippleVgpr);
+    code[at++] = stippleVgpr == NoInput ? 0x7e000200u | blueConstant | (22u << 17u) : 0x7e000c00u | (22u << 17u) | (256u + stippleVgpr);
     code[at++] = 0x7e0002f2u | (23u << 17u);
     code[at++] = 0xf800180fu;
     code[at++] = 0x17161514u;
