@@ -1090,12 +1090,13 @@ void TestWithoutAllocators() {
 }
 
 void TestOptionalVideoBuffersRespectMemoryLimit() {
-    const auto run = [](int textureLimit, int expectedTextures) {
+    const auto run = [](int textureLimit, int expectedTextures, bool unsynced) {
         SetTextureLimit(textureLimit);
         AvPlayerInitData init = InitData(nullptr);
         init.num_output_video_framebuffers = 2;
         auto* player = sceAvPlayerInit(&init);
         Check(player != nullptr, "init with limited texture memory failed");
+        if (unsynced) Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode with limited texture memory rejected");
         Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source with limited texture memory failed");
         Check(WaitFor([&] { return TextureCount() == expectedTextures && sceAvPlayerIsActive(player); }), "unexpected optional video buffer count");
         AvPlayerFrameInfoEx frame{};
@@ -1105,9 +1106,13 @@ void TestOptionalVideoBuffersRespectMemoryLimit() {
         Check(TextureCount() == 0, "limited texture allocations were not released");
     };
 
-    run(2, 2);
-    run(13, 2);
-    run(14, 14);
+    run(2, 2, false);
+    run(5, 2, false);
+    run(6, 6, false);
+    run(14, 6, false);
+    run(5, 2, true);
+    run(13, 6, true);
+    run(14, 14, true);
     SetTextureLimit(std::nullopt);
 }
 
@@ -1161,7 +1166,7 @@ void TestPs5ExtendedInitLayout() {
     constexpr std::size_t Ps5ThreadParameters = 0x78;
     constexpr std::size_t Ps5VideoFrameBuffers = 0x228;
     constexpr std::int32_t Buffers = 3;
-    constexpr int DecodeAheadBuffers = 12;
+    constexpr int DecodeAheadBuffers = 4;
     static_assert(offsetof(AvPlayerInitDataEx, audio_decoder_priority) == Ps5AutoStart);
     const auto run = [&](bool autoStart) {
         Events events;

@@ -33,7 +33,8 @@ constexpr std::uint32_t VideoBufferAlignment = 0x100;
 constexpr std::uint32_t AudioBufferAlignment = 0x10;
 constexpr std::uint32_t AudioChunkSamples = 1024;
 constexpr std::uint32_t AudioMaxChannels = 8;
-constexpr std::uint32_t VideoDecodeAheadFrames = 12;
+constexpr std::uint32_t VideoDecodeAheadFrames = 4;
+constexpr std::uint32_t UnsyncedVideoDecodeAheadFrames = 12;
 constexpr std::size_t VideoPacketLimit = 30;
 constexpr std::size_t AudioPacketLimit = 8;
 constexpr std::size_t AudioOnlyPacketLimit = 30;
@@ -722,16 +723,20 @@ private:
 
     void addVideoDecodeAheadBuffers() {
         if (video.stream < 0) return;
+        if (syncMode != SyncModeDefault && addVideoBuffers(UnsyncedVideoDecodeAheadFrames)) return;
+        addVideoBuffers(VideoDecodeAheadFrames);
+    }
 
+    bool addVideoBuffers(std::uint32_t count) {
         const auto& memory = settings.memory;
         std::vector<std::uint8_t*> extra;
-        extra.reserve(VideoDecodeAheadFrames);
-        for (std::uint32_t index = 0; index < VideoDecodeAheadFrames; ++index) {
+        extra.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index) {
             auto* buffer = static_cast<std::uint8_t*>(memory.allocate_texture(
                 memory.object_ptr, VideoBufferAlignment, video.bufferSize));
             if (!buffer) {
                 for (auto* allocated : extra) memory.deallocate_texture(memory.object_ptr, allocated);
-                return;
+                return false;
             }
             extra.push_back(buffer);
         }
@@ -739,6 +744,7 @@ private:
             video.allocated.push_back(buffer);
             video.free.push_back(buffer);
         }
+        return true;
     }
 
     void releaseDecoders() {
