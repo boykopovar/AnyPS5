@@ -6307,7 +6307,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         // The whole-layer copies below overwrite the interior units of the span; the edge units
         // keep a neighbour's shadowed results in the rest of their bytes, which reach the import
         // first (this write-back's stamps then make those units stale).
-        PublishShadow(firstStored, static_cast<std::size_t>(lastStored - firstStored), PublishScope::PartialUnits, PublishReason::Upload);
+        PublishShadow(firstStored, static_cast<std::size_t>(lastStored - firstStored), drawOriginal != nullptr ? PublishScope::Whole : PublishScope::PartialUnits, PublishReason::Upload);
         // The surface lives in host-imported memory: the retiler writes into device scratch and the
         // untouched blocks are copied into the imported bytes in place, recorded behind the work that
         // produced the image; nothing crosses to the CPU.
