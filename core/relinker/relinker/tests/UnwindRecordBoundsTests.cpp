@@ -52,7 +52,7 @@ int main() {
         auto empty = Fixture();
         Io::WriteU64(empty, 112, 0);
         Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(empty, {load, eh}, {}, {}).empty());
-        for (int kind = 0; kind < 13; ++kind) {
+        for (int kind = 0; kind < 14; ++kind) {
             auto bytes = Fixture(); auto segment = load;
             switch (kind) {
                 case 0: Io::WriteU32(bytes, 64, 0x1000); break;
@@ -95,6 +95,19 @@ int main() {
                     bytes[99] = 0x80;
                     break;
                 }
+                case 13: {
+                    segment.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
+                    eh.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
+                    Io::WriteU64(bytes, 4, 0xFFFFFFFFFFFF0040ULL);
+                    bytes[3] = 0x11;
+                    bytes[16] = 0xF0;
+                    bytes[17] = 0x8F;
+                    bytes[18] = 0x84;
+                    bytes[19] = 0x00;
+                    Io::WriteU32(bytes, 20, 0x4C);
+                    Io::WriteU64(bytes, 104, 0x800);
+                    break;
+                }
             }
             bool rejected = false;
             std::vector<Domain::ProgramHeader> headers = {segment, eh};
@@ -102,12 +115,12 @@ int main() {
                 Domain::ProgramHeader high{}; high.Type = 1; high.MappedAddress = 0xFFFFFFFFFFFFF000ULL; high.FileSize = 0x100;
                 headers.push_back(high);
             }
-            if (kind == 10) {
+            if (kind == 10 || kind == 13) {
                 Domain::ProgramHeader funcSeg{}; funcSeg.Type = 1; funcSeg.MappedAddress = 0x800; funcSeg.FileSize = 0x20;
                 headers = {segment, eh, funcSeg};
             }
             try { Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {}); }
-            catch (const std::exception&) { rejected = true; }
+            catch (const Relinker::RelinkerException&) { rejected = true; }
             Require(rejected);
         }
         auto tableOverflow = Fixture();
@@ -352,6 +365,6 @@ int main() {
             lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaS2Rejected);
-        std::cout << "30 unwind record cases passed\n";
+        std::cout << "31 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
