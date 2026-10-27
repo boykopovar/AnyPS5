@@ -1,3 +1,4 @@
+#include "prx/libSceNpUtility/include/InventoryExports.hpp"
 #include "prx/libSceNpUtility/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -156,6 +157,23 @@ int CheckComment(const char* comment) {
 }
 
 extern "C" {
+
+int APS5_VABI sceNpAdvppBandwidthDownloadBegin() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpAdvppBandwidthDownloadEnd() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpBandwidthTestInitStartDownloadInternal() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpBandwidthTestInitStartUploadInternal() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int SceNpUtilityModuleLoaded_nid_no_patch = 1;
 
