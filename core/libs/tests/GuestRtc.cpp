@@ -139,6 +139,10 @@ int main(int argc, char** argv) {
     Require(sceRtcSetTick(&converted, &tick) == 0 && Equal(converted, RtcDateTime{9999, 12, 31, 23, 59, 59, 999999}));
     tick.tick = maxTick + 1;
     Require(sceRtcSetTick(&converted, &tick) == 0 && Equal(converted, RtcDateTime{10000, 1, 1, 0, 0, 0, 0}));
+    RtcTick convertedTick{};
+    Require(sceRtcConvertDateTimeToTick(&leapDay, &convertedTick) == 0 && convertedTick.tick == leapDayTick);
+    RtcDateTime fromConvertedTick{};
+    Require(sceRtcConvertTickToDateTime(&tick, &fromConvertedTick) == 0 && Equal(fromConvertedTick, RtcDateTime{10000, 1, 1, 0, 0, 0, 0}));
 
     Require(sceRtcGetCurrentClock(nullptr, 0) == invalidPointer);
     Require(sceRtcGetCurrentClock(&converted, 0) == 0 && sceRtcCheckValid(&converted) == 0);
@@ -146,6 +150,8 @@ int main(int argc, char** argv) {
     Require(sceRtcGetCurrentClock(&converted, -300) == 0 && sceRtcCheckValid(&converted) == 0);
     Require(sceRtcGetCurrentClockLocalTime(nullptr) == invalidPointer);
     Require(sceRtcGetCurrentClockLocalTime(&converted) == 0 && sceRtcCheckValid(&converted) == 0);
+    Require(sceRtcGetCurrentClockUtc(nullptr) == invalidPointer);
+    Require(sceRtcGetCurrentClockUtc(&converted) == 0 && sceRtcCheckValid(&converted) == 0);
 
     RtcDateTime epoch{1970, 1, 1, 0, 0, 0, 0};
     std::int64_t seconds = -1;
@@ -153,6 +159,8 @@ int main(int argc, char** argv) {
     RtcDateTime millennium{2000, 1, 1, 0, 0, 0, 0};
     Require(sceRtcGetTime_t(&millennium, &seconds) == 0 && seconds == 946684800);
     Require(sceRtcSetTime_t(&converted, 946684800) == 0 && Equal(converted, millennium));
+    Require(sceRtcConvertDateTimeToTime_t(&millennium, &seconds) == 0 && seconds == 946684800);
+    Require(sceRtcConvertTime_tToDateTime(946684800, &converted) == 0 && Equal(converted, millennium));
     Require(sceRtcSetTime_t(&converted, -1) == 0 && Equal(converted, RtcDateTime{2106, 2, 7, 6, 28, 15, 0}));
     Require(sceRtcSetTime_t(&converted, 0x100000001ll) == 0 && Equal(converted, RtcDateTime{1970, 1, 1, 0, 0, 1, 0}));
     Require(sceRtcSetTime_t(&converted, -0x80000000ll) == 0 && Equal(converted, RtcDateTime{2038, 1, 19, 3, 14, 8, 0}));
@@ -944,6 +952,8 @@ int main(int argc, char** argv) {
     RtcDateTime sentinel{0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaaaaaau};
     RtcDateTime ranged = sentinel;
     Require(sceRtcSetTime_t(&ranged, -1) == invalidValue && Equal(ranged, sentinel));
+    Require(sceRtcSetTime_t(nullptr, -1) == invalidValue && sceRtcSetTime_t(nullptr, std::numeric_limits<std::int64_t>::min()) == invalidValue);
+    Require(sceRtcSetTime_t(nullptr, 0) == static_cast<int>(0x80B50002) && sceRtcSetTime_t(nullptr, 1) == static_cast<int>(0x80B50002));
     Require(sceRtcSetTime_t(&ranged, std::numeric_limits<std::int64_t>::min()) == invalidValue && Equal(ranged, sentinel));
     Require(sceRtcSetTime_t(&ranged, 4294967296ll) == 0 && Equal(ranged, RtcDateTime{2106, 2, 7, 6, 28, 16, 0}));
     Require(sceRtcSetTime_t(&ranged, 253402300800ll) == 0 && Equal(ranged, RtcDateTime{10000, 1, 1, 0, 0, 0, 0}));

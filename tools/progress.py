@@ -531,6 +531,10 @@ def validate_snapshot(snapshot):
                 raise ValueError(f"{location} must be an object with a string name")
             if "shared_sources" in group and not isinstance(group["shared_sources"], str):
                 raise ValueError(f"{location}.shared_sources must be a string")
+            if section == "libraries":
+                for field in ("done", "todo"):
+                    if field in group and (type(group[field]) is not int or group[field] < 0):
+                        raise ValueError(f"{location}.{field} must be a non-negative integer")
             for field in ("done_names", "todo_names", "inert_names"):
                 values = group.get(field, [])
                 if not isinstance(values, list) or any(not isinstance(value, str) for value in values):

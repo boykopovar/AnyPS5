@@ -1472,11 +1472,15 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
     }
     if (!write && offset == nullptr && File::IsDirectoryDescriptor(d)) return SceErrorFromErrno(GUEST_EISDIR);
     if (write && iovcnt > 1 && total <= static_cast<std::size_t>(std::numeric_limits<int>::max()) && File::Appends(d)) {
-        std::vector<char> gathered;
-        gathered.reserve(total);
+        std::vector<char> gathered(total);
+        std::size_t gatheredOffset = 0;
         for (int i = 0; i < iovcnt; ++i) {
-            const auto* base = static_cast<const char*>(iov[i].base);
-            gathered.insert(gathered.end(), base, base + iov[i].length);
+            if (iov[i].length == 0) continue;
+            SIZE_T copied = 0;
+            if (!ReadProcessMemory(GetCurrentProcess(), iov[i].base, gathered.data() + gatheredOffset, iov[i].length, &copied) || copied != iov[i].length) {
+                return SceErrorFromErrno(GUEST_EFAULT);
+            }
+            gatheredOffset += iov[i].length;
         }
         const auto result = offset != nullptr ? NativePositionedTransfer(d, gathered.data(), gathered.size(), *offset, true)
                                               : NativeTransferBuffer(d, gathered.data(), gathered.size(), true);

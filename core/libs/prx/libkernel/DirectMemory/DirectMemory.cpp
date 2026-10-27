@@ -207,6 +207,7 @@ namespace {
 
 constexpr int GuestMapFixedFlag = 0x10;
 constexpr int GuestProtGpuReadWrite = 0x30;
+constexpr int GuestProtCpuExecute = 0x4;
 
 #if defined(__linux__)
 void* MapAtOrAbove(std::uintptr_t start, size_t len, int prot, size_t alignment) {
@@ -1045,6 +1046,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     if (physStart < 0 || (static_cast<std::uint64_t>(physStart) & (PS5_PAGE_SIZE - 1)) != 0 || static_cast<std::uint64_t>(physStart) >= DIRECT_MEMORY_SIZE || len > DIRECT_MEMORY_SIZE - static_cast<std::uint64_t>(physStart)) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
+    if ((prot & ~0x3F7) == 0 && (prot & GuestProtCpuExecute) != 0) return SCE_KERNEL_ERROR_EINVAL;
     GuestAllocations::Mutation mutation;
     flags = PlaceHintInReservation(*addr, len, flags);
     if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;

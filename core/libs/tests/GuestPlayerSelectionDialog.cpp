@@ -97,7 +97,12 @@ int main() {
     Require(scePlayerSelectionDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(scePlayerSelectionDialogTerminate() == 0);
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
-    Require(scePlayerSelectionDialogGetStatus() == 0);
+    Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
+    Require(scePlayerSelectionDialogOpen(&param) == kErrNotInitialized);
     Require(scePlayerSelectionDialogClose() == kErrNotInitialized);
+    Require(scePlayerSelectionDialogGetResult(nullptr) == kErrArgNull);
+    Require(scePlayerSelectionDialogGetResult(&result) == kErrNotInitialized);
+    Require(scePlayerSelectionDialogGetStatus() == 0);
+    Require(scePlayerSelectionDialogUpdateStatus() == 0);
     Require(sceUserServiceTerminate() == 0);
 }

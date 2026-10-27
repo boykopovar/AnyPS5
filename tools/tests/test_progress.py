@@ -11,6 +11,33 @@ import progress
 
 
 class ProgressSnapshotTests(unittest.TestCase):
+    def test_library_counters_reject_invalid_types_and_negative_values(self):
+        for field in ("done", "todo"):
+            for value in (None, True, False, "1", 1.5, [], {}, -1, float("nan"), float("inf")):
+                with self.subTest(field=field, value=value):
+                    snapshot = self.snapshot()
+                    snapshot["libraries"]["groups"] = [{"name": "libExample", "done": 0, "todo": 0, field: value}]
+                    self.assert_rejected(snapshot, f"libraries.groups[0].{field} must be a non-negative integer")
+
+    def test_library_counter_validation_preserves_optional_and_large_counts(self):
+        groups = [{"name": "libLegacy"}, {"name": "libHalf", "done": 1},
+                  {"name": "libShared", "shared_sources": "libExample"},
+                  {"name": "libEmpty", "done": 0, "todo": 0},
+                  {"name": "libLarge", "done": 10**200, "todo": 10**200}]
+        snapshot = self.snapshot()
+        snapshot["libraries"]["groups"] = groups
+        with tempfile.TemporaryDirectory() as directory:
+            before, after = Path(directory) / "before.json", Path(directory) / "after.json"
+            before.write_text(json.dumps(self.snapshot()), encoding="utf-8")
+            after.write_text(json.dumps(snapshot), encoding="utf-8")
+            output = io.StringIO()
+            with patch("sys.stdout", output):
+                self.assertEqual(progress.main(["--compare", str(before), str(after)]), 0)
+            self.assertIn("Counts unavailable", output.getvalue())
+            self.assertIn("Shared sources", output.getvalue())
+            self.assertIn("No exports", output.getvalue())
+            self.assertIn("50.00%", output.getvalue())
+
     def snapshot(self):
         return {"libraries": {"percent": 0, "groups": []}, "shaders": {"percent": 0, "groups": []}}
 

@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <span>
 #include <string>
@@ -122,8 +123,11 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> ReadStart(AgcDriver::Vulkan
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool bufferCopy = argc > 1 && std::string(argv[1]) == "--buffer-copy";
+        if (bufferCopy) AgcDriver::Graphics::SetDirectDepthCopy(false);
+        const bool forcedOff = bufferCopy || std::getenv("APS5_NO_DIRECT_DEPTH_COPY") != nullptr;
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Require(AgcDriver::Graphics::DepthSliceBytes(PlaneExtent, 4u) == PlaneBytes, "the 384x200 depth plane is not six 64 KiB tiles");
@@ -284,7 +288,11 @@ int main() {
         stored = Since(before);
         Require(stored.stores == 1 && stored.units == Units, "a lookup of every layer of an array did not store the depth plane over its second layer");
         for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(layerPlane, unit, 0.25f, Texels(unit), "a lookup of every layer of an array, the depth plane over its second layer");
-        std::puts("depth plane partial store tests passed");
+        const auto direct = AgcDriver::Graphics::DirectDepthCopyCount();
+        Require(!forcedOff || direct == 0, "depth plane copies went directly with the buffer path forced");
+        Require(forcedOff || !device->graphicsContext().maintenance8 || direct > 0, "the device enables VK_KHR_maintenance8 but no depth plane copy went directly");
+        if (!forcedOff && direct == 0) std::puts("direct depth copies not exercised: the device lacks VK_KHR_maintenance8 or no storage format pairs with the depth plane");
+        std::printf("depth plane partial store tests passed (%s, %llu direct depth copies)\n", forcedOff ? "buffer path" : "default path", static_cast<unsigned long long>(direct));
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

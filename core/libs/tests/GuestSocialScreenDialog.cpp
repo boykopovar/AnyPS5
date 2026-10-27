@@ -51,6 +51,8 @@ int main() {
     Require(sceSocialScreenDialogClose() == 0);
     Require(sceSocialScreenDialogTerminate() == 0);
     Require(sceSocialScreenDialogTerminate() == kErrNotInitialized);
+    Require(sceSocialScreenDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSocialScreenDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceSocialScreenDialogGetStatus() == kStatusNone);
     Require(sceSocialScreenDialogUpdateStatus() == kStatusNone);
 
@@ -62,4 +64,9 @@ int main() {
     Require(sceSocialScreenDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(sceSocialScreenDialogTerminate() == 0);
+    Require(sceSocialScreenDialogTerminate() == kErrNotInitialized);
+    Require(sceSocialScreenDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSocialScreenDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceSocialScreenDialogGetStatus() == kStatusNone);
+    Require(sceSocialScreenDialogUpdateStatus() == kStatusNone);
 }

@@ -604,6 +604,40 @@ static int CheckExclusiveStandardOutput() {
     return 0;
 }
 
+static int CheckUpdateStandardOutput() {
+    const auto filename = "anyps5-update-stdout-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    auto* const stream = __stdoutp_nid_postfix;
+    Require(freopen_nid_postfix(filename.c_str(), "a+b", stream) == stream);
+    Require(fputs_nid_postfix("0123456789", stream) >= 0);
+    const auto readFirst = [stream] { Require(fseek_nid_postfix(stream, 0, SEEK_SET) == 0 && fgetc_nid_postfix(stream) == '0'); };
+    readFirst();
+    Require(puts_nid_postfix("A") != EOF);
+    readFirst();
+    Require(printf_nid_postfix("%s", "B") == 1);
+    readFirst();
+    Require(PrintStandard("%s", "C") == 1);
+    readFirst();
+    Require(printf_s_nid_postfix("%s", "D") == 1);
+    readFirst();
+    Require(wprintf_nid_postfix(u"E") == 1);
+    Require(ferror_nid_postfix(stream) == 0);
+    Require(freopen_nid_postfix(filename.c_str(), "rb", stream) == stream && fgetc_nid_postfix(stream) == '0');
+    *__error_nid_postfix() = 0;
+    Require(puts_nid_postfix("A") == EOF && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(printf_nid_postfix("%s", "B") == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(PrintStandard("%s", "C") == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(printf_s_nid_postfix("%s", "D") == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(wprintf_nid_postfix(u"E") == -1 && *__error_nid_postfix() == 9);
+    Require(ferror_nid_postfix(stream) != 0 && fclose_nid_postfix(stream) == 0);
+    Require(CheckFileBytes(filename, "0123456789A\nBCDE", "a+b", true));
+    Require(std::filesystem::remove(filename));
+    return 0;
+}
+
 #ifdef _WIN32
 static void CheckStandardStreamDeleteSharing() {
     int index = 0;
@@ -625,6 +659,7 @@ static void CheckStandardStreamDeleteSharing() {
 #endif
 
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string_view(argv[1]) == "--update-stdout") return CheckUpdateStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--closed-stdout") return CheckClosedStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--exclusive-stdout") return CheckExclusiveStandardOutput();
     CheckClosedStreamWrites();

@@ -280,6 +280,33 @@ static void CheckRandom() {
     Require(std::any_of(values.begin() + 1, values.end(), [&](std::uint32_t value) { return value != values[0]; }));
 }
 
+static void CheckByteOrderConversion() {
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetHtons_nid_postfix(0x1234) == 0x3412);
+    Require(sceNetNtohs_nid_postfix(0x3412) == 0x1234);
+    Require(sceNetHtons_nid_postfix(0x1234) == static_cast<std::uint16_t>(htons(0x1234)));
+    Require(sceNetHtonl_nid_postfix(0x12345678u) == 0x78563412u);
+    Require(sceNetNtohl_nid_postfix(0x78563412u) == 0x12345678u);
+    Require(sceNetHtonl_nid_postfix(0x12345678u) == static_cast<std::uint32_t>(htonl(0x12345678u)));
+    Require(sceNetHtonll(0x0123456789abcdefULL) == 0xefcdab8967452301ULL);
+    Require(sceNetNtohll(0xefcdab8967452301ULL) == 0x0123456789abcdefULL);
+    Require(sceNetHtons_nid_postfix(0x1212) == 0x1212);
+    Require(sceNetHtonl_nid_postfix(0x12343412u) == 0x12343412u);
+    Require(sceNetHtonll(0x0123456767452301ULL) == 0x0123456767452301ULL);
+    for (const std::uint16_t value : {std::uint16_t{0x0000}, std::uint16_t{0x0001}, std::uint16_t{0x00ff}, std::uint16_t{0x8000},
+                                      std::uint16_t{0xff00}, std::uint16_t{0xffff}}) {
+        Require(sceNetNtohs_nid_postfix(sceNetHtons_nid_postfix(value)) == value);
+    }
+    for (const std::uint32_t value : {0x00000000u, 0x00000001u, 0x0000ffffu, 0x80000000u, 0xff000000u, 0xffffffffu}) {
+        Require(sceNetNtohl_nid_postfix(sceNetHtonl_nid_postfix(value)) == value);
+    }
+    for (const std::uint64_t value : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{0x00000000ffffffff}, std::uint64_t{0xffffffff00000000},
+                                      std::uint64_t{0x8000000000000000}, UINT64_MAX}) {
+        Require(sceNetNtohll(sceNetHtonll(value)) == value);
+    }
+    Require(*sceNetErrnoLoc() == 123);
+}
+
 static void CheckInitParam() {
     alignas(8) std::array<std::uint8_t, 64> parameter{};
     const auto* initialize = reinterpret_cast<const NetInitializeParameter*>(parameter.data());
@@ -2100,6 +2127,7 @@ int main() {
     CheckPoolStats();
     CheckIfName();
     CheckRandom();
+    CheckByteOrderConversion();
     CheckNetMemory();
     CheckNetstat();
     CheckEmptyEpoll();

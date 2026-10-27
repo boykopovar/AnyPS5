@@ -345,7 +345,27 @@ char* APS5_VABI rindex_nid_postfix(const char* s, int c) {
     return strrchr_nid_postfix(s, c);
 }
 
+int APS5_VABI ffs_nid_postfix(int value) {
+    return value == 0 ? 0 : std::countr_zero(static_cast<unsigned int>(value)) + 1;
+}
+
+int APS5_VABI ffsl_nid_postfix(std::int64_t value) {
+    return value == 0 ? 0 : std::countr_zero(static_cast<std::uint64_t>(value)) + 1;
+}
+
+int APS5_VABI ffsll_nid_postfix(std::int64_t value) {
+    return value == 0 ? 0 : std::countr_zero(static_cast<std::uint64_t>(value)) + 1;
+}
+
+int APS5_VABI fls_nid_postfix(int mask) {
+    return mask == 0 ? 0 : 32 - std::countl_zero(static_cast<std::uint32_t>(mask));
+}
+
 int APS5_VABI flsl_nid_postfix(std::int64_t mask) {
+    return mask == 0 ? 0 : 64 - std::countl_zero(static_cast<std::uint64_t>(mask));
+}
+
+int APS5_VABI flsll_nid_postfix(std::int64_t mask) {
     return mask == 0 ? 0 : 64 - std::countl_zero(static_cast<std::uint64_t>(mask));
 }
 

@@ -371,11 +371,17 @@ constexpr uint32_t GB_CELLS = 126 * 190;
 struct Gb18030Tables {
     std::span<const uint32_t[3]> twoByte;
     std::span<const uint32_t[3]> fourByte;
-    std::span<const uint32_t[2]> fallback;
+    bool edition2005;
 };
 
-constexpr Gb18030Tables GB18030_2000{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, {}};
-constexpr Gb18030Tables GB18030_2005{Gb18030::TWO_BYTE_2005, Gb18030::FOUR_BYTE_2005, Gb18030::FALLBACK_2005};
+constexpr Gb18030Tables GB18030_2000{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, false};
+constexpr Gb18030Tables GB18030_2005{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, true};
+constexpr uint32_t GB18030_SWAPPED_CELL = (0xA8 - 0x81) * 190 + (0xBC - 0x41);
+constexpr uint32_t GB18030_SWAPPED_LINEAR = (5 * 126 + (0xF4 - 0x81)) * 10 + 7;
+
+bool mapsGb18030Supplementary(const Gb18030Tables& tables, uint32_t code) {
+    return tables.edition2005 && code >= 0x20000 && code <= 0x2FFFF;
+}
 
 const Gb18030Tables* gb18030Tables(const void* profile) {
     if (profile == nullptr) return nullptr;
@@ -400,8 +406,18 @@ const uint32_t* findRun(std::span<const uint32_t[3]> runs, uint32_t key) {
 }
 
 uint32_t gb18030Cell(const Gb18030Tables& tables, uint32_t cell) {
+    if (tables.edition2005 && cell == GB18030_SWAPPED_CELL) return 0x1E3F;
     const uint32_t* run = findRun(tables.twoByte, cell);
     return run ? run[1] + cell - run[0] : Cp936::TO_UCS2[cell];
+}
+
+void putGbLinear(uint32_t linear, uint8_t* mbcs) {
+    mbcs[3] = static_cast<uint8_t>(0x30 + linear % 10);
+    linear /= 10;
+    mbcs[2] = static_cast<uint8_t>(0x81 + linear % 126);
+    linear /= 126;
+    mbcs[1] = static_cast<uint8_t>(0x30 + linear % 10);
+    mbcs[0] = static_cast<uint8_t>(0x81 + linear / 10);
 }
 
 void putGbCell(uint32_t cell, uint8_t* mbcs) {
@@ -427,8 +443,9 @@ int decodeGb18030(const Gb18030Tables& tables, const uint8_t* mbcs, uint32_t mbc
         const uint32_t linear = (((lead - 0x81) * 10 + (second - 0x30)) * 126 + (mbcs[2] - 0x81)) * 10 + (mbcs[3] - 0x30);
         const uint32_t* run = findRun(tables.fourByte, linear);
         if (!run) return unassigned(4, length);
+        code = tables.edition2005 && linear == GB18030_SWAPPED_LINEAR ? 0xE7C7 : run[1] + linear - run[0];
+        if (code > 0xFFFF && !mapsGb18030Supplementary(tables, code)) return unassigned(4, length);
         length = 4;
-        code = run[1] + linear - run[0];
         return 0;
     }
     if (second < 0x40 || second == 0x7F || second == 0xFF) return rejectTrail(second, 2, length);
@@ -463,22 +480,16 @@ int encodeGb18030(const Gb18030Tables& tables, uint32_t code, uint8_t* mbcs, uin
         length = 2;
         return 0;
     }
-    for (const auto& run : tables.fourByte) {
-        if (code - run[1] >= run[2]) continue;
-        uint32_t linear = run[0] + code - run[1];
-        mbcs[3] = static_cast<uint8_t>(0x30 + linear % 10);
-        linear /= 10;
-        mbcs[2] = static_cast<uint8_t>(0x81 + linear % 126);
-        linear /= 126;
-        mbcs[1] = static_cast<uint8_t>(0x30 + linear % 10);
-        mbcs[0] = static_cast<uint8_t>(0x81 + linear / 10);
+    if (code > 0xFFFF && !mapsGb18030Supplementary(tables, code)) return CES_ERROR_UNASSIGNED_CODE;
+    if (tables.edition2005 && code == 0xE7C7) {
+        putGbLinear(GB18030_SWAPPED_LINEAR, mbcs);
         length = 4;
         return 0;
     }
-    for (const auto& entry : tables.fallback) {
-        if (entry[0] != code) continue;
-        putGbCell(entry[1], mbcs);
-        length = 2;
+    for (const auto& run : tables.fourByte) {
+        if (code - run[1] >= run[2]) continue;
+        putGbLinear(run[0] + code - run[1], mbcs);
+        length = 4;
         return 0;
     }
     return CES_ERROR_UNASSIGNED_CODE;

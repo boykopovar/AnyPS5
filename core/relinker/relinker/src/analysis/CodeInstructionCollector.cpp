@@ -498,7 +498,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
                 const auto offset = address - header.MappedAddress;
                 const auto info = decoder.DecodeInstruction(text.data() + offset, text.size() - offset);
                 addAddressTakenRoot(address, text.data() + offset, info);
-                if (info.HasBranchTarget && !info.HasRipRelativeDisp) addRoot(static_cast<std::uint64_t>(static_cast<std::int64_t>(address + info.Length) + info.BranchDisp));
+                if (info.HasBranchTarget && !info.HasRipRelativeDisp) addRoot(address + info.Length + static_cast<std::uint64_t>(info.BranchDisp));
             }
         }
     } while (roots.size() != previousRoots);

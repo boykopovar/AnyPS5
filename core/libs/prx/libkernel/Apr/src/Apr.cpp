@@ -589,10 +589,19 @@ struct Deferred {
 std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::uint32_t start = 0, ReadCursor read = {}, bool defer = false) {
     std::uint32_t cursor = start;
     while (cursor < buffer.offset) {
+        if (buffer.offset - cursor < Apr::NopHeaderBytes) throw std::runtime_error("APR: truncated command buffer");
+        std::uint32_t first;
+        std::memcpy(&first, buffer.base + cursor, sizeof(first));
+        if (Apr::IsNopHeader(first)) {
+            const std::uint32_t bytes = Apr::NopDwords(first) * Apr::NopHeaderBytes;
+            if (bytes > buffer.offset - cursor) throw std::runtime_error("APR: malformed command");
+            cursor += bytes;
+            continue;
+        }
         if (cursor + sizeof(Apr::CommandHeader) > buffer.offset) throw std::runtime_error("APR: truncated command buffer");
         Apr::CommandHeader header;
         std::memcpy(&header, buffer.base + cursor, sizeof(header));
-        if ((static_cast<std::uint32_t>(header.opcode) & 0xffu) == static_cast<std::uint32_t>(Apr::Opcode::CompactReadFileGather)) {
+        if ((first & 0xffu) == static_cast<std::uint32_t>(Apr::Opcode::CompactReadFileGather)) {
             if (sizeof(Apr::CompactReadFileGatherCommand) > buffer.offset - cursor) throw std::runtime_error("APR: truncated compact gather command");
             Apr::CompactReadFileGatherCommand command;
             std::memcpy(&command, buffer.base + cursor, sizeof(command));
@@ -604,7 +613,6 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         }
         if (header.bytes < sizeof(header) || header.bytes > buffer.offset - cursor) throw std::runtime_error("APR: malformed command");
         switch (header.opcode) {
-        case Apr::Opcode::Nop:
         case Apr::Opcode::PushMarker:
         case Apr::Opcode::PopMarker:
         case Apr::Opcode::SetMarker:
