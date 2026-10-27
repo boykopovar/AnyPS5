@@ -55,8 +55,13 @@ std::unordered_map<std::string, std::uint32_t>& g_idsByPath = *new std::unordere
 // File sizes by directory, listed on first use. Titles resolve thousands of package paths at startup,
 // and one size query per path took over 20 s; a listing costs one directory read. Names are compared
 // case-insensitively, like the host file system.
+struct ListedFile {
+    std::uint64_t size;
+    std::filesystem::path name;
+};
+
 std::mutex& g_directoriesLock = *new std::mutex();
-std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>& g_directories = *new std::unordered_map<std::string, std::unordered_map<std::string, std::uint64_t>>();
+std::unordered_map<std::string, std::unordered_map<std::string, ListedFile>>& g_directories = *new std::unordered_map<std::string, std::unordered_map<std::string, ListedFile>>();
 
 std::string _foldCase(std::string text) {
     for (auto& character : text) {
@@ -69,13 +74,13 @@ std::mutex& g_hostDirectoriesLock = *new std::mutex();
 std::unordered_map<std::string, std::filesystem::path>& g_hostDirectories = *new std::unordered_map<std::string, std::filesystem::path>();
 std::uint64_t g_hostDirectoriesGeneration = 0;
 
-bool _listedSize(const std::filesystem::path& path, std::uint64_t& bytes) {
+bool _listedSize(const std::filesystem::path& path, std::uint64_t& bytes, std::filesystem::path* listedName = nullptr) {
     {
         std::lock_guard lock(g_directoriesLock);
         const auto directory = _foldCase(path.parent_path().string());
         auto listed = g_directories.find(directory);
         if (listed == g_directories.end()) {
-            std::unordered_map<std::string, std::uint64_t> sizes;
+            std::unordered_map<std::string, ListedFile> sizes;
 #ifdef _WIN32
             // The find data carries each size; std::filesystem would query every entry again.
             WIN32_FIND_DATAW entry{};
@@ -84,7 +89,11 @@ bool _listedSize(const std::filesystem::path& path, std::uint64_t& bytes) {
                 do {
                     if ((entry.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) continue;
                     const auto size = (static_cast<std::uint64_t>(entry.nFileSizeHigh) << 32u) | entry.nFileSizeLow;
-                    sizes.emplace(_foldCase(std::filesystem::path(entry.cFileName).string()), size);
+                    try {
+                        std::filesystem::path name(entry.cFileName);
+                        sizes.emplace(_foldCase(name.string()), ListedFile{size, std::move(name)});
+                    } catch (const std::exception&) {
+                    }
                 } while (FindNextFileW(find, &entry));
                 FindClose(find);
             }
@@ -94,13 +103,14 @@ bool _listedSize(const std::filesystem::path& path, std::uint64_t& bytes) {
                 std::error_code entryError;
                 if (!it->is_regular_file(entryError)) continue;
                 const auto size = it->file_size(entryError);
-                if (!entryError) sizes.emplace(_foldCase(it->path().filename().string()), size);
+                if (!entryError) sizes.emplace(_foldCase(it->path().filename().string()), ListedFile{size, it->path().filename()});
             }
 #endif
             listed = g_directories.emplace(directory, std::move(sizes)).first;
         }
         if (const auto file = listed->second.find(_foldCase(path.filename().string())); file != listed->second.end()) {
-            bytes = file->second;
+            bytes = file->second.size;
+            if (listedName) *listedName = file->second.name;
             return true;
         }
     }
@@ -123,13 +133,26 @@ int _fail(int guestErrno) {
     return -1;
 }
 
+constexpr std::size_t MAX_PATH_LENGTH = 1024;
+constexpr std::size_t MAX_NAME_LENGTH = 255;
+
+bool _listedPathIn(const std::string& directory, const std::string& name, std::filesystem::path& hostPath, std::uint64_t& bytes);
+
 bool _listedPath(const char* guestPath, std::filesystem::path& hostPath, std::uint64_t& bytes) {
     const std::string_view text(guestPath);
     const auto separator = text.find_last_of('/');
-    if (text.empty() || text.front() != '/' || separator == 0) return false;
+    if (text.empty() || text.front() != '/' || separator == 0 || text.size() >= MAX_PATH_LENGTH) return false;
     const std::string name(text.substr(separator + 1));
-    if (name.empty() || name == "." || name == ".." || name.find('\\') != std::string::npos) return false;
+    if (name.empty() || name == "." || name == ".." || name.size() > MAX_NAME_LENGTH || name.find_first_of("\\:") != std::string::npos) return false;
     const std::string directory(text.substr(0, separator));
+    try {
+        return _listedPathIn(directory, name, hostPath, bytes);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool _listedPathIn(const std::string& directory, const std::string& name, std::filesystem::path& hostPath, std::uint64_t& bytes) {
     std::filesystem::path hostDirectory;
     std::uint64_t generation = 0;
     {
@@ -148,8 +171,10 @@ bool _listedPath(const char* guestPath, std::filesystem::path& hostPath, std::ui
         std::lock_guard lock(g_hostDirectoriesLock);
         if (PathAliasGeneration_nid_no_patch() == generation && g_hostDirectoriesGeneration == generation) g_hostDirectories.emplace(directory, hostDirectory);
     }
-    hostPath = hostDirectory / name;
-    return _listedSize(hostPath, bytes);
+    const std::filesystem::path guestName(name);
+    std::filesystem::path listedName;
+    hostPath = hostDirectory / guestName;
+    return _listedSize(hostPath, bytes, &listedName) && listedName == guestName;
 }
 
 bool _resolve(const char* guestPath, std::uint32_t* id, std::uint64_t* size) {
