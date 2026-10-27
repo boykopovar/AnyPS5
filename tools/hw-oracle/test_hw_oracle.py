@@ -625,6 +625,15 @@ class GroupSegmentTests(unittest.TestCase):
         self.assertIn(".group_segment_fixed_size: 8192", text)
         self.assertNotIn("@LDS@", text)
 
+    def test_assembly_source_is_utf8(self):
+        body = "  s_nop 0  ; v0 \u2192 v10, caf\u00e9"
+        with tempfile.TemporaryDirectory() as tmp, patch.object(hw_oracle, "target", return_value="gfx1036"), \
+                patch.object(hw_oracle, "runtime", return_value="hsa"), patch.object(hw_oracle.subprocess, "run"), \
+                patch.object(hw_oracle, "tool", return_value="clang"):
+            hw_oracle.assemble(body, Path(tmp), False, **MODES)
+            text = (Path(tmp) / "k.s").read_bytes().decode("utf-8")
+        self.assertIn(body, text)
+
 
 class AssemblyTests(unittest.TestCase):
     def test_condition_operands_match_wave_size(self):
