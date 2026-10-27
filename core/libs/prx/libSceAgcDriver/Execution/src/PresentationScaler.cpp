@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 
 namespace AgcDriver {
@@ -23,7 +24,7 @@ PresentationScaler::~PresentationScaler() {
 
 void PresentationScaler::release() noexcept {
     if (sourceImage != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, sourceImage, nullptr);
-    if (sourceMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, sourceMemory, nullptr);
+    if (sourceMemory != VK_NULL_HANDLE) Graphics::ReleaseImageMemory(context, sourceMemory, sourceBytes, sourceMemoryType);
     sourceImage = VK_NULL_HANDLE;
     sourceMemory = VK_NULL_HANDLE;
     sourceWidth = 0;
@@ -42,7 +43,9 @@ void PresentationScaler::EnsureSourceImage(std::uint32_t width, std::uint32_t he
     imageInfo.arrayLayers = 1;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, sourceFormat, &properties);
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT) != 0 ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : 0u);
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     Graphics::Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &sourceImage), "vkCreateImage presentation source");
@@ -50,8 +53,9 @@ void PresentationScaler::EnsureSourceImage(std::uint32_t width, std::uint32_t he
     context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, sourceImage, &requirements);
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     allocation.allocationSize = requirements.size;
-    allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Graphics::Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &sourceMemory), "vkAllocateMemory presentation source");
+    allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, requirements.size, "presentation source");
+    sourceMemory = Graphics::AllocateImageMemory(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory presentation source", &sourceMemoryType, true);
+    sourceBytes = requirements.size;
     Graphics::Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, sourceImage, sourceMemory, 0), "vkBindImageMemory presentation source");
     sourceWidth = width;
     sourceHeight = height;

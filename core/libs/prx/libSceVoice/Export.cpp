@@ -447,7 +447,7 @@ int APS5_VABI sceVoiceQAEnableRecording(void) {
     return 0;
 }
 
-int APS5_VABI sceVoiceVADAdjustment(void) {
+int APS5_VABI sceVoiceVADAdjustment(float, float) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

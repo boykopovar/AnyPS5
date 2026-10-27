@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -45,7 +46,12 @@ int main() {
     const int http2 = sceHttp2Init(1, ssl, 0x40000, 1);
     Require(http2 > 0);
     Http2MemoryPoolStats http2Stats{};
-    Require(sceHttp2GetMemoryPoolStats(http2, &http2Stats) == 0 && http2Stats.pool_size == 0x40000);
+    bool http2StatsThrow = false;
+    const auto previous = http2Stats;
+    try { sceHttp2GetMemoryPoolStats(http2, &http2Stats); }
+    catch (const std::exception&) { http2StatsThrow = true; }
+    Require(http2StatsThrow && http2Stats.pool_size == previous.pool_size && http2Stats.max_inuse_size == previous.max_inuse_size &&
+        http2Stats.current_inuse_size == previous.current_inuse_size && http2Stats.reserved == previous.reserved);
     Require(sceHttp2GetMemoryPoolStats(http2, nullptr) == http2NullPointer);
     Require(sceHttp2GetMemoryPoolStats(12345, nullptr) == http2NullPointer);
     CheckRejected(sceHttp2GetMemoryPoolStats, 12345, http2InvalidId);

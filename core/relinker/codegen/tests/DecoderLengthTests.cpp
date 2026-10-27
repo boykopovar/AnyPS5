@@ -113,6 +113,15 @@ int main() {
             const auto bytes = parse(testCase.Bytes);
             require(!decoder.DecodeInstruction(bytes.data(), bytes.size()).TruncatesBranchTarget, "Branch target of " + std::string(testCase.Bytes) + " was reported as truncated");
         }
+        for (const auto segment : {0x64, 0x65}) {
+            for (const auto opcode : {0x6c, 0x6d, 0xaa, 0xab, 0xae, 0xaf, 0x6e, 0x6f, 0xa4, 0xa5, 0xa6, 0xa7, 0xac, 0xad}) {
+                const std::vector<std::uint8_t> bytes{static_cast<std::uint8_t>(segment), static_cast<std::uint8_t>(opcode)};
+                const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
+                const bool fixedEs = opcode == 0x6c || opcode == 0x6d || opcode == 0xaa || opcode == 0xab || opcode == 0xae || opcode == 0xaf;
+                require(info.HasMemoryOperand, "A string instruction lost its implicit memory operand");
+                require(info.SegmentPrefix == (fixedEs ? 0 : segment), "Wrong effective segment for a string instruction");
+            }
+        }
         const auto threeDNow = parse("0f0f0d11223344a6");
         const auto threeDNowInfo = decoder.DecodeInstruction(threeDNow.data(), threeDNow.size());
         require(threeDNowInfo.HasModRm && threeDNowInfo.ModRmByte == 0x0d, "3DNow! ModRM was not reported");
@@ -120,6 +129,8 @@ int main() {
         for (const auto& testCase : std::vector<std::pair<const char*, bool>>{
             {"6590", false},
             {"654889c8", false},
+            {"658d0511111111", false},
+            {"650f1f0511111111", false},
             {"65488b0c2578030000", true},
             {"65a4", true},
             {"650fa2", false},

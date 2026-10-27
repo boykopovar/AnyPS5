@@ -148,7 +148,7 @@ def relink(relinker, case, executable, modules):
     for name, image in modules.items():
         (case / "sce_module" / name).write_bytes(image)
     output = case / "output.elf"
-    result = subprocess.run([str(relinker), str(source), str(output)], capture_output=True, text=True, timeout=30)
+    result = subprocess.run([str(relinker), str(source), str(output)], capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert result.returncode == 0, (result.stdout, result.stderr)
     return output
 
@@ -192,7 +192,7 @@ def main():
         for name, image in twins.items():
             (work / "needed-both" / "sce_module" / name).write_bytes(image)
         result = subprocess.run([str(relinker), str(work / "needed-both" / "input.elf"), str(work / "needed-both" / "output.elf")],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert result.returncode != 0 and "Ambiguous guest import AAAAAAAAAAA" in result.stderr, (result.stdout, result.stderr)
 
         guests = relink(relinker, work / "guest-declared", importing_executable([]), {
@@ -222,7 +222,7 @@ def main():
                     needed_module_import("YYYYYYYYYYY", "XXXXXXXXXXX#A#B", "libc.prx", (tag,)))
                 output = case / ("output.exe" if windows else "output.elf")
                 result = subprocess.run([str(relinker), *(["--windows"] if windows else []), str(case / "input.elf"), str(output)],
-                                        capture_output=True, text=True, timeout=30)
+                                        capture_output=True, text=True, encoding="utf-8", timeout=30)
                 assert result.returncode == 0, (windows, hex(tag), result.stdout, result.stderr)
                 if not windows:
                     modules = case / "app0" / "sce_module"
@@ -240,7 +240,7 @@ def main():
         module = case / "sce_module" / "libc.prx"
         module.write_bytes(needed_module_import("XXXXXXXXXXX", "YYYYYYYYYYY#A#B", "libkernel.prx", (0x6100000F, 0x61000045)))
         result = subprocess.run([str(relinker), str(case / "input.elf"), str(case / "output.elf")],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert result.returncode == 2 and f"{module}: Guest module mixes PS4 and PS5 needed-module tags\n" in result.stderr, result.stderr
         assert not (case / "output.elf").exists()
 
@@ -250,7 +250,7 @@ def main():
         module = case / "sce_module" / "libc.prx"
         module.write_bytes(needed_module_import("XXXXXXXXXXX", "YYYYYYYYYYY#A#C", "libkernel.prx"))
         result = subprocess.run([str(relinker), str(case / "input.elf"), str(case / "output.elf")],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert result.returncode == 2 and "Unknown import module ID: YYYYYYYYYYY#A#C\n" in result.stderr \
             and f"Input: {module}\n" in result.stderr, result.stderr
         assert not (case / "output.elf").exists()

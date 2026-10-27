@@ -290,6 +290,23 @@ static void RequireZone(const char* zone, std::int64_t utc, std::int64_t standar
     Require(state.t == local && state.west_sec == universal.west_sec && state.dst_sec == universal.dst_sec);
 }
 
+static void RequireTimezone(const char* zone, std::int32_t minutesEast, std::int32_t daylightMinutes) {
+    SetTimeZone(zone);
+    KernelTimezone tz{-1, -1};
+    Require(sceKernelGettimezone(&tz) == SCE_OK);
+    Require(tz.tz_minuteswest == minutesEast && tz.tz_dsttime == RuntimeDaylight(daylightMinutes * 60) / 60);
+}
+
+static void TimezoneReportsTheStandardOffsetAndDaylightAmount() {
+    RequireTimezone("UTC0", 0, 0);
+    RequireTimezone("IST-5:30", 330, 0);
+    RequireTimezone("BRT+3", -180, 0);
+    RequireTimezone("EST5EDT", -300, 60);
+    RequireTimezone("CET-1CEST", 60, 60);
+    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000e));
+    SetTimeZone("UTC0");
+}
+
 static void CalendarConversionsFollowTheHostZone() {
     constexpr std::int64_t winter = 1768478400;
     constexpr std::int64_t summer = 1782907200;
@@ -308,6 +325,7 @@ int main() {
     SettimeValidatesLikeFreebsd();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();
+    TimezoneReportsTheStandardOffsetAndDaylightAmount();
     SecondClockReportsWholeSeconds();
     KernelTimezone zone{-1, -1};
     Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);

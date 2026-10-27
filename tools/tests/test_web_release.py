@@ -2,6 +2,7 @@ import contextlib
 import hashlib
 import io
 import json
+import struct
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,48 @@ def zipped(entries):
 
 
 class WebReleaseTests(unittest.TestCase):
+    def unsupported_zip(self, payload, encrypted):
+        data = bytearray(payload)
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            local = archive.infolist()[0].header_offset
+            central = archive.start_dir
+        if encrypted:
+            for position in (local + 6, central + 8):
+                struct.pack_into("<H", data, position, struct.unpack_from("<H", data, position)[0] | 1)
+        else:
+            for position in (local + 8, central + 10):
+                struct.pack_into("<H", data, position, 99)
+        return bytes(data)
+
+    def test_unsupported_zip_members_preserve_previous_site_and_allow_retry(self):
+        originals = dict(self.responses)
+        for encrypted in (False, True):
+            for name in ("web-v1.zip", "prx-windows-v1.zip", "prx-linux-v1.zip"):
+                with self.subTest(encrypted=encrypted, asset=name):
+                    original = originals["https://example.test/" + name]
+                    self.set_asset(name, self.unsupported_zip(original, encrypted))
+                    self.requests.clear()
+                    self.assert_rejected("[Aa]rchive|[Ee]ncrypted")
+                    self.set_asset(name, original)
+                    self.requests.clear()
+                    self.publish()
+                    self.assertEqual(json.loads((self.output / "release.json").read_text())["revision"], REVISION)
+                    self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
+    def test_cli_reports_unsupported_zip_without_traceback_or_site_changes(self):
+        name = "web-v1.zip"
+        self.set_asset(name, self.unsupported_zip(self.responses["https://example.test/" + name], False))
+        self.seed_previous()
+        previous = self.snapshot()
+        errors = io.StringIO()
+        with patch.object(build_web, "request", self.request), contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+            build_web.main(["--build", str(self.build), "--release"])
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("Invalid release archive", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
+        self.assertEqual(self.snapshot(), previous)
+        self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -104,6 +147,20 @@ class WebReleaseTests(unittest.TestCase):
                 self.assertEqual(archive.read("libs/libkernel.prx"), platform.encode())
         self.assertTrue((self.output / ".nojekyll").is_file())
         self.assertEqual(self.requests.count(LATEST), 1)
+
+    def test_rewritten_library_paths_preserve_the_previous_site(self):
+        invalid = zipped([("libs/libkernel.prx!ignored", b"content")])
+        invalid = invalid.replace(b"libs/libkernel.prx!ignored", b"libs/libkernel.prx\0ignored")
+        for platform in ("windows", "linux"):
+            with self.subTest(platform=platform):
+                self.requests.clear()
+                name = f"prx-{platform}-v1.zip"
+                original = self.responses["https://example.test/" + name]
+                self.set_asset(name, invalid)
+                try:
+                    self.assert_rejected("Invalid library archive layout")
+                finally:
+                    self.set_asset(name, original)
 
     def test_libraries_flag_also_replaces_an_incompatible_local_converter(self):
         self.seed_previous()
@@ -211,6 +268,27 @@ class WebReleaseTests(unittest.TestCase):
                 patch.object(sys, "argv", ["build_web.py", "--build", str(self.build), "--release"]):
             build_web.main()
         self.assertEqual((self.output / "native/relinker_wasm.mjs").read_bytes(), self.contents["native/relinker_wasm.mjs"])
+
+    def test_invalid_zip_reports_cli_error_and_preserves_previous_site(self):
+        self.seed_previous()
+        previous = self.snapshot()
+        for name in ("web-v1.zip", "prx-windows-v1.zip", "prx-linux-v1.zip"):
+            with self.subTest(asset=name):
+                self.requests.clear()
+                original = self.responses[f"https://example.test/{name}"]
+                self.set_asset(name, original[:-22])
+                errors = io.StringIO()
+                try:
+                    with patch.object(build_web, "request", self.request), contextlib.redirect_stderr(errors):
+                        with self.assertRaises(SystemExit) as error:
+                            build_web.main(["--build", str(self.build), "--release"])
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertIn(f"error: Invalid release archive {name}: File is not a zip file", errors.getvalue())
+                    self.assertNotIn("Traceback", errors.getvalue())
+                    self.assertEqual(self.snapshot(), previous)
+                    self.assertEqual(list(self.build.glob(".web-release-*")), [])
+                finally:
+                    self.set_asset(name, original)
 
     def test_local_build_still_copies_sources_without_network(self):
         source = self.root / "source/demo/web"

@@ -873,6 +873,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
 
     for (const auto index : lazyUnresolvedImports) {
         const auto stubRva = code.GetRva();
+        code.Emit({0x48, 0x83, 0xe4, 0xf0, 0x48, 0x83, 0xec, 0x40});
         writeString(errorRvas.at(3 + index), true);
         raise(0xc0000139u);
         result.LazyStubs.push_back({imports[index].TargetRva, stubRva});
