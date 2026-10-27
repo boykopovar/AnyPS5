@@ -1,4 +1,4 @@
-add_library(libSceNpCommon SHARED EXCLUDE_FROM_ALL PendingExports.cpp)
+add_library(libSceNpCommon SHARED EXCLUDE_FROM_ALL PendingExports.cpp PendingExportsRound7.cpp)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp")
     target_sources(libSceNpCommon PRIVATE Export.cpp)
 endif()

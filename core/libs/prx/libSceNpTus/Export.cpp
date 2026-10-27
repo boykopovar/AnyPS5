@@ -1001,7 +1001,7 @@ int APS5_VABI sceNpTssGetData() {
     return 0;
 }
 
-int APS5_VABI sceNpTusCreateNpTitleCtx() {
+int APS5_VABI sceNpTusCreateNpTitleCtx(std::uint32_t serviceLabel, void* npId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

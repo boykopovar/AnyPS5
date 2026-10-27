@@ -27,15 +27,6 @@ void Check(bool condition, const std::string& what) {
     ++failures;
 }
 
-bool Throws(const SaveDataConvert* convert) {
-    try {
-        sceSaveDataConvert(convert);
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
 int Convert(const char* data, std::size_t size) {
     SceSaveDataDirName name{};
     std::memcpy(name.data, data, size);
@@ -63,13 +54,13 @@ int main() {
 
     float progress = 0.0f;
     Check(sceSaveDataGetConvertProgress(&progress) == SaveDataErrorNotInitialized, "query before initialize fails with not initialized");
-    Check(Throws(nullptr), "null convert pointer throws");
-    SaveDataConvert nullDir{};
-    Check(Throws(&nullDir), "null dir_name throws");
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds");
     Check(progress == 0.0f, "convert progress reports 0.0f initially");
     Check(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress pointer is rejected");
+    Check(sceSaveDataConvert(nullptr) == SaveDataErrorParameter, "null convert pointer is rejected");
+    SaveDataConvert nullDir{};
+    Check(sceSaveDataConvert(&nullDir) == SaveDataErrorParameter, "null dir_name pointer is rejected");
     Check(Convert("missing", sizeof("missing")) == SaveDataErrorNotFound, "a missing save is not found");
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds after failed convert");
     Check(progress < 1.0f, "convert progress is below 1.0f after failed convert");

@@ -232,6 +232,31 @@ static bool KerningIs(const FontKerning& kerning, float offsetX) {
     return kerning.offsetX == offsetX && kerning.offsetY == 0.0f && kerning.positionX == 0.0f && kerning.positionY == 0.0f;
 }
 
+static void CheckRenderEffects(FontHandle font, FontRenderer renderer) {
+    const auto near = [](float value, float expected) { return std::fabs(value - expected) < 1e-6f; };
+    float slant = 1.0f;
+    float weightX = 0.0f;
+    float weightY = 0.0f;
+    std::uint32_t mode = 7;
+    Require(sceFontSetupRenderEffectSlant(font, 0.25f) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
+    Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 0) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
+    Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_ERROR_NOT_BOUND_RENDERER && slant == 0.0f);
+    Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
+    Require(sceFontSetupRenderEffectSlant(font, 0.25f) == SCE_FONT_OK);
+    Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_OK && slant == 0.25f);
+    Require(sceFontSetupRenderEffectSlant(font, 2.0f) == SCE_FONT_OK);
+    Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_OK && slant == 1.0f);
+    Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 1) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 0) == SCE_FONT_OK);
+    Require(sceFontGetRenderEffectWeight(font, &weightX, &weightY, &mode) == SCE_FONT_OK && near(weightX, 1.02f) && near(weightY, 0.98f) && mode == 0);
+    Require(sceFontSetupRenderEffectWeight(font, 1.5f, 0.5f, 0) == SCE_FONT_OK);
+    Require(sceFontGetRenderEffectWeight(font, &weightX, &weightY, nullptr) == SCE_FONT_OK && near(weightX, 1.04f) && near(weightY, 0.96f));
+    Require(sceFontSetupRenderEffectSlant(nullptr, 0.0f) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontSetupRenderEffectWeight(nullptr, 1.0f, 1.0f, 0) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontSetupRenderEffectSlant(font, 0.0f) == SCE_FONT_OK && sceFontSetupRenderEffectWeight(font, 1.0f, 1.0f, 0) == SCE_FONT_OK);
+    Require(sceFontUnbindRenderer(font) == SCE_FONT_OK);
+}
+
 static void CheckGlyphScale(FontHandle font, const FontMemory* memory, float expectedW, float expectedH) {
     float width = 0.0f;
     float height = 0.0f;
@@ -650,6 +675,7 @@ int main() {
     Require(sceFontGetRenderScaledKerning(font, 'A', 'V', &kerning) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
 
     CheckPointAndDpiScale(font, library, &memory, renderer);
+    CheckRenderEffects(font, renderer);
 
     ParsedText parsed{"AV", 0, font};
     FontTextSource source{};

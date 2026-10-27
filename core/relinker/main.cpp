@@ -25,6 +25,8 @@
 #include <cwchar>
 #endif
 
+#include "RelinkerRevision.hpp"
+
 namespace {
 
 struct ConvertedExecutable {
@@ -261,6 +263,11 @@ int Run(const int argc, char* argv[]) {
 
     if (args.showHelp) {
         std::cout << Cli::Usage() << '\n';
+        return 0;
+    }
+
+    if (args.showVersion) {
+        std::cout << "relinker " << ANYPS5_RELINKER_REVISION << '\n';
         return 0;
     }
 
