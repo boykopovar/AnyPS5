@@ -1,4 +1,5 @@
 add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Acb/src/Control.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Acb/src/Dispatch.cpp
@@ -92,6 +93,19 @@ if(BUILD_TESTING)
     add_test(NAME agc_atomic_gds_size COMMAND agc_atomic_gds_size_tests)
     if(WIN32)
         set_tests_properties(agc_atomic_gds_size PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_draw_index_multi_instanced_tests EXCLUDE_FROM_ALL tests/DrawIndexMultiInstanced.cpp)
+target_include_directories(agc_draw_index_multi_instanced_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_draw_index_multi_instanced_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_draw_index_multi_instanced_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_draw_index_multi_instanced_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_draw_index_multi_instanced COMMAND agc_draw_index_multi_instanced_tests)
+    if(WIN32)
+        set_tests_properties(agc_draw_index_multi_instanced PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

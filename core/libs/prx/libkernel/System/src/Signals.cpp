@@ -20,6 +20,10 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#ifdef __APPLE__
+#include <new>
+#include <typeinfo>
+#endif
 
 static_assert(sizeof(GuestSigaction) == 32 && offsetof(GuestSigaction, flags) == 8 && offsetof(GuestSigaction, mask) == 12);
 
@@ -391,7 +395,14 @@ void ExpireAlarm(std::chrono::microseconds interval) {
         if (handler == 1) return;
     }
     if (handler == 0) TerminateBySigalrm("the alarm expired");
+#ifdef __APPLE__
+    const std::string message = "ITIMER_REAL (it_interval " + DescribeInterval(interval) + ") expired: delivering SIGALRM to a guest handler is not implemented";
+    void* object = __cxa_allocate_exception_nid_postfix(sizeof(std::runtime_error));
+    new (object) std::runtime_error(message);
+    __cxa_throw_nid_postfix(object, const_cast<std::type_info*>(&typeid(std::runtime_error)), [](void* thrown) { static_cast<std::runtime_error*>(thrown)->~runtime_error(); });
+#else
     throw std::runtime_error("ITIMER_REAL (it_interval " + DescribeInterval(interval) + ") expired: delivering SIGALRM to a guest handler is not implemented");
+#endif
 }
 
 void RunAlarms() {
