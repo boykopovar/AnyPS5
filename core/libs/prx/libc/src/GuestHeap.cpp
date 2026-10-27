@@ -355,7 +355,8 @@ void* GuestHeapAlignForGpu_nid_postfix(std::size_t alignment, std::size_t bytes)
 
 int GuestHeapStatsFast_nid_postfix(void* stats) {
     auto* managed = static_cast<MallocManagedSize*>(stats);
-    if (managed == nullptr || managed->size < sizeof(MallocManagedSize)) return 22;
+    if (managed == nullptr) return 22;
+    if (managed->size != sizeof(MallocManagedSize) || managed->version != 1) return 1;
     auto& value = usage();
     managed->maxSystemSize = value.maxSystem.load(std::memory_order_relaxed);
     managed->currentSystemSize = value.system.load(std::memory_order_relaxed);
