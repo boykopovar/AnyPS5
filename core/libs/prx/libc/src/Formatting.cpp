@@ -138,12 +138,20 @@ class StringSource {
     const char* position;
 
 public:
+    static constexpr bool Contiguous = true;
+
     explicit StringSource(const char* text) : start(text), position(text) {}
 
     int Peek() const { return *position == '\0' ? EOF : static_cast<unsigned char>(*position); }
     void Skip() { ++position; }
     void Advance(std::ptrdiff_t count) { position += count; }
     std::ptrdiff_t Consumed() const { return position - start; }
+
+#ifndef _WIN32
+    std::size_t PeekWide(char32_t* point) const {
+        return *position == '\0' ? 0 : LibcDetail::ReadWideScanCharacter(position, point);
+    }
+#endif
 
     int Scan(const char* directive, bool suppress, void* target, int* consumed) const {
         return suppress ? HostSscanf(position, directive, consumed) : HostSscanf(position, directive, target, consumed);
@@ -155,6 +163,8 @@ class StreamSource {
     std::ptrdiff_t consumed = 0;
 
 public:
+    static constexpr bool Contiguous = false;
+
     explicit StreamSource(std::FILE* native) : file(native) {}
 
     int Peek() const {
@@ -171,25 +181,30 @@ public:
     void Advance(std::ptrdiff_t count) { consumed += count; }
     std::ptrdiff_t Consumed() const { return consumed; }
 
+#ifndef _WIN32
+    std::size_t PeekWide(char32_t* point) const {
+        char bytes[5] = {};
+        int next = std::fgetc(file);
+        if (next == EOF) return 0;
+        const std::size_t length = std::max<std::size_t>(LibcDetail::WideScanCharacterLength(static_cast<unsigned char>(next)), 1);
+        std::size_t size = 0;
+        while (true) {
+            bytes[size++] = static_cast<char>(next);
+            if (size == length || (next = std::fgetc(file)) == EOF) break;
+            if ((next & 0xC0) != 0x80) {
+                std::ungetc(next, file);
+                break;
+            }
+        }
+        for (std::size_t index = size; index != 0; --index) std::ungetc(static_cast<unsigned char>(bytes[index - 1]), file);
+        return LibcDetail::ReadWideScanCharacter(bytes, point);
+    }
+#endif
+
     int Scan(const char* directive, bool suppress, void* target, int* count) const {
         return suppress ? HostFscanf(file, directive, count) : HostFscanf(file, directive, target, count);
     }
 };
-
-#ifndef _WIN32
-template <typename TSource>
-char16_t TakeWideCharacter(TSource& source) {
-    char bytes[5] = {};
-    const std::size_t length = std::max<std::size_t>(LibcDetail::WideScanCharacterLength(static_cast<unsigned char>(source.Peek())), 1);
-    for (std::size_t index = 0; index < length && (index == 0 || (source.Peek() & 0xC0) == 0x80); ++index) {
-        bytes[index] = static_cast<char>(source.Peek());
-        source.Skip();
-    }
-    char32_t point = 0;
-    LibcDetail::ReadWideScanCharacter(bytes, &point);
-    return static_cast<char16_t>(point);
-}
-#endif
 
 template <typename TSource, typename NextPointer, typename NextCapacity>
 int ScanSource(TSource source, const char* format, bool secure, NextPointer nextPointer, NextCapacity nextCapacity) {
@@ -267,17 +282,25 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             const unsigned long wanted = width != 0 ? width : (kind == 'c' ? 1 : ULONG_MAX);
             const unsigned long taken = std::min(wanted, limit);
             std::u16string text;
-            const auto accepts = [&](int lead) {
-                if (lead == EOF) return false;
-                if (kind == 's') return lead >= 0x80 || !std::isspace(lead);
-                if (kind == '[') return LibcDetail::InWideScanset(specifier, static_cast<char32_t>(lead));
+            const auto accepts = [&](char32_t point) {
+                if (kind == 's') return point >= 0x80 || !std::isspace(static_cast<int>(point));
+                if (kind == '[') return LibcDetail::InWideScanset(specifier, point);
                 return true;
             };
-            while (text.size() < taken && accepts(source.Peek())) text.push_back(TakeWideCharacter(source));
+            while (text.size() < taken) {
+                char32_t point = 0;
+                const std::size_t size = source.PeekWide(&point);
+                if (size == 0 || !accepts(point)) break;
+                text.push_back(static_cast<char16_t>(point));
+                for (std::size_t index = 0; index < size; ++index) source.Skip();
+            }
             if (text.empty()) return finish(assigned);
-            if (target != nullptr && kind != 'c' && wanted > limit && text.size() == limit && accepts(source.Peek())) {
-                target[0] = u'\0';
-                return finish(assigned);
+            if (target != nullptr && kind != 'c' && wanted > limit && text.size() == limit) {
+                char32_t point = 0;
+                if (source.PeekWide(&point) != 0 && accepts(point)) {
+                    target[0] = u'\0';
+                    return finish(assigned);
+                }
             }
             if (target != nullptr) {
                 std::memcpy(target, text.data(), text.size() * sizeof(char16_t));
