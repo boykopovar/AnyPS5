@@ -50,6 +50,15 @@ static int CheckPackageChunkTable(const char* root) {
     Require(scePlayGoGetLocus(handle, outside, 2, loci) == badChunkId);
     std::uint32_t chunkCount = 0;
     Require(scePlayGoGetChunkId(handle, nullptr, 0, &chunkCount) == 0 && chunkCount == 3);
+    std::uint32_t installCount = 0;
+    Require(scePlayGoGetInstallChunkId(handle, nullptr, 0, &installCount) == 0 && installCount == 3);
+    PlayGoProgress progress{};
+    Require(scePlayGoGetProgress(handle, known, 3, &progress) == 0 && progress.progress_size == 1 && progress.total_size == 1);
+    Require(scePlayGoGetProgress(handle, outside, 2, &progress) == badChunkId);
+    Require(scePlayGoGetProgress(handle, known, 0, &progress) == static_cast<int>(0x80B2000B));
+    Require(scePlayGoGetProgress(handle, nullptr, 3, &progress) == static_cast<int>(0x80B2000A));
+    Require(scePlayGoGetProgress(handle, known, 3, nullptr) == static_cast<int>(0x80B2000A));
+    Require(scePlayGoGetProgress(-1, known, 3, &progress) == static_cast<int>(0x80B20009));
     Require(scePlayGoClose(handle) == 0);
     return 0;
 }

@@ -414,6 +414,17 @@ static void APS5_VABI RequestStatusCallback(int, int, void* argument) {
     ++*static_cast<int*>(argument);
 }
 
+static void CheckCaList() {
+    constexpr int invalidValue = static_cast<int>(0x804311FE);
+    int certificate = 0;
+    HttpsCaList list{&certificate, 7};
+    Require(sceHttpsGetCaList(1, nullptr) == invalidValue);
+    Require(sceHttpsGetCaList(1, &list) == 0 && list.certs == nullptr && list.certsNum == 0);
+    list = {&certificate, 7};
+    Require(sceHttpsFreeCaList(1, nullptr) == invalidValue);
+    Require(sceHttpsFreeCaList(1, &list) == 0 && list.certs == nullptr && list.certsNum == 0);
+}
+
 int main() {
     const std::uint64_t processSize = processParameters.size();
     const std::uint32_t processMagic = 0x4942524f;
@@ -422,6 +433,7 @@ int main() {
     std::memcpy(processParameters.data() + 8, &processMagic, sizeof(processMagic));
     std::memcpy(processParameters.data() + 16, &sdkVersion, sizeof(sdkVersion));
     Require(ProcessParametersFixture::Install(processParameters.data(), processParameters.size()));
+    CheckCaList();
     for (const std::uint32_t version : {0u, 0xffffffu, 0x1000000u}) {
         std::memcpy(processParameters.data() + 16, &version, sizeof(version));
         for (unsigned value = 1; value < 256; ++value) {
