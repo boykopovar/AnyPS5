@@ -542,6 +542,12 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `ANYPS5_LANGUAGE` | integer | `core/libs/prx/libSceSystemService/SystemService.hpp` | 1 | console language number returned by sceSystemServiceParamGetInt, defaulting to English US |
 
+### libSceUsbStorage
+
+| Name | Kind | Source | Default | Description |
+|------|------|--------|---------|-------------|
+| `APS5_USB_STORAGE_PASSTHROUGH` | presence | `core/libs/prx/libSceUsbStorage/src/HostVolumes.cpp` |  | passes the FAT and exFAT volumes the host mounted from USB mass-storage devices through to the guest, writable; unset, no host volume is scanned and the guest sees no USB storage device |
+
 ### libSceVideoOut
 
 | Name | Kind | Source | Default | Description |

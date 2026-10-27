@@ -612,5 +612,19 @@ int main() {
         Require(std::string(error.what()) == "sceNpUnknown_WxLcN76q19o not implemented",
             "sceNpUnknown_WxLcN76q19o threw");
     }
+    std::uint32_t state = 0x5a5a;
+    Require(sceNpGetState(0x10000, &state) == 0 && state == StateSignedOut, "sceNpGetState must report the user as signed out");
+    Require(sceNpGetState(0x10000, nullptr) == InvalidArgument, "sceNpGetState must reject a null state");
+    bool hasSignedUp = true;
+    Require(sceNpHasSignedUp(0x10000, &hasSignedUp) == 0 && !hasSignedUp, "sceNpHasSignedUp must report no sign-up");
+    Require(sceNpHasSignedUp(0x10000, nullptr) == InvalidArgument, "sceNpHasSignedUp must reject a null output");
+    Require(sceNpCheckNpReachability(1, 0x10000) == SignedOut, "sceNpCheckNpReachability must report the user as signed out");
+    NpCheckPremiumParameter premiumParameter{};
+    NpCheckPremiumResult premiumResult{};
+    std::memset(&premiumResult, 0x5a, sizeof(premiumResult));
+    NpCheckPremiumResult untouchedPremiumResult{};
+    std::memset(&untouchedPremiumResult, 0x5a, sizeof(untouchedPremiumResult));
+    Require(sceNpCheckPremium(1, &premiumParameter, &premiumResult) == SignedOut, "sceNpCheckPremium must report the user as signed out");
+    Require(std::memcmp(&premiumResult, &untouchedPremiumResult, sizeof(premiumResult)) == 0, "sceNpCheckPremium must leave the result untouched");
     return 0;
 }

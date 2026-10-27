@@ -9,8 +9,10 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <net/route.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #ifdef __linux__
@@ -21,18 +23,22 @@
 #endif
 #endif
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostEntropy.hpp"
 #include <fstream>
 #include <memory>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 // Network-control state reflects host interface addressing, not PSN sign-in status.
@@ -49,6 +55,25 @@ static constexpr int NET_CTL_STATE_DISCONNECTED = 0;
 static constexpr int NET_CTL_STATE_IPOBTAINED = 3;
 static constexpr int NET_CTL_EVENT_DISCONNECTED = 1;
 static constexpr int NET_CTL_EVENT_IPOBTAINED = 3;
+static constexpr int NET_CTL_STUN_STATUS_FAILED = 1;
+static constexpr int NET_CTL_STUN_STATUS_OK = 2;
+static constexpr int NET_CTL_NAT_TYPE_NONE = 0;
+static constexpr int NET_CTL_NAT_TYPE_1 = 1;
+static constexpr int NET_CTL_NAT_TYPE_2 = 2;
+static constexpr int NET_CTL_NAT_TYPE_3 = 3;
+static constexpr std::uint16_t STUN_BINDING_REQUEST = 0x0001;
+static constexpr std::uint16_t STUN_BINDING_RESPONSE = 0x0101;
+static constexpr std::uint32_t STUN_MAGIC_COOKIE = 0x2112A442u;
+static constexpr std::uint16_t STUN_ATTR_MAPPED_ADDRESS = 0x0001;
+static constexpr std::uint16_t STUN_ATTR_CHANGED_ADDRESS = 0x0005;
+static constexpr std::uint16_t STUN_ATTR_XOR_MAPPED_ADDRESS = 0x0020;
+static constexpr std::uint16_t STUN_ATTR_XOR_MAPPED_ADDRESS_LEGACY = 0x8020;
+static constexpr std::uint16_t STUN_ATTR_OTHER_ADDRESS = 0x802b;
+static constexpr std::size_t STUN_HEADER_SIZE = 20;
+static constexpr std::size_t STUN_TRANSACTION_ID_SIZE = 12;
+static constexpr int STUN_DEFAULT_TIMEOUT_MS = 300;
+static constexpr int STUN_TOTAL_BUDGET_MS = 1000;
+static constexpr int STUN_CACHE_TTL_MS = 60000;
 static constexpr int NET_CTL_INFO_DEVICE = 1;
 static constexpr int NET_CTL_INFO_ETHER_ADDR = 2;
 static constexpr int NET_CTL_INFO_MTU = 3;
@@ -457,6 +482,346 @@ extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers,
     return host.dns.size();
 }
 
+#ifdef _WIN32
+using StunSocket = SOCKET;
+static constexpr StunSocket INVALID_STUN_SOCKET = INVALID_SOCKET;
+static void CloseStunSocket(StunSocket descriptor) { closesocket(descriptor); }
+static bool EnsureSocketRuntime() {
+    static const int status = [] {
+        WSADATA data{};
+        return WSAStartup(MAKEWORD(2, 2), &data);
+    }();
+    return status == 0;
+}
+#else
+using StunSocket = int;
+static constexpr StunSocket INVALID_STUN_SOCKET = -1;
+static void CloseStunSocket(StunSocket descriptor) { close(descriptor); }
+static bool EnsureSocketRuntime() { return true; }
+#endif
+
+struct StunEndpoint {
+    std::uint32_t address = 0;
+    std::uint16_t port = 0;
+    bool valid = false;
+};
+
+struct StunProbeResponse {
+    StunEndpoint mapped;
+    StunEndpoint other;
+};
+
+struct StunConfig {
+    std::mutex lock;
+    bool overrideActive = false;
+    std::vector<sockaddr_in> overrideServers;
+    int overrideTimeoutMs = STUN_DEFAULT_TIMEOUT_MS;
+    std::uint64_t configGeneration = 1;
+    std::uint64_t cachedConfigGeneration = 0;
+    std::uint32_t cachedLocalAddr = 0;
+    std::chrono::steady_clock::time_point cachedUntil{};
+    bool hasCachedResult = false;
+    NetCtlNatInfo cachedResult{};
+};
+
+static StunConfig& GetStunConfig() {
+    static StunConfig config;
+    return config;
+}
+
+extern "C" void NetCtlSetStunServers_nid_no_patch(const sockaddr_in* servers, std::size_t count, int timeoutMs) {
+    auto& config = GetStunConfig();
+    std::lock_guard guard(config.lock);
+    ++config.configGeneration;
+    config.hasCachedResult = false;
+    config.overrideServers.clear();
+    if (!servers && count == 0 && timeoutMs <= 0) {
+        config.overrideActive = false;
+        config.overrideTimeoutMs = STUN_DEFAULT_TIMEOUT_MS;
+        return;
+    }
+    config.overrideActive = true;
+    config.overrideTimeoutMs = timeoutMs > 0 ? timeoutMs : STUN_DEFAULT_TIMEOUT_MS;
+    if (servers && count > 0) config.overrideServers.assign(servers, servers + count);
+}
+
+static void AppendUniqueStunServer(std::vector<sockaddr_in>& servers, const sockaddr_in& candidate) {
+    if (candidate.sin_family != AF_INET || candidate.sin_addr.s_addr == 0 || candidate.sin_port == 0) return;
+    for (const auto& existing : servers) {
+        if (existing.sin_addr.s_addr == candidate.sin_addr.s_addr && existing.sin_port == candidate.sin_port) return;
+    }
+    servers.push_back(candidate);
+}
+
+static std::vector<sockaddr_in> ResolveStunServers(int& timeoutMs, std::uint64_t& generationOut, std::chrono::steady_clock::time_point totalDeadline) {
+    auto& config = GetStunConfig();
+    {
+        std::lock_guard guard(config.lock);
+        generationOut = config.configGeneration;
+        if (config.overrideActive) {
+            timeoutMs = config.overrideTimeoutMs;
+            return config.overrideServers;
+        }
+    }
+    timeoutMs = STUN_DEFAULT_TIMEOUT_MS;
+    struct DefaultStunHost {
+        const char* host;
+        const char* port;
+    };
+    static constexpr DefaultStunHost kDefaultHosts[] = {
+        {"stun.playstation.net", "3478"},
+        {"stun.cloudflare.com", "3478"},
+        {"stun.l.google.com", "19302"},
+        {"stun1.l.google.com", "19302"},
+    };
+    struct DnsQueryState {
+        std::mutex lock;
+        std::condition_variable cv;
+        std::vector<sockaddr_in> servers;
+        bool done = false;
+    };
+    const auto now = std::chrono::steady_clock::now();
+    if (!EnsureSocketRuntime() || now >= totalDeadline) return {};
+    const auto dnsCap = now + std::chrono::milliseconds(STUN_DEFAULT_TIMEOUT_MS * 2);
+    const auto dnsDeadline = dnsCap < totalDeadline ? dnsCap : totalDeadline;
+    auto state = std::make_shared<DnsQueryState>();
+    std::thread([state, dnsDeadline] {
+        for (const auto& entry : kDefaultHosts) {
+            if (std::chrono::steady_clock::now() >= dnsDeadline) break;
+            addrinfo hints{};
+            hints.ai_family = AF_INET;
+            hints.ai_socktype = SOCK_DGRAM;
+            hints.ai_protocol = IPPROTO_UDP;
+            addrinfo* list = nullptr;
+            if (getaddrinfo(entry.host, entry.port, &hints, &list) != 0 || !list) continue;
+            {
+                std::lock_guard guard(state->lock);
+                for (auto* item = list; item; item = item->ai_next) {
+                    if (item->ai_addr && item->ai_addrlen >= sizeof(sockaddr_in) && item->ai_addr->sa_family == AF_INET) {
+                        AppendUniqueStunServer(state->servers, *reinterpret_cast<const sockaddr_in*>(item->ai_addr));
+                    }
+                }
+            }
+            freeaddrinfo(list);
+        }
+        {
+            std::lock_guard guard(state->lock);
+            state->done = true;
+        }
+        state->cv.notify_one();
+    }).detach();
+    std::unique_lock lock(state->lock);
+    state->cv.wait_until(lock, dnsDeadline, [&] { return state->done; });
+    return state->servers;
+}
+
+static StunEndpoint DecodeStunIpv4Endpoint(const std::uint8_t* value, std::uint16_t length, bool xorMask) {
+    StunEndpoint endpoint{};
+    if (length < 8 || value[1] != 0x01) return endpoint;
+    const auto rawPort = static_cast<std::uint16_t>((static_cast<std::uint16_t>(value[2]) << 8) | value[3]);
+    std::uint32_t rawAddress = 0;
+    std::memcpy(&rawAddress, value + 4, sizeof(rawAddress));
+    endpoint.port = xorMask ? static_cast<std::uint16_t>(rawPort ^ static_cast<std::uint16_t>(STUN_MAGIC_COOKIE >> 16)) : rawPort;
+    endpoint.address = xorMask ? (rawAddress ^ htonl(STUN_MAGIC_COOKIE)) : rawAddress;
+    endpoint.valid = endpoint.address != 0 && endpoint.port != 0;
+    return endpoint;
+}
+
+static bool ParseStunBindingResponse(const std::uint8_t* packet, std::size_t size, const std::uint8_t* transactionId, StunProbeResponse& response) {
+    if (size < STUN_HEADER_SIZE) return false;
+    const auto type = static_cast<std::uint16_t>((static_cast<std::uint16_t>(packet[0]) << 8) | packet[1]);
+    const auto length = static_cast<std::uint16_t>((static_cast<std::uint16_t>(packet[2]) << 8) | packet[3]);
+    if (type != STUN_BINDING_RESPONSE || (length & 3u) != 0 || STUN_HEADER_SIZE + length > size) return false;
+    const std::uint32_t expectedCookie = htonl(STUN_MAGIC_COOKIE);
+    if (std::memcmp(packet + 4, &expectedCookie, sizeof(expectedCookie)) != 0) return false;
+    if (std::memcmp(packet + 8, transactionId, STUN_TRANSACTION_ID_SIZE) != 0) return false;
+    response = {};
+    bool hasXorMapped = false;
+    const std::size_t end = STUN_HEADER_SIZE + length;
+    for (std::size_t offset = STUN_HEADER_SIZE; offset < end;) {
+        if (offset + 4 > end) return false;
+        const auto attrType = static_cast<std::uint16_t>((static_cast<std::uint16_t>(packet[offset]) << 8) | packet[offset + 1]);
+        const auto attrLen = static_cast<std::uint16_t>((static_cast<std::uint16_t>(packet[offset + 2]) << 8) | packet[offset + 3]);
+        const std::size_t valueOffset = offset + 4;
+        if (valueOffset + attrLen > end) return false;
+        const std::uint8_t* value = packet + valueOffset;
+        if (attrType == STUN_ATTR_XOR_MAPPED_ADDRESS || attrType == STUN_ATTR_XOR_MAPPED_ADDRESS_LEGACY) {
+            const auto endpoint = DecodeStunIpv4Endpoint(value, attrLen, true);
+            if (endpoint.valid) {
+                response.mapped = endpoint;
+                hasXorMapped = true;
+            }
+        } else if (attrType == STUN_ATTR_MAPPED_ADDRESS && !hasXorMapped) {
+            const auto endpoint = DecodeStunIpv4Endpoint(value, attrLen, false);
+            if (endpoint.valid) response.mapped = endpoint;
+        } else if (attrType == STUN_ATTR_OTHER_ADDRESS || attrType == STUN_ATTR_CHANGED_ADDRESS) {
+            const auto endpoint = DecodeStunIpv4Endpoint(value, attrLen, false);
+            if (endpoint.valid) response.other = endpoint;
+        }
+        offset = valueOffset + ((static_cast<std::size_t>(attrLen) + 3u) & ~std::size_t(3u));
+    }
+    return response.mapped.valid;
+}
+
+static bool ProbeStunServer(StunSocket descriptor, const sockaddr_in& server, int timeoutMs, std::chrono::steady_clock::time_point totalDeadline, StunProbeResponse& response) {
+    const auto start = std::chrono::steady_clock::now();
+    if (start >= totalDeadline) return false;
+    std::uint8_t request[STUN_HEADER_SIZE] = {};
+    request[0] = static_cast<std::uint8_t>(STUN_BINDING_REQUEST >> 8);
+    request[1] = static_cast<std::uint8_t>(STUN_BINDING_REQUEST & 0xFF);
+    const std::uint32_t cookie = htonl(STUN_MAGIC_COOKIE);
+    std::memcpy(request + 4, &cookie, sizeof(cookie));
+    HostEntropy_nid_no_patch(request + 8, STUN_TRANSACTION_ID_SIZE);
+    const auto sent = sendto(descriptor, reinterpret_cast<const char*>(request), sizeof(request), 0,
+                             reinterpret_cast<const sockaddr*>(&server), sizeof(server));
+    if (sent != static_cast<int>(sizeof(request))) return false;
+    const auto probeDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs > 0 ? timeoutMs : 1);
+    const auto deadline = probeDeadline < totalDeadline ? probeDeadline : totalDeadline;
+    for (;;) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) return false;
+        const auto remainingUs = std::chrono::duration_cast<std::chrono::microseconds>(deadline - now).count();
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(descriptor, &readSet);
+        timeval tv{};
+        tv.tv_sec = static_cast<long>(remainingUs / 1000000);
+        tv.tv_usec = static_cast<long>(remainingUs % 1000000);
+        if (tv.tv_sec == 0 && tv.tv_usec == 0) tv.tv_usec = 1000;
+#ifdef _WIN32
+        const int ready = select(0, &readSet, nullptr, nullptr, &tv);
+#else
+        const int ready = select(descriptor + 1, &readSet, nullptr, nullptr, &tv);
+#endif
+        if (ready <= 0) return false;
+        std::uint8_t buffer[512];
+        sockaddr_in from{};
+#ifdef _WIN32
+        int fromLen = sizeof(from);
+#else
+        socklen_t fromLen = sizeof(from);
+#endif
+        const auto received = recvfrom(descriptor, reinterpret_cast<char*>(buffer), sizeof(buffer), 0,
+                                       reinterpret_cast<sockaddr*>(&from), &fromLen);
+#ifdef _WIN32
+        if (received < 0) {
+            if (WSAGetLastError() == WSAECONNRESET) continue;
+            return false;
+        }
+#else
+        if (received < 0) return false;
+#endif
+        if (received == 0) return false;
+        if (ParseStunBindingResponse(buffer, static_cast<std::size_t>(received), request + 8, response)) return true;
+    }
+}
+
+static NetCtlNatInfo DiscoverNatInfo(in_addr localAddress) {
+    NetCtlNatInfo result{};
+    result.size = sizeof(NetCtlNatInfo);
+    result.stun_status = NET_CTL_STUN_STATUS_FAILED;
+    result.nat_type = NET_CTL_NAT_TYPE_NONE;
+    result.mapped_addr = 0;
+
+    const auto totalDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(STUN_TOTAL_BUDGET_MS);
+    int timeoutMs = STUN_DEFAULT_TIMEOUT_MS;
+    std::uint64_t generation = 0;
+    const auto servers = ResolveStunServers(timeoutMs, generation, totalDeadline);
+    if (servers.empty() || !EnsureSocketRuntime()) return result;
+
+    const StunSocket descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (descriptor == INVALID_STUN_SOCKET) return result;
+
+#ifdef _WIN32
+    BOOL newBehavior = FALSE;
+    DWORD bytesReturned = 0;
+    WSAIoctl(descriptor, _WSAIOW(IOC_VENDOR, 12), &newBehavior, sizeof(newBehavior), nullptr, 0, &bytesReturned, nullptr, nullptr);
+#endif
+
+    sockaddr_in bindAddr{};
+    bindAddr.sin_family = AF_INET;
+    bindAddr.sin_addr = (ntohl(servers[0].sin_addr.s_addr) >> 24) == 127 ? servers[0].sin_addr : localAddress;
+    bindAddr.sin_port = 0;
+    if (bind(descriptor, reinterpret_cast<const sockaddr*>(&bindAddr), sizeof(bindAddr)) != 0) {
+        CloseStunSocket(descriptor);
+        return result;
+    }
+
+    sockaddr_in boundAddr{};
+#ifdef _WIN32
+    int boundLen = sizeof(boundAddr);
+#else
+    socklen_t boundLen = sizeof(boundAddr);
+#endif
+    if (getsockname(descriptor, reinterpret_cast<sockaddr*>(&boundAddr), &boundLen) != 0) {
+        CloseStunSocket(descriptor);
+        return result;
+    }
+    const std::uint16_t localPort = ntohs(boundAddr.sin_port);
+
+    StunProbeResponse firstResponse{};
+    sockaddr_in primaryServer{};
+    std::size_t primaryIndex = servers.size();
+    for (std::size_t i = 0; i < servers.size(); ++i) {
+        if (ProbeStunServer(descriptor, servers[i], timeoutMs, totalDeadline, firstResponse)) {
+            primaryServer = servers[i];
+            primaryIndex = i;
+            break;
+        }
+    }
+    if (primaryIndex == servers.size()) {
+        CloseStunSocket(descriptor);
+        return result;
+    }
+
+    if (firstResponse.mapped.address == localAddress.s_addr && firstResponse.mapped.port == localPort) {
+        CloseStunSocket(descriptor);
+        result.stun_status = NET_CTL_STUN_STATUS_OK;
+        result.nat_type = NET_CTL_NAT_TYPE_1;
+        result.mapped_addr = firstResponse.mapped.address;
+        return result;
+    }
+
+    std::vector<sockaddr_in> secondaryServers;
+    if (firstResponse.other.valid) {
+        sockaddr_in otherServer{};
+        otherServer.sin_family = AF_INET;
+        otherServer.sin_addr.s_addr = firstResponse.other.address;
+        otherServer.sin_port = htons(firstResponse.other.port);
+        if (otherServer.sin_addr.s_addr != primaryServer.sin_addr.s_addr || otherServer.sin_port != primaryServer.sin_port) {
+            AppendUniqueStunServer(secondaryServers, otherServer);
+        }
+        if (otherServer.sin_port != primaryServer.sin_port) {
+            sockaddr_in sameIpOtherPort = primaryServer;
+            sameIpOtherPort.sin_port = otherServer.sin_port;
+            AppendUniqueStunServer(secondaryServers, sameIpOtherPort);
+        }
+    }
+    for (std::size_t i = 0; i < servers.size(); ++i) {
+        if (i == primaryIndex) continue;
+        if (servers[i].sin_addr.s_addr != primaryServer.sin_addr.s_addr || servers[i].sin_port != primaryServer.sin_port) {
+            AppendUniqueStunServer(secondaryServers, servers[i]);
+        }
+    }
+
+    for (const auto& secondary : secondaryServers) {
+        StunProbeResponse secondResponse{};
+        if (ProbeStunServer(descriptor, secondary, timeoutMs, totalDeadline, secondResponse)) {
+            CloseStunSocket(descriptor);
+            result.stun_status = NET_CTL_STUN_STATUS_OK;
+            result.nat_type = (secondResponse.mapped.address == firstResponse.mapped.address &&
+                               secondResponse.mapped.port == firstResponse.mapped.port)
+                                  ? NET_CTL_NAT_TYPE_2
+                                  : NET_CTL_NAT_TYPE_3;
+            result.mapped_addr = firstResponse.mapped.address;
+            return result;
+        }
+    }
+
+    CloseStunSocket(descriptor);
+    return result;
+}
+
 static void WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
     std::memcpy(info->opaque, &value, sizeof(value));
 }
@@ -574,7 +939,33 @@ int APS5_VABI sceNetCtlGetNatInfo(NetCtlNatInfo* info) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!info) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (info->size != sizeof(NetCtlNatInfo)) return SCE_NET_CTL_ERROR_INVALID_SIZE;
-    throw std::logic_error("sceNetCtlGetNatInfo: NAT discovery is not implemented");
+    HostIpv4Interface host;
+    if (!FindHostIpv4Interface(host)) return SCE_NET_CTL_ERROR_NOT_CONNECTED;
+    auto& config = GetStunConfig();
+    std::uint64_t generation = 0;
+    const auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard guard(config.lock);
+        generation = config.configGeneration;
+        if (config.hasCachedResult && config.cachedConfigGeneration == generation &&
+            config.cachedLocalAddr == host.address.s_addr && now < config.cachedUntil) {
+            *info = config.cachedResult;
+            return 0;
+        }
+    }
+    const NetCtlNatInfo discovered = DiscoverNatInfo(host.address);
+    if (discovered.stun_status == NET_CTL_STUN_STATUS_OK) {
+        std::lock_guard guard(config.lock);
+        if (config.configGeneration == generation) {
+            config.cachedConfigGeneration = generation;
+            config.cachedLocalAddr = host.address.s_addr;
+            config.cachedUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(STUN_CACHE_TTL_MS);
+            config.cachedResult = discovered;
+            config.hasCachedResult = true;
+        }
+    }
+    *info = discovered;
+    return 0;
 }
 
 int APS5_VABI sceNetCtlGetResult(int event, int* result) {

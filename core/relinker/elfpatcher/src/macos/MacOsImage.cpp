@@ -549,7 +549,6 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     for (std::size_t index = 0; index < input.TlsExports.size(); ++index) {
         const auto& variable = input.TlsExports[index];
         if (!hasTls) throw Domain::RelinkerException("Guest TLS export has no TLS block: " + variable.Symbol);
-        if (variable.Offset >= tls.Tls->MemorySize) throw Domain::RelinkerException("Guest TLS export is outside the TLS block: " + variable.Symbol);
         const auto at = tlsExports + index * 16;
         Io::WriteU64(meta, at, imageBase + descriptor);
         Io::WriteU64(meta, at + 8, variable.Offset);

@@ -326,6 +326,16 @@ int APS5_VABI setsid_nid_postfix(void) {
     return static_cast<int>(Fail(GuestEperm));
 }
 
+int APS5_VABI profil_nid_postfix(void* samples, std::size_t size, std::size_t offset, unsigned int scale) {
+    (void)samples;
+    (void)size;
+    (void)offset;
+    constexpr unsigned int MaxScale = 1u << 16;
+    if (scale > MaxScale) return static_cast<int>(Fail(GuestEinval));
+    if (scale != 0) NotImplemented_nid_no_patch("profil: the profiling clock");
+    return 0;
+}
+
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask) {
     return File::ExchangeCreationMask_nid_no_patch(mask);
 }
