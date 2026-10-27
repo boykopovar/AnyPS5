@@ -74,7 +74,7 @@ std::uint32_t* WriteData(CommandBuffer* buffer, bool compute, std::uint8_t dst, 
     return packet;
 }
 
-std::uint32_t* WriteWait(CommandBuffer* buffer, std::uint8_t size, std::uint8_t compareFunction, std::uint8_t operation, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t reference, std::uint64_t mask, std::uint32_t pollCycles, const char* function) {
+std::uint32_t* WriteWait(CommandBuffer* buffer, bool compute, std::uint8_t size, std::uint8_t compareFunction, std::uint8_t operation, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t reference, std::uint64_t mask, std::uint32_t pollCycles, const char* function) {
     CheckBits(size, 1, function);
     Require(compareFunction <= 6, function, "invalid wait comparison");
     CheckBits(operation, size == 0 ? 0xfu : 7u, function);
@@ -90,8 +90,9 @@ std::uint32_t* WriteWait(CommandBuffer* buffer, std::uint8_t size, std::uint8_t 
     if (guestAddress != 0) CheckAddress(guestAddress, size == 0 ? 4 : 8, function);
     CheckBits(guestAddress, 0xffffffffffffull, function);
     const auto waitSize = size == 0 ? 7u : 9u;
+    const auto tagFlags = compute ? 0u : 4u;
     auto* packet = Allocate(buffer, waitSize + 7u, function);
-    packet[0] = Header(0x79u, 4, 1);
+    packet[0] = Header(0x79u, 4, tagFlags);
     packet[1] = 0x342u;
     packet[2] = (size == 0 ? 0xc8010000u : 0xc8020000u) | static_cast<std::uint32_t>(guestAddress >> 32u);
     packet[3] = static_cast<std::uint32_t>(guestAddress);
@@ -110,7 +111,7 @@ std::uint32_t* WriteWait(CommandBuffer* buffer, std::uint8_t size, std::uint8_t 
         wait[7] = static_cast<std::uint32_t>(mask >> 32u);
     }
     wait[waitSize - 1u] = pollCycles >> 4u;
-    wait[waitSize] = Header(0x79u, 3, 1);
+    wait[waitSize] = Header(0x79u, 3, tagFlags);
     wait[waitSize + 1u] = 0x342u;
     wait[waitSize + 2u] = 0xc8000000u;
     return packet;
@@ -118,13 +119,14 @@ std::uint32_t* WriteWait(CommandBuffer* buffer, std::uint8_t size, std::uint8_t 
 
 std::uint32_t* ValidateWait(std::uint32_t* packet, const char* function) {
     CheckAddress(reinterpret_cast<std::uintptr_t>(packet), 4, function);
-    Require(packet[0] == Header(0x79u, 4, 1) && packet[1] == 0x342u, function, "invalid wait wrapper");
+    const auto tagFlags = packet[0] & 0xffu;
+    Require((tagFlags == 0 || tagFlags == 4u) && packet[0] == Header(0x79u, 4, tagFlags) && packet[1] == 0x342u, function, "invalid wait wrapper");
     const auto tag = packet[2] & 0xffff0000u;
     Require(tag == 0xc8010000u || tag == 0xc8020000u, function, "invalid wait tag");
     const auto size = tag == 0xc8010000u ? 7u : 9u;
     auto* wait = packet + 4;
     ValidatePacket(wait, size == 7 ? 0x3cu : 0x93u, size, function);
-    Require(wait[size] == Header(0x79u, 3, 1) && wait[size + 1u] == 0x342u && wait[size + 2u] == 0xc8000000u, function, "invalid wait end tag");
+    Require(wait[size] == Header(0x79u, 3, tagFlags) && wait[size + 1u] == 0x342u && wait[size + 2u] == 0xc8000000u, function, "invalid wait end tag");
     return wait;
 }
 

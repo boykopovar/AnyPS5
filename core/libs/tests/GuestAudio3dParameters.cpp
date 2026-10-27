@@ -1,12 +1,13 @@
+#include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <bit>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
-extern "C" void APS5_VABI sceAudio3dGetDefaultOpenParameters(Audio3dOpenParameters* parameters);
-extern "C" int APS5_VABI sceAudio3dInitialize(std::int64_t reserved);
 
 static_assert(sizeof(Audio3dOpenParameters) == 0x28);
 static_assert(offsetof(Audio3dOpenParameters, num_beds) == 0x20);
@@ -71,7 +72,29 @@ static void CheckExtendedBuffer() {
     }
 }
 
+static void CheckErrorStrings() {
+    constexpr const char* messages[]{
+        "port does not exist", "object does not exist", "invalid parameter",
+        "out of memory", "out of resources", "not ready"
+    };
+    for (std::uint32_t index = 0; index < std::size(messages); ++index) {
+        errno = 7;
+        const char* result = sceAudio3dStrError(std::bit_cast<std::int32_t>(0x80ea0002u + index));
+        Require(result && std::strcmp(result, messages[index]) == 0, "incorrect Audio3d error description");
+        Require(errno == 7, "error description lookup must preserve errno");
+        Require(std::strcmp(sceAudio3dStrError(0), "(unknown)") == 0 && std::strcmp(result, messages[index]) == 0,
+                "error descriptions must remain valid after another lookup");
+    }
+    for (const auto code : std::array<std::uint32_t, 11>{0, 1, 0xffffffffu, 0x80000000u, 0x7fffffffu,
+            0x80e9ffffu, 0x80ea0000u, 0x80ea0001u, 0x80ea0008u, 0x80ea0009u, 0x80eb0002u}) {
+        errno = 7;
+        const char* result = sceAudio3dStrError(std::bit_cast<std::int32_t>(code));
+        Require(result && std::strcmp(result, "(unknown)") == 0 && errno == 7,
+                "unrecognized codes must return the native fallback without changing errno");
+    }
+}
 int main() {
+    CheckErrorStrings();
     CheckInvalidDestination();
     CheckShortBuffer();
     CheckExtendedBuffer();

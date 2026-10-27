@@ -1,45 +1,13 @@
+#include <cstdio>
+#include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
+#include <initializer_list>
 #include <cstdlib>
 #include <cstring>
 
-extern "C" {
-void* APS5_VABI sceCesUcsProfileInitEucCnGb2312(void*);
-void* APS5_VABI sceCesUcsProfileInitGbkCp936(void*);
-void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void*);
-int APS5_VABI sceCesMbcsUcsContextInit(void*, const void*);
-int APS5_VABI sceCesEucCnToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesEucCnToUtf8(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesEucCnToUtf16be(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesEucCnToUtf32(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesGbToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesGbToUtf8(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesGbToUtf16(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesGbToUtf32le(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesUcs2ToEucCn(std::uint16_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUcs2ToGb(std::uint16_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf8ToEucCn(const std::uint8_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf8ToGb(const std::uint8_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf16leToGb(const std::uint16_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf32ToEucCn(std::uint32_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf32beToGb(const std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf8StrToMbcsStr(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrToUtf8Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-void* APS5_VABI sceCesUcsProfileInitGb18030_2000(void*);
-void* APS5_VABI sceCesUcsProfileInitGb18030_2005(void*);
-int APS5_VABI sceCesGbToUtf16be(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesGbToUtf32(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesUtf16ToGb(const std::uint16_t*, std::uint32_t, std::uint32_t*, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesUtf32ToGb(std::uint32_t, const void*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcToUcs2(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*);
-int APS5_VABI sceCesMbcToUtf16le(const void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrToUcs2Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrToUtf16Str(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint16_t*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceCesMbcsStrGetUtf16Len(void*, const std::uint8_t*, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceCesUtf16StrToMbcsStr(void*, const std::uint16_t*, std::uint32_t, std::uint32_t*, std::uint8_t*, std::uint32_t, std::uint32_t*);
-}
-
-static void Require(bool value) { if (!value) std::abort(); }
+static void RequireImpl(bool value, int line) { if (!value) { std::fprintf(stderr, "REQFAIL line %d\n", line); std::fflush(stderr); std::abort(); } }
+#define Require(v) RequireImpl((v), __LINE__)
 
 static const std::uint8_t* Bytes(const char* text) { return reinterpret_cast<const std::uint8_t*>(text); }
 
@@ -47,6 +15,7 @@ static constexpr int invalidParameter = static_cast<int>(0x805C0001);
 static constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
 static constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
 static constexpr int invalidEncode = static_cast<int>(0x805C0014);
+ constexpr int outOfCodeSpace = static_cast<int>(0x805C0015);
 static constexpr int unassignedCode = static_cast<int>(0x805C0020);
 static constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
 static constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
@@ -78,24 +47,18 @@ static constexpr Gb18030Sequence GB18030_BOUNDARIES[88] = {
     {0x8336CF39, 0xE863, 0xE863}, {0x8336D030, 0xE865, 0xE865}, {0x84308534, 0xF92B, 0xF92B}, {0x84308535, 0xF92D, 0xF92D},
     {0x84309C37, 0xFA26, 0xFA26}, {0x84309C38, 0xFA2A, 0xFA2A}, {0x84318537, 0xFE2F, 0xFE2F}, {0x84318538, 0xFE32, 0xFE32},
     {0x8431A233, 0xFFDF, 0xFFDF}, {0x8431A234, 0xFFE6, 0xFFE6}, {0x8431A439, 0xFFFF, 0xFFFF}, {0x8431A530, 0x0, 0x0},
-    {0x8F39FE39, 0x0, 0x0}, {0x90308130, 0x10000, 0x10000}, {0x95328235, 0x1FFFF, 0x1FFFF}, {0x95328236, 0x20000, 0x20000},
-    {0x9A348431, 0x2FFFF, 0x2FFFF}, {0x9A348432, 0x30000, 0x30000}, {0x9F368537, 0x3FFFF, 0x3FFFF}, {0x9F368538, 0x40000, 0x40000},
-    {0xA4388733, 0x4FFFF, 0x4FFFF}, {0xA4388734, 0x50000, 0x50000}, {0xAA308839, 0x5FFFF, 0x5FFFF}, {0xAA308930, 0x60000, 0x60000},
-    {0xAF328A35, 0x6FFFF, 0x6FFFF}, {0xAF328A36, 0x70000, 0x70000}, {0xB4348C31, 0x7FFFF, 0x7FFFF}, {0xB4348C32, 0x80000, 0x80000},
-    {0xB9368D37, 0x8FFFF, 0x8FFFF}, {0xB9368D38, 0x90000, 0x90000}, {0xBE388F33, 0x9FFFF, 0x9FFFF}, {0xBE388F34, 0xA0000, 0xA0000},
-    {0xC4309039, 0xAFFFF, 0xAFFFF}, {0xC4309130, 0xB0000, 0xB0000}, {0xC9329235, 0xBFFFF, 0xBFFFF}, {0xC9329236, 0xC0000, 0xC0000},
-    {0xCE349431, 0xCFFFF, 0xCFFFF}, {0xCE349432, 0xD0000, 0xD0000}, {0xD3369537, 0xDFFFF, 0xDFFFF}, {0xD3369538, 0xE0000, 0xE0000},
-    {0xD8389733, 0xEFFFF, 0xEFFFF}, {0xD8389734, 0xF0000, 0xF0000}, {0xDE309839, 0xFFFFF, 0xFFFFF}, {0xDE309930, 0x100000, 0x100000},
-    {0xE3329A35, 0x10FFFF, 0x10FFFF}, {0xE3329A36, 0x0, 0x0}, {0xFD308130, 0x0, 0x0}, {0xFE39FE39, 0x0, 0x0},
+    {0x8F39FE39, 0x0, 0x0}, {0x90308130, 0x0, 0x0}, {0x95328235, 0x0, 0x0}, {0x95328236, 0x0, 0x20000},
+    {0x9A348431, 0x0, 0x2FFFF}, {0x9A348432, 0x0, 0x0}, {0x9F368537, 0x0, 0x0}, {0x9F368538, 0x0, 0x0},
+    {0xA4388733, 0x0, 0x0}, {0xA4388734, 0x0, 0x0}, {0xAA308839, 0x0, 0x0}, {0xAA308930, 0x0, 0x0},
+    {0xAF328A35, 0x0, 0x0}, {0xAF328A36, 0x0, 0x0}, {0xB4348C31, 0x0, 0x0}, {0xB4348C32, 0x0, 0x0},
+    {0xB9368D37, 0x0, 0x0}, {0xB9368D38, 0x0, 0x0}, {0xBE388F33, 0x0, 0x0}, {0xBE388F34, 0x0, 0x0},
+    {0xC4309039, 0x0, 0x0}, {0xC4309130, 0x0, 0x0}, {0xC9329235, 0x0, 0x0}, {0xC9329236, 0x0, 0x0},
+    {0xCE349431, 0x0, 0x0}, {0xCE349432, 0x0, 0x0}, {0xD3369537, 0x0, 0x0}, {0xD3369538, 0x0, 0x0},
+    {0xD8389733, 0x0, 0x0}, {0xD8389734, 0x0, 0x0}, {0xDE309839, 0x0, 0x0}, {0xDE309930, 0x0, 0x0},
+    {0xE3329A35, 0x0, 0x0}, {0xE3329A36, 0x0, 0x0}, {0xFD308130, 0x0, 0x0}, {0xFE39FE39, 0x0, 0x0},
 };
-static constexpr Gb18030Difference GB18030_DIFFERENCES[26] = {
-    {0xA6D9, 0xE78D, 0xFE10, true}, {0xA6DA, 0xE78E, 0xFE12, true}, {0xA6DB, 0xE78F, 0xFE11, true}, {0xA6DC, 0xE790, 0xFE13, true},
-    {0xA6DD, 0xE791, 0xFE14, true}, {0xA6DE, 0xE792, 0xFE15, true}, {0xA6DF, 0xE793, 0xFE16, true}, {0xA6EC, 0xE794, 0xFE17, true},
-    {0xA6ED, 0xE795, 0xFE18, true}, {0xA6F3, 0xE796, 0xFE19, true}, {0xA8BC, 0xE7C7, 0x1E3F, false}, {0xFE51, 0xE816, 0x20087, true},
-    {0xFE52, 0xE817, 0x20089, true}, {0xFE53, 0xE818, 0x200CC, true}, {0xFE59, 0xE81E, 0x9FB4, true}, {0xFE61, 0xE826, 0x9FB5, true},
-    {0xFE66, 0xE82B, 0x9FB6, true}, {0xFE67, 0xE82C, 0x9FB7, true}, {0xFE6C, 0xE831, 0x215D7, true}, {0xFE6D, 0xE832, 0x9FB8, true},
-    {0xFE76, 0xE83B, 0x2298F, true}, {0xFE7E, 0xE843, 0x9FB9, true}, {0xFE90, 0xE854, 0x9FBA, true}, {0xFE91, 0xE855, 0x241FE, true},
-    {0xFEA0, 0xE864, 0x9FBB, true}, {0x8135F437, 0x1E3F, 0xE7C7, false},
+static constexpr Gb18030Difference GB18030_DIFFERENCES[2] = {
+    {0xA8BC, 0xE7C7, 0x1E3F, false}, {0x8135F437, 0x1E3F, 0xE7C7, false},
 };
 static std::uint32_t Gb18030Bytes(std::uint32_t linear) {
     return (0x81 + linear / 12600) << 24 | (0x30 + linear / 1260 % 10) << 16 | (0x81 + linear / 10 % 126) << 8 | (0x30 + linear % 10);
@@ -116,7 +79,7 @@ static std::uint32_t Gb18030Decode(const void* gb, std::uint32_t packed) {
     std::uint32_t code = 0xDEADBEEF;
     const int result = sceCesGbToUtf32(gb, bytes, size, &consumed, &code);
     if (result != 0) {
-        Require(result == unassignedCode && consumed == 0x55 && code == 0xDEADBEEF);
+        Require(result == unassignedCode && consumed == size && code == 0);
         return 0;
     }
     Require(consumed == size);
@@ -126,18 +89,21 @@ static std::uint32_t Gb18030Decode(const void* gb, std::uint32_t packed) {
 static std::uint32_t Gb18030Encode(const void* gb, std::uint32_t code) {
     std::uint8_t bytes[4] = {};
     std::uint32_t size = 0;
-    Require(sceCesUtf32ToGb(code, gb, bytes, sizeof(bytes), &size) == 0 && (size == 2 || size == 4));
+    const int result = sceCesUtf32ToGb(code, gb, bytes, sizeof(bytes), &size);
+    if (result == unassignedCode) return 0;
+    Require(result == 0 && (size == 2 || size == 4));
     std::uint32_t packed = 0;
     for (std::uint32_t i = 0; i < size; ++i) packed = packed << 8 | bytes[i];
     return packed;
 }
 
-static void RequireGb18030Error(const void* gb, const char* bytes, std::uint32_t size, int error) {
+static void RequireGb18030Error(const void* gb, const char* bytes, std::uint32_t size, int error, std::uint32_t length) {
     std::uint32_t consumed = 0x55;
     std::uint32_t utf32 = 0xDEADBEEF;
-    Require(sceCesGbToUtf32(gb, Bytes(bytes), size, &consumed, &utf32) == error && consumed == 0x55 && utf32 == 0xDEADBEEF);
+    Require(sceCesGbToUtf32(gb, Bytes(bytes), size, &consumed, &utf32) == error && consumed == length && utf32 == 0);
     std::uint16_t ucs2 = 0xBEEF;
-    Require(sceCesMbcToUcs2(gb, Bytes(bytes), size, &consumed, &ucs2) == error && consumed == 0x55 && ucs2 == 0xBEEF);
+    consumed = 0x55;
+    Require(sceCesMbcToUcs2(gb, Bytes(bytes), size, &consumed, &ucs2) == error && consumed == length && ucs2 == 0);
 }
 
 static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByteHash, std::uint32_t fourByteHash, std::uint32_t encodeHash, int fourByteOneWay, int codeOneWay) {
@@ -182,10 +148,10 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
         Fnv(hash, Gb18030Decode(gb, Gb18030Bytes(linear)));
         ++samples;
     }
-    Require(hash == 0x9E77B552 && samples == 1052);
+    Require(hash == (revision2005 ? 0x0F212E49u : 0x9832CC85u) && samples == 1052);
     hash = 0x811C9DC5;
     for (std::uint32_t code = 0x10000; code < 0x110000; code += 997) Fnv(hash, Gb18030Encode(gb, code));
-    Require(hash == 0x3D088D7E);
+    Require(hash == (revision2005 ? 0x2EB90A7Bu : 0x9832CC85u));
 
     for (const Gb18030Sequence& entry : GB18030_BOUNDARIES) {
         const std::uint32_t code = revision2005 ? entry.code2005 : entry.code2000;
@@ -198,77 +164,93 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
         if (revision2005 && entry.fallback) Require(Gb18030Encode(gb, entry.code2000) == entry.bytes);
     }
 
-    RequireGb18030Error(gb, "\x80", 1, invalidEncode);
-    RequireGb18030Error(gb, "\xFF", 1, invalidEncode);
-    RequireGb18030Error(gb, "\x81", 1, srcBufferEnd);
-    RequireGb18030Error(gb, "\x81\x30", 2, srcBufferEnd);
-    RequireGb18030Error(gb, "\x81\x30\x81", 3, srcBufferEnd);
-    RequireGb18030Error(gb, "\x81\x00", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x2F", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x3A", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x7F", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\xFF", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x80\x30", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\xFF\x30", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x30\x30", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x81\x2F", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x81\x3A", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x81\x81", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x84\x31\xA5\x30", 4, unassignedCode);
-    RequireGb18030Error(gb, "\xE3\x32\x9A\x36", 4, unassignedCode);
-    RequireGb18030Error(gb, "\xFE\x39\xFE\x39", 4, unassignedCode);
+    RequireGb18030Error(gb, "\x80", 1, invalidEncode, 1);
+    RequireGb18030Error(gb, "\xFF", 1, invalidEncode, 1);
+    RequireGb18030Error(gb, "\x81", 1, srcBufferEnd, 2);
+    RequireGb18030Error(gb, "\x81\x30", 2, srcBufferEnd, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81", 3, srcBufferEnd, 4);
+    RequireGb18030Error(gb, "\x81\x00", 2, invalidEncode, 1);
+    RequireGb18030Error(gb, "\x81\x2F", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\x3A", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\x7F", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\xFF", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\x30\x80\x30", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\xFF\x30", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x30\x30", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81\x2F", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81\x3A", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81\x81", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x84\x31\xA5\x30", 4, unassignedCode, 4);
+    RequireGb18030Error(gb, "\xE3\x32\x9A\x36", 4, unassignedCode, 4);
+    RequireGb18030Error(gb, "\xFE\x39\xFE\x39", 4, unassignedCode, 4);
 
     std::uint32_t consumed = 0x55;
     std::uint32_t produced = 0x55;
     std::uint16_t ucs2 = 0xBEEF;
-    Require(sceCesGbToUcs2(gb, Bytes("\x90\x30\x81\x30"), 4, &consumed, &ucs2) == unassignedCode && consumed == 0x55 && ucs2 == 0xBEEF);
     std::uint8_t utf8[4] = {1, 2, 3, 4};
-    Require(sceCesGbToUtf8(gb, Bytes("\x90\x30\x81\x30"), 4, &consumed, utf8, 3, &produced) == dstBufferEnd && consumed == 0x55 && produced == 0x55);
-    Require(std::memcmp(utf8, "\x01\x02\x03\x04", 4) == 0);
-    Require(sceCesGbToUtf8(gb, Bytes("\x90\x30\x81\x30"), 4, &consumed, utf8, 4, &produced) == 0 && consumed == 4 && produced == 4);
-    Require(std::memcmp(utf8, "\xF0\x90\x80\x80", 4) == 0);
     std::uint16_t utf16[2] = {0xBEEF, 0xBEEF};
-    produced = 0x55;
-    Require(sceCesGbToUtf16(gb, Bytes("\xE3\x32\x9A\x35"), 4, &consumed, utf16, 1, &produced) == dstBufferEnd && produced == 0x55 && utf16[0] == 0xBEEF);
-    Require(sceCesGbToUtf16(gb, Bytes("\xE3\x32\x9A\x35"), 4, &consumed, utf16, 2, &produced) == 0 && produced == 2 && utf16[0] == 0xDBFF && utf16[1] == 0xDFFF);
-    Require(sceCesGbToUtf16be(gb, Bytes("\x90\x30\x81\x30"), 4, &consumed, utf16, 2, &produced) == 0 && std::memcmp(utf16, "\xD8\x00\xDC\x00", 4) == 0);
-    Require(sceCesMbcToUtf16le(gb, Bytes("\x94\x39\xFC\x36"), 4, &consumed, utf16, 2, &produced) == 0 && consumed == 4 && std::memcmp(utf16, "\x3D\xD8\x00\xDE", 4) == 0);
+    for (const char* refused : {"\x90\x30\x81\x30", "\x94\x39\xFC\x36", "\xE3\x32\x9A\x35"}) {
+        Require(sceCesGbToUtf8(gb, Bytes(refused), 4, &consumed, utf8, 4, &produced) == unassignedCode && consumed == 4 && produced == 0);
+    }
+    consumed = 0x55;
+    ucs2 = 0xBEEF;
+    Require(sceCesGbToUcs2(gb, Bytes("\x95\x32\x82\x36"), 4, &consumed, &ucs2) == unassignedCode);
+    if (revision2005) {
+        Require(consumed == 0x55 && ucs2 == 0xBEEF);
+        consumed = 0x55;
+        produced = 0x55;
+        Require(sceCesGbToUtf8(gb, Bytes("\x95\x32\x82\x36"), 4, &consumed, utf8, 3, &produced) == dstBufferEnd && consumed == 0x55 && produced == 0x55);
+        Require(sceCesGbToUtf8(gb, Bytes("\x95\x32\x82\x36"), 4, &consumed, utf8, 4, &produced) == 0 && consumed == 4 && produced == 4);
+        Require(std::memcmp(utf8, "\xF0\xA0\x80\x80", 4) == 0);
+        produced = 0x55;
+        Require(sceCesGbToUtf16(gb, Bytes("\x9A\x34\x84\x31"), 4, &consumed, utf16, 1, &produced) == dstBufferEnd && produced == 0x55 && utf16[0] == 0xBEEF);
+        Require(sceCesGbToUtf16(gb, Bytes("\x9A\x34\x84\x31"), 4, &consumed, utf16, 2, &produced) == 0 && produced == 2 && utf16[0] == 0xD87F && utf16[1] == 0xDFFF);
+        Require(sceCesGbToUtf16be(gb, Bytes("\x95\x32\x82\x36"), 4, &consumed, utf16, 2, &produced) == 0 && std::memcmp(utf16, "\xD8\x40\xDC\x00", 4) == 0);
+    } else {
+        Require(sceCesGbToUtf8(gb, Bytes("\x95\x32\x82\x36"), 4, &consumed, utf8, 4, &produced) == unassignedCode && consumed == 4 && produced == 0);
+    }
     Require(sceCesGbToUcs2(gb, Bytes("\xA2\xE3"), 2, &consumed, &ucs2) == 0 && consumed == 2 && ucs2 == 0x20AC);
 
     std::uint8_t mbcs[4] = {1, 2, 3, 4};
     produced = 0x55;
-    Require(sceCesUtf32ToGb(0x10000, gb, mbcs, 3, &produced) == dstBufferEnd && produced == 0x55 && std::memcmp(mbcs, "\x01\x02\x03\x04", 4) == 0);
-    Require(sceCesUtf32ToGb(0xD800, gb, mbcs, sizeof(mbcs), &produced) == invalidEncode);
+    Require(sceCesUtf32ToGb(0x10000, gb, mbcs, sizeof(mbcs), &produced) == unassignedCode && produced == 0);
+    produced = 0x55;
+    Require(sceCesUtf32ToGb(0x20000, gb, mbcs, 3, &produced) == (revision2005 ? dstBufferEnd : unassignedCode) && produced == (revision2005 ? 4u : 0u) && std::memcmp(mbcs, "\x01\x02\x03\x04", 4) == 0);
+    Require(sceCesUtf32ToGb(0xD800, gb, mbcs, sizeof(mbcs), &produced) == outOfCodeSpace);
     Require(sceCesUtf32ToGb(0x110000, gb, mbcs, sizeof(mbcs), &produced) == invalidEncode);
     Require(sceCesUcs2ToGb(0x80, gb, mbcs, sizeof(mbcs), &produced) == 0 && produced == 4 && std::memcmp(mbcs, "\x81\x30\x81\x30", 4) == 0);
     Require(sceCesUcs2ToGb(0x20AC, gb, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\xA2\xE3", 2) == 0);
-    Require(sceCesUtf8ToGb(Bytes("\xF0\x9F\x98\x80"), 4, &consumed, gb, mbcs, sizeof(mbcs), &produced) == 0 && consumed == 4 && produced == 4);
-    Require(std::memcmp(mbcs, "\x94\x39\xFC\x36", 4) == 0);
-    const std::uint16_t pair[2] = {0xD83D, 0xDE00};
-    Require(sceCesUtf16ToGb(pair, 2, &consumed, gb, mbcs, sizeof(mbcs), &produced) == 0 && consumed == 2 && produced == 4 && std::memcmp(mbcs, "\x94\x39\xFC\x36", 4) == 0);
+    Require(sceCesUtf8ToGb(Bytes("\xF0\x9F\x98\x80"), 4, &consumed, gb, mbcs, sizeof(mbcs), &produced) == unassignedCode);
+    const std::uint16_t pair[2] = {0xD840, 0xDC00};
+    if (revision2005) Require(sceCesUtf16ToGb(pair, 2, &consumed, gb, mbcs, sizeof(mbcs), &produced) == 0 && consumed == 2 && produced == 4 && std::memcmp(mbcs, "\x95\x32\x82\x36", 4) == 0);
+    else Require(sceCesUtf16ToGb(pair, 2, &consumed, gb, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUtf16ToGb(pair, 1, &consumed, gb, mbcs, sizeof(mbcs), &produced) == srcBufferEnd);
 
     alignas(8) std::uint8_t context[64] = {};
     Require(sceCesMbcsUcsContextInit(context, gb) == 0);
-    const char* utf8Text = "A\xE4\xB8\xAD\xC2\x80\xF0\x9F\x98\x80\xEF\xB8\x90";
-    const char* gbText = revision2005 ? "A\xD6\xD0\x81\x30\x81\x30\x94\x39\xFC\x36\xA6\xD9" : "A\xD6\xD0\x81\x30\x81\x30\x94\x39\xFC\x36\x84\x31\x82\x36";
-    const std::uint32_t gbSize = revision2005 ? 13 : 15;
+    const char* utf8Text = revision2005 ? "A\xE4\xB8\xAD\xC2\x80\xF0\xA0\x80\x80\xEF\xB8\x90" : "A\xE4\xB8\xAD\xC2\x80\xEF\xB8\x90";
+    const std::uint32_t utf8Size = revision2005 ? 13 : 9;
+    const char* gbText = revision2005 ? "A\xD6\xD0\x81\x30\x81\x30\x95\x32\x82\x36\x84\x31\x82\x36" : "A\xD6\xD0\x81\x30\x81\x30\x84\x31\x82\x36";
+    const std::uint32_t gbSize = revision2005 ? 15 : 11;
+    const std::uint32_t units = revision2005 ? 6 : 4;
     std::uint8_t text[16] = {};
-    Require(sceCesUtf8StrToMbcsStr(context, Bytes(utf8Text), 13, &consumed, text, sizeof(text), &produced) == 0 && consumed == 13 && produced == gbSize);
+    Require(sceCesUtf8StrToMbcsStr(context, Bytes(utf8Text), utf8Size, &consumed, text, sizeof(text), &produced) == 0 && consumed == utf8Size && produced == gbSize);
     Require(std::memcmp(text, gbText, gbSize) == 0);
     std::uint8_t backUtf8[16] = {};
-    Require(sceCesMbcsStrToUtf8Str(context, text, gbSize, &consumed, backUtf8, sizeof(backUtf8), &produced) == 0 && consumed == gbSize && produced == 13);
-    Require(std::memcmp(backUtf8, utf8Text, 13) == 0);
+    Require(sceCesMbcsStrToUtf8Str(context, text, gbSize, &consumed, backUtf8, sizeof(backUtf8), &produced) == 0 && consumed == gbSize && produced == utf8Size);
+    Require(std::memcmp(backUtf8, utf8Text, utf8Size) == 0);
     std::uint16_t backUtf16[8] = {};
-    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 8, &produced) == 0 && consumed == gbSize && produced == 6);
-    Require(backUtf16[0] == 'A' && backUtf16[1] == 0x4E2D && backUtf16[2] == 0x80 && backUtf16[3] == 0xD83D && backUtf16[4] == 0xDE00 && backUtf16[5] == 0xFE10);
-    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 4, &produced) == dstBufferEnd);
-    Require(sceCesMbcsStrGetUtf16Len(context, text, gbSize, &consumed, &produced) == 0 && consumed == gbSize && produced == 6);
+    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 8, &produced) == 0 && consumed == gbSize && produced == units);
+    Require(backUtf16[0] == 'A' && backUtf16[1] == 0x4E2D && backUtf16[2] == 0x80 && backUtf16[units - 1] == 0xFE10);
+    if (revision2005) Require(backUtf16[3] == 0xD840 && backUtf16[4] == 0xDC00);
+    std::uint16_t shortUtf16[8] = {};
+    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, units - 2, &produced) == dstBufferEnd);
+    Require(sceCesMbcsStrGetUtf16Len(context, text, gbSize, &consumed, &produced) == 0 && consumed == gbSize && produced == units);
     std::uint8_t again[16] = {};
-    Require(sceCesUtf16StrToMbcsStr(context, backUtf16, 6, &consumed, again, sizeof(again), &produced) == 0 && consumed == 6 && produced == gbSize);
+    Require(sceCesUtf16StrToMbcsStr(context, backUtf16, units, &consumed, again, sizeof(again), &produced) == 0 && consumed == units && produced == gbSize);
     Require(std::memcmp(again, gbText, gbSize) == 0);
     std::uint16_t ucs2Text[8] = {};
-    Require(sceCesMbcsStrToUcs2Str(context, text, gbSize, &consumed, ucs2Text, 8, &produced) == unassignedCode);
+    if (revision2005) Require(sceCesMbcsStrToUcs2Str(context, text, gbSize, &consumed, ucs2Text, 8, &produced) == unassignedCode);
     Require(sceCesUtf8StrToMbcsStr(context, Bytes("\xC2\x80"), 2, &consumed, text, 3, &produced) == dstBufferEnd);
 }
 
@@ -324,7 +306,7 @@ int main() {
     Require(sceCesUcs2ToEucCn(0x4E02, euc, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUcs2ToEucCn(0x20AC, euc, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUcs2ToEucCn(0x4E2D, euc, mbcs, 1, &produced) == dstBufferEnd);
-    Require(sceCesUcs2ToEucCn(0xDC00, euc, mbcs, sizeof(mbcs), &produced) == invalidEncode);
+    Require(sceCesUcs2ToEucCn(0xDC00, euc, mbcs, sizeof(mbcs), &produced) == outOfCodeSpace);
     Require(sceCesUcs2ToGb(0x4E02, gbk, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\x81\x40", 2) == 0);
     Require(sceCesUcs2ToGb(0x20AC, gbk, mbcs, sizeof(mbcs), &produced) == 0 && produced == 1 && mbcs[0] == 0x80);
     Require(sceCesUcs2ToGb(0x3042, euc, mbcs, sizeof(mbcs), &produced) == invalidParameter);
@@ -377,6 +359,6 @@ int main() {
     Require(sceCesEucCnToUcs2(gb2000, Bytes("\xD6\xD0"), 2, &consumed, &ucs2) == invalidParameter);
     Require(sceCesGbToUcs2(gb2005, Bytes("\xD6\xD0"), 2, &consumed, &ucs2) == 0 && consumed == 2 && ucs2 == 0x4E2D);
     CheckGb18030(gb2000, false, 0xE61D3BD3, 0x83476043, 0x469CFCE5, 0, 0);
-    CheckGb18030(gb2005, true, 0x83EDDA69, 0x8D188DFC, 0x31CD0B55, 18, 24);
+    CheckGb18030(gb2005, true, 0xE4CF78F0, 0x8D188DFC, 0xD675EFA1, 0, 0);
     return 0;
 }

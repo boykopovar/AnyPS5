@@ -1,17 +1,7 @@
+#include "prx/libSceErrorDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceErrorDialogInitialize(void);
-int APS5_VABI sceErrorDialogOpen(const void* param);
-int APS5_VABI sceErrorDialogUpdateStatus(void);
-int APS5_VABI sceErrorDialogGetStatus(void);
-int APS5_VABI sceErrorDialogClose(void);
-int APS5_VABI sceErrorDialogTerminate(void);
-int APS5_VABI sceErrorDialogOpenDetail(void);
-int APS5_VABI sceErrorDialogOpenWithReport(void);
-}
 
 namespace {
 
@@ -41,6 +31,7 @@ int main() {
     Require(sceErrorDialogUpdateStatus() == 0);
     Require(sceErrorDialogTerminate() == kErrNotInitialized);
     Require(sceErrorDialogClose() == kErrInvalidState);
+    Require(sceErrorDialogOpen(nullptr) == kErrInvalidState);
     Require(sceErrorDialogOpen(&param) == kErrInvalidState);
 
     Require(sceErrorDialogInitialize() == 0);
@@ -53,9 +44,14 @@ int main() {
     Require(sceErrorDialogOpen(nullptr) == kErrParam);
     ErrorDialogParam bad{8, 0, 0, 0};
     Require(sceErrorDialogOpen(&bad) == kErrParam);
+    ErrorDialogParam badZero{0, 0, 0, 0};
+    Require(sceErrorDialogOpen(&badZero) == kErrParam);
+    ErrorDialogParam badLarge{32, 0, 0, 0};
+    Require(sceErrorDialogOpen(&badLarge) == kErrParam);
 
     Require(sceErrorDialogOpen(&param) == 0);
     Require(sceErrorDialogGetStatus() == kStatusRunning);
+    Require(sceErrorDialogOpen(nullptr) == kErrInvalidState);
     Require(sceErrorDialogOpen(&param) == kErrInvalidState);
 
     Require(sceErrorDialogUpdateStatus() == kStatusFinished);
@@ -71,6 +67,8 @@ int main() {
     Require(sceErrorDialogGetStatus() == 0);
     Require(sceErrorDialogUpdateStatus() == 0);
     Require(sceErrorDialogClose() == kErrInvalidState);
+    Require(sceErrorDialogOpen(nullptr) == kErrInvalidState);
+    Require(sceErrorDialogOpen(&param) == kErrInvalidState);
     Require(sceErrorDialogOpenDetail() == kErrUnexpectedFatal);
     Require(sceErrorDialogOpenWithReport() == kErrUnexpectedFatal);
 }

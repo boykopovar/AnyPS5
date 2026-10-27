@@ -1,3 +1,4 @@
+#include "prx/libSceNpSignaling/include/Api.hpp"
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -161,9 +162,12 @@ int APS5_VABI sceNpSignalingTerminateConnection(int ctxId, int connId) {
     return SCE_NP_SIGNALING_ERROR_CONN_NOT_FOUND;
 }
 
-int APS5_VABI sceNpSignalingDeactivateConnection(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpSignalingDeactivateConnection(int ctxId, int connId) {
+    (void)connId;
+    std::lock_guard lock(signalingMutex);
+    if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!FindContext(ctxId)) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
+    return SCE_NP_SIGNALING_ERROR_CONN_NOT_FOUND;
 }
 
 }

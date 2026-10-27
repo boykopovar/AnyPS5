@@ -57,6 +57,7 @@ struct KernelFilter {
     EqueueDeleteFunc deleteEventFunc = nullptr;
     EqueuePollFunc pollFunc = nullptr;
     int waitDescriptor = -1;
+    bool repoll = false;
     std::shared_ptr<KernelEqueuePrivate> watched;
 };
 
@@ -94,6 +95,7 @@ public:
     int WaitForEvents(KernelEvent* ev, int num, uint32_t micros);
     int WaitForEventsUntil(KernelEvent* ev, int num, std::uint64_t deadlineNanos);
     void RemoveDescriptorEvents(uintptr_t ident);
+    void WakeReadWaiters(uintptr_t ident);
     void Close();
     static uint64_t MonotonicNs();
 
@@ -104,6 +106,7 @@ private:
     int CollectTriggered(KernelEvent* ev, int num);
     int CollectOncePerWait(KernelEvent* ev, int num);
     bool PollEvents();
+    void MeasureFiles(std::unique_lock<std::mutex>& lock);
     void WakePollers();
     void WaitForDescriptors(std::unique_lock<std::mutex>& lock, std::uint64_t deadlineNanos);
     void GatherInterests(WaitSet& wait, std::uintptr_t waker, bool nested);
@@ -123,6 +126,8 @@ private:
 using KernelEqueueRef = std::shared_ptr<KernelEqueuePrivate>;
 void EqueueDescriptorClosed(int descriptor);
 void KqueueDescriptorClosed(int descriptor);
+void EqueueDescriptorReadShut(int descriptor);
+void KqueueDescriptorReadShut(int descriptor);
 bool IsKqueueDescriptor(int descriptor);
 std::optional<bool> KqueueReadable(int descriptor);
 KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t flags, void* udata);

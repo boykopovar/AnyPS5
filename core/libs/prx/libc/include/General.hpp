@@ -13,6 +13,7 @@
 #include "general/ExportMacros.hpp"
 
 extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName);
+extern "C" std::uint64_t NotImplementedCalls_nid_no_patch();
 extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
 extern "C" bool StopAtPrefixLetter_nid_no_patch(const char* str, char** endptr, int base);
 extern "C" bool RejectIntegerBase_nid_no_patch(const char* str, char** endptr, int base, bool setError);
@@ -27,8 +28,11 @@ extern "C" std::FILE* HostStandardErrorFile_nid_no_patch();
 #endif
 
 extern "C" bool CopyGuestEnvironment_nid_no_patch(const char* name, std::string& value);
+extern "C" int CopyGuestString_nid_no_patch(const char* source, std::size_t maximum, std::string& destination);
+extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& destination);
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
+extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const char* path);
 extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* path, bool module = false);
 extern "C" std::filesystem::path ResolveDiskPath_nid_no_patch(const char* path);
@@ -89,6 +93,9 @@ struct PthreadSyncForwards_nid_no_patch {
     void (APS5_VABI* yield)();
 };
 extern "C" void RegisterPthreadSyncForwards_nid_no_patch(const PthreadSyncForwards_nid_no_patch* forwards);
+
+using SigactionFn_nid_no_patch = int (APS5_VABI*)(int, const void*, void*);
+extern "C" void RegisterSigaction_nid_no_patch(SigactionFn_nid_no_patch fn, std::uint32_t* interruptSet);
 
 #define APS5_INVALID_ARG_EX throw std::invalid_argument(std::string(__func__) + ": invalid argument")
 

@@ -1,16 +1,7 @@
+#include "prx/libSceHmdSetupDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceHmdSetupDialogInitialize(void);
-int APS5_VABI sceHmdSetupDialogOpen(const void* param);
-int APS5_VABI sceHmdSetupDialogUpdateStatus(void);
-int APS5_VABI sceHmdSetupDialogGetStatus(void);
-int APS5_VABI sceHmdSetupDialogGetResult(void* result);
-int APS5_VABI sceHmdSetupDialogClose(void);
-int APS5_VABI sceHmdSetupDialogTerminate(void);
-}
 
 namespace {
 
@@ -32,8 +23,10 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceHmdSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceHmdSetupDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceHmdSetupDialogOpen(&param) == kErrNotInitialized);
     Require(sceHmdSetupDialogClose() == kErrNotInitialized);
+    Require(sceHmdSetupDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceHmdSetupDialogGetResult(result) == kErrNotInitialized);
     Require(sceHmdSetupDialogGetStatus() == kStatusNone);
     Require(sceHmdSetupDialogUpdateStatus() == kStatusNone);
@@ -58,6 +51,8 @@ int main() {
     Require(sceHmdSetupDialogClose() == 0);
     Require(sceHmdSetupDialogTerminate() == 0);
     Require(sceHmdSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceHmdSetupDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceHmdSetupDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceHmdSetupDialogGetStatus() == kStatusNone);
     Require(sceHmdSetupDialogUpdateStatus() == kStatusNone);
 

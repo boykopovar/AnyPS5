@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -46,6 +47,18 @@ PFN_vkCmdCopyImageToBuffer realCopyImageToBuffer = nullptr;
 PFN_vkCmdCopyBufferToImage realCopyBufferToImage = nullptr;
 std::atomic<std::uint32_t> imageToBufferCopies{0};
 std::atomic<std::uint32_t> bufferToImageCopies{0};
+std::atomic<VkImage> lastFilledImage{VK_NULL_HANDLE};
+PFN_vkAllocateMemory realAllocateMemory = nullptr;
+std::atomic<std::uint32_t> memoryAllocations{0};
+std::atomic<VkDeviceSize> lastAllocationBytes{0};
+std::atomic<std::uint32_t> lastAllocationType{0};
+
+VKAPI_ATTR VkResult VKAPI_CALL CountAllocateMemory(VkDevice device, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* allocator, VkDeviceMemory* memory) {
+    memoryAllocations.fetch_add(1);
+    lastAllocationBytes = info->allocationSize;
+    lastAllocationType = info->memoryTypeIndex;
+    return realAllocateMemory(device, info, allocator, memory);
+}
 
 VKAPI_ATTR void VKAPI_CALL CountImageToBuffer(VkCommandBuffer commands, VkImage image, VkImageLayout layout, VkBuffer buffer, std::uint32_t count, const VkBufferImageCopy* regions) {
     imageToBufferCopies.fetch_add(1);
@@ -54,6 +67,7 @@ VKAPI_ATTR void VKAPI_CALL CountImageToBuffer(VkCommandBuffer commands, VkImage 
 
 VKAPI_ATTR void VKAPI_CALL CountBufferToImage(VkCommandBuffer commands, VkBuffer buffer, VkImage image, VkImageLayout layout, std::uint32_t count, const VkBufferImageCopy* regions) {
     bufferToImageCopies.fetch_add(1);
+    lastFilledImage = image;
     realCopyBufferToImage(commands, buffer, image, layout, count, regions);
 }
 
@@ -63,6 +77,10 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL CountingDeviceProc(VkDevice device, con
     if (std::strcmp(name, "vkCmdCopyImageToBuffer") == 0) {
         realCopyImageToBuffer = reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(function);
         return reinterpret_cast<PFN_vkVoidFunction>(&CountImageToBuffer);
+    }
+    if (std::strcmp(name, "vkAllocateMemory") == 0) {
+        realAllocateMemory = reinterpret_cast<PFN_vkAllocateMemory>(function);
+        return reinterpret_cast<PFN_vkVoidFunction>(&CountAllocateMemory);
     }
     if (std::strcmp(name, "vkCmdCopyBufferToImage") == 0) {
         realCopyBufferToImage = reinterpret_cast<PFN_vkCmdCopyBufferToImage>(function);
@@ -76,6 +94,8 @@ public:
     Device() {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -87,6 +107,12 @@ public:
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &application;
+#ifdef __APPLE__
+            const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            info.enabledExtensionCount = 1;
+            info.ppEnabledExtensionNames = &portability;
+#endif
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
@@ -215,6 +241,65 @@ private:
     std::uint8_t* block = nullptr;
 };
 
+class SparseLayers {
+public:
+    SparseLayers() {
+#ifdef _WIN32
+        memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocateAtOrAbove_nid_postfix(GuestArena::GuestArenaHighestFree_nid_no_patch(BlockBytes, 65536), BlockBytes, 65536));
+#else
+        constexpr std::uintptr_t alignment = 65536;
+        void* raw = mmap(nullptr, BlockBytes + alignment, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(raw != MAP_FAILED, "cannot reserve sparse depth layers");
+        const auto begin = reinterpret_cast<std::uintptr_t>(raw);
+        const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
+        if (aligned != begin) munmap(raw, aligned - begin);
+        if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
+        memory = reinterpret_cast<std::uint8_t*>(aligned);
+#endif
+        Require(memory != nullptr, "cannot reserve sparse depth layers");
+    }
+
+    ~SparseLayers() {
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(memory, BlockBytes);
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(Address(), BlockBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(memory, BlockBytes);
+#else
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, BlockBytes);
+        munmap(memory, BlockBytes);
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(Address(), BlockBytes);
+#endif
+    }
+
+    void Commit(std::size_t offset, std::size_t bytes) {
+#ifdef _WIN32
+        GuestArena::GuestArenaCommit_nid_postfix(memory + offset, bytes, PAGE_READWRITE, 65536);
+#else
+        Require(mmap(memory + offset, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != MAP_FAILED, "cannot commit sparse depth layer pages");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory + offset, bytes);
+#endif
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(Address() + offset, bytes);
+    }
+
+    void DecommitGuestLayer() {
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(memory + LayerBytes, LayerBytes);
+#else
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory + LayerBytes, LayerBytes);
+        Require(mmap(memory + LayerBytes, LayerBytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != MAP_FAILED, "cannot decommit sparse depth layer pages");
+#endif
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(Address() + LayerBytes, LayerBytes);
+    }
+
+    std::uint8_t* Data() const { return memory; }
+    std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(memory); }
+    SparseLayers(const SparseLayers&) = delete;
+    SparseLayers& operator=(const SparseLayers&) = delete;
+
+private:
+    std::uint8_t* memory = nullptr;
+};
+
 std::atomic<std::uint64_t> watchedBegin{0};
 std::atomic<std::uint64_t> watchedEnd{0};
 std::atomic<std::uint32_t> watchedReads{0};
@@ -300,6 +385,59 @@ void Run(const Context& context, const WatchedBlock& block) {
     AgcDriver::GuestMemory::SetFlushHook(nullptr);
 }
 
+void SparseGuestLayers(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    SparseLayers block;
+    block.Commit(0, LayerBytes);
+    FillLayer(block.Data(), 1.0f);
+    const auto address = block.Address();
+    DepthSurfaceView(context, DepthTarget{address, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    const auto resource = ArrayOver(address);
+    watchedBegin = address + LayerBytes;
+    watchedEnd = address + BlockBytes;
+    AgcDriver::GuestMemory::SetFlushHook(&CountReads);
+    const auto sample = [&](const char* when, bool changed) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        watchedReads = 0;
+        Require(DepthSurfaceTexture(context, words, resource, components) != nullptr, "sparse depth layers were not sampled");
+        Require((watchedReads.load() != 0) == changed, std::string("sparse depth layer read mismatch ") + when);
+    };
+    try {
+        sample("at first use", true);
+        sample("with the guest layer still uncommitted", false);
+        block.Commit(LayerBytes, 65536);
+        const float value = 0.25f;
+        std::memcpy(block.Data() + LayerBytes, &value, sizeof(value));
+        sample("after committing part of the guest layer", true);
+        block.Data()[LayerBytes + 64] = 1;
+        sample("after a CPU write to the committed part", true);
+        AgcDriver::GuestMemory::MarkWritten(address + LayerBytes + 128, 4);
+        sample("after a driver store to the committed part", true);
+        block.DecommitGuestLayer();
+        sample("after decommitting the guest layer", true);
+        sample("with the guest layer still decommitted", false);
+        block.Commit(LayerBytes, 65536);
+        sample("after committing the same pages again", true);
+        block.DecommitGuestLayer();
+        block.Commit(LayerBytes, 65536);
+        sample("after replacing a mapping with the same committed range", true);
+        block.DecommitGuestLayer();
+        block.Commit(LayerBytes, LayerBytes);
+        FillLayer(block.Data() + LayerBytes, 0.5f);
+        sample("after fully committing the guest layer", true);
+        sample("with the fully committed layer unchanged", false);
+        block.DecommitGuestLayer();
+        sample("after decommitting a fully committed guest layer", true);
+        sample("with the fully committed layer now empty", false);
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        ClearDepthSurfaces(context.device);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearDepthSurfaces(context.device);
+}
+
 void RecordedUploads(const Context& context, const WatchedBlock& block) {
     const auto resource = ArrayOver(block.Address());
     Recorder recorder(context);
@@ -312,6 +450,76 @@ void RecordedUploads(const Context& context, const WatchedBlock& block) {
         Require(kept >= LayerBytes, "the recorded upload of a written guest layer added " + std::to_string(kept) + " bytes to the open batch's kept bytes, less than the " + std::to_string(LayerBytes) + " bytes of the layer it holds until the batch completes");
     }
     recorder.Sync();
+}
+
+void PooledPlaneCopies(const Context& context, const WatchedBlock& first, const WatchedBlock& second) {
+    ClearDepthSurfaces(context.device);
+    FillLayer(first.Data() + LayerBytes, 0.25f);
+    FillLayer(second.Data() + LayerBytes, 0.75f);
+    DepthSurfaceView(context, DepthTarget{first.Address(), 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    DepthSurfaceView(context, DepthTarget{second.Address(), 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    const auto sample = [&](const WatchedBlock& block, int round) {
+        lastFilledImage = VK_NULL_HANDLE;
+        bufferToImageCopies = 0;
+        Require(DepthSurfaceTexture(context, words, ArrayOver(block.Address()), components) != nullptr, "the 2D array over a depth surface was not sampled through its depth planes in round " + std::to_string(round));
+        Require(DepthPlaneCopyCount() == 1, "the depth plane copies outgrew a budget that holds one in round " + std::to_string(round) + ", " + std::to_string(DepthPlaneCopyCount()) + " copies");
+        Require(lastFilledImage.load() != VK_NULL_HANDLE && bufferToImageCopies.load() == 1, "a plane copy made again over a full budget was not filled from its surface once in round " + std::to_string(round) + ", " + std::to_string(bufferToImageCopies.load()) + " fills");
+    };
+    sample(first, 0);
+    sample(second, 0);
+    const auto keepsCopies = [&] {
+        if (context.bufferPool == nullptr) return false;
+        const VkMemoryAllocateInfo probe{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, lastAllocationBytes.load(), lastAllocationType.load()};
+        const auto memory = context.bufferPool->TakeImageMemory(probe, "vkAllocateMemory pool probe");
+        const auto before = context.bufferPool->RetainedImages();
+        context.bufferPool->PutImageMemory(memory, probe.allocationSize, probe.memoryTypeIndex);
+        const bool kept = context.bufferPool->RetainedImages() > before;
+        return kept;
+    }();
+    memoryAllocations = 0;
+    for (int round = 1; round <= 3; ++round) {
+        sample(first, round);
+        sample(second, round);
+    }
+    if (!keepsCopies) {
+        std::printf("note: the device memory pool does not keep a block of a plane copy's size and memory type here (not device-tiered, or its heap over budget); the reuse of evicted copies' memory is not checked\n");
+    } else {
+        Require(memoryAllocations.load() == 0, "plane copies evicted and made again over a full budget allocated device memory " + std::to_string(memoryAllocations.load()) + " times instead of taking the evicted copies' memory back");
+    }
+    ClearDepthSurfaces(context.device);
+}
+
+void SharedLayerRanges(const Context& context, const WatchedBlock& block) {
+    ClearDepthSurfaces(context.device);
+    auto resource = ArrayOver(block.Address());
+    resource.depthOrLastArray = 3;
+    const auto geometry = DescribeSurface(resource);
+    for (std::uint32_t layer = 0; layer < 4; ++layer) {
+        DepthSurfaceView(context, DepthTarget{block.Address() + geometry.GuestLayerOffset(layer), 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    }
+    DepthSurfaceView(context, DepthTarget{block.Address() + 16u * LayerBytes, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    const auto sample = [&](std::uint32_t lastArray, std::uint32_t baseArray, std::uint32_t fromSlices, std::uint32_t intoCopy) {
+        auto range = resource;
+        range.depthOrLastArray = lastArray;
+        range.baseArray = baseArray;
+        imageToBufferCopies = 0;
+        bufferToImageCopies = 0;
+        const auto texture = DepthSurfaceTexture(context, words, range, components);
+        const auto when = "layers " + std::to_string(baseArray) + "-" + std::to_string(lastArray);
+        Require(texture != nullptr, "the 2D array over depth surfaces was not sampled through its depth planes for " + when);
+        if (imageToBufferCopies.load() != fromSlices || bufferToImageCopies.load() != intoCopy) {
+            throw std::runtime_error("sampling " + when + " of the depth surfaces recorded " + std::to_string(imageToBufferCopies.load()) + " depth surface copies and " + std::to_string(bufferToImageCopies.load()) + " plane copy fills, expected " + std::to_string(fromSlices) + " and " + std::to_string(intoCopy));
+        }
+        const auto view = texture->SampledViewRange(false);
+        Require(view.layers == lastArray + 1u - baseArray, "the view sampling " + when + " covers " + std::to_string(view.layers) + " layers, not the texture's own");
+        return texture;
+    };
+    sample(3, 0, 4, 1);
+    sample(2, 0, 0, 0);
+    sample(1, 0, 0, 0);
+    sample(2, 1, 0, 0);
+    sample(3, 0, 0, 0);
+    ClearDepthSurfaces(context.device);
 }
 
 void RunCubeGather(const Context& base, const WatchedBlock& block) {
@@ -388,6 +596,11 @@ void RunCubeTiledSlice(const Context& base, const WatchedBlock& block) {
 
 int main() {
     try {
+#ifdef _WIN32
+        _putenv_s("APS5_DEPTH_PLANE_COPY_MIB", "1");
+#else
+        setenv("APS5_DEPTH_PLANE_COPY_MIB", "1", 1);
+#endif
         if (!AgcDriver::GuestMemory::WriteWatched()) {
             std::puts("skipped, guest memory has no write watch");
             return Skipped;
@@ -408,8 +621,14 @@ int main() {
             Require(AgcDriver::GuestMemory::Watched(block.Address(), BlockBytes), "depth plane guest layers: the guest block is not write-watched");
             Run(context, block);
             RecordedUploads(context, block);
+            {
+                WatchedBlock second;
+                PooledPlaneCopies(context, block, second);
+            }
+            SharedLayerRanges(context, block);
             RunCubeGather(context, block);
             RunCubeTiledSlice(context, block);
+            SparseGuestLayers(context);
         }
         device.reset();
         std::puts("depth plane guest layer tests passed");

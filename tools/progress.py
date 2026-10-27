@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from fractions import Fraction
 from html import escape
 from pathlib import Path
 
@@ -18,6 +19,7 @@ OPCODES = ROOT / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / 
 ISA = Path(__file__).resolve().parent / "rdna_isa.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
 STUB = "NotImplemented_nid_no_patch"
 CALL = re.compile(r"\b(\w+)\s*\(")
 KEYWORDS = r"return|else|do|throw|co_return|co_await|co_yield|and|or|not|xor|bitand|bitor|compl"
@@ -162,15 +164,15 @@ def inert_wrappers(text):
 
 def scan_library(path):
     done, todo, inert, live = set(), set(), set(), set()
-    for source in path.rglob("*.cpp"):
-        if "tests" in source.relative_to(path).parts:
-            continue
-        text = code(source.read_text(encoding="utf-8", errors="ignore"))
+    texts = [code(source.read_text(encoding="utf-8", errors="ignore")) for source in path.rglob("*.cpp")
+             if "tests" not in source.relative_to(path).parts]
+    exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
+    for text in texts:
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)
         for match in DEFINITION.finditer(text):
             name = match.group(1)
-            if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")):
+            if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
                 continue
             body = text[match.end() - 1:body_end(text, match.end() - 1)]
             if any(call.group(1) in calls and not QUALIFIED.search(body, 0, call.start())
@@ -415,6 +417,20 @@ def details(icon, title, column, items):
     return rows + ["\n</details>"]
 
 
+def exact_delta(base, head):
+    try:
+        return Fraction(100 * head["done"], head["total"]) - Fraction(100 * base["done"], base["total"])
+    except (KeyError, TypeError, ZeroDivisionError):
+        return None
+
+
+def small_delta(delta):
+    text = f"{float(delta):+.4f}"
+    if float(text) == 0:
+        return f'{"+" if delta > 0 else "-"}<0.0001'
+    return text.rstrip("0")
+
+
 def compare(title, column, unit, base, head):
     owners = {g["name"]: g["shared_sources"] for g in head["groups"] if "shared_sources" in g}
     previous = {g["name"]: g.get("shared_sources") for g in base["groups"]}
@@ -427,11 +443,13 @@ def compare(title, column, unit, base, head):
     if not (implemented or declared or regressed or removed or shared):
         return []
     delta = round(head["percent"] - base["percent"], 2)
-    icon = "📈" if delta > 0 else "📉" if delta < 0 else "➖"
+    exact = exact_delta(base, head) if delta == 0 else None
+    shown = small_delta(exact) if exact else f"{delta:+}"
+    icon = "📈" if (exact or delta) > 0 else "📉" if (exact or delta) < 0 else "➖"
     counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared), "declared"),
                                                 (-len(regressed), "reverted"), (-len(removed), "removed")) if n]
     changes = f', {", ".join(counts)} {unit}' if counts else ""
-    lines = [f'{icon} **{title}**: {head["percent"]}% ({delta:+}%{changes})', ""]
+    lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
     lines += details("🆕", "declared as stubs", column, declared)
@@ -441,8 +459,46 @@ def compare(title, column, unit, base, head):
     return lines + [""]
 
 
+def library_progress(group):
+    if group is None:
+        return "Not present", None
+    if "shared_sources" in group:
+        return f'Shared sources: `{group["shared_sources"]}`', None
+    if "done" not in group or "todo" not in group:
+        return "Counts unavailable", None
+    total = group["done"] + group["todo"]
+    if not total:
+        return "No exports", None
+    percent = 100 * group["done"] / total
+    return f'{group["done"]}/{total} ({percent:.2f}%)', percent
+
+
+def library_report(base, head):
+    before, after = ({group["name"]: group for group in data["groups"]} for data in (base, head))
+    fields = ("done", "todo", "done_names", "todo_names", "shared_sources")
+    rows = []
+    for name in sorted(before.keys() | after.keys(), key=str.casefold):
+        old, new = before.get(name), after.get(name)
+        if old is not None and new is not None and all(old.get(field) == new.get(field) for field in fields):
+            continue
+        old_text, old_percent = library_progress(old)
+        new_text, new_percent = library_progress(new)
+        delta = "n/a"
+        if old_percent is not None and new_percent is not None:
+            delta = f'{round(new_percent - old_percent, 2) or 0:+.2f} pp'
+        rows.append(f"| {name} | {old_text} | {new_text} | {delta} |")
+    if not rows:
+        return []
+    lines = ["#### Changed libraries (implemented exports)", "",
+             "| Library | Before | After | Change |", "| - | - | - | - |"] + rows[:REPORT_ROWS]
+    if len(rows) > REPORT_ROWS:
+        lines.append(f"| ... | {len(rows) - REPORT_ROWS} more libraries | | |")
+    return lines + [""]
+
+
 def report(base, head):
     lines = compare("System libraries", "Library", "functions", base["libraries"], head["libraries"])
+    lines += library_report(base["libraries"], head["libraries"])
     lines += compare("GPU shader instructions", "Encoding", "instructions", base["shaders"], head["shaders"])
     return "\n".join(lines)
 
@@ -475,6 +531,10 @@ def validate_snapshot(snapshot):
                 raise ValueError(f"{location} must be an object with a string name")
             if "shared_sources" in group and not isinstance(group["shared_sources"], str):
                 raise ValueError(f"{location}.shared_sources must be a string")
+            if section == "libraries":
+                for field in ("done", "todo"):
+                    if field in group and (type(group[field]) is not int or group[field] < 0):
+                        raise ValueError(f"{location}.{field} must be a non-negative integer")
             for field in ("done_names", "todo_names", "inert_names"):
                 values = group.get(field, [])
                 if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
@@ -482,6 +542,10 @@ def validate_snapshot(snapshot):
 
 
 def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     global PRX, OPCODES
     previous = PRX, OPCODES
     parser = argparse.ArgumentParser()
@@ -501,7 +565,7 @@ def main(argv=None):
             snapshots = []
             for path in args.compare:
                 try:
-                    snapshots.append(json.loads(path.read_text(encoding="utf-8")))
+                    snapshots.append(json.loads(path.read_text(encoding="utf-8-sig")))
                 except (OSError, ValueError) as error:
                     parser.error(f"{path}: {error}")
             for path, snapshot in zip(args.compare, snapshots):
@@ -541,6 +605,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
     raise SystemExit(main())

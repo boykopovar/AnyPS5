@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -17,8 +18,6 @@
 #endif
 
 namespace {
-
-using GuestNewHandler = void (APS5_VABI*)();
 
 std::atomic<GuestNewHandler> g_newHandler{nullptr};
 
@@ -132,6 +131,7 @@ void APS5_VABI _ZdlPv_nid_postfix(void* pointer) {
 
 void APS5_VABI _ZdlPvRKSt9nothrow_t_nid_postfix(void* pointer, const void*) noexcept {
     _ZdlPv_nid_postfix(pointer);
+
 }
 
 void APS5_VABI _ZdaPv_nid_postfix(void* pointer) {

@@ -45,11 +45,12 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     input.Executable = fileReader.Read(inputPath);
     input.InputPath = std::filesystem::absolute(Io::NativePath(inputPath)).lexically_normal();
     input.OutputPath = Io::NativePath(absPath);
+    Cli::NativeModules modules;
     if (!args.skipSceModule) {
-        auto modules = Cli::ReadModules(std::filesystem::absolute(Io::NativePath(args.inputPath)).lexically_normal(), Io::NativePath(args.sceModulePath), args.excludedSceModules, args.moduleDirectories);
-        input.ModuleRoot = std::move(modules.Root);
+        modules = Cli::ReadModules(std::filesystem::absolute(Io::NativePath(args.inputPath)).lexically_normal(), Io::NativePath(args.sceModulePath), args.excludedSceModules, args.moduleDirectories);
+        input.ModuleRoot = modules.Root;
         input.Modules = std::move(modules.Modules);
-        input.RuntimeDirectories = std::move(modules.RuntimeDirectories);
+        input.RuntimeDirectories = modules.RuntimeDirectories;
     }
     const auto iconPath = Io::NativePath(args.inputPath).parent_path() / "sce_sys" / "icon0.png";
     if (args.toWindows && std::filesystem::exists(iconPath)) input.Icon = fileReader.Read(Io::Utf8Path(iconPath));
@@ -57,6 +58,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.Target = args.toWindows ? Relinker::TargetSystem::Windows : args.toMacos ? Relinker::TargetSystem::MacOs : Relinker::TargetSystem::Linux;
     options.ToIntel = args.toIntel;
     options.ToRosetta = args.toRosetta;
+    options.FrameRedZone = args.frameRedZone;
     options.SkipSyscallCheck = args.skipSyscallCheck;
     options.TrapSdkSyscallStubs = args.trapSdkSyscallStubs;
     options.UnusedFilterLevel = args.unusedFilterLevel;
@@ -75,6 +77,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     progress.IncludeFile(Io::Utf8Path(input.OutputPath));
     for (const auto& module : input.Modules) progress.IncludeFile(Io::Utf8Path(module.Path));
     auto converted = Relinker::Conversion(progress).Convert(std::move(input), options);
+    if (!args.skipSceModule) Cli::ReportUnconvertedNeeded(modules, converted.Analysis.DynamicSection.NeededLibraries, args.toWindows, std::cout);
     return {inputPath, absPath, std::move(converted.Analysis), std::move(converted.Modules), std::move(converted.Executable), std::move(converted.WindowsDiagnostics), std::move(converted.AppliedPatches), converted.LinuxBase};
 }
 
@@ -122,9 +125,10 @@ bool SameOutputFile(const std::filesystem::path& first, const std::filesystem::p
     return Io::SameFile(first, second);
 }
 
-bool SameOutputDestination(const std::filesystem::path& first, const std::filesystem::path& second) {
-    const auto firstPath = std::filesystem::weakly_canonical(first);
-    const auto secondPath = std::filesystem::weakly_canonical(second);
+bool SameOutputDestination(const std::filesystem::path& first, const std::filesystem::path& second,
+                           std::filesystem::path& firstPath, std::filesystem::path& secondPath) {
+    if (firstPath.empty()) firstPath = std::filesystem::weakly_canonical(first);
+    if (secondPath.empty()) secondPath = std::filesystem::weakly_canonical(second);
     if (firstPath == secondPath) return true;
     if (std::filesystem::exists(first) && std::filesystem::exists(second)) return SameOutputFile(first, second);
 #ifdef _WIN32
@@ -345,6 +349,8 @@ int Run(const int argc, char* argv[]) {
 
         const auto checkOutputInputs = [&](const std::filesystem::path& path, const char* kind) {
             if (!std::filesystem::exists(path)) return;
+            if (std::filesystem::is_directory(path))
+                throw Domain::RelinkerException(std::string(kind) + " output is a directory: " + Io::Utf8Path(path));
             for (const auto& input : metadataInputs)
                 if (std::filesystem::exists(input) && SameOutputFile(input, path))
                     throw Domain::RelinkerException(std::string(kind) + " output would overwrite input metadata: " + Io::Utf8Path(path));
@@ -401,11 +407,12 @@ int Run(const int argc, char* argv[]) {
             outputPaths.push_back(desktopEntry->EntryPath);
         }
         if (args.windowsDiagnostics) outputPaths.push_back(std::filesystem::absolute("windows-diagnostics-imports.txt"));
+        std::vector<std::filesystem::path> canonicalOutputPaths(outputPaths.size());
         for (std::size_t index = 0; index < outputPaths.size(); ++index) {
             for (std::size_t previous = 0; previous < index; ++previous) {
                 const auto& first = outputPaths[index];
                 const auto& second = outputPaths[previous];
-                if (SameOutputDestination(first, second))
+                if (SameOutputDestination(first, second, canonicalOutputPaths[index], canonicalOutputPaths[previous]))
                     throw Domain::RelinkerException("Output paths collide: " + Io::Utf8Path(first) + " and " + Io::Utf8Path(second));
             }
         }

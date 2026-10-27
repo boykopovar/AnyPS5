@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
 #include <cstddef>
@@ -7,25 +8,6 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-std::uint64_t APS5_VABI _WStoul_nid_postfix(const char16_t*, char16_t**, int);
-int APS5_VABI _Iswctype_nid_postfix(std::uint32_t, std::uint64_t);
-int APS5_VABI swscanf_nid_postfix(const char16_t*, const char16_t*, ...);
-int APS5_VABI swscanf_s_nid_postfix(const char16_t*, const char16_t*, ...);
-int APS5_VABI iswalnum_nid_postfix(std::uint32_t);
-int APS5_VABI iswalpha_nid_postfix(std::uint32_t);
-int APS5_VABI iswcntrl_nid_postfix(std::uint32_t);
-int APS5_VABI iswdigit_nid_postfix(std::uint32_t);
-int APS5_VABI iswgraph_nid_postfix(std::uint32_t);
-int APS5_VABI iswlower_nid_postfix(std::uint32_t);
-int APS5_VABI iswprint_nid_postfix(std::uint32_t);
-int APS5_VABI iswpunct_nid_postfix(std::uint32_t);
-int APS5_VABI iswspace_nid_postfix(std::uint32_t);
-int APS5_VABI iswupper_nid_postfix(std::uint32_t);
-int APS5_VABI iswxdigit_nid_postfix(std::uint32_t);
-int APS5_VABI iswblank_nid_postfix(std::uint32_t);
-}
 
 static int failures = 0;
 
@@ -171,6 +153,17 @@ static void CheckUnsizedScan() {
     Require(swscanf_nid_postfix(u"  42 -7", u"%d%d", &first, &second) == 2 && first == 42 && second == -7, "swscanf %d");
     Require(swscanf_nid_postfix(u"x=0x1f", u"x=%i", &first) == 1 && first == 31, "swscanf %i with a hex prefix");
     Require(swscanf_nid_postfix(u"1 2", u"%*d%d", &first) == 1 && first == 2, "swscanf suppressed %d");
+    float scannedFloat = 0;
+    double scannedDouble = 0;
+    long double scannedLongDouble = 0;
+    errno = 0;
+    Require(swscanf_nid_postfix(u"1e39 1e400", u"%f%lf", &scannedFloat, &scannedDouble) == 2 && scannedFloat == std::numeric_limits<float>::infinity() &&
+        scannedDouble == std::numeric_limits<double>::infinity() && errno == 0, "swscanf leaves errno alone for an overflowing float and double");
+    Require(swscanf_nid_postfix(u"1e-400", u"%lf", &scannedDouble) == 1 && scannedDouble == 0 && errno == 0, "swscanf leaves errno alone for an underflowing double");
+    errno = 0;
+    Require(swscanf_nid_postfix(u"1e-5000", u"%Lf", &scannedLongDouble) == 1 && scannedLongDouble == 0 && errno == ERANGE, "swscanf sets ERANGE for an out-of-range long double");
+    errno = 0;
+    Require(swscanf_nid_postfix(u"1e-50", u"%e", &scannedFloat) == 1 && scannedFloat == 0 && errno == 0, "swscanf leaves errno alone for an underflowing float");
     Require(swscanf_nid_postfix(u"12345", u"%3d%d", &first, &second) == 2 && first == 123 && second == 45, "swscanf %d width");
     std::int64_t wide = 0;
     Require(swscanf_nid_postfix(u"5000000000", u"%ld", &wide) == 1 && wide == 5000000000LL, "swscanf %ld is 64-bit");

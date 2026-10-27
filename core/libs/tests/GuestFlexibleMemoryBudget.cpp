@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
@@ -12,24 +13,9 @@
 #include <string_view>
 
 extern "C" {
-int APS5_VABI sceKernelConfiguredFlexibleMemorySize(std::size_t*);
-int APS5_VABI sceKernelAvailableFlexibleMemorySize(std::size_t*);
-int APS5_VABI sceKernelMapFlexibleMemory(void**, std::size_t, int, int);
-int APS5_VABI sceKernelReleaseFlexibleMemory(void*, std::size_t);
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
+
 std::uint64_t GuestImageSegmentBytes_nid_no_patch();
-void* APS5_VABI dlopen_nid_postfix(const char*, int);
-char* APS5_VABI dlerror_nid_postfix();
-int APS5_VABI dlclose_nid_postfix(void*);
-std::size_t APS5_VABI sceKernelGetDirectMemorySize();
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelMapDirectMemory2(void**, std::size_t, int, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelMapNamedDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t, const char*);
-int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry*, int, int*, int);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
+
 }
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {

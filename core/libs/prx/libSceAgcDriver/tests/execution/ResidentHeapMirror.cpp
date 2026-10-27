@@ -15,6 +15,10 @@
 #else
 #include <sys/mman.h>
 #endif
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -87,7 +91,13 @@ public:
         GuestArena::GuestArenaCommit_nid_postfix(raw, bytes, PAGE_READWRITE, bytes);
         base = static_cast<std::uint8_t*>(raw);
 #else
+#ifdef __APPLE__
+        mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(at);
+        raw = at == nullptr ? mmap(nullptr, bytes + Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0)
+                            : (mach_vm_allocate(mach_task_self(), &address, bytes + Block, VM_FLAGS_FIXED) == KERN_SUCCESS ? reinterpret_cast<void*>(address) : MAP_FAILED);
+#else
         raw = mmap(at, bytes + Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | (at != nullptr ? MAP_FIXED_NOREPLACE : 0), -1, 0);
+#endif
         Require(raw != MAP_FAILED && (at == nullptr || raw == at), "resident heap mirror: cannot map the guest heap");
         base = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(raw) + Block - 1) / Block * Block);
 #endif
@@ -270,6 +280,45 @@ void CopiedTests(AgcDriver::VulkanDevice& device) {
     CheckStores(written, "copied, after a guest write");
 }
 
+struct ImportWindow {
+    explicit ImportWindow(std::uint64_t bytes) { AgcDriver::Graphics::SetHostImportRangeWindow(bytes); }
+    ~ImportWindow() { AgcDriver::Graphics::SetHostImportRangeWindow(std::uint64_t{64} << 20u); }
+    ImportWindow(const ImportWindow&) = delete;
+    ImportWindow& operator=(const ImportWindow&) = delete;
+};
+
+void PartialImportTests(AgcDriver::VulkanDevice& device, bool copied, bool readFirst) {
+    const AddressSpaceLimit limit(copied ? 1 : 0);
+    const ImportWindow window(2 * Block);
+    GuestHeap first(!readFirst);
+    GuestHeap second(readFirst);
+    const auto& read = readFirst ? first : second;
+    const auto& written = readFirst ? second : first;
+    const OutputBlock output;
+    const auto tail = HeapBytes - Block;
+    for (std::uint32_t thread = 0; thread * ThreadStride < Block; ++thread) read.Store(thread * ThreadStride, Pattern(thread));
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        read.Store(tail + thread * sizeof(std::uint32_t), Pattern(thread));
+        written.Store(tail + thread * sizeof(std::uint32_t), Pattern(thread));
+    }
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + 3 * Block);
+    Dispatch(device, read, written, output);
+    CheckReads(output, "partial heap import", false);
+    const auto& selected = read.Address() < written.Address() ? read : written;
+    const auto* prefix = AgcDriver::Graphics::ExistingHostImportFor(device.graphicsContext(), selected.Address(), 2 * Block);
+    Require(prefix != nullptr && prefix->base == selected.Address() && prefix->bytes == 2 * Block, "partial heap import: the first registered heap has no exact two-block imported prefix");
+    const auto held = AgcDriver::Graphics::HeapMirrorsWithin(selected.Address(), selected.Address() + HeapBytes);
+    const auto expected = copied ? HeapBytes - prefix->bytes : (selected.Address() == read.Address() ? Block : 2 * Block);
+    Require(held.mirrors == 1 && held.bytes == expected, "partial heap import: its mirror holds " + std::to_string(held.bytes) + " bytes, expected " + std::to_string(expected));
+    Copy(device, selected.Address() + tail, output);
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) Require(output.Data()[thread] == Pattern(thread), "partial heap import: GPU read of the mirrored tail lost its contents");
+    selected.Store(tail + 2 * sizeof(std::uint32_t), 0x12345678u);
+    Copy(device, selected.Address() + tail, output);
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) Require(output.Data()[thread] == (thread == 2 ? 0x12345678u : Pattern(thread)), "partial heap import: refresh lost a CPU write or its unchanged neighbors");
+    const auto refreshed = AgcDriver::Graphics::HeapMirrorsWithin(selected.Address(), selected.Address() + HeapBytes);
+    Require(refreshed.mirrors == 1 && refreshed.bytes == expected, "partial heap import: refreshing the selected tail changed its accounted extent");
+}
+
 void ReusedAddressTests(AgcDriver::VulkanDevice& device) {
     GuestHeap written(true);
     const OutputBlock output;
@@ -342,6 +391,9 @@ int main() {
         ReusedAddressTests(*device);
         JoinedImportTests(*device);
         CopiedTests(*device);
+        for (const bool copied : {false, true}) {
+            for (const bool readFirst : {false, true}) PartialImportTests(*device, copied, readFirst);
+        }
         std::puts("resident heap mirror tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import env_reference
@@ -168,6 +169,19 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertTrue([name for name in found if name.startswith("APS5_")])
         self.assertTrue([name for name in found if name.startswith("ANYPS5_")])
 
+    def test_reads_fails_on_a_source_file_it_cannot_decode(self):
+        root = self.fixture()
+        (root / "core" / "Latin.cpp").write_bytes(b'static const char* s = "caf\xe9";\n')
+        with self.assertRaises(ValueError) as raised:
+            env_reference.reads([root / "core"], BOTH)
+        self.assertIn("Latin.cpp", str(raised.exception))
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = env_reference.main(["--check", "--doc", str(root / "missing.md"), "--root", str(root / "core")])
+        self.assertEqual(code, 1)
+        self.assertIn("cannot read", stderr.getvalue())
+        self.assertIn("Latin.cpp", stderr.getvalue())
+
     def test_check_passes_when_every_read_name_has_a_row(self):
         root = self.fixture()
         found = env_reference.reads([root / "core"])
@@ -282,6 +296,34 @@ class EnvReferenceTests(unittest.TestCase):
                 self.assertEqual(code, 1, (name, flags))
                 self.assertIn("is not a directory", err.getvalue())
                 self.assertNotIn("no longer reads", out.getvalue())
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(env_reference.sys, "stdout", out), patch.object(env_reference.sys, "stderr", err):
+            try:
+                env_reference.main(["--root", "nonexistent"])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":
