@@ -338,6 +338,13 @@ class AuditDumpTests(unittest.TestCase):
             with self.subTest(relative=relative):
                 self.assert_report_rejected(self.dump / relative)
 
+    def test_json_output_directory_or_missing_parent_is_rejected_before_staging(self):
+        directory = self.root / "report-dir"
+        directory.mkdir()
+        self.assert_report_rejected(directory)
+        missing_parent = self.root / "no-such-parent" / "report.json"
+        self.assert_report_rejected(missing_parent)
+
     def test_json_output_symlink_aliases_of_the_dump_are_rejected(self):
         for name, target, directory in (("file", self.dump / "eboot.bin", False), ("directory", self.dump, True), ("missing", self.dump / "not-created.json", False)):
             with self.subTest(name=name):
