@@ -54,7 +54,19 @@ float toSignedLodBias(std::uint32_t raw) {
 
 }
 
-GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven, bool forceDegammaPaired, bool integerBorder) {
+std::optional<std::uint32_t> BorderColorTableIndex(std::span<const std::uint32_t> words) {
+    Require(words.size() == 4, "guest sampler descriptor must contain 4 dwords");
+    if (((words[3] >> 30u) & 0x3u) != 3u) return std::nullopt;
+    if (!readsBorderColor(words[0] & 0x7u) && !readsBorderColor((words[0] >> 3u) & 0x7u) && !readsBorderColor((words[0] >> 6u) & 0x7u)) return std::nullopt;
+    return words[3] & 0xfffu;
+}
+
+std::uint64_t BorderColorTableEntry(std::uint64_t base, std::uint32_t index) {
+    Require(index <= 0xfffu, "border color table index exceeds BORDER_COLOR_PTR");
+    return base + static_cast<std::uint64_t>(index) * sizeof(BorderColor);
+}
+
+GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven, bool forceDegammaPaired, bool integerBorder, const BorderColor* tableColor) {
     Require(words.size() == 4, "guest sampler descriptor must contain 4 dwords");
 
     const auto clampX = (words[0] >> 0u) & 0x7u;
@@ -135,8 +147,13 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
         case 1: border = integerBorder ? VK_BORDER_COLOR_INT_OPAQUE_BLACK : VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK; break;
         case 2: border = integerBorder ? VK_BORDER_COLOR_INT_OPAQUE_WHITE : VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE; break;
         default:
-            if (readsBorderColor(clampX) || readsBorderColor(clampY) || readsBorderColor(clampZ)) throw std::runtime_error("AGC graphics: guest sampler descriptor uses a border color table which is not implemented");
-            border = integerBorder ? VK_BORDER_COLOR_INT_TRANSPARENT_BLACK : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+            if (!readsBorderColor(clampX) && !readsBorderColor(clampY) && !readsBorderColor(clampZ)) {
+                border = integerBorder ? VK_BORDER_COLOR_INT_TRANSPARENT_BLACK : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+                break;
+            }
+            Require(tableColor != nullptr, "guest sampler descriptor reads border color table entry " + std::to_string(words[3] & 0xfffu) + ", which was not read from the table");
+            Require(!integerBorder, "guest sampler descriptor reads an integer border color from the border color table, which is not implemented");
+            border = VK_BORDER_COLOR_FLOAT_CUSTOM_EXT;
             break;
     }
 
@@ -153,6 +170,7 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     result.maxLod = maxLod;
     result.lodBias = toSignedLodBias(lodBiasRaw);
     result.borderColor = border;
+    if (border == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT) result.customBorderColor = *tableColor;
     result.reductionMode = reductionMode;
     const std::array compareOps{VK_COMPARE_OP_NEVER, VK_COMPARE_OP_LESS, VK_COMPARE_OP_EQUAL, VK_COMPARE_OP_LESS_OR_EQUAL, VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL, VK_COMPARE_OP_GREATER_OR_EQUAL, VK_COMPARE_OP_ALWAYS};
     result.compareOp = compareOps.at(depthCompareFunc);
