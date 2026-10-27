@@ -407,6 +407,13 @@ static void CheckWindowsZoneNameEncoding() {
         const std::size_t zoneIndex = local.tm_isdst > 0 ? 1 : 0;
         Require(local.tm_zone == publishedNames[zoneIndex] && std::strcmp(local.tm_zone, expectedNames[zoneIndex].c_str()) == 0,
             "localtime tm_zone did not retain the UTF-8 zone name");
+        char formatted[64]{};
+        Require(strftime_nid_postfix(formatted, sizeof(formatted), "%Z", &local) > 0, "strftime rejected a localtime result");
+        for (std::size_t index = 0; index < expectedNames.size(); ++index)
+            Require(tzname_nid_postfix[index] == publishedNames[index] && std::strcmp(tzname_nid_postfix[index], expectedNames[index].c_str()) == 0,
+                "strftime invalidated the published tzname storage");
+        Require(local.tm_zone == publishedNames[zoneIndex] && std::strcmp(local.tm_zone, expectedNames[zoneIndex].c_str()) == 0,
+            "strftime released the tm_zone of a localtime result under an unchanged zone");
     }
     if (hadPreviousZone) Require(setenv_nid_postfix("TZ", previousZone.c_str(), 1) == 0, "Could not restore the guest time zone");
     else Require(unsetenv_nid_postfix("TZ") == 0, "Could not restore the guest time zone");
