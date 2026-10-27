@@ -1,4 +1,4 @@
-#include "prx/libSceFreeType/include/Api.hpp"
+#include "prx/libSceFreeType/include/SquareRoot32.hpp"
 #include <cstdint>
 
 extern "C" std::int32_t APS5_VABI FT_Sqrt32_nid_postfix(std::int32_t value) {

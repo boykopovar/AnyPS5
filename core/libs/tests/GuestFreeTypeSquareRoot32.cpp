@@ -1,4 +1,4 @@
-#include "prx/libSceFreeType/include/Api.hpp"
+#include "prx/libSceFreeType/include/SquareRoot32.hpp"
 #include <bit>
 #include <cstdint>
 #include <cstdio>
