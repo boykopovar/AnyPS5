@@ -53,6 +53,7 @@ void RunOverflow(std::uint32_t frames, std::uint32_t format, std::uint32_t frame
 }
 
 int InitializeSdlAudio_nid_no_patch() { return 0; }
+bool WasapiDefaultOutputAbsent_nid_no_patch() { return false; }
 extern "C" Uint32 SDLCALL SDL_WasInit(Uint32) { return SDL_INIT_AUDIO; }
 extern "C" int SDLCALL SDL_GetNumAudioDevices(int) { return 1; }
 extern "C" const char* SDLCALL SDL_GetAudioDeviceName(int, int) { return "Main speakers"; }

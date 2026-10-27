@@ -246,6 +246,9 @@ static void SettimeValidatesLikeFreebsd() {
     const KernelTimespec valid{1767225600, 5};
     RequireSettimeError(GUEST_CLOCK_REALTIME, nullptr, 14);
     RequireSettimeError(GUEST_CLOCK_MONOTONIC, nullptr, 14);
+    const auto unreadable = reinterpret_cast<const KernelTimespec*>(1);
+    RequireSettimeError(GUEST_CLOCK_REALTIME, unreadable, 14);
+    RequireSettimeError(GUEST_CLOCK_MONOTONIC, unreadable, 14);
     for (const int clockId : {GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_REALTIME_PRECISE,
              GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID, -1, 16})
         RequireSettimeError(clockId, &valid, 22);

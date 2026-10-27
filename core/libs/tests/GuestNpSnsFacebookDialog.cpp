@@ -51,6 +51,11 @@ int main() {
     Require(sceNpSnsFacebookDialogClose() == 0);
     Require(sceNpSnsFacebookDialogTerminate() == 0);
     Require(sceNpSnsFacebookDialogTerminate() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogClose() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(result) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogGetStatus() == kStatusNone);
     Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusNone);
 
@@ -62,4 +67,12 @@ int main() {
     Require(sceNpSnsFacebookDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(sceNpSnsFacebookDialogTerminate() == 0);
+    Require(sceNpSnsFacebookDialogTerminate() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogClose() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(result) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetStatus() == kStatusNone);
+    Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusNone);
 }

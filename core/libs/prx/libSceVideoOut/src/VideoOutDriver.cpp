@@ -30,6 +30,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
+#include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
@@ -752,6 +753,9 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 require(current->timing != nullptr, "missing presentation timing");
                 const auto dequeued = AgcDriver::FrameTiming::Clock::now();
                 current->timing->Add(current->timing->Get("VideoOut", "queue"), dequeued - current->queuedAt);
+                ImeKeyboardView keyboardView;
+                const bool keyboardShown = ImeReadKeyboardView_nid_postfix(keyboardView);
+                AgcDriverSetSystemOverlay_nid_postfix(keyboardShown ? &keyboardView : nullptr);
                 processFlip(*current);
                 int windowWidth = 0;
                 int windowHeight = 0;

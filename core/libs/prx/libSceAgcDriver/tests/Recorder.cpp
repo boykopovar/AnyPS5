@@ -4343,8 +4343,10 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
             Require(actual.buffers.size() == original.buffers.size() && actual.images.size() == original.images.size(), "snapshot update omitted unchanged descriptors");
             for (const auto& [key, before] : original.buffers) {
                 const auto after = actual.buffers.at(key);
-                const auto expected = key.first == (allocation == 0 ? 2u : 7u) ? draw->snapshots.front().buffer->Handle() : before.buffer;
-                Require(after.buffer == expected && after.offset == before.offset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
+                const bool replaced = key.first == (allocation == 0 ? 2u : 7u);
+                const auto expected = replaced ? draw->snapshots.front().buffer->Handle() : before.buffer;
+                const auto expectedOffset = replaced ? draw->snapshots.front().offset : before.offset;
+                Require(after.buffer == expected && after.offset == expectedOffset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
             }
             for (const auto& [key, before] : original.images) {
                 const auto after = actual.images.at(key);

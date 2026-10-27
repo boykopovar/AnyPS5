@@ -978,6 +978,9 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+    add_test(NAME macos_guest_weak_exports COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_exports.py $<TARGET_FILE:relinker>)
+    set_tests_properties(macos_guest_weak_exports PROPERTIES TIMEOUT 30 LABELS relinker)
     add_test(NAME macos_executable_exports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_executable_exports.py $<TARGET_FILE:relinker>)
     set_tests_properties(macos_executable_exports PROPERTIES TIMEOUT 30 LABELS relinker)

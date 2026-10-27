@@ -34,6 +34,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr int WantRead = static_cast<int>(0x8095f013);
 constexpr int WantWrite = static_cast<int>(0x8095f014);
+constexpr int InvalidValue = static_cast<int>(0x817B11FE);
 
 [[noreturn]] void Unknown(const char* message) {
     NotImplemented_nid_no_patch(message);
@@ -214,8 +215,15 @@ void CheckNg(int result) {
 
 }
 
-void AddHeader(Settings& settings, const char* name, const char* value, std::uint32_t mode) {
-    Require(name && value && mode <= 1, "sceHttp2AddRequestHeader: unsupported arguments");
+int AddHeader(Settings& settings, const char* name, const char* value, std::uint32_t mode) {
+    if (!name || !value) {
+        if (name && mode == 0) {
+            const auto key = Lower(name);
+            std::erase_if(settings.headers, [&](const auto& header) { return header.first == key; });
+        }
+        return InvalidValue;
+    }
+    Require(mode <= 1, "sceHttp2AddRequestHeader: unsupported arguments");
     auto key = Lower(name);
     Require(!key.empty() && nghttp2_check_header_name(reinterpret_cast<const std::uint8_t*>(key.data()), key.size()),
         "sceHttp2AddRequestHeader: invalid header name");
@@ -228,6 +236,7 @@ void AddHeader(Settings& settings, const char* name, const char* value, std::uin
     if (mode == 0) std::erase_if(updated, [&](const auto& header) { return header.first == key; });
     updated.emplace_back(std::move(key), value);
     settings.headers = std::move(updated);
+    return 0;
 }
 
 struct Request::State {

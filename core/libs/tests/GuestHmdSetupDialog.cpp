@@ -51,6 +51,8 @@ int main() {
     Require(sceHmdSetupDialogClose() == 0);
     Require(sceHmdSetupDialogTerminate() == 0);
     Require(sceHmdSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceHmdSetupDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceHmdSetupDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceHmdSetupDialogGetStatus() == kStatusNone);
     Require(sceHmdSetupDialogUpdateStatus() == kStatusNone);
 

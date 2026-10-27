@@ -260,6 +260,7 @@ void* APS5_VABI calloc_nid_postfix(size_t count, size_t size);
 int APS5_VABI posix_memalign_nid_postfix(void** pointer, size_t alignment, size_t size);
 void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
 int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare);
+int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare);
 void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
 int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestContextCompare compare, void* context);
 int APS5_VABI access_nid_postfix(const char* path, int mode);
@@ -1028,6 +1029,7 @@ void APS5_VABI vsyslog_nid_postfix(int priority, const char* format, VaList* arg
 void APS5_VABI syslog_nid_postfix(int priority, const char* format, ...);
 int APS5_VABI _Mtx_init_nid_postfix(void** handle, int type);
 int APS5_VABI _Mtx_init_with_name_nid_postfix(void** handle, int type, const char*);
+int APS5_VABI _Mtx_init_with_default_name_override_nid_postfix(void** handle, int type, const char* name);
 void APS5_VABI _Mtx_destroy_nid_postfix(void** handle);
 int APS5_VABI _Mtx_lock_nid_postfix(void** handle);
 int APS5_VABI _Mtx_trylock_nid_postfix(void** handle);

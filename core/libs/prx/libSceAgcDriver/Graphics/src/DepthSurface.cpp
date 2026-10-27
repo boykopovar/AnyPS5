@@ -53,6 +53,24 @@ bool storageFits(const DepthTarget& target, const GuestTextureResource& descript
     return sized && descriptor.width == target.extent.width && descriptor.height == target.extent.height && descriptor.mipCount == 1 && (descriptor.dimension == TextureDimension::k2D || descriptor.dimension == TextureDimension::k2DArray);
 }
 
+std::atomic<bool> directDepthCopy{std::getenv("APS5_NO_DIRECT_DEPTH_COPY") == nullptr};
+std::atomic<std::uint64_t> directDepthCopies{0};
+
+std::uint32_t aspectCopyBytes(VkFormat format, VkImageAspectFlagBits aspect) {
+    if (aspect != VK_IMAGE_ASPECT_DEPTH_BIT) return 0;
+    if (format == VK_FORMAT_D32_SFLOAT || format == VK_FORMAT_D32_SFLOAT_S8_UINT) return 4;
+    if (format == VK_FORMAT_D16_UNORM || format == VK_FORMAT_D16_UNORM_S8_UINT) return 2;
+    return 0;
+}
+
+bool singleComponent(VkFormat format, std::uint32_t bytes) {
+    switch (bytes) {
+        case 2: return format == VK_FORMAT_R16_SFLOAT || format == VK_FORMAT_R16_UNORM || format == VK_FORMAT_R16_SNORM || format == VK_FORMAT_R16_UINT || format == VK_FORMAT_R16_SINT;
+        case 4: return format == VK_FORMAT_R32_SFLOAT || format == VK_FORMAT_R32_SINT || format == VK_FORMAT_R32_UINT;
+        default: return false;
+    }
+}
+
 struct DepthGuard {
     VkDevice device;
     std::uint64_t address;
@@ -707,7 +725,8 @@ public:
         if (storage == nullptr) storage = StorageTexture::FindLive(target.address, bytes);
         if (storage == nullptr || !storageFits(target, storage->Descriptor())) return;
         storage->Refresh();
-        if (depthPlane.staging == nullptr) depthPlane.staging = std::make_unique<DeviceBuffer>(context, static_cast<std::size_t>(target.extent.width) * target.extent.height * (d16 ? 2u : 4u), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        const bool direct = DirectDepthCopy(context, hostFormat, VK_IMAGE_ASPECT_DEPTH_BIT, storage->ImageFormat());
+        if (!direct && depthPlane.staging == nullptr) depthPlane.staging = std::make_unique<DeviceBuffer>(context, static_cast<std::size_t>(target.extent.width) * target.extent.height * (d16 ? 2u : 4u), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         auto* recorder = RecorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         if (recorder == nullptr) batch = std::make_unique<CommandBatch>(context);
@@ -716,6 +735,37 @@ public:
         VkBufferImageCopy depthRegion{0, 0, 0, {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1}, {0, 0, 0}, {target.extent.width, target.extent.height, 1}};
         VkBufferImageCopy colorRegion = depthRegion;
         colorRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        if (direct) {
+            const VkImageCopy copy{{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1}, {0, 0, 0}, {target.extent.width, target.extent.height, 1}};
+            const bool discarding = target.stencilAddress == 0;
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            if (discarding) {
+                VkImageMemoryBarrier discard{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                discard.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                discard.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                discard.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                discard.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                discard.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                discard.image = image;
+                discard.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+                const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
+                barrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &discard);
+                context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, storage->Image(), VK_IMAGE_LAYOUT_GENERAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+                VkImageMemoryBarrier toGeneral = discard;
+                toGeneral.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                toGeneral.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                toGeneral.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+            } else {
+                context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, storage->Image(), VK_IMAGE_LAYOUT_GENERAL, image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+            }
+            directDepthCopies.fetch_add(1, std::memory_order_relaxed);
+            if (batch) batch->SubmitAndWait();
+            else Recorder::CountBarriers(Recorder::CommandClass::Copy, discarding ? 3 : 2);
+            return;
+        }
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, storage->Image(), VK_IMAGE_LAYOUT_GENERAL, depthPlane.staging->Handle(), 1, &colorRegion);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -1125,7 +1175,9 @@ private:
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
         const std::uint32_t texelBytes = stencil ? 1u : d16 ? 2u : 4u;
         const auto bytes = static_cast<std::size_t>(target.extent.width) * target.extent.height * texelBytes;
-        if (plane.staging == nullptr) plane.staging = std::make_unique<DeviceBuffer>(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        const auto aspect = stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
+        const bool direct = !stencil && DirectDepthCopy(context, hostFormat, aspect, storage->ImageFormat());
+        if (!direct && plane.staging == nullptr) plane.staging = std::make_unique<DeviceBuffer>(context, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         const auto commands = recorder != nullptr ? recorder->Commands() : batch->Handle();
         if (recorder != nullptr) recorder->Keep(storage);
         const std::uint32_t timing = recorder != nullptr ? recorder->BeginGpuTiming(Recorder::CommandClass::Copy) : 0u;
@@ -1151,6 +1203,25 @@ private:
         const auto count = static_cast<std::uint32_t>(planeRegions.size());
         const auto sourceImage = toStorage ? image : storage->Image();
         const auto destinationImage = toStorage ? storage->Image() : image;
+        if (direct) {
+            std::vector<VkImageCopy> copies;
+            for (const auto& region : planeRegions) {
+                const VkImageSubresourceLayers planeLayers{static_cast<VkImageAspectFlags>(aspect), 0, 0, 1};
+                const VkImageSubresourceLayers colorLayers{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                copies.push_back({toStorage ? planeLayers : colorLayers, region.imageOffset, toStorage ? colorLayers : planeLayers, region.imageOffset, region.imageExtent});
+            }
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, sourceImage, VK_IMAGE_LAYOUT_GENERAL, destinationImage, VK_IMAGE_LAYOUT_GENERAL, count, copies.data());
+            directDepthCopies.fetch_add(1, std::memory_order_relaxed);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+            if (batch) {
+                batch->SubmitAndWait();
+                return;
+            }
+            Recorder::CountBarriers(Recorder::CommandClass::Copy, 2);
+            recorder->EndGpuTiming(timing, moved);
+            return;
+        }
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
         context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, sourceImage, VK_IMAGE_LAYOUT_GENERAL, plane.staging->Handle(), count, toStorage ? planeRegions.data() : colorRegions.data());
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -1432,7 +1503,7 @@ public:
         StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(bytes), nullptr, "storage image creation", PublishScope::None);
         storage = StorageTexture::Create(context, *context.detiler, resource, 0);
         Require(storage->ImageLayers() == layers, "a layered depth storage view's image does not hold its layers");
-        staging = std::make_unique<DeviceBuffer>(context, static_cast<std::size_t>(sliceBytes()) * layers, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        if (!DirectDepthCopy(context, base.format, VK_IMAGE_ASPECT_DEPTH_BIT, storage->ImageFormat())) staging = std::make_unique<DeviceBuffer>(context, static_cast<std::size_t>(sliceBytes()) * layers, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
 
     void Copy(std::span<const LayeredSlice> slices, bool toStorage) {
@@ -1451,6 +1522,21 @@ public:
             return copy;
         };
         for (const auto& slice : slices) storageRegions.push_back(region(slice.layer, VK_IMAGE_ASPECT_COLOR_BIT, slice.layer));
+        if (DirectDepthCopy(context, base.format, VK_IMAGE_ASPECT_DEPTH_BIT, storage->ImageFormat())) {
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            for (const auto& slice : slices) {
+                const VkImageSubresourceLayers depthLayers{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+                const VkImageSubresourceLayers colorLayers{VK_IMAGE_ASPECT_COLOR_BIT, 0, slice.layer, 1};
+                const VkImageCopy copy{toStorage ? depthLayers : colorLayers, {0, 0, 0}, toStorage ? colorLayers : depthLayers, {0, 0, 0}, {extent.width, extent.height, 1}};
+                context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, toStorage ? slice.surface->image : storage->Image(), VK_IMAGE_LAYOUT_GENERAL, toStorage ? storage->Image() : slice.surface->image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+                directDepthCopies.fetch_add(1, std::memory_order_relaxed);
+            }
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+            Recorder::CountBarriers(Recorder::CommandClass::Copy, 2);
+            recorder->EndGpuTiming(timing, sliceBytes() * slices.size());
+            return;
+        }
+        if (staging == nullptr) staging = std::make_unique<DeviceBuffer>(context, static_cast<std::size_t>(sliceBytes()) * layers, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         const auto copyToBuffer = context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer");
         const auto copyToImage = context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage");
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -2636,6 +2722,20 @@ void RetireCoveredDepthSurfaces(VkDevice device, std::span<const std::pair<std::
     for (const auto& surface : surfaces()) {
         if (surface->context.device == device && !surface->retired && surface->CoveredBy(written, extents)) retire(*surface);
     }
+}
+
+bool DirectDepthCopy(const Context& context, VkFormat depthFormat, VkImageAspectFlagBits aspect, VkFormat colorFormat) {
+    if (!context.maintenance8 || !directDepthCopy.load(std::memory_order_relaxed)) return false;
+    const auto bytes = aspectCopyBytes(depthFormat, aspect);
+    return bytes != 0 && singleComponent(colorFormat, bytes);
+}
+
+std::uint64_t DirectDepthCopyCount() {
+    return directDepthCopies.load(std::memory_order_relaxed);
+}
+
+void SetDirectDepthCopy(bool enabled) {
+    directDepthCopy.store(enabled && std::getenv("APS5_NO_DIRECT_DEPTH_COPY") == nullptr, std::memory_order_relaxed);
 }
 
 }

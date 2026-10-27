@@ -258,6 +258,8 @@ endif()
 
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
 
+include(prx/libSceLibreSsl/ProtocolSelection.cmake)
+
 if(BUILD_TESTING)
     add_test_executable(guest_posix_scalar_io_tests tests/GuestPosixScalarIo.cpp)
     target_include_directories(guest_posix_scalar_io_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1097,3 +1099,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
     endif()
 endif()
+
+include(prx/libSceFreeType/CurveBounds.cmake)
