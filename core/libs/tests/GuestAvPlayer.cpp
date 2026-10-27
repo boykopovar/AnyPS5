@@ -1594,6 +1594,31 @@ void TestVideoSyncTolerance() {
     Check(allocations.blocks.empty(), "sync tolerance allocations leaked");
 }
 
+void TestSyncedVideoFollowsClockWithSlowConsumer() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "slow consumer init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "slow consumer source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "slow consumer ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "slow consumer video failed");
+    Check(sceAvPlayerStart(player) == 0, "slow consumer start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "slow consumer first frame missing");
+    const auto start = std::chrono::steady_clock::now();
+    const auto first = static_cast<std::int64_t>(frame.timestamp);
+    std::int64_t worst = 0;
+    for (int poll = 1; poll <= 2; ++poll) {
+        std::this_thread::sleep_until(start + std::chrono::milliseconds(400 * poll));
+        Check(sceAvPlayerGetVideoDataEx(player, &frame) != 0, "slow consumer frame " + std::to_string(poll) + " missing");
+        CheckVideoFrame(frame);
+        const auto elapsed = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+        worst = std::max(worst, first + elapsed - static_cast<std::int64_t>(frame.timestamp));
+    }
+    Check(worst <= 150, "the picture handed out fell " + std::to_string(worst) + " ms behind the presentation clock");
+    Check(sceAvPlayerClose(player) == 0, "slow consumer close failed");
+}
+
 void TestAudioClockDriftGating() {
     const auto open = [](Events& events) {
         AvPlayerInitData init = InitData(&events);
@@ -2064,6 +2089,7 @@ int main(int argc, char** argv) {
         TestLoopWarningWaitsForPlayback();
         TestEofStopLatency();
         TestVideoSyncTolerance();
+        TestSyncedVideoFollowsClockWithSlowConsumer();
         TestAudioClockDriftGating();
         TestAudioEofClockRebase();
         TestAudioClockAdvancesAfterEof();
