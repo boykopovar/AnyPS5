@@ -30,7 +30,6 @@
 extern "C" {
 extern std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
-extern std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix;
 extern std::int32_t _ZNSt6locale2id7_Id_cntE_nid_postfix;
 }
 
@@ -217,7 +216,24 @@ std::int64_t APS5_VABI WideCollateHash(const GuestLocale::CollateFacet*, const c
 
 const GuestLocale::CollateVtable g_wideCollateVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideCollateCompare, WideCollateTransform, WideCollateHash};
 
-const std::uint16_t g_wideNumpunctGrouping[] = {0};
+GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
+    if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
+    const std::size_t length = std::strlen(source);
+    char* data = result->buffer;
+    std::size_t capacity = GuestStringInlineCapacity;
+    if (length > GuestStringInlineCapacity) {
+        capacity = length | GuestStringCapacityMask;
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
+    }
+    if (length != 0) std::memcpy(data, source, length);
+    data[length] = 0;
+    if (data != result->buffer) result->pointer = data;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+const char g_wideNumpunctGrouping[] = "";
 const std::uint16_t g_wideNumpunctFalseName[] = {'f', 'a', 'l', 's', 'e', 0};
 const std::uint16_t g_wideNumpunctTrueName[] = {'t', 'r', 'u', 'e', 0};
 
@@ -230,7 +246,7 @@ GuestLocale::String* APS5_VABI AssignWideCString(GuestLocale::String* result, co
     std::size_t capacity = GuestWideInlineCapacity;
     if (length > GuestWideInlineCapacity) {
         capacity = length | GuestWideInlineCapacity;
-        data = static_cast<char*>(AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
     }
     if (bytes != 0) std::memcpy(data, source, bytes);
     data[bytes] = 0;
@@ -250,7 +266,7 @@ std::uint16_t APS5_VABI WideNumpunctThousandsSep(const GuestLocale::WideNumpunct
 }
 
 GuestLocale::String* APS5_VABI WideNumpunctGrouping(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self) {
-    return AssignWideCString(result, self->grouping);
+    return AssignCString(result, self->grouping);
 }
 
 GuestLocale::String* APS5_VABI WideNumpunctFalsename(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self) {
@@ -287,23 +303,6 @@ std::size_t APS5_VABI CodecvtLength(GuestLocale::Facet*, std::uint64_t*, const c
 }
 
 const GuestLocale::CodecvtVtable g_codecvtVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, CodecvtAlwaysNoconv, CodecvtConstantOne, CodecvtConstantOne, CodecvtNoConversion, CodecvtNoConversion, CodecvtUnshift, CodecvtLength};
-
-GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
-    if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
-    const std::size_t length = std::strlen(source);
-    char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
-        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
-    }
-    if (length != 0) std::memcpy(data, source, length);
-    data[length] = 0;
-    if (data != result->buffer) result->pointer = data;
-    result->size = length;
-    result->capacity = capacity;
-    return result;
-}
 
 char APS5_VABI NumpunctDecimalPoint(const GuestLocale::NumpunctFacet* self) {
     return self->decimalPoint;

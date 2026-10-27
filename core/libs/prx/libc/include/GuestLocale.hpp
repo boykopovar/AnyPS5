@@ -100,7 +100,7 @@ struct NumpunctVtable {
 
 struct WideNumpunctFacet {
     Facet base;
-    const std::uint16_t* grouping;
+    const char* grouping;
     std::uint16_t decimalPoint;
     std::uint16_t thousandsSep;
     const std::uint16_t* falsename;
