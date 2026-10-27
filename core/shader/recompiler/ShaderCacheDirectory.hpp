@@ -52,11 +52,28 @@ inline std::filesystem::path NativeCachePath_nid_no_patch(const std::filesystem:
 }
 #endif
 
+#ifdef _WIN32
+inline DWORD PosixReplaceByHandle(HANDLE source, const std::filesystem::path& destination) {
+    struct RenameInfo { DWORD flags; HANDLE root; DWORD nameBytes; WCHAR name[1]; };
+    static_assert(sizeof(RenameInfo) == sizeof(FILE_RENAME_INFO) && offsetof(RenameInfo, name) == offsetof(FILE_RENAME_INFO, FileName));
+    const auto nameBytes = destination.native().size() * sizeof(wchar_t);
+    std::vector<std::byte> renameBuffer(sizeof(RenameInfo) + nameBytes);
+    auto* rename = reinterpret_cast<RenameInfo*>(renameBuffer.data());
+    constexpr DWORD replaceExisting = 0x00000001, posixSemantics = 0x00000002;
+    rename->flags = replaceExisting | posixSemantics;
+    rename->nameBytes = static_cast<DWORD>(nameBytes);
+    std::memcpy(rename->name, destination.c_str(), nameBytes);
+    constexpr auto renameInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(22);
+    return SetFileInformationByHandle(source, renameInfoEx, rename, static_cast<DWORD>(renameBuffer.size())) ? ERROR_SUCCESS : GetLastError();
+}
+#endif
+
 inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<const std::byte> bytes) {
     std::error_code error;
 #ifdef _WIN32
     const auto destination = NativeCachePath_nid_no_patch(path, error);
     if (error) return false;
+    if (destination.native().size() > (MAXDWORD - sizeof(FILE_RENAME_INFO)) / sizeof(wchar_t)) return false;
 #else
     const auto& destination = path;
 #endif
@@ -65,18 +82,6 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
     const auto unique = std::hash<std::thread::id>{}(std::this_thread::get_id()) ^ static_cast<std::size_t>(std::chrono::steady_clock::now().time_since_epoch().count());
     auto temporary = destination;
     temporary += ".tmp." + std::to_string(unique) + "." + std::to_string(serial.fetch_add(1, std::memory_order_relaxed));
-#ifdef _WIN32
-    struct RenameInfo { DWORD flags; HANDLE root; DWORD nameBytes; WCHAR name[1]; };
-    static_assert(sizeof(RenameInfo) == sizeof(FILE_RENAME_INFO) && offsetof(RenameInfo, name) == offsetof(FILE_RENAME_INFO, FileName));
-    if (destination.native().size() > (MAXDWORD - sizeof(RenameInfo)) / sizeof(wchar_t)) return false;
-    const auto nameBytes = destination.native().size() * sizeof(wchar_t);
-    std::vector<std::byte> renameBuffer(sizeof(RenameInfo) + nameBytes);
-    auto* rename = reinterpret_cast<RenameInfo*>(renameBuffer.data());
-    constexpr DWORD replaceExisting = 0x00000001, posixSemantics = 0x00000002;
-    rename->flags = replaceExisting | posixSemantics;
-    rename->nameBytes = static_cast<DWORD>(nameBytes);
-    std::memcpy(rename->name, destination.c_str(), nameBytes);
-#endif
     bool written = false;
     {
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
@@ -104,8 +109,7 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
             return false;
         }
         struct Close { HANDLE handle; ~Close() { CloseHandle(handle); } } close{handle};
-        constexpr auto renameInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(22);
-        if (!SetFileInformationByHandle(handle, renameInfoEx, rename, static_cast<DWORD>(renameBuffer.size()))) renameError = GetLastError();
+        renameError = PosixReplaceByHandle(handle, destination);
     }
     if (renameError == ERROR_SUCCESS) return true;
     if (renameError != ERROR_INVALID_PARAMETER && renameError != ERROR_INVALID_FUNCTION && renameError != ERROR_NOT_SUPPORTED) {
@@ -120,6 +124,29 @@ inline bool WriteFileAtomically(const std::filesystem::path& path, std::span<con
     }
     return true;
 }
+
+#ifdef _WIN32
+inline bool PosixReplaceUnsupported(const std::filesystem::path& directory) {
+    std::error_code error;
+    const auto native = NativeCachePath_nid_no_patch(directory, error);
+    if (error) return false;
+    const auto source = native / L"posix-replace-probe.source";
+    const auto target = native / L"posix-replace-probe.target";
+    for (const auto& path : {source, target}) {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file.put('\0');
+    }
+    DWORD result = ERROR_SUCCESS;
+    const auto handle = CreateFileW(source.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle != INVALID_HANDLE_VALUE) {
+        result = PosixReplaceByHandle(handle, target);
+        CloseHandle(handle);
+    }
+    std::filesystem::remove(source, error);
+    std::filesystem::remove(target, error);
+    return result == ERROR_INVALID_PARAMETER;
+}
+#endif
 
 inline bool ReadWholeFile(const std::filesystem::path& path, std::vector<std::byte>& bytes) {
     bytes.clear();

@@ -68,6 +68,10 @@ int main() {
     Require(sceCesUtf32leToSbc(&yLe, cp1252, &sbc) == 0 && sbc == 0x9F);
     Require(sceCesUtf32leToSbc(nullptr, cp1252, &sbc) == invalidSrcBuffer);
     for (int value = 0; value < 256; ++value) {
+        if (value == 0x98) {
+            Require(sceCesSbcToUtf32(cp1251, static_cast<std::uint8_t>(value), &utf32) == unassignedCode);
+            continue;
+        }
         Require(sceCesSbcToUtf32(cp1251, static_cast<std::uint8_t>(value), &utf32) == 0);
         Require(sceCesUtf32ToSbc(utf32, cp1251, &sbc) == 0 && sbc == value);
     }

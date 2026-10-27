@@ -11,6 +11,8 @@ POINTER = 0x810
 TABLE = 0x820
 FUNCTION = CODE + 0x40
 SECOND_FUNCTION = CODE + 0x60
+REJECTED = {"got-slot-address-size-underflow":
+            "RELA r_offset 0xfffff008 (8 bytes) does not fit inside a PT_LOAD segment"}
 
 
 def rel(next_address, target):
@@ -62,6 +64,11 @@ def run(relinker, work, name, image, level=1):
     source.write_bytes(image)
     result = subprocess.run([str(relinker), "--skip-sce-module", "--registry", f"unused-filter={level}",
                              str(source), str(output)], capture_output=True, text=True, timeout=20)
+    if name in REJECTED:
+        assert result.returncode == 2 and REJECTED[name] in result.stderr and not output.exists(), (
+            name, result.returncode, result.stdout, result.stderr)
+        assert "CFG/GOT filtering: 1 -> 1;" in result.stdout, (name, result.stdout)
+        return True
     assert result.returncode == 0 and output.exists(), (name, result.returncode, result.stdout, result.stderr)
     registry = json.loads(output.with_suffix(".registry.json").read_text())
     kept = len(registry)

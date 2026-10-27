@@ -98,7 +98,7 @@ int main() {
         CheckPool("registration preparation", [](std::function<void()> task) { AgcDriver::DriverDetail::SubmitRegistrationPreparation(std::move(task)); });
         CheckPool("library prebuild", [](std::function<void()> task) { AgcDriver::DriverDetail::SubmitLibraryPrebuild(std::move(task)); });
         const char* prebuildThreads = std::getenv("APS5_PREBUILD_THREADS");
-        const auto started = std::max(2u, std::thread::hardware_concurrency() / 2u) + (prebuildThreads != nullptr ? std::max(1u, static_cast<unsigned>(std::strtoul(prebuildThreads, nullptr, 10))) : 1u);
+        const auto started = std::max(2u, std::thread::hardware_concurrency() / 2u) + (prebuildThreads != nullptr ? std::max(1u, static_cast<unsigned>(std::strtoul(prebuildThreads, nullptr, 10))) : std::max(2u, std::thread::hardware_concurrency() / 2u));
         const auto live = AgcDriver::DriverDetail::RegistrationPreparationThreads();
         Require(live == started, "the preparation and prebuild pools count " + std::to_string(live) + " live threads of the " + std::to_string(started) + " they started");
         AgcDriver::DriverDetail::CloseRegistrationPreparation();

@@ -21,6 +21,8 @@ struct AppArchiveBuffer {
 struct AppArchiveDirectoryEntry {
     std::string Name;
     bool Directory;
+    std::uint32_t Handle;
+    std::uint64_t Size;
 };
 
 extern "C" {
@@ -28,6 +30,9 @@ extern "C" {
 bool AppArchiveLookup_nid_no_patch(const std::filesystem::path& hostPath, AppArchiveNode* node);
 std::uint64_t AppArchiveRead_nid_no_patch(std::uint32_t handle, std::uint64_t offset, void* buffer, std::uint64_t length);
 std::vector<AppArchiveDirectoryEntry> AppArchiveList_nid_no_patch(std::uint32_t handle);
+std::vector<AppArchiveDirectoryEntry> AppArchiveListDirectory_nid_no_patch(const std::filesystem::path& hostPath);
+std::vector<AppArchiveDirectoryEntry> AppArchiveListUnshadowedDirectory_nid_no_patch(const std::filesystem::path& hostPath, const std::vector<std::string>& hostNames);
+bool AppArchiveNameMatches_nid_no_patch(const std::string& left, const std::string& right);
 void AppArchiveReady_nid_no_patch();
 void AppArchiveRefuseOnly_nid_no_patch(const std::filesystem::path& hostPath, const char* guestPath, const char* operation);
 void AppArchiveRefuseMergedListing_nid_no_patch(const std::filesystem::path& hostPath, const char* guestPath);

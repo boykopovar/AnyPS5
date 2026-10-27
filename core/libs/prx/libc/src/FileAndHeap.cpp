@@ -302,11 +302,11 @@ void* heapAllocation(std::size_t bytes, TAllocate allocate) {
 extern "C" {
 
 FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode) {
-    if (descriptor < 0) { errno = 9; return nullptr; }
     if (!mode) { errno = 22; return nullptr; }
-    AppArchiveRefuseDescriptor_nid_no_patch(descriptor, "fdopen");
     const auto parsed = ParseFileMode(mode);
     if (!parsed) { errno = 22; return nullptr; }
+    if (descriptor < 0) return nullptr;
+    AppArchiveRefuseDescriptor_nid_no_patch(descriptor, "fdopen");
     try {
         auto nativeMode = parsed->native;
         std::erase(nativeMode, 'x');
@@ -315,9 +315,6 @@ FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode) {
 #ifdef _WIN32
         const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
         if (handle == INVALID_HANDLE_VALUE) { errno = 9; return nullptr; }
-        const int access = WindowsDescriptorAccess_nid_no_patch(handle, descriptor, "fdopen");
-        const int requested = nativeMode.find('+') != std::string::npos ? 2 : nativeMode[0] == 'r' ? 0 : 1;
-        if (access != 2 && access != requested) { errno = 22; return nullptr; }
         if (parsed->append && !AppendThroughDescriptor(descriptor)) return nullptr;
         auto* native = ::_fdopen(descriptor, nativeMode.c_str());
 #else
@@ -462,6 +459,15 @@ int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, con
     *result = nullptr;
     if (!filename || !mode) return GuestEinval;
     *result = fopen_nid_postfix(filename, mode);
+    return *result ? 0 : errno;
+}
+
+int APS5_VABI freopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode, FileStream* stream) {
+    constexpr int GuestEinval = 22;
+    if (!result) return GuestEinval;
+    *result = nullptr;
+    if (!mode || !stream) return GuestEinval;
+    *result = freopen_nid_postfix(filename, mode, stream);
     return *result ? 0 : errno;
 }
 

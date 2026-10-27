@@ -25,8 +25,13 @@ def git(*args):
 
 
 def daily_commits(ref):
+    try:
+        log = git("log", "--first-parent", "--format=%H %ct", ref)
+    except subprocess.CalledProcessError as error:
+        reason = error.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"cannot read the history of {ref}: {reason}") from error
     seen = {}
-    for line in git("log", "--first-parent", "--format=%H %ct", ref).decode("utf-8").splitlines():
+    for line in log.decode("utf-8").splitlines():
         sha, timestamp = line.split()
         seen.setdefault(datetime.fromtimestamp(int(timestamp), timezone.utc).date().isoformat(), sha)
     return sorted(seen.items())

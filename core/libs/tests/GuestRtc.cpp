@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <chrono>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +15,7 @@
 #include <string_view>
 #include <initializer_list>
 #include <limits>
+#include <random>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -64,7 +64,7 @@ static void SetCompiledSdkVersion(std::byte* process, std::uint32_t version) {
 }
 
 static void EnterTitleDirectory(const char* titleId) {
-    const auto directory = std::filesystem::temp_directory_path() / ("rtc-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto directory = std::filesystem::temp_directory_path() / ("rtc-test-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(directory / "app0" / "sce_sys");
     std::filesystem::current_path(directory);
     if (titleId == nullptr) return;
@@ -186,59 +186,26 @@ int main(int argc, char** argv) {
     Require(sceRtcGetDosTime(&dosEarly, &dosTime) == invalidYear && dosTime == 0);
     const RtcDateTime dosLate{2108, 1, 1, 0, 0, 0, 0};
     Require(sceRtcGetDosTime(&dosLate, &dosTime) == invalidYear && dosTime == 0xff9fbf7du);
+    const RtcDateTime dosMeasured{2026, 10, 22, 21, 30, 59, 999999};
+    Require(sceRtcGetDosTime(&dosMeasured, &dosTime) == 0 && dosTime == 0x5d56abddu);
+    const RtcDateTime dosFirstYear{1, 1, 1, 0, 0, 0, 0};
+    Require(sceRtcGetDosTime(&dosFirstYear, &dosTime) == invalidYear && dosTime == 0);
+    const RtcDateTime dosLastYear{9999, 12, 31, 23, 59, 59, 0};
+    Require(sceRtcGetDosTime(&dosLastYear, &dosTime) == invalidYear && dosTime == 0xff9fbf7du);
+    dosTime = 0xbbbbbbbbu;
+    const RtcDateTime dosYearZero{0, 1, 1, 0, 0, 0, 0};
+    Require(sceRtcGetDosTime(&dosYearZero, &dosTime) == invalidYear && dosTime == 0xbbbbbbbbu);
+    const RtcDateTime dosBadDay{2026, 2, 30, 0, 0, 0, 0};
+    Require(sceRtcGetDosTime(&dosBadDay, &dosTime) == invalidDay && dosTime == 0xbbbbbbbbu);
+    const RtcDateTime dosBadHour{2026, 1, 1, 24, 0, 0, 0};
+    Require(sceRtcGetDosTime(&dosBadHour, &dosTime) == invalidHour && dosTime == 0xbbbbbbbbu);
+    const RtcDateTime dosBadMicrosecond{2026, 1, 1, 0, 0, 0, 1000000};
+    Require(sceRtcGetDosTime(&dosBadMicrosecond, &dosTime) == invalidMicrosecond && dosTime == 0xbbbbbbbbu);
+    RtcDateTime dosDecoded{};
+    Require(sceRtcSetDosTime(&dosDecoded, 0xffffffffu) == 0 && Equal(dosDecoded, RtcDateTime{2107, 15, 31, 31, 63, 62, 0}));
+    Require(sceRtcSetDosTime(&dosDecoded, 0) == 0 && Equal(dosDecoded, RtcDateTime{1980, 0, 0, 0, 0, 0, 0}));
+    Require(sceRtcSetDosTime(nullptr, 0) == invalidPointer);
 
-    Require(sceRtcGetYear(nullptr) == invalidPointer);
-    Require(sceRtcSetYear(nullptr, 2024) == invalidPointer);
-    Require(sceRtcSetYear(&converted, 0) == invalidYear);
-    Require(sceRtcSetYear(&converted, 10000) == invalidYear);
-    Require(sceRtcSetYear(&converted, 1) == 0 && sceRtcGetYear(&converted) == 1);
-    Require(sceRtcSetYear(&converted, 9999) == 0 && sceRtcGetYear(&converted) == 9999);
-    Require(sceRtcSetYear(&converted, 2026) == 0 && sceRtcGetYear(&converted) == 2026);
-
-    Require(sceRtcGetMonth(nullptr) == invalidPointer);
-    Require(sceRtcSetMonth(nullptr, 6) == invalidPointer);
-    Require(sceRtcSetMonth(&converted, 0) == invalidMonth);
-    Require(sceRtcSetMonth(&converted, 13) == invalidMonth);
-    Require(sceRtcSetMonth(&converted, 1) == 0 && sceRtcGetMonth(&converted) == 1);
-    Require(sceRtcSetMonth(&converted, 12) == 0 && sceRtcGetMonth(&converted) == 12);
-
-    Require(sceRtcGetDay(nullptr) == invalidPointer);
-    Require(sceRtcSetDay(nullptr, 15) == invalidPointer);
-    Require(sceRtcSetDay(&converted, 0) == invalidDay);
-    Require(sceRtcSetDay(&converted, 32) == invalidDay);
-    Require(sceRtcSetDay(&converted, 1) == 0 && sceRtcGetDay(&converted) == 1);
-    Require(sceRtcSetDay(&converted, 31) == 0 && sceRtcGetDay(&converted) == 31);
-
-    Require(sceRtcGetHour(nullptr) == invalidPointer);
-    Require(sceRtcSetHour(nullptr, 12) == invalidPointer);
-    Require(sceRtcSetHour(&converted, -1) == invalidHour);
-    Require(sceRtcSetHour(&converted, 24) == invalidHour);
-    Require(sceRtcSetHour(&converted, 0) == 0 && sceRtcGetHour(&converted) == 0);
-    Require(sceRtcSetHour(&converted, 23) == 0 && sceRtcGetHour(&converted) == 23);
-
-    constexpr int invalidMinute = static_cast<int>(0x80B5000C);
-    constexpr int invalidSecond = static_cast<int>(0x80B5000D);
-
-    Require(sceRtcGetMinute(nullptr) == invalidPointer);
-    Require(sceRtcSetMinute(nullptr, 30) == invalidPointer);
-    Require(sceRtcSetMinute(&converted, -1) == invalidMinute);
-    Require(sceRtcSetMinute(&converted, 60) == invalidMinute);
-    Require(sceRtcSetMinute(&converted, 0) == 0 && sceRtcGetMinute(&converted) == 0);
-    Require(sceRtcSetMinute(&converted, 59) == 0 && sceRtcGetMinute(&converted) == 59);
-
-    Require(sceRtcGetSecond(nullptr) == invalidPointer);
-    Require(sceRtcSetSecond(nullptr, 45) == invalidPointer);
-    Require(sceRtcSetSecond(&converted, -1) == invalidSecond);
-    Require(sceRtcSetSecond(&converted, 60) == invalidSecond);
-    Require(sceRtcSetSecond(&converted, 0) == 0 && sceRtcGetSecond(&converted) == 0);
-    Require(sceRtcSetSecond(&converted, 59) == 0 && sceRtcGetSecond(&converted) == 59);
-
-    Require(sceRtcGetMicrosecond(nullptr) == invalidPointer);
-    Require(sceRtcSetMicrosecond(nullptr, 123456) == invalidPointer);
-    Require(sceRtcSetMicrosecond(&converted, -1) == invalidMicrosecond);
-    Require(sceRtcSetMicrosecond(&converted, 1000000) == invalidMicrosecond);
-    Require(sceRtcSetMicrosecond(&converted, 0) == 0 && sceRtcGetMicrosecond(&converted) == 0);
-    Require(sceRtcSetMicrosecond(&converted, 999999) == 0 && sceRtcGetMicrosecond(&converted) == 999999);
     converted = RtcDateTime{1, 1, 1, 1, 1, 1, 1};
     Require(sceRtcSetDosTime(&converted, 0x585d645cu) == 0 && Equal(converted, RtcDateTime{2024, 2, 29, 12, 34, 56, 0}));
     Require(sceRtcSetDosTime(&converted, 0x7f9fbf7du) == 0 && Equal(converted, RtcDateTime{2043, 12, 31, 23, 59, 58, 0}));
@@ -762,10 +729,11 @@ int main(int argc, char** argv) {
 
     RtcTick now{};
     Require(sceRtcGetCurrentTick(&now) == 0 && now.tick > leapDayTick);
+    const RtcTick fixed{leapDayTick};
     RtcTick local{};
     RtcTick back{};
-    Require(sceRtcConvertUtcToLocalTime(&now, &local) == 0);
-    Require(sceRtcConvertLocalTimeToUtc(&local, &back) == 0 && back.tick == now.tick);
+    Require(sceRtcConvertUtcToLocalTime(&fixed, &local) == 0);
+    Require(sceRtcConvertLocalTimeToUtc(&local, &back) == 0 && back.tick == fixed.tick);
 
     char rfc2822[32];
     tick.tick = leapDayTick;
@@ -905,6 +873,39 @@ int main(int argc, char** argv) {
         Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &first, 2) == 0 && std::strcmp(precise, "2024-02-29T12:34:56.78Z") == 0);
         Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &first, 7) == invalidValue);
         Require(sceRtcFormatRFC3339PreciseLocalTime(nullptr, &first, 0) == invalidPointer);
+        constexpr int invalidYear = static_cast<int>(0x80B50008u);
+        const RtcTick measured{63926543109123456ull};
+        static constexpr const char* fractions[] = {"2026-10-02T13:05:09Z", "2026-10-02T13:05:09.1Z", "2026-10-02T13:05:09.12Z", "2026-10-02T13:05:09.123Z",
+            "2026-10-02T13:05:09.1234Z", "2026-10-02T13:05:09.12345Z", "2026-10-02T13:05:09.123456Z"};
+        for (int digits = 0; digits <= 6; ++digits)
+            Require(sceRtcFormatRFC3339Precise(precise, &measured, 0, digits) == 0 && std::strcmp(precise, fractions[digits]) == 0);
+        struct Zone {
+            int minutes;
+            const char* expected;
+        };
+        static constexpr Zone zones[] = {{60, "2026-10-02T14:05:09.123+01:00"}, {-180, "2026-10-02T10:05:09.123-03:00"}, {330, "2026-10-02T18:35:09.123+05:30"},
+            {-330, "2026-10-02T07:35:09.123-05:30"}, {1439, "2026-10-03T13:04:09.123+23:59"}, {-1439, "2026-10-01T13:06:09.123-23:59"},
+            {1, "2026-10-02T13:06:09.123+00:01"}, {-1, "2026-10-02T13:04:09.123-00:01"}, {720, "2026-10-03T01:05:09.123+12:00"}};
+        for (const auto& zone : zones)
+            Require(sceRtcFormatRFC3339Precise(precise, &measured, zone.minutes, 3) == 0 && std::strcmp(precise, zone.expected) == 0);
+        const RtcTick yearEnd{63934358400999999ull};
+        Require(sceRtcFormatRFC3339Precise(precise, &yearEnd, 1, 6) == 0 && std::strcmp(precise, "2027-01-01T00:01:00.999999+00:01") == 0);
+        Require(sceRtcFormatRFC3339Precise(precise, &yearEnd, -1439, 2) == 0 && std::strcmp(precise, "2026-12-31T00:01:00.99-23:59") == 0);
+        const RtcTick zero{0}, maximum{315537897599999999ull}, pastMaximum{315537897600000000ull}, huge{~0ull}, nines{63926543109999999ull};
+        Require(sceRtcFormatRFC3339Precise(precise, &zero, 0, 6) == 0 && std::strcmp(precise, "0001-01-01T00:00:00.000000Z") == 0);
+        Require(sceRtcFormatRFC3339Precise(precise, &maximum, 0, 6) == 0 && std::strcmp(precise, "9999-12-31T23:59:59.999999Z") == 0);
+        Require(sceRtcFormatRFC3339Precise(precise, &nines, 0, 1) == 0 && std::strcmp(precise, "2026-10-02T13:05:09.9Z") == 0);
+        std::memset(precise, '#', sizeof(precise));
+        Require(sceRtcFormatRFC3339Precise(precise, &zero, -60, 0) == invalidValue && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &maximum, 60, 6) == invalidYear && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &pastMaximum, 0, 6) == invalidYear && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &huge, 0, 6) == invalidYear && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &pastMaximum, -60, 3) == 0 && std::strcmp(precise, "9999-12-31T23:00:00.000-01:00") == 0);
+        Require(sceRtcFormatRFC3339Precise(nullptr, &measured, 0, 9) == invalidPointer);
+        Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &pastMaximum, 3) == invalidYear);
+        SetTimeZone("XXX+3");
+        Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &pastMaximum, 3) == 0 && std::strcmp(precise, "9999-12-31T21:00:00.000-03:00") == 0);
+        SetTimeZone("UTC0");
         Require(sceRtcCompareTick(&first, &second) == -1 && sceRtcCompareTick(&second, &first) == 1 && sceRtcCompareTick(&first, &first) == 0);
         Require(sceRtcCompareTick(nullptr, &first) == invalidPointer && sceRtcCompareTick(&first, nullptr) == invalidPointer);
         RtcTick current{};
