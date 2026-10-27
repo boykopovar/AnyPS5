@@ -173,6 +173,7 @@ int main(int argc, char** argv) {
     Require(send_nid_postfix(pair[0], ping, sizeof(ping), 0) == sizeof(ping));
     char withoutLength[8]{};
     Require(recvfrom_nid_postfix(pair[1], withoutLength, sizeof(withoutLength), 0, from, nullptr) == sizeof(ping) && std::strcmp(withoutLength, ping) == 0);
+    Require(recvfrom_nid_postfix(pair[1], withoutLength, 0, 0, from, nullptr) == 0);
 
     Require(fcntl_nid_postfix(pair[1], 3) == 2);
     Require(fcntl_nid_postfix(pair[0], 1) == 0 && fcntl_nid_postfix(pair[1], 1) == 0);

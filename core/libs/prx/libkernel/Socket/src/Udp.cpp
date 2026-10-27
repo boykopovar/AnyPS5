@@ -1543,7 +1543,7 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     if (!destination.Open()) return Fail(14);
     if (const int answered = ReceiveAnsweredHere(*socket, length); answered >= 0) {
         if (answered > 0) return Fail(answered);
-        if (address) *addressLength = 0;
+        if (address && addressLength) *addressLength = 0;
         return 0;
     }
     sockaddr_storage native{};
