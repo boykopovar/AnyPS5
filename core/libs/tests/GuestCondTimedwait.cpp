@@ -16,6 +16,7 @@ static constexpr int SCE_OK = 0;
 static constexpr int POSIX_EPERM = 1;
 static constexpr int POSIX_EINVAL = 22;
 static constexpr int POSIX_ETIMEDOUT = 60;
+static constexpr int MUTEX_TYPE_RECURSIVE = 2;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -105,7 +106,10 @@ static void SignalTo() {
     signalled.target = scePthreadSelf();
     Require(scePthreadMutexInit(&signalled.mutex, nullptr, nullptr) == SCE_OK);
     Require(scePthreadCondInit(&signalled.cond, nullptr, nullptr) == SCE_OK);
-    Require(pthread_cond_signalto_np_nid_postfix(&signalled.cond, signalled.target) == 0);
+    Require(pthread_cond_signalto_np_nid_postfix(&signalled.cond, signalled.target) == 1);
+    Require(scePthreadCondSignalto(&signalled.cond, signalled.target) == static_cast<int>(0x80020001u));
+    Require(pthread_cond_signalto_np_nid_postfix(&signalled.cond, nullptr) == 22);
+    Require(scePthreadCondSignalto(&signalled.cond, nullptr) == static_cast<int>(0x80020016u));
     Require(scePthreadMutexLock(&signalled.mutex) == SCE_OK);
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, SignallerTo, &signalled, nullptr) == SCE_OK);
@@ -120,9 +124,38 @@ static void SignalTo() {
     Require(scePthreadMutexDestroy(&signalled.mutex) == SCE_OK);
 }
 
+static void SignalToEveryRound(bool recursive) {
+    for (int round = 0; round < 200; ++round) {
+        Signalled signalled;
+        signalled.target = scePthreadSelf();
+        PthreadMutexattr attr = nullptr;
+        Require(scePthreadMutexattrInit(&attr) == SCE_OK);
+        if (recursive)
+            Require(scePthreadMutexattrSettype(&attr, MUTEX_TYPE_RECURSIVE) == SCE_OK);
+        Require(scePthreadMutexInit(&signalled.mutex, &attr, nullptr) == SCE_OK);
+        Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+        Require(scePthreadCondInit(&signalled.cond, nullptr, nullptr) == SCE_OK);
+        Require(scePthreadMutexLock(&signalled.mutex) == SCE_OK);
+        if (recursive)
+            Require(scePthreadMutexLock(&signalled.mutex) == SCE_OK);
+        Pthread thread = nullptr;
+        Require(scePthreadCreate(&thread, nullptr, SignallerTo, &signalled, nullptr) == SCE_OK);
+        while (!signalled.ready)
+            Require(pthread_cond_reltimedwait_np_nid_postfix(&signalled.cond, &signalled.mutex, 2000000) == 0);
+        if (recursive)
+            Require(scePthreadMutexUnlock(&signalled.mutex) == SCE_OK);
+        Require(scePthreadMutexUnlock(&signalled.mutex) == SCE_OK);
+        Require(scePthreadJoin(thread, nullptr) == SCE_OK);
+        Require(scePthreadCondDestroy(&signalled.cond) == SCE_OK);
+        Require(scePthreadMutexDestroy(&signalled.mutex) == SCE_OK);
+    }
+}
+
 int main() {
     RelativeWait();
     SignalTo();
+    SignalToEveryRound(false);
+    SignalToEveryRound(true);
 
     Context context;
     PthreadCond cond = nullptr;

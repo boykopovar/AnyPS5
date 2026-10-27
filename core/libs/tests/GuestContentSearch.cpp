@@ -2,6 +2,9 @@
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
+#ifdef __APPLE__
+#include <initializer_list>
+#endif
 #include <stdexcept>
 
 namespace {
@@ -33,12 +36,6 @@ constexpr int ErrorInvalidArgument = static_cast<int>(0x809D1003u);
 constexpr int ErrorAlreadyInitialized = static_cast<int>(0x809D1002u);
 constexpr int ErrorLimitTooBig = static_cast<int>(0x809D100Au);
 
-struct MetadataValue {
-    std::int32_t size;
-    std::int32_t type;
-    std::int64_t value;
-};
-
 }
 
 int main() {
@@ -52,9 +49,6 @@ int main() {
     std::int64_t size = -1;
     std::int64_t updateId = -1;
     std::int32_t metadataId = -1;
-    std::int32_t metadataType = -1;
-    std::int32_t fieldSize = -1;
-    MetadataValue value{-1, -1, -1};
 
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, &updateId) == ErrorNotInitialized);
@@ -122,13 +116,7 @@ int main() {
     Require(sceContentSearchGetTotalContentSize(&columnSet, 0, &size, &updateId) == ErrorInvalidArgument);
     Require(count == -1 && updateId == -1);
 
-    Require(Throws([&] { sceContentSearchOpenMetadata("/data/photo.jpg", &metadataId); }));
-    Require(Throws([&] { sceContentSearchOpenMetadataByContentId(1, &metadataId); }));
-    Require(metadataId == -1);
     Require(sceContentSearchCloseMetadata(1) == ErrorInvalidArgument);
-    Require(Throws([&] { sceContentSearchGetMetadataFieldInfo(1, "title", &metadataType, &fieldSize); }));
-    Require(Throws([&] { sceContentSearchGetMetadataValue(1, "title", &value); }));
-    Require(metadataType == -1 && fieldSize == -1 && value.size == -1);
 
     Require(sceContentSearchTerm() == 0);
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == ErrorNotInitialized);

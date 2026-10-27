@@ -460,6 +460,20 @@ void testInternedSpirvSharesEqualWords() {
     check(edited[6] == spv::CapabilityFloat64 && first[6] == spv::CapabilityShader && again.data() == first.data(), "a write to one holder of interned SPIR-V changed the others");
 }
 
+void testInternedSpirvReleasesUnusedWords() {
+    const std::vector<std::uint32_t> words{spv::MagicNumber, 0x00010400u, 0u, 7u, 0u, (2u << 16u) | spv::OpCapability, spv::CapabilityGeometry};
+    SharedSpirv::Weak released;
+    {
+        const auto first = InternSpirv(words);
+        const auto second = InternSpirv(words);
+        check(first.data() == second.data(), "two equal specialized modules kept separate copies of their words");
+        released = first.Weaken();
+    }
+    check(released.Expired(), "the SPIR-V interning table kept words no holder uses");
+    const auto again = InternSpirv(words);
+    check(std::ranges::equal(again.Words(), words) && released.Lock().empty(), "SPIR-V interned again after its release changed its words");
+}
+
 int main() {
     testFoldingLeavesNoDeadBlocksOrConstants();
     testIdsBeyondTheBoundAreRejected();
@@ -477,6 +491,7 @@ int main() {
     testEmittedWordsAreStable();
     testBlockBallotsOfOnePredicateShareOneBallot();
     testInternedSpirvSharesEqualWords();
+    testInternedSpirvReleasesUnusedWords();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

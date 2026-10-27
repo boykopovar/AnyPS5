@@ -207,7 +207,7 @@ int APS5_VABI sceNpWebApi2PushEventSetHandleTimeout(int libraryContextId, int ha
     return 0;
 }
 
-int APS5_VABI sceNpWebApi2PushEventRegisterPushContextCallback() {
+int APS5_VABI sceNpWebApi2PushEventRegisterPushContextCallback(std::int32_t userContextId, std::int32_t filterId, void* callback, void* userArg) {
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 

@@ -133,6 +133,39 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(self.path.read_text(encoding="utf-8"), original)
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
+    def test_output_has_consistent_lf_newlines_and_utf8(self):
+        self.queue(1000, "cross")
+        content = self.path.read_bytes()
+        self.assertTrue(content.endswith(b"\n"))
+        self.assertFalse(content.endswith(b"\r\n"))
+        self.assertEqual(content.decode("utf-8"), "1000 16384 300\n")
+
+    def test_unreadable_command_file_is_not_replaced(self):
+        original = "7 16384 300\n"
+        self.path.write_text(original, encoding="utf-8")
+        with mock.patch.object(Path, "open", side_effect=PermissionError("denied")), \
+                self.assertRaises(PermissionError):
+            self.queue(1000, "cross")
+        self.assertEqual(self.path.read_text(encoding="utf-8"), original)
+        self.assertEqual(list(self.root.iterdir()), [self.path])
+
+    def test_missing_parent_directory_reports_error(self):
+        missing = self.root / "nonexistent" / "command"
+        errors = io.StringIO()
+        with mock.patch.object(sys, "argv", ["pad_input.py", str(missing), "cross"]), \
+                contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+            pad_input.main()
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("directory does not exist", errors.getvalue())
+
+    def test_directory_path_reports_error(self):
+        errors = io.StringIO()
+        with mock.patch.object(sys, "argv", ["pad_input.py", str(self.root), "cross"]), \
+                contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+            pad_input.main()
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("is a directory", errors.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

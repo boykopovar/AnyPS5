@@ -169,14 +169,32 @@ def chunks(names):
         yield batch
 
 
+def load_graph(path):
+    graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if not isinstance(graph, dict) or not isinstance(graph.get("tests"), dict) or not isinstance(graph.get("closures"), dict):
+        raise ValueError(f"{path}: invalid test graph (expected tests and closures objects)")
+    fields = ("registered", "arguments", "sets", "requires", "depends")
+    for name, test in graph["tests"].items():
+        if (not isinstance(name, str) or not isinstance(test, dict) or "target" not in test
+                or not (test["target"] is None or isinstance(test["target"], str))
+                or any(not isinstance(test.get(field), list)
+                       or any(not isinstance(item, str) for item in test[field]) for field in fields)):
+            raise ValueError(f"{path}: invalid test graph entry {name!r}")
+    for name, paths in graph["closures"].items():
+        if not isinstance(name, str) or not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+            raise ValueError(f"{path}: invalid test graph closure {name!r}")
+    return graph
+
+
 def dump(build, out):
     deps = collections.defaultdict(set)
     current = None
-    for line in build.run("-t", "deps").splitlines():
-        if not line.startswith(" ") and ": #deps" in line:
-            current = build.key(line.split(": #deps")[0])
+    recorded = subprocess.run([build.program, "-C", build.path, "-t", "deps"], capture_output=True, check=True).stdout
+    for line in recorded.splitlines():
+        if not line.startswith(b" ") and b": #deps" in line:
+            current = build.key(line.split(b": #deps")[0].decode(build.encoding))
         elif line.strip() and current:
-            path = build.repo(line.strip())
+            path = build.repo(line.strip().decode("utf-8"))
             if path:
                 deps[current].add(path)
     listing, listed = build.tests()
@@ -301,7 +319,7 @@ def main(argv=None):
         return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
     if args.command == "explain":
         try:
-            graph = json.loads(args.graph.read_text(encoding="utf-8-sig"))
+            graph = load_graph(args.graph)
             changed = [line.strip() for line in args.changed.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
             reasons = {}
             picked, full = select(graph, changed, reasons)
@@ -323,8 +341,11 @@ def main(argv=None):
     if not os.path.exists(args.graph):
         print("full run: no test graph")
         return 0
-    graph = json.loads(Path(args.graph).read_text(encoding="utf-8-sig"))
-    changed = [line.strip() for line in Path(args.changed).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    try:
+        graph = load_graph(args.graph)
+        changed = [line.strip() for line in Path(args.changed).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
     picked, full = select(graph, changed)
     if picked is None:
         print(f"full run: {', '.join(full[:5])}")

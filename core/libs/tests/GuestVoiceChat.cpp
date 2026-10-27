@@ -5,12 +5,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-extern "C" {
-
-int APS5_VABI sceVoiceChatRequestAcsTts(int requestId, void* a, void* b);
-
-}
-
 static void Require(bool value, const char* what) {
     if (value) return;
     std::printf("VoiceChat: %s\n", what);
@@ -22,8 +16,8 @@ int main() {
 
     Require(sceVoiceChatInitialize(nullptr) == 0, "initialization failed");
     Require(sceVoiceChatProcessEvent() == 0, "event processing failed");
-    Require(sceVoiceChatRegisterHandlers(nullptr) == 0, "register handlers failed");
-    Require(sceVoiceChatRegisterMicEventHandler(nullptr, nullptr) == 0, "register mic event handler failed");
+    Require(sceVoiceChatRegisterHandlers(nullptr, nullptr) == 0, "register handlers failed");
+    Require(sceVoiceChatRegisterMicEventHandler(0, nullptr, nullptr) == 0, "register mic event handler failed");
     Require(sceVoiceChatRegisterChannelEventHandler(nullptr, nullptr) == 0, "register channel event handler failed");
     Require(sceVoiceChatUnregisterMicEventHandler(nullptr) == 0, "unregister mic event handler failed");
     Require(sceVoiceChatStartChannelEvent(nullptr) == 0, "start channel event failed");
