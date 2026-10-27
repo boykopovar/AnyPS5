@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <bit>
 #include <cerrno>
 #include <cfenv>
@@ -1996,6 +1997,51 @@ static void CheckLog1pf() {
     Require(std::isnan(log1pf_nid_postfix(std::numeric_limits<float>::quiet_NaN())));
 }
 
+static void CheckLog1pfBitExact() {
+    const struct { std::uint32_t input; std::uint32_t expected; } cases[] = {
+        {0x00000000u, 0x00000000u},
+        {0x80000000u, 0x80000000u},
+        {0x00000001u, 0x00000001u},
+        {0x80000001u, 0x80000001u},
+        {0x337fffffu, 0x337fffffu},
+        {0x33800000u, 0x33800000u},
+        {0x33800001u, 0x33800001u},
+        {0xb37fffffu, 0xb37fffffu},
+        {0xb3800000u, 0xb3800000u},
+        {0xb3800001u, 0xb3800001u},
+        {0xb3000001u, 0xb3000001u},
+        {0xb7904001u, 0xb7904052u},
+        {0xb7ffffffu, 0xb800007fu},
+        {0xb8000000u, 0xb8000080u},
+        {0xb8000001u, 0xb8000081u},
+        {0x37ffffffu, 0x37fffeffu},
+        {0x38000000u, 0x37ffff00u},
+        {0x38000001u, 0x37ffff02u},
+        {0xbe95f618u, 0xbeb17216u},
+        {0xbe95f619u, 0xbeb17217u},
+        {0xbe95f61au, 0xbeb17218u},
+        {0xbea00000u, 0xbebfd7d2u},
+        {0xbf000000u, 0xbf317218u},
+        {0xbf400000u, 0xbfb17218u},
+        {0xbf7ffffeu, 0xc17f1402u},
+        {0xbf7fffffu, 0xc1851592u},
+        {0x3ed413cfu, 0x3eb1721au},
+        {0x3ed413d0u, 0x3eb1721au},
+        {0x3ed413d1u, 0x3eb1721bu},
+        {0x3f800000u, 0x3f317218u},
+        {0x40000000u, 0x3f8c9f54u},
+        {0x40400000u, 0x3fb17218u},
+        {0x59ffffffu, 0x4212f27cu},
+        {0x5a000000u, 0x4212f27cu},
+        {0x5a000001u, 0x4212f27cu},
+        {0x7f7fffffu, 0x42b17218u},
+    };
+    for (const auto& test : cases) {
+        const std::uint32_t result = std::bit_cast<std::uint32_t>(log1pf_nid_postfix(std::bit_cast<float>(test.input)));
+        Require(result == test.expected);
+    }
+}
+
 static void CheckFloatClassification() {
     Require(_FInf_nid_postfix.bits[0] == 0x7f800000u && _FNan_nid_postfix.bits[0] == 0x7fc00000u);
     for (int word = 1; word < 4; ++word) Require(_FInf_nid_postfix.bits[word] == 0 && _FNan_nid_postfix.bits[word] == 0);
@@ -2864,6 +2910,7 @@ int main() {
     CheckAtanhf();
     CheckLogfConsoleBits();
     CheckLog1pf();
+    CheckLog1pfBitExact();
     CheckHypotSpecialValue();
     CheckAtanfConsoleBits();
     CheckAtan2fConsoleBits();
