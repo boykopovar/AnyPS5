@@ -33,7 +33,7 @@ constexpr std::uint32_t VideoBufferAlignment = 0x100;
 constexpr std::uint32_t AudioBufferAlignment = 0x10;
 constexpr std::uint32_t AudioChunkSamples = 1024;
 constexpr std::uint32_t AudioMaxChannels = 8;
-constexpr std::uint32_t VideoDecodeAheadFrames = 4;
+constexpr std::uint32_t VideoDecodeAheadFrames = 12;
 constexpr std::size_t VideoPacketLimit = 30;
 constexpr std::size_t AudioPacketLimit = 8;
 constexpr std::size_t AudioOnlyPacketLimit = 30;
@@ -608,12 +608,13 @@ private:
             return false;
         }
         const auto epoch = frames.front().epoch;
+        const bool unsynced = syncMode != SyncModeDefault;
         present(audio, info);
         const auto currentClock = presentationClock.Now();
         const auto timestamp = static_cast<double>(info.timestamp);
         lastAudioTimestamp = timestamp;
         audioHasTimestamp = true;
-        const bool drifted = currentClock > timestamp + 50.0 || timestamp > currentClock + 50.0;
+        const bool drifted = currentClock > timestamp + 50.0 || (!unsynced && timestamp > currentClock + 50.0);
         const bool exhausted = audioExhausted() && !audioClockReconciled();
         const bool shouldRebase = !audioDriving || epoch > clockEpoch || drifted || exhausted;
         audioDriving = true;
