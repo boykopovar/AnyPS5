@@ -98,11 +98,6 @@ void recordChange(void* mutation, const void* pointer, std::size_t bytes) {
     if (mutation != nullptr && bytes != 0) static_cast<MutationState*>(mutation)->changed.emplace_back(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 }
 
-bool pinDebugEnabled() {
-    static const bool value = std::getenv("APS5_PIN_DEBUG") != nullptr;
-    return value;
-}
-
 std::shared_ptr<Lease::Ranges> newSnapshot() {
     liveSnapshots.fetch_add(1, std::memory_order_release);
     return std::shared_ptr<Lease::Ranges>(new Lease::Ranges, [](Lease::Ranges* ranges) {
@@ -111,8 +106,6 @@ std::shared_ptr<Lease::Ranges> newSnapshot() {
     });
 }
 
-// A lease snapshot covers every registered range, so while one lives its bytes may be read by
-// recorded work and no span query can clear them.
 bool spanIsClear(std::uintptr_t address, std::size_t bytes) {
     if (liveSnapshots.load(std::memory_order_acquire) != 0) return false;
     const auto query = spanQuery.load(std::memory_order_acquire);
@@ -418,7 +411,6 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
         registry().readableLease.reset();
         registry().allLease.reset();
         bool pinned = false;
-        bool cleared = false;
         std::size_t holders = 0;
         auto it = ranges.upper_bound(address);
         if (it != ranges.begin()) --it;
@@ -427,17 +419,12 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
             if (base >= end && base != address) break;
             if (!((address < base + range->bytes && base < end) || base == address) || range.use_count() == 1) continue;
             holders = range.use_count();
-            // The references above the registry's own can belong to host work on other bytes of the
-            // same registered range, which cannot read these ones; ask before waiting.
             if (!spanIsClear(address, bytes)) {
                 pinned = true;
                 break;
             }
-            cleared = true;
         }
         if (!pinned) {
-            if (cleared && pinDebugEnabled()) std::fprintf(stderr, "[pin] 0x%llx+0x%llx released with use_count %zu (host spans clear)\n",
-                static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), holders);
             if (state != nullptr && bytes != 0) state->unpinned.emplace_back(address, bytes);
             return;
         }
@@ -462,11 +449,6 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
             // and the re-lock a driver worker took a new lease (every address-based build pins every
             // registered range). Rare per round, but each round is a GPU wait, so a repeat is reported.
             if (++syncedRounds == 8) std::fprintf(stderr, "[gpu] leased allocation 0x%llx+0x%llx still pinned after %d recorder syncs\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), syncedRounds);
-            static const bool pinDebug = pinDebugEnabled();
-            if (pinDebug && syncedRounds % 32 == 0) std::fprintf(stderr, "[pin] 0x%llx+0x%llx round %d use_count %zu snapshots %llu mutation %s\n",
-                static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), syncedRounds, holders,
-                static_cast<unsigned long long>(liveSnapshots.load()),
-                state == nullptr ? "absent" : (state->lock.owns_lock() ? "held" : "detached"));
             continue;
         }
     }

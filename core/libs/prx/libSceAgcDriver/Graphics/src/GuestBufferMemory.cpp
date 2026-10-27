@@ -3163,11 +3163,6 @@ SnapshotStats& Snapshots() {
     return stats;
 }
 
-// Whether host work can still read these bytes: a live import (or one waiting to be destroyed) whose
-// mapped window covers them. Imports are per window inside a registered range, so an import of
-// neighbouring bytes must not block a mutation of these ones. Called with the registry lock held, so
-// the import table is only read when it can be taken without waiting; otherwise the answer is the
-// conservative one and the mutation waits as it did before.
 bool ImportedSpansCover(std::uintptr_t address, std::size_t bytes) {
     const auto end = static_cast<std::uint64_t>(address) + bytes;
     const auto covers = [&](const HostImport& entry) {
