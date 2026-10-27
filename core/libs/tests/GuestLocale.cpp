@@ -495,6 +495,7 @@ static void CheckFacetGetcat() {
     Require(widePunctVtable->decimalPoint(widePunctFacet) == u'.' && widePunctVtable->thousandsSep(widePunctFacet) == u',');
     GuestLocale::String wideName{};
     Require(widePunctVtable->grouping(&wideName, widePunctFacet) == &wideName && wideName.size == 0);
+    Require(wideName.capacity == 15 && wideName.buffer[0] == '\0');
     const auto* wideContents = reinterpret_cast<const std::uint16_t*>(wideName.size <= 7 ? wideName.buffer : wideName.pointer);
     Require(widePunctVtable->falsename(&wideName, widePunctFacet)->size == 5);
     wideContents = reinterpret_cast<const std::uint16_t*>(wideName.size <= 7 ? wideName.buffer : wideName.pointer);
