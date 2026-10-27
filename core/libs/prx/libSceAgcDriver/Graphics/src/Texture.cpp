@@ -6088,6 +6088,12 @@ void StorageTexture::PrepareLinearDraw() {
     linearDrawOriginal = std::move(snapshot);
 }
 
+void StorageTexture::FinishLinearDraw() {
+    if (descriptor.tileMode != TextureTileMode::kLinear) return;
+    FlushPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), nullptr, "linear target");
+    if (!anyLayerPending()) linearDrawOriginal.reset();
+}
+
 void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     CaptureTrace::Log("writeback image=%llx generation=%llu reason=%s units=%zu", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(generation), flushReason, static_cast<std::size_t>(std::count(layers.begin(), layers.end(), true)));
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
