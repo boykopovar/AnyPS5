@@ -658,7 +658,7 @@ void AsyncTeardown(int ssl) {
 
 void AsyncFailure(int ssl) {
     std::fprintf(stderr, "HTTP2 async failure scenario\n");
-    Server server(Mode::Redirect);
+    Server server(Mode::Reset);
     Client client(ssl);
     client.Create(server.Url());
     AsyncQueue queue(client.request);
