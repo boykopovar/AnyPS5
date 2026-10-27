@@ -18,9 +18,9 @@ VERIFIED = "Verified 1 patches: 1 ok, 0 not-checked, 0 mismatch\n"
 
 class PatchAdvisorTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = tempfile.TemporaryDirectory(prefix="patch advisor-")
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         self.catalog = self.root / "catalog"
         self.catalog.mkdir()
         self.input = self.root / "eboot.bin"
@@ -180,6 +180,40 @@ class PatchAdvisorTests(unittest.TestCase):
         self.write_index()
         self.assertEqual(self.advise(), 1)
         run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_patch_symlink_loop_is_rejected_without_blocking_valid_entry(self, run):
+        try:
+            (self.catalog / "loop.toml").symlink_to("loop.toml")
+        except OSError as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        bad = dict(self.entry, patch="loop.toml")
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for entries, expected, calls in (([bad], 1, 0), ([bad, self.entry], 0, 1)):
+            with self.subTest(entries=len(entries)):
+                run.reset_mock()
+                self.write_index(entries)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(self.advise(), expected)
+                self.assertIn("Catalog entry 1 ('loop.toml'): rejected", output.getvalue())
+                self.assertEqual(run.call_count, calls)
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_target_symlink_loop_does_not_block_valid_entry(self, run):
+        try:
+            (self.root / "loop.prx").symlink_to("loop.prx")
+        except OSError as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        (self.catalog / "loop-target.toml").write_text('format = 1\n[[patch]]\ntarget = "loop.prx"\n')
+        bad = dict(self.entry, patch="loop-target.toml", targets={"loop.prx": "0" * 64})
+        self.write_index([bad, self.entry])
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(self.advise(), 0)
+        self.assertIn("Catalog entry 1 ('loop-target.toml'): rejected", output.getvalue())
+        run.assert_called_once()
 
     @patch.object(suggest_patches.subprocess, "run")
     def test_relinker_timeout_is_not_a_recommendation(self, run):
@@ -353,7 +387,7 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertIn("--patches", output.getvalue())
         self.assertIn("--module-dir Media/Modules", output.getvalue())
         self.assertIn("--executable picker/picker.bin", output.getvalue())
-        self.assertIn(f"--sce-module-path {self.root}", output.getvalue())
+        self.assertIn(suggest_patches.command_line(["--sce-module-path", str(self.root)]), output.getvalue())
 
     @patch.object(suggest_patches.subprocess, "run")
     def test_no_entries_for_title_is_distinct(self, run):

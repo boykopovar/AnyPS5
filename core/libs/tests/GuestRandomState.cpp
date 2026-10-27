@@ -180,11 +180,22 @@ int main() {
 
     initstate_nid_postfix(7, small.data(), static_cast<std::int64_t>(small.size()));
     random_nid_postfix();
-    alignas(4) std::array<char, 32> garbled{};
+    alignas(4) std::array<char, 128> garbled{};
     const std::uint32_t garbledWord = 5 * 7 + 1;
     std::memcpy(garbled.data(), &garbledWord, sizeof(garbledWord));
-    Require(setstate_nid_postfix(garbled.data()) == nullptr, "setstate must reject a rear position past the degree");
-    Require(random_nid_postfix() == seed7Type1[1], "a rejected setstate must keep the current state");
+    Require(setstate_nid_postfix(garbled.data()) == small.data(), "setstate must take a rear position past the degree as the console does");
+    random_nid_postfix();
+    Require(setstate_nid_postfix(small.data()) == garbled.data(), "setstate back from the garbled state");
+    Require(random_nid_postfix() == seed7Type1[1], "returning to the earlier state must resume its sequence");
+
+    initstate_nid_postfix(7, small.data(), static_cast<std::int64_t>(small.size()));
+    for (int draw = 0; draw < 3; ++draw) random_nid_postfix();
+    alignas(4) std::array<char, 8> refused{};
+    Require(initstate_nid_postfix(1, refused.data(), 4) == nullptr, "initstate below 8 bytes returns null");
+    Require(Word(small.data(), 0) == 3 * 5 + 1, "initstate below 8 bytes still saves the current state's rear position");
+    initstate_nid_postfix(7, small.data(), static_cast<std::int64_t>(small.size()));
+    random_nid_postfix();
+    random_nid_postfix();
 
     *__error_nid_postfix() = 1234;
     std::array<char, 8> tiny{};

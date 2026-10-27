@@ -28,6 +28,152 @@ ORIGINAL = index([A_STUB, B_STUB, C_STUB], [A_FUNCTIONAL, SHADER, SHARED])
 
 
 class DebtSplitTests(unittest.TestCase):
+
+
+    def test_relink_escaped_first_backtick_in_run(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        original = (
+            "prefix \\``[example](../../core/sample.cpp)` "
+            "[real](../../core/real.cpp)"
+        )
+        expected = (
+            "prefix \\``[example](../../core/sample.cpp)` "
+            "[real](../../../core/real.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_escaped_backticks_do_not_hide_links(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        original = r"\`[real](../../core/example.cpp)\`"
+        expected = r"\`[real](../../../core/example.cpp)\`"
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_invalid_backtick_fence(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        cases = [
+            (
+                "```[example](../../core/sample.cpp)```\n"
+                "[real](../../core/example.cpp)",
+                "```[example](../../core/sample.cpp)```\n"
+                "[real](../../../core/example.cpp)",
+            ),
+            (
+                "```code``` and [real](../../core/real.cpp)\n"
+                "[later](../../core/later.cpp)",
+                "```code``` and [real](../../../core/real.cpp)\n"
+                "[later](../../../core/later.cpp)",
+            ),
+        ]
+
+        for original, expected in cases:
+            with self.subTest(original=original):
+                self.assertEqual(
+                    debt_split.relink(original, source, destination),
+                    expected,
+                )
+
+    def test_relink_escaped_backslash_before_code_span(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        original = (
+            "\\\\`[code](../../core/a.cpp)` "
+            "and [real](../../core/b.cpp)"
+        )
+        expected = (
+            "\\\\`[code](../../core/a.cpp)` "
+            "and [real](../../../core/b.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_preserves_inline_code(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        for marker in ("`", "``", "```"):
+            original = f"{marker}[example](../../core/test.cpp){marker}"
+            self.assertEqual(
+                debt_split.relink(original, source, destination),
+                original,
+            )
+
+    def test_relink_rewrites_links_outside_inline_code(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        original = (
+            "`[code](../../core/test.cpp)` "
+            "and [real](../../core/real.cpp)"
+        )
+        expected = (
+            "`[code](../../core/test.cpp)` "
+            "and [real](../../../core/real.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_preserves_code_after_real_link(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        original = (
+            "[real](../../core/real.cpp) "
+            "and `[code](../../core/test.cpp)`"
+        )
+        expected = (
+            "[real](../../../core/real.cpp) "
+            "and `[code](../../core/test.cpp)`"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_preserves_tilde_fenced_code(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        original = (
+            "~~~\n"
+            "[code](../../core/a.cpp)\n"
+            "~~~\n"
+            "[real](../../core/b.cpp)"
+        )
+        expected = (
+            "~~~\n"
+            "[code](../../core/a.cpp)\n"
+            "~~~\n"
+            "[real](../../../core/b.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+
     def test_split_preserves_root_relative_links(self):
         targets = ("/AnyPS5/guide.html#usage", "/images/example.png", "/")
         references = " ".join(f"[reference]({target})" for target in targets)

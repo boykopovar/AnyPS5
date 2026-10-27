@@ -30,9 +30,9 @@ bool TranslationContext::flushesInHardware(const RdnaInstruction& inst) const {
     case RdnaOpcode::VAddF32:
     case RdnaOpcode::VSubF32:
     case RdnaOpcode::VSubrevF32:
-    case RdnaOpcode::VMulF32:
+    case RdnaOpcode::VMulF32: return true;
     case RdnaOpcode::VFloorF32:
-    case RdnaOpcode::VCeilF32: return true;
+    case RdnaOpcode::VCeilF32: return float32FlushDeclared;
     case RdnaOpcode::VFmaF32:
     case RdnaOpcode::VMacF32:
     case RdnaOpcode::VMadmkF32:

@@ -845,6 +845,13 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
 #endif
 }
 
+extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(source);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    return CopyGuestBytes(destination, source, bytes);
+}
+
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {
     auto resolved = ResolveLocked(path, false, true);
     AppArchiveRefuseOnly_nid_no_patch(resolved, path, "reading");
@@ -996,6 +1003,17 @@ extern "C" int DuplicateHostDescriptor_nid_no_patch(int descriptor) {
 }
 #endif
 
+namespace {
+
+std::atomic<std::uint64_t> notImplementedCalls{0};
+
+}
+
 extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName) {
+    notImplementedCalls.fetch_add(1, std::memory_order_relaxed);
     throw std::runtime_error(std::string(funcName) + " not implemented");
+}
+
+extern "C" std::uint64_t NotImplementedCalls_nid_no_patch() {
+    return notImplementedCalls.load(std::memory_order_relaxed);
 }

@@ -134,10 +134,15 @@ bool multisamplePlaneRead(const ImageResource& image) {
     return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible;
 }
 
+bool undefinedImageWords(const DescriptorValue& descriptor) {
+    const auto type = static_cast<std::uint32_t>(rawImageType(descriptor));
+    return !nullImageDescriptor(descriptor) && type >= 2u && (type < static_cast<std::uint32_t>(ImageType::Color1D) || !IsDefinedImageFormat(rawImageFormat(descriptor)));
+}
+
 bool validImageDescriptor(const DescriptorValue& descriptor, bool r128) {
     const auto type = rawImageType(descriptor);
     const auto format = rawImageFormat(descriptor);
-    if (type < ImageType::Color1D || format == IrBufferFormat::Invalid) {
+    if (type < ImageType::Color1D || !IsDefinedImageFormat(format)) {
         return false;
     }
     if (r128 && type != ImageType::Color1D && type != ImageType::Color2D && type != ImageType::Color2DMsaa) {
@@ -179,7 +184,7 @@ PoisonReason invalidImageReason(const DescriptorValue& descriptor) {
     if (type < ImageType::Color1D) {
         return PoisonReason::NotImage;
     }
-    if (rawImageFormat(descriptor) == IrBufferFormat::Invalid) {
+    if (!IsDefinedImageFormat(rawImageFormat(descriptor))) {
         return PoisonReason::InvalidFormat;
     }
     if (type == ImageType::Color2DMsaa || type == ImageType::Color2DMsaaArray) {
@@ -290,6 +295,8 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     const bool wideSint = format == IrBufferFormat::Format32SInt || format == IrBufferFormat::Format32_32SInt || format == IrBufferFormat::Format32_32_32_32SInt;
     const bool narrowSint = format == IrBufferFormat::Format16SInt || format == IrBufferFormat::Format8_8SInt || format == IrBufferFormat::Format16_16SInt || format == IrBufferFormat::Format8_8_8_8SInt || format == IrBufferFormat::Format16_16_16_16SInt;
     const bool rawSintStorage = storage && (wideSint || (narrowSint && !base.packed)) && base.written && !base.read && !base.atomic;
+    const bool rawFloat16Storage = storage && base.written && !base.read && !base.atomic &&
+        (remappedFormat == IrBufferFormat::Format16Float || remappedFormat == IrBufferFormat::Format16_16Float || remappedFormat == IrBufferFormat::Format16_16_16_16Float);
     decoded.numericClass = base.atomic || decoded.fmask ? IrTextureNumericClass::Uint : nativeRepacked ? IrTextureNumericClass::Float : SampledTextureNumericClass(remappedFormat);
     if (!storage && !base.depthCompare && IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) {
         decoded.depthBits = true;
@@ -305,7 +312,10 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
         if (rawSintStorage) {
             decoded.numericClass = IrTextureNumericClass::Uint;
         }
-        if ((rawSintStorage || (base.atomic && format == IrBufferFormat::Format32SInt)) && !base.packed) {
+        if (rawFloat16Storage) {
+            decoded.numericClass = IrTextureNumericClass::Uint;
+        }
+        if ((rawSintStorage || rawFloat16Storage || (base.atomic && format == IrBufferFormat::Format32SInt)) && !base.packed) {
             decoded.conversionFormat = format;
         }
     } else if (decoded.numericClass == IrTextureNumericClass::Unsupported || (base.depthCompare && decoded.numericClass != IrTextureNumericClass::Float)) {
@@ -1352,7 +1362,13 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
             descriptor.dwordCount = 8u;
         }
         if (!validImageDescriptor(descriptor, image.r128) && !nullImageDescriptor(image, descriptor)) {
-            throw std::runtime_error("runtime image descriptor is invalid");
+            if (!image.optionalDescriptor || !undefinedImageWords(descriptor)) {
+                char detail[256];
+                std::snprintf(detail, sizeof(detail), ": image %u first used at pc 0x%x (%s, read %d, written %d, r128 %d), T# %08x %08x %08x %08x %08x %08x %08x %08x", i, image.firstUsePc, image.optionalDescriptor ? "optional" : "required", image.read ? 1 : 0, image.written ? 1 : 0, image.r128 ? 1 : 0, descriptor.dwords[0], descriptor.dwords[1], descriptor.dwords[2], descriptor.dwords[3], descriptor.dwords[4], descriptor.dwords[5], descriptor.dwords[6], descriptor.dwords[7]);
+                throw std::runtime_error(std::string("runtime image descriptor is invalid") + detail);
+            }
+            descriptor = DescriptorValue{};
+            descriptor.dwordCount = 8u;
         }
         snapshot.images[i] = descriptor;
     }
@@ -2023,6 +2039,10 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             if (image.atomic && format != IrBufferFormat::Format32SInt) continue;
             append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
         }
+    }
+    if (storage && !image.packed && image.written && !image.read && !image.atomic) {
+        constexpr std::array formats{IrBufferFormat::Format16Float, IrBufferFormat::Format16_16Float, IrBufferFormat::Format16_16_16_16Float};
+        for (const auto format : formats) append(IrTextureNumericClass::Uint, format, IrBufferFormat::Invalid, false, false);
     }
     if (image.depthCompare && !table && (image.emulatedCompare & EmulatedCompare::Unsupported) == 0u && (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray)) {
         auto mode = image;

@@ -368,8 +368,11 @@ void DefineOutputs(SpirvEmitterState& state) {
         DefineMeshOutputs(state);
         return;
     }
-    const bool depthRemap = state.depthRangeRemap && state.program.Resources().stage == IrShaderStage::Vertex;
+    const bool depthRemap = state.depthRangeRemap && (state.program.Resources().stage == IrShaderStage::Vertex || state.program.Resources().stage == IrShaderStage::TessellationEvaluation);
     if (depthRemap) {
+        if (clipDistanceCount + cullDistanceCount > MaxClipDistances - 2u) {
+            FailEmit("depth remap needs two free clip-distance components");
+        }
         state.depthRemapClipIndex = clipDistanceCount;
         clipDistanceCount += 2u;
     }
@@ -460,7 +463,7 @@ void DefineOutputs(SpirvEmitterState& state) {
 void DefineDescriptors(SpirvEmitterState& state) {
     const IrBindingLayout& layout = state.program.Metadata().bindings;
     const IrShaderStage stage = state.program.Resources().stage;
-    if (layout.UsesPushData() || state.stencilReplay || stage == IrShaderStage::Mesh || stage == IrShaderStage::TessellationControl || (state.depthRangeRemap && stage == IrShaderStage::Vertex)) {
+    if (layout.UsesPushData() || state.stencilReplay || stage == IrShaderStage::Mesh || stage == IrShaderStage::TessellationControl || (state.depthRangeRemap && (stage == IrShaderStage::Vertex || stage == IrShaderStage::TessellationEvaluation))) {
         const auto type = PushConstantBlockType(state);
         state.pushConstantVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPushConstant, type), spv::StorageClassPushConstant);
         state.module.AddName(type, "BufferResource");

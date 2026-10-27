@@ -98,6 +98,14 @@ std::vector<std::uint8_t> RebasedRelocations(const std::vector<std::uint8_t>& ta
     return rebased;
 }
 
+void RequireZeroImportSlotAddends(const std::vector<std::uint8_t>& table) {
+    for (std::size_t entry = 0; entry < table.size(); entry += kRelaEntrySize) {
+        const auto type = static_cast<std::uint32_t>(Io::ReadU64(table, entry + 8));
+        if ((type == R_X86_64_GLOB_DAT || type == R_X86_64_JUMP_SLOT) && Io::ReadU64(table, entry + 16) != 0)
+            throw Domain::RelinkerException("GLOB_DAT/JUMP_SLOT relocation has a nonzero addend", Io::ReadU64(table, entry));
+    }
+}
+
 void RequireFileRange(const std::vector<std::uint8_t>& buf, const Domain::ProgramHeader& load) {
     if (load.Offset > buf.size() || load.FileSize > buf.size() - load.Offset)
         throw Domain::RelinkerException("PT_LOAD at " + Hex(load.MappedAddress) + " has file bytes outside the input");
@@ -190,7 +198,7 @@ std::vector<TracedImport> TracedImports(const Domain::SysVDynamicSection& dynSec
             const auto type = static_cast<std::uint32_t>(info);
             const auto symbol = info >> 32;
             const auto target = Io::ReadU64(table, entry);
-            if ((type != R_X86_64_GLOB_DAT && type != R_X86_64_JUMP_SLOT) || symbol == 0 || Io::ReadU64(table, entry + 16) != 0)
+            if ((type != R_X86_64_GLOB_DAT && type != R_X86_64_JUMP_SLOT) || symbol == 0)
                 continue;
             if (type == R_X86_64_GLOB_DAT && !dynSection.FunctionImports.contains(target))
                 continue;
@@ -376,6 +384,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         throw Domain::RelinkerException("--trace-imports conflicts with --lazy-binding");
     if (_traceImports && std::find(dynSection.NeededLibraries.begin(), dynSection.NeededLibraries.end(), "libc.prx") == dynSection.NeededLibraries.end())
         throw Domain::RelinkerException("--trace-imports requires libc.prx among the libraries");
+    RequireZeroImportSlotAddends(dynSection.RelaData);
+    RequireZeroImportSlotAddends(dynSection.RelaPltData);
     if (_fixedBase)
         RequireOnlyDependencies(dynSection.DynamicSegmentData);
     RequireLoaded(originalHeaders, Io::ReadU64(sourceElf, kEhdrEntryOffset), 1, PF_X, "e_entry");
