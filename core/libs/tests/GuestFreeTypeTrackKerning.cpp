@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "FontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -9,10 +10,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Get_Track_Kerning_nid_postfix(GuestFaceRec*, std::int64_t, std::int32_t, std::int64_t*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
