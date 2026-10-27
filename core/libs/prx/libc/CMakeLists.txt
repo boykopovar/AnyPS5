@@ -234,7 +234,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_sce_v2_filesystem_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Filesystem.cpp)
     target_include_directories(guest_sce_v2_filesystem_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_sce_v2_filesystem_tests PRIVATE libc libkernel)
+    target_link_libraries(guest_sce_v2_filesystem_tests PRIVATE libc libkernel zarchive)
     configure_windows_unwind(guest_sce_v2_filesystem_tests)
     add_test(NAME guest_sce_v2_filesystem COMMAND guest_sce_v2_filesystem_tests)
     set_tests_properties(guest_sce_v2_filesystem PROPERTIES TIMEOUT 20)

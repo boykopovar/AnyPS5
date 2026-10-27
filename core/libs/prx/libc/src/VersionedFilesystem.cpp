@@ -1,10 +1,12 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestFilesystemPrimitives.hpp"
 
 #include <cerrno>
 #include <filesystem>
+#include <stdexcept>
 #include <system_error>
 
 #ifdef _WIN32
@@ -53,11 +55,18 @@ std::filesystem::path StatusPath(const std::filesystem::path& path) {
 int StatType(const char* path, int* perms, int* error) {
     errno = 0;
     std::filesystem::path native;
-    int code = ResolvePathError_nid_no_patch(path, native);
+    int code = ResolvePathError_nid_no_patch(path, native, false, true);
     int type;
     if (code != 0) {
         errno = code;
         type = IsNotFound(code) ? GuestFilesystem::TypeNotFound : GuestFilesystem::TypeNone;
+    } else if (AppArchiveOnly_nid_no_patch(native)) {
+        AppArchiveNode node{};
+        if (!AppArchiveLookup_nid_no_patch(native, &node))
+            throw std::logic_error("sce v2 filesystem: " + native.string() + " left app0.zar while reading its status");
+        errno = 0;
+        if (perms) *perms = node.Directory ? 0555 : 0444;
+        type = node.Directory ? GuestFilesystem::TypeDirectory : GuestFilesystem::TypeRegular;
     } else {
         std::error_code failure;
 #ifdef _WIN32
