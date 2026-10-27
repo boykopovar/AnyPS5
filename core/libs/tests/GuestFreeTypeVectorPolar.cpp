@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -11,14 +12,6 @@
 #include <initializer_list>
 
 using namespace FreeType;
-
-extern "C" {
-std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t, std::int64_t);
-std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const GuestVector*);
-void APS5_VABI FT_Vector_Rotate_nid_postfix(GuestVector*, std::int64_t);
-void APS5_VABI FT_Vector_Polarize_nid_postfix(const GuestVector*, std::int64_t*, std::int64_t*);
-void APS5_VABI FT_Vector_From_Polar_nid_postfix(GuestVector*, std::int64_t, std::int64_t);
-}
 
 static void Check(bool value, int line) {
     if (!value) {

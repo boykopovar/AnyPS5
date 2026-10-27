@@ -122,6 +122,11 @@ const char* APS5_VABI FT_Get_Font_Format_nid_postfix(FreeType::GuestFaceRec* fac
 std::uint8_t APS5_VABI FT_Face_CheckTrueTypePatents_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint8_t APS5_VABI FT_Face_SetUnpatentedHinting_nid_postfix(FreeType::GuestFaceRec* face, std::uint8_t value);
 int APS5_VABI FT_Get_Track_Kerning_nid_postfix(FreeType::GuestFaceRec* face, std::int64_t pointSize, std::int32_t degree, std::int64_t* kerning);
+void APS5_VABI FT_Vector_Polarize_nid_postfix(const FreeType::GuestVector* vector, std::int64_t* length, std::int64_t* angle);
+std::int64_t APS5_VABI FT_Vector_Length_nid_postfix(const FreeType::GuestVector* vector);
+void APS5_VABI FT_Vector_Rotate_nid_postfix(FreeType::GuestVector* vector, std::int64_t angle);
+std::int64_t APS5_VABI FT_Atan2_nid_postfix(std::int64_t x, std::int64_t y);
+void APS5_VABI FT_Vector_From_Polar_nid_postfix(FreeType::GuestVector* vector, std::int64_t length, std::int64_t angle);
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);
