@@ -102,7 +102,6 @@ static void RequireTimeoutWinsBeforeSet() {
         std::uint64_t pattern = UINT64_MAX;
         KernelUseconds timeout = 1000;
         std::thread waiter([&] { result = sceKernelWaitEventFlag(flag, 1, EVF_WAITMODE_OR | EVF_WAITMODE_CLEAR_PAT, &pattern, &timeout); });
-        WaitForWaiters(flag, 1);
         waiter.join();
         Require(result == SCE_KERNEL_ERROR_ETIMEDOUT);
         Require(pattern == 0);
