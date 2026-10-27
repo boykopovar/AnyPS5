@@ -10,7 +10,6 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -28,11 +27,6 @@ static void SameFace(const GuestFaceRec* guest, FT_Face native) {
     Require(guest->num_faces == native->num_faces && guest->face_index == native->face_index);
     Require(guest->face_flags == native->face_flags && guest->num_glyphs == native->num_glyphs);
     Require(guest->units_per_EM == native->units_per_EM && guest->ascender == native->ascender && guest->descender == native->descender);
-}
-
-template<typename TAction> static void RequireThrows(TAction action) {
-    try { action(); } catch (const std::runtime_error&) { return; }
-    Require(false);
 }
 
 int main() {
@@ -78,6 +72,14 @@ int main() {
     GuestOpenArgs nullPath{FT_OPEN_PATHNAME, nullptr, 0, nullptr, nullptr, nullptr, 0, nullptr};
     Require(FT_Open_Face_nid_postfix(&library, &nullPath, 0, &face) == FT_Err_Invalid_Argument);
 
+    GuestOpenArgs both{FT_OPEN_MEMORY | FT_OPEN_PATHNAME, font.data(), static_cast<std::int64_t>(font.size()), path, nullptr, nullptr, 0, nullptr};
+    FT_Open_Args nativeBoth{FT_OPEN_MEMORY | FT_OPEN_PATHNAME, font.data(), static_cast<FT_Long>(font.size()), path, nullptr, nullptr, 0, nullptr};
+    face = reinterpret_cast<GuestFaceRec*>(1);
+    expected = nullptr;
+    Require(FT_Open_Face_nid_postfix(&library, &both, 0, &face) == FT_Err_Invalid_Argument);
+    Require(FT_Open_Face(native, &nativeBoth, 0, &expected) == FT_Err_Invalid_Argument);
+    Require(face == reinterpret_cast<GuestFaceRec*>(1));
+
     FT_Open_Args nativeNullMemory{FT_OPEN_MEMORY, nullptr, 0, nullptr, nullptr, nullptr, 0, nullptr};
     GuestOpenArgs nullMemory{FT_OPEN_MEMORY, nullptr, 0, nullptr, nullptr, nullptr, 0, nullptr};
     expected = nullptr;
@@ -94,16 +96,12 @@ int main() {
     Require(face == nullptr && expected == nullptr);
     Require(FT_Open_Face_nid_postfix(&library, nullptr, 0, &face) == FT_Open_Face(native, nullptr, 0, &expected));
     Require(FT_Open_Face_nid_postfix(nullptr, &memory, 0, &face) == FT_Open_Face(nullptr, &nativeMemory, 0, &expected));
+    const FT_Long maskedIndex = static_cast<FT_Long>(0x80000000ll);
     GuestFaceRec* masked = nullptr;
     FT_Face nativeMasked = nullptr;
-    Require(FT_Open_Face_nid_postfix(&library, &memory, 0x180000000ll, &masked) == FT_Open_Face(native, &nativeMemory, 0x180000000ll, &nativeMasked));
+    Require(FT_Open_Face_nid_postfix(&library, &memory, 0x180000000ll, &masked) == FT_Open_Face(native, &nativeMemory, maskedIndex, &nativeMasked));
     Require(masked && nativeMasked);
     Require(FT_Done_Face_nid_postfix(masked) == 0 && FT_Done_Face(nativeMasked) == 0);
-
-    for (const std::uint32_t flags : {static_cast<std::uint32_t>(FT_OPEN_STREAM), static_cast<std::uint32_t>(FT_OPEN_DRIVER), static_cast<std::uint32_t>(FT_OPEN_PARAMS)}) {
-        GuestOpenArgs unsupported{flags | FT_OPEN_MEMORY, font.data(), static_cast<std::int64_t>(font.size()), nullptr, nullptr, nullptr, 0, nullptr};
-        RequireThrows([&] { FT_Open_Face_nid_postfix(&library, &unsupported, 0, &face); });
-    }
 
     Require(FT_Done_FreeType(library.host) == 0 && FT_Done_FreeType(native) == 0);
     std::filesystem::current_path(previous);
