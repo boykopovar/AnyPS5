@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -11,10 +12,6 @@
 #include <stdexcept>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Set_Renderer_nid_postfix(GuestLibrary*, void*, std::uint32_t, const GuestParameter*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
