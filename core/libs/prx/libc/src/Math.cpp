@@ -1524,7 +1524,7 @@ double APS5_VABI fmod_nid_postfix(double x, double y) {
     return result;
 }
 float APS5_VABI roundf_nid_postfix(float x) { return std::round(x); }
-double APS5_VABI round_nid_postfix(double x) { return std::round(x); }
+double APS5_VABI round_nid_postfix(double x) { return std::isnan(x) ? x + x : std::round(x); }
 float APS5_VABI cbrtf_nid_postfix(float x) {
     const std::uint32_t B1 = 709958130;
     const std::uint32_t B2 = 642849266;

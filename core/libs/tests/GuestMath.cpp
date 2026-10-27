@@ -854,6 +854,26 @@ static void CheckRoundingNaNConsoleBits() {
     }
 }
 
+static void CheckRoundNaNBits() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x7ff0000000000001ull, 0x7ff8000000000001ull}, {0xfff0000000000001ull, 0xfff8000000000001ull}, {0x7ff4000000000123ull, 0x7ffc000000000123ull},
+        {0xfff4000000000123ull, 0xfffc000000000123ull}, {0x7ff7ffffffffffffull, 0x7fffffffffffffffull}, {0x7ff8000000000456ull, 0x7ff8000000000456ull},
+        {0xfff8000000000456ull, 0xfff8000000000456ull}, {0x7ff0000000000000ull, 0x7ff0000000000000ull}, {0xfff0000000000000ull, 0xfff0000000000000ull},
+        {0x0000000000000000ull, 0x0000000000000000ull}, {0x8000000000000000ull, 0x8000000000000000ull}, {0x3ff0000000000000ull, 0x3ff0000000000000ull},
+        {0x4004000000000000ull, 0x4008000000000000ull}, {0xc004000000000000ull, 0xc008000000000000ull}, {0x3fe0000000000000ull, 0x3ff0000000000000ull},
+        {0xbfe0000000000000ull, 0xbff0000000000000ull}, {0x3fdfffffffffffffull, 0x0000000000000000ull}, {0xbfdfffffffffffffull, 0x8000000000000000ull},
+        {0x3ff8000000000000ull, 0x4000000000000000ull}, {0xbff8000000000000ull, 0xc000000000000000ull}, {0x7fefffffffffffffull, 0x7fefffffffffffffull},
+        {0x0000000000000001ull, 0x0000000000000000ull},
+    };
+    for (const auto& [input, expected] : cases) {
+        const std::uint64_t result = std::bit_cast<std::uint64_t>(round_nid_postfix(std::bit_cast<double>(input)));
+        if (result != expected) {
+            std::fprintf(stderr, "Guest round failed for %016llx: got %016llx, expected %016llx\n", static_cast<unsigned long long>(input), static_cast<unsigned long long>(result), static_cast<unsigned long long>(expected));
+            std::abort();
+        }
+    }
+}
+
 template<typename T, typename UInt>
 static void CheckNextafterEnvironment(T (APS5_VABI *next)(T, T), UInt sign, UInt one, UInt minimum, UInt maximum, UInt infinity) {
     const RestoreFloatingPointState saved;
@@ -2208,6 +2228,7 @@ int main() {
     CheckNextafterConsoleBits();
     CheckTanhConsoleBits();
     CheckRoundingNaNConsoleBits();
+    CheckRoundNaNBits();
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
     CheckAsinl();
