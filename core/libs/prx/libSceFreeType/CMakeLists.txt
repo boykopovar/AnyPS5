@@ -10,7 +10,6 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/OutlineDecompose.cpp
 )
 target_include_directories(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR})
-include("${CMAKE_CURRENT_LIST_DIR}/SquareRoot32.cmake")
 target_link_libraries(libSceFreeType PRIVATE freetype)
 target_sources(libSceFreeType PRIVATE src/SizeRequest.cpp)
 
@@ -25,6 +24,8 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/SquareRoot32.cmake")
 
 target_sources(libSceFreeType PRIVATE src/List.cpp)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
