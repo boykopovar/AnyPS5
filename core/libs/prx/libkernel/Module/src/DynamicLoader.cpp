@@ -133,7 +133,7 @@ void FindImage(Module& module, bool mainProgram) {
     unsigned long size = 0;
     const auto* meta = module.image ? getsectiondata(static_cast<const mach_header_64*>(module.image), "__APS5DATA", "__meta", &size) : nullptr;
     std::uint64_t version = 0;
-    if (meta != nullptr && size >= 0x10 && (std::memcpy(&version, meta, sizeof(version)), version == 2)) {
+    if (meta != nullptr && size >= 0x60 && (std::memcpy(&version, meta, sizeof(version)), version == 2)) {
         std::uint64_t loadBias = 0;
         std::memcpy(&loadBias, meta + 0x08, sizeof(loadBias));
         module.loadBias = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(loadBias));
@@ -141,6 +141,7 @@ void FindImage(Module& module, bool mainProgram) {
 }
 
 bool HiddenImage(const void* image) {
+    if (image == nullptr || static_cast<const mach_header_64*>(image)->filetype == MH_EXECUTE) return false;
     bool local = false;
     for (const auto& [key, module] : modules) {
         if (module->image != image) continue;
@@ -155,21 +156,8 @@ void* DefaultScopeSymbol(const char* symbolName) {
     if (!FromGuestModule(result)) return nullptr;
     Dl_info info{};
     if (!::dladdr(result, &info) || info.dli_fbase == nullptr) return result;
-    std::vector<std::shared_ptr<Module>> globals;
-    {
-        std::lock_guard lock(modulesMutex);
-        if (!HiddenImage(info.dli_fbase)) return result;
-        for (const auto& [key, module] : modules) {
-            if (module->global && module->native) globals.push_back(module);
-        }
-    }
-    for (const auto& module : globals) {
-        auto* found = ::dlsym(module->native, symbolName);
-        if (!FromGuestModule(found) || !::dladdr(found, &info) || info.dli_fbase == nullptr) continue;
-        std::lock_guard lock(modulesMutex);
-        if (!HiddenImage(info.dli_fbase)) return found;
-    }
-    return nullptr;
+    std::lock_guard lock(modulesMutex);
+    return HiddenImage(info.dli_fbase) ? nullptr : result;
 }
 #elif !defined(_WIN32)
 const link_map* MainProgramMap() {
@@ -395,9 +383,17 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
     if (!name || !*name) { Error("dlsym: empty symbol name"); return nullptr; }
     try {
         std::vector<std::shared_ptr<Module>> search;
+        bool defaultScope = handle == nullptr || handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2));
         {
             std::lock_guard lock(modulesMutex);
-            if (handle == nullptr || handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2))) {
+#ifdef __APPLE__
+            if (!defaultScope) {
+                auto found = modules.find(reinterpret_cast<std::uintptr_t>(handle));
+                defaultScope = found != modules.end() && found->second->image != nullptr &&
+                    static_cast<const mach_header_64*>(found->second->image)->filetype == MH_EXECUTE;
+            }
+#endif
+            if (defaultScope) {
                 for (const auto& [key, module] : modules) if (module->global) search.push_back(module);
 #ifdef _WIN32
                 std::sort(search.begin(), search.end(), [](const auto& left, const auto& right) { return left->globalOrder < right->globalOrder; });
@@ -411,7 +407,7 @@ void* APS5_VABI dlsym_nid_postfix(void* handle, const char* name) {
         }
         for (const auto& module : search) if (auto* result = FindSymbol(*module, name)) return result;
 #ifndef _WIN32
-        if (handle == nullptr || handle == reinterpret_cast<void*>(static_cast<std::intptr_t>(-2))) {
+        if (defaultScope) {
             if (auto* result = DefaultScopeSymbol(name)) return result;
             const auto nid = Nid::ComputeNid(name, "");
             if (auto* result = DefaultScopeSymbol(nid.c_str())) return result;
