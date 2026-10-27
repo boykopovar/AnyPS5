@@ -12,6 +12,7 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
 target_include_directories(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceFreeType PRIVATE freetype)
 target_sources(libSceFreeType PRIVATE src/SizeRequest.cpp)
+include("${CMAKE_CURRENT_LIST_DIR}/SquareRoot32.cmake")
 
 if(BUILD_TESTING)
     add_test_executable(guest_freetype_request_size_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeRequestSize.cpp)
