@@ -42,6 +42,8 @@ void MoveImportFirst(std::vector<unsigned char>& bytes, const std::string& dll) 
     const auto optionalSize = read16(bytes, pe + 20);
     const auto optional = pe + 24;
     if (read16(bytes, optional) != 0x20bu) throw std::runtime_error("not a PE32+ image");
+    const auto numberOfRvaAndSizes = read32(bytes, optional + 108);
+    if (numberOfRvaAndSizes < 2) throw std::runtime_error("the image has no imports");
     const auto importRva = read32(bytes, optional + 112 + 8);
     if (importRva == 0) throw std::runtime_error("the image has no imports");
     const auto sectionTable = optional + optionalSize;
@@ -71,6 +73,7 @@ void MoveImportFirst(std::vector<unsigned char>& bytes, const std::string& dll) 
         const auto nameOffset = fileOffset(read32(bytes, offset + 12));
         std::string name;
         for (auto at = nameOffset; at < bytes.size() && bytes[at] != 0; ++at) name.push_back(static_cast<char>(bytes[at]));
+        if (nameOffset + name.size() + 1 > bytes.size()) throw std::runtime_error("unterminated import name");
         if (lower(name) == lower(dll)) found = descriptors.size();
         descriptors.push_back(descriptor);
     }

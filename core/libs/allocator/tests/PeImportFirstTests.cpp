@@ -145,6 +145,16 @@ int main() {
         truncated.resize(SectionOffset + DescriptorBytes + DescriptorBytes / 2);
         failsWithoutTouchingTheFile(directory, "truncated-directory", truncated, "truncated import directory");
         failsWithoutTouchingTheFile(directory, "pe32", image({"kernel32.dll", "mimalloc-redirect.dll"}, 0x10b), "not a PE32+ image");
+        auto noDirectoryCount = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        put32(noDirectoryCount, OptionalOffset + 108, 0);
+        failsWithoutTouchingTheFile(directory, "no-import-directory", noDirectoryCount, "the image has no imports");
+        auto singleDirectoryCount = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        put32(singleDirectoryCount, OptionalOffset + 108, 1);
+        failsWithoutTouchingTheFile(directory, "single-import-directory", singleDirectoryCount, "the image has no imports");
+        auto unterminated = image({"kernel32.dll", "mimalloc-redirect.dll"});
+        const auto nameLen = std::string("mimalloc-redirect.dll").size();
+        unterminated.resize(SectionOffset + 2 * DescriptorBytes + nameLen);
+        failsWithoutTouchingTheFile(directory, "unterminated-name", unterminated, "unterminated import name");
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         std::error_code ignored;
