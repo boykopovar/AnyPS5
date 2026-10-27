@@ -1,4 +1,5 @@
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -6,16 +7,6 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
-
-extern "C" {
-int APS5_VABI memcpy_s_nid_postfix(void*, std::size_t, const void*, std::size_t);
-int APS5_VABI wmemcpy_s_nid_postfix(std::uint16_t*, std::size_t, const std::uint16_t*, std::size_t);
-int APS5_VABI strcpy_s_nid_postfix(char*, std::size_t, const char*);
-int APS5_VABI strncpy_s_nid_postfix(char*, std::size_t, const char*, std::size_t);
-int APS5_VABI fopen_s_nid_postfix(void**, const char*, const char*);
-int APS5_VABI fclose_nid_postfix(void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 
@@ -74,8 +65,8 @@ void CheckMemcpyS() {
 }
 
 void CheckWmemcpyS() {
-    std::uint16_t buffer[32];
-    const std::uint16_t source[4] = {1, 2, 3, 4};
+    char16_t buffer[32];
+    const char16_t source[4] = {1, 2, 3, 4};
     const std::size_t accepted[] = {0x20, 0x100000, 0x7fffffff, 0x80000000, std::size_t{1} << 32, RsizeMax};
     for (const auto size : accepted) {
         std::memset(buffer, 0xaa, sizeof(buffer));
@@ -124,28 +115,28 @@ void CheckFopenS() {
         std::FILE* handle = std::fopen(existing.c_str(), "wb");
         if (handle) std::fclose(handle);
     }
-    void* stream = reinterpret_cast<void*>(0x5a5a5a5a5a5a5a5aull);
+    FileStream* stream = reinterpret_cast<FileStream*>(0x5a5a5a5a5a5a5a5aull);
     *__error_nid_postfix() = 0;
     Require(fopen_s_nid_postfix(&stream, missing.c_str(), "r") == GuestEnoent && stream == nullptr);
     Require(*__error_nid_postfix() == GuestEnoent);
-    stream = reinterpret_cast<void*>(0x5a5a5a5a5a5a5a5aull);
+    stream = reinterpret_cast<FileStream*>(0x5a5a5a5a5a5a5a5aull);
     Require(fopen_s_nid_postfix(&stream, existing.c_str(), "r") == 0 && stream != nullptr);
     Require(fclose_nid_postfix(stream) == 0);
-    stream = reinterpret_cast<void*>(0x5a5a5a5a5a5a5a5aull);
+    stream = reinterpret_cast<FileStream*>(0x5a5a5a5a5a5a5a5aull);
     Require(fopen_s_nid_postfix(&stream, existing.c_str(), "wx") == GuestEexist && stream == nullptr);
     Require(*__error_nid_postfix() == GuestEexist);
-    stream = reinterpret_cast<void*>(0x5a5a5a5a5a5a5a5aull);
+    stream = reinterpret_cast<FileStream*>(0x5a5a5a5a5a5a5a5aull);
     Require(fopen_s_nid_postfix(&stream, existing.c_str(), "z") == GuestEinval && stream == nullptr);
     Require(*__error_nid_postfix() == GuestEinval);
-    stream = reinterpret_cast<void*>(0x5a5a5a5a5a5a5a5aull);
+    stream = reinterpret_cast<FileStream*>(0x5a5a5a5a5a5a5a5aull);
     Require(fopen_s_nid_postfix(&stream, existing.c_str(), "") == GuestEinval && stream == nullptr);
     Require(*__error_nid_postfix() == GuestEinval);
-    stream = reinterpret_cast<void*>(0x5a5a5a5a5a5a5a5aull);
+    stream = reinterpret_cast<FileStream*>(0x5a5a5a5a5a5a5a5aull);
     Require(fopen_s_nid_postfix(&stream, sub.c_str(), "w") == GuestEisdir && stream == nullptr);
     Require(*__error_nid_postfix() == GuestEisdir);
-    stream = reinterpret_cast<void*>(0x5a5a5a5a5a5a5a5aull);
+    stream = reinterpret_cast<FileStream*>(0x5a5a5a5a5a5a5a5aull);
     Require(fopen_s_nid_postfix(&stream, nullptr, "r") == GuestEinval && stream == nullptr);
-    stream = reinterpret_cast<void*>(0x5a5a5a5a5a5a5a5aull);
+    stream = reinterpret_cast<FileStream*>(0x5a5a5a5a5a5a5a5aull);
     Require(fopen_s_nid_postfix(&stream, existing.c_str(), nullptr) == GuestEinval && stream == nullptr);
     Require(fopen_s_nid_postfix(nullptr, existing.c_str(), "r") == GuestEinval);
     std::error_code error;
