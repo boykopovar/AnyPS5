@@ -61,7 +61,7 @@ namespace AgcDriver::Graphics {
     private:
         VkPipeline multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth);
         VkPipeline multisampleUploadPipeline(std::uint32_t elementBytes);
-        VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
+        VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false, bool changedOnly = false);
         void release() noexcept;
         struct DescriptorRing {
             std::vector<VkDescriptorPool> pools;
@@ -78,6 +78,7 @@ namespace AgcDriver::Graphics {
         VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkShaderModule module = VK_NULL_HANDLE;
+        VkShaderModule changedModule = VK_NULL_HANDLE;
         std::vector<std::pair<std::uint32_t, VkPipeline>> pipelines;
         std::vector<std::pair<std::uint32_t, GcnTileGeometry>> gcnGeometries;
         std::uint32_t layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer);
