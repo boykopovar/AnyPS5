@@ -124,7 +124,8 @@ int main(int argc, char** argv) {
             const auto before = stats;
             require(malloc_stats_fast_nid_postfix(stats.data()) == 1 && stats == before);
         }
-        require(malloc_stats_fast_nid_postfix(nullptr) == 22 && statsCalls == 0);
+        reject([&] { malloc_stats_fast_nid_postfix(nullptr); });
+        require(statsCalls == 0);
         return 0;
     }
     if (argc > 1 && std::strcmp(argv[1], "missing") == 0) {
