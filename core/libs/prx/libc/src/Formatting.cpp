@@ -80,10 +80,6 @@ bool ScansWideInProcess(const char* format) {
     return true;
 }
 
-void RejectGuestWideScan(const char* format) {
-    if (HasGuestWideScan(format)) NotImplemented_nid_no_patch("fscanf 16-bit wide conversion on Linux");
-}
-
 bool IsWideScan(const std::string& length, char conversion) {
     return conversion == 'S' || conversion == 'C' || (length == "l" && (conversion == 's' || conversion == 'c' || conversion == '['));
 }
@@ -142,15 +138,12 @@ class StringSource {
     const char* position;
 
 public:
-    static constexpr bool Contiguous = true;
-
     explicit StringSource(const char* text) : start(text), position(text) {}
 
     int Peek() const { return *position == '\0' ? EOF : static_cast<unsigned char>(*position); }
     void Skip() { ++position; }
     void Advance(std::ptrdiff_t count) { position += count; }
     std::ptrdiff_t Consumed() const { return position - start; }
-    const char* Remaining() const { return position; }
 
     int Scan(const char* directive, bool suppress, void* target, int* consumed) const {
         return suppress ? HostSscanf(position, directive, consumed) : HostSscanf(position, directive, target, consumed);
@@ -162,8 +155,6 @@ class StreamSource {
     std::ptrdiff_t consumed = 0;
 
 public:
-    static constexpr bool Contiguous = false;
-
     explicit StreamSource(std::FILE* native) : file(native) {}
 
     int Peek() const {
@@ -184,6 +175,21 @@ public:
         return suppress ? HostFscanf(file, directive, count) : HostFscanf(file, directive, target, count);
     }
 };
+
+#ifndef _WIN32
+template <typename TSource>
+char16_t TakeWideCharacter(TSource& source) {
+    char bytes[5] = {};
+    const std::size_t length = std::max<std::size_t>(LibcDetail::WideScanCharacterLength(static_cast<unsigned char>(source.Peek())), 1);
+    for (std::size_t index = 0; index < length && (index == 0 || (source.Peek() & 0xC0) == 0x80); ++index) {
+        bytes[index] = static_cast<char>(source.Peek());
+        source.Skip();
+    }
+    char32_t point = 0;
+    LibcDetail::ReadWideScanCharacter(bytes, &point);
+    return static_cast<char16_t>(point);
+}
+#endif
 
 template <typename TSource, typename NextPointer, typename NextCapacity>
 int ScanSource(TSource source, const char* format, bool secure, NextPointer nextPointer, NextCapacity nextCapacity) {
@@ -242,14 +248,12 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             continue;
         }
 #ifndef _WIN32
-        if constexpr (TSource::Contiguous) if (IsWideScan(length, conversion)) {
-            const char* const input = source.Remaining();
+        if (IsWideScan(length, conversion)) {
             const char kind = conversion == 'S' ? 's' : conversion == 'C' ? 'c' : conversion;
-            const char* field = input;
             if (kind == 's') {
-                while (std::isspace(static_cast<unsigned char>(*field))) ++field;
+                while (std::isspace(source.Peek())) source.Skip();
             }
-            if (*field == '\0') return finish(converted ? assigned : EOF);
+            if (source.Peek() == EOF) return finish(converted ? assigned : EOF);
             auto* target = suppress ? nullptr : static_cast<char16_t*>(nextPointer());
             unsigned long limit = ULONG_MAX;
             if (secure && !suppress) {
@@ -263,33 +267,23 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             const unsigned long wanted = width != 0 ? width : (kind == 'c' ? 1 : ULONG_MAX);
             const unsigned long taken = std::min(wanted, limit);
             std::u16string text;
-            const auto accepts = [&](char32_t point) {
-                if (kind == 's') return point >= 0x80 || !std::isspace(static_cast<int>(point));
-                if (kind == '[') return LibcDetail::InWideScanset(specifier, point);
+            const auto accepts = [&](int lead) {
+                if (lead == EOF) return false;
+                if (kind == 's') return lead >= 0x80 || !std::isspace(lead);
+                if (kind == '[') return LibcDetail::InWideScanset(specifier, static_cast<char32_t>(lead));
                 return true;
             };
-            while (text.size() < taken && *field != '\0') {
-                char32_t point = 0;
-                const std::size_t size = LibcDetail::ReadWideScanCharacter(field, &point);
-                if (!accepts(point)) break;
-                text.push_back(static_cast<char16_t>(point));
-                field += size;
-            }
+            while (text.size() < taken && accepts(source.Peek())) text.push_back(TakeWideCharacter(source));
             if (text.empty()) return finish(assigned);
-            if (target != nullptr && kind != 'c' && wanted > limit && text.size() == limit && *field != '\0') {
-                char32_t point = 0;
-                LibcDetail::ReadWideScanCharacter(field, &point);
-                if (accepts(point)) {
-                    target[0] = u'\0';
-                    return finish(assigned);
-                }
+            if (target != nullptr && kind != 'c' && wanted > limit && text.size() == limit && accepts(source.Peek())) {
+                target[0] = u'\0';
+                return finish(assigned);
             }
             if (target != nullptr) {
                 std::memcpy(target, text.data(), text.size() * sizeof(char16_t));
                 if (kind != 'c') target[text.size()] = u'\0';
                 ++assigned;
             }
-            source.Advance(field - input);
             converted = true;
             continue;
         }
@@ -360,7 +354,7 @@ int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPoin
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToReading()) return EOF;
 #ifndef _WIN32
-    RejectGuestWideScan(format);
+    if (HasGuestWideScan(format)) LibcDetail::RequireNoPositionalWideScan(format);
 #endif
     const int result = ScanSource(StreamSource(native), format, true, nextPointer, nextCapacity);
     stream->SyncStatus();
@@ -458,10 +452,10 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
     const int result = LibcDetail::ScanFileWindows_nid_no_patch(native, format, args);
     __builtin_sysv_va_end(args);
 #else
-    RejectGuestWideScan(format);
     std::va_list args;
     va_start(args, format);
-    const int result = HostVfscanf(native, format, args);
+    const int result = ScansWideInProcess(format) ? ScanSource(StreamSource(native), format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
+                                                  : HostVfscanf(native, format, args);
     va_end(args);
 #endif
     stream->SyncStatus();
@@ -781,11 +775,16 @@ int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList
 #ifdef _WIN32
     const int result = LibcDetail::ScanFileWindows_nid_no_patch(native, format, args);
 #else
-    RejectGuestWideScan(format);
-    std::va_list copy;
-    va_copy(copy, *reinterpret_cast<std::va_list*>(args));
-    const int result = HostVfscanf(native, format, copy);
-    va_end(copy);
+    int result = 0;
+    if (ScansWideInProcess(format)) {
+        LibcDetail::FormatArguments arguments(args);
+        result = ScanSource(StreamSource(native), format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
+    } else {
+        std::va_list copy;
+        va_copy(copy, *reinterpret_cast<std::va_list*>(args));
+        result = HostVfscanf(native, format, copy);
+        va_end(copy);
+    }
 #endif
     stream->SyncStatus();
     stream->KeepDirectoryReadError(result == -1);
