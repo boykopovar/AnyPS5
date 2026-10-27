@@ -354,8 +354,8 @@ bool APS5_VABI DynamicCastTypeInfo(const __cxxabiv1::__class_type_info* self, st
         ClassTypeInfo::__sub_kind toSource = ClassTypeInfo::__not_contained;
         auto sourceVisitor = [&](const std::type_info* base, CallbackLocation baseLocation) {
             if (!Equal(base, source) || baseLocation.object != sourceObject) return;
+            toSource = containsSource ? static_cast<ClassTypeInfo::__sub_kind>(toSource | baseLocation.path) : baseLocation.path;
             containsSource = true;
-            toSource = baseLocation.path;
         };
         VisitCallbackBases(candidate, {location.object, location.identity, ClassTypeInfo::__contained_public, nullptr}, sourceVisitor);
         auto found = std::find_if(candidates.begin(), candidates.end(), [&](const Candidate& entry) {
