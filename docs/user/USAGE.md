@@ -362,8 +362,9 @@ When a dump has neither `sce_sys/playgo-chunk.dat` nor `sce_sys/playgo-scenario.
 |-------|---------------------------------|------------------------------|
 | `installed` | Report it as installed (`LOCAL_FAST`). | High on Life (PPSA15388) needs this to load its saves. |
 | `absent` | Return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`. | Sifu (PPSA03001) and Demon Slayer: Kimetsu no Yaiba - The Hinokami Chronicles (PPSA03490) use this result to end their chunk-ID search. With `installed`, PPSA03490 keeps asking about higher chunk IDs forever, so its chunk list grows until startup fails with a `Ran out of memory allocating 5565054976 bytes` error. |
+| A comma-separated list of IDs, e.g. `0,1` | Report those IDs as installed (`LOCAL_FAST`) and every other unlisted ID as absent (`SCE_PLAYGO_ERROR_BAD_CHUNK_ID`). | The Medium (PPSA03718) needs chunks 0 and 1; with `installed` it asks about every ID and UE4 runs out of memory. |
 
-Leave the variable unset to keep the explicit error. Any other value also stops with an error. Dumps that include PlayGo metadata are unaffected. These title-specific results come from emulator runs and have not been verified against a console.
+Leave the variable unset to keep the explicit error. A list holds decimal chunk IDs from 0 to 65535 and is added to chunk 0; it only applies when the dump has neither `playgo-chunk.dat` nor `playgo-scenario.json`. Any other value also stops with an error. Dumps that include `playgo-chunk.dat` or `playgo-scenario.json` are unaffected. These title-specific results come from emulator runs and have not been verified against a console.
 
 ### Screenshots
 

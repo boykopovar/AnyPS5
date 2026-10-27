@@ -75,6 +75,30 @@ static void RejectUnreadablePlayGoFiles() {
     }
 }
 
+static bool ReadExplicitChunks(ChunkTable& table) {
+    const char* text = std::getenv("APS5_PLAYGO_UNLISTED_CHUNKS");
+    if (text == nullptr || text[0] == '\0') return false;
+    const std::string value(text);
+    if (value == "installed" || value == "absent") return false;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const auto end = value.find(',', start);
+        const auto token = value.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        try {
+            std::size_t consumed = 0;
+            const auto parsed = std::stoul(token, &consumed);
+            if (token.empty() || consumed != token.size() || parsed > 0xFFFF) throw std::invalid_argument("chunk");
+            table.ids.insert(static_cast<uint16_t>(parsed));
+        } catch (const std::exception&) {
+            throw std::runtime_error("scePlayGo: APS5_PLAYGO_UNLISTED_CHUNKS must be installed, absent, or a comma-separated list of chunk ids from 0 to 65535, not \"" + value + "\"");
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    table.defined = true;
+    return true;
+}
+
 static const ChunkTable& Chunks() {
     static const ChunkTable chunks = [] {
         ChunkTable table;
@@ -82,8 +106,12 @@ static const ChunkTable& Chunks() {
         if (!file) {
             if (ReadPackageChunks(table)) return table;
             table.scenario = std::ifstream(ResolvePath_nid_no_patch("/app0/sce_sys/playgo-scenario.json")).good();
-            if (!table.scenario) RejectUnreadablePlayGoFiles();
-            else for (uint32_t id = 1; id < PLAYGO_SCENARIO_CHUNK_COUNT; ++id) table.ids.insert(static_cast<uint16_t>(id));
+            if (table.scenario) {
+                for (uint32_t id = 1; id < PLAYGO_SCENARIO_CHUNK_COUNT; ++id) table.ids.insert(static_cast<uint16_t>(id));
+                return table;
+            }
+            RejectUnreadablePlayGoFiles();
+            ReadExplicitChunks(table);
             return table;
         }
         table.defined = true;
@@ -112,7 +140,9 @@ static UnlistedChunkAnswer UnlistedChunks() {
         const std::string value(text);
         if (value == "installed") return UnlistedChunkAnswer::Installed;
         if (value == "absent") return UnlistedChunkAnswer::Absent;
-        throw std::runtime_error("scePlayGo: APS5_PLAYGO_UNLISTED_CHUNKS must be installed or absent, not \"" + value + "\"");
+        ChunkTable explicitChunks;
+        ReadExplicitChunks(explicitChunks);
+        return UnlistedChunkAnswer::Stop;
     }();
     return answer;
 }
@@ -128,7 +158,7 @@ static bool IsKnownChunk(uint16_t id) {
     }
     if (chunks.scenario)
         throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat is missing and sce_sys/playgo-scenario.json lists no chunks, so chunk ID " + std::to_string(id) + " outside the listed ids 0 to " + std::to_string(PLAYGO_SCENARIO_CHUNK_COUNT - 1) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed or =absent to answer for this dump");
-    throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat and sce_sys/playgo-scenario.json are missing, so chunk ID " + std::to_string(id) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed or =absent to answer for this dump");
+    throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat and sce_sys/playgo-scenario.json are missing, so chunk ID " + std::to_string(id) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed, =absent, or a comma-separated list of chunk ids to answer for this dump");
 }
 
 static int ValidateChunks(const uint16_t* chunk_ids, uint32_t number_of_entries) {
