@@ -1,3 +1,4 @@
+#include "AppArchiveFixture.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
@@ -64,6 +65,17 @@ void TestStatError() {
     Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(loop.c_str(), &perms, &error) == TypeNone && error == Loop && perms == 1234, "a symlink loop is not reported as not found");
 }
 
+void TestArchivedStat() {
+    int perms = -1;
+    int error = -1;
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix("/app0/Readme.TXT", &perms, &error) == TypeRegular && error == 0 && perms == 0444, "archived file");
+    FileStat status{};
+    Require(stat_nid_postfix("/app0/Readme.TXT", &status) == 0 && perms == (status.st_mode & 07777), "archived file permissions");
+    perms = -1;
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix("/app0/Data", &perms, &error) == TypeDirectory && error == 0 && perms == 0555, "archived directory");
+    Require(stat_nid_postfix("/app0/Data", &status) == 0 && perms == (status.st_mode & 07777), "archived directory permissions");
+}
+
 void TestDirectories() {
     std::filesystem::create_directory(At("made"));
     char name[260];
@@ -95,13 +107,16 @@ void TestCurrent() {
 }
 
 int main() {
-    root = "anyps5-sce-v2-filesystem-" + std::to_string(std::random_device{}());
-    std::filesystem::create_directory(root);
+    const auto directory = AppArchiveFixture::EnterFreshRoot("anyps5-sce-v2-filesystem");
+    root = ".";
+    AppArchiveFixture::WriteArchive(directory / "app0.zar", {{"Readme.TXT", {'r', 'e', 'a', 'd'}}, {"Data/Sub.txt", {'s'}}});
     TestStat();
     TestStatError();
+    TestArchivedStat();
     TestDirectories();
     TestCurrent();
     std::error_code ignored;
-    std::filesystem::remove_all(root, ignored);
+    std::filesystem::current_path(std::filesystem::temp_directory_path(), ignored);
+    std::filesystem::remove_all(directory, ignored);
     return 0;
 }
