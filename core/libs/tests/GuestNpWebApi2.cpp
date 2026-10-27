@@ -87,6 +87,17 @@ int main() {
     Require(sceNpWebApi2SendMultipartRequest(multipart, 1, part, 0, nullptr) == invalidArgument);
     Require(sceNpWebApi2SendMultipartRequest(multipart, 1, part, sizeof(part), nullptr) == unavailable);
     Require(sceNpWebApi2DeleteRequest(multipart) == 0 && sceNpWebApi2DeleteRequest(nextMultipart) == 0);
+    const int pushHandle = sceNpWebApi2PushEventCreateHandle(presence);
+    const int filter = sceNpWebApi2PushEventCreateFilter(presence, pushHandle, "sessionInvitation", 0, nullptr, 0);
+    Require(pushHandle > 0 && filter > 0);
+    int callbackArg = 0;
+    void* const callbackFunction = reinterpret_cast<void*>(+[] {});
+    const int callback = sceNpWebApi2PushEventRegisterCallback(multipartUser, filter, callbackFunction, &callbackArg);
+    const int pushContextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(multipartUser, filter, callbackFunction, &callbackArg);
+    Require(callback > 0 && pushContextCallback > 0 && callback != pushContextCallback);
+    Require(sceNpWebApi2PushEventUnregisterCallback(multipartUser, callback) == 0);
+    Require(sceNpWebApi2PushEventUnregisterPushContextCallback(multipartUser, pushContextCallback) == 0);
+    Require(sceNpWebApi2PushEventDeleteHandle(presence, pushHandle) == 0);
     for (const int created : {internal, internal2, presence}) {
         Require(sceNpWebApi2Terminate(created) == 0);
         Require(sceNpWebApi2GetMemoryPoolStats(created, &stats) == invalidContext);
