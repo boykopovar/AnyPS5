@@ -177,12 +177,44 @@ static void CheckReverseAndSwap() {
     for (int i = 0; i < 37; ++i) Require(left[i] == 100 + i && right[i] == i);
 }
 
+static void CheckMaxValue() {
+    const std::uint64_t edges[] = {0, 1, 0xffffffff, 0x100000000, 0x7fffffffffffffff, 0x8000000000000000, 0xfffffffffffffffe, 0xffffffffffffffff};
+    for (const auto& left : edges) {
+        Require(__std_max_8u_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::uint64_t pair[] = {left, right};
+            Require(__std_max_8u_nid_postfix(pair, pair + 2) == std::max(left, right));
+        }
+    }
+    std::uint64_t state = 0x7698f1b33a25c04d;
+    for (const std::size_t count : {1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::uint64_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            value = state;
+        }
+        const auto expected = *std::max_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 16; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::uint64_t) + 32, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::uint64_t));
+            const auto original = storage;
+            Require(__std_max_8u_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::uint64_t)) == expected);
+            Require(storage == original);
+        }
+    }
+    const std::uint64_t repeated[] = {9, 9, 9, 9};
+    Require(__std_max_8u_nid_postfix(repeated, repeated + 4) == 9);
+}
+
 int main() {
     CheckMinValue();
     CheckSizedHelpers();
     CheckFindAndCount();
     CheckUnsizedRescan();
     CheckMinMax();
+    CheckMaxValue();
     CheckReverseAndSwap();
     return 0;
 }
