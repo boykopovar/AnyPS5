@@ -21,7 +21,7 @@ const numberPattern = /^-?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/u;
 export function settingValue(setting, value) {
     const text = typeof value === 'string' ? value.trim() : '';
     if (setting.kind === 'percent') {
-        if (!/^\d+$/u.test(text) || Number(text) > 90) return `${setting.name} must be a whole percentage from 0 to 90.`;
+        if (!/^-?\d+$/u.test(text) || Number(text) < 0 || Number(text) > 90) return `${setting.name} must be a whole percentage from 0 to 90.`;
         return '';
     }
     const parsed = numberPattern.test(text) ? Number(text) : undefined;
