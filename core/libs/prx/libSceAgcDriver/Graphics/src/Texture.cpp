@@ -4321,11 +4321,13 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         for (const auto& texture : flush) std::fprintf(stderr, "[flush] image 0x%llx+0x%llx for %s 0x%llx+0x%zx\n", static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), reason, static_cast<unsigned long long>(address), bytes);
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
-    if (!ownNotes.empty() && (flush.size() != 1 || std::any_of(flush.begin(), flush.end(), [](const std::shared_ptr<StorageTexture>& texture) { return ExistingHostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) == nullptr; }))) ownNotes.clear();
-    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion() && recorder->PendingUnstampedWriterSerial(address, bytes, ownNotes) != 0) {
+    const bool ownStoresSkipped = flush.size() == 1 && ExistingHostImportFor(flush.front()->context, flush.front()->descriptor.baseAddress, static_cast<std::size_t>(flush.front()->guestBytes)) != nullptr;
+    if (!ownStoresSkipped) ownNotes.clear();
+    const auto pendingWriter = [&](const Recorder& active) { return ownStoresSkipped ? active.PendingUnstampedWriterSerial(address, bytes, ownNotes) : active.PendingWriterSerial(address, bytes, ownNotes); };
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion() && pendingWriter(*recorder) != 0) {
         try {
             recorder->Reap();
-            if (const auto writer = recorder->PendingUnstampedWriterSerial(address, bytes, ownNotes); writer == recorder->OpenSerial()) {
+            if (const auto writer = pendingWriter(*recorder); writer == recorder->OpenSerial()) {
                 Recorder::CountSync(recorder->OpenWriteOverlaps(address, bytes) ? 1 : 3);
                 recorder->Sync();
             } else if (writer != 0) {

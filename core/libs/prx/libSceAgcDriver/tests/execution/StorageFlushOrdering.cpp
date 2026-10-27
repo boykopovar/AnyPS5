@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -24,6 +25,14 @@
 #include <span>
 #include <string>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -161,36 +170,52 @@ std::uint64_t OpenSerial() {
     return recorder->OpenSerial();
 }
 
-void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset) {
-    const auto* words = guest.Words() + offset / 4u;
-    const auto image = guest.Address() + offset;
+void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, std::size_t images) {
+    const auto first = guest.Address() + offset;
     const auto target = device.Target();
-    const auto storeImage = Compile(StoreImageCode, ImageUserData(image), target);
-    const auto restoreImage = Compile(RestoreImageCode, ImageUserData(image), target);
-    const std::string what = "storage flush ordering, image stored again in the open batch: ";
-    device.Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
-    Require(AgcDriver::Graphics::StorageTexture::FlushPending(image, ImageBytes, nullptr, "test"), what + "the first store left no results pending");
-    device.Dispatch(restoreImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(RestoreImageCode.data()));
+    std::vector<ShaderRecompiler::RecompileResult> stores, restores;
+    for (std::size_t index = 0; index < images; ++index) {
+        stores.push_back(Compile(StoreImageCode, ImageUserData(first + index * ImageBytes), target));
+        restores.push_back(Compile(RestoreImageCode, ImageUserData(first + index * ImageBytes), target));
+    }
+    for (const auto& store : stores) device.Dispatch(store, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
+    const std::string subject = "storage flush ordering, " + std::to_string(images) + (images == 1 ? " image" : " images");
+    Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes * images, nullptr, "test"), subject + " stored again in the open batch: the first store left no results pending");
+    const bool imported = AgcDriver::Graphics::ExistingHostImportFor(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), first, ImageBytes * images) != nullptr;
+    const bool skips = images == 1 && imported;
+    const std::string what = subject + (imported ? "" : " without a host import") + " stored again in the open batch: ";
+    for (const auto& restore : restores) device.Dispatch(restore, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(RestoreImageCode.data()));
     const auto open = OpenSerial();
-    Require(AgcDriver::Graphics::StorageTexture::FlushPending(image, ImageBytes, nullptr, "test"), what + "the second store left no results pending");
-    Require(OpenSerial() == open, what + "the second store waited for the GPU to finish the image's own earlier store");
+    Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes * images, nullptr, "test"), what + "the second store left no results pending");
+    if (skips) Require(OpenSerial() == open, what + "the second store waited for the GPU to finish the image's own earlier store");
+    else Require(OpenSerial() != open, what + "the second store did not wait for the earlier store, which only a single image with a host import may skip");
     device.WaitIdle();
-    Require(words[0] == Restored && words[FarDword] == Restored, what + "the newer texels did not land over the earlier store");
+    for (std::size_t index = 0; index < images; ++index) {
+        const auto* words = guest.Words() + (offset + index * ImageBytes) / 4u;
+        Require(words[0] == Restored && words[FarDword] == Restored, what + "the newer texels did not land over the earlier store");
+    }
 }
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const bool watched = AgcDriver::GuestMemory::WriteWatched();
         GuestBlock guest(watched);
+        if (argc > 1 && std::string(argv[1]) == "--stored-again") {
+            RunStoredAgain(*device, guest, BlockBytes / 4u, 1);
+            RunStoredAgain(*device, guest, BlockBytes / 8u * 5u, 2);
+            std::puts("storage flush ordering stored-again tests passed");
+            return 0;
+        }
         if (!watched) std::puts("guest memory has no write watch: the writer-in-flight case is skipped");
         else if (!device->CanWaitUnlocked()) std::puts("the recorder cannot wait for the GPU without running completions: the writer-in-flight case is skipped");
         else Run(*device, guest, 0, true, "writer in flight");
         Run(*device, guest, BlockBytes / 2u, false, "writer in the open batch");
-        RunStoredAgain(*device, guest, BlockBytes / 4u);
+        RunStoredAgain(*device, guest, BlockBytes / 4u, 1);
+        RunStoredAgain(*device, guest, BlockBytes / 8u * 5u, 2);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {
