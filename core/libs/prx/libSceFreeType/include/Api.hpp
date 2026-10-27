@@ -131,4 +131,5 @@ int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::u
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);
 int APS5_VABI sceFreeTypeOtOutlineDone_nid_no_patch();
 int APS5_VABI sceFreeTypeOtOutlineNew_nid_no_patch();
+int APS5_VABI sceFreeTypeOtGlyphSlotOwnBitmap_nid_no_patch();
 }
