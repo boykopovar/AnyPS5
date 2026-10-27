@@ -3409,6 +3409,11 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     if (recorded && recorder->HasQueuedKeyStores() && (resources->HoldsLease() || recorder->AnyQueuedKeyStore(touches))) recorder->FlushKeyStores();
     // A queued label store over such memory likewise (Recorder::RecordStore).
     if (recorded && recorder->HasQueuedStores() && (resources->HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
+    if (recorded) {
+        for (const auto& binding : targets) {
+            if (binding.resident != nullptr) binding.resident->PrepareLinearDraw();
+        }
+    }
     const auto commands = recorded ? recorder->Commands() : batch->Handle();
     if (recorded) recorder->PrepareSampleSlot();
     APS5_LOG_CHARS_OUT_DEBUG("CommandBatch created");
