@@ -277,7 +277,7 @@ void PresentationPass::Bind(std::size_t index, VkImage image, std::uint32_t widt
 
 void PresentationPass::releaseUploadImage(Slot& slot) noexcept {
     if (slot.uploadImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, slot.uploadImage, nullptr);
-    if (slot.uploadMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, slot.uploadMemory, nullptr);
+    if (slot.uploadMemory) Graphics::MemoryAccounting::Free(context, slot.uploadMemory);
     slot.uploadImage = VK_NULL_HANDLE;
     slot.uploadMemory = VK_NULL_HANDLE;
     slot.uploadExtent = {};
@@ -305,7 +305,7 @@ void PresentationPass::ensureUploadImage(Slot& slot, VkExtent2D extent) {
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Graphics::Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &slot.uploadMemory), "vkAllocateMemory presentation upload");
+        Graphics::Check(Graphics::MemoryAccounting::Allocate(context, allocation, "presentation upload", &slot.uploadMemory), "vkAllocateMemory presentation upload");
         Graphics::Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, slot.uploadImage, slot.uploadMemory, 0), "vkBindImageMemory presentation upload");
         slot.uploadTexels = std::make_unique<Graphics::Buffer>(context, static_cast<std::size_t>(extent.width) * extent.height * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         slot.uploadExtent = extent;
