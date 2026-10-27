@@ -38,6 +38,7 @@ struct Push {
     std::uint32_t rowBegin;
     std::uint32_t pipeBankXor;
     std::uint32_t splitStride;
+    std::uint32_t originalBase;
 };
 
 std::uint32_t BlockBytesFor(TextureTileMode tileMode) {
@@ -69,7 +70,7 @@ std::uint32_t PipelineKey(TextureTileMode tileMode, std::uint32_t elementBytes, 
 
 TextureDetiler::TextureDetiler(const Context& context) : context(context) {
     try {
-        std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+        std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
         for (std::uint32_t index = 0; index < bindings.size(); ++index) {
             bindings[index].binding = index;
             bindings[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -92,6 +93,7 @@ TextureDetiler::TextureDetiler(const Context& context) : context(context) {
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
         module = CreateShaderModule(context, TEXTURE_DETILE_SPV, sizeof(TEXTURE_DETILE_SPV), "vkCreateShaderModule");
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        layoutInfo.bindingCount = 2;
         Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &layoutInfo, nullptr, &imageDescriptorLayout), "vkCreateDescriptorSetLayout");
         pipelineLayoutInfo.pSetLayouts = &imageDescriptorLayout;
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &pipelineLayoutInfo, nullptr, &imagePipelineLayout), "vkCreatePipelineLayout");
