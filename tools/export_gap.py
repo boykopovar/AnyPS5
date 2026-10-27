@@ -16,6 +16,7 @@ import nid_names
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
 POSTFIXES = ("_nid_postfix", "_nid_no_patch_cut", "_nid_no_patch")
+DISAMBIG = "_nid_disambig"
 NID_PATTERN = "[A-Za-z0-9+\\-]{11}"
 VABI = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
 TABLE_ENTRY = re.compile(r"sprx_dlsym\s*\(\s*__handle\s*,\s*\"(" + NID_PATTERN + r")\"")
@@ -117,6 +118,16 @@ def base_of(name):
     return name, None
 
 
+def strip_disambig(name):
+    pos = name.rfind(DISAMBIG)
+    if pos == -1:
+        return name
+    tail = name[pos + len(DISAMBIG):]
+    if tail and all(char in "0123456789" for char in tail):
+        return name[:pos]
+    return name
+
+
 def source_texts(module_dir):
     texts = []
     for path in sorted(module_dir.rglob("*")):
@@ -167,6 +178,7 @@ def collect_provided(module_dir):
                     continue
                 if postfix is not None and postfix != "_nid_postfix":
                     continue
+                base = strip_disambig(base)
                 nid = nid_names.compute_nid(base)
                 if nid not in provided:
                     if postfix is None:
@@ -197,6 +209,7 @@ def collect_provided(module_dir):
                         continue
                     if postfix is not None and postfix != "_nid_postfix":
                         continue
+                    base = strip_disambig(base)
                     nid = nid_names.compute_nid(base)
                     if nid not in provided:
                         provided[nid] = f"through macro {macro} as {symbol}"

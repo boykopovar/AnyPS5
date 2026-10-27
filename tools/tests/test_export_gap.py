@@ -121,6 +121,32 @@ class ExportGapTests(unittest.TestCase):
     def test_postfix_name_provides_hashed_base_nid(self):
         self.assertTrue(provides("sceExampleBase_nid_postfix", nid_of("sceExampleBase")))
 
+    def test_disambig_postfix_provides_hashed_base_nid(self):
+        self.assertTrue(provides("alias_nid_disambig12_nid_postfix", nid_of("alias")))
+
+    def test_bare_disambig_provides_hashed_base_nid(self):
+        self.assertTrue(provides("foo_nid_disambig1", nid_of("foo")))
+
+    def test_disambig_non_digit_tail_left_alone(self):
+        self.assertFalse(provides("foo_nid_disambigX", nid_of("foo")))
+        self.assertTrue(provides("foo_nid_disambigX", nid_of("foo_nid_disambigX")))
+
+    def test_macro_disambig_postfix_counts_as_provided(self):
+        nid = nid_names.compute_nid("alias")
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": (
+                "int before(void) { return 0; }\n"
+                "#define EXAMPLE_MACRO(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+                "EXAMPLE_MACRO(alias_nid_disambig12_nid_postfix)\n")})
+            write_table(tables, MODULE, [nid])
+            db = write_db(directory, [(nid, "alias")])
+            out = Path(directory) / "out.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.read_text(encoding="utf-8"), "")
+            self.assertIn("already provided", report)
+
     def test_no_patch_cut_base_counts_as_literally_provided(self):
         base = "sceCutBase1"
         with tempfile.TemporaryDirectory() as directory:
