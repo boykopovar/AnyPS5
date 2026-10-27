@@ -1,11 +1,14 @@
 #include "prx/libSceJson2/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <new>
 #include <thread>
 
 using namespace SceJson2;
@@ -17,6 +20,20 @@ extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
 
 static void Require(bool value, const char* message) {
     if (!value) { std::fprintf(stderr, "%s\n", message); std::abort(); }
+}
+
+static std::atomic<std::size_t> heapAllocations{0};
+
+extern "C" void* APS5_VABI _Znwm_nid_postfix(std::size_t bytes) {
+    void* memory = std::malloc(bytes == 0 ? 1 : bytes);
+    if (!memory) throw std::bad_alloc();
+    heapAllocations.fetch_add(1, std::memory_order_relaxed);
+    return memory;
+}
+extern "C" void APS5_VABI _ZdlPv_nid_postfix(void* memory) {
+    if (!memory) return;
+    Require(heapAllocations.fetch_sub(1, std::memory_order_relaxed) != 0, "Legacy heap releases must balance live allocations");
+    std::free(memory);
 }
 
 struct Schedule {
@@ -126,4 +143,5 @@ int main() {
     _ZN3sce4Json5ValueD1Ev(&parsed);
     _ZN3sce4Json5ValueD1Ev(&replacement);
     Require(_ZN3sce4Json11Initializer9terminateEv(&initializer) == 0, "Release legacy callback resources");
+    Require(heapAllocations.load(std::memory_order_relaxed) == 0, "Legacy callback threads must release every mocked application-heap allocation");
 }
