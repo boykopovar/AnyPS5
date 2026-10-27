@@ -16,7 +16,7 @@ import build_web
 import package_release
 import test_web
 
-FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "output-directory.mjs", "worker.mjs",
+FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "output-directory.mjs", "worker.mjs",
          "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 REVISION = "a" * 40
 LATEST = "https://api.github.com/repos/boykopovar/AnyPS5/releases/latest"

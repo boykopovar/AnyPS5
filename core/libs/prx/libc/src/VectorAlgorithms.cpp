@@ -143,6 +143,20 @@ const void* APS5_VABI __std_max_element_1_nid_postfix(const void* first, const v
 const void* APS5_VABI __std_max_element_2_nid_postfix(const void* first, const void* last, bool isSigned) { return MinMaxBySign<std::uint16_t>(first, last, isSigned, false, true).maximum; }
 const void* APS5_VABI __std_max_element_4_nid_postfix(const void* first, const void* last, bool isSigned) { return MinMaxBySign<std::uint32_t>(first, last, isSigned, false, true).maximum; }
 const void* APS5_VABI __std_max_element_8_nid_postfix(const void* first, const void* last, bool isSigned) { return MinMaxBySign<std::uint64_t>(first, last, isSigned, false, true).maximum; }
+std::uint64_t APS5_VABI __std_max_8u_nid_postfix(const void* first, const void* last) {
+    const auto beginAddress = reinterpret_cast<std::uintptr_t>(first);
+    const auto endAddress = reinterpret_cast<std::uintptr_t>(last);
+    if (!first || !last || endAddress <= beginAddress || (endAddress - beginAddress) % sizeof(std::uint64_t) != 0) NotImplemented_nid_no_patch(__func__);
+    auto* current = static_cast<const unsigned char*>(first);
+    const auto* end = static_cast<const unsigned char*>(last);
+    std::uint64_t maximum = Read<std::uint64_t>(current);
+    for (current += sizeof(std::uint64_t); current != end; current += sizeof(std::uint64_t)) {
+        const auto value = Read<std::uint64_t>(current);
+        if (maximum < value) maximum = value;
+    }
+    return maximum;
+}
+
 MinMaxPointers APS5_VABI __std_minmax_element_1_nid_postfix(const void* first, const void* last, bool isSigned) { return MinMaxBySign<std::uint8_t>(first, last, isSigned, true, true); }
 MinMaxPointers APS5_VABI __std_minmax_element_2_nid_postfix(const void* first, const void* last, bool isSigned) { return MinMaxBySign<std::uint16_t>(first, last, isSigned, true, true); }
 MinMaxPointers APS5_VABI __std_minmax_element_4_nid_postfix(const void* first, const void* last, bool isSigned) { return MinMaxBySign<std::uint32_t>(first, last, isSigned, true, true); }

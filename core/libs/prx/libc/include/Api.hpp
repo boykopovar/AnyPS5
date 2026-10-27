@@ -1126,6 +1126,7 @@ const void* APS5_VABI __std_max_element_1_nid_postfix(const void* first, const v
 const void* APS5_VABI __std_max_element_2_nid_postfix(const void* first, const void* last, bool isSigned);
 const void* APS5_VABI __std_max_element_4_nid_postfix(const void* first, const void* last, bool isSigned);
 const void* APS5_VABI __std_max_element_8_nid_postfix(const void* first, const void* last, bool isSigned);
+std::uint64_t APS5_VABI __std_max_8u_nid_postfix(const void* first, const void* last);
 MinMaxPointers APS5_VABI __std_minmax_element_1_nid_postfix(const void* first, const void* last, bool isSigned);
 MinMaxPointers APS5_VABI __std_minmax_element_2_nid_postfix(const void* first, const void* last, bool isSigned);
 MinMaxPointers APS5_VABI __std_minmax_element_4_nid_postfix(const void* first, const void* last, bool isSigned);
