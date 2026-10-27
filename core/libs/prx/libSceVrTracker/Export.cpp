@@ -1,3 +1,4 @@
+#include "prx/libSceVrTracker/include/Api.hpp"
 #include <atomic>
 #include <mutex>
 #include <cstdint>
@@ -5,66 +6,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
-struct VrTrackerMemoryBlock {
-    void* address;
-    std::uint32_t size;
-    std::uint32_t alignment;
-};
-
-struct VrTrackerInitConfig {
-    std::uint32_t type;
-    std::uint32_t option;
-    std::uint32_t mode;
-    std::uint32_t parameter;
-    std::uint32_t reserved[4];
-};
-
-struct VrTrackerInitParam {
-    std::uint32_t size;
-    std::int32_t mode;
-    std::uint32_t reserved[6];
-    VrTrackerInitConfig config;
-    VrTrackerMemoryBlock memory[3];
-    std::uint32_t option112;
-    std::uint32_t option116;
-    std::uint32_t reservedTail[6];
-};
-
 static_assert(sizeof(VrTrackerMemoryBlock) == 16);
 static_assert(sizeof(VrTrackerInitConfig) == 32);
 static_assert(sizeof(VrTrackerInitParam) == 144);
 static_assert(offsetof(VrTrackerInitParam, config) == 32);
 static_assert(offsetof(VrTrackerInitParam, memory) == 64);
 static_assert(offsetof(VrTrackerInitParam, option112) == 112);
-struct VrTrackerGpuSubmitParam;
-struct VrTrackerResult;
-
-struct VrTrackerCpuProcessParam {
-    std::uint32_t size;
-    std::uint32_t mode;
-    std::uint32_t argument;
-    std::uint32_t reserved[5];
-};
-
-struct VrTrackerGpuWaitParam {
-    std::uint32_t size;
-    std::byte payload[28];
-};
-
-struct VrTrackerGetResultParam {
-    std::uint32_t size;
-    std::int32_t handle;
-    std::uint32_t mode;
-    std::uint32_t extendedResult;
-    std::uint64_t time;
-    std::uint32_t statusMode;
-    std::uint32_t reserved0;
-    std::uint32_t option32;
-    std::byte outputValue[4];
-    std::uint32_t option40;
-    std::uint32_t reserved1[2];
-    std::byte unused[4];
-};
 
 static_assert(sizeof(VrTrackerCpuProcessParam) == 32);
 static_assert(offsetof(VrTrackerCpuProcessParam, mode) == 4);
@@ -77,6 +24,8 @@ static_assert(offsetof(VrTrackerGetResultParam, outputValue) == 36);
 static_assert(offsetof(VrTrackerGetResultParam, reserved1) == 44);
 
 namespace {
+
+using namespace VrTrackerLegacy;
 
 constexpr int NotInit = static_cast<int>(0x81260801u);
 constexpr int AlreadyInitialized = static_cast<int>(0x81260802u);
@@ -92,32 +41,7 @@ constexpr std::uint32_t WorkSize = 0x1000000;
 constexpr std::uint32_t CalibrationManual = 0;
 constexpr std::uint32_t CalibrationAuto = 1;
 
-struct CalibrationSettings {
-    std::uint32_t hmd_position;
-    std::uint32_t pad_position;
-    std::uint32_t move_position;
-    std::uint32_t gun_position;
-    std::uint32_t reserved[4];
-};
-
-struct QueryMemoryParam {
-    std::uint32_t size;
-    std::uint32_t profile;
-    std::uint32_t reserved[6];
-    CalibrationSettings calibration_settings;
-};
 static_assert(sizeof(QueryMemoryParam) == 0x40);
-
-struct QueryMemoryResult {
-    std::uint32_t size;
-    std::uint32_t direct_memory_onion_size;
-    std::uint32_t direct_memory_onion_alignment;
-    std::uint32_t direct_memory_garlic_size;
-    std::uint32_t direct_memory_garlic_alignment;
-    std::uint32_t work_memory_size;
-    std::uint32_t work_memory_alignment;
-    std::uint32_t reserved[9];
-};
 
 bool ValidCalibration(const CalibrationSettings& settings) {
     return settings.pad_position <= CalibrationAuto && settings.hmd_position <= CalibrationManual &&
@@ -131,29 +55,6 @@ std::uint32_t OnionSize(const CalibrationSettings& settings) {
 constexpr std::int32_t ComputePipes = 7;
 constexpr std::int32_t QueuesPerPipe = 8;
 
-struct InitParam {
-    std::uint32_t size;
-    std::uint32_t profile;
-    std::uint32_t execution_mode;
-    std::int32_t hmd_thread_priority;
-    std::int32_t pad_thread_priority;
-    std::int32_t move_thread_priority;
-    std::int32_t gun_thread_priority;
-    std::int32_t reserved;
-    std::uint64_t cpu_mask;
-    CalibrationSettings calibration_settings;
-    void* direct_memory_onion;
-    std::uint32_t direct_memory_onion_size;
-    std::uint32_t direct_memory_onion_alignment;
-    void* direct_memory_garlic;
-    std::uint32_t direct_memory_garlic_size;
-    std::uint32_t direct_memory_garlic_alignment;
-    void* work_memory;
-    std::uint32_t work_memory_size;
-    std::uint32_t work_memory_alignment;
-    std::int32_t gpu_pipe_id;
-    std::int32_t gpu_queue_id;
-};
 static_assert(sizeof(InitParam) == 0x80);
 
 std::atomic<bool> g_initialized{false};
@@ -164,18 +65,9 @@ constexpr std::uint32_t DeviceGun = 3;
 std::mutex g_devicesMutex;
 std::int32_t g_deviceHandles[DeviceGun + 1] = {-1, -1, -1, -1};
 
-struct RecalibrateParam {
-    std::uint32_t size;
-    std::uint32_t device_type;
-    std::uint32_t calibration_type;
-    std::uint32_t reserved[5];
-};
-
 } // namespace
 
 extern "C" {
-
-int APS5_VABI sceVrTrackerRegisterDeviceInternal(int device_type, int handle, int unk0, int);
 
 int APS5_VABI sceVrTrackerCpuProcess(const VrTrackerCpuProcessParam* param) {
     NotImplemented_nid_no_patch(__func__);

@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <optional>
 #include <deque>
@@ -34,8 +36,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -295,7 +295,6 @@ struct AmmState {
     std::map<std::uintptr_t, AmmPage> pages;
     std::map<std::uint64_t, std::uint32_t> pooledUses;
     std::set<std::uintptr_t> prt;
-    std::atomic<std::uint32_t> lastSubmit{0};
 };
 
 AmmState& _amm() {
@@ -590,10 +589,19 @@ struct Deferred {
 std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::uint32_t start = 0, ReadCursor read = {}, bool defer = false) {
     std::uint32_t cursor = start;
     while (cursor < buffer.offset) {
+        if (buffer.offset - cursor < Apr::NopHeaderBytes) throw std::runtime_error("APR: truncated command buffer");
+        std::uint32_t first;
+        std::memcpy(&first, buffer.base + cursor, sizeof(first));
+        if (Apr::IsNopHeader(first)) {
+            const std::uint32_t bytes = Apr::NopDwords(first) * Apr::NopHeaderBytes;
+            if (bytes > buffer.offset - cursor) throw std::runtime_error("APR: malformed command");
+            cursor += bytes;
+            continue;
+        }
         if (cursor + sizeof(Apr::CommandHeader) > buffer.offset) throw std::runtime_error("APR: truncated command buffer");
         Apr::CommandHeader header;
         std::memcpy(&header, buffer.base + cursor, sizeof(header));
-        if ((static_cast<std::uint32_t>(header.opcode) & 0xffu) == static_cast<std::uint32_t>(Apr::Opcode::CompactReadFileGather)) {
+        if ((first & 0xffu) == static_cast<std::uint32_t>(Apr::Opcode::CompactReadFileGather)) {
             if (sizeof(Apr::CompactReadFileGatherCommand) > buffer.offset - cursor) throw std::runtime_error("APR: truncated compact gather command");
             Apr::CompactReadFileGatherCommand command;
             std::memcpy(&command, buffer.base + cursor, sizeof(command));
@@ -605,7 +613,6 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         }
         if (header.bytes < sizeof(header) || header.bytes > buffer.offset - cursor) throw std::runtime_error("APR: malformed command");
         switch (header.opcode) {
-        case Apr::Opcode::Nop:
         case Apr::Opcode::PushMarker:
         case Apr::Opcode::PopMarker:
         case Apr::Opcode::SetMarker:
@@ -674,6 +681,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         case Apr::Opcode::WriteKernelEventQueue: {
             const auto command = _read<Apr::WriteKernelEventQueueCommand>(buffer, cursor);
             EqueueTriggerEvent_nid_postfix(static_cast<KernelEqueue>(command.equeue), static_cast<uintptr_t>(command.ident), EVFILT_AMPR, reinterpret_cast<void*>(command.data));
+
             break;
         }
         case Apr::Opcode::WriteAddressFromTimeCounter: {
@@ -700,8 +708,6 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
 }
 
 extern "C" {
-
-int APS5_VABI sceKernelAllocateDirectMemory(int64_t searchStart, int64_t searchEnd, size_t length, size_t alignment, int memoryType, int64_t* offset);
 
 int AmmGiveDirectMemory_nid_no_patch(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset) {
     if (!offset || (usage != 0 && usage != 1)) return SCE_KERNEL_ERROR_EINVAL;
@@ -815,17 +821,19 @@ void _waitSubmitted(std::uint32_t id, bool amm) {
 }
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
-    const auto id = _submit(static_cast<const std::uint8_t*>(base), bytes, true);
-    _amm().lastSubmit.store(id);
-    return id;
+    return _submit(static_cast<const std::uint8_t*>(base), bytes, true);
 }
 
 bool AmmSubmitted_nid_no_patch(std::uint32_t id) {
-    if (id == 0 || id > _amm().lastSubmit.load()) return false;
+    if (id == 0) return false;
+    {
+        auto& queue = _queue(true);
+        std::lock_guard lock(queue.mutex);
+        if (id > queue.submitted) return false;
+    }
     _waitSubmitted(id, true);
     return true;
 }
-
 
 int APS5_VABI sceKernelAprResolveFilepathsToIds(const char** paths, uint32_t count, uint32_t* ids, uint32_t* error_index) {
     if (!paths || !ids) return _fail(GUEST_EINVAL);

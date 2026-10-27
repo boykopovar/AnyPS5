@@ -1,22 +1,11 @@
+#include "prx/libSceSaveDataDialog/include/Api.hpp"
+#include "prx/libSceSaveDataDialog.native/include/Api.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceSaveDataDialogInitialize();
-int APS5_VABI sceSaveDataDialogOpen(const void* param);
-int APS5_VABI sceSaveDataDialogGetStatus();
-int APS5_VABI sceSaveDataDialogUpdateStatus();
-int APS5_VABI sceSaveDataDialogIsReadyToDisplay();
-int APS5_VABI sceSaveDataDialogProgressBarInc(int target, std::uint32_t delta);
-int APS5_VABI sceSaveDataDialogProgressBarSetValue(int target, std::uint32_t rate);
-int APS5_VABI sceSaveDataDialogClose(const void* param);
-int APS5_VABI sceSaveDataDialogGetResult(void* result);
-int APS5_VABI sceSaveDataDialogTerminate();
-}
 
 static void Require(bool value, const char* message) {
     if (!value) {

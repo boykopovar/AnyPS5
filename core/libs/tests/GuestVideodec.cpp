@@ -1,3 +1,5 @@
+#include "prx/libSceVideodec2/include/Api.hpp"
+#include "prx/libSceVideodec/include/Api.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
@@ -6,122 +8,15 @@
 #include "prx/libc/include/General.hpp"
 #include "H264Fixture.hpp"
 
-struct ConfigInfo {
-    std::uint64_t thisSize;
-    std::uint32_t codecType;
-    std::uint32_t profile;
-    std::uint32_t maxLevel;
-    std::int32_t maxFrameWidth;
-    std::int32_t maxFrameHeight;
-    std::int32_t maxDpbFrameCount;
-    std::uint64_t videodecFlags;
-};
-
-struct ResourceInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuMemorySize;
-    void* cpuMemory;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-    std::uint64_t maxFrameBufferSize;
-    std::uint32_t frameBufferAlignment;
-};
-
-struct Ctrl {
-    std::uint64_t thisSize;
-    void* handle;
-    std::uint64_t version;
-};
-
-struct FrameBuffer {
-    std::uint64_t thisSize;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-};
-
-struct AvcInfo {
-    std::uint32_t numUnitsInTick;
-    std::uint32_t timeScale;
-    std::uint8_t fixedFrameRateFlag;
-    std::uint8_t aspectRatioIdc;
-    std::uint16_t sarWidth;
-    std::uint16_t sarHeight;
-    std::uint8_t colourPrimaries;
-    std::uint8_t transferCharacteristics;
-    std::uint8_t matrixCoefficients;
-    std::uint8_t videoFullRangeFlag;
-    std::uint32_t frameCropLeftOffset;
-    std::uint32_t frameCropRightOffset;
-    std::uint32_t frameCropTopOffset;
-    std::uint32_t frameCropBottomOffset;
-};
-
-union CodecInfo {
-    std::uint8_t reserved[64];
-    AvcInfo avc;
-};
-
-struct PictureInfo {
-    std::uint64_t thisSize;
-    std::uint32_t isValid;
-    std::uint32_t codecType;
-    std::uint32_t frameWidth;
-    std::uint32_t framePitch;
-    std::uint32_t frameHeight;
-    std::uint32_t isErrorPic;
-    std::uint64_t ptsData;
-    std::uint64_t attachedData;
-    CodecInfo codec;
-};
-
-struct InputData {
-    std::uint64_t thisSize;
-    const std::uint8_t* auData;
-    std::uint64_t auSize;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-};
-
-struct Decoder2ConfigInfo {
-    std::uint64_t thisSize;
-    std::uint32_t resourceType;
-    std::uint32_t codecType;
-    std::uint32_t profile;
-    std::uint32_t maxLevel;
-    std::int32_t maxFrameWidth;
-    std::int32_t maxFrameHeight;
-    std::int32_t maxDpbFrameCount;
-    std::uint32_t decodePipelineDepth;
-};
-
-struct Decoder2MemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuMemorySize;
-    void* cpuMemory;
-    std::uint64_t gpuMemorySize;
-    void* gpuMemory;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-    std::uint64_t maxFrameBufferSize;
-    std::uint32_t frameBufferAlignment;
-};
+using namespace SceVideodec;
 
 static_assert(sizeof(PictureInfo) == 112 && sizeof(AvcInfo) == 36);
 static_assert(sizeof(ConfigInfo) == 40 && sizeof(ResourceInfo) == 56 && sizeof(Ctrl) == 24);
-static_assert(sizeof(Decoder2ConfigInfo) == 40 && sizeof(Decoder2MemoryInfo) == 72);
-
-extern "C" {
-int APS5_VABI sceVideodecCreateDecoder(const ConfigInfo*, const ResourceInfo*, Ctrl*);
-int APS5_VABI sceVideodecDecode(Ctrl*, const InputData*, FrameBuffer*, PictureInfo*);
-int APS5_VABI sceVideodecDeleteDecoder(Ctrl*);
-int APS5_VABI sceVideodecFlush(Ctrl*, FrameBuffer*, PictureInfo*);
-int APS5_VABI sceVideodecReset(Ctrl*);
-int APS5_VABI sceVideodecQueryResourceInfo(const ConfigInfo*, ResourceInfo*);
-int APS5_VABI sceVideodec2QueryDecoderMemoryInfo_nid_postfix(const Decoder2ConfigInfo*, Decoder2MemoryInfo*);
-}
+static_assert(sizeof(SceVideodec2::DecoderConfigInfo) == 40 && sizeof(SceVideodec2::DecoderMemoryInfo) == 72);
 
 namespace {
+
+using namespace SceVideodec;
 
 using namespace H264Fixture;
 
@@ -166,6 +61,7 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
     check(units.size() == PictureHashes.size(), "unexpected access unit count");
     std::vector<std::uint64_t> hashes;
     std::vector<std::uint64_t> timestamps;
+    std::vector<std::uint64_t> attachments;
     const auto collect = [&](PictureInfo& picture) {
         if (!picture.isValid) return;
         check(picture.framePitch == Pitch && picture.frameHeight == PictureHeight, "unexpected picture geometry");
@@ -174,9 +70,10 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
         check(picture.codec.avc.frameCropTopOffset == cropTop && picture.codec.avc.frameCropBottomOffset == cropBottom, "unexpected crop");
         hashes.push_back(hashNv12(session.buffer.data(), Pitch, PictureHeight));
         timestamps.push_back(picture.ptsData);
+        attachments.push_back(picture.attachedData);
     };
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
-        const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
         auto target = session.MakeTarget();
         PictureInfo picture{sizeof(PictureInfo)};
         const auto status = sceVideodecDecode(&session.ctrl, &input, &target, &picture);
@@ -195,6 +92,7 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
         check(hashes[index] == PictureHashes[index], "picture " + std::to_string(index) + " differs from the reference");
         const auto unit = DisplayOrderUnits[index];
         check(timestamps[index] == 1000 + unit, "pictures out of display order");
+        check(attachments[index] == 0xa0 + unit, "picture attachment out of display order");
     }
 }
 
@@ -221,22 +119,22 @@ void testErrors() {
     foreign.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234));
     check(sceVideodecDeleteDecoder(&foreign) == ErrorHandle, "an unknown decoder was deleted");
     check(sceVideodecReset(&foreign) == ErrorHandle, "an unknown decoder was reset");
-    const InputData empty{sizeof(InputData), nullptr, 0, 0, 0, 0};
+    const SceVideodec2::InputData empty{sizeof(SceVideodec2::InputData), nullptr, 0, 0, 0, 0};
     FrameBuffer frame{sizeof(FrameBuffer), nullptr, 0};
     PictureInfo picture{sizeof(PictureInfo)};
     check(sceVideodecDecode(nullptr, &empty, &frame, &picture) == ErrorArgumentPointer, "a null control block was accepted");
     check(sceVideodecDecode(&ctrl, &empty, &frame, &picture) == ErrorAuPointer, "a null access unit was accepted");
-    const InputData sized{sizeof(InputData), reinterpret_cast<const std::uint8_t*>(&config), 0, 0, 0, 0};
+    const SceVideodec2::InputData sized{sizeof(SceVideodec2::InputData), reinterpret_cast<const std::uint8_t*>(&config), 0, 0, 0, 0};
     check(sceVideodecDecode(&ctrl, &sized, &frame, &picture) == ErrorAuSize, "an empty access unit was accepted");
     FrameBuffer missing{sizeof(FrameBuffer), nullptr, FrameBytes};
     const auto units = accessUnits(false);
-    const InputData input{sizeof(InputData), units[0].data(), units[0].size(), 0, 0, 0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 0, 0, 0};
     check(sceVideodecDecode(&ctrl, &input, &missing, &picture) == ErrorFrameBufferPointer, "a null frame buffer was accepted");
     std::vector<std::uint8_t> storage(static_cast<std::size_t>(FrameBytes));
     FrameBuffer shortBuffer{sizeof(FrameBuffer), storage.data(), FrameBytes - 1};
     int refusals = 0;
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
-        const InputData unit0{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+        const SceVideodec2::InputData unit0{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
         const auto status = sceVideodecDecode(&ctrl, &unit0, &shortBuffer, &picture);
         check(status == 0 || status == ErrorFrameBufferSize, "a decode failed");
         if (status == ErrorFrameBufferSize) ++refusals;
@@ -249,7 +147,7 @@ void testErrors() {
 void testReset() {
     Session session;
     const auto units = accessUnits(false);
-    const InputData input{sizeof(InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
+    const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
     auto target = session.MakeTarget();
     PictureInfo picture{sizeof(PictureInfo)};
     check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode failed");
@@ -262,8 +160,8 @@ void testQueryResourceInfo(std::int32_t width, std::int32_t height, std::uint32_
     const ConfigInfo config{sizeof(ConfigInfo), 1, profile, level, width, height, 4, 0};
     ResourceInfo resource{sizeof(ResourceInfo)};
     check(sceVideodecQueryResourceInfo(&config, &resource) == 0, "the resource query failed");
-    const Decoder2ConfigInfo mapped{sizeof(Decoder2ConfigInfo), 1, 1, profile, level, width, height, 4, 1};
-    Decoder2MemoryInfo memory{sizeof(Decoder2MemoryInfo)};
+    const SceVideodec2::DecoderConfigInfo mapped{sizeof(SceVideodec2::DecoderConfigInfo), 1, 1, profile, level, width, height, 4, 1};
+    SceVideodec2::DecoderMemoryInfo memory{sizeof(SceVideodec2::DecoderMemoryInfo)};
     check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&mapped, &memory) == 0, "the Videodec2 memory query failed");
     check(resource.thisSize == sizeof(ResourceInfo), "the resource information size was changed");
     check(resource.cpuMemorySize == memory.cpuMemorySize, "the CPU memory size differs from libSceVideodec2");

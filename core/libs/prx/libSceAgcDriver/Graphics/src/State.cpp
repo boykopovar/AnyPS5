@@ -1,11 +1,13 @@
 #include <cstdio>
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
@@ -229,6 +231,11 @@ constexpr std::uint32_t PixelStageRunsMask = 0x000207c7u;
 constexpr std::uint32_t AlphaToCoverageMask = ~0x0001ff00u;
 constexpr std::uint32_t AlphaToCoverageUndithered = 0x0000aa01u;
 constexpr std::uint32_t AlphaToCoverageDithered = 0x00018701u;
+constexpr std::uint32_t AlphaToCoverageTwoSampleDithered = 0x0000e701u;
+
+bool ditheredAlphaToCoverageWord(std::uint32_t word) {
+    return word == AlphaToCoverageDithered || word == AlphaToCoverageTwoSampleDithered;
+}
 
 bool alphaToCoverageDisabled(const Registers& cx) {
     const auto control = find(cx, 0x203);
@@ -239,6 +246,22 @@ bool ditheredAlphaSamplesSupported(const Registers& cx) {
     const auto config = find(cx, 0x2f8);
     const auto eqaa = find(cx, 0x201);
     return config != cx.end() && (config->second & 0x700007u) == 0x300003u && eqaa != cx.end() && (eqaa->second & 0x207777u) == 0x3303u;
+}
+
+bool twoSampleDitheredAlphaSamplesSupported(const Registers& cx) {
+    const auto config = find(cx, 0x2f8);
+    const auto eqaa = find(cx, 0x201);
+    return config != cx.end() && (config->second & 0x700007u) == 0x100001u && eqaa != cx.end() && (eqaa->second & 0x207077u) == 0x1001u && ((eqaa->second >> 8u) & 7u) <= 1u;
+}
+
+bool twoSampleDitheredAlphaLocationsSupported(const Registers& cx) {
+    const auto first = find(cx, 0x2fe);
+    if (first == cx.end() || (first->second != 0xcc44u && first->second != 0xc44cu)) return false;
+    for (std::uint32_t pixel = 1; pixel < 4; ++pixel) {
+        const auto locations = find(cx, 0x2fe + pixel * 4u);
+        if (locations == cx.end() || locations->second != first->second) return false;
+    }
+    return true;
 }
 
 bool ditheredAlphaLocationsSupported(const Registers& cx) {
@@ -314,12 +337,32 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
     auto fixed = compare == 0 || compare == 7 ? 0u : face.compareMask;
     std::uint32_t invertMask = 0;
     std::uint32_t inverted = 0;
+    std::uint32_t logicMask = 0;
+    const auto logic = [](std::uint32_t op) { return op == 10 || op == 11 || op == 12 || op == 15; };
     const auto convert = [&](std::uint32_t op, bool testFailed) {
         if (face.writeMask == 0) return VK_STENCIL_OP_KEEP;
         char detail[112];
-        if (opValExport && ((op == 4 && !opValReference) || op == 5 || op == 6 || op == 8 || op == 9)) {
+        if (opValExport && ((op == 4 && !opValReference) || (op >= 5 && op != 7))) {
             std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operation %u with a pixel shader that exports the stencil operation value is unsupported", op);
             throw std::runtime_error(detail);
+        }
+        if (logic(op)) {
+            const auto bits = (op == 11 || op == 12 ? opValue : ~opValue) & face.writeMask;
+            if (bits == 0) return VK_STENCIL_OP_KEEP;
+            if (logicMask != 0 && logicMask != bits) {
+                std::snprintf(detail, sizeof(detail), "AGC graphics: stencil logic operations on write masks 0x%02x and 0x%02x are unsupported", logicMask, bits);
+                throw std::runtime_error(detail);
+            }
+            logicMask = bits;
+            if (op != 11) return op == 10 ? VK_STENCIL_OP_ZERO : VK_STENCIL_OP_INVERT;
+            if (testValExport) throw std::runtime_error("AGC graphics: stencil OR is unsupported with a pixel shader that exports the stencil test value");
+            if ((~reference & fixed & bits) != 0) {
+                std::snprintf(detail, sizeof(detail), "AGC graphics: stencil OR of 0x%02x against test value 0x%02x (masks 0x%02x/0x%02x) is unsupported", opValue, test, face.compareMask, face.writeMask);
+                throw std::runtime_error(detail);
+            }
+            reference |= bits;
+            fixed |= bits;
+            return VK_STENCIL_OP_REPLACE;
         }
         switch (op) {
             case 0: return VK_STENCIL_OP_KEEP;
@@ -377,35 +420,33 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
         if (inverted != active) throw std::runtime_error("AGC graphics: a stencil replacement drawn as an inversion beside another stencil operation is unsupported");
         face.writeMask = invertMask;
     }
+    if (logicMask != 0) {
+        const auto other = [&](std::uint32_t op) { return op != 0 && !logic(op); };
+        if ((other(ops & 0xfu) || other((ops >> 4u) & 0xfu) || other((ops >> 8u) & 0xfu)) && logicMask != face.writeMask) {
+            char detail[128];
+            std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operations 0x%03x combine a logic operation on write mask 0x%02x with write mask 0x%02x", ops & 0xfffu, logicMask, face.writeMask);
+            throw std::runtime_error(detail);
+        }
+        face.writeMask = logicMask;
+    }
     face.reference = reference;
     Require(!opValReference || compare == 0 || compare == 7 || face.compareMask == 0, "a stencil compare against the test value is unsupported with a pixel shader that exports the stencil operation value");
     return face;
 }
 
-void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValExport, bool opValExport, State& result) {
-    const bool opValReference = opValExport && StencilOperationValueReplaces(cx);
-    zero(cx, 0x000, 0x0000101cu, "depth copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
-    const bool depthClear = (read(cx, 0x000) & 1u) != 0;
-    const auto view = read(cx, 0x002);
-    zero(cx, 0x010, 0x00001000u, "partially resident depth (DB_Z_INFO)");
+DepthTarget decodeDepthPlane(const Registers& cx) {
+    const auto viewRegister = find(cx, 0x002);
+    const auto view = viewRegister == cx.end() ? 0u : viewRegister->second;
     const auto viewMip = (view >> 26u) & 0xfu;
     const auto maxMip = (read(cx, 0x010) >> 16u) & 0xfu;
-    zero(cx, 0x011, 0x00001000u, "partially resident stencil (DB_STENCIL_INFO)");
     const auto zFormat = read(cx, 0x010) & 3u;
-    const bool stencil = (read(cx, 0x011) & 1u) != 0;
-    const bool stencilClear = stencil && (read(cx, 0x000) & 2u) != 0;
-    Require(zFormat != 2, "Z_24 depth is unsupported");
-    if (zFormat == 0) depthControl &= ~6u;
-    if (!stencil) depthControl &= ~1u;
+    const auto stencilRegister = find(cx, 0x011);
+    const auto stencilInfo = stencilRegister == cx.end() ? 0u : stencilRegister->second;
+    const bool stencil = (stencilInfo & 1u) != 0;
     const auto base = [&](std::uint32_t low, std::uint32_t highOffset) {
         const auto high = find(cx, highOffset);
         return (high == cx.end() ? 0ull : static_cast<std::uint64_t>(high->second & 0xffu) << 40u) | (static_cast<std::uint64_t>(read(cx, low)) << 8u);
     };
-    const bool depthReadOnly = (view & 0x01000000u) != 0;
-    const bool stencilReadOnly = (view & 0x02000000u) != 0;
-    Require(!stencilClear || !stencilReadOnly, "stencil clear requires a writable stencil plane");
-    Require(!stencilClear || !testValExport, "stencil clear with a pixel shader that exports the stencil test value is unsupported");
-    Require(!depthClear || (zFormat != 0 && !depthReadOnly), "depth clear requires a writable depth plane");
     DepthTarget depth{};
     depth.samples = 1u << ((read(cx, 0x010) >> 2u) & 3u);
     depth.depthSwizzle = (read(cx, 0x010) >> 4u) & 31u;
@@ -414,9 +455,6 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     depth.lastSlice = (view >> 13u) & 0x7ffu;
     depth.address = zFormat != 0 ? base(0x012, 0x01a) : 0;
     depth.stencilAddress = stencil ? base(0x013, 0x01b) : 0;
-    const bool depthWritten = zFormat != 0 && !depthReadOnly && (depthClear || (depthControl & 6u) == 6u || (read(cx, 0x000) & 0x60u) != 0);
-    Require(!depthWritten || base(0x014, 0x01c) == depth.address, "depth read and written at different addresses is unsupported");
-    Require(!stencil || stencilReadOnly || base(0x015, 0x01d) == depth.stencilAddress, "stencil read and written at different addresses is unsupported");
     if (depth.samples != 1u) {
         depth.pipeBankXor = static_cast<std::uint32_t>(depth.address & 65535u);
         depth.address &= ~std::uint64_t{65535u};
@@ -453,13 +491,44 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
         if (depth.stencilAddress != 0) depth.stencilAddress += static_cast<std::uint64_t>(slice) * DepthSliceBytes(depth.extent, 1u);
     }
     depth.format = zFormat == 1 ? (stencil ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM) : (stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT);
-    depth.clearDepth = readFloat(cx, 0x00b);
-    depth.clearStencil = static_cast<std::uint8_t>(read(cx, 0x00a) & 0xffu);
-    depth.htileDepthOnly = (read(cx, 0x011) & (1u << 29u)) != 0u;
+    depth.htileDepthOnly = (stencilInfo & (1u << 29u)) != 0u;
     if (const auto htile = find(cx, 0x005); zFormat != 0 && htile != cx.end() && htile->second != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
         depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * HtileMetadataBytes(depth.extent);
         depth.htileStencil = stencil && !depth.htileDepthOnly;
     }
+    return depth;
+}
+
+void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValExport, bool opValExport, State& result) {
+    const bool opValReference = opValExport && StencilOperationValueReplaces(cx);
+    zero(cx, 0x000, 0x0000101cu, "depth copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
+    const bool depthClear = (read(cx, 0x000) & 1u) != 0;
+    const auto view = read(cx, 0x002);
+    zero(cx, 0x010, 0x00001000u, "partially resident depth (DB_Z_INFO)");
+    zero(cx, 0x011, 0x00001000u, "partially resident stencil (DB_STENCIL_INFO)");
+    const auto zFormat = read(cx, 0x010) & 3u;
+    const bool stencil = (read(cx, 0x011) & 1u) != 0;
+    const bool stencilClear = stencil && (read(cx, 0x000) & 2u) != 0;
+    Require(zFormat != 2, "Z_24 depth is unsupported");
+    if (zFormat == 0) depthControl &= ~6u;
+    if (!stencil) depthControl &= ~1u;
+    const auto base = [&](std::uint32_t low, std::uint32_t highOffset) {
+        const auto high = find(cx, highOffset);
+        return (high == cx.end() ? 0ull : static_cast<std::uint64_t>(high->second & 0xffu) << 40u) | (static_cast<std::uint64_t>(read(cx, low)) << 8u);
+    };
+    const bool depthReadOnly = (view & 0x01000000u) != 0;
+    const bool stencilReadOnly = (view & 0x02000000u) != 0;
+    Require(!stencilClear || !stencilReadOnly, "stencil clear requires a writable stencil plane");
+    Require(!stencilClear || !testValExport, "stencil clear with a pixel shader that exports the stencil test value is unsupported");
+    Require(!depthClear || (zFormat != 0 && !depthReadOnly), "depth clear requires a writable depth plane");
+    const auto readAddress = zFormat != 0 ? base(0x012, 0x01a) : 0;
+    const auto stencilReadAddress = stencil ? base(0x013, 0x01b) : 0;
+    const bool depthWritten = zFormat != 0 && !depthReadOnly && (depthClear || (depthControl & 6u) == 6u || (read(cx, 0x000) & 0x60u) != 0);
+    Require(!depthWritten || base(0x014, 0x01c) == readAddress, "depth read and written at different addresses is unsupported");
+    Require(!stencil || stencilReadOnly || base(0x015, 0x01d) == stencilReadAddress, "stencil read and written at different addresses is unsupported");
+    auto depth = decodeDepthPlane(cx);
+    depth.clearDepth = readFloat(cx, 0x00b);
+    depth.clearStencil = static_cast<std::uint8_t>(read(cx, 0x00a) & 0xffu);
     result.depth = depth;
     result.depthTest = (depthControl & 2u) != 0;
     result.depthWrite = result.depthTest && (depthControl & 4u) != 0 && !depthReadOnly;
@@ -568,7 +637,7 @@ std::string singleSampleMsaaRejection(const QueueState& queue) {
         const auto offset = 0x2feu + pixel * 4u;
         if (const auto locations = word(cx, offset); locations && (*locations & 0xffu) != 0) return zeroMessage(offset, *locations, "MSAA_ENABLE on a single-sample target whose sample is off the pixel center");
     }
-    if (const auto alphaToMask = word(cx, 0x2dc); alphaToMask && (*alphaToMask & 1u) != 0 && !(*alphaToMask == AlphaToCoverageDithered && alphaToCoverageDisabled(cx))) return zeroMessage(0x2dc, *alphaToMask, "MSAA_ENABLE on a single-sample target with alpha-to-coverage");
+    if (const auto alphaToMask = word(cx, 0x2dc); alphaToMask && (*alphaToMask & 1u) != 0 && !(ditheredAlphaToCoverageWord(*alphaToMask) && alphaToCoverageDisabled(cx))) return zeroMessage(0x2dc, *alphaToMask, "MSAA_ENABLE on a single-sample target with alpha-to-coverage");
     if (const auto conservative = word(cx, 0x313); conservative && (*conservative & ~0x001f6000u) != 0) return zeroMessage(0x313, *conservative, "MSAA_ENABLE on a single-sample target with conservative rasterization");
     return nonTriangleRejection(queue, "MSAA_ENABLE on a single-sample target for primitives other than triangles and rectangles", true);
 }
@@ -589,6 +658,11 @@ std::string singleSampleDepthScanRejection(const QueueState& queue) {
 constexpr std::uint32_t CoveredCentroidIsCenter = 1u << 29u;
 constexpr std::uint32_t SampleZeroRefusedInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
 constexpr std::uint32_t CentroidInputs = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveCentroid) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::LinearCentroid);
+
+bool staticAnchors(const Registers& cx, std::uint32_t depthSamples) {
+    const auto eqaa = find(cx, 0x201);
+    return eqaa != cx.end() && (eqaa->second & 7u) == static_cast<std::uint32_t>(std::countr_zero(depthSamples)) && (eqaa->second & 0x100000u) != 0;
+}
 
 bool overrasterized(const Registers& cx, std::uint32_t samples) {
     const auto eqaa = find(cx, 0x201);
@@ -713,15 +787,19 @@ void rasterizeSampleZero(State& state) {
     state.sampleLocationGrid = sampleZero[8] != sampleZero[0] || sampleZero[16] != sampleZero[0] || sampleZero[24] != sampleZero[0];
 }
 
+bool documentedRop(std::uint32_t rop) {
+    return (rop >> 4u) == (rop & 0xfu) || ((rop >> 2u) & 0x33u) == (rop & 0x33u);
+}
+
 bool colorControlSupported(std::uint32_t colorControl, bool hasColorTarget) {
     colorControl &= ~1u;
-    return colorControl == 0xcc0010u || ((colorControl >> 4u) & 7u) == 0u || (!hasColorTarget && (colorControl & ~0x70u) == 0xcc0000u);
+    return ((colorControl & ~0xff0000u) == 0x10u && documentedRop((colorControl >> 16u) & 0xffu)) || ((colorControl >> 4u) & 7u) == 0u || (!hasColorTarget && (colorControl & ~0x70u) == 0xcc0000u);
 }
 
 std::string colorControlMessage(std::uint32_t colorControl) {
     static constexpr const char* modes[8] = {"disable", "normal", "eliminate fast clear", "resolve", "decompress", "FMASK decompress", "DCC decompress", "reserved"};
     char text[160];
-    std::snprintf(text, sizeof(text), "AGC graphics: only normal color rendering with copy ROP is supported (CB_COLOR_CONTROL 0x%08x, mode %s)", colorControl, modes[(colorControl >> 4u) & 7u]);
+    std::snprintf(text, sizeof(text), "AGC graphics: only normal color rendering with a ROP3 code of the source or brush form is supported (CB_COLOR_CONTROL 0x%08x, mode %s)", colorControl, modes[(colorControl >> 4u) & 7u]);
     return text;
 }
 
@@ -927,12 +1005,17 @@ struct DecodedColorFormat {
 
 const char* PackedColorTargetName(ShaderRecompiler::ColorExportPacking packing) {
     if (packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4) return "4_4_4_4 unorm";
+    if (packing == ShaderRecompiler::ColorExportPacking::Uint) return "unsigned integer";
     return packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "11_11_10 float" : "10_11_11 unorm";
+}
+
+bool WordPacked(ShaderRecompiler::ColorExportPacking packing) {
+    return packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
 }
 
 // CB_COLOR_INFO FORMAT / NUMBER_TYPE / COMP_SWAP to a Vulkan attachment format. AMD formats list
 // components from the least significant bits, as Vulkan's non-packed formats do.
-DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number, std::uint32_t swap) {
+DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t number, std::uint32_t swap) {
     constexpr std::uint32_t unorm = 0, snorm = 1, sint = 5, srgb = 6, floating = 7;
     constexpr std::uint32_t uint = 4;
     const auto fail = [&]() -> DecodedColorFormat {
@@ -1095,6 +1178,21 @@ std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrd
     return {mask, mask, mask, mask};
 }
 
+VkLogicOp LogicOpFromRop(std::uint8_t rop) {
+    if (!documentedRop(rop)) {
+        char text[96];
+        std::snprintf(text, sizeof(text), "AGC graphics: ROP3 code 0x%02x combines source and brush, which is not implemented", rop);
+        throw std::runtime_error(text);
+    }
+    static constexpr std::array<VkLogicOp, 16> operations{
+        VK_LOGIC_OP_CLEAR, VK_LOGIC_OP_NOR, VK_LOGIC_OP_AND_INVERTED, VK_LOGIC_OP_COPY_INVERTED,
+        VK_LOGIC_OP_AND_REVERSE, VK_LOGIC_OP_INVERT, VK_LOGIC_OP_XOR, VK_LOGIC_OP_NAND,
+        VK_LOGIC_OP_AND, VK_LOGIC_OP_EQUIVALENT, VK_LOGIC_OP_NO_OP, VK_LOGIC_OP_OR_INVERTED,
+        VK_LOGIC_OP_COPY, VK_LOGIC_OP_OR_REVERSE, VK_LOGIC_OP_OR, VK_LOGIC_OP_SET};
+    const std::uint32_t index = (rop & 3u) | ((rop >> 4u) & 4u) | ((rop >> 4u) & 8u);
+    return operations[index];
+}
+
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state) {
     Require(state.samples == 1 || state.samples == 2 || state.samples == 4 || state.samples == 8, "invalid sample count");
     std::array<VkSampleLocationEXT, 32> locations{};
@@ -1161,44 +1259,24 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     validate(!vertexWorkgroup || ((value & 0x02002020u) == 0x2000u && !tessellation), "a vertex program that needs a workgroup requires PRIMGEN_EN without GS_EN, PRIMGEN_PASSTHRU_EN or tessellation");
     const bool geometry = (value & 0x20u) != 0 || vertexWorkgroup;
     validate(tessellation == ((value & 4u) != 0), "Patch topology and HS_EN disagree");
-    validate(!tessellation || !geometry, "combined tessellation and geometry is unsupported by the reference path");
-    const auto path = tessellation ? ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
+    const auto path = tessellation ? geometry ? ShaderPath::TessellationGeometry : ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
     ShaderStages result{path, value, (value & 0x00400000u) != 0 ? 32u : 64u, (read(queue.context, 0x1b6) & 0x8000u) != 0 ? 32u : 64u, {}, {}};
+    result.hullWaveSize = (value & 0x00200000u) != 0 ? 32u : 64u;
     APS5_LOG_OUT_DEBUG("DecodeShaderStages value=0x%x primitive=%u path=%u vertexWave=%u", value, primitive, static_cast<unsigned>(result.path), result.vertexWaveSize);
-    if (path == ShaderPath::Vertex) {
-        validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
-        validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
-    } else if (path == ShaderPath::Tessellation) {
-        validate((value & 0x00600020u) == 0, "wave32 tessellation or geometry amplification is unsupported");
-        validate((value & ~0x0207ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
-        const auto config = read(queue.context, 0x2d6);
-        const auto parameters = read(queue.context, 0x2db);
-        const auto primitiveGroup = find(queue.userConfig, 0x25b, RegisterBank::UserConfig);
-        ShaderRecompiler::TessellationConfiguration tess{(config >> 8u) & 0x3fu, (config >> 14u) & 0x3fu, parameters & 3u, (parameters >> 2u) & 7u, (parameters >> 5u) & 7u, config & 0xffu, primitiveGroup == queue.userConfig.end() ? 0u : primitiveGroup->second & 0x1ffu, primitiveGroup != queue.userConfig.end() && (primitiveGroup->second & 0x40000u) != 0u};
-        validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 && tess.outputControlPoints <= 32, "invalid tessellation control-point counts");
-        validate(tess.patchesPerGroup != 0, "VGT_LS_HS_CONFIG.NUM_PATCHES is zero");
-        if ((parameters & ~0x000600ffu) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
-        if (!((tess.domain == 1 || tess.domain == 2) && (tess.partitioning == 0 || tess.partitioning == 2 || tess.partitioning == 3) && (tess.outputTopology == 2 || tess.outputTopology == 3))) validate(false, tessellationMessage(config, parameters, tess).c_str());
-        result.minTessellationLevel = readFloat(queue.context, 0x287);
-        result.maxTessellationLevel = readFloat(queue.context, 0x286);
-        Require(result.minTessellationLevel >= 0.0f && result.minTessellationLevel <= 63.0f && result.minTessellationLevel <= result.maxTessellationLevel && result.maxTessellationLevel >= 1.0f, "tessellation level clamps need 0 <= VGT_HOS_MIN_TESS_LEVEL <= 63, VGT_HOS_MAX_TESS_LEVEL >= 1 and the minimum at most the maximum");
-        result.tessellation = tess;
-    } else {
-        const bool fastLaunch = ((value >> 19u) & 3u) == 1u;
-        validate((value & ~(fastLaunch ? 0x004fec30u : 0x0047ec30u)) == 0, "unsupported geometry routing, fast launch or wave-ID state");
+    const auto meshConfiguration = [&](std::uint32_t inputPrimitive, bool fastLaunch) {
         const auto group = read(queue.userConfig, 0x25b, RegisterBank::UserConfig);
         const auto vertices = (group >> 9u) & 0x1ffu;
         const auto primitives = group & 0x1ffu;
-        validate(!fastLaunch || (!vertexWorkgroup && primitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
+        validate(!fastLaunch || (!vertexWorkgroup && inputPrimitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
         const auto maxVertices = read(queue.context, 0x1ff);
         const auto verticesPerPrimitive = vertexWorkgroup ? 3u : read(queue.context, 0x2ce);
         const auto outputType = read(queue.context, 0x29b);
         validate(outputType == 2 || ((outputType == 0 || outputType == 1) && !vertexWorkgroup), "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a point list or line strip from a geometry program, is unsupported");
         const auto outputSize = outputType == 0 ? 1u : outputType == 1 ? 2u : 3u;
-        validate((primitive == 1 || primitive == 2 || primitive == 4 || primitive == 5 || primitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
-        const auto inputSize = primitive == 1 ? 1u : primitive == 2 ? 2u : 3u;
+        validate((inputPrimitive == 1 || inputPrimitive == 2 || inputPrimitive == 4 || inputPrimitive == 5 || inputPrimitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
+        const auto inputSize = inputPrimitive == 1 ? 1u : inputPrimitive == 2 ? 2u : 3u;
         validate(vertices >= inputSize && maxVertices != 0 && (!vertexWorkgroup || maxVertices >= inputSize) && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
-        const auto inputStep = primitive == 5 || primitive == 6 ? 1u : inputSize;
+        const auto inputStep = inputPrimitive == 5 || inputPrimitive == 6 ? 1u : inputSize;
         const auto outputLimit = vertexWorkgroup ? (maxVertices - inputSize) / inputStep + 1u : maxVertices / verticesPerPrimitive;
         const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, outputLimit});
         validate(groupPrimitives != 0, "geometry subgroup contains no primitives");
@@ -1211,9 +1289,52 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, maxPrimitives});
         const auto raster = find(queue.context, 0x205);
         const auto provokingVertex = raster != queue.context.end() && (raster->second & (1u << 19u)) != 0 ? outputSize - 1u : 0u;
-        result.mesh = ShaderRecompiler::MeshConfiguration{primitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
+        return ShaderRecompiler::MeshConfiguration{inputPrimitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
+    };
+    if (path == ShaderPath::Vertex) {
+        validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
+        validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
+    } else if (path == ShaderPath::Tessellation || path == ShaderPath::TessellationGeometry) {
+        if (path == ShaderPath::Tessellation) validate((value & ~0x0267ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
+        else validate((value & ~0x0067ed2du) == 0 && (value & 0x02002000u) == 0x2000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation and geometry routing");
+        const auto config = read(queue.context, 0x2d6);
+        const auto parameters = read(queue.context, 0x2db);
+        const auto primitiveGroup = find(queue.userConfig, 0x25b, RegisterBank::UserConfig);
+        ShaderRecompiler::TessellationConfiguration tess{(config >> 8u) & 0x3fu, (config >> 14u) & 0x3fu, parameters & 3u, (parameters >> 2u) & 7u, (parameters >> 5u) & 7u, config & 0xffu, primitiveGroup == queue.userConfig.end() ? 0u : primitiveGroup->second & 0x1ffu, primitiveGroup != queue.userConfig.end() && (primitiveGroup->second & 0x40000u) != 0u};
+        validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 && tess.outputControlPoints <= 32, "invalid tessellation control-point counts");
+        validate(tess.patchesPerGroup != 0, "VGT_LS_HS_CONFIG.NUM_PATCHES is zero");
+        if ((parameters & ~0x000600ffu) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
+        if (!((tess.domain == 1 || tess.domain == 2) && (tess.partitioning == 0 || tess.partitioning == 2 || tess.partitioning == 3) && (tess.outputTopology == 2 || tess.outputTopology == 3))) validate(false, tessellationMessage(config, parameters, tess).c_str());
+        result.minTessellationLevel = readFloat(queue.context, 0x287);
+        result.maxTessellationLevel = readFloat(queue.context, 0x286);
+        Require(result.minTessellationLevel >= 0.0f && result.minTessellationLevel <= 63.0f && result.minTessellationLevel <= result.maxTessellationLevel && result.maxTessellationLevel >= 1.0f, "tessellation level clamps need 0 <= VGT_HOS_MIN_TESS_LEVEL <= 63, VGT_HOS_MAX_TESS_LEVEL >= 1 and the minimum at most the maximum");
+        result.tessellation = tess;
+        if (path == ShaderPath::TessellationGeometry) result.tessellationGeometry = meshConfiguration(4u, false);
+    } else {
+        const bool fastLaunch = ((value >> 19u) & 3u) == 1u;
+        validate((value & ~(fastLaunch ? 0x004fec30u : 0x0047ec30u)) == 0, "unsupported geometry routing, fast launch or wave-ID state");
+        result.mesh = meshConfiguration(primitive, fastLaunch);
     }
     return result;
+}
+
+std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage) {
+    if (stage == ShaderRecompiler::ShaderStage::Fragment) return stages.fragmentWaveSize;
+    if (stage == ShaderRecompiler::ShaderStage::Local || stage == ShaderRecompiler::ShaderStage::TessellationControl) return stages.hullWaveSize;
+    return stages.vertexWaveSize;
+}
+
+std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage) {
+    if (stages.mesh) return stages.mesh;
+    if (stage == ShaderRecompiler::ShaderStage::TessellationEvaluation || stage == ShaderRecompiler::ShaderStage::Mesh) return stages.tessellationGeometry;
+    return std::nullopt;
+}
+
+std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset, bool depthRemap) {
+    const bool preRasterization = pushOffset < PipelinePushSlotBytes;
+    if (stages.mesh || (stages.tessellationGeometry && preRasterization)) return ShaderRecompiler::MeshDrawPushOffsetBytes;
+    if (stages.tessellation && preRasterization) return ShaderRecompiler::TessellationLevelPushOffsetBytes;
+    return depthRemap ? ShaderRecompiler::DepthRemapPushOffsetBytes : PipelinePushSlotBytes;
 }
 
 bool DepthResummarizeDrawsNothing(const QueueState& queue) {
@@ -1283,6 +1404,27 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     blend.srcAlphaBlendFactor = routing->factors[2];
     blend.dstAlphaBlendFactor = routing->factors[3];
     return {blend, routing->code};
+}
+
+void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
+    if (!state.depthBoundsTest || !state.depth || context.depthBounds) return;
+    ValidateDepthBounds(context, state);
+    Require(!context.depthRangeUnrestricted, "the depth bounds test without the depthBounds feature is emulated only where stored depth stays in [0, 1]");
+    Require(state.depth->format == VK_FORMAT_D32_SFLOAT || state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT, "the depth bounds test on a normalized depth target needs the depthBounds feature");
+    Require(!state.depthTest && !state.depthWrite, "the depth bounds test with depth testing needs the depthBounds feature");
+    Require(!pixel.posZ && !pixel.depthExportEnable, "the depth bounds test from a pixel program that reads or exports depth needs the depthBounds feature");
+    const auto keepsOnFail = [](const VkStencilOpState& face) { return (face.writeMask & 0xffu) == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };
+    Require(!state.stencilTest || (keepsOnFail(state.stencilFront) && keepsOnFail(state.stencilBack)), "the depth bounds test with a stencil test that writes on a failed test needs the depthBounds feature");
+    const bool upper = state.minDepthBounds <= 0.0f;
+    Require(upper || state.maxDepthBounds >= 1.0f, "the depth bounds test with both bounds inside (0, 1) needs the depthBounds feature");
+    const float bound = upper ? state.maxDepthBounds : state.minDepthBounds;
+    state.depthBoundsTest = false;
+    state.depthTest = true;
+    state.depthCompare = upper ? VK_COMPARE_OP_GREATER_OR_EQUAL : VK_COMPARE_OP_LESS_OR_EQUAL;
+    state.depthBias = false;
+    state.depthBiasPerFace = false;
+    state.viewport.minDepth = bound;
+    state.viewport.maxDepth = bound;
 }
 
 void ApplyDepthRemap(const Context& context, State& state) {
@@ -1383,20 +1525,26 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     }
     zero(cx, 0x203, shaderControlMask(read(cx, 0x1c4)), "depth export, shader coverage or ordered fragment execution");
     const auto alpha = read(cx, 0x2dc);
-    const bool alphaDisabled = alpha == AlphaToCoverageDithered && alphaToCoverageDisabled(cx);
-    result.alphaToCoverage = alpha == AlphaToCoverageUndithered || (!alphaDisabled && alpha == AlphaToCoverageDithered);
-    result.ditheredAlphaToCoverage = result.alphaToCoverage && alpha == AlphaToCoverageDithered;
+    const bool alphaDisabled = ditheredAlphaToCoverageWord(alpha) && alphaToCoverageDisabled(cx);
+    result.alphaToCoverage = alpha == AlphaToCoverageUndithered || (!alphaDisabled && ditheredAlphaToCoverageWord(alpha));
+    result.ditheredAlphaToCoverage = result.alphaToCoverage && ditheredAlphaToCoverageWord(alpha);
     if (!result.alphaToCoverage) zero(cx, 0x2dc, alphaDisabled ? AlphaToCoverageMask & ~1u : AlphaToCoverageMask, "dithered or rounded alpha-to-coverage");
-    if (result.ditheredAlphaToCoverage) {
+    if (result.ditheredAlphaToCoverage && alpha == AlphaToCoverageDithered) {
         Require(ditheredAlphaSamplesSupported(cx), "dithered alpha-to-coverage requires eight matched raster/DB_EQAA samples and one pixel iteration");
         Require(!result.customSampleLocations, "dithered alpha-to-coverage with custom sample locations is unsupported");
+    }
+    if (result.ditheredAlphaToCoverage && alpha == AlphaToCoverageTwoSampleDithered) {
+        Require(twoSampleDitheredAlphaSamplesSupported(cx), "DB_ALPHA_TO_MASK 0xe701 requires two matched raster/DB_EQAA samples and one pixel iteration");
+        Require(twoSampleDitheredAlphaLocationsSupported(cx), "DB_ALPHA_TO_MASK 0xe701 is supported only with the two-sample locations (4,4),(-4,-4) or (-4,4),(4,-4) in every pixel");
+        result.ditheredAlphaSamples = 2;
     }
     const bool depthKeepsSampleZero = result.depth && result.depth->samples == 1 && result.samples > 1;
     zero(cx, 0x292, ScanModeMask & ~1u, "scan conversion mode");
     if (depthKeepsSampleZero && (read(cx, 0x292) & 1u) == 0) {
         const bool filled = result.topology != VK_PRIMITIVE_TOPOLOGY_POINT_LIST && result.topology != VK_PRIMITIVE_TOPOLOGY_LINE_LIST && result.topology != VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
-        const auto sampleInputs = read(cx, 0x1b3) & read(cx, 0x1b4) & (ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage));
-        Require(filled && !result.alphaToCoverage && (PixelProgramSkipped(queue) || sampleInputs == 0) && (read(cx, 0x203) & 0x100u) == 0 && (read(cx, 0x201) & 0x0f080000u) == 0, "a one-sample depth target under a multisampled rasterizer without MSAA_ENABLE is unsupported for points or lines and with alpha-to-coverage, a sample index or coverage input, a sample-mask export, or DB_EQAA source Z interpolation or overrasterization");
+        const auto sampleIndex = (read(cx, 0x293) & PixelShaderIteratesSamples) != 0u ? ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) : 0u;
+        const auto sampleInputs = read(cx, 0x1b3) & read(cx, 0x1b4) & (sampleIndex | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage));
+        Require(filled && !result.alphaToCoverage && (PixelProgramSkipped(queue) || sampleInputs == 0) && (read(cx, 0x203) & 0x100u) == 0 && (read(cx, 0x201) & 0x0f080000u) == 0, "a one-sample depth target under a multisampled rasterizer without MSAA_ENABLE is unsupported for points or lines and with alpha-to-coverage, a sample index input under PS_ITER_SAMPLE, a coverage input, a sample-mask export, or DB_EQAA source Z interpolation or overrasterization");
         result.samples = 1;
         result.customSampleLocations = false;
         result.sampleLocations.fill(0);
@@ -1474,6 +1622,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
 
     // CB_COLOR_CONTROL mode 0 disables color writes, which only matters when a target is written.
     if (const auto colorControl = read(cx, 0x202); !colorControlSupported(colorControl, result.hasColorTarget)) throw std::runtime_error(colorControlMessage(colorControl));
+    if (const auto colorControl = read(cx, 0x202); ((colorControl >> 4u) & 7u) == 1u) result.colorRop = static_cast<std::uint8_t>(colorControl >> 16u);
     zero(cx, 0x1c4, zFormatSupported(read(cx, 0x1c4)) ? 0u : ~0u, "depth or sample-mask export");
     const auto exportFormat = result.hasColorTarget ? read(cx, 0x1c5) : 0u;
     APS5_LOG_OUT_DEBUG("Export format=%u", exportFormat);
@@ -1490,6 +1639,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         if (slotExport == 7 && ((read(cx, 0x31c + slot * 0xfu) >> 8u) & 7u) != 4u) throw std::runtime_error("AGC graphics: color export format 7 (UINT16_ABGR) into a target that is not unsigned integer is unsupported");
         color.exportIndex = index;
         color.uintExport = slotExport == 7;
+        if (color.uintExport && color.packing == ShaderRecompiler::ColorExportPacking::Uint) color.packing = ShaderRecompiler::ColorExportPacking::None;
         if (color.samples == 1 && result.samples > 1 && result.colors.empty() && !result.depth && (read(cx, 0x292) & 1u) == 0) {
             const auto sampleInputs = read(cx, 0x1b3) & read(cx, 0x1b4) & (ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage));
             Require(sampleInputs == 0 && (read(cx, 0x203) & 0x100u) == 0, "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index or coverage input, or a sample-mask export");
@@ -1503,10 +1653,12 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             result.customSampleLocations = true;
             result.sampleLocations.fill(0);
         }
-        const bool merged = color.samples == 1u && !result.depth && !result.perSampleShading && (result.colors.empty() || result.mergedCoverage) && overrasterized(cx, result.samples);
-        if (!merged && color.samples == 1 && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
+        const bool merged = color.samples == 1u && color.coverageSamples == 1u && !result.depth && !result.perSampleShading && (result.colors.empty() || result.mergedCoverage) && overrasterized(cx, result.samples);
+        if (!merged && color.samples == 1 && color.coverageSamples == 1u && result.colors.empty() && !result.depth && rasterizesSampleZeroOnly(cx, result)) rasterizeSampleZero(result);
+        Require(color.coverageSamples == color.samples || color.coverageSamples == result.samples || (result.samples == 1u && (read(cx, 0x292) & 1u) == 0), "a one-fragment color target's sample count differs from the rasterizer's");
         const bool truncated = color.samples == 1u && result.samples > 1u && result.depth && result.depth->samples == result.samples && (result.colors.empty() || result.truncatedCoverage) && !overrasterized(cx, result.samples);
         Require((color.samples == result.samples && !result.mergedCoverage && !result.truncatedCoverage) || merged || truncated, "a color target's sample count differs from the rasterizer's");
+        Require(color.coverageSamples == color.samples || result.samples == 1u || staticAnchors(cx, result.depth->samples), "a one-fragment color target is supported only with static DB_EQAA anchors at the depth target's sample count");
         result.mergedCoverage = merged;
         result.truncatedCoverage = truncated;
         APS5_LOG_OUT_DEBUG("Color %u address=0x%llx extent=%ux%u bytes=%llu VkFormat=%u", slot, static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height, static_cast<unsigned long long>(color.bytes), static_cast<unsigned>(color.format));
@@ -1645,7 +1797,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 if ((weighted(state.colorBlendOp) && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) || (weighted(state.alphaBlendOp) && (constantColor(state.srcAlphaBlendFactor) || constantColor(state.dstAlphaBlendFactor)))) throw std::runtime_error("AGC graphics: blending into an 8_8 color target with the alternate component order with a constant color factor, which Vulkan applies to the second channel with the green blend constant instead of the alpha one, is not implemented");
             }
         }
-        if (color.packing != ShaderRecompiler::ColorExportPacking::None) {
+        if (color.packing == ShaderRecompiler::ColorExportPacking::Uint) state.blendEnable = VK_FALSE;
+        if (WordPacked(color.packing)) {
             const std::string packed = std::string(color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "an " : "a ") + PackedColorTargetName(color.packing);
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
             if (slotExport == 5 || slotExport == 6) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into " + packed + " target is unsupported");
@@ -1670,6 +1823,10 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 }
             }
         }
+        if (color.packing == ShaderRecompiler::ColorExportPacking::Uint) {
+            const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
+            if (slotExport != 1 && slotExport != 2 && slotExport != 3 && slotExport != 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
+        }
         if (state.blendEnable && !reversed && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {
             const auto addition = [](VkBlendOp op) { return op == VK_BLEND_OP_ADD || op == VK_BLEND_OP_SUBTRACT || op == VK_BLEND_OP_REVERSE_SUBTRACT; };
             Require(addition(state.colorBlendOp) && addition(state.alphaBlendOp), "dual-source blending with a MIN or MAX operation is unsupported");
@@ -1689,6 +1846,9 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     if (!result.colors.empty()) {
         result.color = result.colors.front();
         result.blend = result.blends[result.colors.front().exportIndex];
+    }
+    if (LogicOpFromRop(result.colorRop) != VK_LOGIC_OP_COPY) {
+        for (const auto& blend : result.blends) Require(blend.blendEnable == VK_FALSE, "a color logic operation together with blending is not implemented");
     }
     Require(result.reversedBlend == 0 || (exportSlots.size() == 1 && exportCount == 1), "blending into a color target with a reversed component order through a second source color needs that target to be the shader's only color export");
     if (result.dualSourceBlend) {
@@ -1864,11 +2024,17 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dstSelY = 5;
     surface.dstSelZ = 6;
     surface.dstSelW = 7;
-    surface.dccAddress = color.dccAddress;
+    surface.dccAddress = color.dccAddress != 0 ? color.dccAddress : color.chainDccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
     return surface;
 }
+DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number, std::uint32_t swap) {
+    auto decoded = DecodeColorFormatRaw(format, number, swap);
+    if (number == 4u && decoded.packing == ShaderRecompiler::ColorExportPacking::None) decoded.packing = ShaderRecompiler::ColorExportPacking::Uint;
+    return decoded;
+}
+
 
 ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allowMultisampleDcc) {
     const auto stride = slot * 0xfu;
@@ -1882,10 +2048,12 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     const auto decoded = DecodeColorFormat(format, number, swap);
     const auto attrib = read(cx, 0x31d + stride);
     zero(cx, 0x31d + stride, ~0x3f000u, "color destination alpha override or other CB_COLOR_ATTRIB modes");
-    color.samples = 1u << ((attrib >> 12u) & 7u);
-    Require(color.samples <= 8u, "color targets with more than eight samples are unsupported");
-    Require((1u << ((attrib >> 15u) & 3u)) == color.samples, "color targets with fewer fragments than samples (EQAA) are unsupported");
-    const auto multisampleInfo = color.samples > 1 ? 0x0c006000u : 0u;
+    color.coverageSamples = 1u << ((attrib >> 12u) & 7u);
+    Require(color.coverageSamples <= 8u, "color targets with more than eight samples are unsupported");
+    color.samples = 1u << ((attrib >> 15u) & 3u);
+    Require(color.samples <= color.coverageSamples, "color targets with more fragments than samples are unsupported");
+    Require(color.samples == color.coverageSamples || color.samples == 1u, "color targets with more than one but fewer fragments than samples (EQAA) are unsupported");
+    const auto multisampleInfo = color.coverageSamples > 1 ? 0x0c006000u : 0u;
     // ROUND_MODE (bit 18) only affects unorm rounding and packed float truncation. With DCC_ENABLE (bit 28) the target is written
     if ((info & ~(0x00039f7cu | 0x00040000u | 0x10000000u | 0x00002000u | multisampleInfo)) != 0) throw std::runtime_error("AGC graphics: color compression, DCC, endian conversion, nonstandard rounding or color optimization is unsupported (CB_COLOR_INFO 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%08x", info); return std::string(text); }() + ")");
     Require((info & 0x8000u) != 0 || number <= 1u || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
@@ -1975,7 +2143,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     color.format = decoded.format;
     color.componentMapping = decoded.componentMapping;
     color.packing = decoded.packing;
-    if (color.packing != ShaderRecompiler::ColorExportPacking::None && (info & 0x10000000u) != 0) throw std::runtime_error("AGC graphics: DCC-compressed " + std::string(PackedColorTargetName(color.packing)) + " color targets are unsupported");
+    if (WordPacked(color.packing) && (info & 0x10000000u) != 0) throw std::runtime_error("AGC graphics: DCC-compressed " + std::string(PackedColorTargetName(color.packing)) + " color targets are unsupported");
     Require(color.packing != ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || (info & 0x00040000u) == 0, "truncating (ROUND_MODE) 10_11_11 unorm color targets are unsupported");
     Require(color.packing != ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 || (info & 0x00040000u) == 0, "truncating (ROUND_MODE) 4_4_4_4 unorm color targets are unsupported");
     Require(color.packing != ShaderRecompiler::ColorExportPacking::Float11_11_10 || (info & 0x00040000u) != 0, "rounding (ROUND_MODE 0) 11_11_10 float color targets are unsupported");
@@ -2025,10 +2193,16 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.fmaskAddress = address - color.fmaskPipeBankXor;
         }
     }
+    if (color.coverageSamples > color.samples && (info & 0x4000u) != 0) {
+        const auto fmaskHigh = find(cx, 0x3a0 + slot);
+        color.fmaskAddress = (((fmaskHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(fmaskHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x321 + stride)) << 8u)) & ~0xffffull;
+        Require(color.fmaskAddress != 0, "a compressed one-fragment color target without an FMASK address is unsupported");
+    }
     if ((info & 0x10000000u) != 0) {
+        const auto dccHigh = find(cx, 0x3a8 + slot);
+        const auto dccBase = ((dccHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(dccHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x325 + stride)) << 8u);
         if (maxMip == 0) {
-            const auto dccHigh = find(cx, 0x3a8 + slot);
-            color.dccAddress = ((dccHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(dccHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x325 + stride)) << 8u);
+            color.dccAddress = dccBase;
             color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
             color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
             if (color.samples > 1) {
@@ -2036,11 +2210,15 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
                 color.dccControl = read(cx, 0x31e + stride);
                 if (!allowMultisampleDcc) Require((color.dccControl & 0x3ff80u) == 0, "multisampled DCC color transforms or lossy modes are not implemented");
             }
+        } else if (!volume && color.arrayLastSlice == 0 && slice == 0) {
+            color.chainDccAddress = dccBase;
+            color.dccAlphaOnMsb = DccAlphaOnMsb(color.format, swap);
+            color.dccPipeAligned = ((attrib3 >> 30u) & 1u) != 0;
         } else {
             static bool reported = false;
             if (!reported) {
                 reported = true;
-                std::fprintf(stderr, "[gpu] DCC keys of mipmapped color targets are ignored\n");
+                std::fprintf(stderr, "[gpu] DCC keys of mipmapped array and 3D color targets are ignored\n");
             }
         }
     }
@@ -2081,28 +2259,20 @@ std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue) {
     Require((control->second & ~0xf84u) == 0, "DB depth copy combined with a stencil copy, clear, resummarize or decompress");
     Require((read(cx, 0x200) & 0xfu) == 0, "DB depth copy with depth or stencil tests");
     Require((read(cx, 0x010) & 3u) == 3u, "DB depth copy from a depth plane that is not Z_32_FLOAT");
-    Require(ColorWriteMask(cx) == 1u, "DB depth copy into anything but the red channel of color target 0");
     const auto viewRegister = find(cx, 0x002);
-    const auto view = viewRegister == cx.end() ? 0u : viewRegister->second;
-    Require((read(cx, 0x010) & 0x000f1000u) == 0 && (view & 0x3c000000u) == 0, "DB depth copy from a mipmapped or partially resident depth plane");
+    Require((read(cx, 0x010) & 0x000f1000u) == 0 && ((viewRegister == cx.end() ? 0u : viewRegister->second) & 0x3c000000u) == 0, "DB depth copy from a mipmapped or partially resident depth plane");
+    Require(ColorWriteMask(cx) == 1u, "DB depth copy into anything but the red channel of color target 0");
+    Require((read(cx, 0x1e0) & (1u << 30u)) == 0, "DB depth copy with color target 0 blending is unsupported");
     DepthCopyPass pass{};
-    const auto high = find(cx, 0x01a);
-    pass.depthAddress = (high == cx.end() ? 0ull : static_cast<std::uint64_t>(high->second & 0xffu) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x012)) << 8u);
-    const auto size = read(cx, 0x007);
-    pass.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
-    pass.samples = 1u << ((read(cx, 0x010) >> 2u) & 3u);
-    if (pass.samples != 1u) pass.depthAddress &= ~std::uint64_t{65535u};
-    if (const auto slice = view & 0x1fffu; slice != 0) pass.depthAddress += static_cast<std::uint64_t>(slice) * DepthSliceBytes(pass.extent, 4u);
+    pass.source = decodeDepthPlane(cx);
     const auto maskLow = find(cx, 0x30e);
     const auto maskHigh = find(cx, 0x30f);
     Require((maskLow == cx.end() || maskLow->second == 0xffffffffu) && (maskHigh == cx.end() || maskHigh->second == 0xffffffffu), "DB depth copy with a sample mask is unsupported");
     pass.sample = (control->second & 0x80u) != 0 ? 0u : (control->second >> 8u) & 0xfu;
-    Require(pass.sample < pass.samples, "DB depth copy of a sample the depth plane does not have");
+    Require(pass.sample < pass.source.samples, "DB depth copy of a sample the depth plane does not have");
     pass.color = DecodeColorBuffer(cx, 0);
     Require(pass.color.format == VK_FORMAT_R32_SFLOAT && pass.color.samples == 1 && pass.color.mip == 0 && pass.color.layers == 1, "DB depth copy into a color target that is not a single-sample R32 float");
-    Require(pass.color.extent.width == pass.extent.width && pass.color.extent.height == pass.extent.height, "DB depth copy into a color target of another size");
-    Require(pass.color.cmaskAddress == 0, "DB depth copy into a color target with CMASK fast clears is unsupported");
-    Require(drawCovers(cx, pass.extent), "DB depth copy over part of the depth surface");
+    Require(pass.color.extent.width == pass.source.extent.width && pass.color.extent.height == pass.source.extent.height, "DB depth copy into a color target of another size");
     return pass;
 }
 
@@ -2145,7 +2315,7 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         Require(destination.samples == 1, "CB resolve into a multisampled target is unsupported");
         Require(destination.cmaskAddress == 0, "CB resolve into a fast-clear color target is unsupported (the resolve does not update its CMASK)");
         Require(source.format == destination.format && source.extent.width == destination.extent.width && source.extent.height == destination.extent.height, "CB resolve between different formats or extents is unsupported");
-        if (source.packing != ShaderRecompiler::ColorExportPacking::None) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
+        if (WordPacked(source.packing)) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
         requireCovered(destination);
         pass.source = source;
         pass.targets.push_back(destination);
@@ -2162,7 +2332,7 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
             Require(target.samples == 1, "CB metadata pass over a multisampled color target, whose texels are on the host, is unsupported (only a CB resolve is modeled)");
         }
         Require((read(cx, 0x31c + slot * 0xfu) & 0x10000000u) == 0 || target.dccAddress != 0, "CB metadata pass over a mipmapped DCC color target, whose keys are not modeled");
-        requireCovered(target);
+        if (target.cmaskAddress != 0 || target.dccAddress != 0) requireCovered(target);
         pass.targets.push_back(target);
     }
     return pass;
@@ -2216,13 +2386,15 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     static_cast<void>(value(cx, 0x1c4, zFormat));
     if (auto reason = nonzero(cx, 0x203, shaderControlMask(zFormat), "depth export, shader coverage or ordered fragment execution"); !reason.empty()) return reason;
     if (value(cx, 0x2dc, word)) {
-        const bool alphaDisabled = word == AlphaToCoverageDithered && alphaToCoverageDisabled(cx);
-        if ((word != AlphaToCoverageUndithered && word != AlphaToCoverageDithered) || alphaDisabled) {
+        const bool alphaDisabled = ditheredAlphaToCoverageWord(word) && alphaToCoverageDisabled(cx);
+        if ((word != AlphaToCoverageUndithered && !ditheredAlphaToCoverageWord(word)) || alphaDisabled) {
             if (auto reason = nonzero(cx, 0x2dc, alphaDisabled ? AlphaToCoverageMask & ~1u : AlphaToCoverageMask, "dithered or rounded alpha-to-coverage"); !reason.empty()) return reason;
         }
         if (!alphaDisabled && word == AlphaToCoverageDithered && !ditheredAlphaSamplesSupported(cx)) return "AGC graphics: dithered alpha-to-coverage requires eight matched raster/DB_EQAA samples and one pixel iteration";
-        if (!alphaDisabled && word == AlphaToCoverageDithered) {
-            if (!ditheredAlphaLocationsSupported(cx)) return "AGC graphics: dithered alpha-to-coverage with custom sample locations is unsupported";
+        if (!alphaDisabled && word == AlphaToCoverageTwoSampleDithered && !twoSampleDitheredAlphaSamplesSupported(cx)) return "AGC graphics: DB_ALPHA_TO_MASK 0xe701 requires two matched raster/DB_EQAA samples and one pixel iteration";
+        if (!alphaDisabled && ditheredAlphaToCoverageWord(word)) {
+            if (word == AlphaToCoverageDithered && !ditheredAlphaLocationsSupported(cx)) return "AGC graphics: dithered alpha-to-coverage with custom sample locations is unsupported";
+            if (word == AlphaToCoverageTwoSampleDithered && !twoSampleDitheredAlphaLocationsSupported(cx)) return "AGC graphics: DB_ALPHA_TO_MASK 0xe701 is supported only with the two-sample locations (4,4),(-4,-4) or (-4,4),(4,-4) in every pixel";
             std::uint32_t format = 0;
             if (value(cx, 0x1c5, format)) {
                 format &= 0xfu;

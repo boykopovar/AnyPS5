@@ -1,3 +1,4 @@
+#include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -142,11 +143,6 @@ int APS5_VABI sceCesRefersUcsProfileCp857(void) {
     return 0;
 }
 
-int APS5_VABI sceCesRefersUcsProfileCp858(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceCesRefersUcsProfileCp864(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -247,16 +243,6 @@ int APS5_VABI sceCesUcs2StrToIso2022Str(void) {
     return 0;
 }
 
-int APS5_VABI sceCesUcs2ToMbc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesUcsProfileInitEucJis2004(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceCesUcsProfileInitIso2022JpCp50221(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -268,11 +254,6 @@ int APS5_VABI sceCesUcsProfileInitIso2022JpCp50222(void) {
 }
 
 int APS5_VABI sceCesUcsProfileInitIso2022JpRfc1468(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesUcsProfileInitSJis2004X0213(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -297,21 +278,6 @@ int APS5_VABI sceCesUtf16StrToIso2022Str(void) {
     return 0;
 }
 
-int APS5_VABI sceCesUtf16ToMbc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesUtf16beToMbc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesUtf16leToMbc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceCesUtf32StrGetIso2022Len(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -322,32 +288,12 @@ int APS5_VABI sceCesUtf32StrToIso2022Str(void) {
     return 0;
 }
 
-int APS5_VABI sceCesUtf32ToMbc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesUtf32beToMbc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesUtf32leToMbc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceCesUtf8StrGetIso2022Len(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceCesUtf8StrToIso2022Str(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesUtf8ToMbc(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -392,7 +392,7 @@ bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t
                 }
                 auto last = first + BlockWords;
                 while (last < end && !page->valid.TestBlock(last)) last += BlockWords;
-                std::memcpy(&page->words[first], reinterpret_cast<const void*>(base + first * sizeof(std::uint32_t)), (last - first) * sizeof(std::uint32_t));
+                GuestMemory::CopyGuestBytes(&page->words[first], reinterpret_cast<const void*>(base + first * sizeof(std::uint32_t)), (last - first) * sizeof(std::uint32_t));
                 page->valid.SetRun(first, last - first);
                 first = last;
             }
@@ -495,8 +495,8 @@ bool ShaderMemory::place(std::uint64_t address, const std::uint32_t* values, std
                 if (!page.valid.Test(index + word)) page.words[index + word] = values[word];
             }
         }
-        if (headOpen && head < index) std::memcpy(&page.words[head], reinterpret_cast<const void*>(base + head * sizeof(std::uint32_t)), (index - head) * sizeof(std::uint32_t));
-        if (tailOpen && index + words < tail) std::memcpy(&page.words[index + words], reinterpret_cast<const void*>(base + (index + words) * sizeof(std::uint32_t)), (tail - index - words) * sizeof(std::uint32_t));
+        if (headOpen && head < index) GuestMemory::CopyGuestBytes(&page.words[head], reinterpret_cast<const void*>(base + head * sizeof(std::uint32_t)), (index - head) * sizeof(std::uint32_t));
+        if (tailOpen && index + words < tail) GuestMemory::CopyGuestBytes(&page.words[index + words], reinterpret_cast<const void*>(base + (index + words) * sizeof(std::uint32_t)), (tail - index - words) * sizeof(std::uint32_t));
         page.valid.SetRun(page.lazy ? head : index, page.lazy ? tail - head : words);
         page.read.SetRun(index, words);
         if (recent) page.recent.SetRun(index, words);

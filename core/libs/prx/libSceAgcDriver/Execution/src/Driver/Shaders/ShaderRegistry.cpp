@@ -138,7 +138,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
                 cache.erase(found);
             }
             const auto bytes = result->code.size() * sizeof(std::uint32_t);
-            while (!cache.empty() && (cache.size() >= 64 || cacheBytes + bytes > 8 * 1024 * 1024)) {
+            while (!cache.empty() && (cache.size() >= 4096 || cacheBytes + bytes > 64 * 1024 * 1024)) {
                 cacheBytes -= cache.back()->code.size() * sizeof(std::uint32_t);
                 cache.pop_back();
             }
@@ -1279,7 +1279,7 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
         wave = pixel->wave32 ? 32u : 64u;
     } else {
         const auto routing = RegisterValue(state.context, 0x2d5);
-        wave = (routing & 0x00400000u) != 0 ? 32u : 64u;
+        wave = (routing & (stage == Stage::TessellationControl ? 0x00200000u : 0x00400000u)) != 0 ? 32u : 64u;
         const bool unroutedBarrier = routing == 0 && std::ranges::any_of(decoded.instructions, [](const auto& instruction) {
             return instruction.op == ShaderRecompiler::RdnaOpcode::SBarrier;
         });
@@ -1292,6 +1292,7 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
             auto stageState = state;
             stageState.context[0x1b6] = 0;
             const auto stages = Graphics::DecodeShaderStages(stageState);
+            if (stages.tessellationGeometry) return {};
             graphics = ShaderRecompiler::GraphicsCompileContext{0, {}, stages.mesh, stages.tessellation, {}};
             if (stages.mesh) { stage = Stage::Mesh; firstUser = 0; }
             if (stages.tessellation && snapshot.type == 2) stage = Stage::TessellationEvaluation;
@@ -1483,7 +1484,7 @@ public:
         static auto* pool = [] {
             const char* text = std::getenv("APS5_PREBUILD_THREADS");
             std::lock_guard lifecycle(Lifecycle());
-            auto* created = new RegistrationPreparePool(Closing() ? 0u : text != nullptr ? std::max(1u, static_cast<unsigned>(std::strtoul(text, nullptr, 10))) : 1u);
+            auto* created = new RegistrationPreparePool(Closing() ? 0u : text != nullptr ? std::max(1u, static_cast<unsigned>(std::strtoul(text, nullptr, 10))) : std::max(2u, std::thread::hardware_concurrency() / 2u));
             PrebuildSlot().store(created);
             return created;
         }();
@@ -1496,6 +1497,17 @@ public:
 
     static unsigned LiveWorkers() {
         return liveWorkers.load(std::memory_order_acquire);
+    }
+
+    static std::optional<std::size_t> Pending() {
+        std::size_t pending = 0;
+        for (auto* pool : {Existing(), ExistingPrebuild()}) {
+            if (pool == nullptr) continue;
+            std::unique_lock lock(pool->mutex, std::try_to_lock);
+            if (!lock.owns_lock()) return std::nullopt;
+            pending += pool->tasks.size() + pool->running;
+        }
+        return pending;
     }
 
     static void CloseAll() {
@@ -1637,7 +1649,7 @@ private:
 
     static void* Main(void* argument) {
         auto& pool = *static_cast<RegistrationPreparePool*>(argument);
-        if (PerformanceTrace::Configured()) PerformanceTrace::BindThread("shader prepare", TraceThread::DefaultCapacity / 8);
+        PerformanceTrace::BindThread("shader prepare", TraceThread::DefaultCapacity / 8);
         for (;;) {
             Task task;
             {
@@ -1702,7 +1714,7 @@ void PrepareRegisteredInBackground(std::shared_ptr<const ShaderSnapshot> snapsho
         try {
             entries = PrepareRegistered(*plan);
         } catch (const std::exception& error) {
-            APS5_LOG_ERR("Shader 0x%llx could not be prepared after registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), error.what());
+            APS5_LOG_ERR("Shader 0x%llx snapshot=0x%llx could not be prepared after registration: %s", static_cast<unsigned long long>(snapshot->codeAddress), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(snapshot.get())), error.what());
             failure = std::current_exception();
         } catch (...) {
             failure = std::current_exception();
@@ -1750,14 +1762,19 @@ unsigned RegistrationPreparationThreads() {
     return RegistrationPreparePool::LiveWorkers();
 }
 
+std::optional<std::size_t> RegistrationPreparationsPending() {
+    return RegistrationPreparePool::Pending();
+}
+
 std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target, bool deferUnprepared) {
     ShaderPreparationTransaction transaction;
     require(decoded.programs.size() == decoded.roles.size(), "graphics ABI program roles are incomplete");
     for (const auto& program : decoded.programs) require(program.snapshot != nullptr, "graphics ABI has no registered shader snapshot");
     std::vector<ShaderRecompiler::ProgramRole> expected;
-    if (decoded.state.stages.path == Graphics::ShaderPath::Tessellation) {
+    if (decoded.state.stages.path == Graphics::ShaderPath::Tessellation || decoded.state.stages.path == Graphics::ShaderPath::TessellationGeometry) {
         if (!decoded.roles.empty() && decoded.roles.front() == ShaderRecompiler::ProgramRole::Local) expected.push_back(ShaderRecompiler::ProgramRole::Local);
         expected.insert(expected.end(), {ShaderRecompiler::ProgramRole::Hull, ShaderRecompiler::ProgramRole::Domain});
+        if (decoded.state.stages.path == Graphics::ShaderPath::TessellationGeometry) expected.push_back(ShaderRecompiler::ProgramRole::Main);
     } else {
         expected.push_back(ShaderRecompiler::ProgramRole::Main);
         if (decoded.state.stages.path == Graphics::ShaderPath::Geometry && !decoded.programs.empty() && decoded.programs.front().snapshot->type == 4) expected.push_back(ShaderRecompiler::ProgramRole::GeometryBack);
@@ -1777,12 +1794,12 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
     std::vector<PreparedGraphicsStage> prepared;
     std::uint32_t pushOffset = 0;
     const bool fixedSlots = target.fixedPushSlots;
-    const auto capacity = decoded.state.stages.mesh ? ShaderRecompiler::MeshDrawPushOffsetBytes : decoded.state.stages.tessellation ? ShaderRecompiler::TessellationLevelPushOffsetBytes : decoded.state.depthRemap.mode != 0u ? ShaderRecompiler::DepthRemapPushOffsetBytes : Graphics::PipelinePushSlotBytes;
+    const auto capacity = Graphics::StagePushLimit(decoded.state.stages, 0, decoded.state.depthRemap.mode != 0u);
     for (std::size_t index = 0; index < decoded.programs.size(); ++index) {
         if (decoded.roles[index] == ShaderRecompiler::ProgramRole::GeometryBack) continue;
         const auto& program = decoded.programs[index];
         const bool fragment = program.binary.stage == ShaderRecompiler::ShaderStage::Fragment;
-        const auto wave = fragment ? decoded.state.stages.fragmentWaveSize : decoded.state.stages.vertexWaveSize;
+        const auto wave = Graphics::StageWaveSize(decoded.state.stages, program.binary.stage);
         pushOffset = Graphics::StagePushOffset(pushOffset, program.binary.stage, fixedSlots);
         const auto offset = pushOffset;
         const auto room = (fixedSlots && fragment ? Graphics::PipelinePushSlotBytes : capacity) - pushOffset % Graphics::PipelinePushSlotBytes;
@@ -1803,7 +1820,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
             vertex->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, decoded.state.paClVsOutCntl, program.tailContinuation.get()) | decoded.state.layerExports;
             Graphics::ApplyPointSize(decoded.state, *vertex);
         }
-        ShaderRecompiler::RecompileRequest request{program.binary, {wave, program.firstUserSgpr, program.userData, {}, fragment ? std::optional(decoded.pixel) : std::nullopt, vertex, memory, RegisteredFloatMode(*program.snapshot)}, target, {0, 0, offset, room}, ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, decoded.state.stages.mesh, decoded.state.stages.tessellation, {}}};
+        ShaderRecompiler::RecompileRequest request{program.binary, {wave, program.firstUserSgpr, program.userData, {}, fragment ? std::optional(decoded.pixel) : std::nullopt, vertex, memory, RegisteredFloatMode(*program.snapshot)}, target, {0, 0, offset, room}, ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, Graphics::StageMeshConfiguration(decoded.state.stages, program.binary.stage), decoded.state.stages.tessellation, {}}};
         std::vector<std::uint64_t> key;
         ShaderRecompiler::BuildPreparedShaderKey(request, key);
         std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
@@ -2111,6 +2128,37 @@ std::uint64_t NullPixelProgramAddress() {
     return reinterpret_cast<std::uintptr_t>(NullPixelCode);
 }
 
+alignas(256) static const std::uint32_t DepthCopyMultisamplePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0x7e0a0208u, 0xf0000130u, 0x00000603u, 0xbf8c3f70u, 0xf8001801u, 0x00000006u, 0xbf810000u};
+alignas(256) static const std::uint32_t DepthCopySinglePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0xf0000108u, 0x00000603u, 0xbf8c3f70u, 0xf8001801u, 0x00000006u, 0xbf810000u};
+static const Shader DepthCopyMultisamplePixelShader = [] {
+    Shader shader{};
+    shader.file_header = 0x34333231u;
+    shader.version = 0x18u;
+    shader.code = DepthCopyMultisamplePixelCode;
+    shader.header_size = sizeof(Shader);
+    shader.shader_size = sizeof(DepthCopyMultisamplePixelCode);
+    shader.type = 1;
+    return shader;
+}();
+static const Shader DepthCopySinglePixelShader = [] {
+    Shader shader{};
+    shader.file_header = 0x34333231u;
+    shader.version = 0x18u;
+    shader.code = DepthCopySinglePixelCode;
+    shader.header_size = sizeof(Shader);
+    shader.shader_size = sizeof(DepthCopySinglePixelCode);
+    shader.type = 1;
+    return shader;
+}();
+
+std::uint64_t DepthCopyPixelProgramAddress(bool multisampled) {
+    return reinterpret_cast<std::uintptr_t>(multisampled ? DepthCopyMultisamplePixelCode : DepthCopySinglePixelCode);
+}
+
+std::uint32_t DepthCopyPixelUserWords(bool multisampled) {
+    return multisampled ? 9u : 8u;
+}
+
 void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
     BindTitleThread();
     PerformanceContext timingContext(FrameTiming::Preparation());
@@ -2251,6 +2299,25 @@ ShaderSnapshot PrepareNullPixelProgram(const VulkanDevice& device) {
     return null;
 }
 
+ShaderSnapshot PrepareDepthCopyPixelProgram(bool multisampled) {
+    const auto& shader = multisampled ? DepthCopyMultisamplePixelShader : DepthCopySinglePixelShader;
+    const auto* code = multisampled ? DepthCopyMultisamplePixelCode : DepthCopySinglePixelCode;
+    ShaderSnapshot copy{DepthCopyPixelProgramAddress(multisampled), reinterpret_cast<std::uintptr_t>(&shader), shader.type, {}, {}};
+    copy.code.assign(code, code + 64);
+    copy.header.resize(sizeof(Shader));
+    std::memcpy(copy.header.data(), &shader, sizeof(Shader));
+    auto state = DecodeRegisteredState(copy);
+    state.shader.insert_or_assign(0x008u, static_cast<std::uint32_t>(copy.codeAddress >> 8u));
+    state.shader.insert_or_assign(0x009u, static_cast<std::uint32_t>(copy.codeAddress >> 40u));
+    state.shader.insert_or_assign(0x00bu, DepthCopyPixelUserWords(multisampled) << 1u);
+    state.context.insert_or_assign(0x1b3u, 0x8002u);
+    state.context.insert_or_assign(0x1b4u, 0x8002u);
+    state.context.insert_or_assign(0x1c5u, 1u);
+    copy.registeredState = std::make_shared<const RegisteredShaderState>(std::move(state));
+    copy.prepared->deferred = true;
+    return copy;
+}
+
 std::shared_ptr<const ShaderRegistry> Driver::RegisteredShaders() {
     std::lock_guard lock(mutex);
     return shaders;
@@ -2358,6 +2425,9 @@ void Driver::RegisterShader(const Shader* shader) {
     PublishRegisteredShader(shaders, published);
     if (shaders->find(NullPixelProgramAddress()) == shaders->end()) {
         PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareNullPixelProgram(*localDevice)));
+    }
+    for (const bool multisampled : {false, true}) {
+        if (shaders->find(DepthCopyPixelProgramAddress(multisampled)) == shaders->end()) PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareDepthCopyPixelProgram(multisampled)));
     }
     transaction.Commit();
     if (preparation != nullptr) PrepareRegisteredInBackground(published, std::move(preparation));

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <bit>
 #include <cerrno>
@@ -9,19 +10,6 @@
 #include <cstdlib>
 #include <iterator>
 #include <limits>
-
-extern "C" {
-double APS5_VABI j0_nid_postfix(double);
-double APS5_VABI j1_nid_postfix(double);
-double APS5_VABI jn_nid_postfix(int, double);
-double APS5_VABI y0_nid_postfix(double);
-double APS5_VABI y1_nid_postfix(double);
-double APS5_VABI yn_nid_postfix(int, double);
-float APS5_VABI y0f_nid_postfix(float);
-float APS5_VABI y1f_nid_postfix(float);
-float APS5_VABI ynf_nid_postfix(int, float);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -99,6 +87,7 @@ static void CheckSecondKind() {
         y0_nid_postfix(input);
         y1_nid_postfix(input);
         yn_nid_postfix(3, input);
+
         Require(std::fetestexcept(FE_DIVBYZERO | FE_INVALID) == 0);
     }
 }

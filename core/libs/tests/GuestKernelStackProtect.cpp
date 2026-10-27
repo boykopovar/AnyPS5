@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <atomic>
@@ -17,18 +19,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI scePthreadKeyDelete(PthreadKey key);
-int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
-int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end);
-void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) noexcept;
-int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept;
-int* APS5_VABI __error_nid_postfix();
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr std::uintptr_t Page = 0x4000;
@@ -112,7 +102,6 @@ static void CheckFixedStackRemap(std::uintptr_t low, void* start) {
     reject(address + 1, Page, FixedPrivateAnonymous, -1, 0, 22);
     reject(address, Page, FixedPrivateAnonymous, 0, 0, 22);
     reject(address, Page, FixedPrivateAnonymous, -1, Page, 22);
-    reject(address, Page, FixedPrivateAnonymous | 0x4000, -1, 0, 0);
     int active = 0;
     const auto activePage = reinterpret_cast<std::uintptr_t>(&active) & ~(Page - 1);
     void* activeStart = nullptr;

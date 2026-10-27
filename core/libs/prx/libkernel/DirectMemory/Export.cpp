@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -19,6 +21,10 @@
 #include <sstream>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #endif
 #include <algorithm>
 #include <cassert>
@@ -32,8 +38,6 @@
 #include <mutex>
 
 extern "C" std::uint64_t GuestImageSegmentBytes_nid_no_patch();
-extern "C" void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) noexcept;
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -276,8 +280,6 @@ int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int pro
  return _mapFlexible(addr_in_out, len, prot, flags & ~IgnoredHeapFlag);
 }
 
-int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const char* name);
-
 int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
  const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
  if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
@@ -504,6 +506,12 @@ int APS5_VABI sceKernelGetPageTableStats(int* cpu_total, int* cpu_available, int
  return 0;
 }
 
+int APS5_VABI sceKernelGetTraceMemoryStats(std::uint64_t* first, std::uint64_t* second) {
+ if (first) *first = 0;
+ if (second) *second = 0;
+ return 0;
+}
+
 int APS5_VABI sceKernelGetPrtAperture(int index, void** addr, size_t* len) {
  if (index < 0 || index >= PRT_APERTURE_COUNT || !addr || !len) return SCE_KERNEL_ERROR_EINVAL;
  std::lock_guard lock(g_prtLock);
@@ -518,8 +526,6 @@ int APS5_VABI sceKernelSetPrtAperture(int index, void* addr, size_t len) {
  g_prtApertures[index] = {addr, len};
  return 0;
 }
-
-int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, int* num_entries_out, int flags);
 
 int APS5_VABI sceKernelBatchMap(KernelBatchMapEntry* entries, int num_entries, int* num_entries_out) {
  constexpr int MapFixed = 0x10;
@@ -563,6 +569,18 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
  }
  if (num_entries_out) *num_entries_out = processed;
  return result;
+}
+
+int32_t APS5_VABI sceKernelMapNamedSystemFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
+    constexpr size_t MaximumNameLength = 32;
+    if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    if (name == nullptr) throw std::runtime_error("sceKernelMapNamedSystemFlexibleMemory: null name");
+    if (strnlen(name, MaximumNameLength) >= MaximumNameLength) throw std::runtime_error("sceKernelMapNamedSystemFlexibleMemory: name of 32 bytes or more");
+    const int result = DoMapAnon(addr_in_out, len, prot, flags);
+    if (result != 0) return result;
+    _releaseFlexible(reinterpret_cast<uintptr_t>(*addr_in_out), len);
+    sceKernelSetVirtualRangeName(*addr_in_out, len, name);
+    return 0;
 }
 
 }
@@ -676,6 +694,20 @@ int UnlockHostPages(std::uintptr_t start, std::uintptr_t end) {
 int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
     auto* const address = reinterpret_cast<void*>(start);
     const std::size_t bytes = end - start;
+#ifdef __APPLE__
+    for (mach_vm_address_t cursor = start; cursor < end;) {
+        mach_vm_address_t region = cursor;
+        mach_vm_size_t size = 0;
+        vm_region_basic_info_data_64_t info{};
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object = MACH_PORT_NULL;
+        const kern_return_t status = mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object);
+        if (status == KERN_INVALID_ADDRESS) return SCE_KERNEL_ERROR_ENOMEM;
+        if (status != KERN_SUCCESS) throw std::runtime_error("mach_vm_region failed");
+        if (region > cursor || (info.protection & (VM_PROT_READ | VM_PROT_EXECUTE)) == 0) return SCE_KERNEL_ERROR_ENOMEM;
+        cursor = region + size;
+    }
+#endif
     if (::mlock(address, bytes) == 0) {
         RecordLockedRange(start, end);
         return 0;

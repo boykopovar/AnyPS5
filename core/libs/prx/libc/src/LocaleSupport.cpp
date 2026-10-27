@@ -1,4 +1,7 @@
+#include "prx/libc/include/Api.hpp"
 #include <climits>
+#include <cmath>
+#include <cstdlib>
 #include <clocale>
 #include <cstddef>
 #include <cstdio>
@@ -25,8 +28,9 @@
 #include "SceTypes.hpp"
 
 extern "C" {
-void* APS5_VABI _Znwm_nid_postfix(std::size_t size);
-void APS5_VABI _ZdlPv_nid_postfix(void* pointer);
+extern std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
+extern std::int32_t _ZNSt6locale2id7_Id_cntE_nid_postfix;
 }
 
 namespace {
@@ -110,6 +114,7 @@ void APS5_VABI DestroyCollate(GuestLocale::Facet*) {}
 void APS5_VABI DeleteCollate(GuestLocale::Facet* self) {
     if (self == nullptr) throw std::invalid_argument("collate delete: null facet");
     _ZdlPv_nid_postfix(self);
+
 }
 
 void APS5_VABI RetainFacet(GuestLocale::Facet* self) {
@@ -220,6 +225,297 @@ std::int64_t APS5_VABI WideCollateHash(const GuestLocale::CollateFacet*, const c
 
 const GuestLocale::CollateVtable g_wideCollateVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideCollateCompare, WideCollateTransform, WideCollateHash};
 
+bool APS5_VABI CodecvtAlwaysNoconv(const GuestLocale::Facet*) {
+    return true;
+}
+
+int APS5_VABI CodecvtConstantOne(const GuestLocale::Facet*) {
+    return 1;
+}
+
+int APS5_VABI CodecvtNoConversion(GuestLocale::Facet*, std::uint64_t*, const char* first1, const char*, const char** next1, char* first3, char*, char** next3) {
+    *next1 = first1;
+    *next3 = first3;
+    return 3;
+}
+
+int APS5_VABI CodecvtUnshift(GuestLocale::Facet*, std::uint64_t*, char* first3, char*, char** next3) {
+    *next3 = first3;
+    return 0;
+}
+
+std::size_t APS5_VABI CodecvtLength(GuestLocale::Facet*, std::uint64_t*, const char* first1, const char* last1, std::size_t count) {
+    return std::min(static_cast<std::size_t>(last1 - first1), count);
+}
+
+const GuestLocale::CodecvtVtable g_codecvtVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, CodecvtAlwaysNoconv, CodecvtConstantOne, CodecvtConstantOne, CodecvtNoConversion, CodecvtNoConversion, CodecvtUnshift, CodecvtLength};
+
+GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
+    if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
+    const std::size_t length = std::strlen(source);
+    char* data = result->buffer;
+    std::size_t capacity = GuestStringInlineCapacity;
+    if (length > GuestStringInlineCapacity) {
+        capacity = length | GuestStringCapacityMask;
+        data = static_cast<char*>(AllocateStringStorage(capacity + 1));
+    }
+    if (length != 0) std::memcpy(data, source, length);
+    data[length] = 0;
+    if (data != result->buffer) result->pointer = data;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+char APS5_VABI NumpunctDecimalPoint(const GuestLocale::NumpunctFacet* self) {
+    return self->decimalPoint;
+}
+
+char APS5_VABI NumpunctThousandsSep(const GuestLocale::NumpunctFacet* self) {
+    return self->thousandsSep;
+}
+
+GuestLocale::String* APS5_VABI NumpunctGrouping(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignCString(result, self->grouping);
+}
+
+GuestLocale::String* APS5_VABI NumpunctFalsename(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignCString(result, self->falsename);
+}
+
+GuestLocale::String* APS5_VABI NumpunctTruename(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignCString(result, self->truename);
+}
+
+const GuestLocale::NumpunctVtable g_numpunctVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, NumpunctDecimalPoint, NumpunctThousandsSep, NumpunctGrouping, NumpunctFalsename, NumpunctTruename};
+
+void PutCharacter(GuestLocale::OutputIterator& out, char character) {
+    GuestLocale::Streambuf* buffer = out.buffer;
+    if (buffer == nullptr) {
+        out.failed = true;
+        return;
+    }
+    char* next = *buffer->putNext;
+    if (next != nullptr && static_cast<std::int32_t>(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(*buffer->putEnd) - reinterpret_cast<std::uintptr_t>(next))) > 0) {
+        *buffer->putNext = next + 1;
+        *next = character;
+        return;
+    }
+    if (buffer->vtable->overflow(buffer, static_cast<unsigned char>(character)) == -1) out.failed = true;
+}
+
+GuestLocale::OutputIterator APS5_VABI TimePutDoPut(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase*, char, const GuestTm* time, char format, char modifier) {
+    const char pattern[] = {'!', '%', modifier != 0 ? modifier : format, modifier != 0 ? format : '\0', '\0'};
+    std::string text;
+    std::size_t length = 0;
+    for (std::size_t size = 16; length == 0; size *= 2) {
+        text.resize(size);
+        length = strftime_nid_postfix(text.data(), size, pattern, time);
+    }
+    for (std::size_t index = 1; index < length; ++index) PutCharacter(out, text[index]);
+    return out;
+}
+
+constexpr std::int32_t IosLeft = 0x2;
+constexpr std::int32_t IosInternal = 0x8;
+constexpr std::int32_t IosAdjustField = 0xe;
+constexpr std::int32_t IosOct = 0x20;
+constexpr std::int32_t IosHex = 0x40;
+constexpr std::int32_t IosBaseField = 0x70;
+constexpr std::int32_t IosShowBase = 0x80;
+constexpr std::int32_t IosShowPoint = 0x100;
+constexpr std::int32_t IosUppercase = 0x200;
+constexpr std::int32_t IosShowPos = 0x400;
+constexpr std::int32_t IosScientific = 0x800;
+constexpr std::int32_t IosFixed = 0x1000;
+constexpr std::int32_t IosHexFloat = 0x1800;
+constexpr std::int32_t IosBoolAlpha = 0x8000;
+
+const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uint64_t& id) {
+    std::atomic_ref<std::uint64_t> slot(id);
+    if (slot.load() == 0) {
+        _Locksyslock_nid_postfix();
+        if (slot.load() == 0) slot.store(static_cast<std::uint64_t>(++_ZNSt6locale2id7_Id_cntE_nid_postfix));
+        _Unlocksyslock_nid_postfix();
+    }
+    const std::uint64_t index = slot.load();
+    const GuestLocale::Implementation* locale = *stream->locale;
+    const GuestLocale::Facet* facet = index < locale->facetCount ? locale->facets[index] : nullptr;
+    if (facet != nullptr || !locale->transparent) return facet;
+    const GuestLocale::Implementation* global = _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
+    return index < global->facetCount ? global->facets[index] : nullptr;
+}
+
+const GuestLocale::Facet* StreamNumpunct(const GuestLocale::IosBase* stream) {
+    if (const GuestLocale::Facet* facet = FindFacet(stream, _ZNSt8numpunctIcE2idE_nid_postfix)) return facet;
+    static GuestLocale::Facet* const fallback = [] {
+        GuestLocale::Facet* created = nullptr;
+        _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&created, nullptr);
+        return created;
+    }();
+    return fallback;
+}
+
+const GuestLocale::NumpunctVtable& Punctuation(const GuestLocale::Facet* facet) {
+    return *reinterpret_cast<const GuestLocale::NumpunctVtable*>(facet->vtable);
+}
+
+const GuestLocale::NumpunctFacet* AsNumpunct(const GuestLocale::Facet* facet) {
+    return reinterpret_cast<const GuestLocale::NumpunctFacet*>(facet);
+}
+
+std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const GuestLocale::NumpunctFacet*), const GuestLocale::Facet* facet) {
+    GuestLocale::String value{};
+    method(&value, AsNumpunct(facet));
+    const bool onHeap = value.capacity > GuestStringInlineCapacity;
+    std::string text(onHeap ? value.pointer : value.buffer, value.size);
+    if (onHeap) _ZdlPv_nid_postfix(value.capacity + 1 < GuestStringLargeAllocation ? static_cast<void*>(value.pointer) : reinterpret_cast<void**>(value.pointer)[-1]);
+    return text;
+}
+
+std::string Widen(const GuestLocale::IosBase* stream, const char* text, std::size_t count) {
+    std::string result(text, count);
+    if (const GuestLocale::Facet* ctype = FindFacet(stream, _ZNSt5ctypeIcE2idE_nid_postfix)) reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable)->widenRange(ctype, text, text + count, result.data());
+    return result;
+}
+
+bool HexPrefix(const char* text, std::size_t prefix, std::size_t count) {
+    return prefix + 2 <= count && text[prefix] == '0' && (text[prefix + 1] == 'x' || text[prefix + 1] == 'X');
+}
+
+std::size_t SignPrefix(const char* text, std::size_t count) {
+    return count > 0 && (text[0] == '+' || text[0] == '-') ? 1 : 0;
+}
+
+void InsertSeparators(std::string& text, const std::string& grouping, char separator, std::size_t offset, std::size_t prefix) {
+    const char* group = grouping.c_str();
+    while (static_cast<signed char>(*group) != CHAR_MAX && static_cast<signed char>(*group) > 0 && static_cast<std::size_t>(*group) < offset - prefix) {
+        offset -= static_cast<std::size_t>(*group);
+        text.insert(offset, 1, separator);
+        if (static_cast<signed char>(group[1]) > 0) ++group;
+    }
+}
+
+GuestLocale::OutputIterator PutField(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const std::string& text, std::size_t prefix) {
+    const std::int32_t width = stream->width;
+    std::size_t fillCount = width <= 0 || static_cast<std::size_t>(width) <= text.size() ? 0 : static_cast<std::size_t>(width) - text.size();
+    const std::int32_t adjust = stream->flags & IosAdjustField;
+    if (adjust != IosLeft && adjust != IosInternal) {
+        for (; fillCount != 0; --fillCount) PutCharacter(out, fill);
+    }
+    for (std::size_t index = 0; index < prefix; ++index) PutCharacter(out, text[index]);
+    if (adjust == IosInternal) {
+        for (; fillCount != 0; --fillCount) PutCharacter(out, fill);
+    }
+    for (std::size_t index = prefix; index < text.size(); ++index) PutCharacter(out, text[index]);
+    stream->width = 0;
+    for (; fillCount != 0; --fillCount) PutCharacter(out, fill);
+    return out;
+}
+
+GuestLocale::OutputIterator PutInteger(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
+    std::size_t prefix = SignPrefix(digits, count);
+    if ((stream->flags & IosBaseField) == IosHex && HexPrefix(digits, prefix, count)) prefix += 2;
+    std::string text = Widen(stream, digits, count);
+    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    const std::string grouping = TakeString(Punctuation(punct).grouping, punct);
+    if (static_cast<signed char>(grouping[0]) != CHAR_MAX && static_cast<signed char>(grouping[0]) > 0) InsertSeparators(text, grouping, Punctuation(punct).thousandsSep(AsNumpunct(punct)), count, prefix);
+    return PutField(out, stream, fill, text, prefix);
+}
+
+GuestLocale::OutputIterator PutFloating(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* digits, std::size_t count) {
+    const std::size_t sign = SignPrefix(digits, count);
+    const std::size_t prefix = sign != 0 ? sign : HexPrefix(digits, 0, count) ? 2 : 0;
+    const bool hex = (stream->flags & IosHexFloat) == IosHexFloat;
+    const std::size_t exponent = std::strcspn(digits, hex ? "pP" : "eE");
+    const char point[2] = {localeconv_nid_postfix()->decimal_point[0], '\0'};
+    const std::size_t pointOffset = std::strcspn(digits, point);
+    std::string text = Widen(stream, digits, count);
+    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    const std::string grouping = TakeString(Punctuation(punct).grouping, punct);
+    const char separator = Punctuation(punct).thousandsSep(AsNumpunct(punct));
+    std::size_t offset = exponent;
+    if (pointOffset != count) {
+        offset = pointOffset;
+        text[pointOffset] = Punctuation(punct).decimalPoint(AsNumpunct(punct));
+    }
+    const char lead = digits[prefix];
+    if (lead != 'I' && lead != 'N' && lead != 'i' && lead != 'n') InsertSeparators(text, grouping, separator, offset, prefix);
+    return PutField(out, stream, fill, text, prefix);
+}
+
+template<typename Value> GuestLocale::OutputIterator PutFormattedInteger(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* qualifier, char decimal, Value value) {
+    const std::int32_t flags = stream->flags;
+    const std::int32_t base = flags & IosBaseField;
+    const char conversion = base == IosOct ? 'o' : base != IosHex ? decimal : (flags & IosUppercase) != 0 ? 'X' : 'x';
+    const std::string format = std::string("%") + ((flags & IosShowPos) != 0 ? "+" : "") + ((flags & IosShowBase) != 0 ? "#" : "") + qualifier + conversion;
+    char digits[64];
+    const int count = snprintf_nid_postfix(digits, sizeof(digits), format.c_str(), value);
+    return PutInteger(out, stream, fill, digits, static_cast<std::size_t>(count));
+}
+
+template<typename Value> GuestLocale::OutputIterator PutFormattedFloating(GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const char* qualifier, Value value) {
+    const std::int32_t flags = stream->flags;
+    const std::int32_t field = flags & IosHexFloat;
+    const std::int32_t precision = field == IosHexFloat ? 6 : stream->precision;
+    std::int64_t size = precision;
+    if (field == IosFixed && std::fabs(value) > Value(1e10)) {
+        int exponent = 0;
+        std::frexp(value, &exponent);
+        size += static_cast<std::int64_t>(std::abs(exponent)) * 30103 / 100000;
+    }
+    size += 50;
+    const char conversion = field == IosFixed ? 'f' : field == IosHexFloat ? 'a' : field == IosScientific ? 'e' : 'g';
+    const bool upper = (flags & IosUppercase) != 0 && field != IosFixed;
+    const std::string format = std::string("%") + ((flags & IosShowPos) != 0 ? "+" : "") + ((flags & IosShowPoint) != 0 ? "#" : "") + (field != IosHexFloat ? ".*" : "") + qualifier + static_cast<char>(upper ? conversion - 'a' + 'A' : conversion);
+    if (size <= 0) throw std::invalid_argument("num_put::do_put: the precision leaves no room for the converted value");
+    std::string digits(static_cast<std::size_t>(size), '\0');
+    const int count = snprintf_nid_postfix(digits.data(), digits.size(), format.c_str(), precision, value);
+    if (count < 0 || count >= size) throw std::invalid_argument("num_put::do_put: the precision leaves no room for the converted value");
+    return PutFloating(out, stream, fill, digits.c_str(), static_cast<std::size_t>(count));
+}
+
+GuestLocale::OutputIterator APS5_VABI NumPutBool(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, bool value) {
+    if ((stream->flags & IosBoolAlpha) == 0) return reinterpret_cast<const GuestLocale::NumPutVtable*>(self->vtable)->putLong(self, out, stream, fill, value ? 1 : 0);
+    const GuestLocale::Facet* punct = StreamNumpunct(stream);
+    return PutField(out, stream, fill, TakeString(value ? Punctuation(punct).truename : Punctuation(punct).falsename, punct), 0);
+}
+
+GuestLocale::OutputIterator APS5_VABI NumPutLong(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::int64_t value) {
+    return PutFormattedInteger(out, stream, fill, "l", 'd', value);
+}
+
+GuestLocale::OutputIterator APS5_VABI NumPutUnsignedLong(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::uint64_t value) {
+    return PutFormattedInteger(out, stream, fill, "l", 'u', value);
+}
+
+GuestLocale::OutputIterator APS5_VABI NumPutLongLong(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::int64_t value) {
+    return PutFormattedInteger(out, stream, fill, "ll", 'd', value);
+}
+
+GuestLocale::OutputIterator APS5_VABI NumPutUnsignedLongLong(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, std::uint64_t value) {
+    return PutFormattedInteger(out, stream, fill, "ll", 'u', value);
+}
+
+GuestLocale::OutputIterator APS5_VABI NumPutDouble(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, double value) {
+    return PutFormattedFloating(out, stream, fill, "", value);
+}
+
+GuestLocale::OutputIterator APS5_VABI NumPutLongDouble(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, long double value) {
+    return PutFormattedFloating(out, stream, fill, "L", value);
+}
+
+GuestLocale::OutputIterator APS5_VABI NumPutPointer(const GuestLocale::Facet*, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const void* value) {
+    char digits[64];
+    const int count = snprintf_nid_postfix(digits, sizeof(digits), "%p", value);
+    return PutInteger(out, stream, fill, digits, static_cast<std::size_t>(count));
+}
+
+const GuestLocale::NumPutVtable g_numPutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, NumPutBool, NumPutLong, NumPutUnsignedLong, NumPutLongLong, NumPutUnsignedLongLong, NumPutDouble, NumPutLongDouble, NumPutPointer};
+const GuestLocale::TimePutVtable g_timePutVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, TimePutDoPut};
+
+constexpr std::size_t GuestTimePutFacetSize = 0xb8;
+
 constexpr std::array<short, 257> MakeClassificationTable() {
     std::array<short, 257> table{};
     for (unsigned int value = 0; value < 256; ++value) {
@@ -227,6 +523,7 @@ constexpr std::array<short, 257> MakeClassificationTable() {
         if (value < 32 || value == 127) mask |= 0x80;
         if (value == ' ') mask |= 0x04;
         if (value >= '\t' && value <= '\r') mask |= 0x40;
+        if (value == '\t') mask |= 0x400;
         if (value >= 'A' && value <= 'Z') mask |= 0x02;
         if (value >= 'a' && value <= 'z') mask |= 0x10;
         if (value >= '0' && value <= '9') mask |= 0x20;
@@ -254,18 +551,18 @@ constexpr auto g_lowerTable = MakeCaseTable(false);
 constexpr auto g_upperTable = MakeCaseTable(true);
 
 void ValidateCharacter(int value) {
-    if (value != EOF && (value < 0 || value > UCHAR_MAX)) throw std::invalid_argument("Invalid character value");
+    if (value < SCHAR_MIN || value > UCHAR_MAX) throw std::invalid_argument("Invalid character value");
 }
 
-int ClassifyCharacter(int value, std::ctype_base::mask mask) {
+int ClassifyCharacter(int value, short mask) {
     ValidateCharacter(value);
     if (value == EOF) return 0;
-    return std::use_facet<std::ctype<char>>(std::locale::classic()).is(mask, static_cast<char>(value));
+    return g_classificationTable[static_cast<std::size_t>(value < 0 ? value + UCHAR_MAX + 1 : value) + 1] & mask;
 }
 
 int ConvertCharacter(int value, bool upper) {
     ValidateCharacter(value);
-    if (value == EOF) return EOF;
+    if (value < 0) return value;
     const auto& facet = std::use_facet<std::ctype<char>>(std::locale::classic());
     const auto character = static_cast<char>(value);
     return static_cast<unsigned char>(upper ? facet.toupper(character) : facet.tolower(character));
@@ -275,18 +572,18 @@ int ConvertCharacter(int value, bool upper) {
 
 extern "C" {
 
-int APS5_VABI isupper_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::upper); }
-int APS5_VABI islower_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::lower); }
-int APS5_VABI isalpha_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::alpha); }
-int APS5_VABI isdigit_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::digit); }
-int APS5_VABI isalnum_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::alnum); }
-int APS5_VABI isspace_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::space); }
-int APS5_VABI isblank_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::blank); }
-int APS5_VABI iscntrl_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::cntrl); }
-int APS5_VABI isprint_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::print); }
-int APS5_VABI isgraph_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::graph); }
-int APS5_VABI ispunct_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::punct); }
-int APS5_VABI isxdigit_nid_postfix(int c) { return ClassifyCharacter(c, std::ctype_base::xdigit); }
+int APS5_VABI isupper_nid_postfix(int c) { return ClassifyCharacter(c, 0x02); }
+int APS5_VABI islower_nid_postfix(int c) { return ClassifyCharacter(c, 0x10); }
+int APS5_VABI isalpha_nid_postfix(int c) { return ClassifyCharacter(c, 0x12); }
+int APS5_VABI isdigit_nid_postfix(int c) { return ClassifyCharacter(c, 0x20); }
+int APS5_VABI isalnum_nid_postfix(int c) { return ClassifyCharacter(c, 0x32); }
+int APS5_VABI isspace_nid_postfix(int c) { return ClassifyCharacter(c, 0x44); }
+int APS5_VABI isblank_nid_postfix(int c) { return ClassifyCharacter(c, 0x404); }
+int APS5_VABI iscntrl_nid_postfix(int c) { return ClassifyCharacter(c, 0x80); }
+int APS5_VABI isprint_nid_postfix(int c) { return ClassifyCharacter(c, 0x3e); }
+int APS5_VABI isgraph_nid_postfix(int c) { return ClassifyCharacter(c, 0x3a); }
+int APS5_VABI ispunct_nid_postfix(int c) { return ClassifyCharacter(c, 0x08); }
+int APS5_VABI isxdigit_nid_postfix(int c) { return ClassifyCharacter(c, 0x01); }
 int APS5_VABI isascii_nid_postfix(int c) { return (c & ~0x7F) == 0; }
 int APS5_VABI toascii_nid_postfix(int c) { return c & 0x7F; }
 int APS5_VABI toupper_nid_postfix(int c) { return ConvertCharacter(c, true); }
@@ -296,14 +593,32 @@ std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt7collateIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt7collateIcE2idE_nid_postfix = 0;
+std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&DestroyCollate),
+    reinterpret_cast<std::uintptr_t>(&DeleteCollate),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&CollateCompare),
+    reinterpret_cast<std::uintptr_t>(&CollateTransform),
+    reinterpret_cast<std::uintptr_t>(&CollateHash),
+};
 std::uint64_t _ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[16] {};
 std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13] {};
 std::uint64_t _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
-std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[12] {};
+std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots] {};
 std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17] {};
 std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 0;
+std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14] {};
+std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
+std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
+std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13] {};
+std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17] {};
 
 std::streamoff _ZSt7_BADOFF_nid_postfix = -1;
 std::fpos_t _ZSt4_Fpz_nid_postfix {};
@@ -329,15 +644,20 @@ GuestLocale::IosBase* APS5_VABI SetStreamWidth(GuestLocale::IosBase* stream, std
     return stream;
 }
 
-struct StreamManipulator {
-    GuestLocale::IosBase* (APS5_VABI* function)(GuestLocale::IosBase*, std::int32_t);
-    std::int32_t argument;
-};
+GuestLocale::IosBase* APS5_VABI SetStreamPrecision(GuestLocale::IosBase* stream, std::int32_t precision) {
+    if (stream == nullptr) throw std::invalid_argument("setprecision: null stream");
+    stream->precision = precision;
+    return stream;
+}
 
 static_assert(sizeof(StreamManipulator) == 0x10);
 
 StreamManipulator APS5_VABI _ZSt4setwi_nid_postfix(std::int32_t width) {
     return {&SetStreamWidth, width};
+}
+
+StreamManipulator APS5_VABI _ZSt12setprecisioni_nid_postfix(std::int32_t precision) {
+    return {&SetStreamPrecision, precision};
 }
 
 void APS5_VABI _ZNSt8ios_base7_AddstdEPS__nid_postfix(GuestLocale::IosBase* self) {
@@ -373,9 +693,7 @@ GuestLocale::Implementation* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_post
 }
 
 namespace {
-struct GuestLocaleFacade {
-    GuestLocale::Implementation* implementation;
-};
+
 GuestLocaleFacade g_classicLocaleFacade{&g_classicLocale};
 }
 
@@ -401,6 +719,43 @@ std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_pos
         *facet = &collate->base;
     }
     return 1;
+}
+
+std::size_t APS5_VABI _ZNSt7codecvtIcc9_MbstatetE7_GetcatEPPKNSt6locale5facetEPKS2__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
+    if (facet != nullptr && *facet == nullptr) {
+        auto* object = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+        *object = {&g_codecvtVtable.facet, 0, 0};
+        *facet = object;
+    }
+    return 2;
+}
+
+std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
+    if (facet != nullptr && *facet == nullptr) {
+        auto* punct = static_cast<GuestLocale::NumpunctFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::NumpunctFacet)));
+        *punct = {{&g_numpunctVtable.facet, 0, 0}, "", '.', ',', "false", "true"};
+        *facet = &punct->base;
+    }
+    return 4;
+}
+
+std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
+    if (facet != nullptr && *facet == nullptr) {
+        auto* object = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+        *object = {&g_numPutVtable.facet, 0, 0};
+        *facet = object;
+    }
+    return 4;
+}
+
+std::size_t APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
+    if (facet != nullptr && *facet == nullptr) {
+        auto* object = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(GuestTimePutFacetSize));
+        std::memset(object, 0, GuestTimePutFacetSize);
+        object->vtable = &g_timePutVtable.facet;
+        *facet = object;
+    }
+    return 5;
 }
 
 void APS5_VABI _ZNSt8_LocinfoC1EPKc_nid_postfix(GuestLocale::LocinfoStorage* self, const char* localeName) {
@@ -470,9 +825,11 @@ std::uint32_t APS5_VABI _Towctrans_nid_postfix(std::uint32_t c, std::uint64_t de
 std::uint64_t _ZNSt7codecvtIwc9_MbstatetE2idE_nid_postfix = 0;
 alignas(16) unsigned char _ZSt4cout_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZSt4cerr_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZSt4clog_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZSt3cin_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZSt5wcout_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZSt5wcerr_nid_postfix[0x400] {};
+alignas(16) unsigned char _ZSt5wclog_nid_postfix[0x400] {};
 alignas(16) unsigned char _ZSt4wcin_nid_postfix[0x400] {};
 
 // Facet vectors are read by inlined guest code, so they come from the guest application heap.
@@ -517,6 +874,7 @@ void APS5_VABI _init_env_nid_postfix() {
 void APS5_VABI init_env_nid_postfix(const InitEnvParams* params) {
     (void)params;
     _init_env_nid_postfix();
+
 }
 
 SonyLconv* APS5_VABI localeconv_nid_postfix(void) {

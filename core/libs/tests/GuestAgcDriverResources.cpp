@@ -1,3 +1,6 @@
+#include "prx/libSceAgcDriver/State/include/Status.hpp"
+#include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstddef>
@@ -5,33 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceAgcDriverRegisterDefaultOwner(std::uint32_t);
-int APS5_VABI sceAgcDriverRegisterOwner(std::uint32_t*, const char*);
-int APS5_VABI sceAgcDriverRegisterResource(std::uint32_t*, std::uint32_t, const void*, std::size_t, const char*, std::uint32_t, std::uint64_t);
-int APS5_VABI sceAgcDriverRegisterMultipleResources(std::uint32_t*, std::uint32_t, const void*, std::uint32_t);
-int APS5_VABI sceAgcDriverRegisterGdsResource(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, const char*, std::uint32_t, std::uint64_t);
-int APS5_VABI sceAgcDriverUnregisterAllResourcesForOwner(std::uint32_t);
-int APS5_VABI sceAgcDriverRegisterWorkloadStream(std::uint32_t, const void*);
-int APS5_VABI sceAgcDriverUnregisterWorkloadStream(std::uint32_t);
-int APS5_VABI sceAgcDriverGetDefaultOwner(std::uint32_t*);
-int APS5_VABI sceAgcDriverGetResourceRegistrationMaxNameLength(std::uint32_t*);
-int APS5_VABI sceAgcDriverGetOwnerName(std::uint32_t, const char**);
-int APS5_VABI sceAgcDriverGetResourceName(std::uint32_t, const char**);
-int APS5_VABI sceAgcDriverGetResourceType(std::uint32_t, std::uint32_t*);
-int APS5_VABI sceAgcDriverGetResourceUserData(std::uint32_t, std::uint64_t*);
-int APS5_VABI sceAgcDriverSetResourceUserData(std::uint32_t, std::uint64_t);
-int APS5_VABI sceAgcDriverGetResourceBaseAddressAndSizeInBytes(std::uint32_t, void**, std::size_t*);
-int APS5_VABI sceAgcDriverGetResourceShaderGuid(std::uint32_t, void*);
-int APS5_VABI sceAgcDriverFindResourcesPublic(const void*, void*);
-bool APS5_VABI sceAgcDriverIsCaptureInProgress(void);
-bool APS5_VABI sceAgcDriverIsTraceInProgress(void);
-bool APS5_VABI sceAgcDriverIsSubmitValidationEnabled(void);
-int APS5_VABI sceAgcDriverRegisterOwnerForSystem();
-int APS5_VABI sceAgcDriverInitResourceRegistrationInterface();
-int APS5_VABI sceAgcDriverSetResourceRegistrationInfo();
-}
 
 static constexpr int Unavailable = static_cast<int>(0x8A6C9018);
 static void Require(bool value) { if (!value) std::abort(); }

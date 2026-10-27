@@ -97,6 +97,7 @@ struct ShaderMeshInputInfo: ShaderWorkgroupInputInfo {
     std::uint32_t provokingVertex = 0;
     std::uint32_t esgsItemSize = 0;
     std::uint32_t outputPrimitiveSize = 3;
+    bool capturedInput = false;
 
     [[nodiscard]] std::uint32_t InputPrimitiveSize() const {
         return inputPrimitive == 1u ? 1u : inputPrimitive == 2u ? 2u : 3u;
@@ -124,6 +125,7 @@ struct ShaderTessellationInputInfo {
     std::uint32_t instancePatches = 0;
     bool drawParameters = false;
     bool mergedHull = false;
+    std::uint32_t geometryItemDwords = 0;
 };
 
 struct ShaderVertexInputInfo {
@@ -194,6 +196,7 @@ struct ShaderPixelInputInfo {
     bool psOrderedPixelShader = false;
     bool psAlphaToCoverage = false;
     bool psDitheredAlphaToCoverage = false;
+    std::uint8_t psDitheredAlphaSamples = 8;
     std::uint8_t quadPixelMask = 0xf;
     std::array<std::uint16_t, 4> quadSampleMask{0xffffu, 0xffffu, 0xffffu, 0xffffu};
     bool psIteratesSamples = false;

@@ -1,3 +1,5 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
+#include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
@@ -7,72 +9,22 @@ constexpr int SystemServiceRejected = static_cast<int>(0x80A10005);
 
 }
 
-struct ShellCoreErrorDialogParam {
-    const char* message;
-    const char* const* formatArgs;
-    std::uint8_t flag;
-};
-
 static_assert(sizeof(ShellCoreErrorDialogParam) == 24);
 static_assert(offsetof(ShellCoreErrorDialogParam, message) == 0);
 static_assert(offsetof(ShellCoreErrorDialogParam, formatArgs) == 8);
 static_assert(offsetof(ShellCoreErrorDialogParam, flag) == 16);
 
-struct SystemServiceDaemonEvent;
-struct SystemServiceLocalProcessStatus;
 struct SystemServiceEvent;
-struct SystemServicePSButtonEvent;
-struct SystemServicePrivacyDefinitionData;
-struct SystemServicePrivacyDefinitionVersion;
-struct SystemServiceTitleWorkaroundInfo;
-struct SystemServiceStoreParam {
-    std::uint32_t size;
-};
 
 static_assert(sizeof(SystemServiceStoreParam) == 4);
-
-struct SystemServiceCpuPstateParam;
-struct SystemServiceLocalProcessParam;
-struct SystemServiceJvmProcessParam;
-struct SystemServicePs2ProcessParam;
-struct SystemServiceAppInstallStatus;
-struct SystemServiceAppStatus;
-struct ShellCoreLaunchByUriParam {
-    std::uint32_t option;
-    std::int32_t userId;
-};
 
 static_assert(sizeof(ShellCoreLaunchByUriParam) == 8);
 static_assert(offsetof(ShellCoreLaunchByUriParam, option) == 0);
 static_assert(offsetof(ShellCoreLaunchByUriParam, userId) == 4);
-struct ShellCoreTelemetryToken;
-struct ShellCoreUmmStatus {
-    std::int32_t state;
-    std::int32_t inDeviceMuteState;
-};
 
 static_assert(sizeof(ShellCoreUmmStatus) == 8);
 static_assert(offsetof(ShellCoreUmmStatus, state) == 0);
 static_assert(offsetof(ShellCoreUmmStatus, inDeviceMuteState) == 4);
-struct ShellCorePbtcUserInfoList;
-struct ShellCorePrivacyEventData;
-struct ShellCorePsnAccountInfoFirst;
-struct ShellCorePsnAccountInfoSecond;
-struct ShellCorePsnAccountInfoThird;
-struct ShellCorePsnAccountInfoFourth;
-struct ShellCorePsnAccountInfoFifth;
-struct ShellCoreAppLaunchTypeInfo;
-struct LncGpuCrashAppStatus {
-    char titleId[16];
-    std::int32_t appId;
-    std::int32_t appLocalPid;
-    char path[1024];
-    std::int32_t appType;
-    std::int32_t coredumpReason;
-    char corefileName[256];
-    std::uint32_t exceptionCode;
-    std::uint32_t appCategoryType;
-};
 
 static_assert(sizeof(LncGpuCrashAppStatus) == 1320);
 static_assert(offsetof(LncGpuCrashAppStatus, titleId) == 0);
@@ -84,15 +36,6 @@ static_assert(offsetof(LncGpuCrashAppStatus, coredumpReason) == 1052);
 static_assert(offsetof(LncGpuCrashAppStatus, corefileName) == 1056);
 static_assert(offsetof(LncGpuCrashAppStatus, exceptionCode) == 1312);
 static_assert(offsetof(LncGpuCrashAppStatus, appCategoryType) == 1316);
-struct LncLaunchParam {
-    std::uint32_t size;
-    std::int32_t userId;
-    std::int32_t appAttr;
-    std::int32_t enableCrashReport;
-    std::uint64_t checkFlag;
-    std::uint64_t contextId;
-    bool isSpeculativeLaunch;
-};
 
 static_assert(sizeof(LncLaunchParam) == 40);
 static_assert(offsetof(LncLaunchParam, size) == 0);
@@ -102,49 +45,19 @@ static_assert(offsetof(LncLaunchParam, enableCrashReport) == 12);
 static_assert(offsetof(LncLaunchParam, checkFlag) == 16);
 static_assert(offsetof(LncLaunchParam, contextId) == 24);
 static_assert(offsetof(LncLaunchParam, isSpeculativeLaunch) == 32);
-struct LncDaemonEvent;
-struct LncShellUiEvent;
-struct LncLocalProcessStatus {
-    std::int32_t appLocalPid;
-    std::uint8_t reserved[32];
-};
 
 static_assert(sizeof(LncLocalProcessStatus) == 36);
 static_assert(offsetof(LncLocalProcessStatus, appLocalPid) == 0);
 static_assert(offsetof(LncLocalProcessStatus, reserved) == 4);
-struct LncCoredumpState {
-    std::uint32_t progress;
-    std::uint32_t isFinished;
-    std::int32_t result;
-};
 
 static_assert(sizeof(LncCoredumpState) == 12);
 static_assert(offsetof(LncCoredumpState, progress) == 0);
 static_assert(offsetof(LncCoredumpState, isFinished) == 4);
 static_assert(offsetof(LncCoredumpState, result) == 8);
-struct LncVideoFinalizeState {
-    std::uint32_t progress;
-    std::int32_t result;
-};
 
 static_assert(sizeof(LncVideoFinalizeState) == 8);
 static_assert(offsetof(LncVideoFinalizeState, progress) == 0);
 static_assert(offsetof(LncVideoFinalizeState, result) == 4);
-struct LncLocalProcessParam;
-struct LncAppStatus {
-    std::int32_t appId;
-    std::int32_t launchRequestAppId;
-    std::int32_t appType;
-    std::int32_t appAttr;
-    char titleId[16];
-    std::uint32_t appCategoryType;
-    std::int32_t appBootMode;
-    std::int32_t appBootSubMode;
-    char appVer[6];
-    char contentVersion[11];
-    bool isSystemExApp;
-    bool isCdlgInitialized;
-};
 
 static_assert(sizeof(LncAppStatus) == 64);
 static_assert(offsetof(LncAppStatus, appId) == 0);
@@ -159,24 +72,6 @@ static_assert(offsetof(LncAppStatus, appVer) == 44);
 static_assert(offsetof(LncAppStatus, contentVersion) == 50);
 static_assert(offsetof(LncAppStatus, isSystemExApp) == 61);
 static_assert(offsetof(LncAppStatus, isCdlgInitialized) == 62);
-struct LncShellUiAppStatus {
-    std::int32_t appId;
-    std::int32_t appType;
-    std::int32_t appAttr;
-    std::int32_t launchRequestAppId;
-    std::int32_t userId;
-    std::int32_t isActiveCdlg;
-    char path[1024];
-    char sceSysDir[256];
-    std::int32_t isCoredumped;
-    std::int32_t isPrxModuleLoadFailed;
-    std::int32_t appLocalPid;
-    std::int32_t crashReportMode;
-    char category[4];
-    std::uint32_t appCategoryType;
-    std::int32_t appBootMode;
-    std::int32_t appBootSubMode;
-};
 
 static_assert(sizeof(LncShellUiAppStatus) == 1336);
 static_assert(offsetof(LncShellUiAppStatus, appId) == 0);
@@ -195,13 +90,6 @@ static_assert(offsetof(LncShellUiAppStatus, category) == 1320);
 static_assert(offsetof(LncShellUiAppStatus, appCategoryType) == 1324);
 static_assert(offsetof(LncShellUiAppStatus, appBootMode) == 1328);
 static_assert(offsetof(LncShellUiAppStatus, appBootSubMode) == 1332);
-struct AppMessagingMessage {
-    std::int32_t sender;
-    std::uint32_t messageType;
-    std::uint8_t payload[8192];
-    std::uint32_t payloadSize;
-    std::uint64_t timestamp;
-};
 
 static_assert(sizeof(AppMessagingMessage) == 8216);
 static_assert(offsetof(AppMessagingMessage, sender) == 0);
@@ -209,10 +97,6 @@ static_assert(offsetof(AppMessagingMessage, messageType) == 4);
 static_assert(offsetof(AppMessagingMessage, payload) == 8);
 static_assert(offsetof(AppMessagingMessage, payloadSize) == 8200);
 static_assert(offsetof(AppMessagingMessage, timestamp) == 8208);
-
-struct UsbStorageEvent;
-struct UsbStorageDeviceInfo;
-using UsbStorageCallback = void (APS5_VABI *)(const UsbStorageEvent* event, void* userData);
 
 extern "C" {
 
@@ -351,26 +235,6 @@ int APS5_VABI sceLncUtilGetAppFocusedAppStatus(LncAppStatus* status) {
     return 0;
 }
 
-int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilGetAppIdOfRunningBigApp() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilGetAppStatus(LncAppStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -382,11 +246,6 @@ int APS5_VABI sceLncUtilGetAppStatusList(LncAppStatus* statuses, std::uint32_t c
 }
 
 int APS5_VABI sceLncUtilGetAppStatusListForShellUIReboot(LncShellUiAppStatus* statuses, std::uint32_t capacity, std::uint32_t* count) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -466,16 +325,6 @@ int APS5_VABI sceLncUtilIsActiveCdlg(bool* active) {
     return 0;
 }
 
-int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilIsAppSuspended(std::int32_t appId, bool* suspended) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilIsCdlgActivated(std::uint8_t* activated) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -502,7 +351,9 @@ bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode() {
 }
 
 int APS5_VABI sceLncUtilIsSpeculativeLaunch(std::int32_t appId, bool* speculative) {
-    NotImplemented_nid_no_patch(__func__);
+    if (speculative == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) NotImplemented_nid_no_patch("sceLncUtilIsSpeculativeLaunch: application other than the running title");
+    *speculative = false;
     return 0;
 }
 
@@ -517,11 +368,6 @@ int APS5_VABI sceLncUtilKillLocalProcess(std::int32_t appId, std::int32_t proces
 }
 
 int APS5_VABI sceLncUtilLaunchApp(const char* titleId, const char* const* argv, const LncLaunchParam* param) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilLoadExec(const char* path, const char* const* argv) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1187,11 +1033,6 @@ int APS5_VABI sceShellCoreUtilGetUIStatus(std::uint64_t* status) {
 }
 
 int APS5_VABI sceShellCoreUtilGetUmmStatus(std::int32_t userId, ShellCoreUmmStatus* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilGetUserFocus(std::int32_t appId, std::int32_t* userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1957,27 +1798,7 @@ int APS5_VABI sceSystemServiceGetAppFocusedAppStatus(SystemServiceAppStatus* sta
     return 0;
 }
 
-int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemServiceGetAppStatus(SystemServiceAppStatus* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceGetAppTitleId(std::int32_t appId, char* titleId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2098,11 +1919,6 @@ int APS5_VABI sceSystemServiceInitializeForShellCore() {
 }
 
 int APS5_VABI sceSystemServiceInvokeAppLaunchLink(const char* uri) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceIsAppSuspended(std::int32_t appId, bool* suspended) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

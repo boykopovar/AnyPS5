@@ -1,16 +1,7 @@
+#include "prx/libSceNpSnsFacebookDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceNpSnsFacebookDialogInitialize(void);
-int APS5_VABI sceNpSnsFacebookDialogOpen(const void* param);
-int APS5_VABI sceNpSnsFacebookDialogUpdateStatus(void);
-int APS5_VABI sceNpSnsFacebookDialogGetStatus(void);
-int APS5_VABI sceNpSnsFacebookDialogGetResult(void* result);
-int APS5_VABI sceNpSnsFacebookDialogClose(void);
-int APS5_VABI sceNpSnsFacebookDialogTerminate(void);
-}
 
 namespace {
 
@@ -32,8 +23,10 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceNpSnsFacebookDialogTerminate() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogOpen(&param) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogClose() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogGetResult(result) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogGetStatus() == kStatusNone);
     Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusNone);
@@ -58,6 +51,11 @@ int main() {
     Require(sceNpSnsFacebookDialogClose() == 0);
     Require(sceNpSnsFacebookDialogTerminate() == 0);
     Require(sceNpSnsFacebookDialogTerminate() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogClose() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(result) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogGetStatus() == kStatusNone);
     Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusNone);
 
@@ -69,4 +67,12 @@ int main() {
     Require(sceNpSnsFacebookDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(sceNpSnsFacebookDialogTerminate() == 0);
+    Require(sceNpSnsFacebookDialogTerminate() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogClose() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(result) == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetStatus() == kStatusNone);
+    Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusNone);
 }

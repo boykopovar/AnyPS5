@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
@@ -59,6 +60,11 @@ FileStream _Stdin_nid_postfix{stdin};
 
 std::FILE* GuestStandardOutputFile_nid_no_patch() {
     return GetNativeStream(&_Stdout_nid_postfix);
+}
+
+std::FILE* GuestStandardOutputForWriting_nid_no_patch() {
+    auto* native = GetNativeStream(&_Stdout_nid_postfix);
+    return _Stdout_nid_postfix.SwitchToWriting() ? native : nullptr;
 }
 
 int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle) {
@@ -165,10 +171,12 @@ void APS5_VABI _Unlockfilelock_nid_postfix(FileStream* stream) {
 
 void APS5_VABI flockfile_nid_postfix(FileStream* stream) {
     _Lockfilelock_nid_postfix(stream);
+
 }
 
 void APS5_VABI funlockfile_nid_postfix(FileStream* stream) {
     _Unlockfilelock_nid_postfix(stream);
+
 }
 
 int APS5_VABI ftrylockfile_nid_postfix(FileStream* stream) {

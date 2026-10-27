@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <bit>
 #include <cstddef>
@@ -158,9 +159,6 @@ static bool IsPipeStream(std::FILE* native) {
 }
 #endif
 
-using GuestCompare = int (APS5_VABI *)(const void*, const void*);
-using GuestContextCompare = int (APS5_VABI *)(const void*, const void*, void*);
-
 static void SwapElements(unsigned char* left, unsigned char* right, size_t size) {
     for (size_t index = 0; index < size; ++index) std::swap(left[index], right[index]);
 }
@@ -303,14 +301,12 @@ void* heapAllocation(std::size_t bytes, TAllocate allocate) {
 
 extern "C" {
 
-[[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix();
-
 FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode) {
-    if (descriptor < 0) { errno = 9; return nullptr; }
     if (!mode) { errno = 22; return nullptr; }
-    AppArchiveRefuseDescriptor_nid_no_patch(descriptor, "fdopen");
     const auto parsed = ParseFileMode(mode);
     if (!parsed) { errno = 22; return nullptr; }
+    if (descriptor < 0) return nullptr;
+    AppArchiveRefuseDescriptor_nid_no_patch(descriptor, "fdopen");
     try {
         auto nativeMode = parsed->native;
         std::erase(nativeMode, 'x');
@@ -319,9 +315,6 @@ FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode) {
 #ifdef _WIN32
         const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
         if (handle == INVALID_HANDLE_VALUE) { errno = 9; return nullptr; }
-        const int access = WindowsDescriptorAccess_nid_no_patch(handle, descriptor, "fdopen");
-        const int requested = nativeMode.find('+') != std::string::npos ? 2 : nativeMode[0] == 'r' ? 0 : 1;
-        if (access != 2 && access != requested) { errno = 22; return nullptr; }
         if (parsed->append && !AppendThroughDescriptor(descriptor)) return nullptr;
         auto* native = ::_fdopen(descriptor, nativeMode.c_str());
 #else
@@ -469,6 +462,15 @@ int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, con
     return *result ? 0 : errno;
 }
 
+int APS5_VABI freopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode, FileStream* stream) {
+    constexpr int GuestEinval = 22;
+    if (!result) return GuestEinval;
+    *result = nullptr;
+    if (!mode || !stream) return GuestEinval;
+    *result = freopen_nid_postfix(filename, mode, stream);
+    return *result ? 0 : errno;
+}
+
 int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) {
         std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
@@ -479,8 +481,6 @@ int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
     return stream->Close();
 }
-
-int APS5_VABI fseek_nid_postfix(FileStream* stream, std::int64_t offset, int origin);
 
 FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const char* filename, int mode, int protection) {
     static_cast<void>(protection);
@@ -502,6 +502,7 @@ FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const 
     auto* stream = fopen_nid_postfix(filename, openMode);
     if (!stream || !(mode & Ate) || fseek_nid_postfix(stream, 0, SEEK_END) == 0) return stream;
     fclose_nid_postfix(stream);
+
     return nullptr;
 }
 
@@ -535,6 +536,7 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fwrite: buffer size overflow");
     const auto bytes = size * count;
     if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fwrite: buffer address overflow");
+    if (!stream->SwitchToWriting()) return 0;
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buffer, bytes);
     const auto result = std::fwrite(buffer, size, count, handle);
     stream->SyncStatus();
@@ -600,7 +602,9 @@ void APS5_VABI rewind_nid_postfix(FileStream* stream) {
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     if (!str) throw std::runtime_error("fputs: null string");
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
-    const int result = std::fputs(str, GetNativeStream(stream));
+    auto* native = GetNativeStream(stream);
+    if (*str != '\0' && !stream->SwitchToWriting()) return -1;
+    const int result = std::fputs(str, native);
     stream->SyncStatus();
     return result;
 }
@@ -611,6 +615,8 @@ int APS5_VABI fflush_nid_postfix(FileStream* stream) {
     if (stream && (stream->IsRandomDevice() || stream->IsDirectory())) return 0;
 #ifdef __linux__
     if (native && !__fwriting(native)) return 0;
+#elif defined(__APPLE__)
+    if (native && !(native->_flags & __SWR)) return 0;
 #endif
     const int result = std::fflush(native);
     if (stream) stream->SyncStatus();
@@ -742,6 +748,44 @@ int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, Guest
     }
     if (source != base) std::memcpy(base, source, count * size);
     free_nid_postfix(scratch);
+
+    return 0;
+}
+
+int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
+    if (count <= 1) return 0;
+    if (size == 0) {
+        errno = 22;
+        return -1;
+    }
+    if (!compare) throw std::invalid_argument("heapsort: null comparator");
+    if (!base) throw std::invalid_argument("heapsort: null base");
+    if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("heapsort: array size overflow");
+
+    auto* const bytes = static_cast<unsigned char*>(base);
+    const auto siftDown = [bytes, size, compare](size_t root, size_t n) {
+        size_t current = root;
+        while (2 * current + 1 < n) {
+            size_t child = 2 * current + 1;
+            if (child + 1 < n && compare(bytes + (child + 1) * size, bytes + child * size) > 0) {
+                child = child + 1;
+            }
+            if (compare(bytes + child * size, bytes + current * size) <= 0) {
+                break;
+            }
+            SwapElements(bytes + current * size, bytes + child * size, size);
+            current = child;
+        }
+    };
+
+    for (size_t i = count / 2; i > 0; --i) {
+        siftDown(i - 1, count);
+    }
+    for (size_t i = count - 1; i > 0; --i) {
+        SwapElements(bytes, bytes + i * size, size);
+        siftDown(0, i);
+    }
+
     return 0;
 }
 

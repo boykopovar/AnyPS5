@@ -1,31 +1,10 @@
+#include "prx/libSceWebBrowserDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
-
-struct ResetCookieParam {
-    std::uint64_t size;
-    std::uint8_t reserved[256];
-};
-
-struct SetCookieParam {
-    std::uint64_t size;
-    const char* url;
-    const char* cookie;
-    std::uint8_t reserved[256];
-};
-
-extern "C" {
-int APS5_VABI sceWebBrowserDialogInitialize(void);
-int APS5_VABI sceWebBrowserDialogTerminate(void);
-int APS5_VABI sceWebBrowserDialogOpen(const void* param);
-int APS5_VABI sceWebBrowserDialogClose(void);
-int APS5_VABI sceWebBrowserDialogUpdateStatus(void);
-int APS5_VABI sceWebBrowserDialogSetCookie(const SetCookieParam* param);
-int APS5_VABI sceWebBrowserDialogResetCookie(const ResetCookieParam* param);
-}
 
 namespace {
 
@@ -41,16 +20,16 @@ void Require(bool value, const char* what) {
     std::abort();
 }
 
-SetCookieParam Cookie(const char* url, const char* cookie) {
-    SetCookieParam param {};
+WebBrowserDialogCookieParam Cookie(const char* url, const char* cookie) {
+    WebBrowserDialogCookieParam param {};
     param.size = sizeof(param);
-    param.url = url;
+    param.address = url;
     param.cookie = cookie;
     return param;
 }
 
-ResetCookieParam Reset() {
-    ResetCookieParam param {};
+WebBrowserDialogResetCookieParam Reset() {
+    WebBrowserDialogResetCookieParam param {};
     param.size = sizeof(param);
     return param;
 }
@@ -61,7 +40,7 @@ void CheckSetCookieParameters() {
     Require(sceWebBrowserDialogSetCookie(nullptr) == ARG_NULL, "SetCookie null");
 
     auto wrongSize = valid;
-    wrongSize.size = sizeof(ResetCookieParam);
+    wrongSize.size = sizeof(WebBrowserDialogResetCookieParam);
     Require(sceWebBrowserDialogSetCookie(&wrongSize) == PARAM_INVALID, "SetCookie size");
     auto noUrl = Cookie(nullptr, "a=b");
     Require(sceWebBrowserDialogSetCookie(&noUrl) == PARAM_INVALID, "SetCookie null url");
@@ -96,7 +75,7 @@ void CheckResetCookieParameters() {
     Require(sceWebBrowserDialogResetCookie(&valid) == 0, "valid ResetCookie");
     Require(sceWebBrowserDialogResetCookie(nullptr) == ARG_NULL, "ResetCookie null");
     auto wrongSize = valid;
-    wrongSize.size = sizeof(SetCookieParam);
+    wrongSize.size = sizeof(WebBrowserDialogCookieParam);
     Require(sceWebBrowserDialogResetCookie(&wrongSize) == PARAM_INVALID, "ResetCookie size");
     auto reserved = valid;
     reserved.reserved[0] = 1;
