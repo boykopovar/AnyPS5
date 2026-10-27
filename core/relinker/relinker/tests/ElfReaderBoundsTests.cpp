@@ -93,10 +93,13 @@ void RejectAddress(Bytes bytes, const std::uint64_t address) {
     throw std::runtime_error("Invalid file mapping was accepted");
 }
 
-void RejectProgramHeaders(Bytes bytes) {
+void RejectProgramHeaders(Bytes bytes, const std::string& expectedMessage = "") {
     try {
         Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
-    } catch (const Relinker::RelinkerException&) {
+    } catch (const Relinker::RelinkerException& error) {
+        if (!expectedMessage.empty()) {
+            Require(std::string(error.what()).find(expectedMessage) != std::string::npos);
+        }
         return;
     }
     throw std::runtime_error("Invalid program header was accepted");
@@ -189,6 +192,16 @@ int main() {
             std::memcpy(bytes.data() + 0x2d0, bytes.data() + 0x298, 56);
             Write<std::uint16_t>(bytes, 56, 3);
             RejectProgramHeaders(std::move(bytes));
+        }},
+        {"program header table out of bounds", [] {
+            for (const std::uint64_t offset : {std::uint64_t{0x300}, std::uint64_t{0x300} - 55, std::numeric_limits<std::uint64_t>::max() - 31}) {
+                auto bytes = Fixture();
+                Write(bytes, 32, offset);
+                RejectProgramHeaders(std::move(bytes), "FileByteOffset out of bounds");
+            }
+            auto truncated = Fixture();
+            truncated.resize(64 + 56 - 1);
+            RejectProgramHeaders(std::move(truncated), "FileByteOffset out of bounds");
         }},
         {"section entry size field", [] {
             const auto sections = Relinker::ElfReader(Fixture()).ReadSectionHeaders();
