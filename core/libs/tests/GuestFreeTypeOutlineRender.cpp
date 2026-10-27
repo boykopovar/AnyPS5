@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -14,10 +15,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Outline_Render_nid_postfix(GuestLibrary*, GuestOutline*, GuestRasterParams*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
