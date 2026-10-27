@@ -2,3 +2,13 @@ add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL Export.cpp ../libSceFreeTyp
 target_sources(libSceFreeTypeOt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/AdditionalExports.cpp)
 target_include_directories(libSceFreeTypeOt PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceFreeTypeOt)
+
+target_sources(libSceFreeTypeOt PRIVATE ForwardExports.cpp)
+if(APPLE)
+    target_link_libraries(libSceFreeTypeOt PRIVATE "-Wl,-needed_library,$<TARGET_FILE:libSceFreeType>")
+    add_dependencies(libSceFreeTypeOt libSceFreeType)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(libSceFreeTypeOt PRIVATE "-Wl,--no-as-needed" libSceFreeType "-Wl,--as-needed")
+else()
+    target_link_libraries(libSceFreeTypeOt PRIVATE libSceFreeType)
+endif()
