@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetile_spv.h"
+#include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileChanged_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/CmaskClear_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureDetileImage_spv.h"
 #include "prx/libSceAgcDriver/Graphics/shaders/TextureRepack_spv.h"
@@ -62,8 +63,8 @@ std::uint32_t BlockBytesFor(TextureTileMode tileMode) {
     throw std::runtime_error("AGC graphics: TextureDetiler encountered an unknown tile mode");
 }
 
-std::uint32_t PipelineKey(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image) {
-    return (image ? 1u << 18 : 0u) | (thick ? 1u << 17 : 0u) | (retile ? 1u << 16 : 0u) | (static_cast<std::uint32_t>(tileMode) << 8) | elementBytes;
+std::uint32_t PipelineKey(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image, bool changedOnly) {
+    return (changedOnly ? 1u << 19 : 0u) | (image ? 1u << 18 : 0u) | (thick ? 1u << 17 : 0u) | (retile ? 1u << 16 : 0u) | (static_cast<std::uint32_t>(tileMode) << 8) | elementBytes;
 }
 
 }
@@ -127,6 +128,7 @@ void TextureDetiler::release() noexcept {
     if (imagePipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, imagePipelineLayout, nullptr);
     if (imageDescriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, imageDescriptorLayout, nullptr);
     for (const auto& entry : pipelines) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry.second, nullptr);
+    if (changedModule) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, changedModule, nullptr);
     if (module) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
     if (pipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, pipelineLayout, nullptr);
     if (descriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, descriptorLayout, nullptr);
@@ -143,16 +145,17 @@ VkFormat TextureDetiler::ImageElementFormat(std::uint32_t elementBytes) {
     }
 }
 
-VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image) {
+VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image, bool changedOnly) {
     Require(std::has_single_bit(elementBytes) && elementBytes <= 16u, "unsupported element size for texture detiling");
-    const auto key = PipelineKey(tileMode, elementBytes, retile, thick, image);
+    const auto key = PipelineKey(tileMode, elementBytes, retile, thick, image, changedOnly);
     for (const auto& entry : pipelines) {
         if (entry.first == key) return entry.second;
     }
     // Constants 0-3 select element size, block size, addressing family and direction; 4-19 carry the
     // per-bit XOR equation for the equation family (2); 20-21 override the block extent in elements.
     const bool gcn = IsGcnTiled(tileMode);
-    std::array<std::uint32_t, 26> values{elementBytes, gcn ? 0u : BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
+    std::array<std::uint32_t, 27> values{elementBytes, gcn ? 0u : BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
+    values[26] = changedOnly ? 1u : 0u;
     if (gcn) {
         Require(!thick, "PS4 tiled surfaces are detiled thin");
         const auto geometry = GcnTiling(tileMode, elementBytes);
@@ -181,7 +184,13 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     if (image && imageModule == VK_NULL_HANDLE) {
         imageModule = CreateShaderModule(context, TEXTURE_DETILE_IMAGE_SPV, sizeof(TEXTURE_DETILE_IMAGE_SPV), "vkCreateShaderModule");
     }
-    std::array<VkSpecializationMapEntry, 26> entries{};
+    if (changedOnly && changedModule == VK_NULL_HANDLE) {
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = sizeof(TEXTURE_DETILE_CHANGED_SPV);
+        moduleInfo.pCode = TEXTURE_DETILE_CHANGED_SPV;
+        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &changedModule), "vkCreateShaderModule");
+    }
+    std::array<VkSpecializationMapEntry, 27> entries{};
     for (std::uint32_t index = 0; index < entries.size(); ++index) entries[index] = {index, index * 4u, 4};
     VkSpecializationInfo specialization{};
     specialization.mapEntryCount = static_cast<std::uint32_t>(entries.size());
@@ -190,7 +199,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     specialization.pData = values.data();
     VkPipelineShaderStageCreateInfo stage{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    stage.module = image ? imageModule : module;
+    stage.module = image ? imageModule : changedOnly ? changedModule : module;
     stage.pName = "main";
     stage.pSpecializationInfo = &specialization;
     VkComputePipelineCreateInfo createInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
