@@ -1,4 +1,7 @@
 #version 450
+#ifdef BYTE_OUTPUT
+#extension GL_EXT_shader_8bit_storage : require
+#endif
 #ifdef LINEAR_IMAGE
 #extension GL_EXT_shader_image_load_formatted : require
 #endif
@@ -33,6 +36,7 @@ layout(constant_id = 22) const uint SPLIT0 = 0u;
 layout(constant_id = 23) const uint SPLIT1 = 0u;
 layout(constant_id = 24) const uint SPLIT2 = 0u;
 layout(constant_id = 25) const uint SPLIT3 = 0u;
+layout(constant_id = 26) const uint CHANGED_ONLY = 0u;
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -41,7 +45,12 @@ layout(set = 0, binding = 0, std430) buffer Tiled { uint data[]; } tiledBuffer;
 layout(set = 0, binding = 1) uniform uimage2D linearImage;
 #else
 layout(set = 0, binding = 0, std430) readonly buffer Input { uint data[]; } inputBuffer;
+#ifdef BYTE_OUTPUT
+layout(set = 0, binding = 1, std430) writeonly buffer Output { uint8_t data[]; } outputBuffer;
+#else
 layout(set = 0, binding = 1, std430) buffer Output { uint data[]; } outputBuffer;
+#endif
+layout(set = 0, binding = 2, std430) readonly buffer Original { uint data[]; } originalBuffer;
 #endif
 
 layout(push_constant) uniform Push {
@@ -69,6 +78,7 @@ layout(push_constant) uniform Push {
     uint rowBegin;
     uint pipeBankXor;
     uint splitStride;
+    uint originalBase;
 } params;
 
 uint equationBit(uint mask, uvec2 p) {
@@ -271,4 +281,3 @@ void main() {
     }
 #endif
 }
-
