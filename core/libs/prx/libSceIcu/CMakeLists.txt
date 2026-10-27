@@ -1,0 +1,16 @@
+add_library(libSceIcu SHARED EXCLUDE_FROM_ALL Export.cpp Invariant.cpp Version.cpp)
+target_include_directories(libSceIcu PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceIcu)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_version_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuVersion.cpp)
+    target_include_directories(guest_icu_version_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_version_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_version_tests)
+    add_test(NAME guest_icu_version COMMAND guest_icu_version_tests)
+    set_tests_properties(guest_icu_version PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_version PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()

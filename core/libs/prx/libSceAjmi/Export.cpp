@@ -13,8 +13,8 @@ int APS5_VABI sceAjmBatchJobInlineBuffer(void) {
     return 0;
 }
 
-int APS5_VABI sceAjmBatchJobRunBufferRa(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmBatchJobRunBufferRa_nid_disambig1(void) {
+    NotImplemented_nid_no_patch("sceAjmBatchJobRunBufferRa");
     return 0;
 }
 

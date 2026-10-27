@@ -221,15 +221,21 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     }
 
     report(9000);
-    for (const auto& [rva, length] : gsTraps)
+    std::sort(branchTargets.begin(), branchTargets.end());
+    branchTargets.erase(std::unique(branchTargets.begin(), branchTargets.end()), branchTargets.end());
+    for (const auto& [rva, length] : gsTraps) {
+        const auto target = std::upper_bound(branchTargets.begin(), branchTargets.end(), rva);
+        if (target != branchTargets.end() && *target < rva + length)
+            throw Domain::RelinkerException("Branch enters a guest GS instruction", *target);
         trapInstruction(sections, rva, length);
+    }
     if (tls == nullptr) {
         if (!accesses.empty())
             throw Domain::RelinkerException("Guest TLS access without PT_TLS");
         return {};
     }
 
-    if (tls->FileSize > tls->MemorySize || tls->Offset > source.size() || tls->FileSize > source.size() - tls->Offset || (tls->Alignment > 1 && !std::has_single_bit(tls->Alignment)) || tls->Alignment > 8192 || tls->MemorySize > 0x7fff0000u)
+    if (tls->FileSize > tls->MemorySize || (tls->FileSize != 0 && (tls->Offset > source.size() || tls->FileSize > source.size() - tls->Offset)) || (tls->Alignment > 1 && !std::has_single_bit(tls->Alignment)) || tls->Alignment > 8192 || tls->MemorySize > 0x7fff0000u)
         throw Domain::RelinkerException("Invalid or unsupported ELF TLS layout", tls->Offset);
     // Native homebrew linkers can emit an empty PT_TLS placeholder.
     // It needs no Windows TLS directory unless guest code accesses TLS.
@@ -273,9 +279,6 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     code.Emit({0x48, 0x89, 0x00});
     code.PatchBranch(skipCallback, code.GetRva());
     code.Emit({0xc3});
-
-    std::sort(branchTargets.begin(), branchTargets.end());
-    branchTargets.erase(std::unique(branchTargets.begin(), branchTargets.end()), branchTargets.end());
 
     std::uint64_t patched = 0;
     for (const auto& access : accesses) {

@@ -19,15 +19,6 @@ static void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
 
-template <typename TFunction>
-static bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
 
 static std::vector<std::string> Search(std::uint32_t key, std::uint32_t order, std::uint32_t capacity, std::uint32_t* hits) {
     SceSaveDataDirName pattern{};
@@ -283,12 +274,16 @@ static void CheckNullArguments() {
     SaveDataDirNameSearchCond cond{};
     cond.user_id = 1;
     SaveDataDirNameSearchResult result{};
-    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch(nullptr, &result); }), "null cond throws in sceSaveDataDirNameSearch");
-    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch(&cond, nullptr); }), "null result throws in sceSaveDataDirNameSearch");
-    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch2(nullptr, &result); }), "null cond throws in sceSaveDataDirNameSearch2");
-    Require(ThrowsRuntimeError([&] { sceSaveDataDirNameSearch2(&cond, nullptr); }), "null result throws in sceSaveDataDirNameSearch2");
+    Require(sceSaveDataDirNameSearch(nullptr, &result) == SaveDataErrorParameter, "null cond returns PARAMETER in sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch2(nullptr, &result) == SaveDataErrorParameter, "null cond returns PARAMETER in sceSaveDataDirNameSearch2");
+    Require(sceSaveDataDirNameSearch2(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearch2");
     cond.order = 2;
     Require(sceSaveDataDirNameSearch2(&cond, &result) == SaveDataErrorParameter, "invalid order must be rejected in sceSaveDataDirNameSearch2");
+    Require(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress returns PARAMETER in sceSaveDataGetConvertProgress");
+    float progress = 0.0f;
+    Require(sceSaveDataGetConvertProgress(&progress) == -2137063423, "uninitialized convert progress returns NOT_INITIALIZED");
+    Require(sceSaveDataCheckIpmiIfSize() == 0, "sceSaveDataCheckIpmiIfSize succeeds");
 }
 
 static void BlockSize() {

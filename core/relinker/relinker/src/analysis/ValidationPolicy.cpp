@@ -11,7 +11,6 @@ void ValidationPolicy::_initializeSupportedRelocationTypes() {
         R_X86_64_NONE,
         R_X86_64_64,
         R_X86_64_PC32,
-        R_X86_64_COPY,
         R_X86_64_GLOB_DAT,
         R_X86_64_JUMP_SLOT,
         R_X86_64_RELATIVE,

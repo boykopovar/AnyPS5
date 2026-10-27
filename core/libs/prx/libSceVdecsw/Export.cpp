@@ -345,11 +345,35 @@ int APS5_VABI sceVdecswSyncDecodeOutput(std::uint64_t handle, OutputInfo* output
 }
 
 int APS5_VABI sceVdecswGetPictureInfo(const OutputInfo* output, void* first, void* second) {
-    (void)output;
-    (void)first;
-    (void)second;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    static_cast<void>(second);
+    if (output == nullptr || (output->thisSize | 8u) != sizeof(OutputInfo)) throw std::runtime_error("Vdecsw: invalid output info");
+    if (output->pictureCount == 0) return 0;
+    if (output->pictureCount > 1) NotImplemented_nid_no_patch(__func__);
+    if (first == nullptr) return 0;
+    std::uint64_t size;
+    std::memcpy(&size, first, sizeof(size));
+    if (size < sizeof(size)) throw std::runtime_error("Vdecsw: picture info is smaller than its size field");
+    const auto copy = [first, size](const auto& source) {
+        const auto bytes = std::min<std::uint64_t>(size, sizeof(source)) - sizeof(size);
+        std::memcpy(static_cast<std::uint8_t*>(first) + sizeof(size), reinterpret_cast<const std::uint8_t*>(&source) + sizeof(size), bytes);
+    };
+    std::vector<std::shared_ptr<Decoder>> all;
+    {
+        std::lock_guard lock(decodersMutex);
+        for (const auto& [handle, decoder] : decoders) all.push_back(decoder);
+    }
+    for (const auto& decoder : all) {
+        std::lock_guard lock(decoder->mutex);
+        if (const auto found = decoder->delivered.find(output->frameBuffer); found != decoder->delivered.end()) {
+            std::visit(copy, found->second);
+            return 0;
+        }
+        if (const auto found = decoder->deliveredVp9.find(output->frameBuffer); found != decoder->deliveredVp9.end()) {
+            copy(found->second);
+            return 0;
+        }
+    }
+    throw std::runtime_error("Vdecsw: picture info requested for a frame buffer no decoder returned");
 }
 
 int APS5_VABI sceVdecswGetAvcPictureInfo(const OutputInfo* output, AvcPictureInfo* first, AvcPictureInfo* second) {

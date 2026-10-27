@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libc/include/General.hpp"
 #include "Common.hpp"
 #include <cstdint>
 #include <stdexcept>
@@ -52,6 +53,10 @@ int APS5_VABI pthread_cond_wait_nid_postfix(PthreadCond* cond, PthreadMutex* mut
     return toPosix(scePthreadCondWait(cond, mutex));
 }
 
+int APS5_VABI pthread_cond_setname_np_nid_postfix(PthreadCond* cond, const char* name) {
+    return toPosix(CondOperations::SetName(cond, name));
+}
+
 int APS5_VABI pthread_condattr_destroy_nid_postfix(PthreadCondattr* attr) {
     if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondattrDestroy(attr));
@@ -65,6 +70,12 @@ int APS5_VABI pthread_condattr_init_nid_postfix(PthreadCondattr* attr) {
 int APS5_VABI pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, KernelClockid clock_id) {
     if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondattrSetclock(attr, clock_id));
+}
+
+int APS5_VABI pthread_condattr_getclock_nid_postfix(const PthreadCondattr* attr, KernelClockid* clockId) {
+    if (!attr || !*attr || !clockId) NotImplemented_nid_no_patch(__func__);
+    *clockId = (*attr)->_clockid;
+    return 0;
 }
 
 int APS5_VABI pthread_condattr_setpshared_nid_postfix(PthreadCondattr* attr, int pshared) {

@@ -287,6 +287,10 @@ int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
         while (e.triggered && ret < num) {
             ev[ret++] = e.event;
             if ((e.event.flags & EV_ONESHOT) != 0) {
+                if (e.filter.deleteEventFunc != nullptr) {
+                    auto owner = e.filter.owner;
+                    e.filter.deleteEventFunc(m_handle, &e);
+                }
                 erase = true;
                 break;
             }
@@ -354,9 +358,7 @@ int KernelEqueuePrivate::CollectOncePerWait(KernelEvent* ev, int num) {
             e.event.data = 0;
         }
         const auto next = std::next(it);
-        if (e.triggered) {
-            requeued.splice(requeued.end(), m_events, it);
-        }
+        requeued.splice(requeued.end(), m_events, it);
         it = next;
     }
     m_events.splice(m_events.end(), requeued);

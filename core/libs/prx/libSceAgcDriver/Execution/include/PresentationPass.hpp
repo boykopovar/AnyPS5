@@ -4,9 +4,12 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <span>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -24,8 +27,14 @@ public:
     PresentationPass& operator=(const PresentationPass&) = delete;
 
     void Bind(std::size_t slot, VkImage image, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits, std::uint32_t layer = 0);
+    void BindTexels(std::size_t slot, VkCommandBuffer commands, std::span<const std::byte> texels, std::uint32_t width, std::uint32_t height, std::uint64_t pixelFormat, float whiteNits);
     void RecordPresent(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout finalLayout);
+    void RecordOverlay(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout);
     void RecordDump(VkCommandBuffer commands, std::size_t slot, std::uint32_t stride, VkBuffer destination);
+    void RecordDumpImage(VkCommandBuffer commands, std::size_t slot, std::uint32_t stride);
+    void RecordDumpReadback(VkCommandBuffer commands, std::size_t slot, VkBuffer destination);
+    VkImage DumpImage(std::size_t slot) const;
+    VkExtent2D DumpImageExtent(std::size_t slot) const;
     void Release(std::size_t slot) noexcept;
     static bool TenBitFormat(VkFormat format);
     static VkExtent2D DumpExtent(std::uint32_t width, std::uint32_t height, std::uint32_t stride);
@@ -48,14 +57,21 @@ private:
         VkImageView dumpView = VK_NULL_HANDLE;
         VkFramebuffer dumpFramebuffer = VK_NULL_HANDLE;
         VkExtent2D dumpExtent{};
+        VkImage uploadImage = VK_NULL_HANDLE;
+        VkDeviceMemory uploadMemory = VK_NULL_HANDLE;
+        VkExtent2D uploadExtent{};
+        std::unique_ptr<Graphics::Buffer> uploadTexels;
     };
 
-    const Target& target(VkFormat format, VkImageLayout finalLayout);
+    const Target& target(VkFormat format, VkImageLayout finalLayout, VkImageLayout loadFrom = VK_IMAGE_LAYOUT_UNDEFINED);
     VkImageView createView(VkImage image, VkFormat format, VkImageUsageFlags usage, std::uint32_t layer = 0) const;
     VkFramebuffer createFramebuffer(VkRenderPass renderPass, VkImageView view, VkExtent2D extent) const;
+    VkFramebuffer destinationFramebuffer(Slot& slot, const Target& target, VkImage destination, VkFormat format, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout);
     void ensureDumpTarget(Slot& slot, VkExtent2D extent);
     void releaseDumpTarget(Slot& slot) noexcept;
-    void draw(VkCommandBuffer commands, const Slot& slot, const Target& target, VkFramebuffer framebuffer, VkExtent2D extent, const std::int32_t (&parameters)[9]) const;
+    void ensureUploadImage(Slot& slot, VkExtent2D extent);
+    void releaseUploadImage(Slot& slot) noexcept;
+    void draw(VkCommandBuffer commands, const Slot& slot, const Target& target, VkFramebuffer framebuffer, VkExtent2D extent, VkRect2D scissor, const std::int32_t (&parameters)[9]) const;
     void release() noexcept;
 
     Graphics::Context context;
@@ -66,7 +82,7 @@ private:
     VkShaderModule vertex = VK_NULL_HANDLE;
     VkShaderModule fragment = VK_NULL_HANDLE;
     std::unique_ptr<Graphics::Buffer> pqNits;
-    std::map<std::pair<VkFormat, VkImageLayout>, Target> targets;
+    std::map<std::tuple<VkFormat, VkImageLayout, VkImageLayout>, Target> targets;
     std::vector<Slot> slots;
 };
 

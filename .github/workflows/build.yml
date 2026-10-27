@@ -421,7 +421,7 @@ jobs:
 
   linux:
     needs: eligibility
-    if: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.linux)) && needs.eligibility.outputs.full == 'true' }}
+    if: ${{ !github.event.repository.fork && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.linux)) && needs.eligibility.outputs.full == 'true' }}
     runs-on: [self-hosted, linux, x64, anyps5]
     timeout-minutes: 60
     env:

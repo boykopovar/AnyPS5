@@ -10,6 +10,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_JOB_MANAGER_HOST` | presence | `core/libs/tests/JobManagerReference.cpp` |  | runs the reference adapter against the host fallback instead of the loaded guest module |
 | `ANYPS5_LOADEXEC_PARENT` | string | `core/libs/tests/GuestLoadExecHost.cpp` |  | variable the Windows entry stub reads; its wide name is built in `core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp` |
 | `ANYPS5_LOADEXEC_TEST_ROOT` | string | `core/libs/tests/GuestLoadExecHost.cpp` |  | directory the load-exec host test reads its guest executable from |
+| `ANYPS5_POSIX_SPAWN_ROLE` | string | `core/libs/tests/GuestPosixSpawn.cpp` |  | role of the test's own copy spawned as a `posix_spawn` child, which exits or sleeps on it and otherwise fails |
 | `ANYPS5_TEST_QUOTED_ARGV0` | presence | `core/libs/tests/GuestLoadExecHost.cpp` |  | makes the load-exec test's first argument one with quotes, a backslash and non-ASCII text |
 | `APS5_EBOOT` | string | `core/libs/tests/GuestSystemExit.cpp` |  | host path of the executable launched for /app0/eboot.bin, defaulting to the running executable |
 | `APS5_SKIP_TIMING_TESTS` | presence | `core/libs/tests/PreciseWait.cpp` |  | treats the timing tests' runner as preempted, so they skip without probing the clock |
@@ -39,7 +40,9 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_CODE_HASH_KEY` | presence | `core/shader/recompiler/CacheKey.hpp` |  | appends every code word to the cache key instead of hashing the code |
 | `APS5_NO_FAILURE_MEMO` | presence | `core/shader/recompiler/Recompiler.cpp` |  | rebuilds a program whose compilation failed instead of reusing the memoized failure |
 | `APS5_NO_IMAGE_TABLES` | presence | `core/shader/recompiler/Optimization/src/ResourceTracker.cpp` |  | disables image tables, leaving table-loaded descriptors unplanned |
+| `APS5_NO_MASKED_RESULT_MEMO` | presence | `core/shader/recompiler/Recompiler.cpp` |  | materializes every result memo miss instead of patching the buffer descriptors, user data and flattened SRT of a cached result whose snapshot differs only in those words |
 | `APS5_NO_PERF_DISK_PLANS` | presence | `core/shader/recompiler/Recompiler.cpp` |  | disables the disk cache of planning results |
+| `APS5_NO_PERF_DOMINATOR_TREE` | presence | `core/shader/recompiler/ControlFlow/src/Structurizer.cpp` |  | computes the structurizer's dominator and post-dominator sets with the set fixpoint instead of a dominator tree, walks every selection construct instead of testing its members by dominance, and tests every block against each construct when checking the structured constructs instead of walking the construct |
 | `APS5_NO_PERF_DOM_INTERSECTION` | presence | `core/shader/recompiler/ControlFlow/src/Structurizer.cpp` |  | computes dominator intersections into a fresh vector instead of intersecting in place |
 | `APS5_NO_PERF_ITERATION_SELECTION` | presence | `core/shader/recompiler/ControlFlow/src/Structurizer.cpp` |  | recomputes the post-dominator sets when finding a loop's iteration-selection merge instead of reusing them |
 | `APS5_NO_RESULT_MEMO` | presence | `core/shader/recompiler/Recompiler.cpp` |  | materializes a fresh result for every recompile instead of reusing the result memo |
@@ -49,12 +52,15 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_WINDOW_NARROWING` | presence | `core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvModuleSetup.cpp` |  | indexes every slot of the shader's vector window instead of only the slots the program uses |
 | `APS5_PROBE` | string | `core/shader/recompiler/Translation/src/DispatchInstructions.cpp` |  | pc:vgpr[:shift] probe that copies that VGPR into v255 after the instruction so image stores write it as a per-lane trace |
 | `APS5_RAYTRACING` | string | `core/shader/recompiler/Translation/src/DispatchInstructions.cpp` |  | selects the image_bvh_intersect_ray behaviour: strict throws and miss writes 0xffffffff |
+| `APS5_RESULT_MEMO_MB` | integer | `core/shader/recompiler/Recompiler.cpp` | 256 | MiB the result memos of all shader sources may hold before the least recently used results are dropped (0 keeps them until their set evicts them) |
 | `APS5_SAVEEXEC_WRITE_FIRST` | presence | `core/shader/recompiler/Translation/src/ControlFlowInstructions.cpp` |  | writes the saved exec to the destination before reading the source in s_*_saveexec |
 | `APS5_SINGLE_LANE` | string | `core/shader/recompiler/Recompiler.cpp` |  | hex code addresses (comma separated, or all) of wave64 programs kept at one guest lane per invocation |
 | `APS5_SRT_DEBUG` | presence | `core/shader/recompiler/Optimization/src/RequestMemoryView.cpp` |  | prints extra SRT descriptor-walk debug output, such as guest reads outside the request memory |
+| `APS5_STRICT_DESCRIPTOR_WEBS` | presence | `core/shader/recompiler/Optimization/src/ResourceTracker.cpp` |  | makes a T# or S# read in a descriptor web throw when a path's descriptor dwords depend on the program counter, EXEC or a lane mask, instead of selecting the first descriptor and recording an `InvalidDescriptor` fault when a lane takes that path; 0 leaves it off |
 | `APS5_TRACE_BDA` | presence | `core/shader/recompiler/Optimization/src/ResourceTracker.cpp` |  | prints the first few accesses that make a program take the address-based path |
 | `APS5_TRACE_BUFFER_WRITTEN` | presence | `core/shader/recompiler/Optimization/src/DescriptorBindingBuilder.cpp` |  | prints how many guest buffer elements a program may store to and how many it only loads |
 | `APS5_TRACE_IMAGE_TABLE` | presence | `core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp` |  | traces image-table resolution |
+| `APS5_VERIFY_MASKED_RESULT_MEMO` | presence | `core/shader/recompiler/Recompiler.cpp` |  | also materializes every patched result memo hit, prints the first twenty whose patched result differs and counts them in the result memo report of `APS5_PROFILE_DRAW` |
 | `APS5_VERIFY_SRT_COMPACT` | presence | `core/shader/recompiler/Optimization/src/SrtWalker/SrtDescriptorEvaluation.cpp` |  | walks every SRT descriptor a second time through the IR evaluator and throws when the two walks differ |
 | `APS5_VERIFY_SRT_TAPE` | presence | `core/shader/recompiler/Optimization/src/SrtWalker/SrtTape.cpp` |  | walks a plan's runtime sources a second time through the evaluator, adopts its answers where the two differ and prints the first twenty differences |
 | `APS5_WAVE_LDS_SUBGROUP` | presence | `core/shader/recompiler/SpirvBackend/src/SpirvEmitter.cpp` |  | restores subgroup-scope LDS barriers for single-wave workgroups instead of workgroup scope |
@@ -63,14 +69,14 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
-| `APS5_TRACE_LABEL` | integer | `core/libs/prx/libSceAgc/Cb/src/Sync.cpp` | 0 | hex guest address of a RELEASE_MEM label whose packet is logged when recorded |
+| `APS5_TRACE_LABEL` | integer | `core/libs/prx/libSceAgc/Cb/src/Sync.cpp`, `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/LabelHistory.cpp` | 0 | hex guest address; logs a matching RELEASE_MEM when recorded, and nearby RELEASE_MEM, WRITE_DATA, COPY_DATA, DMA_DATA and WAIT_REG_MEM packets when executed |
 
 ### libSceAgcDriver
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
 | `ANYPS5_GPU` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | restricts physical device selection to device names containing this case-insensitive substring |
-| `ANYPS5_OVERLAY` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceOverlay.cpp` | 0 | 1 shows the performance overlay; 0 or unset hides it, and any other value is refused |
+| `ANYPS5_OVERLAY` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceOverlay.cpp` | 0 | the performance overlay's page at start: 1 the overlay, 2 its detailed page; 0 or unset hides it, and any other value is refused |
 | `ANYPS5_OVERLAY_POS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceOverlay.cpp` | tl | the overlay's corner: tl, tr, bl or br |
 | `ANYPS5_PRESENT_MODE` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | fifo | selects the swapchain present mode: fifo, fifo_latest_ready, mailbox or immediate |
 | `ANYPS5_REQUIRE_DESCRIPTOR_BINDING_FLAGS` | presence | `core/libs/prx/libSceAgcDriver/tests/ComputePipelineReplay.cpp` |  | fails the replay test instead of accepting a device that refuses descriptor binding flags |
@@ -131,7 +137,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_DRAW_UPLOAD_MAX` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 4096 | largest draw snapshot in bytes copied into the per-recorder upload chunk; 0 turns the chunk off |
 | `APS5_DUMP_COMPUTE_MIN_WORDS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | only captures compute pipelines whose SPIR-V has at least this many words |
 | `APS5_DUMP_COMPUTE_PIPELINES` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | directory in which captured compute pipelines are written |
-| `APS5_DUMP_DRAW_SHADERS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` | 0 | hex color-target or slot-0 address whose draw's shaders are dumped |
+| `APS5_DUMP_DRAW_SHADERS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` | 0 | hex color-target or slot-0 address, or a program's code address, whose draw's shaders are dumped |
 | `APS5_DUMP_DRAW_SLOT1` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` | 0 | hex slot-1 address whose draw's shaders and register state are dumped |
 | `APS5_DUMP_FRAMES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 0 | saves the first n presented frames as frame_<index>.bmp |
 | `APS5_DUMP_FRAMES_EVERY` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 1 | dumps every n-th presented frame |
@@ -217,6 +223,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_CPU_COPY` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferCopy.cpp` |  | disables the CPU copy path of the copy HLE |
 | `APS5_NO_DATA_HITS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/DispatchCache.cpp` |  | disables dispatch-cache hits that differ only in ShaderData or FlattenedSrt words |
 | `APS5_NO_DCC_PRESYNC` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | leaves the DCC key ranges out of the surfaces a build pre-syncs, so only the surface itself waits for its producer |
+| `APS5_NO_DEFERRED_DESTRUCTION` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | on MoltenVK, destroys buffers and frees device memory as soon as the driver releases them, instead of while the graphics queue is idle (KhronosGroup/MoltenVK#2876) |
 | `APS5_NO_DCC_WORD_SCAN` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/DccMetadata.cpp` |  | restores the byte-by-byte DCC key scan instead of the word-at-a-time compare |
 | `APS5_NO_DEFERRED_EVICTION` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | destroys displaced resource-cache entries under the mutex instead of deferring them to the open batch |
 | `APS5_NO_DEFERRED_SETTLES` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | settles watched private host imports as they open instead of through the deferred block-settling path (Windows only) |
@@ -238,6 +245,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_EMPTY_INDIRECT_SKIP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` |  | builds the stages of an indirect draw whose front program last took the CPU path even when none of its records draws anything, instead of reading its records first and skipping it |
 | `APS5_NO_EPOCH_COLLECT_MAP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp` |  | drops the per-epoch map of completed collects, leaving only the fixed-size thread memo to answer a repeated collect |
 | `APS5_NO_EPOCH_REVALIDATE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | runs every Revalidate's per-element and per-region checks instead of the epoch gate |
+| `APS5_NO_EXACT_ROBUST_LOADS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | keeps the descriptor-range comparison in direct buffer loads on a device that zeroes past the range |
 | `APS5_NO_FAST_REVALIDATE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | always repeats the resource lookups instead of using the fast proof |
 | `APS5_NO_FILL_CLEAR` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferFill.cpp` |  | disables the clear-through-DCC-keys path in a fill |
 | `APS5_NO_FILL_HLE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferFill.cpp` |  | disables the fill-kernel HLE, so matching fills run as compute |
@@ -299,11 +307,12 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_PROC_TABLE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | resolves the device's Vulkan entry points per call instead of filling the function table once |
 | `APS5_NO_QUEUED_DRAW_READ_ORDER` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp` |  | stops queued draws and DMA copies from holding back write-backs over the guest memory they read at commit |
 | `APS5_NO_QUEUED_LABELS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/DeferredLabels.cpp` |  | disables the queued-label table |
+| `APS5_NO_RECENT_IMPORTS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | looks every host import up in the import map instead of first checking the last four found while the map is unchanged |
 | `APS5_NO_RECORDED_CLEAR` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | waits for a storage image's fast clear in a batch of its own instead of recording it |
 | `APS5_NO_RECORDER_SYNC_DRAWS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | gives the draws the recorder waits for their own batch instead of recording them with the wait |
 | `APS5_NO_RECORD_COPIED_DRAWS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | waits for copied-write draws at once instead of listing their write-back for later |
 | `APS5_NO_RECT_INDIRECT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/IndirectDraw.cpp` |  | sends an indirect rectangle-list draw down the CPU path instead of the GPU-side path |
-| `APS5_NO_RESIDENT_LINEAR` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | drops the residency of a linear color target whose address already has a host import, so it is copied in and out again |
+| `APS5_NO_RESIDENT_LINEAR` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | drops the residency of linear color targets, so a target whose address has a host import, or whose import a draw would make, is copied in and out again |
 | `APS5_NO_RESIDENT_PRESENT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | always presents through guest memory instead of the resident image |
 | `APS5_NO_RESIDENT_TARGETS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | copies every render target in and out again instead of keeping it resident |
 | `APS5_NO_RESOURCE_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | disables the shared resource cache, so every dispatch builds its resources fresh |
@@ -347,23 +356,23 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_PACKET_EPOCH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitStatistics.cpp` |  | makes queue workers bump the collect epoch before every packet |
 | `APS5_PIPELINED_DRAWS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPipeline.cpp` | 8 | depth of the queue-0 draw pipeline: 0 records draws inline, 1 selects the default depth of 8, and any other value is the depth capped at 256 |
 | `APS5_PIPELINE_DISPATCH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | records an eligible dispatch as an item in the queue-0 pipeline instead of running it inline |
-| `APS5_PIPELINE_DMA` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketMemory.cpp` |  | records a queue-0 DMA data packet in the draw pipeline instead of executing it inline |
 | `APS5_PIPELINE_DRAIN_FILLS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferFill.cpp` |  | runs queue-0 buffer fills through the draw pipeline to keep their order; any value stores them in place instead |
 | `APS5_PIPELINE_DRAIN_LABELS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketExecution.cpp` |  | answers a queue-0 wait from the draw pipeline's own pending labels while it is busy; any value drains the pipeline at the wait |
 | `APS5_PIPELINE_DRAIN_SUBMISSIONS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketExecution.cpp` |  | lets a submission end without submitting its recorded work, so it joins a later submit with the pipeline's queue; any value drains the pipeline and submits at the end of the submission |
-| `APS5_PIPELINE_JOURNAL_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/PipelineJournal.cpp` | 1024 | number of journal entries loaded at most; a longer journal keeps its last entries, the ones recorded last |
+| `APS5_PIPELINE_JOURNAL_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/PipelineJournal.cpp` | 4096 | number of journal entries loaded at most; a longer journal keeps its last entries, the ones recorded last |
 | `APS5_PIPELINE_JOURNAL_MAX_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/PipelineJournal.cpp` | 1024 | size cap in MiB on the pipeline journal; the file is rewritten down to three quarters of the cap when it is reached, keeping the newest pipelines and the modules they name and leaving room for later records |
 | `APS5_PIPELINE_JOURNAL_THREADS` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/PipelineJournal.cpp` |  | threads that replay the journal's pipelines, 0 disables the replay; unset uses half the hardware threads, at least one |
 | `APS5_PIPELINE_STATS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | captures and prints driver statistics for each new pipeline, requiring `VK_KHR_pipeline_executable_properties`; `1` enables |
-| `APS5_PIPELINE_STORE_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/Pipeline.cpp` | 1024 | LRU bound on the entries of the pipeline store; an entry is evicted only once no recorded draw holds it |
+| `APS5_PIPELINE_STORE_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/Pipeline.cpp` | adaptive | fixes the LRU bound on the entries of the pipeline store, which otherwise starts at 1024 and doubles up to 4096 for a journal replay that does not fit and while evicted pipelines keep coming back; an entry is evicted only once no recorded draw holds it |
 | `APS5_PM4_RING` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/SubmissionRing.cpp` | 16 | number of submissions the PM4 ring keeps for dumps, from 0 to 4096; 0 disables the ring |
 | `APS5_POLL_REAP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | reaps completions on every poll tick |
 | `APS5_POLL_TRY_EACH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | tries the poll service on every tick instead of at the poll interval |
-| `APS5_PREBUILD_THREADS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderRegistry.cpp` | 1 | number of threads in the one-thread pool that prebuilds registration-form shader libraries |
+| `APS5_PREBUILD_THREADS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderRegistry.cpp` |  | threads in the pool that prebuilds registration-form shader libraries; unset uses half the hardware threads, at least two |
 | `APS5_PRESENT_POLL_FENCE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | polls the present fence every 50 us instead of blocking on it |
 | `APS5_PROBE_DISPATCH` | string | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | probes one dispatch at a hex program address (optionally `:index`) with debug output |
 | `APS5_PROFILE_DRAW` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | prints the per-phase driver and draw timing totals |
 | `APS5_PROFILE_GPU` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | records the GPU time of recorded work by key from batch timestamps |
+| `APS5_PROFILE_GPU_DRAWS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp`, `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | with APS5_PROFILE_GPU, records the GPU time of each recorded draw by its fragment program's variant id and prints a [drawvariant] line with the code address behind each variant id once (draws that do not use a recipe only; the [gputime] line labels each `draw 0x<variant>`, the id [drawvariant] prints, and the ranges share the batch's query cap) |
 | `APS5_REAP_EACH_PACKET` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/DeferredLabels.cpp` |  | reaps deferred labels after every packet |
 | `APS5_RELEASE_ON_UNLOCK` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | destroys deferred batches on the unlocking thread instead of a release thread |
 | `APS5_RELEASE_QUEUE_MAX` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` | 256 | maximum deferred batches handed to the release thread before a thread destroys its own |
@@ -379,7 +388,8 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_SKIP_INVALID_INDIRECT_REGISTERS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketExecution.cpp` |  | skips the entries whose offset dword is no register offset in a SET_*_REG_INDIRECT list read again where its packet executes, and writes its valid entries, instead of stopping |
 | `APS5_SKIP_REFUSED_DRAWS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Diagnostics.cpp` |  | skips a draw whose graphics stage the recompiler refuses, reporting each refused shader once, instead of failing the queue |
 | `APS5_SKIP_REQUEST_DUMPS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderDiagnostics.cpp` | 8 | caps RecompileRequest dumps per shader-skip reason |
-| `APS5_SKIP_SHADER` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Diagnostics.cpp` | 0 | hex program address of a shader to skip preparing |
+| `APS5_SKIP_SHADER` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Diagnostics.cpp` | 0 | hex program address of a shader whose draws and dispatches are dropped |
+| `APS5_SKIP_SHADER_FILE` | path | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Diagnostics.cpp` |  | file of whitespace-separated hex program addresses (`#` starts a comment) whose draws and dispatches are dropped; re-read within 500 ms of a change; a token that is not a whole 64-bit hex number is reported and ignored |
 | `APS5_SNAPSHOT_CHECK_FATAL` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | throws on the first snapshot that differs from registered memory instead of only counting them |
 | `APS5_SPANNED_WAVE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | spans a single-wave wave64 compute program over two full 32-lane subgroups |
 | `APS5_SPIRV_OPT` | string | `core/libs/prx/libSceAgcDriver/tests/SpirvOptimizer.cpp` |  | selects the SPIR-V optimization pipeline: `full` restores the performance pipeline, `none` skips optimization |
@@ -405,7 +415,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TEMPLATE_AUDIT_MS` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 1000 | milliseconds after which a cached shader-resource object takes the full walk instead of the fast proof; `0` turns the audit off |
 | `APS5_TEXTURE_CACHE_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 0 | forced byte budget in MiB for the storage and sampled texture caches; `0` selects the budget automatically |
 | `APS5_THREAD_NICE` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/ThreadPriority.cpp` | -10 | nice value the raised queue workers and presenter ask rtkit for (clamped to -20..19) |
-| `APS5_THREAD_PRIORITY` | string | `core/libs/prx/libSceAgcDriver/Execution/src/ThreadPriority.cpp` | off | raises the queue workers and presenter above the title's threads: `off`, `high` or `rt` |
+| `APS5_THREAD_PRIORITY` | string | `core/libs/prx/libSceAgcDriver/Execution/src/ThreadPriority.cpp` | off | raises the queue workers and presenter above the title's threads: `off`, `high` or `rt`; on macOS `high` is the user-interactive QoS class and `rt` a Mach time-constraint policy (period 1 ms, computation 0.5 ms) |
 | `APS5_THREAD_RT` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/ThreadPriority.cpp` | 10 | realtime priority the raised threads ask rtkit for (clamped to 1..99) |
 | `APS5_THREAD_RTTIME_US` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/ThreadPriority.cpp` | 200000 | hard RLIMIT_RTTIME the realtime plan lowers to, in microseconds |
 | `APS5_TRACE_BARRIERS` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | prints that many simulated hazard barriers before stopping |
@@ -536,6 +546,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_FULLSCREEN` | presence | `core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp` |  | opens the display window fullscreen at the desktop resolution when set to a non-empty value other than 0; F11 still switches back |
 | `ANYPS5_INPUT_CONFIG` | string | `core/libs/prx/libSceVideoOut/src/InputMapping.cpp` |  | path of the input mapping file that binds host keys and mouse to guest pad actions |
 | `ANYPS5_REQUIRE_DISPLAY` | presence | `core/libs/prx/libSceVideoOut/tests/Flip.cpp` |  | makes video-out tests fail instead of skipping when no display or Vulkan device is available |
 | `APS5_NO_PAD_INPUT` | presence | `core/libs/prx/libSceVideoOut/src/PadInput.cpp` |  | ignores keyboard and mouse input so a measurement run is not advanced by a stray press |
@@ -565,8 +576,10 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_PIN_WAIT_MS` | integer | `core/libs/prx/libc/src/GuestAllocations.cpp` | 60000 | milliseconds to wait for a pinned allocation lease before failing |
 | `APS5_TRACE_AFFINITY` | presence | `core/libs/prx/libc/include/CpuTopology.hpp` |  | prints a line naming the role, tid and mask of every thread pinning |
 | `APS5_TRACE_CALLS` | string | `core/libs/prx/libc/src/specifics/x86_64/CallTrace.cpp` |  | comma-separated libraries (or all) whose guest calls are traced |
+| `APS5_TRACE_CALLS_FILE` | string | `core/libs/prx/libc/src/specifics/x86_64/CallTrace.cpp` |  | file rewritten every 10 seconds with each traced import called so far and its number of calls |
 | `APS5_TRACE_EXIT` | presence | `core/libs/prx/libc/src/Process.cpp` |  | prints a backtrace of the caller of exit, _Exit and the process-exit path |
 | `APS5_TRACE_SSE4A` | presence | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | prints each emulated SSE4a instruction once per rip |
+| `APS5_VERIFY_DIRECT_COLLECT` | presence | `core/libs/prx/libc/include/WindowsMappings.hpp` |  | queries the regions of each private-memory collect read from the allocation map and throws when that collect succeeded over memory that is no longer committed private |
 | `APS5_WATCH_ADDR` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | absolute hex address whose writes are reported after its page is committed |
 | `APS5_WATCH_WRITE` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | guest ELF vaddr whose 8-byte writes are reported by single-stepping the protected page |
 

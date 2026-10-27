@@ -87,7 +87,6 @@ int APS5_VABI sceNpCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, std::ui
 int APS5_VABI sceNpJoinThread(Pthread thread, void** retval);
 int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec);
 void APS5_VABI sceNpGetSdkVersion(char* version);
-int APS5_VABI sceNpCloseEventFlag(void);
 int APS5_VABI sceNpCloseSema(void);
 int APS5_VABI sceNpGetNavSdkVersion(void);
 int APS5_VABI sceNpIntGetPlatformType(void);
@@ -137,6 +136,7 @@ int APS5_VABI sceNpLwCondWait(PthreadCond* cond, PthreadMutex* mutex);
 int APS5_VABI sceNpCreateEventFlag(KernelEventFlag* flag, const char* name, std::uint32_t attr, std::uint64_t pattern);
 int APS5_VABI sceNpDeleteEventFlag(KernelEventFlag flag);
 int APS5_VABI sceNpOpenEventFlag(KernelEventFlag* flag, const char* name);
+int APS5_VABI sceNpCloseEventFlag(KernelEventFlag flag);
 int APS5_VABI sceNpSetEventFlag(KernelEventFlag flag, std::uint64_t pattern);
 int APS5_VABI sceNpClearEventFlag(KernelEventFlag flag, std::uint64_t pattern);
 int APS5_VABI sceNpPollEventFlag(KernelEventFlag flag, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result);

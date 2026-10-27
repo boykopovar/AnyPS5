@@ -403,20 +403,28 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
 }
 
 static std::atomic<bool> g_audioOut2Initialized{false};
+static std::atomic<bool> g_audioOutInitialized{false};
+static constexpr int SCE_AUDIO_OUT2_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80268004);
+static constexpr int SCE_AUDIO_OUT_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8026000e);
 
 bool AudioOut2IsInitialized_nid_no_patch() {
     return g_audioOut2Initialized.load();
 }
 
+void AudioOut2MarkInitialized_nid_no_patch() {
+    g_audioOut2Initialized.store(true);
+}
+
 extern "C" {
 
 int APS5_VABI sceAudioOut2Initialize(void) {
-    g_audioOut2Initialized.store(true);
-    return 0;
+    return g_audioOut2Initialized.exchange(true) ? SCE_AUDIO_OUT2_ERROR_ALREADY_INITIALIZED : 0;
 }
 
 int APS5_VABI sceAudioOutInit() {
-    return sceAudioOut2Initialize();
+    if (g_audioOutInitialized.exchange(true)) return SCE_AUDIO_OUT_ERROR_ALREADY_INITIALIZED;
+    AudioOut2MarkInitialized_nid_no_patch();
+    return 0;
 }
 
 int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len,
@@ -661,6 +669,10 @@ int APS5_VABI sceAudioOutSysOpen(int userId, std::uint32_t mode) {
         throw std::runtime_error("sceAudioOutSysOpen: mode " + std::to_string(mode) + " not supported");
     }
     return allocatePort(PORT_TYPE_SYS, SYS_PORT_SAMPLES, SYS_PORT_FRAME_RATE, Format::S16_8Ch);
+}
+
+int APS5_VABI sceAudioOutSetMainOutput() {
+    return 0;
 }
 
 int APS5_VABI sceAudioOutSetMixLevelPadSpk(int handle, std::uint32_t mixLevel) {
