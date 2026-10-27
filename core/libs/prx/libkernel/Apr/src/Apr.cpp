@@ -58,6 +58,7 @@ std::unordered_map<std::string, std::uint32_t>& g_idsByPath = *new std::unordere
 struct ListedFile {
     std::uint64_t size;
     std::filesystem::path name;
+    bool ambiguous = false;
 };
 
 std::mutex& g_directoriesLock = *new std::mutex();
@@ -68,6 +69,11 @@ std::string _foldCase(std::string text) {
         if (character >= 'A' && character <= 'Z') character = static_cast<char>(character - 'A' + 'a');
     }
     return text;
+}
+
+void _addListed(std::unordered_map<std::string, ListedFile>& files, std::filesystem::path name, std::uint64_t size) {
+    auto [file, added] = files.try_emplace(_foldCase(name.string()), ListedFile{size, name});
+    if (!added) file->second.ambiguous = true;
 }
 
 std::mutex& g_hostDirectoriesLock = *new std::mutex();
@@ -90,8 +96,7 @@ bool _listedSize(const std::filesystem::path& path, std::uint64_t& bytes, std::f
                     if ((entry.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) continue;
                     const auto size = (static_cast<std::uint64_t>(entry.nFileSizeHigh) << 32u) | entry.nFileSizeLow;
                     try {
-                        std::filesystem::path name(entry.cFileName);
-                        sizes.emplace(_foldCase(name.string()), ListedFile{size, std::move(name)});
+                        _addListed(sizes, std::filesystem::path(entry.cFileName), size);
                     } catch (const std::exception&) {
                     }
                 } while (FindNextFileW(find, &entry));
@@ -103,12 +108,12 @@ bool _listedSize(const std::filesystem::path& path, std::uint64_t& bytes, std::f
                 std::error_code entryError;
                 if (!it->is_regular_file(entryError)) continue;
                 const auto size = it->file_size(entryError);
-                if (!entryError) sizes.emplace(_foldCase(it->path().filename().string()), ListedFile{size, it->path().filename()});
+                if (!entryError) _addListed(sizes, it->path().filename(), size);
             }
 #endif
             listed = g_directories.emplace(directory, std::move(sizes)).first;
         }
-        if (const auto file = listed->second.find(_foldCase(path.filename().string())); file != listed->second.end()) {
+        if (const auto file = listed->second.find(_foldCase(path.filename().string())); file != listed->second.end() && !file->second.ambiguous) {
             bytes = file->second.size;
             if (listedName) *listedName = file->second.name;
             return true;

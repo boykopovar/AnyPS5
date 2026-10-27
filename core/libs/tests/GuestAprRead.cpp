@@ -151,6 +151,17 @@ void TestResolve() {
     std::array<std::uint64_t, 2> missingSizes{};
     failed = 0;
     Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(missing.data(), 2, missingIds.data(), missingSizes.data(), &failed) == -1 && failed == 1 && missingSizes[1] == 0, "APR resolved a missing file");
+    std::filesystem::create_directories(directory / "case");
+    WriteBytes(directory / "case" / "E.bin", 13);
+    WriteBytes(directory / "case" / "e.bin", 17);
+    if (std::distance(std::filesystem::directory_iterator(directory / "case"), std::filesystem::directory_iterator()) == 2) {
+        std::array<const char*, 2> cased{"/apr_resolve/case/E.bin", "/apr_resolve/case/e.bin"};
+        std::array<std::uint32_t, 2> casedIds{};
+        std::array<std::uint64_t, 2> casedSizes{};
+        Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(cased.data(), 2, casedIds.data(), casedSizes.data(), &failed) == 0 && casedSizes == std::array<std::uint64_t, 2>{13, 17}, "APR mixed up two names that differ only in case");
+        CheckResolved(casedIds[0], 13);
+        CheckResolved(casedIds[1], 17);
+    }
     std::filesystem::create_directories(directory / "first");
     std::filesystem::create_directories(directory / "second");
     WriteBytes(directory / "first" / "x.bin", 3);
