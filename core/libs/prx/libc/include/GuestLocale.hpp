@@ -188,4 +188,8 @@ static_assert(alignof(LocinfoStorage) == 8);
 
 }
 
+inline constexpr std::size_t kNumPutCharVtableSlots = 14;
+static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
+extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
+
 #endif

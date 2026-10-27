@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from fractions import Fraction
 from html import escape
 from pathlib import Path
 
@@ -415,6 +416,20 @@ def details(icon, title, column, items):
     return rows + ["\n</details>"]
 
 
+def exact_delta(base, head):
+    try:
+        return Fraction(100 * head["done"], head["total"]) - Fraction(100 * base["done"], base["total"])
+    except (KeyError, TypeError, ZeroDivisionError):
+        return None
+
+
+def small_delta(delta):
+    text = f"{float(delta):+.4f}"
+    if float(text) == 0:
+        return f'{"+" if delta > 0 else "-"}<0.0001'
+    return text.rstrip("0")
+
+
 def compare(title, column, unit, base, head):
     owners = {g["name"]: g["shared_sources"] for g in head["groups"] if "shared_sources" in g}
     previous = {g["name"]: g.get("shared_sources") for g in base["groups"]}
@@ -427,11 +442,13 @@ def compare(title, column, unit, base, head):
     if not (implemented or declared or regressed or removed or shared):
         return []
     delta = round(head["percent"] - base["percent"], 2)
-    icon = "📈" if delta > 0 else "📉" if delta < 0 else "➖"
+    exact = exact_delta(base, head) if delta == 0 else None
+    shown = small_delta(exact) if exact else f"{delta:+}"
+    icon = "📈" if (exact or delta) > 0 else "📉" if (exact or delta) < 0 else "➖"
     counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared), "declared"),
                                                 (-len(regressed), "reverted"), (-len(removed), "removed")) if n]
     changes = f', {", ".join(counts)} {unit}' if counts else ""
-    lines = [f'{icon} **{title}**: {head["percent"]}% ({delta:+}%{changes})', ""]
+    lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
     lines += details("🆕", "declared as stubs", column, declared)

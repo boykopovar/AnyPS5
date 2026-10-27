@@ -420,6 +420,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_math PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_strtod_subnormal_tests ${LIBS_INCLUDE_DIR}/tests/GuestStrtodSubnormal.cpp)
+    target_include_directories(guest_strtod_subnormal_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_strtod_subnormal_tests PRIVATE libc)
+    configure_windows_unwind(guest_strtod_subnormal_tests)
+    add_test(NAME guest_strtod_subnormal COMMAND guest_strtod_subnormal_tests)
+    if(WIN32)
+        set_tests_properties(guest_strtod_subnormal PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_random_state_tests ${LIBS_INCLUDE_DIR}/tests/GuestRandomState.cpp)
     target_include_directories(guest_random_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_random_state_tests PRIVATE libc)
@@ -1086,7 +1095,7 @@ if(BUILD_TESTING)
         target_include_directories(cpu_topology_tests PRIVATE ${LIBS_INCLUDE_DIR})
         add_test(NAME cpu_topology COMMAND cpu_topology_tests)
     endif()
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR WIN32)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE OR WIN32)
         add_test_executable(guest_backtrace_tests ${LIBS_INCLUDE_DIR}/tests/GuestBacktrace.cpp)
         target_include_directories(guest_backtrace_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_backtrace_tests PRIVATE libc)
@@ -1273,7 +1282,7 @@ if(MINGW)
         add_test(NAME windows_crash_stack_words COMMAND windows_backtrace_report_tests fault)
         set_tests_properties(windows_crash_stack_words PROPERTIES TIMEOUT 20
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;APS5_CRASH_STACK_BYTES=set:2048"
-            PASS_REGULAR_EXPRESSION "FATAL: unhandled exception 0xc0000005[^~]*stack words from rsp[^~]*data at stack words that point outside the stack[^~]*c0ffee0000000000 c0ffee0000000001 c0ffee0000000002 c0ffee0000000003 c0ffee0000000004 c0ffee0000000005 c0ffee0000000006 c0ffee0000000007")
+            PASS_REGULAR_EXPRESSION "FATAL: unhandled exception 0xc0000005.*stack words from rsp.*data at stack words that point outside the stack.*c0ffee0000000000 c0ffee0000000001 c0ffee0000000002 c0ffee0000000003 c0ffee0000000004 c0ffee0000000005 c0ffee0000000006 c0ffee0000000007")
         add_test(NAME windows_crash_without_stack_words COMMAND windows_backtrace_report_tests fault)
         set_tests_properties(windows_crash_without_stack_words PROPERTIES TIMEOUT 20
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;APS5_CRASH_STACK_BYTES=unset:"

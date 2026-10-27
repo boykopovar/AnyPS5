@@ -1052,6 +1052,7 @@ int APS5_VABI _Tss_delete_nid_postfix(int key);
 void* APS5_VABI _Tss_get_nid_postfix(int key);
 int APS5_VABI _Tss_set_nid_postfix(int key, void* value);
 int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second);
+int APS5_VABI _Thrd_lt_nid_postfix(void* first, void* second);
 void* APS5_VABI _Thrd_current_nid_postfix(void);
 int APS5_VABI _Mtx_current_owns_nid_postfix(void**);
 int APS5_VABI _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name);

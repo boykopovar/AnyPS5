@@ -191,6 +191,30 @@ class ProgressTests(unittest.TestCase):
                                                           base["shaders"], head["shaders"])))
         self.assertNotIn("Changed libraries", report)
 
+    def test_report_shows_a_headline_change_that_two_decimals_would_hide(self):
+        before = dict(self.report_library("libScePad", ["A"], ["T"]), done=50000, todo=50001)
+        after = dict(self.report_library("libScePad", ["A", "B"], ["T"]), done=50001, todo=50000)
+        self.assertEqual(progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
+                                          self.report_snapshot(after)["libraries"])[0],
+                         "\U0001f4c8 **System libraries**: 50.0% (+0.001%, +1 implemented functions)")
+        reverted = progress.compare("System libraries", "Library", "functions", self.report_snapshot(after)["libraries"],
+                                    self.report_snapshot(before)["libraries"])[0]
+        self.assertTrue(reverted.startswith("\U0001f4c9 **System libraries**: 50.0% (-0.001%, "))
+
+    def test_report_keeps_a_zero_headline_change_when_the_ratio_is_unchanged(self):
+        before = dict(self.report_library("libScePad", ["A"], ["T"]), done=1, todo=1)
+        after = dict(self.report_library("libScePad", ["A", "B"], ["T", "U"]), done=2, todo=2)
+        headline = progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
+                                    self.report_snapshot(after)["libraries"])[0]
+        self.assertEqual(headline, "\u2796 **System libraries**: 50.0% (+0.0%, +1 implemented, +1 declared functions)")
+
+    def test_report_marks_a_headline_change_below_four_decimals(self):
+        before = dict(self.report_library("libScePad", ["A"], ["T"]), done=1, todo=10000000)
+        after = dict(self.report_library("libScePad", ["A", "B"], ["T"]), done=2, todo=10000000)
+        headline = progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
+                                    self.report_snapshot(after)["libraries"])[0]
+        self.assertIn("(+<0.0001%, +1 implemented functions)", headline)
+
     def test_report_rounds_percentage_point_change_without_negative_zero(self):
         base = self.report_snapshot(self.report_library("libScePad", ["Ready"], ["A", "B"]))
         head = self.report_snapshot(self.report_library("libScePad", ["Ready", "A"], ["B"]))

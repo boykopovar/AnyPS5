@@ -46,17 +46,19 @@ def parse_nids(path):
 def parse_db(path):
     mapping = {}
     with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
-        for line in f:
+        for number, line in enumerate(f, 1):
             s = line.lstrip("\ufeff").strip()
             if not s or s.startswith("#"):
                 continue
             parts = s.split()
             if len(parts) < 2:
-                continue
+                raise ValueError(f"{path}:{number}: expected a NID and a symbol name, got {s!r}")
             nid = parts[0].split("#", 1)[0].strip().lstrip("\ufeff")
             name = parts[1].split("#", 1)[0].strip().lstrip("\ufeff")
             if not nid or not name:
-                continue
+                raise ValueError(f"{path}:{number}: expected a NID and a symbol name, got {s!r}")
+            if re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) is None:
+                raise ValueError(f"{path}:{number}: invalid NID {nid!r}")
             if nid not in mapping:
                 mapping[nid] = name
     return mapping

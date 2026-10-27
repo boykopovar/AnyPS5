@@ -319,10 +319,19 @@ if(BUILD_TESTING)
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_preprocessor.py)
         set_tests_properties(check_compile_preprocessor PROPERTIES TIMEOUT 20)
-        add_test(NAME check_compile COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py CheckCompileTests)
-        add_test(NAME check_compile_outputs COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py CheckCompileOutputTests)
+        set(check_compile_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${check_compile_test_source}")
+        file(STRINGS "${check_compile_test_source}" check_compile_cases REGEX "^class CheckCompile|^    def test_")
+        foreach(test_case IN LISTS check_compile_cases)
+            if(test_case MATCHES "^class (CheckCompile[A-Za-z0-9_]*)")
+                set(check_compile_class "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+                add_test(NAME check_compile_${test_case} COMMAND ${Python3_EXECUTABLE}
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py" "${check_compile_class}.${test_case}")
+                set_tests_properties(check_compile_${test_case} PROPERTIES TIMEOUT 30)
+            endif()
+        endforeach()
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)

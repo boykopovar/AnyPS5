@@ -24,6 +24,7 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+extern char** environ;
 #endif
 
 namespace AgcDriver {

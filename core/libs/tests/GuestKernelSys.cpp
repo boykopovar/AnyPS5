@@ -1,5 +1,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -11,7 +13,9 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -23,6 +27,9 @@
 #include <stdexcept>
 #include <set>
 #include <string>
+#include <thread>
+#include <tuple>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #include <winioctl.h>
@@ -337,6 +344,132 @@ void CheckCondattrClock() {
     Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
 }
 
+template<class TRecord, class TWrite>
+void CheckAmmWriter(TRecord record, TWrite write, int expected) {
+    std::array<std::uint8_t, 64> recorded{};
+    Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, 0, 0, static_cast<std::uint32_t>(recorded.size()), recorded.data()};
+    Require(record(&buffer) == expected);
+    std::uint64_t measured = ~std::uint64_t{0};
+    Require(write(nullptr, &measured) == expected);
+    std::array<std::uint8_t, 64> written{};
+    written.fill(0xCC);
+    std::uint64_t reported = ~std::uint64_t{0};
+    Require(write(written.data(), &reported) == expected);
+    if (expected != 0) {
+        Require(buffer.offset == 0 && measured == ~std::uint64_t{0} && reported == ~std::uint64_t{0});
+        Require(std::all_of(written.begin(), written.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+        return;
+    }
+    Require(buffer.offset != 0 && measured == buffer.offset && reported == buffer.offset);
+    Require(std::memcmp(written.data(), recorded.data(), buffer.offset) == 0 && written[buffer.offset] == 0xCC);
+    written.fill(0xCC);
+    Require(write(written.data(), nullptr) == 0 && std::memcmp(written.data(), recorded.data(), buffer.offset) == 0);
+}
+
+void CheckAmmWriteCommands() {
+    constexpr std::uint64_t page = 0x4000;
+    constexpr std::uint64_t address = 0x10000000;
+    constexpr std::uint64_t source = 0x20000000;
+    constexpr std::uint64_t directOffset = 0x300000;
+    constexpr std::uint64_t size = 2 * page;
+    constexpr std::int32_t type = 3;
+    constexpr std::int32_t protection = 0x33;
+    constexpr std::int32_t mask = 0x13;
+    constexpr std::uint8_t gpuMaskId = 5;
+    constexpr std::int32_t badProtection = 0x04;
+    for (const auto [mapped, offset, protect, expected] : {std::tuple{address, directOffset, protection, 0}, std::tuple{address + 8, directOffset, protection, SCE_KERNEL_ERROR_EINVAL}, std::tuple{address, directOffset + 8, protection, SCE_KERNEL_ERROR_EINVAL}, std::tuple{address, directOffset, badProtection, SCE_KERNEL_ERROR_EINVAL}}) {
+        const bool alignedOffset = offset == directOffset;
+        if (alignedOffset) {
+            CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMap(buffer, mapped, size, type, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapCommand(dst, mapped, size, type, static_cast<std::uint32_t>(protect), outSize); }, expected);
+            CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapWithGpuMaskId(buffer, mapped, size, type, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapWithGpuMaskIdCommand(dst, mapped, size, type, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+        }
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirect(buffer, mapped, offset, size, type, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectCommand(dst, mapped, offset, size, type, static_cast<std::uint32_t>(protect), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirectWithGpuMaskId(buffer, mapped, offset, size, type, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectWithGpuMaskIdCommand(dst, mapped, offset, size, type, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+    }
+    for (const auto [mapped, length, expected] : {std::tuple{address, size, 0}, std::tuple{address + 8, size, SCE_KERNEL_ERROR_EINVAL}, std::tuple{address, std::uint64_t{0}, SCE_KERNEL_ERROR_EINVAL}}) {
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferUnmap(buffer, mapped, length); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteUnmapCommand(dst, mapped, length, outSize); }, expected);
+    }
+    for (const auto [from, protect, expected] : {std::tuple{source, protection, 0}, std::tuple{source + 8, protection, SCE_KERNEL_ERROR_EINVAL}, std::tuple{source, badProtection, SCE_KERNEL_ERROR_EINVAL}}) {
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferRemap(buffer, address, from, size, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteRemapCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferRemapWithGpuMaskId(buffer, address, from, size, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteRemapWithGpuMaskIdCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMultiMap(buffer, address, from, size, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMultiMapCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMultiMapWithGpuMaskId(buffer, address, from, size, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMultiMapWithGpuMaskIdCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+    }
+    for (const auto [protect, masked, expected] : {std::tuple{protection, mask, 0}, std::tuple{badProtection, mask, SCE_KERNEL_ERROR_EINVAL}, std::tuple{protection, badProtection, SCE_KERNEL_ERROR_EINVAL}}) {
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyProtect(buffer, address, size, protect, masked); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyProtectCommand(dst, address, size, static_cast<std::uint32_t>(protect), static_cast<std::uint32_t>(masked), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyProtectWithGpuMaskId(buffer, address, size, protect, masked, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyProtectWithGpuMaskIdCommand(dst, address, size, static_cast<std::uint32_t>(protect), static_cast<std::uint32_t>(masked), gpuMaskId, outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyMtypeProtectWithGpuMaskId(buffer, address, size, type, protect, masked, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(dst, address, size, type, static_cast<std::uint32_t>(protect), static_cast<std::uint32_t>(masked), gpuMaskId, outSize); }, expected);
+    }
+    std::uint64_t untouched = ~std::uint64_t{0};
+    constexpr std::uint64_t wide = std::uint64_t{1} << 32 | 0x33;
+    Require(sceKernelWriteMapCommand(nullptr, address, size, type, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWriteRemapCommand(nullptr, address, source, size, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWriteModifyProtectCommand(nullptr, address, size, protection, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Require(untouched == ~std::uint64_t{0});
+    constexpr std::uint64_t wideType = std::uint64_t{1} << 32 | static_cast<std::uint64_t>(type);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMap(buffer, address, size, type, protection); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapWithGpuMaskId(buffer, address, size, type, protection, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapWithGpuMaskIdCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), gpuMaskId, outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirect(buffer, address, directOffset, size, type, protection); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectCommand(dst, address, directOffset, size, wideType, static_cast<std::uint32_t>(protection), outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirectWithGpuMaskId(buffer, address, directOffset, size, type, protection, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectWithGpuMaskIdCommand(dst, address, directOffset, size, wideType, static_cast<std::uint32_t>(protection), gpuMaskId, outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyMtypeProtectWithGpuMaskId(buffer, address, size, type, protection, mask, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), static_cast<std::uint32_t>(mask), gpuMaskId, outSize); }, 0);
+}
+
+void CheckAmmWaitCompletion() {
+    constexpr std::uint64_t page = 0x4000;
+    constexpr std::int32_t cpuReadWrite = 0x03;
+    std::uint64_t start = 0;
+    std::uint64_t end = 0;
+    std::uint64_t multimapStart = 0;
+    std::uint64_t multimapEnd = 0;
+    Require(sceAmprAmmGetVirtualAddressRanges(&start, &end, &multimapStart, &multimapEnd) == 0);
+    std::int64_t pool = -1;
+    Require(sceAmprAmmGiveDirectMemory(0, static_cast<std::int64_t>(sceKernelGetDirectMemorySize()), 2 * page, page, 1, &pool) == 0);
+    const std::uint64_t target = start + 0x400000;
+    std::array<std::uint8_t, 64> commands{};
+    std::uint64_t bytes = 0;
+    Require(sceKernelWriteMapCommand(commands.data(), target, page, 0, cpuReadWrite, &bytes) == 0);
+    std::uint32_t id = 0;
+    Require(sceAmprAmmSubmitCommandBuffer3(commands.data(), static_cast<std::uint32_t>(bytes), 0, &id) == 0 && id != 0);
+    Require(sceKernelWaitCommandBufferCompletion(id) == 0);
+    auto* mapped = reinterpret_cast<volatile std::uint8_t*>(target);
+    *mapped = 0x5A;
+    Require(*mapped == 0x5A);
+    Require(sceKernelWaitCommandBufferCompletion(id) == 0);
+    Require(sceKernelWaitCommandBufferCompletion(0) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelWaitCommandBufferCompletion(id + 1) == SCE_KERNEL_ERROR_ESRCH && sceAmprAmmWaitCommandBufferCompletion(id + 1) == SCE_KERNEL_ERROR_ESRCH);
+}
+
+void CheckAmmWaitConcurrentSubmits() {
+    constexpr int submitters = 4;
+    constexpr int submissions = 4000;
+    std::array<std::uint8_t, 16> empty{};
+    std::atomic<std::uint32_t> newest{0};
+    std::atomic<int> running{submitters};
+    std::atomic<int> rejected{0};
+    std::vector<std::thread> threads;
+    for (int thread = 0; thread < submitters; ++thread) {
+        threads.emplace_back([&] {
+            for (int index = 0; index < submissions; ++index) {
+                std::uint32_t id = 0;
+                if (sceAmprAmmSubmitCommandBuffer3(empty.data(), 0, 0, &id) != 0 || id == 0) ++rejected;
+                auto seen = newest.load();
+                while (seen < id && !newest.compare_exchange_weak(seen, id)) {}
+            }
+            --running;
+        });
+    }
+    std::thread waiter([&] {
+        while (running.load() != 0) {
+            const auto id = newest.load();
+            if (id != 0 && (sceKernelWaitCommandBufferCompletion(id) != 0 || sceAmprAmmWaitCommandBufferCompletion(id) != 0)) ++rejected;
+        }
+    });
+    for (auto& thread : threads) thread.join();
+    waiter.join();
+    Require(rejected.load() == 0);
+    Require(sceKernelWaitCommandBufferCompletion(newest.load()) == 0);
+}
+
 void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
     const auto directory = root.generic_string();
     for (const auto& path : {file, directory}) {
@@ -545,6 +678,9 @@ int main() {
     Require(umask_nid_postfix(07777) == 0);
     Require(umask_nid_postfix(022) == 07777);
     CheckCondattrClock();
+    CheckAmmWriteCommands();
+    CheckAmmWaitCompletion();
+    CheckAmmWaitConcurrentSubmits();
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));

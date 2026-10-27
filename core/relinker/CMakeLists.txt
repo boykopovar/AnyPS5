@@ -581,6 +581,9 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME tls_diagnostics COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_tls_diagnostics.py $<TARGET_FILE:relinker>)
+        add_test(NAME ignored_string_segments COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_ignored_string_segments.py $<TARGET_FILE:relinker>)
+        set_tests_properties(ignored_string_segments PROPERTIES TIMEOUT 30)
         add_test(NAME call_zero_padding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_call_zero_padding.py $<TARGET_FILE:relinker>)
         set_tests_properties(call_zero_padding PROPERTIES TIMEOUT 60)

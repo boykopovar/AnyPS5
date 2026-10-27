@@ -484,6 +484,8 @@ int main() {
             for (int whence = 0; whence < 3; ++whence) {
                 Require(lseek_nid_postfix(end, 0, whence) == -1 && *__error_nid_postfix() == 29);
                 Require(sceKernelLseek(end, 1, whence) == static_cast<int>(0x8002001du));
+                Require(lseek_nid_postfix(end, -1, whence) == -1 && *__error_nid_postfix() == 29);
+                Require(sceKernelLseek(end, -100, whence) == static_cast<int>(0x8002001du));
             }
         }
         char piped[8]{};

@@ -490,6 +490,8 @@ static void ForwardedCalls() {
     Require(_Tss_get_nid_postfix(6) == &forwardLog && forwardLog.key == 6);
     Require(_Tss_set_nid_postfix(8, &flag) == success && forwardLog.key == 8 && forwardLog.value == &flag);
     Require(_Thrd_equal_nid_postfix(&flag, &key) == 1 && forwardLog.first == &flag && forwardLog.second == &key);
+    Require(_Thrd_lt_nid_postfix(&flag, &flag) == 0);
+    Require(_Thrd_lt_nid_postfix(&flag, &key) != _Thrd_lt_nid_postfix(&key, &flag));
     Require(_Thrd_current_nid_postfix() == &forwardLog.key);
     Require(_Thrd_id_nid_postfix() == &forwardLog.key);
     Require(_Mtx_current_owns_nid_postfix(nullptr) == 1);

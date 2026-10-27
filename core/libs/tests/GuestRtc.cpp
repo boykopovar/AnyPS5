@@ -873,6 +873,39 @@ int main(int argc, char** argv) {
         Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &first, 2) == 0 && std::strcmp(precise, "2024-02-29T12:34:56.78Z") == 0);
         Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &first, 7) == invalidValue);
         Require(sceRtcFormatRFC3339PreciseLocalTime(nullptr, &first, 0) == invalidPointer);
+        constexpr int invalidYear = static_cast<int>(0x80B50008u);
+        const RtcTick measured{63926543109123456ull};
+        static constexpr const char* fractions[] = {"2026-10-02T13:05:09Z", "2026-10-02T13:05:09.1Z", "2026-10-02T13:05:09.12Z", "2026-10-02T13:05:09.123Z",
+            "2026-10-02T13:05:09.1234Z", "2026-10-02T13:05:09.12345Z", "2026-10-02T13:05:09.123456Z"};
+        for (int digits = 0; digits <= 6; ++digits)
+            Require(sceRtcFormatRFC3339Precise(precise, &measured, 0, digits) == 0 && std::strcmp(precise, fractions[digits]) == 0);
+        struct Zone {
+            int minutes;
+            const char* expected;
+        };
+        static constexpr Zone zones[] = {{60, "2026-10-02T14:05:09.123+01:00"}, {-180, "2026-10-02T10:05:09.123-03:00"}, {330, "2026-10-02T18:35:09.123+05:30"},
+            {-330, "2026-10-02T07:35:09.123-05:30"}, {1439, "2026-10-03T13:04:09.123+23:59"}, {-1439, "2026-10-01T13:06:09.123-23:59"},
+            {1, "2026-10-02T13:06:09.123+00:01"}, {-1, "2026-10-02T13:04:09.123-00:01"}, {720, "2026-10-03T01:05:09.123+12:00"}};
+        for (const auto& zone : zones)
+            Require(sceRtcFormatRFC3339Precise(precise, &measured, zone.minutes, 3) == 0 && std::strcmp(precise, zone.expected) == 0);
+        const RtcTick yearEnd{63934358400999999ull};
+        Require(sceRtcFormatRFC3339Precise(precise, &yearEnd, 1, 6) == 0 && std::strcmp(precise, "2027-01-01T00:01:00.999999+00:01") == 0);
+        Require(sceRtcFormatRFC3339Precise(precise, &yearEnd, -1439, 2) == 0 && std::strcmp(precise, "2026-12-31T00:01:00.99-23:59") == 0);
+        const RtcTick zero{0}, maximum{315537897599999999ull}, pastMaximum{315537897600000000ull}, huge{~0ull}, nines{63926543109999999ull};
+        Require(sceRtcFormatRFC3339Precise(precise, &zero, 0, 6) == 0 && std::strcmp(precise, "0001-01-01T00:00:00.000000Z") == 0);
+        Require(sceRtcFormatRFC3339Precise(precise, &maximum, 0, 6) == 0 && std::strcmp(precise, "9999-12-31T23:59:59.999999Z") == 0);
+        Require(sceRtcFormatRFC3339Precise(precise, &nines, 0, 1) == 0 && std::strcmp(precise, "2026-10-02T13:05:09.9Z") == 0);
+        std::memset(precise, '#', sizeof(precise));
+        Require(sceRtcFormatRFC3339Precise(precise, &zero, -60, 0) == invalidValue && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &maximum, 60, 6) == invalidYear && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &pastMaximum, 0, 6) == invalidYear && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &huge, 0, 6) == invalidYear && precise[0] == '#');
+        Require(sceRtcFormatRFC3339Precise(precise, &pastMaximum, -60, 3) == 0 && std::strcmp(precise, "9999-12-31T23:00:00.000-01:00") == 0);
+        Require(sceRtcFormatRFC3339Precise(nullptr, &measured, 0, 9) == invalidPointer);
+        Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &pastMaximum, 3) == invalidYear);
+        SetTimeZone("XXX+3");
+        Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &pastMaximum, 3) == 0 && std::strcmp(precise, "9999-12-31T21:00:00.000-03:00") == 0);
+        SetTimeZone("UTC0");
         Require(sceRtcCompareTick(&first, &second) == -1 && sceRtcCompareTick(&second, &first) == 1 && sceRtcCompareTick(&first, &first) == 0);
         Require(sceRtcCompareTick(nullptr, &first) == invalidPointer && sceRtcCompareTick(&first, nullptr) == invalidPointer);
         RtcTick current{};
