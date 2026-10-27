@@ -1366,6 +1366,9 @@ int64_t APS5_VABI sceNetSendmsg(int s, const NetMsghdr* msg, int flags) {
 int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
     const auto total = message_length(msg);
     if (total < 0) return total;
+    NetMsghdr header = *msg;
+    std::vector<NetIovec> vectors;
+    if (header.iov_length > 0) vectors.assign(header.iov, header.iov + header.iov_length);
     if (!message_flags_supported(flags, NET_MSG_PEEK | NET_MSG_DONTWAIT)) return fail(NET_EOPNOTSUPP);
     Sock socket;
     {
@@ -1377,8 +1380,7 @@ int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
     const GuestArena::HostWrite messageOutput(msg, sizeof(*msg));
     if (!messageOutput.Open()) return fail(NET_EFAULT);
     std::deque<GuestArena::HostWrite> destinations;
-    for (int i = 0; i < msg->iov_length; ++i) {
-        const auto& entry = msg->iov[i];
+    for (const auto& entry : vectors) {
         if (entry.length == 0) continue;
         if (!destinations.emplace_back(entry.base, static_cast<std::size_t>(entry.length)).Open()) return fail(NET_EFAULT);
     }
@@ -1386,9 +1388,10 @@ int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
 #if defined(_WIN32) || defined(__APPLE__)
     if (const int wait = wait_for_local_address(s, socket, total == 0, flags)) {
         if (wait != RECEIVE_NOTHING) return fail(wait);
-        msg->flags = 0;
-        if (msg->name) msg->name_length = 0;
-        msg->control_length = 0;
+        header.flags = 0;
+        if (header.name) header.name_length = 0;
+        header.control_length = 0;
+        *msg = header;
         return 0;
     }
 #endif
@@ -1413,19 +1416,21 @@ int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
         return fail(native_error());
 #endif
     }
-    msg->flags = 0;
+    header.flags = 0;
     if (received > total) {
         received = total;
-        msg->flags = NET_MSG_TRUNC;
+        header.flags = NET_MSG_TRUNC;
     }
     std::size_t offset = 0;
-    for (int i = 0; i < msg->iov_length && offset < static_cast<std::size_t>(received); ++i) {
-        const auto count = std::min<std::size_t>(msg->iov[i].length, static_cast<std::size_t>(received) - offset);
-        std::memcpy(msg->iov[i].base, buffer.data() + offset, count);
+    for (const auto& entry : vectors) {
+        if (offset >= static_cast<std::size_t>(received)) break;
+        const auto count = std::min<std::size_t>(entry.length, static_cast<std::size_t>(received) - offset);
+        std::memcpy(entry.base, buffer.data() + offset, count);
         offset += count;
     }
-    if (msg->name && !native_to_guest_address(peer, msg->name, &msg->name_length)) msg->name_length = 0;
-    msg->control_length = 0;
+    if (header.name && !native_to_guest_address(peer, header.name, &header.name_length)) header.name_length = 0;
+    header.control_length = 0;
+    *msg = header;
     return received;
 }
 
