@@ -65,6 +65,9 @@ void renewBacking(std::uintptr_t address, std::size_t bytes) {
 std::atomic<std::uint64_t> generation{1};
 std::atomic<void (*)(std::uintptr_t, std::size_t)> invalidator{nullptr};
 std::atomic<bool (*)(std::uintptr_t, std::size_t)> pinWaiter{nullptr};
+std::atomic<bool (*)(std::uintptr_t, std::size_t)> spanQuery{nullptr};
+std::atomic<std::uint64_t> liveSnapshots{0};
+std::atomic<std::uint64_t> spanClears{0};
 std::atomic<void (*)(const Mapped&, std::uint64_t)> gpuMapObserver{nullptr};
 std::atomic<void (*)(std::uintptr_t, std::size_t)> unmapObserver{nullptr};
 std::atomic<std::uint32_t> gpuMapObserverCalls{0};
@@ -93,6 +96,29 @@ struct MutationState {
 
 void recordChange(void* mutation, const void* pointer, std::size_t bytes) {
     if (mutation != nullptr && bytes != 0) static_cast<MutationState*>(mutation)->changed.emplace_back(reinterpret_cast<std::uintptr_t>(pointer), bytes);
+}
+
+bool pinDebugEnabled() {
+    static const bool value = std::getenv("APS5_PIN_DEBUG") != nullptr;
+    return value;
+}
+
+std::shared_ptr<Lease::Ranges> newSnapshot() {
+    liveSnapshots.fetch_add(1, std::memory_order_release);
+    return std::shared_ptr<Lease::Ranges>(new Lease::Ranges, [](Lease::Ranges* ranges) {
+        delete ranges;
+        liveSnapshots.fetch_sub(1, std::memory_order_release);
+    });
+}
+
+// A lease snapshot covers every registered range, so while one lives its bytes may be read by
+// recorded work and no span query can clear them.
+bool spanIsClear(std::uintptr_t address, std::size_t bytes) {
+    if (liveSnapshots.load(std::memory_order_acquire) != 0) return false;
+    const auto query = spanQuery.load(std::memory_order_acquire);
+    if (query == nullptr || query(address, bytes)) return false;
+    spanClears.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 #ifndef _WIN32
@@ -205,6 +231,10 @@ void GuestAllocationsNoteGpuMapping_nid_postfix(void* mutation, const void* poin
 
 void GuestAllocationsSetPinWaiter_nid_postfix(bool (*callback)(std::uintptr_t, std::size_t)) {
     pinWaiter.store(callback, std::memory_order_release);
+}
+
+void GuestAllocationsSetSpanQuery_nid_postfix(bool (*callback)(std::uintptr_t, std::size_t)) {
+    spanQuery.store(callback, std::memory_order_release);
 }
 
 #ifdef _WIN32
@@ -388,21 +418,30 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
         registry().readableLease.reset();
         registry().allLease.reset();
         bool pinned = false;
+        bool cleared = false;
+        std::size_t holders = 0;
         auto it = ranges.upper_bound(address);
         if (it != ranges.begin()) --it;
         for (; it != ranges.end(); ++it) {
             const auto& [base, range] = *it;
             if (base >= end && base != address) break;
-            if (((address < base + range->bytes && base < end) || base == address) && range.use_count() != 1) {
+            if (!((address < base + range->bytes && base < end) || base == address) || range.use_count() == 1) continue;
+            holders = range.use_count();
+            // The references above the registry's own can belong to host work on other bytes of the
+            // same registered range, which cannot read these ones; ask before waiting.
+            if (!spanIsClear(address, bytes)) {
                 pinned = true;
                 break;
             }
+            cleared = true;
         }
         if (!pinned) {
+            if (cleared && pinDebugEnabled()) std::fprintf(stderr, "[pin] 0x%llx+0x%llx released with use_count %zu (host spans clear)\n",
+                static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), holders);
             if (state != nullptr && bytes != 0) state->unpinned.emplace_back(address, bytes);
             return;
         }
-        if (std::chrono::steady_clock::now() >= deadline) PinnedFailure(address, bytes, ("waited " + std::to_string(pinWait().count()) + " ms for the lease (APS5_PIN_WAIT_MS)").c_str());
+        if (std::chrono::steady_clock::now() >= deadline) PinnedFailure(address, bytes, (("waited " + std::to_string(pinWait().count()) + " ms for the lease (APS5_PIN_WAIT_MS), use_count " + std::to_string(holders) + ", snapshots " + std::to_string(liveSnapshots.load()) + ", span queries " + std::to_string(spanClears.load()))).c_str());
         const auto waiter = pinWaiter.load(std::memory_order_acquire);
         bool progressed = false;
         if (state != nullptr && state->lock.owns_lock()) {
@@ -423,6 +462,11 @@ void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* poi
             // and the re-lock a driver worker took a new lease (every address-based build pins every
             // registered range). Rare per round, but each round is a GPU wait, so a repeat is reported.
             if (++syncedRounds == 8) std::fprintf(stderr, "[gpu] leased allocation 0x%llx+0x%llx still pinned after %d recorder syncs\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), syncedRounds);
+            static const bool pinDebug = pinDebugEnabled();
+            if (pinDebug && syncedRounds % 32 == 0) std::fprintf(stderr, "[pin] 0x%llx+0x%llx round %d use_count %zu snapshots %llu mutation %s\n",
+                static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), syncedRounds, holders,
+                static_cast<unsigned long long>(liveSnapshots.load()),
+                state == nullptr ? "absent" : (state->lock.owns_lock() ? "held" : "detached"));
             continue;
         }
     }
@@ -634,7 +678,7 @@ void GuestAllocationsSetUnmapObserver_nid_postfix(void (*callback)(std::uintptr_
 Lease GuestAllocationsAcquire_nid_postfix() {
     std::lock_guard lock(registry().mutex);
     if (auto shared = registry().readableLease) return Lease(std::move(shared));
-    auto ranges = std::make_shared<Lease::Ranges>();
+    auto ranges = newSnapshot();
     for (const auto& [address, range] : registry().ranges) {
         if (range->readable && range->bytes != 0) ranges->push_back(range);
     }
@@ -661,7 +705,7 @@ std::shared_ptr<const Range> GuestAllocationsLookup_nid_postfix(std::uintptr_t a
 Lease GuestAllocationsAcquireAll_nid_postfix() {
     std::lock_guard lock(registry().mutex);
     if (auto shared = registry().allLease) return Lease(std::move(shared));
-    auto ranges = std::make_shared<Lease::Ranges>();
+    auto ranges = newSnapshot();
     ranges->reserve(registry().ranges.size());
     for (const auto& [address, range] : registry().ranges) {
         if (range->bytes != 0) ranges->push_back(range);

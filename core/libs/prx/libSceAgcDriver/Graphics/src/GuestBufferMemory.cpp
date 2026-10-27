@@ -3163,6 +3163,32 @@ SnapshotStats& Snapshots() {
     return stats;
 }
 
+// Whether host work can still read these bytes: a live import (or one waiting to be destroyed) whose
+// mapped window covers them. Imports are per window inside a registered range, so an import of
+// neighbouring bytes must not block a mutation of these ones. Called with the registry lock held, so
+// the import table is only read when it can be taken without waiting; otherwise the answer is the
+// conservative one and the mutation waits as it did before.
+bool ImportedSpansCover(std::uintptr_t address, std::size_t bytes) {
+    const auto end = static_cast<std::uint64_t>(address) + bytes;
+    const auto covers = [&](const HostImport& entry) {
+        const auto base = entry.memoryBase != 0 ? entry.memoryBase : entry.base;
+        const auto pinned = entry.pinnedBytes != 0 ? entry.pinnedBytes : entry.bytes;
+        return base < end && address < base + pinned;
+    };
+    auto& imports = Imports();
+    if (!imports.mutex.try_lock()) return true;
+    const std::lock_guard lock(imports.mutex, std::adopt_lock);
+    for (const auto& [base, entry] : imports.imports) {
+        if (covers(entry)) return true;
+    }
+    for (const auto& [device, list] : imports.parked) {
+        for (const auto& node : list) {
+            if (covers(node->node.mapped())) return true;
+        }
+    }
+    return false;
+}
+
 bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
     const auto start = std::chrono::steady_clock::now();
     bool synced = false;
@@ -3314,6 +3340,7 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
 void ensurePinWaiter() {
     static const bool registered = [] {
         GuestAllocations::GuestAllocationsSetPinWaiter_nid_postfix(&WaitForLeasesAndImports);
+        GuestAllocations::GuestAllocationsSetSpanQuery_nid_postfix(&ImportedSpansCover);
         return true;
     }();
     static_cast<void>(registered);
