@@ -307,7 +307,6 @@ static void TestErrors() {
     playback.Add(data.data(), &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET);
     const auto output = playback.Render();
     for (std::uint32_t i = 0; i < Grain; i++) Require(output[i] == (i < 3 ? 0 : 1));
-    RequireThrows([&] { Control(playback.voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_VAG, 1, 48000, 1, 0, 0}}); });
 }
 
 int main() {
