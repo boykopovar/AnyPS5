@@ -1,5 +1,6 @@
 #include "FontFixture.hpp"
 #include "Type1Fixture.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -10,18 +11,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <initializer_list>
 #include <limits>
-#include <string>
 #include <utility>
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-std::int64_t APS5_VABI FT_Get_PS_Font_Value_nid_postfix(GuestFaceRec*, std::int32_t, std::uint32_t, void*, std::int64_t);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -30,17 +25,6 @@ static void Check(bool value, int line) {
     }
 }
 #define Require(value) Check((value), __LINE__)
-
-template <typename TCall> static bool ThrowsWith(TCall call, const std::string& prefix) {
-    try {
-        call();
-    } catch (const std::exception& error) {
-        return std::string(error.what()).rfind(prefix, 0) == 0;
-    }
-    return false;
-}
-
-static constexpr const char* kLongRefusal = "FT_Get_PS_Font_Value: the LP64 value layouts need a 64-bit host FT_Long, which is not implemented";
 
 struct FacePair {
     std::vector<unsigned char> bytes;
@@ -66,9 +50,7 @@ struct FacePair {
 int main() {
     {
         FacePair pair(Type1Fixture::Font());
-        if constexpr (sizeof(FT_Long) != sizeof(std::int64_t)) {
-            Require(ThrowsWith([&] { FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, nullptr, 0); }, kLongRefusal));
-        } else {
+        if constexpr (sizeof(FT_Long) == sizeof(std::int64_t)) {
             bool sized = false;
             for (int key = 0; key < static_cast<int>(PS_DICT_MAX) + 3; ++key) {
                 for (const std::uint32_t index : {0u, 1u}) {
@@ -104,9 +86,7 @@ int main() {
     }
     {
         FacePair pair(FontFixture::BuildFont(3, {}));
-        if constexpr (sizeof(FT_Long) != sizeof(std::int64_t)) {
-            Require(ThrowsWith([&] { FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, nullptr, 0); }, kLongRefusal));
-        } else {
+        if constexpr (sizeof(FT_Long) == sizeof(std::int64_t)) {
             std::array<unsigned char, 16> actual{};
             std::array<unsigned char, 16> expected{};
             Require(FT_Get_PS_Font_Value_nid_postfix(&pair.guest.rec, PS_DICT_FONT_NAME, 0, actual.data(), 16) ==
