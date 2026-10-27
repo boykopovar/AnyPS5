@@ -223,6 +223,7 @@ void EmitReference(SpirvValueEmitContext& context);
 void EmitReferenceU32(SpirvValueEmitContext& context);
 void EmitUnlinkedCall(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t low, std::uint32_t high, std::uint32_t programCounter);
 void EmitWindowLaneGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t index, std::uint32_t value, std::uint32_t current, std::uint32_t slot, std::uint32_t lane);
+std::uint32_t EmitNanPropagateF32(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t result, std::uint32_t flags, std::uint32_t invalid, std::uint32_t source0, std::uint32_t source1, std::uint32_t source2);
 void EmitDescriptorFault(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t condition, std::uint32_t low, std::uint32_t high, std::uint32_t programCounter);
 void EmitControlNop(SpirvValueEmitContext& context);
 void EmitWaitcnt(SpirvValueEmitContext& context);

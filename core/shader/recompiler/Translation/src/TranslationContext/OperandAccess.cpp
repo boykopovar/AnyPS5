@@ -342,17 +342,13 @@ IrU32 TranslationContext::quietNan32(IrU32 bits) {
 }
 
 IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> sources, IrValue* result, IrValue* invalidProduct) {
-    const auto isNan = [&](IrValue& bits) -> IrValue& { return ir.UGreaterThan(ir.BitwiseAnd(bits, ir.Constant(0x7fffffffu)), ir.Constant(0x7f800000u)); };
-    IrValue* bits = &ir.BitCastU32(*result);
-    bits = &ir.Select(isNan(*bits), ir.Constant(0xffc00000u), *bits);
-    for (auto source = sources.end(); source != sources.begin();) {
-        --source;
-        IrValue& sourceBits = ir.BitCastU32(**source);
-        IrValue* selected = &isNan(sourceBits);
-        if (invalidProduct != nullptr && source + 1 == sources.end() && sources.size() == 3u) selected = &ir.LogicalAnd(*selected, ir.LogicalNot(*invalidProduct));
-        bits = &ir.Select(*selected, quietNan32(IrU32(sourceBits)).Value(), *bits);
-    }
-    return &ir.BitCastF32(*bits);
+    std::array<IrValue*, 3> operands{};
+    std::uint32_t count = 0;
+    for (IrValue* source : sources) operands.at(count++) = source;
+    for (auto index = count; index < operands.size(); ++index) operands[index] = operands[0];
+    const std::uint32_t flags = (ieeeMode ? 1u : 0u) | (count << 1u);
+    IrValue& invalid = invalidProduct != nullptr && count == 3u ? *invalidProduct : ir.ConstantBool(false);
+    return &ir.Emit(IrOpcode::NanPropagateF32, IrType::F32, {result, &ir.Constant(flags), &invalid, operands[0], operands[1], operands[2]});
 }
 
 IrValue& TranslationContext::invalidProductF32(IrValue* lhs, IrValue* rhs) {
