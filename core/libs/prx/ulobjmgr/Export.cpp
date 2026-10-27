@@ -24,4 +24,12 @@ int APS5_VABI _sceUlobjmgrUnregisterObject(std::uint32_t id) {
  return 0;
 }
 
+int APS5_VABI _sceUlobjmgrRegisterObject_nid_postfix(std::uint64_t object, std::int32_t kind, std::uint32_t* id) {
+ return _sceUlobjmgrRegisterObject(object, kind, id);
+}
+
+int APS5_VABI _sceUlobjmgrUnregisterObject_nid_postfix(std::uint32_t id) {
+ return _sceUlobjmgrUnregisterObject(id);
+}
+
 }

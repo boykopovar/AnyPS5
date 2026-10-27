@@ -38,6 +38,7 @@ constexpr int Videodec2ErrorAccessUnitPointer = static_cast<int>(0x811D010Eu);
 
 static_assert(sizeof(Vp9PictureInfo) == 88);
 static_assert(offsetof(Vp9PictureInfo, colorSpace) == 60);
+static_assert(sizeof(OutputInfo) == 0x38 && offsetof(OutputInfo, isDiscardedFrame) == 0xb && offsetof(OutputInfo, codecType) == 0xc && offsetof(OutputInfo, frameBuffer) == 0x20);
 
 class Vp9Bits {
 public:
@@ -458,6 +459,7 @@ void EmitDecoded(std::uint64_t handle, Decoder& decoder, FrameBuffer* frame, Out
     output->isValid = true;
     output->isErrorFrame = false;
     output->pictureCount = 1;
+    output->isDiscardedFrame = false;
     output->frameWidth = decoder.width;
     output->framePitch = pitch / decoder.sampleBytes;
     output->frameHeight = decoder.height;

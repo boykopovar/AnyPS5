@@ -9,7 +9,7 @@ int APS5_VABI sceSharePlayTerminate(void);
 int APS5_VABI sceSharePlayGetCurrentConnectionInfoA(SharePlayConnectionInfoA* info);
 int APS5_VABI sceSharePlayProhibitController(std::uint8_t prohibited);
 int APS5_VABI sceSharePlayCrashDaemon(void);
-int APS5_VABI sceSharePlayGetCurrentConnectionInfo(void);
+int APS5_VABI sceSharePlayGetCurrentConnectionInfo(SharePlayConnectionInfo* info);
 int APS5_VABI sceSharePlayGetCurrentInfo(void);
 int APS5_VABI sceSharePlayGetEvent(void);
 int APS5_VABI sceSharePlayNotifyDialogOpen(void);

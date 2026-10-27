@@ -228,6 +228,10 @@ void TestLowLatencyService() {
 
 int main() {
     Require(sceAudioOut2Initialize() == 0, "initialization must succeed");
+    Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004), "a second AudioOut2 initialization fails");
+    Require(sceAudioOutInit() == 0, "the first legacy initialization succeeds after AudioOut2's");
+    Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004), "AudioOut2 initialization fails after the legacy one");
+    Require(sceAudioOutInit() == static_cast<int>(0x8026000e), "a second legacy initialization fails");
     TestSet3DLatency();
     TestMasteringInit();
     TestMasteringTerm();

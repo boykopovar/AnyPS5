@@ -71,10 +71,10 @@ def depends_on(body):
     body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
     repo = re.escape(globals().get("REPO", "boykopovar/AnyPS5"))
     repo_pattern = rf"(?:{repo}|boykopovar/AnyPS5)"
-    body = re.sub(rf"\[([^\]]*)\]\(https?://github\.com/{repo_pattern}/pull/(\d+)(?:[#/?][^)\s]*)?\)", r"#\2", body, flags=re.IGNORECASE)
-    body = re.sub(rf"\[([^\]]*)\]\(https?://github\.com/(?!{repo_pattern}/)[^/\s]+/[^/\s]+/pull/\d+[^)\s]*\)", "", body, flags=re.IGNORECASE)
+    body = re.sub(rf"\[([^\]]*)\]\(https?://(?:www\.)?github\.com/{repo_pattern}/pull/(\d+)(?:[#/?][^)\s]*)?\)", r"#\2", body, flags=re.IGNORECASE)
+    body = re.sub(rf"\[([^\]]*)\]\(https?://(?:www\.)?github\.com/(?!{repo_pattern}/)[^/\s]+/[^/\s]+/pull/\d+[^)\s]*\)", "", body, flags=re.IGNORECASE)
     body = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", body)
-    body = re.sub(rf"https?://github\.com/{repo_pattern}/pull/(\d+)\b(?:/[^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
+    body = re.sub(rf"https?://(?:www\.)?github\.com/{repo_pattern}/pull/(\d+)\b(?:/[^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
     match = next((match for match in DEPENDS.finditer(body) if match.group(1).strip()), None) or PLAIN_DEPENDS.search(body)
     return {int(n) for n in re.findall(r"#(\d+)", match.group(1))} if match else set()
 
@@ -301,13 +301,31 @@ def overlaps(prs, a, b):
     return found if any(found.values()) else None
 
 
+
+def code_span(item):
+    item = str(item)
+    runs = re.findall(r"`+", item)
+    delimiter = "`" * (max((len(run) for run in runs), default=0) + 1)
+    if "`" in item:
+        return f"{delimiter} {item} {delimiter}"
+    return f"{delimiter}{item}{delimiter}"
+
+
 def cell(items):
-    return "<br>".join(f"`{item}`" for item in sorted(items or ()))
+    return "<br>".join(code_span(item) for item in sorted(items or ()))
+
+
 
 
 def spans(conflicts, blob):
-    return "<br>".join(f"`{path}` " + ", ".join(f"[L{s}-{e}]({blob}/{quote(path)}#L{s}-L{e})" if s != e else f"[L{s}]({blob}/{quote(path)}#L{s})"
-                                               for s, e in ranges) for path, ranges in sorted((conflicts or {}).items()))
+    return "<br>".join(
+        f"{code_span(path)} " + ", ".join(
+            f"[L{s}-{e}]({blob}/{quote(path)}#L{s}-L{e})"
+            if s != e else f"[L{s}]({blob}/{quote(path)}#L{s})"
+            for s, e in ranges
+        )
+        for path, ranges in sorted((conflicts or {}).items())
+    )
 
 
 def pull(blob, number):

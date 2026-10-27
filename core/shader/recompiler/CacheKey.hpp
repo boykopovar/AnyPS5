@@ -109,11 +109,16 @@ private:
             append(key, request.graphics && request.graphics->mesh);
             return;
         }
-        if (request.shader.stage != ShaderStage::Mesh) return;
         const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
+        if (request.shader.stage == ShaderStage::TessellationEvaluation && mesh != nullptr) {
+            append(key, mesh->esgsItemSize);
+            return;
+        }
+        if (request.shader.stage != ShaderStage::Mesh) return;
         append(key, mesh != nullptr);
         if (mesh == nullptr) return;
         for (const auto value : {mesh->inputPrimitive, mesh->primitivesPerGroup, mesh->verticesPerGroup, mesh->maxVertices, mesh->maxPrimitives, mesh->threadsPerGroup, mesh->ldsSizeDwords, mesh->provokingVertex, mesh->esgsItemSize, mesh->outputPrimitiveSize}) append(key, value);
+        if (request.graphics->tessellation) append(key, 0x63617074ull);
         const auto& barycentrics = request.graphics->meshBarycentrics;
         append(key, barycentrics.has_value());
         if (!barycentrics.has_value()) return;
@@ -326,6 +331,7 @@ private:
         append(key, value.float32FlushToZero);
         append(key, value.waveLdsMemoryBarriers);
         append(key, value.float32DenormPreserve);
+        append(key, value.exactRobustLoads);
         append(key, value.fusedExactArithmetic);
         append(key, value.largePixelFunctionLdsBuffer);
         append(key, value.pixelFunctionStorageDwords);

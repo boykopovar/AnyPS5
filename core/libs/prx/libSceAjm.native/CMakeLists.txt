@@ -2,7 +2,7 @@ enable_language(C)
 
 set(LIBATRAC9_DIR ${CMAKE_SOURCE_DIR}/3rdparty/LibAtrac9/C/src)
 set(LIBATRAC9_PATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/atrac9)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LIBATRAC9_DIR}/unpack.c ${LIBATRAC9_DIR}/bit_reader.c ${LIBATRAC9_DIR}/decinit.c)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LIBATRAC9_DIR}/unpack.c ${LIBATRAC9_DIR}/bit_reader.c ${LIBATRAC9_DIR}/decinit.c ${LIBATRAC9_DIR}/utility.c)
 include(${CMAKE_CURRENT_SOURCE_DIR}/PatchLibAtrac9.cmake)
 add_library(atrac9 STATIC EXCLUDE_FROM_ALL
         ${LIBATRAC9_DIR}/band_extension.c
@@ -17,7 +17,7 @@ add_library(atrac9 STATIC EXCLUDE_FROM_ALL
         ${LIBATRAC9_DIR}/scale_factors.c
         ${LIBATRAC9_DIR}/tables.c
         ${LIBATRAC9_PATCHED_DIR}/unpack.c
-        ${LIBATRAC9_DIR}/utility.c
+        ${LIBATRAC9_PATCHED_DIR}/utility.c
 )
 target_include_directories(atrac9 PRIVATE ${LIBATRAC9_DIR})
 set_target_properties(atrac9 PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -36,6 +36,9 @@ if(BUILD_TESTING)
     add_test_executable(atrac9_gradient_tests tests/Atrac9Gradient.c ${LIBATRAC9_DIR}/bit_reader.c)
     target_include_directories(atrac9_gradient_tests PRIVATE ${LIBATRAC9_PATCHED_DIR} ${LIBATRAC9_DIR})
     target_link_libraries(atrac9_gradient_tests PRIVATE atrac9)
+    if(NOT WIN32)
+        target_link_libraries(atrac9_gradient_tests PRIVATE m)
+    endif()
     target_compile_options(atrac9_gradient_tests PRIVATE -ffunction-sections -fdata-sections)
     if(APPLE)
         target_link_options(atrac9_gradient_tests PRIVATE LINKER:-dead_strip)
@@ -57,6 +60,11 @@ if(BUILD_TESTING)
     target_link_libraries(guest_ajm_tests PRIVATE libSceAjm.native libc)
     configure_windows_unwind(guest_ajm_tests)
     add_test(NAME guest_ajm COMMAND guest_ajm_tests)
+    add_test_executable(guest_ajm_aac_multichannel_tests tests/AacMultichannel.cpp)
+    target_include_directories(guest_ajm_aac_multichannel_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ajm_aac_multichannel_tests PRIVATE libSceAjm.native libc)
+    configure_windows_unwind(guest_ajm_aac_multichannel_tests)
+    add_test(NAME guest_ajm_aac_multichannel COMMAND guest_ajm_aac_multichannel_tests)
     add_test_executable(guest_ajm_vibration_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmVibration.cpp)
     target_include_directories(guest_ajm_vibration_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_ajm_vibration_tests PRIVATE libSceAjm.native libc)
@@ -75,7 +83,7 @@ if(BUILD_TESTING)
         add_test(NAME guest_ajm_teardown COMMAND guest_ajm_teardown_tests $<TARGET_FILE:libSceAjm.native>)
     endif()
     if(WIN32)
-        set_tests_properties(guest_ajm guest_ajm_vibration guest_ajm_wvorbis PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_ajm guest_ajm_aac_multichannel guest_ajm_vibration guest_ajm_wvorbis PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm.native>")
     endif()
 endif()

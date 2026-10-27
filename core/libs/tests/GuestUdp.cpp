@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -11,6 +12,34 @@
 #include <chrono>
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static void CheckUnreachablePortIgnored() {
+    const int closing = socket_nid_postfix(2, 2, 0);
+    Require(closing >= 0);
+    std::array<unsigned char, 16> unreachable{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(closing, unreachable.data(), unreachable.size()) == 0);
+    std::uint32_t size = unreachable.size();
+    Require(getsockname_nid_postfix(closing, unreachable.data(), &size) == 0 && size == unreachable.size());
+    const int receiver = socket_nid_postfix(2, 2 | 0x20000000, 0);
+    const int sender = socket_nid_postfix(2, 2, 0);
+    Require(receiver >= 0 && sender >= 0);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+    size = address.size();
+    Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+    Require(close_nid_postfix(closing) == 0);
+    Require(sendto_nid_postfix(receiver, "x", 1, 0, unreachable.data(), unreachable.size()) == 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    char received[4]{};
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    Require(sendto_nid_postfix(sender, "ok", 2, 0, address.data(), address.size()) == 2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(recvfrom_nid_postfix(receiver, received, sizeof(received), 0, nullptr, nullptr) == 2 && received[0] == 'o');
+    Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
+}
 
 static void CheckAddressLengths(int family) {
     const std::uint32_t addressSize = family == 2 ? 16 : 28;
@@ -121,9 +150,96 @@ static void CheckDontWait() {
     Require(close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
 }
 
+static void CheckArrivalTimestamps(int family) {
+    const std::uint32_t addressSize = family == 2 ? 16 : 28;
+    const int receiver = socket_nid_postfix(family, 2, 0);
+    if (receiver < 0 && family == 28 && *__error_nid_postfix() == 47) return;
+    Require(receiver >= 0);
+    const int sender = socket_nid_postfix(family, 2, 0);
+    Require(sender >= 0);
+    std::array<unsigned char, 28> destination{};
+    destination[0] = static_cast<unsigned char>(addressSize);
+    destination[1] = static_cast<unsigned char>(family);
+    if (family == 2) { destination[4] = 127; destination[7] = 1; }
+    else destination[23] = 1;
+    const int bound = bind_nid_postfix(receiver, destination.data(), addressSize);
+    if (bound < 0 && family == 28 && *__error_nid_postfix() == 49) {
+        Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
+        return;
+    }
+    Require(bound == 0);
+    std::uint32_t size = destination.size();
+    Require(getsockname_nid_postfix(receiver, destination.data(), &size) == 0);
+    Require(connect_nid_postfix(sender, destination.data(), addressSize) == 0);
+    for (const int options : {0, 0x400, 0x2000, 0x2400}) {
+        for (const int option : {0x400, 0x2000}) {
+            const int enabled = (options & option) != 0 ? 1 : 0;
+            Require(setsockopt_nid_postfix(receiver, 0xffff, option, &enabled, sizeof(enabled)) == 0);
+        }
+        const bool binary = family == 2 && (options & 0x2000) != 0;
+        const bool micro = (options & 0x400) != 0;
+        const std::uint32_t expected = (binary ? 32u : 0u) + (micro ? 32u : 0u);
+        for (const std::uint32_t capacity : {0u, 8u, 16u, 40u, 64u, 80u}) {
+            const char payload[] = "stamped";
+            Require(sendto_nid_postfix(sender, payload, sizeof(payload), 0, nullptr, 0) == sizeof(payload));
+            std::array<unsigned char, 80> control;
+            control.fill(0xa5);
+            char received[sizeof(payload)]{};
+            KernelIovec vector{received, sizeof(received)};
+            GuestMsghdr message{nullptr, 0, &vector, 1, control.data(), capacity, -1};
+            KernelTimespec before{};
+            Require(clock_gettime_nid_postfix(0, &before) == 0);
+            Require(recvmsg_nid_postfix(receiver, &message, 0) == sizeof(payload));
+            KernelTimespec after{};
+            Require(clock_gettime_nid_postfix(0, &after) == 0);
+            Require(std::memcmp(received, payload, sizeof(payload)) == 0);
+            const std::uint32_t copied = std::min(capacity, expected);
+            Require(message.controlLength == copied);
+            Require(message.flags == (capacity < expected ? 0x20 : 0));
+            Require(std::all_of(control.begin() + copied, control.end(), [](auto byte) { return byte == 0xa5; }));
+            std::array<unsigned char, 64> whole{};
+            std::memcpy(whole.data(), control.data(), copied);
+            std::uint32_t at = 0;
+            for (const int type : {4, 2}) {
+                if ((type == 4 && !binary) || (type == 2 && !micro)) continue;
+                if (at + 32 > copied) break;
+                std::uint32_t length = 0;
+                int level = 0;
+                int kind = 0;
+                std::int64_t seconds = 0;
+                std::uint64_t fraction = 0;
+                std::memcpy(&length, whole.data() + at, sizeof(length));
+                std::memcpy(&level, whole.data() + at + 4, sizeof(level));
+                std::memcpy(&kind, whole.data() + at + 8, sizeof(kind));
+                std::memcpy(&seconds, whole.data() + at + 16, sizeof(seconds));
+                std::memcpy(&fraction, whole.data() + at + 24, sizeof(fraction));
+                Require(length == 32 && level == 0xffff && kind == type);
+                Require(seconds >= before.tv_sec && seconds <= after.tv_sec);
+                if (type == 2) Require(fraction < 1000000);
+                at += 32;
+            }
+            if (copied >= 8) {
+                std::uint32_t length = 0;
+                std::memcpy(&length, whole.data(), sizeof(length));
+                Require(length == 32);
+            }
+        }
+        const char payload[] = "unstamped";
+        Require(sendto_nid_postfix(sender, payload, sizeof(payload), 0, nullptr, 0) == sizeof(payload));
+        char received[sizeof(payload)]{};
+        KernelIovec vector{received, sizeof(received)};
+        GuestMsghdr message{nullptr, 0, &vector, 1, nullptr, 0, -1};
+        Require(recvmsg_nid_postfix(receiver, &message, 0) == sizeof(payload));
+        Require(message.controlLength == 0 && message.flags == 0);
+    }
+    Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
+}
+
 int main() {
     CheckAddressLengths(2);
     CheckAddressLengths(28);
+    CheckArrivalTimestamps(2);
+    CheckArrivalTimestamps(28);
     CheckDontWait();
     CheckSendToPortZero();
     const int receiver = socket_nid_postfix(2, 2, 0);
@@ -310,4 +426,5 @@ int main() {
     Require(closeOnExec >= 0 && fcntl_nid_postfix(closeOnExec, 3) == 2);
     Require(close_nid_postfix(closeOnExec) == 0);
     Require(socket_nid_postfix(2, 0x20000000, 0) == -1 && *__error_nid_postfix() == 43);
+    CheckUnreachablePortIgnored();
 }

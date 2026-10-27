@@ -260,15 +260,17 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     const GuestResolver::AddressInfo* hints, GuestResolver::AddressInfo** output) {
     if (!output) return 4;
     *output = nullptr;
+    if (!node && !service) return 8;
     addrinfo nativeHints{};
+    const bool rawQuery = hints && hints->socketType == 3;
     if (hints) {
         if (hints->addressLength || hints->address || hints->canonicalName || hints->next) return 12;
         if ((hints->flags & ~0xd0f) != 0) return 3;
         if (hints->family != 0 && hints->family != 2 && hints->family != 28) return 5;
-        if (hints->socketType != 0 && hints->socketType != 1 && hints->socketType != 2) return 10;
+        if (hints->socketType != 0 && hints->socketType != 1 && hints->socketType != 2 && hints->socketType != 3) return 10;
         nativeHints.ai_family = hints->family == 28 ? AF_INET6 : hints->family == 2 ? AF_INET : AF_UNSPEC;
-        nativeHints.ai_socktype = hints->socketType == 1 ? SOCK_STREAM : hints->socketType == 2 ? SOCK_DGRAM : 0;
-        nativeHints.ai_protocol = hints->protocol;
+        nativeHints.ai_socktype = hints->socketType == 1 ? SOCK_STREAM : (hints->socketType == 2 || rawQuery) ? SOCK_DGRAM : 0;
+        nativeHints.ai_protocol = rawQuery ? IPPROTO_UDP : hints->protocol;
         if (hints->flags & 1) nativeHints.ai_flags |= AI_PASSIVE;
         if (hints->flags & 2) nativeHints.ai_flags |= AI_CANONNAME;
         if (hints->flags & 4) nativeHints.ai_flags |= AI_NUMERICHOST;
@@ -277,6 +279,7 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
         if (hints->flags & 0x400) nativeHints.ai_flags |= AI_ADDRCONFIG;
         if (hints->flags & 0x800) nativeHints.ai_flags |= AI_V4MAPPED;
     }
+    if (rawQuery && service) return 9;
     if (!Ready()) return 4;
     addrinfo* native = nullptr;
     const auto error = ::getaddrinfo(node, service, &nativeHints, &native);
@@ -292,8 +295,8 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
         tail = &converted->next;
         converted->flags = hints ? hints->flags : 0;
         converted->family = item->ai_family == AF_INET ? 2 : 28;
-        converted->socketType = item->ai_socktype == SOCK_STREAM ? 1 : item->ai_socktype == SOCK_DGRAM ? 2 : 0;
-        converted->protocol = item->ai_protocol;
+        converted->socketType = rawQuery ? 3 : item->ai_socktype == SOCK_STREAM ? 1 : item->ai_socktype == SOCK_DGRAM ? 2 : 0;
+        converted->protocol = rawQuery ? hints->protocol : item->ai_protocol;
         converted->addressLength = item->ai_family == AF_INET ? 16 : 28;
         auto* bytes = static_cast<unsigned char*>(std::calloc(1, converted->addressLength));
         converted->address = bytes;
