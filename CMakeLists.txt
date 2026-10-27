@@ -15,8 +15,10 @@ function(add_test_executable target)
         target_sources(${target} PRIVATE "${ANYPS5_WINDOWS_TEST_EXIT}")
         target_link_options(${target} PRIVATE LINKER:--wrap=main)
     endif()
-    if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.21)
-        set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT "$<TARGET_RUNTIME_DLLS:${target}>")
+    if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.26)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy -t $<TARGET_FILE_DIR:${target}> $<TARGET_RUNTIME_DLLS:${target}>
+            COMMAND_EXPAND_LISTS)
     endif()
 endfunction()
 
