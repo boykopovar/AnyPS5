@@ -28,6 +28,152 @@ ORIGINAL = index([A_STUB, B_STUB, C_STUB], [A_FUNCTIONAL, SHADER, SHARED])
 
 
 class DebtSplitTests(unittest.TestCase):
+
+
+    def test_relink_escaped_first_backtick_in_run(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        original = (
+            "prefix \\``[example](../../core/sample.cpp)` "
+            "[real](../../core/real.cpp)"
+        )
+        expected = (
+            "prefix \\``[example](../../core/sample.cpp)` "
+            "[real](../../../core/real.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_escaped_backticks_do_not_hide_links(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        original = r"\`[real](../../core/example.cpp)\`"
+        expected = r"\`[real](../../../core/example.cpp)\`"
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_invalid_backtick_fence(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        cases = [
+            (
+                "```[example](../../core/sample.cpp)```\n"
+                "[real](../../core/example.cpp)",
+                "```[example](../../core/sample.cpp)```\n"
+                "[real](../../../core/example.cpp)",
+            ),
+            (
+                "```code``` and [real](../../core/real.cpp)\n"
+                "[later](../../core/later.cpp)",
+                "```code``` and [real](../../../core/real.cpp)\n"
+                "[later](../../../core/later.cpp)",
+            ),
+        ]
+
+        for original, expected in cases:
+            with self.subTest(original=original):
+                self.assertEqual(
+                    debt_split.relink(original, source, destination),
+                    expected,
+                )
+
+    def test_relink_escaped_backslash_before_code_span(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/libSceA.md"
+
+        original = (
+            "\\\\`[code](../../core/a.cpp)` "
+            "and [real](../../core/b.cpp)"
+        )
+        expected = (
+            "\\\\`[code](../../core/a.cpp)` "
+            "and [real](../../../core/b.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_preserves_inline_code(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        for marker in ("`", "``", "```"):
+            original = f"{marker}[example](../../core/test.cpp){marker}"
+            self.assertEqual(
+                debt_split.relink(original, source, destination),
+                original,
+            )
+
+    def test_relink_rewrites_links_outside_inline_code(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        original = (
+            "`[code](../../core/test.cpp)` "
+            "and [real](../../core/real.cpp)"
+        )
+        expected = (
+            "`[code](../../core/test.cpp)` "
+            "and [real](../../../core/real.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_preserves_code_after_real_link(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        original = (
+            "[real](../../core/real.cpp) "
+            "and `[code](../../core/test.cpp)`"
+        )
+        expected = (
+            "[real](../../../core/real.cpp) "
+            "and `[code](../../core/test.cpp)`"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+    def test_relink_preserves_tilde_fenced_code(self):
+        source = "docs/dev/TechnicalDebt.md"
+        destination = "docs/dev/debt/example.md"
+
+        original = (
+            "~~~\n"
+            "[code](../../core/a.cpp)\n"
+            "~~~\n"
+            "[real](../../core/b.cpp)"
+        )
+        expected = (
+            "~~~\n"
+            "[code](../../core/a.cpp)\n"
+            "~~~\n"
+            "[real](../../../core/b.cpp)"
+        )
+
+        self.assertEqual(
+            debt_split.relink(original, source, destination),
+            expected,
+        )
+
+
     def test_split_preserves_root_relative_links(self):
         targets = ("/AnyPS5/guide.html#usage", "/images/example.png", "/")
         references = " ".join(f"[reference]({target})" for target in targets)
@@ -223,6 +369,69 @@ class DebtSplitTests(unittest.TestCase):
                          "# libSceA technical debt\n\n### Silent stubs\n\n" + A_STUB.replace("../../", "../../../") +
                          "\n\n### Functional\n\n" +
                          "\n".join(entry.replace("../../", "../../../") for entry in (added, A_FUNCTIONAL)) + "\n")
+
+    def test_resolve_preserves_an_entry_moved_before_another_in_its_file(self):
+        first = "- [libSceA](../../core/libs/prx/libSceA/First.cpp) - first limitation"
+        second = "- [libSceA](../../core/libs/prx/libSceA/Second.cpp) - second limitation"
+        self.write(INDEX, index([first, second], []))
+        self.git("add", "--", INDEX)
+        self.git("commit", "-qm", "docs: record ordered debt")
+        self.git("checkout", "-qb", "reorder")
+        self.write(INDEX, index([second, first], []))
+        self.git("commit", "-qam", "docs: reorder debt")
+        self.git("checkout", "-q", "main")
+        result = self.tool("split")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "docs: split technical debt")
+        self.git("checkout", "-q", "reorder")
+        result = self.git("rebase", "main", check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.tool("resolve")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.git("rebase", "--continue")
+        self.assertEqual(self.read("docs/dev/debt/libSceA.md"),
+                         "# libSceA technical debt\n\n### Silent stubs\n\n" +
+                         "\n".join(entry.replace("../../", "../../../") for entry in (second, first)) + "\n")
+
+    def test_apply_changes_preserve_original_occurrences_and_upstream_entries(self):
+        a = "- [libSceA](../../core/libs/prx/libSceA/A.cpp) - a"
+        b = "- [libSceA](../../core/libs/prx/libSceA/B.cpp) - b"
+        c = "- [libSceA](../../core/libs/prx/libSceA/C.cpp) - c"
+        u, v = "- upstream first", "- upstream last"
+        cases = (
+            ([a, b], [a, b], [b, a], [b, a]),
+            ([a, b, c], [a, u, b, c, v], [c, a, b], [c, a, u, b, v]),
+            ([a, b, a], [a, u, b, a, v], [a, a, b], [a, a, u, b, v]),
+            ([a, b, c, a], [a, u, b, c, a, v], [a, c, a, b], [a, c, a, u, b, v]),
+            ([a, b, a], [a, u, b, a, v], [b, a], [u, b, a, v]),
+            ([a, b, a], [a, u, b, a, v], [a, b], [a, u, b, v]),
+            ([a, b, a], [a, u, b, a, v], [a, b, a + " revised"], [a, u, b, a + " revised", v]),
+            ([a, b, a], [a, u, b, a, v], [a, b, a, c], [a, u, b, a, c, v]),
+            ([a, b], [a, u, b, v], [a, c, c, b], [a, c, c, u, b, v]),
+            ([a, b], [a, u, b, v], [], [u, v]),
+            ([a, b, a], [a, u, b, a, v], [a + " revised", a, c], [a + " revised", a, u, c, v]),
+            ([a, b], [a, u, b + " upstream", v], [a + " revised", b], [a + " revised", u, b + " upstream", v]),
+        )
+        path = "docs/dev/debt/libSceA.md"
+        for before, upstream, after, expected in cases:
+            with self.subTest(before=before, after=after):
+                self.write(path, "# libSceA technical debt\n\n### Functional\n\n" +
+                           "\n".join(entry.replace("../../", "../../../") for entry in upstream) + "\n")
+                debt_split.apply_change(self.root, index([], before), index([], after), index([], []))
+                self.assertEqual(self.read(path), "# libSceA technical debt\n\n### Functional\n\n" +
+                                 "\n".join(entry.replace("../../", "../../../") for entry in expected) + "\n")
+
+    def test_apply_changes_missing_original_does_not_write_files(self):
+        original = "# libSceA technical debt\n\n### Silent stubs\n\n" + A_STUB.replace("../../", "../../../") + "\n"
+        a_path, b_path = "docs/dev/debt/libSceA.md", "docs/dev/debt/libSceB.md"
+        self.write(a_path, original)
+        self.write(b_path, "# libSceB technical debt\n\n### Silent stubs\n\n- changed upstream\n")
+        before = {path: self.read(path) for path in (a_path, b_path)}
+        with self.assertRaises(LookupError):
+            debt_split.apply_change(self.root, index([A_STUB, B_STUB], []),
+                                    index([A_STUB + " revised", B_STUB + " revised"], []), index([], []))
+        self.assertEqual({path: self.read(path) for path in (a_path, b_path)}, before)
 
     def test_indented_continuation_after_a_blank_line_moves_with_its_entry(self):
         note = "  - sub note about sceAOne"

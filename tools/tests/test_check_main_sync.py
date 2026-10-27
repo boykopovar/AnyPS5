@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_main_sync
@@ -67,6 +68,17 @@ class CheckMainSyncTests(unittest.TestCase):
         self.assertEqual((data["behind"], data["ahead"], data["conflicts"], data["shared"]), (0, 1, [], []))
         self.assertEqual(run_tool(self.repo.path, "--head", "feature", "--strict").returncode, 0)
 
+    def test_paths_named_like_revisions_do_not_confuse_the_report(self):
+        self.branch("feature")
+        self.repo.write("other.txt", "y\n")
+        self.repo.commit("feature change")
+        for name in ("main", "feature", "feature..main", "main..feature"):
+            self.repo.write(name, "path matching a revision\n")
+        result = run_tool(self.repo.path, "--head", "feature", "--strict")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1 ahead and 0 behind main", result.stdout)
+        self.assertIn("merge: clean", result.stdout)
+
     def test_main_with_explicit_argv(self):
         self.branch("feature")
         self.repo.write("other.txt", "y\n")
@@ -120,6 +132,51 @@ class CheckMainSyncTests(unittest.TestCase):
         self.assertIn("merge: clean", result.stdout)
         self.assertIn("1 file(s) changed on both sides", result.stdout)
         self.assertIn("#77", result.stdout)
+
+    def check_squash_merge(self, conflict):
+        self.branch("feature")
+        self.repo.write("shared.txt", "one\nmine\nthree\n" if conflict else "zero\none\ntwo\nthree\n")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.git("checkout", "-q", "-b", "theirs")
+        self.repo.write("shared.txt", "one\ntheirs\nthree\n" if conflict else "one\ntwo\nthree\nfour\n")
+        self.repo.commit("their edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.git("merge", "--squash", "-q", "theirs")
+        self.repo.commit("fix(test): change the shared file (#4242)")
+        revision = check_main_sync.git(self.repo.path, "rev-parse", "--short", "main").stdout.strip()
+        data = check_main_sync.report(self.repo.path, "main", "feature")
+        self.assertEqual(data["pulls"], {4242: revision})
+        self.assertEqual(data["shared"], ["shared.txt"])
+        self.assertEqual(data["conflicts"], ["shared.txt"] if conflict else [])
+        for strict in ((False,) if conflict else (False, True)):
+            with self.subTest(strict=strict):
+                result = run_tool(self.repo.path, "--head", "feature", *(["--strict"] if strict else []))
+                self.assertEqual(result.returncode, 1 if conflict or strict else 0, result.stderr)
+                self.assertIn("merge: CONFLICT" if conflict else "merge: clean", result.stdout)
+                self.assertIn("merged pull requests that touched them: #4242", result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_clean_squash_merge_names_the_pull_request(self):
+        self.check_squash_merge(False)
+
+    def test_conflicting_squash_merge_names_the_pull_request(self):
+        self.check_squash_merge(True)
+
+    def test_squash_numbers_must_end_the_subject_and_touch_shared_paths(self):
+        self.branch("feature")
+        self.repo.write("shared.txt", "zero\none\ntwo\nthree\n")
+        self.repo.commit("feature edit")
+        self.repo.git("checkout", "-q", "main")
+        self.repo.write("shared.txt", "one\ntwo\nthree\nfour\n")
+        self.repo.commit("fix(test): reference (#13) without merging it")
+        self.assertEqual(check_main_sync.report(self.repo.path, "main", "feature")["pulls"], {})
+        self.repo.write("shared.txt", "one\ntwo\nthree\nfour\nfive\n")
+        self.repo.commit("fix(test): mention (#13) but merge (#4242)")
+        revision = check_main_sync.git(self.repo.path, "rev-parse", "--short", "main").stdout.strip()
+        self.repo.write("other.txt", "unrelated\n")
+        self.repo.commit("fix(test): an unrelated pull request (#9000)")
+        self.assertEqual(check_main_sync.report(self.repo.path, "main", "feature")["pulls"], {4242: revision})
 
     def test_a_subdirectory_reports_the_same_conflicts_and_pull_requests(self):
         (self.repo.path / "docs").mkdir()
@@ -210,6 +267,16 @@ class CheckMainSyncTests(unittest.TestCase):
 
     def test_conflicting_unicode_report_preserves_exit_status_and_output_encoding(self):
         self.check_unicode_output(True)
+
+    def test_git_without_write_tree_names_the_version_it_needs(self):
+        def old_git(repo, *args, check=True):
+            if args[0] == "version":
+                return subprocess.CompletedProcess(["git", *args], 0, stdout="git version 2.30.0.windows.2\n", stderr="")
+            return subprocess.CompletedProcess(["git", *args], 129, stdout="", stderr="usage: git merge-tree <base-tree> <branch1> <branch2>")
+
+        with unittest.mock.patch.object(check_main_sync, "git", old_git):
+            with self.assertRaisesRegex(RuntimeError, r"needs git 2\.38 or newer; this git is 2\.30$"):
+                check_main_sync.conflicts(self.repo.path, "main", "HEAD")
 
     def test_missing_base_is_an_error_not_a_pass(self):
         result = subprocess.run([sys.executable, str(TOOL), "--repo", self.directory.name, "--base", "upstream/main"], capture_output=True, text=True)

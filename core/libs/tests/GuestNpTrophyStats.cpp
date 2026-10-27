@@ -45,6 +45,20 @@ static const char StatsDefinition[] = R"({"statDefinitionArray":[
     {"statId":10,"dataType":"uint64","aggregation":"latest"},{"statId":20,"dataType":"uint64","aggregation":"latest"},
     {"statId":30,"dataType":"uint32","aggregation":"latest"},{"statId":40,"dataType":"uint32","aggregation":"latest"}]})";
 
+static const char ProgressConf[] = R"({"defaultLanguage":"en-US","trophies":[
+    {"id":"0","grade":"P"},
+    {"id":"1","grade":"B","platinumTrophyId":"0","unlockCondition":{"udsStatId":"112","comparator":"ge","targetValue":"10","progressive":true}},
+    {"id":"2","grade":"B","platinumTrophyId":"0","unlockCondition":{"udsStatId":"113","comparator":"ge","targetValue":"3","progressive":true}}
+]})";
+
+static const char ProgressDefinition[] = R"({"statDefinitionArray":[
+    {"statId":112,"dataType":"int32","aggregation":"max","minValue":"0","initialValue":"0"},
+    {"statId":113,"dataType":"int32","aggregation":"max","minValue":"0","initialValue":"0"}]})";
+
+static const char ProgressExtraction[] = R"({"statsExtractionRuleArray":[
+    {"condition":{"eventName":"_UpdateTrophyProgress","property":{"path":"$._trophy_id","comparator":"==","value":"1"}},"action":{"input":"$._trophy_progress","output":{"statId":112}}},
+    {"condition":{"eventName":"_UpdateTrophyProgress","property":{"path":"$._trophy_id","comparator":"==","value":"2"}},"action":{"input":"$._trophy_progress","output":{"statId":113}}}]})";
+
 static const char SumDefinition[] = R"({"statDefinitionArray":[{"statId":10,"dataType":"uint64","aggregation":"sum"}]})";
 
 static const char StatsExtraction[] = R"({"statsExtractionRuleArray":[
@@ -308,9 +322,34 @@ static void IgnoreOtherAggregations(Unlocks& unlocks) {
         Require(sceNpUniversalDataSystemEventPropertyObjectSetUInt32(properties, "counter", 10) == 0, "counter was not set");
     });
     const auto log = capture.Finish();
-    Require(log.find("[trophy] /app0/sce_sys/uds/uds05.ucp: stat 10 has aggregation \"sum\"; only \"latest\" is supported") != std::string::npos,
+    Require(log.find("[trophy] /app0/sce_sys/uds/uds05.ucp: stat 10 has aggregation \"sum\"; only \"latest\" and \"max\" are supported") != std::string::npos,
             "a stat with a sum aggregation was not reported");
     Require(!Trophy(context, 1).unlocked && !Exists("_trophy/268435456_5.stats.txt") && unlocks.trophies.size() == 6, "a stat with a sum aggregation was stored or unlocked a trophy");
+}
+
+static void RecordTrophyProgress(Unlocks& unlocks) {
+    const auto context = TrophyContext(6);
+    const auto uds = OpenUds(6);
+    const auto progress = [&uds](std::int32_t trophy, std::int32_t value) {
+        Post(uds, "_UpdateTrophyProgress", [trophy, value](NpUniversalDataSystemEventPropertyObject* properties) {
+            Require(sceNpUniversalDataSystemEventPropertyObjectSetInt32(properties, "_trophy_id", trophy) == 0, "_trophy_id was not set");
+            Require(sceNpUniversalDataSystemEventPropertyObjectSetInt32(properties, "_trophy_progress", value) == 0, "_trophy_progress was not set");
+        });
+    };
+    progress(1, 4);
+    const auto partway = Trophy(context, 1);
+    Require(!partway.unlocked && partway.progress.type == 1 && partway.progress.value == 4 && Trophy(context, 2).progress.value == 0, "trophy progress was not recorded for its own trophy");
+    progress(1, 2);
+    Require(Trophy(context, 1).progress.value == 4, "lower trophy progress replaced higher progress");
+    progress(2, 3);
+    Require(Trophy(context, 2).unlocked && !Trophy(context, 1).unlocked && !Trophy(context, 0).unlocked, "trophy progress at its target did not unlock only that trophy");
+    progress(1, 12);
+    const auto done = Trophy(context, 1);
+    Require(done.unlocked && done.progress.value == 10 && Trophy(context, 0).unlocked, "trophy progress past its target did not unlock the trophy and the platinum");
+    Require(Read("_trophy/268435456_6.stats.txt") == "112 12\n113 3\n", "trophy progress was not stored");
+    const std::vector<std::pair<std::uint32_t, std::int32_t>> expected{{6, 2}, {6, 1}, {6, 0}};
+    Require(unlocks.trophies.size() == 9 && std::vector<std::pair<std::uint32_t, std::int32_t>>(unlocks.trophies.end() - 3, unlocks.trophies.end()) == expected,
+            "the listener did not see the progress unlocks and the platinum once, in order");
 }
 
 int main() {
@@ -329,6 +368,8 @@ int main() {
     Write("app0/sce_sys/uds/uds03.ucp", rules.substr(0, rules.size() - 1));
     Write("app0/sce_sys/trophy2/trophy05.ucp", trophies);
     Write("app0/sce_sys/uds/uds05.ucp", Ucp({{"stats_definition.json", SumDefinition}, {"stats_extraction.json", StatsExtraction}}));
+    Write("app0/sce_sys/trophy2/trophy06.ucp", Ucp({{"tropconf.json", ProgressConf}, {"tropmeta_en-US.json", TropMeta}}));
+    Write("app0/sce_sys/uds/uds06.ucp", Ucp({{"stats_definition.json", ProgressDefinition}, {"stats_extraction.json", ProgressExtraction}}));
     Write("_trophy/268435456_0.stats.txt", "40 2\n");
 
     Unlocks unlocks;
@@ -338,6 +379,7 @@ int main() {
     UnlockThroughStats(context, unlocks);
     IgnoreMissingAndMalformedFiles(unlocks);
     IgnoreOtherAggregations(unlocks);
+    RecordTrophyProgress(unlocks);
     NpTrophy2RemoveUnlockListener_nid_no_patch(listener);
 
     std::filesystem::current_path(previous);

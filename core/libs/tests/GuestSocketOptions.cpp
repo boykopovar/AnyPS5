@@ -151,6 +151,13 @@ void BooleanOptionsReportTheirBit() {
         std::uint32_t size = sizeof(value);
         Require(getsockopt_nid_postfix(stream, SolSocket, option, &value, &size) == -1 && *__error_nid_postfix() == ErrorNoProtocolOption, "SO_NO_OFFLOAD and SO_NO_DDP are accepted but cannot be read");
     }
+    for (const int descriptor : {stream, datagram})
+        for (const int setting : {5, 0}) {
+            Require(SetFails(descriptor, SolSocket, 0x1000, &setting, sizeof(setting), ErrorInvalid), "SO_ACCEPTFILTER on a socket that is not listening must fail with EINVAL (22)");
+            std::uint64_t filter = 0xbbbbbbbbbbbbbbbbull;
+            std::uint32_t size = sizeof(filter);
+            Require(getsockopt_nid_postfix(descriptor, SolSocket, 0x1000, &filter, &size) == -1 && *__error_nid_postfix() == ErrorInvalid && filter == 0xbbbbbbbbbbbbbbbbull, "getsockopt of SO_ACCEPTFILTER on a socket that is not listening must fail with EINVAL (22)");
+        }
     const unsigned char narrowFlag = 1;
     Require(SetFails(stream, SolSocket, SoDebug, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");

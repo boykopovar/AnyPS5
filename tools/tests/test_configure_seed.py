@@ -203,10 +203,18 @@ class ConfigureSeedTests(ConfigureSeedProject):
 
 
 class ConfigureSeedRoundTripTests(ConfigureSeedProject):
+    def configure_cache_only(self, name, *extra):
+        source = self.root / "cache-only-source"
+        source.mkdir(exist_ok=True)
+        (source / "CMakeLists.txt").write_text(
+            "cmake_minimum_required(VERSION 3.20)\nproject(cache_round_trip NONE)\n", encoding="utf-8")
+        return subprocess.run(["cmake", *extra, "-S", str(source), "-B", str(self.root / name), "-G", "Ninja"],
+                              check=True, capture_output=True, text=True).stdout
+
     def test_check_names_with_spaces_round_trip_through_cmake(self):
         cache = self.root / "named-check.txt"
         cache.write_text('//Test HAVE FEATURE\nHAVE FEATURE:INTERNAL=1\n', encoding="utf-8")
-        output = self.configure("named-check", "-C", str(self.seed(cache, "named-check.cmake")))
+        output = self.configure_cache_only("named-check", "-C", str(self.seed(cache, "named-check.cmake")))
         self.assertNotRegex(output, r"CMake Error")
         seeded = self.root / "named-check" / "CMakeCache.txt"
         self.assertEqual(configure_seed.checks(seeded)["HAVE FEATURE"][0], "1")
@@ -230,7 +238,7 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         cache.parent.mkdir()
         value = r'a;b "c" \d ${e} $f'
         cache.write_text(f"//Test MINI_ODD\nMINI_ODD:INTERNAL={value}\n", encoding="utf-8")
-        self.configure("odd-seeded", "-C", str(self.seed(cache, "odd.cmake")))
+        self.configure_cache_only("odd-seeded", "-C", str(self.seed(cache, "odd.cmake")))
         seeded = (self.root / "odd-seeded" / "CMakeCache.txt").read_text(encoding="utf-8")
         self.assertIn(f"MINI_ODD:INTERNAL={value}\n", seeded)
         self.assertEqual(configure_seed.checks(self.root / "odd-seeded" / "CMakeCache.txt")["MINI_ODD"][0], value)
@@ -238,6 +246,109 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
 
 
 class ChecksParsingTests(unittest.TestCase):
+    def test_architecture_dependent_sizes_leave_compile_guards_to_cmake(self):
+        entries = {
+            "ARCH_SIZE": ("0", "CHECK_TYPE_SIZE: sizeof(architecture_type)"),
+            "SECOND_SIZE": ("0", "CHECK_TYPE_SIZE: sizeof(other_type)"),
+            "HAVE_ARCH_SIZE": ("TRUE", "Result of TRY_COMPILE"),
+            "CUSTOM_RESULT": ("TRUE", "Result of TRY_COMPILE"),
+            "UNRELATED_COMPILE": ("FALSE", "Result of TRY_COMPILE"),
+            "CONSTANT_SIZE": ("8", "CHECK_TYPE_SIZE: sizeof(long long)"),
+            "MISSING_SIZE": ("", "CHECK_TYPE_SIZE: missing_type unknown"),
+            "HAVE_HEADER": ("1", "Have include stdio.h"),
+            "SIMPLE_TEST": ("1", "Test SIMPLE_TEST"),
+            "RUN_RESULT": ("0", "Result of TRY_RUN"),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            cache.write_text("".join(f"//{doc}\n{name}:INTERNAL={value}\n"
+                                     for name, (value, doc) in entries.items()), encoding="utf-8")
+            expected = {name: entry for name, entry in entries.items()
+                        if name in {"CONSTANT_SIZE", "MISSING_SIZE", "HAVE_HEADER", "SIMPLE_TEST", "RUN_RESULT"}}
+            self.assertEqual(configure_seed.checks(cache), expected)
+
+    def test_compile_guards_are_retained_without_architecture_dependent_sizes(self):
+        entries = {
+            "CONSTANT_SIZE": ("8", "CHECK_TYPE_SIZE: sizeof(long long)"),
+            "HAVE_CONSTANT_SIZE": ("TRUE", "Result of TRY_COMPILE"),
+            "MISSING_SIZE": ("", "CHECK_TYPE_SIZE: missing_type unknown"),
+            "CUSTOM_RESULT": ("FALSE", "Result of TRY_COMPILE"),
+            "ZERO_TEST": ("0", "Test ZERO_TEST"),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            cache.write_text("".join(f"//{doc}\n{name}:INTERNAL={value}\n"
+                                     for name, (value, doc) in entries.items()), encoding="utf-8")
+            self.assertEqual(configure_seed.checks(cache), entries)
+
+    def test_filters_cannot_seed_architecture_dependent_compile_guards(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache, seed = Path(directory) / "CMakeCache.txt", Path(directory) / "seed.cmake"
+            cache.write_text("//CHECK_TYPE_SIZE: sizeof(architecture_type)\nARCH_SIZE:INTERNAL=0\n"
+                             "//Result of TRY_COMPILE\nHAVE_ARCH_SIZE:INTERNAL=TRUE\n"
+                             "//Result of TRY_COMPILE\nCUSTOM_RESULT:INTERNAL=TRUE\n"
+                             "//Have include stdio.h\nHAVE_HEADER:INTERNAL=1\n", encoding="utf-8")
+            for options in ((), ("--include", "*RESULT"), ("--include", "HAVE_*"),
+                            ("--include", "ARCH_SIZE"), ("--exclude", "ARCH_SIZE")):
+                with self.subTest(options=options):
+                    result = subprocess.run([sys.executable, str(TOOL), str(cache), str(seed), *options],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    text = seed.read_text(encoding="utf-8")
+                    self.assertNotIn("ARCH_SIZE", text)
+                    self.assertNotIn("CUSTOM_RESULT", text)
+                    if not options or options in (("--include", "HAVE_*"), ("--exclude", "ARCH_SIZE")):
+                        self.assertIn("HAVE_HEADER", text)
+
+    def test_multiline_help_is_classified_by_its_first_line(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            cache.write_text("//Test HAVE_MULTILINE\n//\\ncontinued help\nHAVE_MULTILINE:INTERNAL=1\n"
+                             "//An ordinary entry\n//Test NOT_A_CHECK\nORDINARY:INTERNAL=0\n"
+                             "//Test BEFORE_BLANK\n\nUNRELATED:INTERNAL=1\n"
+                             "//Test SINGLE\nSINGLE:INTERNAL=\n", encoding="utf-8")
+            self.assertEqual(configure_seed.checks(cache), {
+                "HAVE_MULTILINE": ("1", "Test HAVE_MULTILINE\ncontinued help"),
+                "SINGLE": ("", "Test SINGLE"),
+            })
+
+    @unittest.skipUnless(shutil.which("cmake"), "CMake is required for cache round trips")
+    def test_multiline_help_from_real_cmake_survives_seed_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            (source / "CMakeLists.txt").write_text(
+                'cmake_minimum_required(VERSION 3.20)\nproject(cache_help NONE)\n'
+                'if(REQUIRE_SEED AND (NOT DEFINED HAVE_MULTILINE OR NOT DEFINED HAVE_LONG))\n'
+                'message(FATAL_ERROR "seed did not preload both check results")\n'
+                'endif()\n'
+                'if(NOT DEFINED HAVE_MULTILINE)\n'
+                'set(HAVE_MULTILINE 1 CACHE INTERNAL "Test HAVE_MULTILINE\ncontinued help")\n'
+                'endif()\n'
+                'if(NOT DEFINED HAVE_LONG)\n'
+                'set(HAVE_LONG 0 CACHE INTERNAL "Test HAVE_LONG with a long description that CMake wraps into multiple comment lines when writing its cache file")\n'
+                'endif()\n'
+                'foreach(name HAVE_MULTILINE HAVE_LONG)\n'
+                'get_property(help CACHE ${name} PROPERTY HELPSTRING)\n'
+                'file(WRITE "${CMAKE_BINARY_DIR}/${name}.help" "${help}")\n'
+                'file(WRITE "${CMAKE_BINARY_DIR}/${name}.value" "${${name}}")\n'
+                'endforeach()\n', encoding="utf-8")
+            first, second = root / "first", root / "second"
+            subprocess.run(["cmake", "-S", str(source), "-B", str(first), "-G", "Ninja"], check=True, capture_output=True)
+            checks = configure_seed.checks(first / "CMakeCache.txt")
+            self.assertEqual(checks, {
+                "HAVE_MULTILINE": ("1", "Test HAVE_MULTILINE\ncontinued help"),
+                "HAVE_LONG": ("0", "Test HAVE_LONG with a long description that CMake wraps into multiple comment lines when writing its cache file"),
+            })
+            seed = root / "seed.cmake"
+            subprocess.run([sys.executable, str(TOOL), str(first / "CMakeCache.txt"), str(seed)], check=True, capture_output=True)
+            subprocess.run(["cmake", "-C", str(seed), "-DREQUIRE_SEED=ON", "-S", str(source), "-B", str(second), "-G", "Ninja"], check=True, capture_output=True)
+            self.assertEqual(configure_seed.checks(second / "CMakeCache.txt"), checks)
+            for name, (value, help_text) in checks.items():
+                self.assertEqual((second / f"{name}.help").read_text(encoding="utf-8"), help_text)
+                self.assertEqual((second / f"{name}.value").read_text(encoding="utf-8"), value)
+
     def test_checks_reads_cache_with_utf8_bom(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "CMakeCache.txt"

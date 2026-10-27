@@ -29,7 +29,9 @@ static void CheckList() {
     Require(sceKernelGetModuleListInternal(shorter.data(), internal.size() - 1, &untouched) == SCE_KERNEL_ERROR_ENOMEM);
     Require(untouched == 99 && shorter.back() == -1);
     Require(sceKernelGetModuleListInternal(nullptr, 0, &untouched) == SCE_KERNEL_ERROR_EFAULT);
+    std::fill(shorter.begin(), shorter.end(), -1);
     Require(sceKernelGetModuleListInternal(shorter.data(), shorter.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(shorter == internal);
 }
 
 static void CheckEachModule() {
@@ -74,10 +76,22 @@ static void CheckRefusals() {
     Require(sceKernelGetModuleInfoInternal(-1, &unknown) == SCE_KERNEL_ERROR_ESRCH && unknown.name[0] == '\0');
 }
 
+static void CheckLoadStartSysmodule() {
+    int res = -1;
+    Require(sceKernelLoadStartModuleForSysmodule(nullptr, 0, nullptr, 0, nullptr, &res) == static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT));
+    Require(res == 0);
+    Require(sceKernelLoadStartModuleForSysmodule(nullptr, 0, nullptr, 0, nullptr, nullptr) == static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT));
+    res = -1;
+    Require(sceKernelLoadStartModuleForSysmodule("/system/common/lib/nonexistent_sysmodule.sprx", 0, nullptr, 0, nullptr, &res) ==
+            static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT));
+    Require(res == 0);
+}
+
 int main() {
     CheckList();
     CheckEachModule();
     CheckMatchesAddressLookup();
     CheckRefusals();
+    CheckLoadStartSysmodule();
     return 0;
 }

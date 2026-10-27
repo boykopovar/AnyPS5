@@ -230,6 +230,12 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
     return value;
 }
 
+bool HasHexadecimalPrefix(const char* text, const char* parsedEnd) {
+    while (std::isspace(static_cast<unsigned char>(*text))) ++text;
+    if (*text == '+' || *text == '-') ++text;
+    return text[0] == '0' && (text[1] == 'x' || text[1] == 'X') && parsedEnd > text + 2;
+}
+
 }
 
 extern "C" {
@@ -404,7 +410,12 @@ unsigned long long APS5_VABI strtouq_nid_postfix(const char* str, char** endptr,
 }
 
 double APS5_VABI strtod_nid_postfix(const char* str, char** endptr) {
-    return ParseFloat<double>(str, endptr, std::strtod);
+    char* parsedEnd = nullptr;
+    const double value = ParseFloat<double>(str, &parsedEnd, std::strtod);
+    const double magnitude = value < 0 ? -value : value;
+    if (parsedEnd != str && !HasHexadecimalPrefix(str, parsedEnd) && value != 0 && magnitude < std::numeric_limits<double>::min()) errno = ERANGE;
+    if (endptr != nullptr) *endptr = parsedEnd;
+    return value;
 }
 
 double APS5_VABI atof_nid_postfix(const char* str) { return strtod_nid_postfix(str, nullptr); }
@@ -487,7 +498,11 @@ size_t APS5_VABI strspn_nid_postfix(const char* s, const char* accept) {
 }
 
 int APS5_VABI strcoll_nid_postfix(const char* s1, const char* s2) {
-    return std::strcmp(s1, s2);
+    for (;; ++s1, ++s2) {
+        const int a = static_cast<unsigned char>(*s1);
+        const int b = static_cast<unsigned char>(*s2);
+        if (a != b || a == 0) return a - b;
+    }
 }
 
 int APS5_VABI strncpy_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {

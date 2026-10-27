@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <algorithm>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -11,6 +13,10 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
+#elif defined(__APPLE__)
+#include <dlfcn.h>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 #else
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
@@ -28,6 +34,10 @@ constexpr int kRtldNow = 2;
 const char* findModuleName(const std::uint32_t id) {
     const auto it = kModuleTable.find(id);
     return it != kModuleTable.end() ? it->second : nullptr;
+}
+
+bool isPublicModuleId(const std::uint16_t id) {
+    return std::binary_search(std::begin(kPublicModuleIds), std::end(kPublicModuleIds), id);
 }
 
 std::mutex gMutex;
@@ -120,6 +130,25 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
         gRegions.insert_or_assign(begin, std::move(region));
     }
     return true;
+#elif defined(__APPLE__)
+    mach_vm_address_t region = addr;
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t host{};
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    if (mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&host), &count, &object) != KERN_SUCCESS || region > addr) {
+        return false;
+    }
+    Dl_info image{};
+    info->st_size = sizeof(ModuleInfoForUnwind);
+    std::strncpy(info->name, dladdr(reinterpret_cast<void*>(addr), &image) && image.dli_fname != nullptr ? image.dli_fname : "", sizeof(info->name) - 1);
+    info->name[sizeof(info->name) - 1] = '\0';
+    info->eh_frame_hdr_addr = 0;
+    info->eh_frame_addr = 0;
+    info->eh_frame_size = 0;
+    info->seg0_addr = region;
+    info->seg0_size = size;
+    return true;
 #else
     const auto mapping = HostMapping::Find(addr, "sceSysmoduleGetModuleInfoForUnwind");
     if (!mapping) {
@@ -181,7 +210,7 @@ int APS5_VABI sceSysmoduleGetModuleHandleInternal(std::uint32_t id, std::int32_t
 }
 
 int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
-    if (id == 0) {
+    if (!isPublicModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -197,7 +226,7 @@ int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
 }
 
 int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
-    if (id == 0) {
+    if (!isPublicModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
@@ -228,7 +257,7 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
 }
 
 int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id) {
-    if (id == 0) {
+    if (!isPublicModuleId(id)) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {

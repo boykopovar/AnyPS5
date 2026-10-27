@@ -35,6 +35,7 @@ int main() {
     Require(sceBluetoothHidInit() == 0, "initialization failed");
     Require(sceBluetoothHidInit() == 0, "repeated initialization failed");
     Require(sceBluetoothHidRegisterDevice(1, 2) == noCallback, "registration without callback");
+    Require(sceBluetoothHidUnregisterDevice(1, 2) == 0, "device unregistration does not need a registered callback");
     Require(sceBluetoothHidUnregisterCallback() == noCallback, "removing absent callback");
     BluetoothHidParam param{};
     Require(sceBluetoothHidRegisterCallback(&Callback, &callbackCalls, &param) == 0, "callback registration failed");

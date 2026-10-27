@@ -620,6 +620,47 @@ static void LowWaterMarks() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void SocketShutReadReportsEof() {
+    for (const bool queued : {true, false}) {
+        const int kq = kqueue_nid_postfix();
+        int pair[2];
+        Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+        KernelEvent events[4]{};
+        Require(Apply(kq, Change(static_cast<std::uintptr_t>(pair[0]), EvfiltRead, EvAdd)) == 0);
+        if (queued) {
+            Require(send_nid_postfix(pair[1], "abc", 3, 0) == 3);
+            Require(Wait(kq, events, 4) == 1 && events[0].data == 3 && (events[0].flags & EvEof) == 0);
+        } else {
+            Require(Poll(kq, events, 4) == 0);
+        }
+        Require(shutdown_nid_postfix(pair[0], 0) == 0);
+        Require(Poll(kq, events, 4) == 1 && events[0].data == 0 && (events[0].flags & EvEof) != 0);
+        Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0 && close_nid_postfix(kq) == 0);
+    }
+    for (const bool duplicated : {false, true}) {
+        const int kq = kqueue_nid_postfix();
+        int pair[2];
+        Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+        const int watched = duplicated ? dup_nid_postfix(pair[0]) : pair[0];
+        Require(watched >= 0);
+        KernelEvent events[4]{};
+        Require(Apply(kq, Change(static_cast<std::uintptr_t>(watched), EvfiltRead, EvAdd)) == 0);
+        const KernelTimespec limit{5, 0};
+        const auto start = std::chrono::steady_clock::now();
+        std::thread shutter([&pair] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            Require(shutdown_nid_postfix(pair[0], 0) == 0);
+        });
+        Require(kevent_nid_postfix(kq, nullptr, 0, events, 4, &limit) == 1);
+        const auto waited = std::chrono::steady_clock::now() - start;
+        shutter.join();
+        Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
+        Require(events[0].ident == static_cast<std::uintptr_t>(watched) && events[0].data == 0 && (events[0].flags & EvEof) != 0);
+        if (duplicated) Require(close_nid_postfix(watched) == 0);
+        Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0 && close_nid_postfix(kq) == 0);
+    }
+}
+
 #ifdef __linux__
 static void EdgeTriggeredSocketRead() {
     const int kq = kqueue_nid_postfix();
@@ -857,6 +898,59 @@ static void DisableAndDispatch() {
 
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     Require(close_nid_postfix(kq) == 0);
+}
+
+static void RequireNext(int kq, std::uintptr_t ident) {
+    KernelEvent event{};
+    Require(Poll(kq, &event, 1) == 1 && event.ident == ident);
+}
+
+static void ReportedKnotesMoveToTail() {
+    const int kq = kqueue_nid_postfix();
+    int first[2];
+    int second[2];
+    int pair[2];
+    Require(pipe_nid_postfix(first) == 0 && pipe_nid_postfix(second) == 0);
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    const std::uintptr_t level[3] = {static_cast<std::uintptr_t>(first[0]), static_cast<std::uintptr_t>(second[0]), static_cast<std::uintptr_t>(pair[0])};
+    for (const auto ident : level) {
+        Require(Apply(kq, Change(ident, EvfiltRead, EvAdd)) == 0);
+    }
+    Require(write_nid_postfix(first[1], "a", 1) == 1 && write_nid_postfix(second[1], "b", 1) == 1);
+    Require(send_nid_postfix(pair[1], "c", 1, 0) == 1);
+    for (int round = 0; round < 2; ++round) {
+        for (const auto ident : level) {
+            RequireNext(kq, ident);
+        }
+    }
+    for (const auto ident : level) {
+        Require(Apply(kq, Change(ident, EvfiltRead, EvDelete)) == 0);
+    }
+
+    KernelEvent event{};
+    for (const std::uintptr_t ident : {11, 12}) {
+        Require(Apply(kq, Change(ident, EvfiltUser, EvAdd | EvClear)) == 0);
+        Require(Apply(kq, Change(ident, EvfiltUser, 0, NoteTrigger)) == 0);
+    }
+    RequireNext(kq, 11);
+    Require(Apply(kq, Change(11, EvfiltUser, 0, NoteTrigger)) == 0);
+    RequireNext(kq, 12);
+    RequireNext(kq, 11);
+    Require(Poll(kq, &event, 1) == 0);
+
+    for (const std::uintptr_t ident : {21, 22}) {
+        Require(Apply(kq, Change(ident, EvfiltUser, EvAdd | EvDispatch)) == 0);
+        Require(Apply(kq, Change(ident, EvfiltUser, 0, NoteTrigger)) == 0);
+    }
+    RequireNext(kq, 21);
+    Require(Apply(kq, Change(21, EvfiltUser, EvEnable, NoteTrigger)) == 0);
+    RequireNext(kq, 22);
+    RequireNext(kq, 21);
+    Require(Poll(kq, &event, 1) == 0);
+
+    for (const int descriptor : {first[0], first[1], second[0], second[1], pair[0], pair[1], kq}) {
+        Require(close_nid_postfix(descriptor) == 0);
+    }
 }
 
 static void Errors() {
@@ -1379,6 +1473,7 @@ int main() {
     UserEvents();
     WatchKqueue();
     SocketPair();
+    SocketShutReadReportsEof();
 #ifdef __linux__
     EdgeTriggeredSocketRead();
     EdgeTriggeredSocketWrite();
@@ -1387,6 +1482,7 @@ int main() {
     EdgeTriggeredDispatch();
 #endif
     DisableAndDispatch();
+    ReportedKnotesMoveToTail();
     Errors();
     LowWaterMarks();
     FileWatch();

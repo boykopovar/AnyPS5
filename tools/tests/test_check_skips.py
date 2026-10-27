@@ -345,6 +345,40 @@ class CheckSkipsTests(unittest.TestCase):
 
 
 
+class RequiredTestsTests(unittest.TestCase):
+    def test_required_reports_without_testcases_fail_in_both_jobs(self):
+        for xml in ('<testsuite/>', '<testsuites><testsuite tests="0"/></testsuites>'):
+            with tempfile.TemporaryDirectory() as directory:
+                junit = Path(directory) / "junit.xml"
+                junit.write_text(xml, encoding="utf-8")
+                for job in ("linux", "windows"):
+                    for options in ([], ["--list"]):
+                        with self.subTest(xml=xml, job=job, options=options):
+                            result = subprocess.run(
+                                [sys.executable, "-I", str(TOOL), str(junit), "--job", job, "--require-tests", *options],
+                                capture_output=True, text=True, timeout=5)
+                            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                            self.assertIn("no testcases", result.stderr)
+                            result = subprocess.run(
+                                [sys.executable, "-I", str(TOOL), str(junit), "--job", job, *options],
+                                capture_output=True, text=True, timeout=5)
+                            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_executed_tests_without_skips_pass_in_both_jobs(self):
+        for xml in ('<testsuite><testcase name="normal"/></testsuite>',
+                    '<testsuites><testsuite><testcase name="normal"/></testsuite></testsuites>'):
+            with tempfile.TemporaryDirectory() as directory:
+                junit = Path(directory) / "junit.xml"
+                junit.write_text(xml, encoding="utf-8")
+                for job in ("linux", "windows"):
+                    with self.subTest(xml=xml, job=job):
+                        result = subprocess.run(
+                            [sys.executable, "-I", str(TOOL), str(junit), "--job", job, "--require-tests"],
+                            capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertIn("0 test(s) skipped, all expected", result.stdout)
+
+
 class SkipReportTests(unittest.TestCase):
     def skipped(self, content):
         with tempfile.TemporaryDirectory() as directory:
