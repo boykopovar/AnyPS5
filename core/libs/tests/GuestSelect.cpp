@@ -5,6 +5,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <thread>
@@ -55,6 +56,30 @@ static KernelEvent UserEvent(std::uint16_t flags, std::uint32_t fflags) {
     return change;
 }
 
+static void StandardDescriptorFile(int descriptor) {
+    const int saved = dup_nid_postfix(descriptor);
+    const std::string path = "anyps5-select-input-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int file = open_nid_postfix(path.c_str(), 0x0002 | 0x0200, 0644);
+    Require(file >= 0);
+    Require(dup2_nid_postfix(file, descriptor) == descriptor);
+    if (file != descriptor) Require(close_nid_postfix(file) == 0);
+    GuestDescriptorSet read{};
+    GuestDescriptorSet write{};
+    GuestDescriptorSet except{};
+    const GuestTimeval zero{0, 0};
+    const int ready = SelectAll(descriptor, read, write, except, zero);
+    if (ready != 2) std::fprintf(stderr, "select on a regular file at descriptor %d returned %d instead of 2\n", descriptor, ready);
+    Require(ready == 2);
+    Require(read.Has(descriptor) && write.Has(descriptor) && !except.Has(descriptor));
+    char byte = 0;
+    Require(read_nid_postfix(descriptor, &byte, 1) == 0);
+    if (saved >= 0) {
+        Require(dup2_nid_postfix(saved, descriptor) == descriptor);
+        Require(close_nid_postfix(saved) == 0);
+    } else Require(close_nid_postfix(descriptor) == 0);
+    Require(unlink_nid_postfix(path.c_str()) == 0);
+}
+
 static void Kqueues() {
     const int kq = kqueue_nid_postfix();
     Require(kq >= 0 && kq < GuestDescriptorLimit);
@@ -85,6 +110,7 @@ static void Kqueues() {
 }
 
 int main() {
+    for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     Kqueues();
 
     int descriptors[2]{-1, -1};

@@ -66,7 +66,7 @@ VkComponentSwizzle ComponentSwizzleFor(std::uint8_t dstSel) {
 }
 
 VkComponentMapping ViewComponents(const GuestTextureResource& resource) {
-    if (IsConvertedTextureFormat(resource.format) && !IsRepackedTextureFormat(resource.format)) return {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+    if (IsConvertedTextureFormat(resource.format) && !IsRepackedTextureFormat(resource.format) && resource.format != static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
     const auto channel = [&](std::uint8_t dstSel) { return TextureComponentChannel(resource.format, ComponentSwizzleFor(dstSel)); };
     return {channel(resource.dstSelX), channel(resource.dstSelY), channel(resource.dstSelZ), channel(resource.dstSelW)};
 }
@@ -803,7 +803,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         keys = scanKeys();
         if (*keys == source->FilledKeys()) {
             std::array<std::byte, 16> probe{};
-            if (!FillDccClear(ResolveTextureFormat(resource.format), *keys, resource.dccAlphaOnMsb, probe)) {
+            if (!FillDccClear(DccClearTextureFormat(resource.format), *keys, resource.dccAlphaOnMsb, probe)) {
                 char text[256];
                 std::snprintf(text, sizeof(text), "AGC graphics: sampled texture 0x%llx (%ux%u format %u, dcc 0x%llx) reads %s DCC keys filled over its pending image, a clear value the format has no encoding for", static_cast<unsigned long long>(resource.baseAddress), resource.width, resource.height, resource.format, static_cast<unsigned long long>(resource.dccAddress), DccKeysName(*keys));
                 throw std::runtime_error(text);
@@ -1238,9 +1238,9 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
     const auto viewed = ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
     if (viewed.baseAddress != requested.baseAddress) guestBytes = 0;
     Require(viewed.dimension != TextureDimension::k2DMsaa, "storage image access to a multisampled texture is not implemented");
-    RequireNoMultisampleTarget(viewed.baseAddress, guestBytes != 0 ? static_cast<std::size_t>(guestBytes) : 1u, "a storage image access");
-    if (auto depth = DepthSurfaceStorage(context, words, viewed, mip)) return depth;
     const auto viewedBytes = guestBytes != 0 ? guestBytes : DescribeSurface(viewed).guestBytes;
+    RequireNoMultisampleTarget(viewed.baseAddress, static_cast<std::size_t>(viewedBytes), "a storage image access");
+    if (auto depth = DepthSurfaceStorage(context, words, viewed, mip)) return depth;
     if (viewedBytes >= (1ull << 30u)) {
         static std::atomic<std::uint64_t> large{0};
         const auto count = large.fetch_add(1) + 1;
@@ -2152,9 +2152,10 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         const bool classified = element < binding.bufferWritten.size() && element < binding.bufferRead.size() && element < binding.bufferAtomic.size();
                         allocations[index].writeOnly = classified && allocations[index].guest && allocations[index].written && binding.bufferWritten[element] && !read && !atomic;
                         const auto& push = shader.program->pushConstants;
-                        if (!push.empty()) {
+                        const auto pushDataBytes = shader.program->stencilReferences.empty() ? push.size() : shader.program->stencilReferenceDword * sizeof(std::uint32_t);
+                        if (pushDataBytes != 0u) {
                             const auto position = shader.program->memoryOffsetDword * 4u + element;
-                            Require(position < push.size(), "guest buffer offset lies outside the shader's push constants");
+                            Require(position < pushDataBytes, "guest buffer offset lies outside the shader's push constants");
                             allocations[index].pushByte = static_cast<std::int32_t>(shader.pushConstantOffset + position);
                         } else {
                             allocations[index].dataByte = shader.program->memoryOffsetDword * 4u + element;
@@ -2522,7 +2523,7 @@ void ShaderResources::buildComplete() {
                         for (auto element = first; element < last; ++element) {
                             const auto index = binding.imageAllocations[element];
                             if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) images.push_back({samplers[index]->Handle(), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED});
-                            else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], storageLayers[index]), VK_IMAGE_LAYOUT_GENERAL});
+                            else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], binding.layout.binding >= ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 7u && binding.layout.binding < ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 14u, storageLayers[index]), VK_IMAGE_LAYOUT_GENERAL});
                             else images.push_back({VK_NULL_HANDLE, textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View(), textures[index]->Layout()});
                         }
                         if (recorded) runs.emplace_back(write.dstArrayElement, write.descriptorCount);
@@ -2567,7 +2568,7 @@ void ShaderResources::buildComplete() {
                         for (const auto index : binding.imageAllocations) {
                             if (index == std::numeric_limits<std::size_t>::max()) images.push_back(absentImage(binding.layout.binding));
                             else if (storageTextures[index] == nullptr) images.push_back({VK_NULL_HANDLE, multisampleStorageViews[index], VK_IMAGE_LAYOUT_GENERAL});
-                            else images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], storageLayers[index]), VK_IMAGE_LAYOUT_GENERAL});
+                            else images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index], storageLayers[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], binding.layout.binding >= ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 7u && binding.layout.binding < ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 14u, storageLayers[index]), VK_IMAGE_LAYOUT_GENERAL});
                         }
                         Require(binding.imageAllocations.size() == binding.layout.descriptorCount, "descriptor allocations disagree with compact binding");
                         break;
@@ -4441,6 +4442,11 @@ std::uint64_t ShaderResources::guestBufferBytes(std::span<const std::uint32_t> w
     return byteSize;
 }
 
+std::uint64_t ShaderResources::BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target) {
+    if (target == nullptr || stride == 0 || address >= target->address || address + bytes <= target->address || address + bytes - target->address >= stride) return bytes;
+    return target->address - address;
+}
+
 std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, std::uint32_t extent) {
     Require(words.size() == 4, "buffer descriptor must contain four DWORDs");
     const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1] & ~0x40000000u, words[2], words[3]}};
@@ -4453,8 +4459,7 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     }
     Require(byteSize <= context.limits.maxStorageBufferRange, "shader buffer exceeds descriptor range limit");
     Require(byteSize <= std::numeric_limits<std::size_t>::max(), "shader buffer size exceeds host address space");
-    auto size = static_cast<std::size_t>(byteSize);
-    if (const std::uint64_t stride = descriptor.Stride(); !written && target != nullptr && stride != 0 && address < target->address && address + size > target->address && address + size - target->address < stride) size = static_cast<std::size_t>(target->address - address);
+    const auto size = static_cast<std::size_t>(BytesUpToTarget(address, byteSize, descriptor.Stride(), written ? nullptr : target));
     Require(target == nullptr || !overlap(address, size, target->address, target->bytes), "shader buffer aliases the render target");
     // APS5_ALL_BUFFERS_WRITTEN=1: every element is noted as written, as before bufferWritten existed.
     static const bool allWritten = std::getenv("APS5_ALL_BUFFERS_WRITTEN") != nullptr;
@@ -4994,7 +4999,8 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             Require(!(element < binding.imageAtomic.size() && binding.imageAtomic[element]) && !(element < binding.imageAtomic64.size() && binding.imageAtomic64[element]), "storage image atomics on a multisampled texture are not implemented");
             storageTextures.push_back(nullptr);
             multisampleStorageViews.resize(storageTextures.size(), VK_NULL_HANDLE);
-            multisampleStorageViews.back() = MultisampleTargetStorageView(context, resource);
+            const bool uintStorage = binding.binding >= ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 7u && binding.binding < ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 14u;
+            multisampleStorageViews.back() = MultisampleTargetStorageView(context, resource, uintStorage);
             multisampleSources.push_back(resource.baseAddress);
             storageMips.push_back(0);
             storageKeys.push_back(0);
@@ -5095,7 +5101,7 @@ ShaderResources::TableStage& ShaderResources::tableStage(const CompiledShader& s
     table.stage = shader.stage;
     table.program = shader.program;
     table.poison = shader.program->imageTablePoison;
-    table.messages.assign(table.poison.size(), std::string{});
+    table.messages.assign(table.poison.size(), nullptr);
     return table;
 }
 
@@ -5106,7 +5112,8 @@ std::uint32_t ShaderResources::rejectTableElement(TableStage& table, std::span<c
     poison.resource = ShaderRecompiler::NoTable;
     poison.reason = static_cast<std::uint32_t>(ShaderRecompiler::ImageTableAbi::PoisonReason::DriverRejected);
     table.poison.push_back(poison);
-    table.messages.push_back(message);
+    const bool repeated = !table.messages.empty() && table.messages.back() != nullptr && *table.messages.back() == message;
+    table.messages.push_back(repeated ? table.messages.back() : std::make_shared<const std::string>(message));
     faultChecks = true;
     return ShaderRecompiler::ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(table.poison.size() - 1u));
 }
@@ -5402,7 +5409,7 @@ void ShaderResources::finishImageTables() {
             poison.resource = index;
             poison.reason = static_cast<std::uint32_t>(Abi::PoisonReason::HeapWritten);
             table.poison.push_back(poison);
-            table.messages.push_back("the table at 0x" + HexText(base) + " is written by its own dispatch");
+            table.messages.push_back(std::make_shared<const std::string>("the table at 0x" + HexText(base) + " is written by its own dispatch"));
             map[header + Abi::TableFault] = Abi::PoisonCode(static_cast<std::uint32_t>(table.poison.size() - 1u));
             faultChecks = true;
         }
@@ -5564,7 +5571,7 @@ ShaderResources::DrawBindings::~DrawBindings() {
     release(fragmentLayout, fragmentAllocation);
 }
 
-std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const {
+std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target) const {
     std::vector<MovedBuffer> moved;
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return moved;
     for (const auto& shader : shaders) {
@@ -5591,7 +5598,8 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
                 const auto address = descriptor.Base48();
-                const auto size = descriptor.GetSize();
+                const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
+                const auto size = BytesUpToTarget(address, descriptor.GetSize(), descriptor.Stride(), written ? nullptr : target);
                 const auto index = kept->allocations[element];
                 const auto& item = allocations[index];
                 const bool empty = size == 0 || address == 0;
@@ -5600,7 +5608,6 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                     return std::nullopt;
                 }
                 if (item.address == address && item.size == size) continue;
-                const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
                 if (written || empty || item.written || size > context.limits.maxStorageBufferRange) return std::nullopt;
                 const auto begin = address - item.adjustment;
                 const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
@@ -5834,7 +5841,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
                 const auto snapshotIndex = snapshotIndices[binding.allocations[element]];
                 if (snapshotIndex == selected.size()) continue;
                 const auto& snapshot = result->snapshots[snapshotIndex];
-                buffers[offset + element] = {snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes};
+                buffers[offset + element] = wholeDwordRange({snapshot.buffer->Handle(), snapshot.offset, snapshot.bytes});
             }
         }
     }

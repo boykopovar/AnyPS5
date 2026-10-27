@@ -227,6 +227,19 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
     info->eh_frame_hdr_addr = frames != nullptr ? image->dlpi_addr + frames->p_vaddr : 0;
     info->eh_frame_addr = 0;
     info->eh_frame_size = 0;
+    if (frames != nullptr) {
+      const auto loaded = [image](std::uintptr_t begin, std::uint64_t size) {
+        for (std::uint16_t index = 0; index < image->dlpi_phnum; ++index) {
+          const auto& header = image->dlpi_phdr[index];
+          const std::uintptr_t start = image->dlpi_addr + header.p_vaddr;
+          if (header.p_type == PT_LOAD && begin >= start && begin - start <= header.p_memsz && size <= header.p_memsz - (begin - start)) return true;
+        }
+        return false;
+      };
+      const auto tables = EhFrame::ReadTables(loaded, info->eh_frame_hdr_addr, "sceKernelGetModuleInfoForUnwind");
+      info->eh_frame_addr = tables.frames;
+      info->eh_frame_size = tables.framesSize + sizeof(std::uint32_t);
+    }
     info->seg0_addr = image->dlpi_addr + first->p_vaddr;
     info->seg0_size = first->p_memsz;
     search.found = true;

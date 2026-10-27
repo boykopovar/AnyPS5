@@ -29,6 +29,7 @@ int main() {
     PlayerSelectionDialogResult result{-1, 99, nullptr, 77, 55};
 
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
+    Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogOpen(&param) == kErrNotInitialized);
     Require(scePlayerSelectionDialogClose() == kErrNotInitialized);
     Require(scePlayerSelectionDialogParamInitialize(nullptr) == kErrArgNull);
@@ -41,6 +42,7 @@ int main() {
     }
     Require(threw);
     Require(param.size == sizeof(param));
+    Require(scePlayerSelectionDialogGetResult(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogGetResult(&result) == kErrNotInitialized);
     Require(scePlayerSelectionDialogGetStatus() == 0);
     Require(scePlayerSelectionDialogUpdateStatus() == 0);

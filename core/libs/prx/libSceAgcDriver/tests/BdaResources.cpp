@@ -25,6 +25,7 @@
 #include <mutex>
 #include <new>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifndef _WIN32
@@ -757,6 +758,54 @@ void failedImportJoinProbeBudgetTests(const Context& context, const BdaTestAcces
     ranges.CheckUnchanged();
 }
 
+void failedJoinWrittenViewTests(const Context& context, const BdaTestAccess& access) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t large = 3 * piece;
+    constexpr std::uint32_t stored = 0x600dcafe;
+    auto* block = static_cast<std::uint8_t*>(::operator new(2 * large, std::align_val_t{2 * piece}));
+    std::memset(block, 0x5a, 2 * large);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    const auto second = first + large;
+    const auto written = second + 128;
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    ClearHostImports(importing.device);
+    SetHostImportWindow(2 * piece);
+    SetHostImportBudget(2 * large);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, large, true, false, true);
+        mutation.Add(block + large, large, true, false, true);
+    }
+    Require(HostImportFor(importing, first, 16) != nullptr && HostImportFor(importing, second, 16) != nullptr && HostImportLiveBytes() == 2 * large, "the failed join fixture did not import its two ranges apart");
+    access.limitImports(large);
+    {
+        GuestBufferMemory memory(importing);
+        memory.AcquireRegistered();
+        memory.AddReadable(second - 16, 32);
+        memory.AddWritable(written, 32);
+        memory.Upload(true);
+        Require(ExistingHostImportFor(importing, second - 16, 32) == nullptr && ExistingHostImportFor(importing, written, 32) == nullptr, "the join over the import limit did not fall back to copies");
+        std::uint32_t adjustment = 0;
+        const auto view = memory.Descriptor(written, 32, adjustment);
+        std::memcpy(access.bytes(view.buffer).data() + view.offset + adjustment, &stored, sizeof(stored));
+        memory.WriteBack();
+    }
+    std::uint32_t kept = 0;
+    std::memcpy(&kept, block + large + 128, sizeof(kept));
+    Require(kept == stored, "a write through a view whose import a failed join retired was lost");
+    access.limitImports(std::nullopt);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(block);
+        mutation.Remove(block + large);
+    }
+    SetHostImportBudget(0);
+    SetHostImportWindow(0);
+    ::operator delete(block, std::align_val_t{2 * piece});
+}
+
 // One registered range of `cells` import windows of `window` bytes, with the window and the import budget set for the
 // test and reset after it.
 class WindowedRange {
@@ -851,7 +900,7 @@ private:
             const auto* imported = reinterpret_cast<const VkImportMemoryHostPointerInfoEXT*>(next);
             active->calls.push_back({imported->pHostPointer, info->allocationSize});
             if (active->onImport) {
-                auto callback = std::move(active->onImport);
+                const auto callback = std::exchange(active->onImport, nullptr);
                 callback();
             }
             if (active->failure != VK_SUCCESS) return active->failure;
@@ -1130,7 +1179,7 @@ void importAtMapOverBudgetTests(const Context& context) {
 void importRequesterTests(const Context& context, const BdaTestAccess& access) {
     ClearHostImports(context.device);
     constexpr std::size_t piece = 65536;
-    constexpr std::size_t pieces = 8;
+    constexpr std::size_t pieces = 11;
     auto* block = static_cast<std::uint8_t*>(::operator new(pieces * piece, std::align_val_t{piece}));
     std::memset(block, 0x2d, pieces * piece);
     auto importing = context;
@@ -1144,7 +1193,7 @@ void importRequesterTests(const Context& context, const BdaTestAccess& access) {
     };
     const auto counted = [](ImportRequester requester) { return HostImportCounters().requesters[static_cast<std::size_t>(requester)]; };
     const auto made = [&](ImportRequester requester) { return counted(requester).made; };
-    Require(std::string(ImportRequesterName(ImportRequester::Map)) == "map" && std::string(ImportRequesterName(ImportRequester::Build)) == "build" && std::string(ImportRequesterName(ImportRequester::Access)) == "access" && std::string(ImportRequesterName(ImportRequester::Join)) == "join" && std::string(ImportRequesterName(ImportRequester::Segment)) == "segment", "an import requester has the wrong name");
+    Require(std::string(ImportRequesterName(ImportRequester::Map)) == "map" && std::string(ImportRequesterName(ImportRequester::Build)) == "build" && std::string(ImportRequesterName(ImportRequester::Access)) == "access" && std::string(ImportRequesterName(ImportRequester::Join)) == "join" && std::string(ImportRequesterName(ImportRequester::Segment)) == "segment" && std::string(ImportRequesterName(ImportRequester::ColorTarget)) == "color target", "an import requester has the wrong name");
     const auto mappedRange = [&](std::size_t index) {
         GuestAllocations::Mapped ranges;
         const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
@@ -1245,9 +1294,27 @@ void importRequesterTests(const Context& context, const BdaTestAccess& access) {
         SetHostImportWindow(0);
         ::operator delete(joined, std::align_val_t{window});
     }
+    change(10, true);
+    change(9, true);
+    {
+        const auto decided = PrepareImportWatch(importing);
+        const auto before = counted(ImportRequester::ColorTarget);
+        SetImportWatch(importing, ImportWatch::Unwatch);
+        const auto* compared = HostImportFor(importing, address(10), 16, ImportRequester::ColorTarget);
+        const auto refused = counted(ImportRequester::ColorTarget);
+        SetImportWatch(importing, ImportWatch::Watch);
+        const auto* readOnly = HostImportFor(importing, address(9), 16, ImportRequester::ColorTarget);
+        const auto* outside = HostImportFor(importing, address(10), 16, ImportRequester::ColorTarget);
+        SetImportWatch(importing, decided);
+        Require(compared == nullptr && refused.made == before.made && refused.refused == before.refused && refused.failed == before.failed, "a color target's import was made where imports of its memory are compared");
+        Require(readOnly == nullptr && !HostImportCovers(importing, address(9), piece), "a color target's import was made of registered memory the guest cannot write");
+        Require(outside == nullptr && !HostImportCovers(importing, address(10), piece) && made(ImportRequester::ColorTarget) == before.made, "a color target's import was made of memory outside the write watch");
+    }
     const auto counts = HostImportCounters();
     Require(counts.live >= 4 && counts.liveBytes == HostImportLiveBytes(), "the live import counts disagree with the live bytes");
     for (std::size_t index = 0; index < 6; ++index) change(index, false);
+    change(10, false);
+    change(9, false);
     {
         GuestAllocations::Mutation mutation;
         mutation.Remove(block + 6 * piece);
@@ -1263,8 +1330,9 @@ void hostImportReportTests() {
     counts.requesters[static_cast<std::size_t>(ImportRequester::Map)] = {2, 1u << 20u, 0, 0, 0};
     counts.requesters[static_cast<std::size_t>(ImportRequester::Build)] = {5, 4u << 20u, 7, 7u << 19u, 1, 4};
     counts.requesters[static_cast<std::size_t>(ImportRequester::Segment)] = {1, 1u << 16u, 0, 0, 2};
+    counts.requesters[static_cast<std::size_t>(ImportRequester::ColorTarget)] = {1, 1u << 20u, 0, 0, 0};
     const auto text = FormatHostImportCounts(counts);
-    Require(text == "3 live (3.0 MiB); made 8 (5.1 MiB), refused 7 (3.5 MiB, 4 remembered), failed 3; by requester (made/refused/failed): map 2/0/0, build 5/7/1, access 0/0/0, join 0/0/0, segment 1/0/2", "the host import report is wrong: " + text);
+    Require(text == "3 live (3.0 MiB); made 9 (6.1 MiB), refused 7 (3.5 MiB, 4 remembered), failed 3; by requester (made/refused/failed): map 2/0/0, build 5/7/1, access 0/0/0, join 0/0/0, segment 1/0/2, color target 1/0/0", "the host import report is wrong: " + text);
 }
 
 class PieceWindow {
@@ -2358,6 +2426,64 @@ void importedHeapMirrorTests(const Context& context, const BdaTestAccess& access
     GuestArena::GuestArenaReset_nid_postfix(block, bytes);
 #endif
     GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
+}
+
+void retiredImportWatchTests(const Context& context) {
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: the write watch of retired imports not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t bytes = 2 * piece;
+    void* block = GuestArena::GuestArenaAllocate_nid_postfix(bytes, bytes);
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+    std::memset(block, 0x5a, bytes);
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto address = reinterpret_cast<std::uintptr_t>(block);
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    SetHostImportWindow(bytes);
+    SetHostImportDeferredSettles(false);
+    ClearHostImports(importing.device);
+    const auto decided = PrepareImportWatch(importing);
+    SetImportWatch(importing, ImportWatch::Unwatch);
+    const auto registry = [&](std::size_t offset, bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, guest + offset, piece, true, true, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, guest + offset);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    const auto build = [&] {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        leased.WriteBack();
+    };
+    registry(0, true);
+    build();
+    Require(HostImportCovers(importing, address, piece), "the first 64 KiB piece was not imported on its own");
+    Require(!AgcDriver::GuestMemory::Watched(address, piece), "an unwatched 64 KiB import kept its piece in the write watch");
+    registry(piece, true);
+    SetHostImportBudget(4096);
+    const auto before = MirrorCounters();
+    build();
+    Require(!HostImportCovers(importing, address, piece), "the piece's import outlived the run that grew past it, or a 128 KiB block fit a 4 KiB budget");
+    Require(AgcDriver::GuestMemory::Watched(address, piece), "a 64 KiB piece whose import retired when its run grew into a block stayed outside the write watch");
+    Require(MirrorCounters().heapMirrors == before.heapMirrors + 2, "a 64 KiB piece whose import retired when its run grew into a block was copied, not heap mirrored, once no import fit");
+    registry(piece, false);
+    registry(0, false);
+    build();
+    SetImportWatch(importing, decided);
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    SetHostImportWindow(0);
+    SetHostImportDeferredSettles(true);
+    GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+    GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
+#else
+    static_cast<void>(context);
+#endif
 }
 
 void importedFreshTests(const Context& context) {
@@ -4129,6 +4255,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     importJoinTests(context);
     importCoverageHintBudgetTests(context, access);
     failedImportJoinProbeBudgetTests(context, access);
+    failedJoinWrittenViewTests(context, access);
     importWholeRangeOverWindowTests(context);
     importMappedFailureGenerationTests(context);
     importStaleProbeTests(context, access);
@@ -4168,6 +4295,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     heapMirrorTests(context, access);
     partialHeapImportBudgetTests(context, access);
     importedHeapMirrorTests(context, access);
+    retiredImportWatchTests(context);
     importWatchTests();
     importedFreshTests(context);
     gpuMappingTests(context);

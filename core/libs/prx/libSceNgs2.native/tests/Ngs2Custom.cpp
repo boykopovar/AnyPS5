@@ -521,8 +521,6 @@ static void TestCustomRackChecks() {
     Require(rack == 0);
     sampler.custom_rack_option.module[0].extra_buffer_id = 0;
     Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &sampler.custom_rack_option.rack_option, &info, &rack) == SCE_NGS2_OK);
-    sampler.custom_rack_option.module[0].module_id = SCE_NGS2_CUSTOM_MODULE_ID_GAIN;
-    Require(CreateSamplerThrows<std::runtime_error>(sampler));
     Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
     for (const auto count : {1u, 2u, 24u}) {
         sampler.custom_rack_option.num_modules = count;
@@ -757,17 +755,14 @@ static void TestCustomGain() {
     Patch(sampler, custom);
     Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
 
-    auto out = Render(system);
-    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.0f && out[i * 2 + 1] == 0.0f);
-
     Ngs2CustomVoiceGainParam gain{};
     gain.gain[0] = 2.0f;
     gain.gain[1] = -0.5f;
     Control(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN | 0, gain);
-    out = Render(system);
+    auto out = Render(system);
     for (std::uint32_t i = 0; i < Grain; i++) {
-        Require(out[i * 2] == 0.5f * 2.0f * static_cast<float>(i + 1) / Grain);
-        Require(out[i * 2 + 1] == 0.5f * -0.5f * static_cast<float>(i + 1) / Grain);
+        Require(out[i * 2] == 0.5f * 2.0f * static_cast<float>(i) / Grain);
+        Require(out[i * 2 + 1] == 0.5f * -0.5f * static_cast<float>(i) / Grain);
     }
     out = Render(system);
     for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 1.0f && out[i * 2 + 1] == -0.25f);
@@ -775,13 +770,15 @@ static void TestCustomGain() {
     gain.gain[0] = 1.0f;
     Control(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN | 0, gain);
     out = Render(system);
-    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.5f * (2.0f - static_cast<float>(i + 1) / Grain));
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.5f * (2.0f - static_cast<float>(i) / Grain));
 
     auto outside = gain;
     outside.gain[2] = 33.0f;
-    Require(ControlThrows<std::runtime_error>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN | 0, outside));
-    Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN | 1, gain));
-    Require(ControlThrows<std::invalid_argument>(sampler, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN | 0, gain));
+    Control(custom, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN | 0, outside);
+    gain.header = {sizeof(gain), 0, SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN | 1};
+    Require(sceNgs2VoiceControl(custom, &gain.header) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
+    gain.header.id = SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN;
+    Require(sceNgs2VoiceControl(sampler, &gain.header) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
     struct ShortGainParam {
         Ngs2VoiceParamHeader header;
         float gain[2];

@@ -1,12 +1,14 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include "SceTypes.hpp"
 
 extern "C" {
 
-int APS5_VABI sceRegMgrGetBin(std::uint32_t optionId, void* data, std::size_t size);
-int APS5_VABI sceRegMgrGetInt(int32_t optionId, int32_t* outInt);
-int APS5_VABI sceRegMgrGetStr(int32_t optionId, char* outString, std::size_t stringLength);
+int APS5_VABI sceRegMgrGetBin(std::int64_t optionId, void* data, int size);
+int APS5_VABI sceRegMgrGetInt(std::int64_t optionId, int32_t* outInt);
+int APS5_VABI sceRegMgrGetStr(std::int64_t optionId, char* outString, int stringLength);
 int APS5_VABI sceRegMgrSetBin(std::uint32_t optionId, const void* data, std::size_t size);
 int APS5_VABI sceRegMgrSetInt(int32_t optionId, int32_t inInt);
 int APS5_VABI sceRegMgrSetStr(int32_t optionId, const char* inStirng, std::size_t stringLength);

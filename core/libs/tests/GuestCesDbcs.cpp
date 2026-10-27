@@ -86,7 +86,8 @@ static int Scalar(ToUtf8 convert, const void* profile, const char* source, std::
     std::uint32_t consumed = 77;
     std::uint32_t produced = 77;
     const int result = convert(profile, Bytes(source), sourceMax, &consumed, utf8, utf8Max, &produced);
-    if (result != 0) Require(consumed == 77 && produced == 77 && std::memcmp(utf8, "\x55\x55\x55\x55", 4) == 0);
+    const bool decodeError = source && sourceMax > 0 && (result == static_cast<int>(0x805C0011) || result == static_cast<int>(0x805C0014) || result == static_cast<int>(0x805C0020));
+    if (result != 0) Require((decodeError ? consumed != 77 && produced == 0 : consumed == 77 && produced == 77) && std::memcmp(utf8, "\x55\x55\x55\x55", 4) == 0);
     return result;
 }
 
@@ -184,17 +185,17 @@ static void RequireDecoders(const Decoders& decoders, const void* profile) {
             std::uint16_t ucs2 = 0x5555;
             std::uint32_t read = 77;
             Require(decoders.ucs2(profile, source, sizeof(source), &read, &ucs2) == expected);
-            Require(expected == 0 ? read == consumed && ucs2 == code : read == 77 && ucs2 == 0x5555);
+            Require(read == consumed && ucs2 == (expected == 0 ? code : 0));
             for (int order = 0; order < 3; ++order) {
                 std::uint16_t utf16 = 0x5555;
                 std::uint32_t units = 77;
                 read = 77;
                 Require(decoders.utf16[order](profile, source, sizeof(source), &read, &utf16, 1, &units) == expected);
-                Require(expected == 0 ? read == consumed && units == 1 && Load(&utf16, 2, order) == code : read == 77 && units == 77 && utf16 == 0x5555);
+                Require(read == consumed && (expected == 0 ? units == 1 && Load(&utf16, 2, order) == code : units == 0 && utf16 == 0x5555));
                 std::uint32_t utf32 = 0x55555555;
                 read = 77;
                 Require(decoders.utf32[order](profile, source, sizeof(source), &read, &utf32) == expected);
-                Require(expected == 0 ? read == consumed && Load(&utf32, 4, order) == code : read == 77 && utf32 == 0x55555555);
+                Require(read == consumed && (expected == 0 ? Load(&utf32, 4, order) == code : utf32 == 0));
             }
         }
     }
@@ -321,8 +322,8 @@ int main() {
 
     Require(sceCesMbcsUcsContextInit(context, big5) == 0);
     RequireString(context, "\xA4\xA4\xA4\xE5", "\xE4\xB8\xAD\xE6\x96\x87");
-    RequireString(context, "\xF9\xF9\xA2\x7E\xA4\x51\xA4\xCA", "\xE2\x95\x90\xE2\x95\xAD\xE5\x8D\x81\xE5\x8D\x85");
-    RequireString(context, "\xF9\xE9\xF9\xEB\xF9\xEA\xA2\xA1\xA2\xA3\xA2\xA2", "\xE2\x95\x9E\xE2\x95\xA1\xE2\x95\xAA\xE2\x95\xAE\xE2\x95\xAF\xE2\x95\xB0");
+    RequireString(context, "\xA2\xA4\xA2\x7E\xA4\x51\xA4\xCA", "\xE2\x95\x90\xE2\x95\xAD\xE5\x8D\x81\xE5\x8D\x85");
+    RequireString(context, "\xA2\xA5\xA2\xA7\xA2\xA6\xA2\xA1\xA2\xA3\xA2\xA2", "\xE2\x95\x9E\xE2\x95\xA1\xE2\x95\xAA\xE2\x95\xAE\xE2\x95\xAF\xE2\x95\xB0");
     Require(Utf8ToMbcs(context, "\xEA\xB0\x80") == unassignedCode);
     Require(RoundTripMismatches(context) == 10);
 
@@ -365,7 +366,10 @@ int main() {
     RequireEncode(eucKrEncoders, eucKr, 0x20AC, 0, Bytes("\xA2\xE6"), 2);
     RequireEncode(eucKrEncoders, eucKr, 0xB620, unassignedCode, nullptr, 0);
     RequireEncode(uhcEncoders, uhc, 0xB620, 0, Bytes("\x8C\x63"), 2);
-    RequireEncode(big5Encoders, big5, 0x2550, 0, Bytes("\xF9\xF9"), 2);
+    RequireEncode(big5Encoders, big5, 0x2550, 0, Bytes("\xA2\xA4"), 2);
+    RequireEncode(big5Encoders, big5, 0x255E, 0, Bytes("\xA2\xA5"), 2);
+    RequireEncode(big5Encoders, big5, 0x2561, 0, Bytes("\xA2\xA7"), 2);
+    RequireEncode(big5Encoders, big5, 0x256A, 0, Bytes("\xA2\xA6"), 2);
     RequireEncode(big5Encoders, big5, 0x5341, 0, Bytes("\xA4\x51"), 2);
     RequireEncode(big5Encoders, big5, 0xAC00, unassignedCode, nullptr, 0);
     RequireEncode(eucKrEncoders, uhc, 0xAC00, invalidParameter, nullptr, 0);

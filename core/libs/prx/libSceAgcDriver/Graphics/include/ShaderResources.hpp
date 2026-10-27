@@ -212,7 +212,8 @@ public:
         std::span<const std::uint32_t> words;
     };
     std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false) const;
-    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const;
+    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target) const;
+    static std::uint64_t BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target);
     enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };
     struct MoveProof {
         MoveRefusal refusal = MoveRefusal::None;
@@ -401,7 +402,7 @@ private:
         std::size_t mapAllocation = std::numeric_limits<std::size_t>::max();
         std::vector<std::uint32_t> map;
         std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
-        std::vector<std::string> messages;
+        std::vector<std::shared_ptr<const std::string>> messages;
         std::uint32_t elementBase = 0;
         std::uint32_t set = 0;
         std::size_t firstSampler = 0;
@@ -498,6 +499,7 @@ private:
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
     VkDescriptorBufferInfo descriptor(Allocation& allocation);
+    VkDescriptorBufferInfo wholeDwordRange(VkDescriptorBufferInfo info) const;
     void noteReusable();
     void reportDescriptorCaches() const;
     // What a sampled texture was proved current against when the build (or the last full Revalidate)
