@@ -1,3 +1,4 @@
+#include "prx/libSceAudioPropagation/include/InventoryExports.hpp"
 #include "prx/libSceAudioPropagation/include/Api.hpp"
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 #include "AudioPropagation.hpp"
@@ -132,6 +133,11 @@ void requireNoPropagation(bool none, const char* function) {
 }
 
 extern "C" {
+
+int APS5_VABI sceAudioPropagationSourceQueryAudioPaths() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 std::int32_t APS5_VABI sceAudioPropagationSystemQueryMemory(const SystemOptions* options, AudioPropagationSystemMemory* outMemory) {
     if (!options || !outMemory) return ErrorNullPointer;
