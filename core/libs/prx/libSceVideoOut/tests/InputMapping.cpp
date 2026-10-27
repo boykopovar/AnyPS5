@@ -18,6 +18,14 @@ void require(bool condition, const char* message) {
 
 std::filesystem::path root;
 
+void setConfigPath(const std::filesystem::path& path) {
+#ifdef _WIN32
+    require(_wputenv_s(L"ANYPS5_INPUT_CONFIG", path.wstring().c_str()) == 0, "set ANYPS5_INPUT_CONFIG");
+#else
+    require(::setenv("ANYPS5_INPUT_CONFIG", path.string().c_str(), 1) == 0, "set ANYPS5_INPUT_CONFIG");
+#endif
+}
+
 void useConfig(const std::string& text) {
     const auto path = root / "anyps5-input.ini";
     {
@@ -25,11 +33,7 @@ void useConfig(const std::string& text) {
         file << text;
         require(file.good(), "write the input mapping");
     }
-#ifdef _WIN32
-    require(_putenv_s("ANYPS5_INPUT_CONFIG", path.string().c_str()) == 0, "set ANYPS5_INPUT_CONFIG");
-#else
-    require(::setenv("ANYPS5_INPUT_CONFIG", path.string().c_str(), 1) == 0, "set ANYPS5_INPUT_CONFIG");
-#endif
+    setConfigPath(path);
 }
 
 bool rejects(const std::string& text) {
@@ -75,6 +79,41 @@ void settingsReject() {
     require(rejects("MouseSensitivity = 1\nMouseSensitivity = 2\n"), "a setting given twice is rejected");
 }
 
+void performanceOverlayBinding() {
+    useConfig("Cross = KEY:F\n");
+    bool onF10 = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) onF10 = onF10 || (binding.control == Pad::InputControl::TogglePerformanceOverlay && binding.key == SDL_SCANCODE_F10);
+    require(onF10, "F10 toggles the performance overlay by default");
+    useConfig("togglePerformanceOverlay = KEY:F9\n");
+    bool onF9 = false;
+    bool stillOnF10 = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) {
+        if (binding.control != Pad::InputControl::TogglePerformanceOverlay) continue;
+        onF9 = onF9 || binding.key == SDL_SCANCODE_F9;
+        stillOnF10 = stillOnF10 || binding.key == SDL_SCANCODE_F10;
+    }
+    require(onF9 && !stillOnF10, "the performance overlay toggle moves to another key");
+    require(rejects("TogglePerformanceOverlay = MOUSE:Left\n"), "the performance overlay toggle refuses a mouse button");
+}
+
+void screenshotBinding() {
+    useConfig("Cross = KEY:F\n");
+    bool onF12 = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) onF12 = onF12 || (binding.control == Pad::InputControl::Screenshot && binding.key == SDL_SCANCODE_F12);
+    require(onF12, "F12 takes a screenshot by default");
+    useConfig("Screenshot = KEY:F9\n");
+    bool onF9 = false;
+    bool stillOnF12 = false;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) {
+        if (binding.control != Pad::InputControl::Screenshot) continue;
+        onF9 = onF9 || binding.key == SDL_SCANCODE_F9;
+        stillOnF12 = stillOnF12 || binding.key == SDL_SCANCODE_F12;
+    }
+    require(onF9 && !stillOnF12, "the screenshot key moves to another key");
+    require(rejects("Screenshot = MOUSE:Left\n"), "the screenshot key refuses a mouse button");
+    require(rejects("Screenshot = WHEEL:Up\n"), "the screenshot key refuses the mouse wheel");
+}
+
 void mouseLookDefault() {
     useConfig("Cross = KEY:F\n");
     const auto settings = Pad::LoadInputMapping().settings;
@@ -103,14 +142,6 @@ void mouseLookReject() {
     require(rejects("MouseMaxSpeed = nan\n"), "a non-finite max speed is rejected");
     require(rejects("MouseVerticalScale = 11\n"), "a vertical scale above 10 is rejected");
     require(rejects("MouseDecayMs = 20\nmousedecayms = 30\n"), "a mouse setting given twice is rejected");
-}
-
-void setConfigPath(const std::filesystem::path& path) {
-#ifdef _WIN32
-    require(_wputenv_s(L"ANYPS5_INPUT_CONFIG", path.wstring().c_str()) == 0, "set ANYPS5_INPUT_CONFIG");
-#else
-    require(::setenv("ANYPS5_INPUT_CONFIG", path.string().c_str(), 1) == 0, "set ANYPS5_INPUT_CONFIG");
-#endif
 }
 
 void nonAsciiPaths() {
@@ -147,6 +178,70 @@ void nonAsciiPaths() {
     require(message.find(utf8Name) != std::string::npos, "a missing file names the path in UTF-8");
 }
 
+std::size_t stickModifierBindings(const Pad::InputConfiguration& configuration) {
+    std::size_t count = 0;
+    for (const auto& binding : configuration.bindings) count += binding.control == Pad::InputControl::StickModifier ? 1 : 0;
+    return count;
+}
+
+void stickModifier() {
+    useConfig("Cross = KEY:F\n");
+    auto configuration = Pad::LoadInputMapping();
+    require(stickModifierBindings(configuration) == 0, "no key is a stick modifier by default");
+    require(configuration.settings.stickModifierScale == 0.5, "the stick modifier scale defaults to 0.5");
+    useConfig("StickModifier = KEY:Z\nstickmodifier = MOUSE:X2\nStickModifierScale = 0.35\n");
+    configuration = Pad::LoadInputMapping();
+    require(stickModifierBindings(configuration) == 2, "StickModifier takes a key and a mouse button");
+    require(configuration.settings.stickModifierScale == 0.35, "the stick modifier scale is read");
+    require(rejects("StickModifier = WHEEL:Up\n"), "a wheel direction cannot be a stick modifier");
+    require(rejects("StickModifierScale = 0.04\n"), "a stick modifier scale below 0.05 is rejected");
+    require(rejects("StickModifierScale = 1.5\n"), "a stick modifier scale above 1 is rejected");
+    require(rejects("StickModifierScale = half\n"), "a non-numeric stick modifier scale is rejected");
+    require(rejects("StickModifierScale = 0.5\nStickModifierScale = 0.6\n"), "a stick modifier scale given twice is rejected");
+}
+
+void keyboardRamp() {
+    useConfig("Cross = KEY:F\n");
+    require(Pad::LoadInputMapping().settings.keyboardRampMs == 0.0, "the keyboard ramp defaults to 0");
+    useConfig("KeyboardRampMs = 120\n");
+    require(Pad::LoadInputMapping().settings.keyboardRampMs == 120.0, "the keyboard ramp is read");
+    useConfig("keyboardrampms = 0\n");
+    require(Pad::LoadInputMapping().settings.keyboardRampMs == 0.0, "a ramp of 0 is accepted");
+    require(rejects("KeyboardRampMs = -1\n"), "a negative keyboard ramp is rejected");
+    require(rejects("KeyboardRampMs = 2001\n"), "a keyboard ramp above 2000 is rejected");
+    require(rejects("KeyboardRampMs = slow\n"), "a non-numeric keyboard ramp is rejected");
+    require(rejects("KeyboardRampMs = 50\nKeyboardRampMs = 60\n"), "a keyboard ramp given twice is rejected");
+}
+
+void triggerRamp() {
+    useConfig("Cross = KEY:F\n");
+    require(Pad::LoadInputMapping().settings.triggerRampMs == 0.0, "the trigger ramp defaults to 0");
+    useConfig("TriggerRampMs = 80\n");
+    require(Pad::LoadInputMapping().settings.triggerRampMs == 80.0, "the trigger ramp is read");
+    require(rejects("TriggerRampMs = -5\n"), "a negative trigger ramp is rejected");
+    require(rejects("TriggerRampMs = 2500\n"), "a trigger ramp above 2000 is rejected");
+    require(rejects("TriggerRampMs = 10\ntriggerrampms = 20\n"), "a trigger ramp given twice is rejected");
+}
+
+std::size_t toggleMouseBindings(const Pad::InputConfiguration& configuration, SDL_Scancode key, Pad::MouseButton button) {
+    std::size_t count = 0;
+    for (const auto& binding : configuration.bindings) {
+        if (binding.control == Pad::InputControl::ToggleMouse && binding.key == key && binding.mouseButton == button) ++count;
+    }
+    return count;
+}
+
+void toggleMouseDefaults() {
+    useConfig("Cross = KEY:F\n");
+    auto configuration = Pad::LoadInputMapping();
+    require(toggleMouseBindings(configuration, SDL_SCANCODE_F7, Pad::MouseButton::None) == 1, "F7 toggles the mouse by default");
+    require(toggleMouseBindings(configuration, SDL_SCANCODE_UNKNOWN, Pad::MouseButton::Middle) == 1, "the middle button toggles the mouse by default");
+    useConfig("ToggleMouse = MOUSE:Right\n");
+    configuration = Pad::LoadInputMapping();
+    require(toggleMouseBindings(configuration, SDL_SCANCODE_F7, Pad::MouseButton::None) == 0, "a ToggleMouse line replaces F7");
+    require(toggleMouseBindings(configuration, SDL_SCANCODE_UNKNOWN, Pad::MouseButton::Right) == 1, "a ToggleMouse line adds its own binding");
+}
+
 void deadzoneOffMatchesRawSticks() {
     for (const std::int16_t axis : {std::int16_t{-32768}, std::int16_t{-20000}, std::int16_t{-1}, std::int16_t{0}, std::int16_t{1}, std::int16_t{1234}, std::int16_t{32767}}) {
         const auto stick = Pad::StickWithDeadzone(axis, axis, 0);
@@ -180,9 +275,15 @@ int main() try {
     settingsDefault();
     settingsParse();
     settingsReject();
+    performanceOverlayBinding();
+    screenshotBinding();
     mouseLookDefault();
     mouseLookParse();
     mouseLookReject();
+    stickModifier();
+    keyboardRamp();
+    triggerRamp();
+    toggleMouseDefaults();
     nonAsciiPaths();
     deadzoneOffMatchesRawSticks();
     deadzoneShapesSticks();

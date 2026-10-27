@@ -4,10 +4,13 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 
 namespace AgcDriver::DriverDetail {
 
@@ -64,8 +67,9 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DispatchWriteRanges(const S
                 bounded = false;
                 continue;
             }
-            const auto resource = Graphics::DecodeTextureResource(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8));
-            if (resource.baseAddress == 0) continue;
+            const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
+            if (Graphics::IsNullTextureResource(words)) continue;
+            const auto resource = Graphics::DecodeTextureResource(words);
             const auto surfaceBytes = Graphics::DescribeSurface(resource).guestBytes;
             ranges.emplace_back(resource.baseAddress, resource.baseAddress + (surfaceBytes != 0 ? surfaceBytes : UnknownImageBytes));
             if (resource.dccAddress != 0) ranges.emplace_back(resource.dccAddress, resource.dccAddress + (surfaceBytes != 0 ? surfaceBytes / 256 + 1 : UnknownImageBytes));
@@ -154,6 +158,41 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> Driver::drawWriteRanges(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> stages) {
     return DrawWriteRanges(graphics, stages, ExactDrawWrites());
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> QueuedDrawReadRanges(const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> stages) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    const auto add = [&](std::uint64_t begin, std::uint64_t bytes) {
+        if (begin == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - begin) return;
+        ranges.emplace_back(begin, begin + bytes);
+    };
+    if (draw.indexed && draw.indexSize != 0 && draw.indexCount != 0) add(draw.indexAddress, static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize);
+    if (stages.empty()) return ranges;
+    for (const auto& stage : stages) {
+        if (stage.program == nullptr) continue;
+        for (const auto& binding : stage.program->bindings) {
+            if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers || binding.guestDescriptor.size() < static_cast<std::size_t>(binding.count) * 4u) continue;
+            for (std::uint32_t element = 0; element < binding.count; ++element) {
+                const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
+                const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
+                add(descriptor.Base48(), descriptor.GetSize());
+            }
+        }
+    }
+    if (stages.empty() || stages.front().program == nullptr) return ranges;
+    for (const auto& attribute : stages.front().program->vertexAttributes) {
+        if (Graphics::NullVertexDescriptor(attribute)) continue;
+        const auto address = attribute.resource.fields[0] | (static_cast<std::uint64_t>(attribute.resource.fields[1] & 0xffffu) << 32u);
+        std::uint64_t bytes = 0;
+        try {
+            if (Graphics::VertexFetchOutOfRange(attribute)) continue;
+            bytes = Graphics::VertexBufferExtent(attribute);
+        } catch (const std::runtime_error&) {
+            continue;
+        }
+        add(address, bytes);
+    }
+    return ranges;
 }
 
 std::optional<WrittenBuffer> Driver::newestWriterLocked(std::uint64_t begin, std::uint64_t end) const {

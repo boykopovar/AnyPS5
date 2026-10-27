@@ -9,8 +9,8 @@ from guest_import_fixtures import dynamic
 from test_guest_intel_trampolines import PLAIN_SITE, elf_loads, guest_fixture, main_fixture
 
 
-def module_with_symbol(exported):
-    image = guest_fixture(PLAIN_SITE)
+def module_with_symbol(exported, symbolic=False):
+    image = guest_fixture(PLAIN_SITE, symbolic=symbolic)
     name = b"\0shared#A#B\0"
     image[0x800:0x800 + len(name)] = name
     struct.pack_into("<Q", image, 0x618, len(name))
@@ -24,12 +24,16 @@ def module_with_symbol(exported):
     return image
 
 
-def module_with_soname(soname):
+def module_with_soname(soname, duplicate_alias=False):
     image = module_with_symbol(True)
-    strings = b"\0shared#A#B\0" + soname.encode() + b"\0"
+    alias = b"shared#C#B\0" if duplicate_alias else b""
+    strings = b"\0shared#A#B\0" + alias + soname.encode() + b"\0"
     image[0x800:0x800 + len(strings)] = strings
+    if duplicate_alias:
+        struct.pack_into("<II", image, 0x840, 1, 3)
+        struct.pack_into("<IBBHQQ", image, 0x8B0, 12, 0x12, 0, 1, 0x1000, 1)
     dynamic(image, 0x600, 176, [(5, 0x2200), (10, len(strings)), (6, 0x2280), (11, 24),
-                                (4, 0x2240), (7, 0x2300), (8, 0), (9, 24), (14, 12)])
+                                (4, 0x2240), (7, 0x2300), (8, 0), (9, 24), (14, 12 + len(alias))])
     return image
 
 
@@ -58,6 +62,21 @@ def needed_libraries(image):
             for tag, value in tags if tag == 1]
 
 
+def dynamic_flags(image):
+    phoff, = struct.unpack_from("<Q", image, 32)
+    phsize, phcount = struct.unpack_from("<HH", image, 54)
+    dynamic = next(struct.unpack_from("<IIQQQQQQ", image, phoff + index * phsize)
+                   for index in range(phcount)
+                   if struct.unpack_from("<I", image, phoff + index * phsize)[0] == 2)
+    for position in range(dynamic[2], dynamic[2] + dynamic[5], 16):
+        tag, value = struct.unpack_from("<qQ", image, position)
+        if tag == 0:
+            break
+        if tag == 30:
+            return value
+    return 0
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-module-directories-") as directory:
@@ -79,7 +98,7 @@ def main():
                 prx.mkdir(parents=True)
                 provider = (case / standard) if standard else prx
                 provider.mkdir(exist_ok=True)
-                (provider / "provider.prx").write_bytes(module_with_symbol(True))
+                (provider / "provider.prx").write_bytes(module_with_symbol(True, symbolic=not windows))
                 (prx / "consumer.prx").write_bytes(module_with_symbol(False))
                 (prx / "ignored.txt").write_text("not ELF")
                 (prx / "old.prx.guest.prx").write_bytes(guest_fixture(PLAIN_SITE))
@@ -98,10 +117,13 @@ def main():
                     run = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
                     assert run.returncode == 42, (run.returncode, run.stdout, run.stderr)
                 if not windows:
+                    symbolic_module = case / "app0" / (standard or "prx") / "provider.prx.guest.prx"
+                    assert dynamic_flags(symbolic_module.read_bytes()) == 10
                     needed = needed_libraries(output.read_bytes())
                     assert needed == [f"$ORIGIN/app0/{standard or 'prx'}/provider.prx.guest.prx",
                                       "$ORIGIN/app0/prx/consumer.prx.guest.prx"], needed
                     consumer = case / "app0" / "prx" / "consumer.prx.guest.prx"
+                    assert dynamic_flags(consumer.read_bytes()) == 8
                     needed = needed_libraries(consumer.read_bytes())
                     assert needed == [f"$ORIGIN/{'../' + standard + '/' if standard else ''}provider.prx.guest.prx"], needed
 
@@ -149,6 +171,20 @@ def main():
                 assert result.stdout.count(skipped) == 1, result.stdout
             assert {path.name for path in (case / "app0").rglob("*.guest.prx")} == {"libSceFace.prx.guest.prx"}
 
+            case = work / f"{windows}-backup-alias"
+            (case / "sce_module").mkdir(parents=True)
+            for name in ("libSceFace.prx", "libSceFace.prx.esbak"):
+                (case / "sce_module" / name).write_bytes(module_with_soname("libSceFace.prx", True))
+            result, output = convert(case, windows)
+            skipped = "Skipping backup copy: sce_module/libSceFace.prx.esbak (same SONAME as sce_module/libSceFace.prx)"
+            assert result.stdout.count(skipped) == 1, result.stdout
+            if windows:
+                assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
+                assert {path.name for path in (case / "app0").rglob("*.guest.prx")} == {"libSceFace.prx.guest.prx"}
+            else:
+                assert result.returncode == 2 and "Duplicate or empty export after stripping #: shared" in result.stderr, result.stderr
+                assert not output.exists() and not (case / "app0").exists(), output
+
             case = work / f"{windows}-prefixed-libraries"
             (case / "sce_module").mkdir(parents=True)
             for name in ("libfoo.so.1", "libfoo.so.10"):
@@ -190,6 +226,13 @@ def main():
             result, output = convert(case, windows)
             assert result.returncode == 2 and "Ambiguous guest import" in result.stderr and "shared" in result.stderr, result.stderr
             assert not output.exists() and not (case / "app0").exists(), output
+
+        case = work / "windows-symbolic"
+        (case / "prx").mkdir(parents=True)
+        (case / "prx" / "provider.prx").write_bytes(module_with_symbol(True, symbolic=True))
+        result, output = convert(case, True)
+        assert result.returncode == 2 and "DF_SYMBOLIC" in result.stderr, result.stderr
+        assert not output.exists(), output
     print("Guest module directory integration tests passed")
 
 

@@ -192,20 +192,44 @@ private:
     std::unordered_set<const IrValue*> active;
 };
 
-std::uint32_t IndexedWindowSlots(const IrProgram& program) {
+constexpr std::uint64_t MaxNarrowedSwitchCases = 4096;
+
+std::uint32_t IndexedWindowSlots(const IrProgram& program, std::uint32_t laneCount) {
     const auto window = program.Metadata().vectorWindowSize;
     WindowIndexBounds bounds;
     std::uint64_t reached = 0;
+    std::uint64_t dynamicAccesses = 0;
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
             if (inst->Opcode() != IrOpcode::LoadVectorWindow && inst->Opcode() != IrOpcode::StoreVectorWindow) continue;
             const IrValue* index = inst->Argument(0)->Resolve();
             if (index->HasImmediate()) continue;
+            ++dynamicAccesses;
             const auto bound = bounds.Of(*index);
             if (bound && *bound < window / 2u) reached = std::max(reached, *bound + 1u);
         }
     }
+    if (reached == 0u || dynamicAccesses * (window - reached) * laneCount > MaxNarrowedSwitchCases) return 0u;
     return static_cast<std::uint32_t>(reached);
+}
+
+bool WritesGuestMemory(const IrProgram& program) {
+    const auto& info = program.Info();
+    const auto writtenImage = [](const ImageResource& image) { return !image.targetMerge && (image.written || image.atomic || image.atomic64); };
+    const auto writtenModes = [&](const std::vector<ImageResource>& modes) { return std::ranges::any_of(modes, writtenImage); };
+    const auto writtenBuffer = [](const BufferResource& buffer) { return buffer.written || buffer.atomic; };
+    if (info.bdaWrites || std::ranges::any_of(info.buffers, writtenBuffer) || std::ranges::any_of(info.images, writtenImage) || std::ranges::any_of(info.runtimeImageModes, writtenModes)) return true;
+    const auto& memory = program.Resources().memoryInfo;
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* inst : block->Instructions()) {
+            const auto access = SharedAccessOf(inst->Opcode());
+            if (access == SharedAccess::None || access == SharedAccess::Read) continue;
+            const auto index = inst->Flags<MemoryFlags>().index;
+            if (index >= memory.size()) FailEmit("a shared memory access has no memory metadata");
+            if (memory[index].kind == ResourceKind::Gds) return true;
+        }
+    }
+    return false;
 }
 
 }
@@ -216,7 +240,7 @@ void DefineModule(SpirvEmitterState& state) {
     DefineOutputs(state);
     DefineTessellationInterfaces(state);
     DefineDescriptors(state);
-    if (state.requirements.functionLds) {
+    if (state.requirements.functionLds && !state.pixelFunctionLdsBuffer) {
         state.ldsVariable = state.module.AllocateId();
     }
     if (state.requirements.functionScratch) {
@@ -226,7 +250,7 @@ void DefineModule(SpirvEmitterState& state) {
     }
     if (const auto window = state.program.Metadata().vectorWindowSize; window != 0u) {
         static const bool narrowWindow = std::getenv("APS5_NO_WINDOW_NARROWING") == nullptr;
-        state.vectorWindowIndexed = narrowWindow ? IndexedWindowSlots(state.program) : 0u;
+        state.vectorWindowIndexed = narrowWindow ? IndexedWindowSlots(state.program, state.laneCount) : 0u;
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.vectorWindowVariable.at(half) = state.module.AllocateId();
             if (state.vectorWindowIndexed == 0u) continue;
@@ -240,7 +264,7 @@ void DefineModule(SpirvEmitterState& state) {
         state.meshGuestFunc = state.module.AllocateId();
         state.module.EmitCapability(spv::CapabilityMeshShadingEXT);
         state.module.EmitExtension("SPV_EXT_mesh_shader");
-        state.module.AddExecutionMode(state.mainFunc, mesh.outputPrimitiveSize == 2u ? spv::ExecutionModeOutputLinesEXT : spv::ExecutionModeOutputTrianglesEXT);
+        state.module.AddExecutionMode(state.mainFunc, mesh.outputPrimitiveSize == 1u ? spv::ExecutionModeOutputPoints : mesh.outputPrimitiveSize == 2u ? spv::ExecutionModeOutputLinesEXT : spv::ExecutionModeOutputTrianglesEXT);
         state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeOutputVertices, mesh.maxVertices);
         state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeOutputPrimitivesEXT, mesh.maxPrimitives);
     }
@@ -259,11 +283,17 @@ void DefineModule(SpirvEmitterState& state) {
         if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) == state.supportedCapabilities.end()) {
             FailEmit("64-bit buffer atomics need shaderBufferInt64Atomics");
         }
+    }
+    if (state.requirements.bufferU64View) {
         state.module.EmitCapability(spv::CapabilityInt64);
         state.module.EmitCapability(spv::CapabilityInt64Atomics);
     }
     if (state.requirements.sharedInt64Atomics) {
         state.module.EmitCapability(spv::CapabilityInt64);
+    }
+    if (state.requirements.ldsBufferInt64Atomics) {
+        state.module.EmitCapability(spv::CapabilityInt64);
+        state.module.EmitCapability(spv::CapabilityInt64Atomics);
     }
     if (state.requirements.imageInt64Atomics) {
         if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT)) == state.supportedCapabilities.end()) {
@@ -289,7 +319,15 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.EmitCapability(spv::CapabilityShaderLayer);
     }
     if (InputVariableForKind(state, StageInputKind::Layer) != 0) {
-        state.module.EmitCapability(spv::CapabilityGeometry);
+        const auto supported = [&state](spv::Capability capability) {
+            return std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(capability)) != state.supportedCapabilities.end();
+        };
+        if (supported(spv::CapabilityGeometry) || !supported(spv::CapabilityShaderViewportIndexLayerEXT)) {
+            state.module.EmitCapability(spv::CapabilityGeometry);
+        } else {
+            state.module.EmitExtension("SPV_EXT_shader_viewport_index_layer");
+            state.module.EmitCapability(spv::CapabilityShaderViewportIndexLayerEXT);
+        }
     }
     if (state.viewportIndexVariable != 0) {
         state.module.RequireVersion(0x00010500u);
@@ -327,8 +365,18 @@ void DefineModule(SpirvEmitterState& state) {
     state.module.EmitCapability(spv::CapabilitySignedZeroInfNanPreserve);
     state.module.EmitExtension("SPV_KHR_float_controls");
     state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeSignedZeroInfNanPreserve, 32u);
-    if (state.requirements.float64) {
-        if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFloat64)) == state.supportedCapabilities.end()) {
+    if (state.float32FlushToZero && std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDenormFlushToZero)) != state.supportedCapabilities.end()) {
+        state.module.EmitCapability(spv::CapabilityDenormFlushToZero);
+        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDenormFlushToZero, 32u);
+    } else if (state.float32DenormPreserve && !state.float32FlushToZero) {
+        state.module.EmitCapability(spv::CapabilityDenormPreserve);
+        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDenormPreserve, 32u);
+    }
+    const bool deviceFloat64 = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFloat64)) != state.supportedCapabilities.end();
+    state.integerInterpolation = state.requirements.float64Interpolation && !deviceFloat64;
+    if (state.integerInterpolation) state.module.EmitCapability(spv::CapabilityInt64);
+    if (state.requirements.float64 || (state.requirements.float64Interpolation && deviceFloat64)) {
+        if (!deviceFloat64) {
             throw std::runtime_error("64-bit float instructions need the Float64 capability, which the device lacks");
         }
         state.module.EmitCapability(spv::CapabilityFloat64);
@@ -339,21 +387,8 @@ void DefineModule(SpirvEmitterState& state) {
         }
     }
     if (const auto* workgroup = ShaderWorkgroupInput(state)) {
-        const std::uint32_t derivativeDefault = state.requirements.computeDerivatives ? 2u : 1u;
-        std::uint32_t localX = workgroup->threadsNum[0] != 0u ? workgroup->threadsNum[0] : derivativeDefault;
-        std::uint32_t localY = workgroup->threadsNum[1] != 0u ? workgroup->threadsNum[1] : derivativeDefault;
-        std::uint32_t localZ = workgroup->threadsNum[2] != 0u ? workgroup->threadsNum[2] : 1u;
-        if (state.spannedWave) {
-            localX = 64u;
-            localY = 1u;
-            localZ = 1u;
-        }
-        if (state.laneCount == 2) {
-            localX = ((localX * localY * localZ + 63u) / 64u) * 32u;
-            localY = 1u;
-            localZ = 1u;
-        }
-        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeLocalSize, localX, localY, localZ);
+        const auto local = WorkgroupLocalSize(state, *workgroup);
+        state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeLocalSize, local[0], local[1], local[2]);
     }
     if (StageOf(state) == IrShaderStage::Pixel) {
         const auto& pixel = PixelInfo(state);
@@ -375,12 +410,22 @@ void DefineModule(SpirvEmitterState& state) {
             state.module.EmitExtension("SPV_EXT_shader_stencil_export");
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeStencilRefReplacingEXT);
         }
-        if (pixel.psEarlyZ && !pixel.psAlphaToCoverage && !pixel.QuadMasked()) {
+        const bool merge = pixel.mergeMask != 0u;
+        if (merge && (state.depthVariable != 0 || state.stencilRefVariable != 0 || pixel.psDepthExportEnable || pixel.psSampleMaskExportEnable || pixel.psStencilRefExportEnable || pixel.psAlphaToCoverage || pixel.QuadMasked() || (pixel.psPixelKillEnable && !pixel.psEarlyZ && pixel.mergeDepthStencilWrites))) {
+            throw std::runtime_error("a partial write of a packed color target merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests of a draw writing depth or stencil, exports depth, stencil or coverage, or runs with a quad sample mask cannot use");
+        }
+        if (merge && pixel.mergeSamples > 1u && WritesGuestMemory(state.program)) {
+            throw std::runtime_error("a partial write of a multisampled packed color target runs the pixel shader once per sample, which a shader that writes guest memory (stores, atomics or GDS) cannot use: each covered sample would repeat its writes");
+        }
+        if (merge && !pixel.psEarlyZ && pixel.mergeDepthStencilTests && WritesGuestMemory(state.program)) {
+            throw std::runtime_error("a partial write of a packed color target merges inside the pixel shader after early depth and stencil tests, which a shader that writes guest memory (stores, atomics or GDS) under late tests cannot use: the pixels the tests reject would still write it");
+        }
+        if ((pixel.psEarlyZ && !pixel.psAlphaToCoverage && !pixel.QuadMasked()) || merge) {
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeEarlyFragmentTests);
         }
-        if (pixel.psOrderedPixelShader) {
+        if (pixel.psOrderedPixelShader || merge) {
             if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFragmentShaderPixelInterlockEXT)) == state.supportedCapabilities.end()) {
-                throw std::runtime_error("a primitive-ordered pixel shader needs the fragmentShaderPixelInterlock feature, which the device lacks");
+                throw std::runtime_error(merge ? "a partial write of a packed color target needs the fragmentShaderPixelInterlock feature, which the device lacks" : "a primitive-ordered pixel shader needs the fragmentShaderPixelInterlock feature, which the device lacks");
             }
             state.module.EmitCapability(spv::CapabilityFragmentShaderPixelInterlockEXT);
             state.module.EmitExtension("SPV_EXT_fragment_shader_interlock");
@@ -391,7 +436,7 @@ void DefineModule(SpirvEmitterState& state) {
         state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDerivativeGroupLinearKHR);
     }
     state.module.AddName(state.mainFunc, "main");
-    if (state.requirements.functionLds) {
+    if (state.requirements.functionLds && !state.pixelFunctionLdsBuffer) {
         state.module.AddName(state.ldsVariable, "lds_dwords");
     }
     if (state.requirements.functionScratch) {

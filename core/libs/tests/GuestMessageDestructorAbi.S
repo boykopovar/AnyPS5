@@ -141,7 +141,33 @@ ProbeDestroy:
     .cfi_def_cfa %rsp, 8
     ret
     .cfi_endproc
+.globl GuestCleanup
+GuestCleanup:
+    .cfi_startproc
+    .cfi_personality 0x00, __gcc_personality_v0_nid_postfix
+    .cfi_lsda 0x00, .Lcleanup_lsda
+    PROLOGUE
+.Lcleanup_call:
+    call FixtureHostThrow
+.Lcleanup_call_end:
+    ud2
+.Lcleanup_landing:
+    incl FixtureGuardDestroyed(%rip)
+    movq %rax, %rdi
+    call _Unwind_Resume_nid_postfix
+    ud2
+    .cfi_endproc
+
 .section .rdata,"dr"
+.Lcleanup_lsda:
+    .byte 0xff, 0xff, 0x01
+    .uleb128 .Lcleanup_calls_end-.Lcleanup_calls
+.Lcleanup_calls:
+    .uleb128 .Lcleanup_call-GuestCleanup
+    .uleb128 .Lcleanup_call_end-.Lcleanup_call
+    .uleb128 .Lcleanup_landing-GuestCleanup
+    .uleb128 0
+.Lcleanup_calls_end:
 .Linner_lsda:
     .byte 0xff, 0x00
     .uleb128 .Linner_types_end-.Linner_types_offset

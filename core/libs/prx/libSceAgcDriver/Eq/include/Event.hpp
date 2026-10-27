@@ -4,7 +4,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 
-void AgcDriverDeliverEopInterrupt(std::uint32_t queue);
+bool AgcDriverDeliverEopInterrupt(std::uint32_t queue);
 
 extern "C" int APS5_VABI sceAgcDriverAddEqEvent(KernelEqueue eq, int id, void* udata);
 extern "C" int APS5_VABI sceAgcDriverDeleteEqEvent(KernelEqueue eq, int id);

@@ -63,6 +63,7 @@ public:
                 case spv::OpConstantTrue: value[0] = 1; break;
                 case spv::OpConstantFalse: value[0] = 0; break;
                 case spv::OpLoad: value = arg(3); break;
+                case spv::OpCopyObject: value = arg(3); break;
                 case spv::OpBitwiseAnd: value[0] = arg(3)[0] & arg(4)[0]; break;
                 case spv::OpBitwiseOr: value[0] = arg(3)[0] | arg(4)[0]; break;
                 case spv::OpBitwiseXor: value[0] = arg(3)[0] ^ arg(4)[0]; break;

@@ -33,6 +33,7 @@ struct Globals { Header* caught {}; unsigned uncaught {}; };
 inline thread_local Globals globals;
 inline constexpr std::uint64_t PrimaryClass = 0x414e5950432b2b00;
 inline constexpr std::uint64_t DependentClass = PrimaryClass | 1;
+inline constexpr std::uint64_t GnuClass = 0x474e5543432b2b00;
 
 inline Header* FromUnwind(_Unwind_Exception* e) {
     return reinterpret_cast<Header*>(reinterpret_cast<unsigned char*>(e) - offsetof(Header, unwind));
@@ -42,6 +43,7 @@ inline Allocation* AllocationOf(Header* header) {
     return reinterpret_cast<Allocation*>(reinterpret_cast<unsigned char*>(header) - offsetof(Allocation, header));
 }
 inline bool Native(std::uint64_t value) { return (value & ~std::uint64_t(1)) == PrimaryClass; }
+inline bool Gnu(std::uint64_t value) { return (value & ~std::uint64_t(1)) == GnuClass; }
 inline Header* Primary(Header* header) {
     return header->unwind.exception_class == DependentClass ? FromObject(reinterpret_cast<void*>(header->type)) : header;
 }

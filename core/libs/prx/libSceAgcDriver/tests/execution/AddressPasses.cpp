@@ -141,6 +141,7 @@ struct Step {
     const std::uint32_t* pixel;
     std::uint64_t pointer;
     std::array<std::uint32_t, 4> descriptor{};
+    std::uint64_t color = 0;
 };
 
 void Submit(const GuestBlock& vertices, const GuestBlock& target, std::initializer_list<Step> steps, bool linear = false) {
@@ -179,6 +180,10 @@ void Submit(const GuestBlock& vertices, const GuestBlock& target, std::initializ
         Append(commands, 0x76, {0x008, static_cast<std::uint32_t>(pixel >> 8u), static_cast<std::uint32_t>(pixel >> 40u)});
         Append(commands, 0x76, {0x00e, static_cast<std::uint32_t>(step.pointer), static_cast<std::uint32_t>(step.pointer >> 32u)});
         Append(commands, 0x76, {0x010, step.descriptor[0], step.descriptor[1], step.descriptor[2], step.descriptor[3]});
+        if (step.color != 0) {
+            Append(commands, 0x69, {0x318, static_cast<std::uint32_t>(step.color >> 8u)});
+            Append(commands, 0x69, {0x390, static_cast<std::uint32_t>(step.color >> 40u)});
+        }
         Append(commands, 0x2d, {3, 2});
     }
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
@@ -285,6 +290,26 @@ void TargetReadAsWhenSplit(const GuestBlock& vertices, const GuestBlock& target,
     if (!linear && !split) Expect(after.passesContinued - before.passesContinued == 1, what + ": the reading draw did not continue the rendering draw's pass, so the case does not test it: " + Counts(before, after));
 }
 
+void TargetReadSynchronously(const GuestBlock& vertices, const GuestBlock& target, const GuestBlock& unmapped) {
+    Submit(vertices, target, {{PixelRead.data(), target.At(ColorOffset)}}, true);
+    std::memset(target.Bytes(ColorOffset), 0, ColorBytes);
+    std::memset(unmapped.Bytes(ColorOffset), 0, ColorBytes);
+    const auto before = AddressDraws();
+    const auto otherBefore = OtherDraws();
+    Submit(vertices, target, {{PixelColorWord.data(), 0}, {PixelRead.data(), target.At(ColorOffset), {}, unmapped.At(ColorOffset)}}, true);
+    const auto after = AddressDraws();
+    const auto otherAfter = OtherDraws();
+    const unsigned red = unmapped.Bytes(ColorOffset)[0];
+    std::printf("a synchronous draw reading through the table the linear target the previous draw rendered read %s (red byte %u); recorded: %s, %s\n", red == 255u ? "that draw's color" : "the bytes before it", red, Counts(before, after).c_str(), Counts(otherBefore, otherAfter, "other draws").c_str());
+    if (otherAfter.draws == otherBefore.draws) {
+        std::puts("a synchronous draw reading through the table the linear target the previous draw rendered: skipped, that draw was not recorded because the linear target is not resident on this device, so the target was stored right after it");
+        return;
+    }
+    Expect(otherAfter.draws - otherBefore.draws == 1, "the draw rendering the linear target was not recorded as one draw: " + Counts(otherBefore, otherAfter, "other draws"));
+    Expect(after.draws == before.draws, "the draw reading through the table into an unregistered target was recorded, so the case does not test a synchronous draw: " + Counts(before, after));
+    Expect(red == 255u, "a synchronous draw reading through the table the linear target the previous draw rendered read the bytes before it (red byte " + std::to_string(red) + "), not that draw's color");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -306,6 +331,7 @@ int main(int argc, char** argv) {
         GuestBlock readOnlyVertices;
         GuestBlock data;
         GuestBlock target;
+        GuestBlock unmapped;
         FillVertices(readOnlyVertices);
         readOnlyVertices.Map(false);
         data.Map(true);
@@ -320,6 +346,7 @@ int main(int argc, char** argv) {
             TargetReadAsWhenSplit(readOnlyVertices, target, false);
             TargetReadAsWhenSplit(readOnlyVertices, target, true);
         }
+        if (only.empty() || only == "--synchronous-target-read") TargetReadSynchronously(readOnlyVertices, target, unmapped);
         AgcDriverShutdown_nid_postfix();
         std::puts("address passes: draws reading through the BDA table share a render pass, and a store through it still begins one");
         return 0;

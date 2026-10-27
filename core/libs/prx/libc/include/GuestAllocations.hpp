@@ -19,6 +19,7 @@ struct Range {
     std::size_t allocationBytes;
     bool releasable = true;
     bool gpu = false;
+    std::uint64_t backingSerial = 0;
 };
 
 class Lease {
@@ -39,6 +40,7 @@ public:
     const value_type& front() const { return held().front(); }
     const value_type& back() const { return held().back(); }
     void clear() { ranges.reset(); }
+    const std::shared_ptr<const Ranges>& Snapshot() const { return ranges; }
 
 private:
     const Ranges& held() const {

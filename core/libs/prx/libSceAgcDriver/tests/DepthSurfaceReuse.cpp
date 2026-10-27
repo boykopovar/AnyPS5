@@ -1,7 +1,9 @@
 #include "GraphicsTests.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <map>
@@ -12,6 +14,14 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -47,6 +57,7 @@ VkImageUsageFlags lastImageUsage = 0;
 std::uint32_t imagesDestroyed = 0;
 std::vector<std::pair<VkImage, VkImageAspectFlags>> imageReads;
 std::vector<std::pair<VkImage, VkImageAspectFlags>> imageWrites;
+std::vector<VkImage> destroyedImages;
 
 VKAPI_ATTR VkResult VKAPI_CALL createImage(VkDevice, const VkImageCreateInfo* info, const VkAllocationCallbacks*, VkImage* image) {
     lastImageFormat = info->format;
@@ -108,7 +119,10 @@ VKAPI_ATTR VkResult VKAPI_CALL getFenceStatus(VkDevice, VkFence) {
 VKAPI_ATTR void VKAPI_CALL freeCommandBuffers(VkDevice, VkCommandPool, std::uint32_t, const VkCommandBuffer*) {}
 VKAPI_ATTR void VKAPI_CALL destroyFence(VkDevice, VkFence, const VkAllocationCallbacks*) {}
 VKAPI_ATTR void VKAPI_CALL destroyImageView(VkDevice, VkImageView, const VkAllocationCallbacks*) {}
-VKAPI_ATTR void VKAPI_CALL destroyImage(VkDevice, VkImage, const VkAllocationCallbacks*) { ++imagesDestroyed; }
+VKAPI_ATTR void VKAPI_CALL destroyImage(VkDevice, VkImage image, const VkAllocationCallbacks*) {
+    ++imagesDestroyed;
+    destroyedImages.push_back(image);
+}
 VKAPI_ATTR void VKAPI_CALL freeMemory(VkDevice, VkDeviceMemory, const VkAllocationCallbacks*) {}
 VKAPI_ATTR void VKAPI_CALL cmdPipelineBarrier(VkCommandBuffer, VkPipelineStageFlags, VkPipelineStageFlags, VkDependencyFlags, std::uint32_t, const VkMemoryBarrier*, std::uint32_t, const VkBufferMemoryBarrier*, std::uint32_t, const VkImageMemoryBarrier*) {}
 VKAPI_ATTR void VKAPI_CALL cmdClearDepthStencilImage(VkCommandBuffer, VkImage image, VkImageLayout, const VkClearDepthStencilValue*, std::uint32_t, const VkImageSubresourceRange*) {
@@ -336,7 +350,7 @@ void TestMultisampleDepthOwnership(Context context) {
     ClearDepthSurfaces(context.device);
     context.imageFormatProperties = sampledDepthProperties;
     Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a supported sampled MSAA format must retain attachment rendering without import eligibility");
-    Require((lastImageUsage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0, "a supported MSAA depth image must allow sampled views");
+    Require((lastImageUsage & VK_IMAGE_USAGE_SAMPLED_BIT) == 0, "a native MSAA depth attachment must keep sampled usage off when the shadow path is available");
     ClearDepthSurfaces(context.device);
     const auto destroyed = imagesDestroyed;
     auto owner = std::make_shared<OwnedImage>(context, newHandle<VkImage>(), newHandle<VkDeviceMemory>());
@@ -374,6 +388,100 @@ void TestMultisampleStencilAliases(Context context) {
 
 }
 
+void TestRetiredSurfaceRelease(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{256, 256};
+    const auto bytes = DepthSliceBytes(extent, 4u);
+    const auto destroyed = [](VkImage image) { return std::find(destroyedImages.begin(), destroyedImages.end(), image) != destroyedImages.end(); };
+    constexpr std::uint64_t moving = 0x90000000;
+    std::vector<VkImage> images;
+    for (std::uint64_t frame = 0; frame < 4; ++frame) {
+        DepthSurfaceView(context, {moving + frame * 0x100000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+        images.push_back(lastImage);
+        RetireDepthSurfaces(context.device, moving + frame * 0x100000u, bytes);
+    }
+    const auto released = DepthSurfacesReleased();
+    DepthSurfaceView(context, {moving + 4u * 0x100000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(std::all_of(images.begin(), images.end(), destroyed), "a retired depth surface must free its image once a new surface is created");
+    Require(!destroyed(lastImage), "the new depth surface must keep its image");
+    Require(DepthSurfacesReleased() > released, "freeing retired depth surfaces must be counted for the framebuffer cache");
+
+    constexpr std::uint64_t sampled = 0x98000000;
+    DepthSurfaceView(context, {sampled, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    const auto sampledImage = lastImage;
+    auto view = lookup(context, {sampled, FormatR32Float, 256, 256});
+    Require(view != nullptr, "an R32F view of a D32 surface's own extent must sample its depth plane");
+    RetireDepthSurfaces(context.device, sampled, bytes);
+    DepthSurfaceView(context, {sampled + 0x100000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(!destroyed(sampledImage), "a retired depth surface must keep its image while its sampled view is held");
+    view.reset();
+    DepthSurfaceView(context, {sampled + 0x200000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(destroyed(sampledImage), "a retired depth surface must free its image once its sampled view is released");
+
+    constexpr std::uint64_t kept = 0x9c000000;
+    DepthSurfaceView(context, {kept, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    const auto keptImage = lastImage;
+    DepthSurfaceView(context, {kept + 0x100000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(!destroyed(keptImage), "a depth surface that was not retired must keep its image");
+    ClearDepthSurfaces(context.device);
+}
+
+void TestUnmappedStalePlaneFlush(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{256, 256};
+    constexpr std::uint64_t unmapped = 0xa0000000;
+    DepthTarget target{unmapped, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.depthSwizzle = XorSwizzleMode(TextureTileMode::kZ64KBX);
+    Require(DepthSurfaceView(context, target, true) != VK_NULL_HANDLE, "a mirrorable depth surface must render");
+    Require(DepthPlanesStale(), "a written mirrorable depth surface must leave its plane stale");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> stored;
+    try {
+        stored = FlushDepthPlanes(unmapped, DepthSliceBytes(extent, 4u));
+    } catch (const std::exception& error) {
+        Require(false, std::string("flushing a depth plane whose guest memory is not mapped must drop its results: ") + error.what());
+    }
+    Require(stored.empty(), "a depth plane without mapped guest memory must not be stored");
+    Require(!DepthPlanesStale(), "a dropped depth plane must not stay stale");
+    ClearDepthSurfaces(context.device);
+}
+
+void TestReadOnlyStalePlaneFlush(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr std::size_t bytes = 1024 * 1024;
+#ifdef _WIN32
+    const auto release = [](void* pointer) { VirtualFree(pointer, 0, MEM_RELEASE); };
+    std::unique_ptr<void, decltype(release)> mapping(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY), release);
+    Require(mapping != nullptr, "cannot map a read-only depth plane");
+#else
+    const auto release = [](void* pointer) { munmap(pointer, bytes); };
+    std::unique_ptr<void, decltype(release)> mapping(mmap(nullptr, bytes, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0), release);
+    Require(mapping.get() != MAP_FAILED, "cannot map a read-only depth plane");
+#endif
+    const auto address = (reinterpret_cast<std::uintptr_t>(mapping.get()) + 65535u) & ~std::uintptr_t{65535u};
+    constexpr VkExtent2D extent{256, 256};
+    const auto planeBytes = DepthSliceBytes(extent, 4u);
+    Require(!AgcDriver::GuestMemory::CommittedRanges(address, planeBytes).empty(), "a read-only depth plane must remain readable");
+    Require(AgcDriver::GuestMemory::CommittedRanges(address, planeBytes, true).empty(), "a read-only depth plane must not be writable");
+    auto storageContext = context;
+    storageContext.formatProperties = [](VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+        *properties = {};
+        properties->optimalTilingFeatures = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+    };
+    DepthTarget target{address, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.depthSwizzle = XorSwizzleMode(TextureTileMode::kZ64KBX);
+    Require(DepthSurfaceView(storageContext, target, true) != VK_NULL_HANDLE, "a read-only depth plane must render");
+    Require(DepthPlanesStale(), "the read-only depth plane must have pending results");
+    bool rejected = false;
+    try {
+        static_cast<void>(FlushDepthPlanes(address, planeBytes));
+    } catch (const std::runtime_error& error) {
+        rejected = std::string_view(error.what()).find("storage texture has no committed guest pages") != std::string_view::npos;
+    }
+    Require(rejected, "a mapped read-only depth plane must retain the unsupported-store rejection");
+    Require(DepthPlanesStale(), "a mapped read-only depth plane must retain its pending results");
+    ClearDepthSurfaces(context.device);
+}
+
 void RunDepthSurfaceReuseTests() {
     static int deviceTag = 0;
     Context context{};
@@ -389,6 +497,8 @@ void RunDepthSurfaceReuseTests() {
     TestMultisampleDepthOwnership(context);
     TestMultisampleStencilAliases(context);
     TestStencilUnormView(context);
+    TestUnmappedStalePlaneFlush(context);
+    TestReadOnlyStalePlaneFlush(context);
     constexpr std::uint64_t depth32 = 0x40000000;
     constexpr std::uint64_t depth16 = 0x50000000;
     constexpr std::uint64_t depthStencil = 0x60000000;
@@ -480,6 +590,7 @@ void RunDepthSurfaceReuseTests() {
         Require(clearsAfter(sliceHtile) == std::vector<VkImage>{firstImage}, "an HTILE clear of the first slice must clear that slice alone");
         Require(clearsAfter(2u * sliceHtile) == std::vector<VkImage>{firstImage, secondImage}, "an HTILE clear over both slices must clear both");
     }
+    TestRetiredSurfaceRelease(context);
 
     ClearDepthSurfaces(context.device);
 }

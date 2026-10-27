@@ -48,6 +48,37 @@ bool isChunkType(const std::uint8_t* bytes, const char* type) {
     return std::equal(bytes, bytes + 4, type);
 }
 
+std::optional<std::uint16_t> readGrayscaleTransparencyKey(std::span<const std::uint8_t> png) {
+    std::size_t offset = SIGNATURE.size();
+    if (png.size() < offset || !std::equal(SIGNATURE.begin(), SIGNATURE.end(), png.begin())) return std::nullopt;
+    std::optional<std::uint16_t> key;
+    while (png.size() - offset >= CHUNK_OVERHEAD) {
+        const std::uint32_t length = readBigEndian32(&png[offset]);
+        const std::uint8_t* type = &png[offset + 4];
+        if (length > png.size() - offset - CHUNK_OVERHEAD) return std::nullopt;
+        if (isChunkType(type, "tRNS")) {
+            if (length != 2) return std::nullopt;
+            key = static_cast<std::uint16_t>(png[offset + 8] << 8 | png[offset + 9]);
+        }
+        if (isChunkType(type, "IDAT") || isChunkType(type, "IEND")) return key;
+        offset += CHUNK_OVERHEAD + length;
+    }
+    return std::nullopt;
+}
+
+void repairGrayscaleTransparency(const Header& header, std::span<const std::uint8_t> png, Image& image) {
+    if (header.colorType != ColorType::Grayscale || !header.hasTransparency) return;
+    if (header.bitDepth != 1 && header.bitDepth != 2 && header.bitDepth != 4) return;
+    const std::optional<std::uint16_t> key = readGrayscaleTransparencyKey(png);
+    if (!key.has_value()) return;
+    const std::uint16_t mask = static_cast<std::uint16_t>((1u << header.bitDepth) - 1);
+    if ((*key & 0xFF) == (*key & mask)) return;
+    const std::uint8_t transparent = static_cast<std::uint8_t>((*key & mask) * (255u / mask));
+    for (std::size_t offset = 3; offset < image.pixels.size(); offset += 4) {
+        image.pixels[offset] = static_cast<std::uint8_t>(image.pixels[offset - 3] == transparent ? 0 : 255);
+    }
+}
+
 bool isValidFormat(std::uint8_t bitDepth, std::uint8_t colorType) {
     switch (colorType) {
     case 0:
@@ -152,12 +183,14 @@ std::optional<Image> Decode(std::span<const std::uint8_t> png) {
     int width = 0;
     int height = 0;
     int channels = 0;
-    stbi_uc* decoded = stbi_load_from_memory(png.data(), static_cast<int>(png.size()), &width, &height, &channels, 4);
+    const std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> decoded(
+        stbi_load_from_memory(png.data(), static_cast<int>(png.size()), &width, &height, &channels, 4), stbi_image_free);
     if (!decoded) return std::nullopt;
 
     Image image{static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), {}};
-    image.pixels.assign(decoded, decoded + static_cast<std::size_t>(image.width) * image.height * 4);
-    stbi_image_free(decoded);
+    image.pixels.assign(decoded.get(), decoded.get() + static_cast<std::size_t>(image.width) * image.height * 4);
+    const std::optional<Header> header = ParseHeader(png);
+    if (header.has_value()) repairGrayscaleTransparency(*header, png, image);
     return image;
 }
 

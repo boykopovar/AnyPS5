@@ -21,6 +21,9 @@ class DocLinkTests(unittest.TestCase):
         text = f"{FENCE}\r\ncode\r\n{FENCE}\r\nsee [guide](../README.md)\r\n"
         self.assertEqual(check_conventions.links("docs/x.md", text), [("../README.md", "README.md")])
 
+    def test_link_text_in_inline_code_is_kept(self):
+        self.assertEqual(check_conventions.links("docs/x.md", "see [`Driver::Run`](../README.md)"), [("../README.md", "README.md")])
+
     def test_empty_link_text_is_ignored(self):
         self.assertEqual(check_conventions.links("docs/x.md", "![](img.png) and [](empty.md)"), [])
 

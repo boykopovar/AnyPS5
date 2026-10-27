@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <optional>
 #include <deque>
@@ -34,8 +36,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -165,9 +165,23 @@ void _readFile(const Apr::ReadFileCommand& command) {
     stream.seekg(static_cast<std::streamoff>(command.offset));
     const GuestArena::HostWrite destination(reinterpret_cast<void*>(command.destination), command.size);
     if (!destination.Open()) throw std::runtime_error("APR: the read destination of " + file.path.string() + " is not writable guest memory");
+#ifdef _WIN32
+    std::vector<char> staging(static_cast<std::size_t>(std::min<std::uint64_t>(command.size, 64u * 1024u)));
+    std::uint64_t read = 0;
+    while (read < command.size) {
+        const auto wanted = static_cast<std::streamsize>(std::min<std::uint64_t>(command.size - read, staging.size()));
+        stream.read(staging.data(), wanted);
+        const auto obtained = static_cast<std::uint64_t>(stream.gcount());
+        if (obtained != 0) std::memcpy(reinterpret_cast<char*>(command.destination) + read, staging.data(), static_cast<std::size_t>(obtained));
+        read += obtained;
+        if (stream.bad()) throw std::runtime_error("APR: read failed for " + file.path.string());
+        if (obtained != static_cast<std::uint64_t>(wanted)) break;
+    }
+#else
     stream.read(reinterpret_cast<char*>(command.destination), static_cast<std::streamsize>(command.size));
     if (stream.bad()) throw std::runtime_error("APR: read failed for " + file.path.string());
     const auto read = static_cast<std::uint64_t>(stream.gcount());
+#endif
     if (read != command.size && (!stream.eof() || command.offset + read < std::filesystem::file_size(file.path))) throw std::runtime_error("APR: read of " + file.path.string() + " at offset " + std::to_string(command.offset) + " returned " + std::to_string(read) + " of " + std::to_string(command.size) + " bytes");
     if (read != command.size) std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
 }
@@ -281,7 +295,6 @@ struct AmmState {
     std::map<std::uintptr_t, AmmPage> pages;
     std::map<std::uint64_t, std::uint32_t> pooledUses;
     std::set<std::uintptr_t> prt;
-    std::atomic<std::uint32_t> lastSubmit{0};
 };
 
 AmmState& _amm() {
@@ -660,6 +673,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         case Apr::Opcode::WriteKernelEventQueue: {
             const auto command = _read<Apr::WriteKernelEventQueueCommand>(buffer, cursor);
             EqueueTriggerEvent_nid_postfix(static_cast<KernelEqueue>(command.equeue), static_cast<uintptr_t>(command.ident), EVFILT_AMPR, reinterpret_cast<void*>(command.data));
+
             break;
         }
         case Apr::Opcode::WriteAddressFromTimeCounter: {
@@ -686,8 +700,6 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
 }
 
 extern "C" {
-
-int APS5_VABI sceKernelAllocateDirectMemory(int64_t searchStart, int64_t searchEnd, size_t length, size_t alignment, int memoryType, int64_t* offset);
 
 int AmmGiveDirectMemory_nid_no_patch(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset) {
     if (!offset || (usage != 0 && usage != 1)) return SCE_KERNEL_ERROR_EINVAL;
@@ -801,17 +813,19 @@ void _waitSubmitted(std::uint32_t id, bool amm) {
 }
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
-    const auto id = _submit(static_cast<const std::uint8_t*>(base), bytes, true);
-    _amm().lastSubmit.store(id);
-    return id;
+    return _submit(static_cast<const std::uint8_t*>(base), bytes, true);
 }
 
 bool AmmSubmitted_nid_no_patch(std::uint32_t id) {
-    if (id == 0 || id > _amm().lastSubmit.load()) return false;
+    if (id == 0) return false;
+    {
+        auto& queue = _queue(true);
+        std::lock_guard lock(queue.mutex);
+        if (id > queue.submitted) return false;
+    }
     _waitSubmitted(id, true);
     return true;
 }
-
 
 int APS5_VABI sceKernelAprResolveFilepathsToIds(const char** paths, uint32_t count, uint32_t* ids, uint32_t* error_index) {
     if (!paths || !ids) return _fail(GUEST_EINVAL);

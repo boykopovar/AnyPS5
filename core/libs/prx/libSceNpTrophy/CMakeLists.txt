@@ -1,0 +1,16 @@
+add_library(libSceNpTrophy SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpTrophy PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpTrophy)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_trophy_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpTrophy.cpp)
+    target_include_directories(guest_np_trophy_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_trophy_tests PRIVATE libSceNpTrophy)
+    configure_windows_unwind(guest_np_trophy_tests)
+    add_test(NAME guest_np_trophy COMMAND guest_np_trophy_tests)
+    set_tests_properties(guest_np_trophy PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_np_trophy PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpTrophy>")
+    endif()
+endif()

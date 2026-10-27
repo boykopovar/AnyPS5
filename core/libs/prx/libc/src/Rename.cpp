@@ -1,4 +1,6 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libc/include/RenameDot.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cerrno>
 #include <filesystem>
@@ -10,11 +12,11 @@
 #include <windows.h>
 #endif
 
-std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, [[maybe_unused]] bool replacesFile) {
+std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, [[maybe_unused]] bool replacesExisting) {
     namespace fs = std::filesystem;
     std::error_code error;
 #ifdef _WIN32
-    if (replacesFile) {
+    if (replacesExisting) {
         const auto target = fs::absolute(destination, error);
         if (error) return error;
         struct RenameInfo { DWORD flags; HANDLE root; DWORD nameBytes; WCHAR name[1]; };
@@ -28,7 +30,7 @@ std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, c
         info->flags = replaceExisting | posixSemantics | (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_READONLY) ? ignoreReadOnly : 0);
         info->nameBytes = static_cast<DWORD>(nameBytes);
         std::memcpy(info->name, target.c_str(), nameBytes);
-        const auto handle = CreateFileW(source.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        const auto handle = CreateFileW(source.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
         if (handle == INVALID_HANDLE_VALUE) return std::error_code(static_cast<int>(GetLastError()), std::system_category());
         constexpr auto renameInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(22);
         if (!SetFileInformationByHandle(handle, renameInfoEx, info, static_cast<DWORD>(buffer.size()))) error = std::error_code(static_cast<int>(GetLastError()), std::system_category());
@@ -40,9 +42,18 @@ std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, c
     return error;
 }
 
+#ifdef _WIN32
+static bool BelowSymbolicLinkLoop(const std::filesystem::path& directory) {
+    const auto handle = CreateFileW(directory.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_CANT_RESOLVE_FILENAME;
+    CloseHandle(handle);
+    return false;
+}
+#endif
+
 static int RenamePath_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination) {
     constexpr int GuestEnoent = 2;
-    constexpr int GuestEio = 5;
     constexpr int GuestEnotdir = 20;
     constexpr int GuestEisdir = 21;
     constexpr int GuestEinval = 22;
@@ -71,6 +82,9 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
         error.clear();
         sameFile = fs::equivalent(source, destination, error);
         if (error == std::errc::no_such_file_or_directory) error.clear();
+#ifdef __APPLE__
+        if (error == std::errc::not_supported) error.clear();
+#endif
         if (error) return FilesystemError(error);
         if (!sameFile && sourceIsDirectory && !destinationIsDirectory) return GuestEnotdir;
         if (!sameFile && !sourceIsDirectory && destinationIsDirectory) return GuestEisdir;
@@ -90,24 +104,50 @@ static int RenamePath_nid_no_patch(const std::filesystem::path& source, const st
             return error ? FilesystemError(error) : GuestEnotempty;
         }
     }
-#ifdef _WIN32
-    if (!sameFile && sourceIsDirectory && destinationIsDirectory) {
-        error.clear();
-        if (!fs::remove(destination, error)) return error ? FilesystemError(error) : GuestEio;
-    }
-#endif
-
-    error = RenameNative_nid_no_patch(source, destination, destinationExists && !sourceIsDirectory && !destinationIsDirectory);
+    error = RenameNative_nid_no_patch(source, destination, destinationExists && (!sourceIsDirectory || !sameFile));
     return error ? FilesystemError(error) : 0;
 }
 
+static int SourceLookupError_nid_no_patch(const std::filesystem::path& source) {
+    std::error_code status;
+    const auto sourceStatus = std::filesystem::symlink_status(source, status);
+    if (HasNonDirectoryPrefix_nid_no_patch(source)) return 20;
+    if (status && status != std::errc::no_such_file_or_directory) return FilesystemError(status);
+    return sourceStatus.type() == std::filesystem::file_type::not_found ? 2 : 0;
+}
+
 extern "C" int RenameGuestPath_nid_no_patch(const char* from, const char* to) {
-    if (!from || !to) { errno = 14; return -1; }
-    if (!*from || !*to) { errno = 2; return -1; }
+    std::string fromCopy;
+    if (const int error = CopyGuestPath_nid_no_patch(from, fromCopy)) { errno = error; return -1; }
+    from = fromCopy.c_str();
+    if (fromCopy.empty()) { errno = 2; return -1; }
+    if (const int dot = RenameDotError_nid_no_patch(from)) { errno = dot; return -1; }
+    std::string toCopy;
+    int destinationError = CopyGuestPath_nid_no_patch(to, toCopy);
+    if (destinationError == 0) {
+        to = toCopy.c_str();
+        destinationError = toCopy.empty() ? 2 : RenameDotError_nid_no_patch(to);
+    }
     try {
         const auto source = ResolvePath_nid_no_patch(from);
+        if (destinationError) {
+            const int sourceError = SourceLookupError_nid_no_patch(source);
+            errno = sourceError ? sourceError : destinationError;
+            return -1;
+        }
         const auto destination = ResolvePath_nid_no_patch(to);
-        const int error = RenamePath_nid_no_patch(source, destination);
+        int error = RenamePath_nid_no_patch(source, destination);
+        if (error == 2) {
+            std::error_code status;
+            if (HasNonDirectoryPrefix_nid_no_patch(source) || (std::filesystem::exists(source, status) && HasNonDirectoryPrefix_nid_no_patch(destination))) error = 20;
+        }
+#ifdef _WIN32
+        constexpr int GuestEloop = 62;
+        if (error == 2 || error == 20) {
+            if (BelowSymbolicLinkLoop(source.parent_path())) error = GuestEloop;
+            else if (SourceLookupError_nid_no_patch(source) == 0 && BelowSymbolicLinkLoop(destination.parent_path())) error = GuestEloop;
+        }
+#endif
         if (error) { errno = error; return -1; }
         RecordWrittenPath_nid_no_patch(source);
         RecordWrittenPath_nid_no_patch(destination);

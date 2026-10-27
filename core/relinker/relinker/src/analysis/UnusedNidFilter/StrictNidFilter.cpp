@@ -34,9 +34,8 @@ public:
                 throw RelinkerException("Strict filter: invalid load segment size", segment.Offset);
             if (segment.Type != 2) continue;
             if (!tags.empty()) throw RelinkerException("Strict filter: multiple dynamic segments");
-            if (segment.FileSize % 16 != 0) throw RelinkerException("Strict filter: truncated dynamic segment", segment.Offset);
             bool terminated = false;
-            for (std::uint64_t offset = 0; offset < segment.FileSize; offset += 16) {
+            for (std::uint64_t offset = 0; segment.FileSize - offset >= 16; offset += 16) {
                 const auto tag = read<std::int64_t>(segment.Offset + offset);
                 if (tag == 0) {
                     terminated = true;
@@ -98,8 +97,8 @@ public:
         for (const auto& [addressTag, sizeTag] : {std::pair{25, 27}, std::pair{26, 28}, std::pair{32, 33}}) {
             const auto array = value(addressTag, 0x60000000 + addressTag);
             const auto size = value(sizeTag, 0x60000000 + sizeTag);
-            if (array.has_value() != size.has_value()) throw RelinkerException("Strict filter: incomplete constructor array metadata");
-            if (!array) continue;
+            if (size && !array) throw RelinkerException("Strict filter: incomplete constructor array metadata");
+            if (!size || *size == 0) continue;
             if (*size % 8 != 0) throw RelinkerException("Strict filter: invalid constructor array size", *array);
             for (std::uint64_t offset = 0; offset < *size; offset += 8) {
                 const auto slot = *array + offset;

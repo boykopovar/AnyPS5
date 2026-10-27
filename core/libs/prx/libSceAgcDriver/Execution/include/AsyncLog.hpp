@@ -390,9 +390,7 @@ inline void InstallAsyncLog_nid_no_patch() {
     static_cast<void>(AsyncLog::Get());
 }
 
-inline void FlushAsyncLog_nid_no_patch() {
-    AsyncLog::Get().Flush();
-}
+void FlushAsyncLog_nid_no_patch();
 
 inline void FlushAsyncLogAtEnd_nid_no_patch() {
     AsyncLog::FlushAtEnd();

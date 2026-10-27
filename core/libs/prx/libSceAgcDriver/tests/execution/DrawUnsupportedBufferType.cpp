@@ -6,10 +6,12 @@
 #include <bit>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <initializer_list>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -31,7 +33,7 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-void Draw(const std::array<std::uint32_t, 4>& descriptor) {
+void Draw(const std::array<std::uint32_t, 4>& descriptor, std::uint32_t* label = nullptr) {
     const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
     const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
@@ -68,6 +70,10 @@ void Draw(const std::array<std::uint32_t, 4>& descriptor) {
     Append(commands, 0x69, {0x318, static_cast<std::uint32_t>(color >> 8u)});
     Append(commands, 0x69, {0x390, static_cast<std::uint32_t>(color >> 40u)});
     Append(commands, 0x2d, {3, 2});
+    if (label != nullptr) {
+        const auto address = reinterpret_cast<std::uintptr_t>(label);
+        Append(commands, 0x37, {0x00100200u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 7u});
+    }
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "unsupported buffer type draw submission failed");
     AgcDriverWaitIdle_nid_postfix();
@@ -87,20 +93,35 @@ void NamesShaderAndDescriptor() {
         Require(message.find("buffer descriptor uses an unsupported type") != std::string::npos, "draw failed for another reason: " + message);
         Require(message.find(shader) != std::string::npos, std::string("draw error does not name ") + shader + ": " + message);
         Require(message.find(words) != std::string::npos, std::string("draw error does not name ") + words + ": " + message);
+        if (std::getenv("APS5_DRAW_PIPELINE") != nullptr) Require(message.find("draw at submission ") != std::string::npos && message.find("(finished on the draw finisher)") != std::string::npos, "a draw finished on the draw finisher does not name its submission and offset: " + message);
         return;
     }
     throw std::runtime_error("a pixel shader read a buffer through a descriptor of type 2");
 }
 
+void SkipsRefusedDraw() {
+    const auto address = reinterpret_cast<std::uintptr_t>(Source.data());
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), sizeof(Source), 0xa1b00facu};
+    alignas(8) static std::uint32_t label = 0;
+    for (int submission = 0; submission < 2; ++submission) {
+        label = 0;
+        Draw(descriptor, &label);
+        Require(label == 7u, "the packet after a skipped refused draw was not executed");
+    }
+    for (const auto byte : Pixels) Require(byte == std::byte{0}, "a skipped refused draw wrote its color target");
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
+        Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--skip-refused"), "invalid test arguments");
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        NamesShaderAndDescriptor();
+        if (argc == 2) SkipsRefusedDraw();
+        else NamesShaderAndDescriptor();
         try { AgcDriverShutdown_nid_postfix(); } catch (const std::exception&) {}
         std::puts("draw unsupported buffer type tests passed");
         return 0;

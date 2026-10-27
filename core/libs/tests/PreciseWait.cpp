@@ -144,6 +144,15 @@ int main() {
         return 1;
     }
 
+    PreciseSleepUntil(std::chrono::steady_clock::time_point{});
+    const auto coarseDeadline = std::chrono::ceil<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() + std::chrono::microseconds(25));
+    PreciseSleepUntil(coarseDeadline);
+    if (std::chrono::steady_clock::now() < coarseDeadline) {
+        std::cerr << "PreciseSleepUntil returned before coarse steady_clock deadline\n";
+        return 1;
+    }
+
 #ifdef _WIN32
     for (const HANDLE badHandle : {static_cast<HANDLE>(nullptr), GetCurrentProcess()}) {
         const auto start = std::chrono::steady_clock::now();

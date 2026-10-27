@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
+#include <string_view>
 
 namespace {
 
@@ -19,6 +20,17 @@ void Reject(TAction action, const char* message) {
         rejected = true;
     }
     Require(rejected, message);
+}
+
+template<typename TAction>
+void RejectWithMessage(TAction action, const char* expected) {
+    bool rejected = false;
+    try {
+        action();
+    } catch (const std::exception& error) {
+        rejected = std::string_view(error.what()).find(expected) != std::string_view::npos;
+    }
+    Require(rejected, "strict capture did not preserve its diagnostic");
 }
 
 class Directory {
@@ -163,10 +175,121 @@ void CheckMalformedRecords() {
     invalid([](auto& copy) { copy.sets = {{0, {{}, {}}}}; });
 }
 
+void CheckOptionalEntryCap() {
+    Directory directory;
+    auto capture = AgcDriver::ComputePipelineFixture();
+    std::filesystem::path first;
+    for (std::uint32_t index = 0; index < 128u; ++index) {
+        capture.specialization[0].value = index;
+        const auto path = capture.WriteOptional(directory.path);
+        Require(!path.empty() && AgcDriver::ComputePipelineCapture::OptionalEnabled(), "optional capture stopped before accepting 128 records");
+        if (index == 0u) first = path;
+    }
+    capture.specialization[0].value = 0u;
+    Require(capture.WriteOptional(directory.path) == first, "optional capture did not deduplicate at the entry cap");
+    capture.specialization[0].value = 128u;
+    Require(capture.WriteOptional(directory.path).empty() && !AgcDriver::ComputePipelineCapture::OptionalEnabled(), "optional capture did not stop at the entry cap");
+    RejectWithMessage([&] { capture.Write(directory.path); }, "compute pipeline capture: capture directory reached 128 entries");
+    for (unsigned index = 0; index < 64u; ++index) Require(capture.WriteOptional(directory.path / "after-stop").empty(), "disabled optional capture wrote another file");
+    Require(!std::filesystem::exists(directory.path / "after-stop"), "disabled optional capture touched its output directory");
+    capture.specialization[0].value = 0u;
+    Require(capture.Write(directory.path) == first, "optional stop disabled strict capture deduplication");
 }
 
-int main() {
+void CheckOptionalByteCap() {
+    Directory directory;
+    auto capture = AgcDriver::ComputePipelineFixture();
+    const auto smallBytes = capture.Encode().size();
+    constexpr std::size_t chunkBytes = 32u * 1024u * 1024u;
+    for (std::uint32_t index = 0; index < 8u; ++index) {
+        auto large = capture;
+        large.specialization[0].value = index;
+        const auto bytes = chunkBytes - (index == 7u ? smallBytes : 0u);
+        Require(bytes >= smallBytes && (bytes - smallBytes) % 4u == 0u, "byte-cap fixture size is not representable");
+        large.spirv.insert(large.spirv.end() - 2, (bytes - smallBytes) / 4u, 0x00010000u);
+        Require(std::filesystem::file_size(large.Write(directory.path)) == bytes, "byte-cap fixture size differs");
+    }
+    capture.specialization[0].value = 8u;
+    Require(!capture.WriteOptional(directory.path).empty() && AgcDriver::ComputePipelineCapture::OptionalEnabled(), "optional capture refused exactly 256 MiB");
+    std::uintmax_t total = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(directory.path)) total += std::filesystem::file_size(entry.path() / "capture.aps5cp");
+    Require(total == 256u * 1024u * 1024u, "byte-cap fixture did not reach exactly 256 MiB");
+    capture.specialization[0].value = 9u;
+    Require(capture.WriteOptional(directory.path).empty() && !AgcDriver::ComputePipelineCapture::OptionalEnabled(), "optional capture did not stop beyond the byte cap");
+    RejectWithMessage([&] { capture.Write(directory.path); }, "compute pipeline capture: capture directory exceeds 256 MiB");
+}
+
+void CheckOptionalIo() {
+    Directory directory;
+    const auto blocked = directory.path / "blocked";
+    {
+        std::ofstream output(blocked, std::ios::binary);
+        output.put('x');
+        Require(output.good(), "cannot create output conflict");
+    }
+    const auto capture = AgcDriver::ComputePipelineFixture();
+    Require(capture.WriteOptional(blocked / "captures").empty() && !AgcDriver::ComputePipelineCapture::OptionalEnabled(), "optional capture did not stop after an output I/O error");
+    Require(std::filesystem::file_size(blocked) == 1u, "optional capture changed the conflicting file");
+    RejectWithMessage([&] { capture.Write(blocked / "captures"); }, "compute pipeline capture: cannot create capture directory");
+    Require(capture.WriteOptional(directory.path / "after-stop").empty() && !std::filesystem::exists(directory.path / "after-stop"), "disabled optional capture retried output");
+    auto malformed = capture;
+    malformed.spirv[0] = 0u;
+    Reject([&] { malformed.WriteOptional(directory.path / "after-stop"); }, "disabled optional capture swallowed an invalid pipeline input");
+}
+
+void CheckOptionalInvalid() {
+    Directory directory;
+    auto capture = AgcDriver::ComputePipelineFixture();
+    auto malformed = capture;
+    malformed.spirv[0] = 0u;
+    Reject([&] { malformed.WriteOptional(directory.path / "malformed"); }, "optional capture swallowed an invalid pipeline input");
+    Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && !std::filesystem::exists(directory.path / "malformed"), "invalid input disabled optional capture or touched its output");
+    const auto path = capture.WriteOptional(directory.path);
+    Require(!path.empty(), "optional capture refused valid input");
+    std::ofstream(path, std::ios::binary | std::ios::trunc).put('x');
+    Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed an existing damaged record");
+    Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::file_size(path) == 1u, "damaged record disabled optional capture or was overwritten");
+    Require(std::filesystem::remove(path), "cannot remove owned damaged record");
+    Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed an incomplete existing record");
+    Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && !std::filesystem::exists(path), "incomplete record disabled optional capture or was replaced");
+    Require(std::filesystem::create_directory(path), "cannot create owned nonregular capture");
+    Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed a nonregular existing capture");
+    Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::is_directory(path), "nonregular capture disabled optional capture or was changed");
+    std::filesystem::remove_all(path.parent_path());
+    std::ofstream(path.parent_path(), std::ios::binary).put('x');
+    Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed a non-directory existing record");
+    Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::file_size(path.parent_path()) == 1u, "non-directory record disabled optional capture or was changed");
+    Directory unexpected;
+    const auto finder = unexpected.path / ".DS_Store";
+    std::ofstream(finder, std::ios::binary).put('x');
+    capture.specialization[0].value = 1u;
+    Require(!capture.Write(unexpected.path).empty(), "strict capture rejected a Finder metadata file");
+    capture.specialization[0].value = 2u;
+    Require(!capture.WriteOptional(unexpected.path).empty() && AgcDriver::ComputePipelineCapture::OptionalEnabled(), "optional capture rejected a Finder metadata file");
+    Require(std::filesystem::file_size(finder) == 1u, "Finder metadata file was changed");
+    capture.specialization[0].value = 3u;
+    const auto foreign = unexpected.path / "foreign";
+    std::ofstream(foreign, std::ios::binary).put('x');
+    RejectWithMessage([&] { capture.Write(unexpected.path); }, "capture directory contains an unexpected entry");
+    Reject([&] { capture.WriteOptional(unexpected.path); }, "optional capture swallowed an unexpected directory entry");
+    Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::file_size(foreign) == 1u, "unexpected entry disabled optional capture or was changed");
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc == 2) {
+            const std::string_view mode = argv[1];
+            if (mode == "--optional-entry-cap") CheckOptionalEntryCap();
+            else if (mode == "--optional-byte-cap") CheckOptionalByteCap();
+            else if (mode == "--optional-io") CheckOptionalIo();
+            else if (mode == "--optional-invalid") CheckOptionalInvalid();
+            else throw std::runtime_error("unknown optional capture test mode");
+            std::puts("optional compute capture policy passed");
+            return 0;
+        }
+        Require(argc == 1, "unknown capture test arguments");
         CheckRoundTrip();
         CheckMalformedRecords();
         CheckBindingFlags();

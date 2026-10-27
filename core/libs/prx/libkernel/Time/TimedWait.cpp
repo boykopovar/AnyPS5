@@ -1,14 +1,19 @@
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libkernel/Pthread/include/WindowsThreadLocal.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <cerrno>
+#include <csignal>
+#include <pthread.h>
+#include <system_error>
 #include <time.h>
 #endif
 
@@ -18,6 +23,28 @@ namespace {
 
 constexpr std::uint64_t YIELD_BELOW_NANOS = 50000ULL;
 constexpr std::uint64_t LEAD_NANOS = 500000ULL;
+
+std::mutex& ChangeSleepersMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::atomic<std::uint64_t>& ChangeSleeperCount() {
+    static std::atomic<std::uint64_t> count{0};
+    return count;
+}
+
+#ifdef _WIN32
+std::vector<HANDLE>& ChangeSleepers() {
+    static std::vector<HANDLE> sleepers;
+    return sleepers;
+}
+#else
+std::condition_variable& ChangeCondition() {
+    static std::condition_variable condition;
+    return condition;
+}
+#endif
 
 struct ThreadWaitState {
     std::atomic<int> own{0};
@@ -114,12 +141,14 @@ struct Waiter {
     Waiter* next = nullptr;
     Waiter* nested = nullptr;
     const void* key = nullptr;
+    HANDLE wake = nullptr;
     bool queued = false;
     bool busy = false;
 
     ~Waiter() {
         delete nested;
         if (event) CloseHandle(event);
+        if (wake) CloseHandle(wake);
         if (timer) CloseHandle(timer);
         for (const auto sleepTimer : sleepTimers) if (sleepTimer) CloseHandle(sleepTimer);
     }
@@ -363,6 +392,91 @@ void Condition::NotifyAll() {
     coarse.notify_all();
 }
 
+namespace {
+
+constinit thread_local std::atomic<int> deferralDepth{0};
+constinit thread_local std::atomic<int> deferredSignal{0};
+
+class DeliveryAllowance {
+public:
+    DeliveryAllowance() : depth(deferralDepth.exchange(0)) { DeliverDeferred(); }
+    ~DeliveryAllowance() { deferralDepth.store(depth); }
+    DeliveryAllowance(const DeliveryAllowance&) = delete;
+    DeliveryAllowance& operator=(const DeliveryAllowance&) = delete;
+
+private:
+    int depth;
+};
+
+}
+
+DeliveryDeferral::DeliveryDeferral() {
+    deferralDepth.fetch_add(1);
+}
+
+DeliveryDeferral::~DeliveryDeferral() {
+    deferralDepth.fetch_sub(1);
+}
+
+void DeliverDeferred() {
+    if (deferralDepth.load() != 0) return;
+    const int signum = deferredSignal.exchange(0);
+    if (signum != 0) pthread_kill(pthread_self(), signum);
+}
+
+bool DeferDelivery(int signum) {
+    if (deferralDepth.load() == 0) return false;
+    deferredSignal.store(signum);
+    return true;
+}
+
+#ifdef __APPLE__
+SingleWaiterCondition::SingleWaiterCondition() : semaphore(dispatch_semaphore_create(0)) {
+    if (semaphore == nullptr) throw std::runtime_error("TimedWait: cannot create a wait semaphore");
+}
+
+SingleWaiterCondition::~SingleWaiterCondition() {
+    dispatch_release(semaphore);
+}
+
+void SingleWaiterCondition::NotifyOne() {
+    dispatch_semaphore_signal(semaphore);
+}
+
+bool SingleWaiterCondition::waitSignal(const std::uint64_t* deadlineNanos) {
+    DeliveryAllowance allowance;
+    if (deadlineNanos == nullptr) return dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER) == 0;
+    const std::uint64_t now = NowNanos();
+    const std::uint64_t remaining = *deadlineNanos > now ? *deadlineNanos - now : 0;
+    const dispatch_time_t deadline = remaining >= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ? DISPATCH_TIME_FOREVER : dispatch_time(DISPATCH_TIME_NOW, static_cast<std::int64_t>(remaining));
+    return dispatch_semaphore_wait(semaphore, deadline) == 0;
+}
+#else
+SingleWaiterCondition::SingleWaiterCondition() {
+    if (sem_init(&semaphore, 0, 0) != 0) throw std::system_error(errno, std::generic_category(), "TimedWait: cannot create a wait semaphore");
+}
+
+SingleWaiterCondition::~SingleWaiterCondition() {
+    sem_destroy(&semaphore);
+}
+
+void SingleWaiterCondition::NotifyOne() {
+    sem_post(&semaphore);
+}
+
+bool SingleWaiterCondition::waitSignal(const std::uint64_t* deadlineNanos) {
+    DeliveryAllowance allowance;
+    timespec deadline{};
+    if (deadlineNanos != nullptr) deadline = {static_cast<time_t>(*deadlineNanos / 1000000000ULL), static_cast<long>(*deadlineNanos % 1000000000ULL)};
+    for (;;) {
+        const int result = deadlineNanos == nullptr ? sem_wait(&semaphore) : sem_clockwait(&semaphore, CLOCK_MONOTONIC, &deadline);
+        if (result == 0) return true;
+        if (errno == ETIMEDOUT) return false;
+        if (errno != EINTR) throw std::system_error(errno, std::generic_category(), "TimedWait: cannot wait for a wait semaphore");
+    }
+}
+#endif
+
 #endif
 
 void BindThreadWaitState(std::atomic<int>* state) {
@@ -423,6 +537,72 @@ void SleepUntil(std::uint64_t deadlineNanos) {
 #else
     const std::uint64_t now = NowNanos();
     if (deadlineNanos > now) SleepNanos(deadlineNanos - now);
+#endif
+}
+
+bool SleepNanosUnlessChanged(std::uint64_t nanos, const std::atomic<std::uint64_t>& counter, std::uint64_t observed) {
+    const std::uint64_t deadlineNanos = NowNanos() + nanos;
+#ifdef _WIN32
+    if (Coarse() || nanos < YIELD_BELOW_NANOS) {
+        SleepNanos(nanos);
+        return false;
+    }
+    Waiter* waiter = ThisThreadWaiter();
+    if (!waiter->wake) waiter->wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!waiter->wake) throw std::runtime_error("TimedWait: CreateEventW failed for a wakeable sleep");
+    {
+        std::lock_guard lock(ChangeSleepersMutex());
+        ChangeSleepers().push_back(waiter->wake);
+    }
+    ChangeSleeperCount().fetch_add(1, std::memory_order_seq_cst);
+    struct Unregister {
+        HANDLE wake;
+        ~Unregister() {
+            ChangeSleeperCount().fetch_sub(1, std::memory_order_seq_cst);
+            std::lock_guard lock(ChangeSleepersMutex());
+            auto& sleepers = ChangeSleepers();
+            sleepers.erase(std::find(sleepers.begin(), sleepers.end(), wake));
+        }
+    } unregister{waiter->wake};
+    ResetEvent(waiter->wake);
+    std::uint64_t now = NowNanos();
+    if (counter.load(std::memory_order_seq_cst) != observed) return true;
+    if (deadlineNanos > now + LEAD_NANOS) {
+        const HANDLE handles[2] = {ThreadTimer(1), waiter->wake};
+        LARGE_INTEGER due{};
+        due.QuadPart = -static_cast<LONGLONG>((deadlineNanos - now - LEAD_NANOS) / 100ULL);
+        if (due.QuadPart == 0) due.QuadPart = -1;
+        if (handles[0] && SetWaitableTimer(handles[0], &due, 0, nullptr, nullptr, FALSE)) {
+            if (AlertableWait(2, handles, INFINITE) == WAIT_OBJECT_0 + 1) CancelWaitableTimer(handles[0]);
+        } else {
+            AlertableWait(1, &handles[1], WholeMilliseconds(deadlineNanos - now - LEAD_NANOS));
+        }
+        if (counter.load(std::memory_order_seq_cst) != observed) return true;
+        now = NowNanos();
+    }
+    while (now < deadlineNanos) {
+        if (counter.load(std::memory_order_seq_cst) != observed) return true;
+        YieldProcessor();
+        now = NowNanos();
+    }
+    return false;
+#else
+    std::unique_lock lock(ChangeSleepersMutex());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds(nanos);
+    ChangeSleeperCount().fetch_add(1, std::memory_order_seq_cst);
+    const bool changed = ChangeCondition().wait_until(lock, deadline, [&] { return counter.load(std::memory_order_seq_cst) != observed; });
+    ChangeSleeperCount().fetch_sub(1, std::memory_order_seq_cst);
+    return changed;
+#endif
+}
+
+void WakeChangeSleepers() {
+    if (ChangeSleeperCount().load(std::memory_order_seq_cst) == 0) return;
+    std::lock_guard lock(ChangeSleepersMutex());
+#ifdef _WIN32
+    for (const HANDLE sleeper : ChangeSleepers()) SetEvent(sleeper);
+#else
+    ChangeCondition().notify_all();
 #endif
 }
 

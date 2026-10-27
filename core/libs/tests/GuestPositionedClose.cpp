@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include <atomic>
@@ -11,12 +14,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -58,7 +55,7 @@ int main() {
             state = 2;
         });
         while (state.load() == 0) std::this_thread::yield();
-        std::this_thread::sleep_for(std::chrono::microseconds(300));
+        PreciseSleepUs(300);
         const int closed = sceKernelClose(descriptor);
         reader.join();
         Require(!threw.load());

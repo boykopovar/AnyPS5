@@ -58,6 +58,8 @@ struct MockDevice {
     std::map<VkDeviceMemory, VkDeviceSize> memories;
     std::vector<Bind> binds;
     VkResult bindResult = VK_SUCCESS;
+    VkResult allocationResult = VK_SUCCESS;
+    std::uint64_t allocationAttempts = 0;
     std::uint64_t nextAddress = 0x500000000ull;
     VkDeviceSize sparseAlignment = Alignment;
 };
@@ -119,6 +121,8 @@ VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer bu
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
+    ++mock.allocationAttempts;
+    if (mock.allocationResult != VK_SUCCESS) return mock.allocationResult;
     *memory = reinterpret_cast<VkDeviceMemory>(mock.next++);
     mock.memories[*memory] = info->allocationSize;
     return VK_SUCCESS;
@@ -340,6 +344,34 @@ void LargerSparseBlockIsDecidedBeforeImporting() {
     Expect(mock.memories.size() == memories && mock.binds.empty(), "a chunk was imported or bound for a range that does not take the sparse path");
 }
 
+void RetainsFailedWindowAcrossUnrelatedMutation() {
+    constexpr std::uint64_t window = 4ull << 20u;
+    SharedRange range(window * 2, 0, true);
+    const auto context = mockContext();
+    SetHostImportRangeWindow(window);
+    mock.allocationResult = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    const auto address = range.Address() + window;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto attempts = mock.allocationAttempts;
+    Expect(HostImportFor(context, address, Alignment) == nullptr, "the failed import window was accepted");
+    const auto failedAttempts = mock.allocationAttempts;
+    Expect(failedAttempts > attempts, "the import window did not reach allocation");
+    Expect(HostImportFor(context, address, Alignment) == nullptr && mock.allocationAttempts == failedAttempts, "an unchanged failed window was retried");
+    SharedRange unrelated(Alignment, 0, true);
+    Expect(HostImportFor(context, address, Alignment) == nullptr && mock.allocationAttempts == failedAttempts, "an unrelated registry change retried a failed import window");
+    Expect(HostImportFor(context, range.Address(), Alignment) == nullptr && mock.allocationAttempts > failedAttempts, "a different import window inherited the first window's failure");
+    const auto beforeRemap = mock.allocationAttempts;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(range.backing.base);
+        mutation.Add(range.backing.base, static_cast<std::size_t>(range.backing.bytes), true, true, true);
+    }
+    mock.allocationResult = VK_SUCCESS;
+    const auto* imported = HostImportFor(context, address, Alignment);
+    Expect(imported != nullptr && imported->base == address && imported->bytes == window && mock.allocationAttempts > beforeRemap, "a remapped failed import window was not retried successfully");
+    SetHostImportRangeWindow(64ull << 20u);
+}
+
 void FailureAfterTheDecisionThrows(bool sealed, VkResult bind, const char* step) {
     const auto bytes = RangeBytes();
     SharedRange range(bytes, 0, sealed);
@@ -382,6 +414,7 @@ int main() {
         LargerSparseBlockIsDecidedBeforeImporting();
         FailureAfterTheDecisionThrows(false, VK_SUCCESS, "UDMABUF_CREATE");
         FailureAfterTheDecisionThrows(true, VK_ERROR_DEVICE_LOST, "vkQueueBindSparse");
+        RetainsFailedWindowAcrossUnrelatedMutation();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

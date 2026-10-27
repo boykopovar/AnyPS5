@@ -16,6 +16,12 @@ inline std::string_view ModuleSuffix(const std::string_view name) {
     return suffix == ModuleSuffixes.end() ? std::string_view{} : *suffix;
 }
 
+inline std::string NeededLibraryName(std::string name) {
+    const auto suffix = ModuleSuffix(name);
+    if (!suffix.empty() && suffix != ".prx") name.replace(name.size() - suffix.size(), suffix.size(), ".prx");
+    return name;
+}
+
 inline std::string ImportModuleName(std::string name) {
     name.resize(name.size() - ModuleSuffix(name).size());
     if (name.ends_with("-module")) name.resize(name.size() - 7);

@@ -58,8 +58,36 @@ template<class TAction> void fails(TAction&& fn) {
     Require(failed, "invalid vertex input was accepted");
 }
 
+void descriptorDiagnostics(const Context& ctx) {
+    auto input = attribute(7);
+    input.resource.fields = {0x89abcde0u, 0x0010abcdu, 0x12345678u, 0x0104dfacu};
+    Require(BuildVertexInputLayout(ctx, std::span(&input, 1)).attributes.size() == 1, "valid diagnostic control was rejected");
+    struct Case {
+        unsigned field;
+        std::uint32_t bits;
+        const char* words;
+    };
+    constexpr std::array cases{
+        Case{1, 0x80000000u, "V#=[89abcde0 8010abcd 12345678 0104dfac]"},
+        Case{3, 0x00800000u, "V#=[89abcde0 0010abcd 12345678 0184dfac]"},
+        Case{3, 0x40000000u, "V#=[89abcde0 0010abcd 12345678 4104dfac]"},
+        Case{3, 0x80000000u, "V#=[89abcde0 0010abcd 12345678 8104dfac]"},
+        Case{3, 0xc0800000u, "V#=[89abcde0 0010abcd 12345678 c184dfac]"}
+    };
+    for (const auto& value : cases) {
+        auto described = input;
+        described.resource.fields[value.field] |= value.bits;
+        const auto before = described.resource.fields;
+        const std::string message(VertexDescriptorFlagsMessage(described).data());
+        Require(message.find("unsupported vertex buffer descriptor flags at location 7") != std::string::npos && message.find(value.words) != std::string::npos,
+            "vertex flag message did not identify the attribute and all four descriptor words: " + message);
+        Require(described.resource.fields == before, "formatting changed the descriptor");
+    }
+}
+
 void run() {
     auto ctx = context();
+    descriptorDiagnostics(ctx);
     VertexInputCache cache(ctx, 2);
     std::array attributes{attribute(0), attribute(1)};
     auto first = get(cache, ctx, 1, attributes);
@@ -151,9 +179,24 @@ void run() {
         const auto zeroStride = live.TryGet(101, input);
         Require(VertexFetchOutOfRange(input[0]), "zero records did not select zero fill");
         input[0].resource.fields[2] = 64;
-        Require(live.TryGet(101, input) == zeroStride && !VertexFetchOutOfRange(input[0]) && VertexBufferExtent(input[0]) == 64, "cached zero-stride layout froze the live zero-fill decision");
+        Require(live.TryGet(101, input) == zeroStride && !VertexFetchOutOfRange(input[0]) && VertexBufferExtent(input[0]) == 16, "cached zero-stride layout froze the live zero-fill decision");
         input[0].resource.fields[2] = 0;
         Require(live.TryGet(101, input) == zeroStride && VertexFetchOutOfRange(input[0]), "record count zero reused a live fetch");
+        input[0] = attribute();
+        input[0].resource.fields[1] = 0;
+        input[0].resource.fields[3] |= 3u << 28u;
+        input[0].resource.fields[2] = 16;
+        const auto wholeFetch = live.TryGet(105, input);
+        for (const auto records : {0u, 8u, 15u}) {
+            input[0].resource.fields[2] = records;
+            Require(live.TryGet(105, input) == wholeFetch && VertexFetchOutOfRange(input[0]), "a fetch that only partly fits was not read as zero");
+        }
+        for (const auto records : {16u, 17u, 0xffffffffu}) {
+            input[0].resource.fields[2] = records;
+            Require(live.TryGet(105, input) == wholeFetch && !VertexFetchOutOfRange(input[0]) && VertexBufferExtent(input[0]) == 16, "a fetch inside the byte range was read as zero or sized by NUM_RECORDS");
+        }
+        input[0].resource.fields[3] &= ~(3u << 28u);
+        Require(VertexFetchOutOfRange(input[0]), "OOB_SELECT 0 read a zero-stride fetch");
         input[0] = attribute();
         input[0].formatComponents = 1;
         const auto narrow = live.TryGet(102, input);

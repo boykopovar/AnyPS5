@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
@@ -8,40 +9,6 @@
 #include <stdexcept>
 #include <thread>
 
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-void* APS5_VABI sceLibcMspaceCreate_nid_postfix(const char*, void*, std::size_t, unsigned);
-int APS5_VABI sceLibcMspaceDestroy_nid_postfix(void*);
-void* APS5_VABI sceLibcMspaceMalloc_nid_postfix(void*, std::size_t);
-void* APS5_VABI sceLibcMspaceCalloc_nid_postfix(void*, std::size_t, std::size_t);
-void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void*, void*, std::size_t);
-void APS5_VABI sceLibcMspaceFree_nid_postfix(void*, void*);
-int APS5_VABI sceLibcMspacePosixMemalign_nid_postfix(void*, void**, std::size_t, std::size_t);
-std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void*);
-void* APS5_VABI sceLibcMspaceMemalign_nid_postfix(void*, std::size_t, std::size_t);
-void* APS5_VABI sceLibcMspaceAlignedAlloc_nid_postfix(void*, std::size_t, std::size_t);
-void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void*, void*, std::size_t, std::size_t);
-int APS5_VABI sceLibcMspaceMallocStats_nid_postfix(void*, void*);
-int APS5_VABI sceLibcMspaceMallocStatsFast_nid_postfix(void*, void*);
-void* APS5_VABI sceLibcPafMspaceCreate_nid_postfix(const char*, void*, std::size_t, unsigned, const void*);
-int APS5_VABI sceLibcPafMspaceDestroy_nid_postfix(void*);
-void* APS5_VABI sceLibcPafMspaceMalloc_nid_postfix(void*, std::size_t, const void*);
-void APS5_VABI sceLibcPafMspaceFree_nid_postfix(void*, void*, const void*);
-void* APS5_VABI sceLibcPafMspaceCalloc_nid_postfix(void*, std::size_t, std::size_t, const void*);
-void* APS5_VABI sceLibcPafMspaceRealloc_nid_postfix(void*, void*, std::size_t, const void*);
-void* APS5_VABI sceLibcPafMspaceReallocalign_nid_postfix(void*, void*, std::size_t, std::size_t, const void*);
-int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void*, void*);
-int APS5_VABI sceLibcPafMspaceMallocStatsFast_nid_postfix(void*, void*);
-}
-struct MallocManagedSize {
-    std::uint16_t size;
-    std::uint16_t version;
-    std::uint32_t reserved;
-    std::size_t maxSystemSize;
-    std::size_t currentSystemSize;
-    std::size_t maxInuseSize;
-    std::size_t currentInuseSize;
-};
 static void Require(bool value) {
     if (!value) { std::fputs("Mspace check failed\n", stderr); std::abort(); }
 }
@@ -64,6 +31,15 @@ static void CheckPaf() {
     Require(block != nullptr && block[0] == 0x5a && block[39] == 0x5a);
     block = static_cast<unsigned char*>(sceLibcPafMspaceReallocalign_nid_postfix(arena, block, 256, 64, &owner));
     Require(block != nullptr && reinterpret_cast<std::uintptr_t>(block) % 256 == 0 && block[39] == 0x5a);
+    auto* aligned = static_cast<unsigned char*>(sceLibcPafMspaceMemalign_nid_postfix(arena, 128, 50, &owner));
+    Require(aligned != nullptr && reinterpret_cast<std::uintptr_t>(aligned) % 128 == 0);
+    Require(sceLibcPafMspaceMemalign_nid_postfix(arena, 0, 50, &owner) == nullptr && *__error_nid_postfix() == 22);
+    Require(sceLibcPafMspaceMemalign_nid_postfix(arena, 15, 50, &owner) == nullptr && *__error_nid_postfix() == 22);
+    void* posixAligned = nullptr;
+    Require(sceLibcPafMspacePosixMemalign_nid_postfix(arena, &posixAligned, 256, 60, &owner) == 0);
+    Require(posixAligned != nullptr && reinterpret_cast<std::uintptr_t>(posixAligned) % 256 == 0);
+    Require(sceLibcPafMspacePosixMemalign_nid_postfix(arena, nullptr, 256, 60, &owner) == 22);
+    Require(sceLibcPafMspacePosixMemalign_nid_postfix(arena, &posixAligned, 15, 60, &owner) == 22);
     MallocManagedSize viaPaf{}, viaMspace{}, fastPaf{}, fastMspace{};
     viaPaf.size = viaMspace.size = fastPaf.size = fastMspace.size = sizeof(MallocManagedSize);
     viaPaf.version = viaMspace.version = fastPaf.version = fastMspace.version = 1;
@@ -73,7 +49,10 @@ static void CheckPaf() {
     Require(fastPaf.currentInuseSize == fastMspace.currentInuseSize);
     sceLibcPafMspaceFree_nid_postfix(arena, block, &owner);
     sceLibcPafMspaceFree_nid_postfix(arena, zeroed, arena);
+    sceLibcPafMspaceFree_nid_postfix(arena, aligned, &owner);
+    sceLibcPafMspaceFree_nid_postfix(arena, posixAligned, &owner);
     sceLibcPafMspaceFree_nid_postfix(arena, nullptr, &owner);
+
     Require(sceLibcPafMspaceDestroy_nid_postfix(arena) == 0);
     Require(sceLibcPafMspaceDestroy_nid_postfix(arena) == -1);
 }
@@ -192,14 +171,17 @@ int main() {
     Require(sceLibcMspaceCalloc_nid_postfix(arena, std::numeric_limits<std::size_t>::max(), 2) == nullptr);
     sceLibcMspaceFree_nid_postfix(arena, blocker);
     sceLibcMspaceFree_nid_postfix(arena, aligned);
+
     Require(sceLibcMspaceRealloc_nid_postfix(arena, grown, 0) == nullptr);
     void* large = sceLibcMspaceMalloc_nid_postfix(arena, storage.size() - 256);
     Require(large != nullptr); // freeing coalesced all the fragmented blocks
     sceLibcMspaceFree_nid_postfix(arena, large);
+
     void* head = sceLibcMspaceMalloc_nid_postfix(arena, 64);
     Require(head != nullptr && sceLibcMspaceRealloc_nid_postfix(arena, head, 1024) == head);
     Require(sceLibcMspaceMallocUsableSize_nid_postfix(head) == 1024);
     sceLibcMspaceFree_nid_postfix(arena, head);
+
     std::array<void*, 2000> small{};
     for (auto& pointer : small) {
         pointer = sceLibcMspaceMalloc_nid_postfix(arena, 16);
@@ -211,6 +193,7 @@ int main() {
     large = sceLibcMspaceMalloc_nid_postfix(arena, storage.size() - 256);
     Require(large != nullptr);
     sceLibcMspaceFree_nid_postfix(arena, large);
+
     std::array<std::thread, 4> workers;
     for (auto& worker : workers) worker = std::thread([&] {
         for (int i = 0; i < 1000; ++i) {
@@ -219,6 +202,7 @@ int main() {
             std::memset(pointer, 42, 97);
             Require(sceLibcMspaceMallocUsableSize_nid_postfix(pointer) >= 97);
             sceLibcMspaceFree_nid_postfix(arena, pointer);
+
         }
     });
     for (auto& worker : workers) worker.join();
@@ -250,6 +234,7 @@ int main() {
     Require(rounded && (reinterpret_cast<std::uintptr_t>(rounded) & 127) == 0);
     Require(sceLibcMspaceMallocStatsFast_nid_postfix(arena, &stats) == 0 && stats.currentInuseSize >= 100);
     sceLibcMspaceFree_nid_postfix(arena, memaligned);
+
     void* region = sceLibcMspaceMalloc_nid_postfix(arena, 8192);
     Require(region != nullptr);
     Require(sceLibcMspaceCreate_nid_postfix("outside", static_cast<unsigned char*>(region) + 8192, 4096, 0) == nullptr);
@@ -261,6 +246,7 @@ int main() {
     Require(sceLibcMspaceCreate_nid_postfix("flags", storage.data(), storage.size(), 2) == nullptr);
     Require(sceLibcMspaceDestroy_nid_postfix(nested) == 0);
     sceLibcMspaceFree_nid_postfix(arena, region);
+
     Require(sceLibcMspaceDestroy_nid_postfix(arena) == 0);
     Require(sceLibcMspaceMalloc_nid_postfix(arena, 8) == nullptr);
     Require(sceLibcMspaceCreate_nid_postfix("reuse", storage.data(), storage.size(), 0) == arena);

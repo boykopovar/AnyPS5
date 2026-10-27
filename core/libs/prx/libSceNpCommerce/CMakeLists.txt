@@ -1,11 +1,12 @@
 add_library(libSceNpCommerce SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceNpCommerce PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNpCommerce)
+target_link_libraries(libSceNpCommerce PRIVATE libc libSceUserService)
 
 if(BUILD_TESTING)
     add_test_executable(guest_np_commerce_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCommerceDialog.cpp)
     target_include_directories(guest_np_commerce_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_np_commerce_dialog_tests PRIVATE libSceNpCommerce libc)
+    target_link_libraries(guest_np_commerce_dialog_tests PRIVATE libSceNpCommerce libc libSceUserService)
     configure_windows_unwind(guest_np_commerce_dialog_tests)
     add_test(NAME guest_np_commerce_dialog COMMAND guest_np_commerce_dialog_tests)
     if(WIN32)

@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cerrno>
@@ -13,11 +16,9 @@
 #include <lmcons.h>
 #else
 #include <pwd.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-extern "C" int APS5_VABI getlogin_r_nid_postfix(char*, int);
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 static void Check(bool condition, int line) {
     if (!condition) {
@@ -41,6 +42,27 @@ static std::string HostLogin() {
     Require(account != nullptr && account->pw_name != nullptr && account->pw_name[0] != '\0');
     return account->pw_name;
 #endif
+}
+
+static char* GuardedPageEnd() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    auto* memory = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+    DWORD previous;
+    Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+    const long nativePageSize = sysconf(_SC_PAGESIZE);
+    Require(nativePageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(nativePageSize);
+    void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(allocation != MAP_FAILED);
+    auto* memory = static_cast<char*>(allocation);
+    Require(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    return memory + pageSize;
 }
 
 static void RequireLogin(const std::string& expected) {
@@ -78,4 +100,30 @@ int main() {
         for (int i = 0; i != 20; ++i) RequireLogin(expected);
     });
     for (auto& reader : readers) reader.join();
+    *__error_nid_postfix() = 0;
+    Require(setlogin_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(setlogin_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && *__error_nid_postfix() == 14);
+    RequireLogin(expected);
+    const std::string longest(32, 'n');
+    const std::string tooLong(33, 'n');
+    *__error_nid_postfix() = 0;
+    Require(setlogin_nid_postfix(tooLong.c_str()) == -1 && *__error_nid_postfix() == 22);
+    RequireLogin(expected);
+    char* const pageEnd = GuardedPageEnd();
+    std::memset(pageEnd - 33, 'p', 33);
+    *__error_nid_postfix() = 0;
+    Require(setlogin_nid_postfix(pageEnd - 33) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(setlogin_nid_postfix(pageEnd - 32) == -1 && *__error_nid_postfix() == 14);
+    RequireLogin(expected);
+    pageEnd[-1] = '\0';
+    Require(setlogin_nid_postfix(pageEnd - 33) == 0);
+    RequireLogin(std::string(32, 'p'));
+    Require(setlogin_nid_postfix("guest") == 0);
+    RequireLogin("guest");
+    Require(setlogin_nid_postfix(longest.c_str()) == 0);
+    RequireLogin(longest);
+    Require(setlogin_nid_postfix("") == 0);
+    RequireLogin("");
 }

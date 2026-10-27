@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
@@ -12,33 +14,14 @@
 #include <thread>
 #include <typeinfo>
 
-struct GuestItimerval {
-    KernelTimeval interval;
-    KernelTimeval value;
-};
 static_assert(sizeof(GuestItimerval) == 32 && offsetof(GuestItimerval, value) == 16);
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
-struct GuestTimespec {
-    std::int64_t seconds;
-    std::int64_t nanoseconds;
-};
 
 using Handler = void (APS5_VABI *)(int);
 using TerminateHandler = void (*)();
 extern "C" {
-int APS5_VABI setitimer_nid_postfix(int, const GuestItimerval*, GuestItimerval*);
-int APS5_VABI getitimer_nid_postfix(int, GuestItimerval*);
+
 unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
-Handler APS5_VABI signal_nid_postfix(int, Handler);
-int APS5_VABI _sigprocmask_nid_postfix(int, const GuestSignalSet*, GuestSignalSet*);
-int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet*, void*, const GuestTimespec*);
-int APS5_VABI sigpending_nid_postfix(GuestSignalSet*);
-int* APS5_VABI __error_nid_postfix();
-void* APS5_VABI __cxa_current_primary_exception_nid_postfix();
-std::type_info* APS5_VABI __cxa_current_exception_type_nid_postfix();
-TerminateHandler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(TerminateHandler);
+
 }
 
 static void Require(bool value, const char* message) {
@@ -140,6 +123,7 @@ int main(int argc, char** argv) {
         bool threw = false;
         try {
             setitimer_nid_postfix(cpu, &valid, &previous);
+
         } catch (const std::runtime_error&) {
             threw = true;
         }
@@ -150,6 +134,7 @@ int main(int argc, char** argv) {
     const GuestItimerval tiny{{0, 999}, {1, 0}};
     try {
         setitimer_nid_postfix(0, &tiny, nullptr);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -189,8 +174,8 @@ int main(int argc, char** argv) {
     Require(GuestAlarm_nid_no_patch(0) == 0, "setitimer did not cancel the alarm");
 
     const GuestSignalSet alarmSet{{1u << 13, 0, 0, 0}};
-    const GuestTimespec poll{0, 0};
-    const GuestTimespec patience{2, 0};
+    const KernelTimespec poll{0, 0};
+    const KernelTimespec patience{2, 0};
     GuestSignalSet unblocked{};
     Require(_sigprocmask_nid_postfix(1, &alarmSet, &unblocked) == 0, "blocking SIGALRM failed");
     ExpireOnce();
@@ -220,6 +205,7 @@ int main(int argc, char** argv) {
 
     Require(signal_nid_postfix(14, OnAlarm) == ignore, "SIGALRM handler was not installed");
     _ZSt13set_terminatePFvvE_nid_postfix(OnTerminate);
+
     const GuestItimerval handled{{0, 250000}, {0, 50000}};
     Require(setitimer_nid_postfix(0, &handled, nullptr) == 0, "arming the handled timer failed");
     std::this_thread::sleep_for(std::chrono::seconds(2));

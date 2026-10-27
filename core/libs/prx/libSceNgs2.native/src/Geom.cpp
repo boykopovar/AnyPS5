@@ -23,6 +23,10 @@ double Dot(const Vector& left, const Vector& right) {
     return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
 }
 
+Vector Cross(const Vector& left, const Vector& right) {
+    return {left[1] * right[2] - left[2] * right[1], left[2] * right[0] - left[0] * right[2], left[0] * right[1] - left[1] * right[0]};
+}
+
 Vector Unit(Vector value) {
     const double length = std::hypot(value[0], value[1], value[2]);
     if (!(length > 0.0)) APS5_INVALID_ARG_EX;
@@ -30,19 +34,28 @@ Vector Unit(Vector value) {
     return value;
 }
 
+Vector PerpendicularHint(const Vector& front) {
+    return std::abs(front[1]) < 0.9 ? Vector{0.0, 1.0, 0.0} : Vector{1.0, 0.0, 0.0};
+}
+
 }
 
 int Ngs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWork* outWork, std::uint32_t flags) {
-    if (param == nullptr) APS5_INVALID_ARG_EX;
+    if (param == nullptr) return SCE_NGS2_ERROR_INVALID_GEOM_LISTENER_ADDRESS;
     if (outWork == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    if (flags > 1) throw std::runtime_error("NGS2: unknown listener coordinate flags");
+    if (flags > 1) return SCE_NGS2_ERROR_INVALID_GEOM_FLAG;
     if (!std::isfinite(param->sound_speed) || param->sound_speed <= 0.0f) APS5_INVALID_ARG_EX;
     const Vector position = ReadVector(param->position);
     ReadVector(param->velocity);
     const Vector front = Unit(ReadVector(param->orient_front));
     Vector up = Unit(ReadVector(param->orient_up));
-    Vector right = Unit({up[1] * front[2] - up[2] * front[1], up[2] * front[0] - up[0] * front[2], up[0] * front[1] - up[1] * front[0]});
-    up = {front[1] * right[2] - front[2] * right[1], front[2] * right[0] - front[0] * right[2], front[0] * right[1] - front[1] * right[0]};
+    Vector right = Cross(up, front);
+    if (!(std::hypot(right[0], right[1], right[2]) > 0.0)) {
+        up = Unit(PerpendicularHint(front));
+        right = Cross(up, front);
+    }
+    right = Unit(right);
+    up = Cross(front, right);
     if (flags == 1) for (auto& component : right) component = -component;
     const std::array<Vector, 3> axes{right, up, front};
     Ngs2GeomListenerWork work{};

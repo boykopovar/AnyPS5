@@ -244,9 +244,13 @@ void RunAtomic(AgcDriver::VulkanDevice& device, std::uint32_t misalignment) {
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) Require(Output[128u + lane] == Fill, run + ": lane " + std::to_string(lane) + " returned " + Hex(Output[128u + lane]) + ", expected " + Hex(Fill));
 }
 
-void RunAtomicFault(AgcDriver::VulkanDevice& device) {
+void RunAtomicContainingDword(AgcDriver::VulkanDevice& device) {
     DispatchAtomic(device, 2u, 0u);
-    for (std::uint32_t word = 0; word < Output.size(); ++word) Require(Output[word] == Fill, "buffer unaligned base atomic, view +2, offset lane * 4: dword " + std::to_string(word) + " is " + Hex(Output[word]) + ", but an atomic off a DWORD boundary faults the wave on RDNA2");
+    for (std::uint32_t word = 0; word < 128u; ++word) {
+        const auto expected = word >= 1u && word < Lanes ? Fill + word + 1u : Fill;
+        Require(Output[word] == expected, "buffer unaligned base atomic, view +2, offset lane * 4: dword " + std::to_string(word) + " is " + Hex(Output[word]) + ", expected " + Hex(expected) + ": a 32-bit atomic off a DWORD boundary acts on its containing dword");
+    }
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) Require(Output[128u + lane] == Fill, "buffer unaligned base atomic, view +2, offset lane * 4: lane " + std::to_string(lane) + " returned " + Hex(Output[128u + lane]) + ", expected " + Hex(Fill));
 }
 
 }
@@ -272,7 +276,7 @@ int main() {
             RunFormattedFault(*device, "tbuffer_load_format_x 32_UINT", Load32Code, view);
             RunFormattedFault(*device, "tbuffer_load_format_x 16_16_UINT", Load16_16Code, view);
         }
-        RunAtomicFault(*device);
+        RunAtomicContainingDword(*device);
         std::puts("buffer unaligned base tests passed");
         return 0;
     } catch (const std::exception& error) {

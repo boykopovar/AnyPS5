@@ -70,19 +70,23 @@ void Driver::deferCompletion(const Submission& submission) {
         queue0Uncommitted.push_back(received);
     }
     completionDeferred() = true;
-    DrawPipeline::Queue0().Enqueue([this, serial = submission.serial, received, labelWrites = submission.labelWrites] {
-        completeSubmission(serial, received, labelWrites);
+    DrawPipeline::Queue0().Enqueue([this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress] {
+        completeSubmission(serial, received, labelWrites, progress);
     }, {});
 }
 
-void Driver::submitOpenWork() {
-    if (deferredLabels().labels.empty() && !Graphics::Recorder::PendingLabelSince().has_value() && Graphics::Recorder::RecordedWorkSinceSubmit() == 0) return;
+void Driver::submitOpenWork(const std::shared_ptr<SubmissionProgress>& progress) {
+    const bool work = !deferredLabels().labels.empty() || Graphics::Recorder::PendingLabelSince().has_value() || Graphics::Recorder::RecordedWorkSinceSubmit() != 0;
+    if (!work && !progress) return;
     ++submissionCosts(0).endSubmits;
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::End);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     const auto localDevice = device.Load();
-    recordDeferredLabels(localDevice.get(), 0);
-    if (localDevice != nullptr) localDevice->SubmitRecorded(true);
+    if (work) {
+        recordDeferredLabels(localDevice.get(), 0);
+        if (localDevice != nullptr) localDevice->SubmitRecorded(true);
+    }
+    if (progress) progress->Publish(localDevice, localDevice ? localDevice->SubmittedEpoch() : 0);
 }
 
 void Driver::wakeQueueZeroForCompletions() {
@@ -91,7 +95,7 @@ void Driver::wakeQueueZeroForCompletions() {
     changed.notify_all();
 }
 
-void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites) {
+void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, std::span<const std::uint64_t> labelWrites, const std::shared_ptr<SubmissionProgress>& progress) {
     struct Complete {
         Driver& driver;
         std::uint64_t serial, received;
@@ -109,7 +113,7 @@ void Driver::completeSubmission(std::uint64_t serial, std::uint64_t received, st
             if (notify) driver.changed.notify_all();
         }
     } complete{*this, serial, received, labelWrites};
-    submitOpenWork();
+    submitOpenWork(progress);
 }
 
 const std::atomic<std::uint64_t>*& Driver::workerQueued() {
@@ -142,7 +146,7 @@ void Driver::run(std::uint32_t id) noexcept {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& costs = submissionCosts(id);
     try {
-        if (PerformanceTrace::Configured()) PerformanceTrace::BindThread(role);
+        PerformanceTrace::BindThread(role);
         for (;;) {
             submission = Submission{};
             struct Running {
@@ -261,6 +265,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{}) costs.dequeueNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - submission.enqueuedAt).count());
             }
             execute(submission);
+            if (submission.progress && submission.rewindTail == nullptr && !completionDeferred()) submitOpenWork(submission.progress);
             if (traceGpu) std::fprintf(stderr, "[gpu] %.1f done serial=%llu queue=0x%x\n", TraceMs(), static_cast<unsigned long long>(submission.serial), id);
             const auto completeStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             PerformanceContext completionContext(id == 0 ? frameTiming() : FrameTiming::Async());

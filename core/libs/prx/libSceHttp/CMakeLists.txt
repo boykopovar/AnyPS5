@@ -1,4 +1,4 @@
-add_library(libSceHttp SHARED EXCLUDE_FROM_ALL Export.cpp src/Parse.cpp src/Uri.cpp)
+add_library(libSceHttp SHARED EXCLUDE_FROM_ALL Export.cpp src/Options.cpp src/Parse.cpp src/Uri.cpp)
 target_include_directories(libSceHttp PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceHttp)
 
@@ -13,8 +13,13 @@ if(BUILD_TESTING)
     target_link_libraries(guest_http_response_header_tests PRIVATE libSceHttp libc)
     configure_windows_unwind(guest_http_response_header_tests)
     add_test(NAME guest_http_response_header COMMAND guest_http_response_header_tests)
+    add_test_executable(guest_http_options_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttpOptions.cpp)
+    target_include_directories(guest_http_options_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_http_options_tests PRIVATE libSceHttp libc)
+    configure_windows_unwind(guest_http_options_tests)
+    add_test(NAME guest_http_options COMMAND guest_http_options_tests)
     if(WIN32)
-        set_tests_properties(guest_http guest_http_response_header PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_http guest_http_response_header guest_http_options PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
     endif()
 endif()
