@@ -327,8 +327,7 @@ void* GuestHeapRealign_nid_postfix(void* pointer, std::size_t bytes, std::size_t
     mutation.RequireUnpinned(pointer, range.bytes);
     if (bytes == 0) {
         if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest heap alignment");
-        if (reinterpret_cast<std::uintptr_t>(pointer) % alignment != 0)
-            throw std::invalid_argument("reallocalign to 0 bytes with an alignment the block does not have is not measured on the console");
+        if (reinterpret_cast<std::uintptr_t>(pointer) % alignment != 0) return allocate(mutation, alignment, 0, range.gpu);
         return emptyInPlace(mutation, pointer, range.gpu);
     }
     void* result = allocate(mutation, alignment, bytes, range.gpu);
