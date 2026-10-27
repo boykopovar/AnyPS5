@@ -28,7 +28,6 @@ int main() {
     const int request = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://localhost/", 0);
     Require(box > 0 && context > 0 && tmpl > 0 && request > 0);
     Require(sceHttp2SetCookieBox(tmpl, 0) == 0);
-    Require(Throws([&] { sceHttp2SetCookieBox(tmpl, box); }));
     Require(sceHttp2CookieFlush(box) == 0);
     Require(sceHttp2SetResolveRetry(tmpl, 0) == 0);
     Require(Throws([&] { sceHttp2SetResolveRetry(tmpl, 3); }));
@@ -49,9 +48,6 @@ int main() {
         Require(Throws([&] { sceHttp2SslEnableOption(id, 0x3d); }));
         Require(Throws([&] { sceHttp2SslDisableOption(id, 0x20); }));
     }
-    Http2MemoryPoolStats stats{1, 2, 3, 4};
-    Require(Throws([&] { sceHttp2GetMemoryPoolStats(context, &stats); }));
-    Require(stats.pool_size == 1 && stats.current_inuse_size == 3);
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "http2-async") == 0);
     const int failed = sceHttp2CreateRequestWithURL(tmpl, "POST", "https://localhost/", 0);

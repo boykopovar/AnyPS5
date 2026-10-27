@@ -59,20 +59,23 @@ struct Http2Handle {
 static std::atomic<int> g_nextHandle{1};
 static std::mutex g_handlesMutex;
 static std::unordered_map<int, Http2Handle> g_handles;
+static std::atomic<GuestSceHttp2Test::AsyncPublishHook> g_asyncPublishHook{nullptr};
+static std::atomic<void*> g_asyncPublishHookData{nullptr};
 
 static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state, int req_id, const Http2AsyncOption& option,
     int event_type, int result, std::exception_ptr failure) {
-    {
-        std::lock_guard lock(state->mutex);
-        if (state->retired) return;
-        Http2AsyncCompletion completion{};
-        completion.result.event_type = event_type;
-        completion.result.req_id = req_id;
-        completion.result.result = result;
-        completion.failure = std::move(failure);
-        state->pending.push_back(std::move(completion));
-    }
+    std::lock_guard lock(state->mutex);
+    if (state->retired) return;
+    Http2AsyncCompletion completion{};
+    completion.result.event_type = event_type;
+    completion.result.req_id = req_id;
+    completion.result.result = result;
+    completion.failure = std::move(failure);
+    state->pending.push_back(std::move(completion));
     state->changed.notify_all();
+    if (const auto hook = g_asyncPublishHook.load(std::memory_order_acquire)) {
+        hook(g_asyncPublishHookData.load(std::memory_order_acquire));
+    }
     sceKernelTriggerUserEvent(option.equeue, option.user_event_id, option.user_data);
 }
 
@@ -83,6 +86,13 @@ static void RetireAsync(const std::shared_ptr<Http2AsyncState>& state) {
         state->pending.clear();
     }
     state->changed.notify_all();
+}
+
+namespace GuestSceHttp2Test {
+void SetAsyncPublishHookForTests_nid_no_patch(AsyncPublishHook hook, void* data) noexcept {
+    g_asyncPublishHookData.store(data, std::memory_order_release);
+    g_asyncPublishHook.store(hook, std::memory_order_release);
+}
 }
 
 static Http2Handle* FindHandle(int id, Http2Kind kind) {
