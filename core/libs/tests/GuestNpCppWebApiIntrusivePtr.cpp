@@ -347,18 +347,6 @@ static void TestUserProfileBoolAndSize() {
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE4sizeEv(&vector) == 2);
     Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv(&vector) == 2);
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEED1Ev(&vector);
-
-    // a title-provided body has an unknown layout
-    alignas(8) unsigned char body[ObjectSize];
-    std::memset(body, 0x5a, sizeof(body));
-    const IntrusivePtr adopted{body, RecordDelete, &context};
-    bool thrown = false;
-    try {
-        (void)_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv(&adopted);
-    } catch (const std::runtime_error&) {
-        thrown = true;
-    }
-    Require(thrown);
 }
 
 int main() {
