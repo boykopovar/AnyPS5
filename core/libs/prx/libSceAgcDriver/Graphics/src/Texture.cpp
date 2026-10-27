@@ -8003,7 +8003,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             for (const auto& [begin, end] : coveredBytes(runs)) importStores.emplace_back(descriptor.baseAddress + begin, descriptor.baseAddress + end);
             padding = {};
             static const bool importRetile = std::getenv("APS5_NO_LINEAR_IMPORT_RETILE") == nullptr;
-            if (importRetile && !geometry.levelMajor && elementBytes % 4 == 0 && segments.size() == 1 && segments.front().begin <= firstStored && lastStored <= segments.front().end) {
+            if (importRetile && drawOriginal == nullptr && !geometry.levelMajor && elementBytes % 4 == 0 && segments.size() == 1 && segments.front().begin <= firstStored && lastStored <= segments.front().end) {
                 std::vector<std::pair<std::uint64_t, std::uint64_t>> wholeLayers;
                 for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
                     if (!layers[layer]) continue;
@@ -8085,7 +8085,21 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
                 if (!geometry.HasLayer(level, layer)) continue;
                 const auto& mip = mips[level];
                 if (directImport != nullptr) detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, directImport->buffer, HostImportOffset(*directImport, descriptor.baseAddress + geometry.GuestOffset(layer, mip)), mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
-                else detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiledScratch->Handle(), geometry.GuestOffset(layer, mip), mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                else {
+                    detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiledScratch->Handle(), geometry.GuestOffset(layer, mip), mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                    if (drawOriginal != nullptr) {
+                        const auto address = descriptor.baseAddress + geometry.GuestLayerOffset(layer) + mip.tiledOffset;
+                        const auto offset = geometry.LinearLayerOffset(layer) + mip.linearOffset;
+                        for (const auto& segment : segments) {
+                            const auto begin = std::max(address, segment.begin);
+                            const auto end = std::min(address + mip.tiledSize, segment.end);
+                            if (begin >= end) continue;
+                            Require(end - address <= UINT32_MAX, "a linear target write-back exceeds addressable shader offsets");
+                            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), offset, segment.import->buffer, HostImportOffset(*segment.import, begin), mip, true, layer, false,
+                                {.rangeBegin = static_cast<std::uint32_t>(begin - address), .rangeEnd = static_cast<std::uint32_t>(end - address), .tiledBase = static_cast<std::uint32_t>(begin - address)}, sliceLinearBytes * arrayLayers + offset);
+                        }
+                    }
+                }
             }
         }
         if (directImport != nullptr) {
@@ -8100,7 +8114,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
                     const auto end = std::min(to, segment.end);
                     if (begin < end) copies.push_back({begin - descriptor.baseAddress, HostImportOffset(*segment.import, begin), end - begin});
                 }
-                if (!copies.empty()) context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, tiledScratch->Handle(), segment.import->buffer, static_cast<std::uint32_t>(copies.size()), copies.data());
+                if (drawOriginal == nullptr && !copies.empty()) context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, tiledScratch->Handle(), segment.import->buffer, static_cast<std::uint32_t>(copies.size()), copies.data());
             }
             if (!saveUnits.empty()) {
                 std::vector<VkBufferCopy> saves;
