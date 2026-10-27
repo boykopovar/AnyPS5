@@ -2184,7 +2184,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
         else residents[index]->MarkDirty();
     }
     for (std::size_t index = 0; index < residents.size(); ++index) {
-        if (storeNow[index]) StorageTexture::FlushPending(residents[index]->Descriptor().baseAddress, static_cast<std::size_t>(residents[index]->GuestBytes()), nullptr, "linear target");
+        if (storeNow[index]) residents[index]->FinishLinearDraw();
     }
 }
 
