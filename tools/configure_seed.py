@@ -4,20 +4,26 @@ import re
 import sys
 from pathlib import Path
 
-CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|TEST_BIG_ENDIAN|check_))")
+CHECK = re.compile(r"^//(Have (include|includes|function|symbol|library) |Test |Result of (TRY_COMPILE|TRY_RUN|TEST_BIG_ENDIAN|check_)|CHECK_TYPE_SIZE: )")
 ENTRY = re.compile(r"^([^#/:][^:]*):([A-Z]+)=(.*)$")
 
 
 def checks(cache):
-    found, doc = {}, ""
+    found, doc = {}, []
     for line in Path(cache).read_text(encoding="utf-8-sig").splitlines():
         if line.startswith("//"):
-            doc = line
+            doc.append(line)
             continue
         match = ENTRY.match(line)
-        if match and match.group(2) == "INTERNAL" and CHECK.match(doc):
-            found[match.group(1)] = (match.group(3), doc[2:])
-        doc = ""
+        if match and match.group(2) == "INTERNAL" and doc and CHECK.match(doc[0]):
+            help_text = "".join("\n" + line[4:] if line.startswith("//\\n") else line[2:] for line in doc)
+            found[match.group(1)] = (match.group(3), help_text)
+        doc = []
+    architecture_sizes = {name for name, (value, doc) in found.items()
+                          if value == "0" and doc.startswith("CHECK_TYPE_SIZE: ")}
+    if architecture_sizes:
+        return {name: entry for name, entry in found.items()
+                if name not in architecture_sizes and not entry[1].startswith("Result of TRY_COMPILE")}
     return found
 
 
@@ -25,7 +31,10 @@ def quote(value):
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$") + '"'
 
 
-def main():
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Write the configure check results of a CMake cache as an initial cache file")
     parser.add_argument("cache", help="CMakeCache.txt of a configured tree")
     parser.add_argument("seed", help="file to pass to cmake -C")
@@ -33,7 +42,7 @@ def main():
                         help="seed matching check names only; repeat to include several patterns")
     parser.add_argument("--exclude", action="append", default=[], metavar="GLOB",
                         help="omit matching check names after inclusion; patterns are case-sensitive")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     cache, seed = Path(args.cache), Path(args.seed)
     if cache.resolve() == seed.resolve() or (cache.exists() and seed.exists() and cache.samefile(seed)):
         parser.error("seed output would overwrite the input cache")
@@ -44,9 +53,12 @@ def main():
     found = {name: entry for name, entry in results.items()
              if (not args.include or any(fnmatch.fnmatchcase(name, pattern) for pattern in args.include))
              and not any(fnmatch.fnmatchcase(name, pattern) for pattern in args.exclude)}
-    seed.parent.mkdir(parents=True, exist_ok=True)
-    seed.write_text("".join(f"set({quote(name)} {quote(value)} CACHE INTERNAL {quote(doc)})\n"
-                           for name, (value, doc) in sorted(found.items())), encoding="utf-8")
+    try:
+        seed.parent.mkdir(parents=True, exist_ok=True)
+        seed.write_text("".join(f"set({quote(name)} {quote(value)} CACHE INTERNAL {quote(doc)})\n"
+                               for name, (value, doc) in sorted(found.items())), encoding="utf-8")
+    except OSError as error:
+        parser.error(f"{seed}: {error}")
     print(f"{len(found)} check results")
     return 0
 

@@ -11,12 +11,12 @@ LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
 
 KNOWN_UNRUN = set()
-SCRIPT = re.compile(r"(?:[\w.-]+/)*test_\w+\.py")
+SCRIPT = re.compile(r"(?<![\w./-])(?:[\w.-]+/)*test_\w+\.py(?![\w./-])")
 
 
 def built(build):
     program, generator = None, None
-    for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8").splitlines():
+    for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
         if line.startswith("CMAKE_MAKE_PROGRAM:"):
             program = line.partition("=")[2]
         elif line.startswith("CMAKE_GENERATOR:"):
@@ -78,10 +78,12 @@ def commands(content):
                 raise ValueError(f"invalid CTest argument at position {position}")
             argument = token.group(0)
             if argument.startswith('"'):
-                argument = re.sub(r"\\(.)", lambda match: {"n": "\n", "r": "\r", "t": "\t"}.get(match[1], match[1]), argument[1:-1], flags=re.S)
+                argument = re.sub(r"\\(\r?\n|.)",
+                                  lambda match: {"\n": "", "\r\n": "", "n": "\n", "r": "\r", "t": "\t", ";": r"\;"}.get(match[1], match[1]),
+                                  argument[1:-1], flags=re.S)
             elif token.group("equals") is not None:
                 width = len(token.group("equals")) + 2
-                argument = argument[width:-width]
+                argument = argument[width:-width].removeprefix("\n")
             arguments.append(argument)
             position = token.end()
 
@@ -132,6 +134,46 @@ def listed(root):
     return sorted(set(filter(None, output.split("\0"))))
 
 
+def workflow_run_lines(content):
+    parents = []
+    step_key_indent = None
+    block_indent = None
+    for line in content.splitlines():
+        text = line.lstrip()
+        if not text or text.startswith("#"):
+            continue
+        indent = len(line) - len(text)
+        if block_indent is not None:
+            if indent > block_indent:
+                yield line
+                continue
+            block_indent = None
+        sequence = re.match(r"-\s+", text)
+        while parents and (parents[-1][0] > indent or
+                           (parents[-1][0] == indent and not (sequence and parents[-1][1] == "steps"))):
+            parents.pop()
+        path = [key for _, key in parents]
+        step = len(path) == 3 and path[0] == "jobs" and path[2] == "steps"
+        key_indent = indent
+        if sequence:
+            key_indent += sequence.end()
+            text = text[sequence.end():]
+            if step:
+                step_key_indent = key_indent
+        match = re.match(r"(['\"]?)([A-Za-z_][\w.-]*)\1\s*:(?:\s+(.*)|$)", text)
+        if match is None:
+            continue
+        key, value = match[2], match[3] or ""
+        if key == "steps" and len(path) == 2 and path[0] == "jobs":
+            step_key_indent = None
+        if step and key_indent == step_key_indent and key == "run":
+            if value.startswith(("|", ">")):
+                block_indent = key_indent
+            elif value:
+                yield value
+        parents.append((key_indent, key))
+
+
 def run_scripts(root, files):
     run = set()
     for name in files:
@@ -141,7 +183,7 @@ def run_scripts(root, files):
                 if command == "add_test":
                     run.update(argument.rpartition("}")[2].lstrip("/") for argument in arguments)
         elif name.startswith(".github/workflows/") and name.endswith((".yml", ".yaml")):
-            for line in (Path(root) / name).read_text(encoding="utf-8", errors="replace").splitlines():
+            for line in workflow_run_lines((Path(root) / name).read_text(encoding="utf-8", errors="replace")):
                 if line.lstrip().startswith("#"):
                     continue
                 line = re.split(r"\s#", line)[0]
@@ -157,21 +199,24 @@ def unrun_scripts(root):
     return scripts, [name for name in scripts if not any(name == path or name.endswith("/" + path) for path in run)]
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs")
     parser.add_argument("build", type=Path, nargs="?", default=Path("build"), help="configured build directory")
     parser.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
     parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.scripts:
         scripts, unrun = unrun_scripts(Path(__file__).resolve().parents[1])
         for name in unrun:
             print(f"error: {name} is a test script that no add_test or workflow runs")
         if unrun:
             print(f"{len(unrun)} test script(s) would never run: register each with add_test, or run it from a workflow")
-            raise SystemExit(1)
+            return 1
         print(f"{len(scripts)} test script(s), each run by an add_test or a workflow")
-        raise SystemExit
+        return 0
     try:
         every = sorted(built(args.build))
         run = registered(args.build)
@@ -180,11 +225,11 @@ if __name__ == "__main__":
     if args.list:
         for name in every:
             print(f"{'run' if name in run else 'NOT RUN'}  {name}")
-        raise SystemExit
+        return 0
     unrun = sorted(set(every) - run)
     if not every:
         print(f"no test executables found under {args.build}; is it configured with -DBUILD_TESTING=ON?")
-        raise SystemExit(1)
+        return 1
     for name in sorted(set(unrun) & KNOWN_UNRUN):
         print(f"note: {name} is built and not run, as recorded")
     stale = sorted(KNOWN_UNRUN & run)
@@ -196,5 +241,10 @@ if __name__ == "__main__":
     if fresh:
         print(f"{len(fresh)} test executable(s) would never run: ctest reports a full pass over what it knows, so a test nobody registered is invisible in CI")
     if stale or fresh:
-        raise SystemExit(1)
+        return 1
     print(f"{len(every)} test executable(s), {len(unrun)} built and not run as recorded, none new")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

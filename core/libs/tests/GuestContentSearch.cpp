@@ -1,25 +1,25 @@
+#include "prx/libSceContentSearch/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
+#ifdef __APPLE__
+#include <initializer_list>
+#endif
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceContentSearchInit(const ContentSearchInitParam* init_param);
-int APS5_VABI sceContentSearchTerm(void);
-int APS5_VABI sceContentSearchGetContentLastUpdateId(std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchGetNumOfContent(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, std::int64_t* numOfContent, std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchGetTotalContentSize(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, std::int64_t* size, std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchSearchContent(const ContentSearchContentColumnSet* columnSet, std::uint32_t columnSetLength, const ContentSearchContentOrderByCondition* orderByConditions, std::uint32_t orderByConditionsLength, std::uint32_t offset, std::uint32_t limit, std::int64_t* numOfContent, void* infos, std::int64_t* lastUpdateId);
-int APS5_VABI sceContentSearchOpenMetadata(const char* filePath, std::int32_t* metadataId);
-int APS5_VABI sceContentSearchOpenMetadataByContentId(std::int64_t contentId, std::int32_t* metadataId);
-int APS5_VABI sceContentSearchCloseMetadata(std::int32_t metadataId);
-int APS5_VABI sceContentSearchGetMetadataFieldInfo(std::int32_t metadataId, const char* field, std::int32_t* metadataType, std::int32_t* size);
-int APS5_VABI sceContentSearchGetMetadataValue(std::int32_t metadataId, const char* field, void* value);
-}
 
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
+
+template <typename TAction>
+bool ThrowsRuntimeError(TAction action) {
+    try {
+        action();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
 
 template <typename TAction>
 bool Throws(TAction action) {
@@ -36,12 +36,6 @@ constexpr int ErrorInvalidArgument = static_cast<int>(0x809D1003u);
 constexpr int ErrorAlreadyInitialized = static_cast<int>(0x809D1002u);
 constexpr int ErrorLimitTooBig = static_cast<int>(0x809D100Au);
 
-struct MetadataValue {
-    std::int32_t size;
-    std::int32_t type;
-    std::int64_t value;
-};
-
 }
 
 int main() {
@@ -55,9 +49,6 @@ int main() {
     std::int64_t size = -1;
     std::int64_t updateId = -1;
     std::int32_t metadataId = -1;
-    std::int32_t metadataType = -1;
-    std::int32_t fieldSize = -1;
-    MetadataValue value{-1, -1, -1};
 
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == ErrorNotInitialized);
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, &updateId) == ErrorNotInitialized);
@@ -125,15 +116,23 @@ int main() {
     Require(sceContentSearchGetTotalContentSize(&columnSet, 0, &size, &updateId) == ErrorInvalidArgument);
     Require(count == -1 && updateId == -1);
 
-    Require(Throws([&] { sceContentSearchOpenMetadata("/data/photo.jpg", &metadataId); }));
-    Require(Throws([&] { sceContentSearchOpenMetadataByContentId(1, &metadataId); }));
-    Require(metadataId == -1);
     Require(sceContentSearchCloseMetadata(1) == ErrorInvalidArgument);
-    Require(Throws([&] { sceContentSearchGetMetadataFieldInfo(1, "title", &metadataType, &fieldSize); }));
-    Require(Throws([&] { sceContentSearchGetMetadataValue(1, "title", &value); }));
-    Require(metadataType == -1 && fieldSize == -1 && value.size == -1);
 
     Require(sceContentSearchTerm() == 0);
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == ErrorNotInitialized);
     Require(updateId == -1);
+    constexpr int binderResult = static_cast<int>(0x809D000F);
+    Require(sceContentBinderInitialize() == binderResult);
+    Require(sceContentBinderStart() == binderResult);
+    Require(sceContentBinderReset() == binderResult);
+    Require(sceContentBinderIsUpdated() == binderResult);
+    Require(sceContentBinderGetNumOfDifference() == binderResult);
+    Require(sceContentBinderSearchDifference() == binderResult);
+    Require(sceContentBinderEnd() == binderResult);
+    Require(sceContentBinderTerminate() == binderResult);
+
+    Require(ThrowsRuntimeError([] { sceContentSearchGetApplicationLastUpdateId(); }));
+    Require(ThrowsRuntimeError([] { sceContentSearchGetMyApplicationIndex(); }));
+    Require(ThrowsRuntimeError([] { sceContentSearchGetNumOfApplication(); }));
+    Require(ThrowsRuntimeError([] { sceContentSearchSearchApplication(); }));
 }

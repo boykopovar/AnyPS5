@@ -82,28 +82,6 @@ static_assert(sizeof(ReprojectionState) == 16);
 static_assert(alignof(ReprojectionState) == 8);
 static_assert(offsetof(ReprojectionState, timingUs) == 8);
 
-struct ReprojectionInitializeParameter {
-    void* workMemory;
-    void* displayMemory;
-    std::int32_t threadPriority;
-    std::uint32_t threadAffinity;
-    std::uint32_t queueParameter24;
-    std::uint32_t queueParameter28;
-    std::uint32_t renderingMode;
-    std::uint32_t reserved36;
-    void* auxiliaryMemory;
-    std::uint32_t timingInterval;
-    std::uint32_t reserved52[5];
-};
-
-static_assert(sizeof(ReprojectionInitializeParameter) == 72);
-static_assert(alignof(ReprojectionInitializeParameter) == 8);
-static_assert(offsetof(ReprojectionInitializeParameter, threadPriority) == 16);
-static_assert(offsetof(ReprojectionInitializeParameter, threadAffinity) == 20);
-static_assert(offsetof(ReprojectionInitializeParameter, renderingMode) == 32);
-static_assert(offsetof(ReprojectionInitializeParameter, auxiliaryMemory) == 40);
-static_assert(offsetof(ReprojectionInitializeParameter, timingInterval) == 48);
-
 struct SizeAlign {
     std::uint64_t size;
     std::uint64_t align;

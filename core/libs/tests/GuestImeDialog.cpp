@@ -1,20 +1,13 @@
+#include "prx/libSceImeDialog/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceImeDialogInit(const Param*, const ExtendedParam*);
-int APS5_VABI sceImeDialogGetStatus(void);
-int APS5_VABI sceImeDialogGetResult(Result*);
-int APS5_VABI sceImeDialogAbort(void);
-int APS5_VABI sceImeDialogTerm(void);
-int APS5_VABI sceImeDialogForceClose(void);
-}
 
 namespace {
 
@@ -25,6 +18,7 @@ constexpr std::uint32_t EndStatusOk = 0;
 constexpr std::uint32_t EndStatusUserCanceled = 1;
 constexpr std::uint32_t EndStatusAborted = 2;
 constexpr int ErrorBusy = static_cast<int>(0x80bc0001u);
+constexpr int ErrorSuspending = static_cast<int>(0x80bc0009u);
 constexpr int ErrorNotOpened = static_cast<int>(0x80bc0002u);
 constexpr int ErrorNotInUse = static_cast<int>(0x80bc0107u);
 constexpr int ErrorInvalidMaxTextLength = static_cast<int>(0x80bc0016u);
@@ -42,6 +36,32 @@ void Type(const char* utf8) {
     event.text.windowID = WindowId;
     std::strncpy(event.text.text, utf8, sizeof(event.text.text) - 1);
     g_window.HandleEvent(event, WindowId);
+}
+
+constexpr std::uint32_t PadCross = 0x4000;
+constexpr std::uint32_t PadCircle = 0x2000;
+constexpr std::uint32_t PadTriangle = 0x1000;
+constexpr std::uint32_t PadSquare = 0x8000;
+constexpr std::uint32_t PadR2 = 0x0200;
+constexpr std::uint32_t PadL1 = 0x0400;
+constexpr std::uint32_t PadRight = 0x0020;
+
+void Pad(std::uint32_t buttons) {
+    ImePublishPad_nid_postfix({buttons, 128, 128, 0});
+}
+
+void Tap(std::uint32_t button) {
+    Pad(button);
+    Pad(0);
+}
+
+std::u16string SelectedKey() {
+    ImeKeyboardView view;
+    Require(ImeReadKeyboardView_nid_postfix(view));
+    for (const auto& key : view.keys) {
+        if (key.selected) return key.label;
+    }
+    return {};
 }
 
 void Press(SDL_Scancode scancode) {
@@ -177,6 +197,13 @@ int main() {
     Open(param);
     Close();
 
+    Require(sceImeDialogGetPanelPositionAndForm(nullptr) == ErrorNotOpened);
+    std::uint32_t panelWidth = 0;
+    std::uint32_t panelHeight = 0;
+    Require(sceImeDialogGetPanelSize(nullptr, &panelWidth, &panelHeight) == 0 && panelWidth == 1920 && panelHeight == 1080);
+    panelWidth = 0;
+    panelHeight = 0;
+    Require(sceImeDialogGetPanelSizeExtended(nullptr, nullptr, &panelWidth, &panelHeight) == 0 && panelWidth == 1920 && panelHeight == 1080);
     Require(sceImeDialogInit(nullptr, nullptr) == ErrorInvalidAddress);
     const Param empty = DialogParam(buffer, 0);
     Require(sceImeDialogInit(&empty, nullptr) == ErrorInvalidMaxTextLength);
@@ -186,4 +213,129 @@ int main() {
     Require(sceImeDialogInit(&noBuffer, nullptr) == ErrorInvalidInputTextBuffer);
     Require(sceImeDialogGetStatus() == StatusNone);
     Require(!ImeCapturesKeyboard_nid_postfix());
+
+    std::uint32_t star = 0xa5a5a5a5u;
+    const auto starAddress = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&star));
+    Require(sceImeDialogGetCurrentStarState(starAddress) == ErrorNotInUse && star == 0xa5a5a5a5u);
+    Require(sceImeDialogSetPanelPosition(640, 360) == ErrorNotInUse);
+    Require(sceImeDialogInitInternal(nullptr, nullptr) == ErrorInvalidAddress);
+    Require(sceImeDialogInitInternal(&empty, nullptr) == ErrorInvalidMaxTextLength);
+    Require(sceImeDialogGetStatus() == StatusNone);
+    Require(sceImeDialogInitInternal(&param, nullptr) == 0);
+    Require(sceImeDialogGetStatus() == StatusRunning && ImeCapturesKeyboard_nid_postfix());
+    Require(sceImeDialogInitInternal(&param, nullptr) == ErrorBusy);
+    Require(sceImeDialogGetCurrentStarState(0) == ErrorInvalidAddress);
+    Require(sceImeDialogGetCurrentStarState(starAddress) == 0 && star == 0);
+    Require(sceImeDialogSetPanelPosition(640, 360) == ErrorSuspending);
+    Require(sceImeDialogAbort() == 0);
+    Require(sceImeDialogSetPanelPosition(0, 0) == ErrorSuspending);
+    Close();
+
+    Require(!ImeCapturesPad_nid_postfix());
+    buffer[0] = u'\0';
+    Open(param);
+    Require(ImeCapturesPad_nid_postfix());
+    Pad(0);
+    Require(SelectedKey() == u"g");
+    Tap(PadCross);
+    Tap(PadRight);
+    Require(SelectedKey() == u"h");
+    Tap(PadCross);
+    Tap(PadTriangle);
+    Tap(PadSquare);
+    Tap(PadL1);
+    Tap(PadCross);
+    ImeKeyboardView view;
+    Require(ImeReadKeyboardView_nid_postfix(view) && view.text == u"ghh" && view.caret == 2 && view.rows == 6 && view.columns == 10);
+    Require(std::u16string(buffer).empty());
+    Tap(PadR2);
+    Require(sceImeDialogGetStatus() == StatusFinished);
+    Require(EndStatus() == EndStatusOk);
+    Require(std::u16string(buffer) == u"ghh");
+    Require(!ImeCapturesPad_nid_postfix() && !ImeCapturesKeyboard_nid_postfix());
+    Require(!ImeReadKeyboardView_nid_postfix(view));
+    Close();
+
+    std::memcpy(buffer, u"Old", sizeof(u"Old"));
+    Open(param);
+    Pad(0);
+    Tap(PadCross);
+    Tap(PadCircle);
+    Require(sceImeDialogGetStatus() == StatusFinished);
+    Require(EndStatus() == EndStatusUserCanceled);
+    Require(std::u16string(buffer) == u"Old");
+    Require(!ImeCapturesPad_nid_postfix());
+    Close();
+
+    Open(param);
+    Pad(0);
+    Tap(PadCross);
+    Require(sceImeDialogAbort() == 0);
+    Require(EndStatus() == EndStatusAborted && !ImeCapturesPad_nid_postfix());
+    Tap(PadR2);
+    Require(std::u16string(buffer) == u"Old");
+    Close();
+
+    Open(param);
+    Pad(0);
+    Tap(PadCross);
+    Require(sceImeDialogTerm() == 0);
+    Require(sceImeDialogGetStatus() == StatusNone && !ImeCapturesPad_nid_postfix());
+    Open(param);
+    Pad(0);
+    Tap(PadCross);
+    Require(sceImeDialogForceClose() == 0);
+    Require(sceImeDialogGetStatus() == StatusNone && !ImeCapturesPad_nid_postfix());
+    Tap(PadR2);
+    Require(std::u16string(buffer) == u"Old");
+
+    buffer[0] = u'\0';
+    Open(param);
+    Pad(PadCross | PadR2);
+    Pad(PadCross | PadR2);
+    Require(sceImeDialogGetStatus() == StatusRunning);
+    Pad(0);
+    Tap(PadCross);
+    Type("ab");
+    Tap(PadCross);
+    Press(SDL_SCANCODE_RETURN);
+    Require(EndStatus() == EndStatusOk);
+    Require(std::u16string(buffer) == u"gabg");
+    Close();
+
+    std::memcpy(buffer, u"a", sizeof(u"a"));
+    const Param narrow = DialogParam(buffer, 2);
+    Open(narrow);
+    Pad(0);
+    Type("\xf0\x9f\x98\x80");
+    Tap(PadCross);
+    Tap(PadCross);
+    Tap(PadR2);
+    Require(EndStatus() == EndStatusOk);
+    Require(std::u16string(buffer) == u"ag");
+    Close();
+
+    buffer[0] = u'\0';
+    ExtendedParam noController{};
+    noController.disable_device = 0x00000001;
+    Require(sceImeDialogInit(&param, &noController) == 0);
+    Require(ImeCapturesPad_nid_postfix());
+    Pad(0);
+    Tap(PadCross);
+    Tap(PadR2);
+    Require(sceImeDialogGetStatus() == StatusRunning);
+    Press(SDL_SCANCODE_RETURN);
+    Require(EndStatus() == EndStatusOk && buffer[0] == u'\0');
+    Close();
+
+    ExtendedParam symbols{};
+    symbols.option = 0x00000002;
+    symbols.priority = 2;
+    Require(sceImeDialogInit(&param, &symbols) == 0);
+    Pad(0);
+    Require(SelectedKey() == u"!");
+    Tap(PadCross);
+    Tap(PadR2);
+    Require(std::u16string(buffer) == u"!");
+    Close();
 }

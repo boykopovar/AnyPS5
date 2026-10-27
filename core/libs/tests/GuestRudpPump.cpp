@@ -1,3 +1,4 @@
+#include "prx/libSceRudp/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
@@ -5,16 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceRudpInit_nid_postfix(void*, int);
-int APS5_VABI sceRudpEnd();
-int APS5_VABI sceRudpProcessEvents(std::uint64_t timeout);
-int APS5_VABI sceRudpNetFlush();
-int APS5_VABI sceRudpGetMaxSegmentSize(std::uint16_t*);
-int APS5_VABI sceRudpNetReceived(int socketId, const void* data, std::size_t dataSize, const void* sourceAddress, std::uint32_t sourceAddressSize);
-int APS5_VABI sceRudpEnableInternalIOThread2(std::uint32_t, std::uint32_t, std::uint64_t);
-}
 
 static void Require(bool value, int line) {
     if (!value) {
@@ -27,6 +18,7 @@ static void Require(bool value, int line) {
 int main() {
     constexpr int notInitialized = static_cast<int>(0x80770001);
     constexpr int invalidArgument = static_cast<int>(0x80770004);
+    constexpr int notAcceptable = static_cast<int>(0x80770011);
     std::uint16_t segmentSize = 0x5a5a;
     CHECK(sceRudpProcessEvents(0) == notInitialized);
     CHECK(sceRudpNetFlush() == notInitialized);
@@ -35,6 +27,7 @@ int main() {
     CHECK(sceRudpGetMaxSegmentSize(&segmentSize) == notInitialized);
     CHECK(segmentSize == 0x5a5a);
     CHECK(sceRudpGetMaxSegmentSize(nullptr) == notInitialized);
+    CHECK(sceRudpSetMaxSegmentSize(1200) == notInitialized);
 
     alignas(8) static unsigned char pool[0xC58];
     CHECK(sceRudpInit_nid_postfix(pool, sizeof(pool)) == 0);
@@ -48,6 +41,12 @@ int main() {
     std::uint16_t segment[3] = {0, 0, 0x5a5a};
     CHECK(sceRudpGetMaxSegmentSize(&segment[1]) == 0);
     CHECK(segment[0] == 0 && segment[1] == 1410 && segment[2] == 0x5a5a);
+    CHECK(sceRudpSetMaxSegmentSize(1200) == 0);
+    int context = -1;
+    CHECK(sceRudpCreateContext(nullptr, nullptr, &context) == 0);
+    CHECK(sceRudpSetMaxSegmentSize(1000) == notAcceptable);
+    CHECK(sceRudpTerminate(context) == 0);
+    CHECK(sceRudpSetMaxSegmentSize(1000) == 0);
     CHECK(sceRudpEnd() == 0);
 
     segmentSize = 0x5a5a;

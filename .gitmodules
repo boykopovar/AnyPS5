@@ -1,3 +1,6 @@
+[submodule "3rdparty/jxrlib"]
+	path = 3rdparty/jxrlib
+	url = https://github.com/4creators/jxrlib.git
 [submodule "3rdparty/SDL2"]
 	path = 3rdparty/SDL2
 	url = https://github.com/libsdl-org/SDL.git
@@ -22,6 +25,9 @@
 [submodule "3rdparty/ffmpeg-core"]
 	path = 3rdparty/ffmpeg-core
 	url = https://github.com/KytyPS5/ext-ffmpeg-core.git
+[submodule "3rdparty/opus"]
+	path = 3rdparty/opus
+	url = https://github.com/xiph/opus.git
 [submodule "3rdparty/freetype"]
 	path = 3rdparty/freetype
 	url = https://github.com/freetype/freetype.git
@@ -52,3 +58,12 @@
 [submodule "3rdparty/vgmstream"]
 	path = 3rdparty/vgmstream
 	url = https://github.com/vgmstream/vgmstream.git
+[submodule "3rdparty/ogg"]
+	path = 3rdparty/ogg
+	url = https://github.com/xiph/ogg.git
+[submodule "3rdparty/vorbis"]
+	path = 3rdparty/vorbis
+	url = https://github.com/xiph/vorbis.git
+[submodule "3rdparty/nghttp2"]
+	path = 3rdparty/nghttp2
+	url = https://github.com/nghttp2/nghttp2.git

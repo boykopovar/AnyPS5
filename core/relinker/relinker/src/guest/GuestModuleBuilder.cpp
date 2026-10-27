@@ -1,4 +1,5 @@
 #include <relinker/guest/GuestImage.hpp>
+#include <relinker/analysis/RelativeJumpTables.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
@@ -6,6 +7,7 @@
 #include <domain/ImportModule.hpp>
 #include <io/NativePath.hpp>
 #include <io/BufferUtils.hpp>
+#include <nid/NidCompute.hpp>
 #include <algorithm>
 #include <functional>
 #include <limits>
@@ -40,6 +42,37 @@ std::vector<std::string> ReadNeededNames(const Domain::SysVDynamicSection& dynam
         names.emplace_back(start, end);
     }
     return names;
+}
+
+std::string SymbolName(const Domain::SysVDynamicSection& dynamic, const std::size_t index) {
+    if (dynamic.DynSymData.size() % 24 != 0 || index >= dynamic.DynSymData.size() / 24) throw Domain::RelinkerException("Invalid symbol index");
+    const auto nameOffset = Io::ReadU32(dynamic.DynSymData, index * 24);
+    if (nameOffset >= dynamic.DynStrData.size()) throw Domain::RelinkerException("Invalid symbol name offset");
+    const auto start = dynamic.DynStrData.begin() + nameOffset;
+    const auto end = std::find(start, dynamic.DynStrData.end(), 0);
+    if (end == dynamic.DynStrData.end()) throw Domain::RelinkerException("Unterminated symbol name");
+    return std::string(start, end);
+}
+
+std::set<std::string> ExportedNames(const Domain::SysVDynamicSection& dynamic) {
+    std::set<std::string> names;
+    for (std::size_t index = 1; index < dynamic.DynSymData.size() / 24; ++index) {
+        const auto info = dynamic.DynSymData[index * 24 + 4];
+        const auto visibility = dynamic.DynSymData[index * 24 + 5] & 3;
+        if (Io::ReadU16(dynamic.DynSymData, index * 24 + 6) != 0 && (info >> 4) != 0 && visibility != 1 && visibility != 2)
+            names.insert(SymbolName(dynamic, index));
+    }
+    return names;
+}
+
+void BindNamedImportsByNid(GuestImage& image, const std::set<std::string>& kept) {
+    for (const auto index : image.NamedImports) {
+        const auto name = SymbolName(image.Dynamic, index);
+        if (name.ends_with(GuestSymbolSuffix) || kept.contains(name)) continue;
+        if (image.Dynamic.DynStrData.size() > std::numeric_limits<std::uint32_t>::max()) throw Domain::RelinkerException("Guest string table too large");
+        Io::WriteU32(image.Dynamic.DynSymData, index * 24, static_cast<std::uint32_t>(image.Dynamic.DynStrData.size()));
+        Io::AppendString(image.Dynamic.DynStrData, Nid::ComputeNid(name, ""));
+    }
 }
 
 std::string FoldFilename(std::string name) {
@@ -257,6 +290,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             }
             if (provider != nullptr) {
                 if ((symbol.Info & 15) != 0 && (symbol.Info & 15) != provider->Type) throw Domain::RelinkerException("Guest import/export type mismatch: " + symbol.Name);
+                if (provider->Type == 6 && (symbol.Info & 15) == 0 && referencedSymbols.contains(symbolIndex)) throw Domain::RelinkerException("Non-TLS relocation against guest TLS export: " + symbol.Name);
                 if (provider->Provider != index && referencedSymbols.contains(symbolIndex)) dependencies[index].insert(provider->Provider);
             } else if (windows && (symbol.Info & 15) == 6) throw Domain::RelinkerException("Windows guest TLS import requires a guest TLS export: " + symbol.Name);
             if (provider == nullptr) systemImports[index].insert(symbolIndex);
@@ -292,12 +326,14 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         return directory == "." ? std::string("app0") : "app0/" + directory;
     };
     if (!windows) {
+        const auto executableExports = macos ? std::set<std::string>{} : ExportedNames(dynamic);
         for (auto& image : images) {
             for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
                 const auto& symbol = image.Symbols[index];
                 const bool exported = symbol.Section != 0 && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
                 if (((symbol.Section == 0 && !declaresHost(symbol.Library)) || exported) && exports.contains(symbol.Name)) rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, symbol.Name);
             }
+            if (!macos) BindNamedImportsByNid(image, executableExports);
         }
     }
     std::vector<std::size_t> order;
@@ -314,17 +350,18 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::vector<std::string> hostLibraries;
     std::vector<std::vector<std::string>> moduleHostLibraries(images.size());
     std::set<std::string> uniqueHosts;
+    const auto hostLibrary = [&](const std::string& name) { return windows || macos ? name : Domain::NeededLibraryName(name); };
     const auto addHost = [&](const std::string& name, const bool startup) {
         if (findGuest(name) != guestNames.end()) return;
         if (name.empty() || name.find_first_of("/\\:$") != std::string::npos) throw Domain::RelinkerException("Invalid host dependency: " + name);
-        if (startup && uniqueHosts.insert(name).second) hostLibraries.push_back(name);
+        if (const auto host = hostLibrary(name); startup && uniqueHosts.insert(host).second) hostLibraries.push_back(host);
     };
     for (const auto& name : neededNames) addHost(name, true);
     for (std::size_t index = 0; index < images.size(); ++index) {
         auto& hosts = moduleHostLibraries[index];
         for (const auto& dependency : images[index].Dependencies) {
             addHost(dependency, windows || !deferred(index));
-            if (findGuest(dependency) == guestNames.end()) hosts.push_back(dependency);
+            if (findGuest(dependency) == guestNames.end()) hosts.push_back(hostLibrary(dependency));
         }
         if (!windows && !macos && images[index].HasInit) {
             if (std::find(hosts.begin(), hosts.end(), "libkernel.prx") == hosts.end()) hosts.push_back("libkernel.prx");
@@ -343,7 +380,12 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     };
     for (const auto index : order) if (!windows && !deferred(index)) addNeeded("$ORIGIN/" + appDirectory(images[index]) + "/" + images[index].OutputName);
     for (const auto& name : hostLibraries) addNeeded(name);
-    if (!windows && runPath != "$ORIGIN" && !runPath.starts_with("$ORIGIN/") && !runPath.starts_with("$ORIGIN:") && !runPath.starts_with('/')) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
+    if (!windows) for (std::size_t begin = 0; begin <= runPath.size();) {
+        const auto end = std::min(runPath.find(':', begin), runPath.size());
+        const auto component = std::string_view(runPath).substr(begin, end - begin);
+        if (component != "$ORIGIN" && !component.starts_with("$ORIGIN/") && !component.starts_with('/')) throw Domain::RelinkerException("Guest Linux run path must be absolute or begin with $ORIGIN");
+        begin = end + 1;
+    }
     const auto outputDirectory = outputPath.parent_path().lexically_normal();
     std::vector<GuestArtifact> artifacts;
     for (const auto index : order) {
@@ -359,14 +401,26 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         if (!image.PatchedRanges.empty()) GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.RelaData = image.Dynamic.RelaData, .RelaPltData = image.Dynamic.RelaPltData});
         const bool sceImage = std::any_of(image.Headers.begin(), image.Headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x61000000; });
-        const auto unwindFunctions = sceImage ? UnusedNidFilter::ReadExceptionFunctions(image.Bytes, image.Headers, {}, {}) : std::vector<UnusedNidFilter::StrictCodeRegion>{};
+        const bool hasEhFrame = sceImage || std::any_of(image.Headers.begin(), image.Headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x6474e550; });
+        const auto unwindFunctions = hasEhFrame ? UnusedNidFilter::ReadExceptionFunctions(image.Bytes, image.Headers, {}, {}) : std::vector<UnusedNidFilter::StrictCodeRegion>{};
+        std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
+        for (const auto& function : unwindFunctions) unwindRanges.emplace_back(function.Begin, function.End);
+        std::sort(unwindRanges.begin(), unwindRanges.end());
         for (const auto& header : codeHeaders) {
             std::vector<std::uint8_t> code(image.Bytes.begin() + header.Offset, image.Bytes.begin() + header.Offset + header.FileSize);
             if (sceImage)
                 if (const auto end = FindSceCodeEnd(code, header.MappedAddress, unwindFunctions, image.Got, image.Dynamic.RelaPltData.size()))
                     code.resize(*end - header.MappedAddress);
-            const auto unwindRanges = sceImage ? SceUnwindRanges(code, header.MappedAddress, unwindFunctions) : std::vector<CodeRange>{};
-            for (const auto offset : syscallScanner.ScanCodeSectionForSyscalls(code, header.MappedAddress, code.size(), Io::Utf8Path(image.SourcePath), unwindRanges)) {
+            auto scanCode = code;
+            for (const auto& table : FindRelativeJumpTables(code, header.MappedAddress, unwindRanges)) {
+                if (table.Begin >= header.MappedAddress && table.End >= table.Begin) {
+                    const auto maskEnd = std::min<std::size_t>(table.End - header.MappedAddress, scanCode.size());
+                    const auto maskBegin = std::min<std::size_t>(table.Begin - header.MappedAddress, maskEnd);
+                    std::fill(scanCode.begin() + static_cast<std::ptrdiff_t>(maskBegin), scanCode.begin() + static_cast<std::ptrdiff_t>(maskEnd), std::uint8_t{0x90});
+                }
+            }
+            const auto scanUnwindRanges = sceImage ? SceUnwindRanges(code, header.MappedAddress, unwindFunctions) : std::vector<CodeRange>{};
+            for (const auto offset : syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges)) {
                 if (offset > code.size() || code.size() - offset < 2u)
                     throw Domain::RelinkerException("Syscall trap patch exceeds guest executable segment", header.MappedAddress + offset);
                 if (!image.PatchedRanges.empty()) {
@@ -404,7 +458,10 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 needed.push_back("$ORIGIN/" + dependencyPath.lexically_relative(image.SourcePath.parent_path()).generic_string());
             }
             needed.insert(needed.end(), moduleHostLibraries[index].begin(), moduleHostLibraries[index].end());
-            output = macos ? Elfpatcher::GuestModuleWriter().WriteMacOs(image, needed, guestRunPath, message) : Elfpatcher::GuestModuleWriter().WriteLinux(image, needed, guestRunPath);
+            const auto directory = image.SourcePath.parent_path();
+            const bool deferLinuxStart = isRuntime(index) && directory != root / "sce_module" &&
+                directory != root / "sce_modules" && directory != root / "prx";
+            output = macos ? Elfpatcher::GuestModuleWriter().WriteMacOs(image, needed, guestRunPath, message) : Elfpatcher::GuestModuleWriter().WriteLinux(image, needed, guestRunPath, deferLinuxStart);
         }
         if (windows) {
             for (const auto& [name, provider] : guestNames) {
@@ -425,11 +482,40 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         dynamic.GuestModules.push_back(std::move(runtime));
         std::vector<std::string> neededLibraries;
         for (const auto& name : image.Dependencies)
-            if (findGuest(name) == guestNames.end()) neededLibraries.push_back(name);
+            if (findGuest(name) == guestNames.end()) neededLibraries.push_back(hostLibrary(name));
         artifacts.push_back({target, std::move(output), std::move(imports), image.SourcePath, std::move(neededLibraries)});
         progress.Report({Domain::ProgressStage::Modules, Io::Utf8Path(image.SourcePath), artifacts.size(), order.size()});
     }
     return artifacts;
 }
 
+
+std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules) {
+    std::map<std::size_t, std::string> sonames;
+    const auto soname = [&](std::size_t index) -> const std::string& {
+        const auto [found, inserted] = sonames.try_emplace(index);
+        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true).Soname;
+        return found->second;
+    };
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> skipped;
+    std::vector<bool> copies(modules.size());
+    for (std::size_t copy = 0; copy < modules.size(); ++copy) {
+        const auto& path = modules[copy].Path;
+        const auto name = Io::Utf8Path(path.filename());
+        for (std::size_t original = 0; original < modules.size(); ++original) {
+            const auto& kept = modules[original].Path;
+            const auto prefix = Io::Utf8Path(kept.filename());
+            if (kept.parent_path() != path.parent_path() || prefix.size() >= name.size() || !name.starts_with(prefix)) continue;
+            if (soname(copy).empty() || soname(copy) != soname(original)) continue;
+            copies[copy] = true;
+            skipped.emplace_back(path, kept);
+            break;
+        }
+    }
+    std::vector<GuestModuleInput> remaining;
+    for (std::size_t index = 0; index < modules.size(); ++index)
+        if (!copies[index]) remaining.push_back(std::move(modules[index]));
+    modules = std::move(remaining);
+    return skipped;
+}
 }

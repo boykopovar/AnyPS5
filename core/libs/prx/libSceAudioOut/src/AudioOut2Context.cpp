@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -105,6 +106,10 @@ static void DeviceCallback(void* userdata, Uint8* stream, int length);
 static void OpenDevice(AudioOut2Context& context) {
     if (InitializeSdlAudio_nid_no_patch() < 0) {
         AUDIOOUT2_TRACE("SDL audio init failed: %s\n", SDL_GetError());
+        return;
+    }
+    if (SdlAudioReportsNoOutputEndpoint(SDL_GetCurrentAudioDriver(), SDL_GetNumAudioDevices(0))) {
+        AUDIOOUT2_TRACE("SDL reports no WASAPI output endpoint\n");
         return;
     }
     SDL_AudioSpec desired{};

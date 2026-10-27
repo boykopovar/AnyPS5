@@ -1,4 +1,6 @@
 from pathlib import Path
+import contextlib
+import io
 import os
 import shutil
 import subprocess
@@ -13,6 +15,77 @@ import check_test_registration
 
 
 class RegistrationTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the argument oracle")
+    def test_quoted_semicolons_match_real_cmake_arguments(self):
+        values = ["left" + "\\" * count + ";right" for count in range(9)]
+        values += [r"\;", r"a\;b\;c", r"a;\;b", "a\\\n\\;b", "a\\\r\n\\;b", "\u00e9\\;tail"]
+        commands = [f'add_test("case{index}" "{value}")\n' for index, value in enumerate(values)]
+        commands += ['add_test("bracket" [=[a\\;b]=])\n']
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "oracle.cmake"
+            script.write_bytes(('cmake_minimum_required(VERSION 3.20)\n'
+                                'function(add_test name value)\n'
+                                'string(HEX "${value}" encoded)\n'
+                                'file(WRITE "${CMAKE_CURRENT_LIST_DIR}/${name}.hex" "${encoded}")\n'
+                                'endfunction()\n' + "".join(commands)).encode("utf-8"))
+            subprocess.run(["cmake", "-P", str(script)], capture_output=True, text=True, check=True)
+            for content in commands:
+                command, arguments = list(check_test_registration.commands(content))[0]
+                with self.subTest(name=arguments[0]):
+                    actual = bytes.fromhex((root / f"{arguments[0]}.hex").read_text(encoding="ascii")).decode("utf-8")
+                    self.assertEqual((command, arguments), ("add_test", [arguments[0], actual]))
+
+    @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the argument oracle")
+    def test_quoted_continuations_follow_cmake(self):
+        for ending, backslashes in (("\n", 1), ("\r\n", 1), ("\n", 2), ("\n", 3), ("\n", 4)):
+            with self.subTest(ending=repr(ending), backslashes=backslashes), tempfile.TemporaryDirectory() as directory:
+                content = 'add_test("real" "tools/tests/test_' + '\\' * backslashes + ending + 'bounds.py")\n'
+                script = Path(directory) / "oracle.cmake"
+                script.write_bytes(('function(add_test)\n'
+                                    'file(WRITE "${CMAKE_CURRENT_LIST_DIR}/argument.txt" "${ARGV1}")\n'
+                                    'endfunction()\n' + content).encode())
+                subprocess.run(["cmake", "-P", str(script)], capture_output=True, text=True, check=True)
+                actual = (Path(directory) / "argument.txt").read_text()
+                expected = "tools/tests/test_" + '\\' * (backslashes // 2) + ("\n" if backslashes % 2 == 0 else "") + "bounds.py"
+                self.assertEqual(actual, expected)
+                self.assertEqual(list(check_test_registration.commands(content)), [("add_test", ["real", actual])])
+                if backslashes == 1:
+                    (Path(directory) / "CMakeLists.txt").write_bytes(content.encode())
+                    self.assertEqual(check_test_registration.run_scripts(Path(directory), ["CMakeLists.txt"]), {actual})
+
+    def test_literal_escaped_newline_and_bracket_continuation_are_preserved(self):
+        quoted = r'add_test("real" "a\nb")' + '\n'
+        bracket = 'add_test("real" [=[a' + '\\' + '\n' + 'b]=])\n'
+        self.assertEqual(list(check_test_registration.commands(quoted)), [("add_test", ["real", "a\nb"])])
+        self.assertEqual(list(check_test_registration.commands(bracket)), [("add_test", ["real", "a\\\nb"])])
+
+    def test_bracket_arguments_ignore_only_one_initial_newline(self):
+        values = (("path", "path"), ("\npath", "path"), ("\n\npath", "\npath"),
+                  ("\n path", " path"), (" \npath", " \npath"), ("\\npath", "\\npath"),
+                  ("\n", ""), ("\npath\n", "path\n"))
+        for equals in ("", "=", "==="):
+            for content, expected in values:
+                with self.subTest(equals=equals, content=content):
+                    command = f"subdirs([{equals}[{content}]{equals}])\n"
+                    self.assertEqual(list(check_test_registration.commands(command)), [("subdirs", [expected])])
+        self.assertEqual(list(check_test_registration.commands('subdirs("\npath")\n')),
+                         [("subdirs", ["\npath"])])
+
+    def test_bracket_initial_newlines_do_not_hide_disabled_tests(self):
+        content = ('add_test([=[\nbounds]=] "/build/tests/buffer_bounds_tests")\n'
+                   'set_tests_properties(bounds PROPERTIES DISABLED [=[\nTRUE]=])\n')
+        self.assertNotIn("buffer_bounds_tests", self.registered(content))
+
+    def test_bracket_initial_newline_in_subdirectory_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "nested").mkdir()
+            (build / "CTestTestfile.cmake").write_text('subdirs([=[\nnested]=])\n', encoding="utf-8")
+            (build / "nested/CTestTestfile.cmake").write_text(
+                'add_test(bounds "/build/tests/buffer_bounds_tests")\n', encoding="utf-8")
+            self.assertEqual(check_test_registration.registered(build), {"buffer_bounds_tests"})
+
     def test_literal_prefixes_cannot_expose_commands_inside_arguments(self):
         prefixes = (r"\#", r"\(", '"prefix" ', '"" ', '"line\nprefix" ', "[[prefix]] ",
                     "[=[prefix]=] ", "[===[line\nprefix]===] ")
@@ -309,6 +382,11 @@ class ScriptRegistrationTests(unittest.TestCase):
             "core/relinker/CMakeLists.txt": "if(WIN32)\n    add_test(NAME a COMMAND ${Python3_EXECUTABLE}\n        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_a.py)\nendif()\n",
             "core/relinker/relinker/tests/test_a.py": ""}), [])
 
+    def test_script_in_bracket_argument_with_initial_newline_is_registered(self):
+        self.assertEqual(self.unrun({
+            "CMakeLists.txt": "add_test(NAME a COMMAND python [=[\ntools/tests/test_a.py]=])\n",
+            "tools/tests/test_a.py": ""}), [])
+
     def test_unregistered_script_is_reported(self):
         self.assertEqual(self.unrun({
             "CMakeLists.txt": "add_test(NAME a COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_a.py)\n",
@@ -330,6 +408,22 @@ class ScriptRegistrationTests(unittest.TestCase):
             ".github/workflows/web.yml": "on:\n  pull_request:\n    paths:\n      - tools/test_paths.py\n",
             "tools/test_web.py": "", "tools/test_paths.py": ""}), ["tools/test_paths.py"])
 
+    def test_workflow_script_inside_a_longer_name_does_not_run(self):
+        self.assertEqual(self.unrun({
+            ".github/workflows/build.yml": "jobs:\n  t:\n    steps:\n      - run: python3 tools/check_test_registration.py build\n"
+                                           "      - run: python3 tools/run_test_a.py\n",
+            "tools/check_test_registration.py": "", "tools/run_test_a.py": "",
+            "tools/tests/test_registration.py": "", "tools/tests/test_a.py": ""}),
+            ["tools/tests/test_a.py", "tools/tests/test_registration.py"])
+
+    def test_workflow_script_with_a_longer_suffix_does_not_run(self):
+        self.assertEqual(self.unrun({
+            ".github/workflows/ci.yml": "jobs:\n  t:\n    steps:\n      - run: python3 tools/tests/test_a.pyc\n"
+                                        "      - run: python3 tools/tests/test_b.py.bak\n"
+                                        "      - run: python3 \"./tools/tests/test_c.py\" --quick\n",
+            "tools/tests/test_a.py": "", "tools/tests/test_b.py": "", "tools/tests/test_c.py": ""}),
+            ["tools/tests/test_a.py", "tools/tests/test_b.py"])
+
     def test_commented_workflow_line_does_not_run_a_script(self):
         self.assertEqual(self.unrun({
             ".github/workflows/ci.yml": "# python3 tools/tests/test_f.py\njobs:\n  t:\n    steps:\n      # python3 tools/tests/test_a.py\n"
@@ -341,6 +435,100 @@ class ScriptRegistrationTests(unittest.TestCase):
             "tools/tests/test_d.py": "", "tools/tests/test_e.py": "", "tools/tests/test_f.py": ""}),
             ["tools/tests/test_a.py", "tools/tests/test_b.py", "tools/tests/test_c.py", "tools/tests/test_d.py",
              "tools/tests/test_f.py"])
+
+    def test_workflow_metadata_does_not_register_scripts(self):
+        script = "tools/tests/test_python_probe.py"
+        job = "jobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n"
+        echo = "      - run: echo done\n"
+        workflows = (
+            f"name: python3 {script}\n" + job + echo,
+            f"env:\n  DESCRIPTION: python3 {script}\n" + job + echo,
+            job + f"      - name: python3 {script}\n        run: echo done\n",
+            job + f"      - env:\n          DESCRIPTION: python3 {script}\n        run: echo done\n",
+            job + f"      - env:\n          run: python3 {script}\n        run: echo done\n",
+            job + f"      - uses: ./{script}\n",
+            job.replace("    steps:\n", "    defaults:\n      run:\n        shell: bash\n"
+                        f"        working-directory: {script}\n    steps:\n") + echo,
+            f"env:\n  DESCRIPTION: |\n    jobs:\n      fake:\n        steps:\n          - run: python3 {script}\n" + job + echo,
+        )
+        for workflow in workflows:
+            with self.subTest(workflow=workflow):
+                self.assertEqual(self.unrun({".github/workflows/ci.yml": workflow, script: ""}), [script])
+
+    def test_workflow_run_scalars_with_defaults_register_scripts(self):
+        header = "jobs:\n  t:\n    defaults:\n      run:\n        shell: bash\n    steps:\n"
+        steps = ("      - run: python3 tools/tests/test_inline.py\n"
+                 "      - name: named step\n        shell: bash\n        run: |\n"
+                 "          python3 \"./tools/tests/test_block.py\"\n"
+                 "      - shell: bash\n        run: 'python tools/tests/test_named.py'\n")
+        for body in (steps, steps.replace("      - ", "    - ").replace("        run:", "      run:")
+                     .replace("        shell:", "      shell:").replace("          python", "        python")):
+            source = header + body
+            for quote in ("", "'", '"'):
+                workflow = source
+                for key in ("jobs", "t", "steps", "run"):
+                    workflow = workflow.replace(f"{key}:", f"{quote}{key}{quote}:")
+                with self.subTest(workflow=workflow):
+                    self.assertEqual(self.unrun({".github/workflows/ci.yml": workflow,
+                                                "tools/tests/test_inline.py": "", "tools/tests/test_block.py": "",
+                                                "tools/tests/test_named.py": ""}), [])
+
+    def test_workflow_run_block_stops_at_sibling_metadata(self):
+        workflow = ("jobs:\n  t:\n    steps:\n      - run: |\n"
+                    "          python3 tools/tests/test_actual.py\n"
+                    "        name: python3 tools/tests/test_name.py\n"
+                    "        env:\n          DESCRIPTION: python3 tools/tests/test_env.py\n"
+                    "      - name: python3 tools/tests/test_later.py\n        run: echo done\n")
+        self.assertEqual(self.unrun({".github/workflows/ci.yml": workflow,
+                                    "tools/tests/test_actual.py": "", "tools/tests/test_name.py": "",
+                                    "tools/tests/test_env.py": "", "tools/tests/test_later.py": ""}),
+                         ["tools/tests/test_env.py", "tools/tests/test_later.py", "tools/tests/test_name.py"])
+
+
+class CheckRegistrationCliTests(unittest.TestCase):
+    def test_cache_with_utf8_bom_is_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            cache = build / "CMakeCache.txt"
+            cache.write_text("\ufeffCMAKE_MAKE_PROGRAM:FILEPATH=ninja\nCMAKE_GENERATOR:INTERNAL=Ninja\n", encoding="utf-8")
+            output = "tests/dummy_tests: EXECUTABLE\n"
+            with patch.object(check_test_registration.subprocess, "run", side_effect=lambda command, **kwargs: SimpleNamespace(
+                    stdout="Build file encoding: UTF-8\n" if command[-1] == "wincodepage" else output)):
+                names = check_test_registration.built(build)
+                self.assertEqual(names, {"dummy_tests"})
+
+    def test_main_scripts_with_explicit_argv(self):
+        with patch.object(check_test_registration, "unrun_scripts", return_value=(["test_a.py"], [])):
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = check_test_registration.main(["--scripts"])
+            self.assertEqual(code, 0)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(check_test_registration.sys, "stdout", out), patch.object(check_test_registration.sys, "stderr", err):
+            try:
+                check_test_registration.main(["--invalid-argument"])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

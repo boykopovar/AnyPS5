@@ -173,15 +173,21 @@ void Driver::learnPendingRelocation() {
     }
     if (pending.alias == 0) return;
     if (drawAliases.size() >= MaxAliases) drawRelocationCounters.evicted += dropEveryOther(drawAliases);
-    drawAliases[pending.alias] = inserted->second;
+    drawAliases[pending.alias] = pending.key;
 }
 
 void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches) {
     auto& counters = drawRelocationCounters;
     ++counters.lookups;
     const auto found = drawAliases.find(alias);
-    if (found == drawAliases.end() || found->second->decode == nullptr) return;
-    const auto donor = found->second;
+    if (found == drawAliases.end()) return;
+    const auto cached = drawCache.find(found->second);
+    if (cached == drawCache.end()) {
+        drawAliases.erase(found);
+        return;
+    }
+    if (cached->second->decode == nullptr) return;
+    const auto donor = cached->second;
     const auto& programs = donor->decode->programs;
     if (donor->stages.size() != programs.size()) return;
     struct Move {

@@ -145,8 +145,8 @@ RdnaOperand TranslationContext::plainOperand(const RdnaOperand& operand) {
     return result;
 }
 
-IrU32 TranslationContext::flushF32Denormal(IrU32 bits) {
-    if ((f32DenormalFlush & 1u) == 0u) return bits;
+IrU32 TranslationContext::flushF32Denormal(IrU32 bits, std::uint32_t flushBit) {
+    if ((f32DenormalFlush & flushBit) == 0u) return bits;
     if (bits.Value().HasImmediate()) {
         const std::uint32_t value = bits.Value().ImmediateU32();
         return (value & 0x7f800000u) == 0u ? IrU32(ir.Constant(value & 0x80000000u)) : bits;
@@ -156,7 +156,7 @@ IrU32 TranslationContext::flushF32Denormal(IrU32 bits) {
 }
 
 IrF32 TranslationContext::flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend, bool afterRounding) {
-    if ((f32DenormalFlush & 2u) == 0u || keepsProductOutOfTinyRange(*lhs) || keepsProductOutOfTinyRange(*rhs)) return IrF32(*product);
+    if ((f32DenormalFlush & 2u) == 0u || ((f32DenormalFlush & 1u) != 0u && (keepsProductOutOfTinyRange(*lhs) || keepsProductOutOfTinyRange(*rhs)))) return IrF32(*product);
     IrValue& lhsBits = ir.BitCastU32(*lhs);
     IrValue& rhsBits = ir.BitCastU32(*rhs);
     const std::uint32_t roundMode = floatMode.has_value() ? floatMode->floatMode & 3u : 0u;
@@ -249,7 +249,7 @@ void TranslationContext::writeOperand(const RdnaOperand& operand, IrValue* value
     }
     IrType type = value->Type();
     if (type == IrType::F32) {
-        if ((f32DenormalFlush & 2u) != 0u) value = &ir.BitCastF32(flushF32Denormal(IrU32(ir.BitCastU32(*value))).Value());
+        if ((f32DenormalFlush & 2u) != 0u) value = &ir.BitCastF32(flushF32Denormal(IrU32(ir.BitCastU32(*value)), 2u).Value());
         value = &applyF32ResultModifiers(operand, IrF32(*value)).Value();
         type = IrType::F32;
     }

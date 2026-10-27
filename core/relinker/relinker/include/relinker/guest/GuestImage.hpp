@@ -9,6 +9,7 @@
 #include <domain/IProgress.hpp>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Relinker {
@@ -57,6 +58,7 @@ struct GuestImage {
     std::uint64_t Got = 0;
     bool UsePlatformTlsResolver = true;
     bool Symbolic = false;
+    std::vector<std::size_t> NamedImports;
 };
 
 class GuestImageReader {
@@ -77,6 +79,8 @@ struct GuestModuleInput {
     std::vector<std::uint8_t> Bytes;
     std::vector<GamePatch::PatchedRange> PatchedRanges;
 };
+
+std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules);
 
 class GuestModuleBuilder {
 public:

@@ -180,8 +180,11 @@ struct Context {
     // Nonzero when VK_EXT_external_memory_host is enabled: the required host pointer alignment.
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
+    bool discreteGpu = false;
     bool dmaBufImport = false;
     bool sparseBinding = false;
+    bool sparseResidencyBuffer = false;
+    bool sparseResidencyAliased = false;
     std::uint32_t queueFamily = 0;
     std::uint32_t sparseFamily = VK_QUEUE_FAMILY_IGNORED;
     VkQueue sparseQueue = VK_NULL_HANDLE;
@@ -191,7 +194,7 @@ struct Context {
     std::uint32_t settleFamily = 0;
     std::mutex* settleQueueMutex = nullptr;
     PFN_vkGetPhysicalDeviceMemoryProperties2 memoryProperties2 = nullptr;
-    VkDeviceSize (*cacheReclaim)(VkDeviceSize bytes) = nullptr;
+    VkDeviceSize (*cacheReclaim)(VkDeviceSize bytes, bool newImage) = nullptr;
     RenderCache* renderCache = nullptr;
     DrawQueue* drawQueue = nullptr;
     GraphicsPipelineCache* graphicsPipelines = nullptr;
@@ -210,12 +213,16 @@ struct Context {
     bool depthBounds = false;
     bool depthBiasClamp = false;
     bool dualSrcBlend = false;
+    bool logicOp = false;
     bool samplerFilterMinmax = false;
     bool nonSeamlessCubeMap = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
+    VkSampleCountFlags truncatedCoverageSampleCounts = 0;
+    bool mixedAttachmentSamples = false;
     bool conservativeRasterization = false;
     bool meshWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
+    bool exactRobustLoads = false;
     // The device's list of recorded dispatches whose copied written buffers await a CPU write-back
     // (VulkanDevice's State::copiedWriters; the draw counterpart is DrawCopiedWriters): an indirect
     // draw whose records one of them produces reads them on the CPU. Null in tests.
@@ -234,14 +241,17 @@ struct Context {
     std::uint32_t imageTableCapacity = 0;
     std::uint32_t samplerTableCapacity = 0;
     bool individuallyFreeDescriptorSets = false;
+    bool tessellationPipelineCache = true;
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
+    bool largePoints = false;
     bool sampleRateShading = false;
     bool fillModeNonSolid = false;
     bool maintenance5 = false;
     bool storageImageMultisample = false;
     bool storageImageWriteWithoutFormat = false;
+    bool imageFormatList = false;
     bool shaderClipDistance = false;
     bool shaderCullDistance = false;
     bool nullDescriptors = false;
@@ -253,6 +263,7 @@ struct Context {
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
     bool pipelineExecutableInfo = false;
+    bool maintenance8 = false;
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
     std::uint32_t srgbDecodeFormats = 0;

@@ -1,18 +1,8 @@
+#include "prx/libSceWebBrowserDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceWebBrowserDialogInitialize(void);
-int APS5_VABI sceWebBrowserDialogTerminate(void);
-int APS5_VABI sceWebBrowserDialogOpen(const void* param);
-int APS5_VABI sceWebBrowserDialogOpenForPredeterminedContent(const void* param, const WebBrowserDialogAllowList* allowList);
-int APS5_VABI sceWebBrowserDialogClose(void);
-int APS5_VABI sceWebBrowserDialogGetStatus(void);
-int APS5_VABI sceWebBrowserDialogUpdateStatus(void);
-int APS5_VABI sceWebBrowserDialogGetResult(WebBrowserDialogResult* result);
-}
 
 namespace {
 
@@ -37,9 +27,13 @@ int main() {
     result.result = 0x5a5a5a5a;
 
     Require(sceWebBrowserDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogResetCookie(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
     Require(sceWebBrowserDialogClose() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(sceWebBrowserDialogOpen(param) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogGetResult(&result) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(result.result == 0x5a5a5a5a);
 
@@ -52,6 +46,8 @@ int main() {
 
     Require(sceWebBrowserDialogTerminate() == 0);
     Require(sceWebBrowserDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
 
     Require(sceWebBrowserDialogInitialize() == 0);
@@ -67,6 +63,8 @@ int main() {
     Require(sceWebBrowserDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceWebBrowserDialogTerminate() == 0);
     Require(sceWebBrowserDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
 
     Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);

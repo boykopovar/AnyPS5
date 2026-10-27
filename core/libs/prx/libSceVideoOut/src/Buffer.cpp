@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/Buffer.hpp"
 #include <cstdio>
 #include <cstring>
 #include <mutex>

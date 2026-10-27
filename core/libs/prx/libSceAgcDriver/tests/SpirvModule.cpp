@@ -1,5 +1,7 @@
 #include "SpirvBackend/SpirvModule.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include "Recompiler.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <exception>
@@ -298,6 +300,92 @@ void testIdsBeyondTheBoundAreRejected() {
     check(rejected, "a module whose ids reach its bound was specialized");
 }
 
+void testPrivateCompositeTableLoadFolding() {
+    for (const auto storageClass : {spv::StorageClassPrivate, spv::StorageClassFunction}) {
+        for (const auto accessOp : {spv::OpAccessChain, spv::OpInBoundsAccessChain}) {
+            const auto build = [&](bool dynamicIndex, bool storeThroughChain) {
+                SpirvModule module;
+                module.EmitCapability(spv::CapabilityShader);
+                const auto typeVoid = module.Type(spv::OpTypeVoid);
+                const auto typeBool = module.Type(spv::OpTypeBool);
+                const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
+                const auto falseVal = module.Constant(spv::OpConstantFalse, typeBool);
+                const auto zero = module.Constant(spv::OpConstant, typeU32, 0u);
+                const auto one = module.Constant(spv::OpConstant, typeU32, 1u);
+                const auto three = module.Constant(spv::OpConstant, typeU32, 3u);
+                const auto sixteen = module.Constant(spv::OpConstant, typeU32, 16u);
+                const auto twenty = module.Constant(spv::OpConstant, typeU32, 20u);
+                const auto thirty = module.Constant(spv::OpConstant, typeU32, 30u);
+                const auto typeArray = module.Type(spv::OpTypeArray, typeU32, three);
+                const auto initial = module.Constant(spv::OpConstantComposite, typeArray, std::vector<std::uint32_t>{sixteen, twenty, thirty});
+                const auto typeInputPtr = module.Type(spv::OpTypePointer, spv::StorageClassInput, typeU32);
+                const auto typeTablePtr = module.Type(spv::OpTypePointer, storageClass, typeArray);
+                const auto typeElementPtr = module.Type(spv::OpTypePointer, storageClass, typeU32);
+                const auto typePrivatePtr = module.Type(spv::OpTypePointer, spv::StorageClassPrivate, typeU32);
+                const auto typeFunction = module.Type(spv::OpTypeFunction, typeVoid);
+                const auto input = module.DefineGlobalVariable(typeInputPtr, spv::StorageClassInput);
+                const auto table = storageClass == spv::StorageClassPrivate
+                    ? module.DefineInitializedGlobalVariable(typeTablePtr, spv::StorageClassPrivate, initial)
+                    : module.AllocateId();
+                const auto output = module.DefineGlobalVariable(typePrivatePtr, spv::StorageClassPrivate);
+                const auto mainId = module.AllocateId();
+                const auto lane = module.AllocateId();
+                const auto rawCond = module.AllocateId();
+                const auto cond = module.AllocateId();
+                const auto baseIndex = module.AllocateId();
+                const auto index = module.AllocateId();
+                const auto element = module.AllocateId();
+                const auto loaded = module.AllocateId();
+                const auto sum = module.AllocateId();
+                module.AddFunction(spv::OpFunction, typeVoid, mainId, spv::FunctionControlMaskNone, typeFunction);
+                module.AddFunction(spv::OpLabel, module.AllocateId());
+                if (storageClass == spv::StorageClassFunction) module.AddFunction(spv::OpVariable, typeTablePtr, table, spv::StorageClassFunction, initial);
+                module.AddFunction(spv::OpLoad, typeU32, lane, input);
+                if (storeThroughChain) {
+                    const auto writePtr = module.AllocateId();
+                    module.AddFunction(accessOp, typeElementPtr, writePtr, table, zero);
+                    module.AddFunction(spv::OpStore, writePtr, lane);
+                }
+                module.AddFunction(spv::OpUGreaterThan, typeBool, rawCond, lane, zero);
+                module.AddFunction(spv::OpLogicalOr, typeBool, cond, rawCond, falseVal);
+                module.AddFunction(spv::OpIAdd, typeU32, baseIndex, one, one);
+                module.AddFunction(spv::OpSelect, typeU32, index, cond, baseIndex, baseIndex);
+                module.AddFunction(accessOp, typeElementPtr, element, table, dynamicIndex ? lane : index);
+                module.AddFunction(spv::OpLoad, typeU32, loaded, element);
+                module.AddFunction(spv::OpIAdd, typeU32, sum, lane, loaded);
+                module.AddFunction(spv::OpStore, output, sum);
+                module.AddFunction(spv::OpReturn);
+                module.AddFunction(spv::OpFunctionEnd);
+                return std::pair{ShaderRecompiler::SpecializeSpirv(module.Finalize()), thirty};
+            };
+            const auto [folded, expectedConstant] = build(false, false);
+            const auto foldedCounts = opcodeCounts(folded);
+            check(!foldedCounts.contains(accessOp), "a constant-index composite table access chain was not removed");
+            check(!foldedCounts.contains(spv::OpLogicalOr), "a right-false OpLogicalOr was not simplified");
+            check(!foldedCounts.contains(spv::OpSelect), "an identical-arm OpSelect was not simplified");
+            check(foldedCounts.contains(spv::OpLoad) && foldedCounts.at(spv::OpLoad) == 1u, "a constant-index composite table load was not folded");
+            bool addedThirty = false;
+            for (std::size_t cursor = 5; cursor < folded.size(); cursor += folded[cursor] >> 16u) {
+                if ((folded[cursor] >> 16u) == 0u) break;
+                if ((folded[cursor] & 0xffffu) == spv::OpIAdd && folded[cursor + 4u] == expectedConstant) addedThirty = true;
+            }
+            check(addedThirty, "a constant-index composite table load did not fold to its element constant");
+
+            const auto [dynamic, unusedDynamic] = build(true, false);
+            static_cast<void>(unusedDynamic);
+            const auto dynamicCounts = opcodeCounts(dynamic);
+            check(dynamicCounts.contains(accessOp) && dynamicCounts.at(accessOp) == 1u, "a dynamic-index composite table access chain was removed");
+            check(dynamicCounts.contains(spv::OpLoad) && dynamicCounts.at(spv::OpLoad) == 2u, "a dynamic-index composite table load was folded");
+
+            const auto [mutated, unusedMutated] = build(false, true);
+            static_cast<void>(unusedMutated);
+            const auto mutatedCounts = opcodeCounts(mutated);
+            check(mutatedCounts.contains(accessOp) && mutatedCounts.at(accessOp) == 2u, "a mutated composite table access chain was removed");
+            check(mutatedCounts.contains(spv::OpLoad) && mutatedCounts.at(spv::OpLoad) == 2u, "a mutated composite table load was folded despite a store through an access chain");
+        }
+    }
+}
+
 void testBlockBallotsOfOnePredicateShareOneBallot() {
     SpirvModule module;
     const auto typeBool = module.Type(spv::OpTypeBool);
@@ -356,10 +444,41 @@ void testBlockBallotsOfOnePredicateShareOneBallot() {
     check(ballotSources.contains(afterLabel), "a ballot in a later block reused one from an earlier block");
 }
 
+void testInternedSpirvSharesEqualWords() {
+    const std::vector<std::uint32_t> words{spv::MagicNumber, 0x00010400u, 0u, 7u, 0u, (2u << 16u) | spv::OpCapability, spv::CapabilityShader};
+    auto changed = words;
+    changed.back() = spv::CapabilityInt64;
+    const auto first = InternSpirv(words);
+    const auto second = InternSpirv(words);
+    const auto other = InternSpirv(changed);
+    check(std::ranges::equal(first.Words(), words) && std::ranges::equal(other.Words(), changed), "interned SPIR-V changed its words");
+    check(first.data() == second.data(), "two equal specialized modules kept separate copies of their words");
+    check(first.data() != other.data(), "different SPIR-V was interned into one copy");
+    auto edited = second;
+    edited[6] = spv::CapabilityFloat64;
+    const auto again = InternSpirv(words);
+    check(edited[6] == spv::CapabilityFloat64 && first[6] == spv::CapabilityShader && again.data() == first.data(), "a write to one holder of interned SPIR-V changed the others");
+}
+
+void testInternedSpirvReleasesUnusedWords() {
+    const std::vector<std::uint32_t> words{spv::MagicNumber, 0x00010400u, 0u, 7u, 0u, (2u << 16u) | spv::OpCapability, spv::CapabilityGeometry};
+    SharedSpirv::Weak released;
+    {
+        const auto first = InternSpirv(words);
+        const auto second = InternSpirv(words);
+        check(first.data() == second.data(), "two equal specialized modules kept separate copies of their words");
+        released = first.Weaken();
+    }
+    check(released.Expired(), "the SPIR-V interning table kept words no holder uses");
+    const auto again = InternSpirv(words);
+    check(std::ranges::equal(again.Words(), words) && released.Lock().empty(), "SPIR-V interned again after its release changed its words");
+}
+
 int main() {
     testFoldingLeavesNoDeadBlocksOrConstants();
     testIdsBeyondTheBoundAreRejected();
     testStructExtractsAreNotShuffled();
+    testPrivateCompositeTableLoadFolding();
     testRepeatedTypesShareOneId();
     testOperandShapesDoNotCollide();
     testOperandKindsAgree();
@@ -371,6 +490,8 @@ int main() {
     testIdsStayUniqueBeyondCacheCapacity();
     testEmittedWordsAreStable();
     testBlockBallotsOfOnePredicateShareOneBallot();
+    testInternedSpirvSharesEqualWords();
+    testInternedSpirvReleasesUnusedWords();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

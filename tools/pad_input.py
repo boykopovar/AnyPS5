@@ -52,14 +52,32 @@ def next_sequence(path):
     return sequence
 
 
+def button_mask(value):
+    names = value.split("+")
+    if any(name not in BUTTONS for name in names) or ("release" in names and len(names) > 1) or len(set(names)) != len(names):
+        raise argparse.ArgumentTypeError(f"invalid button {value!r}: use one of {', '.join(BUTTONS)}, or several joined by '+'")
+    mask = 0
+    for name in names:
+        mask |= BUTTONS[name]
+    return mask
+
+
 def main():
     parser = argparse.ArgumentParser(description="Queue a controller pulse for APS5_PAD_INPUT_FILE.")
     parser.add_argument("path", type=Path)
-    parser.add_argument("button", choices=BUTTONS)
+    parser.add_argument("button", help=f"a button name ({', '.join(BUTTONS)}), or several joined by '+' to press them together (for example l1+r1); release must be used alone")
     parser.add_argument("--hold-ms", type=int, default=300)
     parser.add_argument("--left-stick", type=int, nargs=2, metavar=("X", "Y"))
     parser.add_argument("--right-stick", type=int, nargs=2, metavar=("X", "Y"))
     args = parser.parse_args()
+    try:
+        mask = button_mask(args.button)
+    except argparse.ArgumentTypeError as error:
+        parser.error(str(error))
+    if args.path.is_dir():
+        parser.error(f"{args.path} is a directory")
+    if not args.path.parent.is_dir():
+        parser.error(f"directory does not exist: {args.path.parent}")
     if not 1 <= args.hold_ms <= 5000:
         parser.error("--hold-ms must be between 1 and 5000")
     sticks = ""
@@ -80,13 +98,13 @@ def main():
             pass
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", dir=args.path.parent, delete=False) as output:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=args.path.parent, delete=False) as output:
             temporary = Path(output.name)
             if metadata is not None:
                 if os.geteuid() == 0:
                     os.fchown(output.fileno(), metadata.st_uid, metadata.st_gid)
                 os.fchmod(output.fileno(), stat.S_IMODE(metadata.st_mode))
-            output.write(f"{sequence} {BUTTONS[args.button]} {args.hold_ms}{sticks}\n")
+            output.write(f"{sequence} {mask} {args.hold_ms}{sticks}\n")
         os.replace(temporary, args.path)
     finally:
         if temporary is not None:

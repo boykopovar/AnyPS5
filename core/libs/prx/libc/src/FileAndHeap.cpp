@@ -1,4 +1,6 @@
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -157,9 +159,6 @@ static bool IsPipeStream(std::FILE* native) {
 }
 #endif
 
-using GuestCompare = int (APS5_VABI *)(const void*, const void*);
-using GuestContextCompare = int (APS5_VABI *)(const void*, const void*, void*);
-
 static void SwapElements(unsigned char* left, unsigned char* right, size_t size) {
     for (size_t index = 0; index < size; ++index) std::swap(left[index], right[index]);
 }
@@ -258,13 +257,13 @@ static void SortElements(unsigned char* base, size_t count, size_t size, Compare
 namespace {
 
 template<typename TAllocate>
-void* allocationOrNull(TAllocate allocate) {
+void* allocationOrNull(TAllocate allocate, int error = 12) {
     try {
         return allocate();
     } catch (const std::bad_alloc&) {
     } catch (const std::length_error&) {
     }
-    errno = 12;
+    errno = error;
     return nullptr;
 }
 
@@ -272,18 +271,42 @@ bool validAlignment(std::size_t alignment) {
     return alignment != 0 && (alignment & (alignment - 1)) == 0;
 }
 
+constexpr std::size_t DefaultHeapAlignment = 32;
+constexpr std::size_t DefaultHeapAlignmentLimit = std::size_t{1} << 63;
+constexpr std::size_t DefaultHeapOverhead = 0x1008f;
+constexpr std::size_t DefaultHeapAlignedOverhead = 0x100af;
+
+std::size_t defaultHeapAlignment(std::size_t alignment) {
+    return std::bit_ceil(std::max(alignment, DefaultHeapAlignment));
+}
+
+bool defaultHeapRequestOverflows(std::size_t bytes, std::size_t alignment) {
+    const std::size_t overhead = alignment <= DefaultHeapAlignment ? DefaultHeapOverhead : defaultHeapAlignment(alignment) + DefaultHeapAlignedOverhead;
+    return bytes > std::numeric_limits<std::size_t>::max() - overhead;
+}
+
+template<typename TAllocate>
+void* defaultHeapAllocation(std::size_t bytes, std::size_t alignment, TAllocate allocate) {
+    if (defaultHeapRequestOverflows(bytes, alignment)) return nullptr;
+    return allocationOrNull(allocate, 22);
+}
+
+template<typename TAllocate>
+void* heapAllocation(std::size_t bytes, TAllocate allocate) {
+    if (!ApplicationHeapDefault_nid_no_patch()) return allocationOrNull(allocate);
+    return defaultHeapAllocation(bytes, 0, allocate);
+}
+
 }
 
 extern "C" {
 
-[[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix();
-
 FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode) {
-    if (descriptor < 0) { errno = 9; return nullptr; }
     if (!mode) { errno = 22; return nullptr; }
-    AppArchiveRefuseDescriptor_nid_no_patch(descriptor, "fdopen");
     const auto parsed = ParseFileMode(mode);
     if (!parsed) { errno = 22; return nullptr; }
+    if (descriptor < 0) return nullptr;
+    AppArchiveRefuseDescriptor_nid_no_patch(descriptor, "fdopen");
     try {
         auto nativeMode = parsed->native;
         std::erase(nativeMode, 'x');
@@ -292,9 +315,6 @@ FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode) {
 #ifdef _WIN32
         const auto handle = WindowsDescriptorHandle_nid_no_patch(descriptor);
         if (handle == INVALID_HANDLE_VALUE) { errno = 9; return nullptr; }
-        const int access = WindowsDescriptorAccess_nid_no_patch(handle, descriptor, "fdopen");
-        const int requested = nativeMode.find('+') != std::string::npos ? 2 : nativeMode[0] == 'r' ? 0 : 1;
-        if (access != 2 && access != requested) { errno = 22; return nullptr; }
         if (parsed->append && !AppendThroughDescriptor(descriptor)) return nullptr;
         auto* native = ::_fdopen(descriptor, nativeMode.c_str());
 #else
@@ -361,14 +381,12 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
     if (!parsed) { errno = 22; return nullptr; }
     try {
         std::filesystem::path path;
-        if (*filename) {
-            if (const int error = ResolvePathError_nid_no_patch(filename, path)) {
-                if (stream->IsHostStandard()) stream->Detach();
-                else stream->Close();
-                if (stream->IsDynamic()) delete stream;
-                errno = error;
-                return nullptr;
-            }
+        if (const int error = *filename ? ResolvePathError_nid_no_patch(filename, path) : 2) {
+            if (stream->IsHostStandard()) stream->Detach();
+            else stream->Close();
+            if (stream->IsDynamic()) delete stream;
+            errno = error;
+            return nullptr;
         }
         if (stream->Reopen(path, parsed->native.c_str(), OpenNative)) {
 #ifdef _WIN32
@@ -444,6 +462,15 @@ int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, con
     return *result ? 0 : errno;
 }
 
+int APS5_VABI freopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode, FileStream* stream) {
+    constexpr int GuestEinval = 22;
+    if (!result) return GuestEinval;
+    *result = nullptr;
+    if (!mode || !stream) return GuestEinval;
+    *result = freopen_nid_postfix(filename, mode, stream);
+    return *result ? 0 : errno;
+}
+
 int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     if (stream && !stream->IsOpen()) {
         std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
@@ -454,8 +481,6 @@ int APS5_VABI fclose_nid_postfix(FileStream* stream) {
     std::unique_ptr<FileStream> owner(stream->IsDynamic() ? stream : nullptr);
     return stream->Close();
 }
-
-int APS5_VABI fseek_nid_postfix(FileStream* stream, std::int64_t offset, int origin);
 
 FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const char* filename, int mode, int protection) {
     static_cast<void>(protection);
@@ -477,15 +502,16 @@ FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const 
     auto* stream = fopen_nid_postfix(filename, openMode);
     if (!stream || !(mode & Ate) || fseek_nid_postfix(stream, 0, SEEK_END) == 0) return stream;
     fclose_nid_postfix(stream);
+
     return nullptr;
 }
 
 size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream) {
+    if (size != 0 && count > std::numeric_limits<std::size_t>::max() / size) { errno = EINVAL; return 0; }
     if (stream && !stream->IsOpen()) { errno = 9; return 0; }
     auto* handle = GetStreamHandle(stream);
     if (size == 0 || count == 0) return 0;
     if (!buffer) throw std::runtime_error("fread: null buffer");
-    if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fread: buffer size overflow");
     const auto bytes = size * count;
     if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fread: buffer address overflow");
     const GuestArena::HostWrite destination(buffer, bytes);
@@ -510,6 +536,7 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fwrite: buffer size overflow");
     const auto bytes = size * count;
     if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fwrite: buffer address overflow");
+    if (!stream->SwitchToWriting()) return 0;
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buffer, bytes);
     const auto result = std::fwrite(buffer, size, count, handle);
     stream->SyncStatus();
@@ -575,7 +602,9 @@ void APS5_VABI rewind_nid_postfix(FileStream* stream) {
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     if (!str) throw std::runtime_error("fputs: null string");
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
-    const int result = std::fputs(str, GetNativeStream(stream));
+    auto* native = GetNativeStream(stream);
+    if (*str != '\0' && !stream->SwitchToWriting()) return -1;
+    const int result = std::fputs(str, native);
     stream->SyncStatus();
     return result;
 }
@@ -586,6 +615,8 @@ int APS5_VABI fflush_nid_postfix(FileStream* stream) {
     if (stream && (stream->IsRandomDevice() || stream->IsDirectory())) return 0;
 #ifdef __linux__
     if (native && !__fwriting(native)) return 0;
+#elif defined(__APPLE__)
+    if (native && !(native->_flags & __SWR)) return 0;
 #endif
     const int result = std::fflush(native);
     if (stream) stream->SyncStatus();
@@ -601,7 +632,7 @@ size_t APS5_VABI malloc_usable_size_nid_postfix(void* pointer) {
 }
 
 void* APS5_VABI malloc_nid_postfix(size_t size) {
-    return allocationOrNull([size] { return ApplicationHeapAllocate_nid_no_patch(size); });
+    return heapAllocation(size, [size] { return ApplicationHeapAllocate_nid_no_patch(size); });
 }
 
 void APS5_VABI free_nid_postfix(void* ptr) {
@@ -609,49 +640,60 @@ void APS5_VABI free_nid_postfix(void* ptr) {
 }
 
 void* APS5_VABI realloc_nid_postfix(void* ptr, size_t newSize) {
-    return allocationOrNull([ptr, newSize] { return ApplicationHeapReallocate_nid_no_patch(ptr, newSize); });
+    return heapAllocation(newSize, [ptr, newSize] { return ApplicationHeapReallocate_nid_no_patch(ptr, newSize); });
 }
 
 void* APS5_VABI reallocf_nid_postfix(void* ptr, size_t newSize) {
-    try {
-        return ApplicationHeapReallocate_nid_no_patch(ptr, newSize);
-    } catch (const std::bad_alloc&) {
-    } catch (const std::length_error&) {
-    }
-    ApplicationHeapFree_nid_no_patch(ptr);
-    errno = 12;
-    return nullptr;
+    void* result = realloc_nid_postfix(ptr, newSize);
+    if (result == nullptr && ptr != nullptr && newSize != 0) ApplicationHeapFree_nid_no_patch(ptr);
+    return result;
 }
 
 void* APS5_VABI memalign_nid_postfix(size_t alignment, size_t size) {
-    if (!validAlignment(alignment)) {
-        errno = 22;
-        return nullptr;
+    if (!ApplicationHeapDefault_nid_no_patch()) {
+        if (!validAlignment(alignment)) {
+            errno = 22;
+            return nullptr;
+        }
+        return allocationOrNull([alignment, size] { return ApplicationHeapAlign_nid_no_patch(alignment, size); });
     }
-    return allocationOrNull([alignment, size] { return ApplicationHeapAlign_nid_no_patch(alignment, size); });
+    if (alignment >= DefaultHeapAlignmentLimit) return nullptr;
+    const std::size_t rounded = defaultHeapAlignment(alignment);
+    return defaultHeapAllocation(size, alignment, [rounded, size] { return ApplicationHeapAlign_nid_no_patch(rounded, size); });
 }
 
 void* APS5_VABI aligned_alloc_nid_postfix(size_t alignment, size_t size) {
+    if (ApplicationHeapDefault_nid_no_patch() && !validAlignment(alignment)) return nullptr;
     return memalign_nid_postfix(alignment, size);
 }
 
 void* APS5_VABI reallocalign_nid_postfix(void* ptr, size_t size, size_t alignment) {
-    if (size != 0 && !validAlignment(alignment)) {
-        errno = 22;
-        return nullptr;
+    if (!ApplicationHeapDefault_nid_no_patch()) {
+        if (size != 0 && !validAlignment(alignment)) {
+            errno = 22;
+            return nullptr;
+        }
+        return allocationOrNull([ptr, size, alignment] { return ApplicationHeapRealign_nid_no_patch(ptr, size, alignment); });
     }
-    return allocationOrNull([ptr, size, alignment] { return ApplicationHeapRealign_nid_no_patch(ptr, size, alignment); });
+    if (alignment >= DefaultHeapAlignmentLimit) return nullptr;
+    const std::size_t rounded = defaultHeapAlignment(alignment);
+    return defaultHeapAllocation(size, alignment, [ptr, size, rounded] { return ApplicationHeapRealign_nid_no_patch(ptr, size, rounded); });
 }
 
 void* APS5_VABI calloc_nid_postfix(size_t count, size_t size) {
-    return allocationOrNull([count, size] { return ApplicationHeapCalloc_nid_no_patch(count, size); });
+    const auto allocate = [count, size] { return ApplicationHeapCalloc_nid_no_patch(count, size); };
+    if (!ApplicationHeapDefault_nid_no_patch()) return allocationOrNull(allocate);
+    if (size != 0 && count > std::numeric_limits<size_t>::max() / size) return nullptr;
+    return defaultHeapAllocation(count * size, 0, allocate);
 }
 
 int APS5_VABI posix_memalign_nid_postfix(void** pointer, size_t alignment, size_t size) {
     if (!pointer || alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) return 22;
     const int savedError = errno;
     const int result = ApplicationHeapPosixAlign_nid_no_patch(pointer, alignment, size);
-    errno = savedError;
+    const bool failureSetsError = result != 0 && ApplicationHeapDefault_nid_no_patch() && alignment < DefaultHeapAlignmentLimit &&
+        !defaultHeapRequestOverflows(size, alignment);
+    errno = failureSetsError ? 22 : savedError;
     return result;
 }
 
@@ -706,6 +748,44 @@ int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, Guest
     }
     if (source != base) std::memcpy(base, source, count * size);
     free_nid_postfix(scratch);
+
+    return 0;
+}
+
+int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
+    if (count <= 1) return 0;
+    if (size == 0) {
+        errno = 22;
+        return -1;
+    }
+    if (!compare) throw std::invalid_argument("heapsort: null comparator");
+    if (!base) throw std::invalid_argument("heapsort: null base");
+    if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("heapsort: array size overflow");
+
+    auto* const bytes = static_cast<unsigned char*>(base);
+    const auto siftDown = [bytes, size, compare](size_t root, size_t n) {
+        size_t current = root;
+        while (2 * current + 1 < n) {
+            size_t child = 2 * current + 1;
+            if (child + 1 < n && compare(bytes + (child + 1) * size, bytes + child * size) > 0) {
+                child = child + 1;
+            }
+            if (compare(bytes + child * size, bytes + current * size) <= 0) {
+                break;
+            }
+            SwapElements(bytes + current * size, bytes + child * size, size);
+            current = child;
+        }
+    };
+
+    for (size_t i = count / 2; i > 0; --i) {
+        siftDown(i - 1, count);
+    }
+    for (size_t i = count - 1; i > 0; --i) {
+        SwapElements(bytes, bytes + i * size, size);
+        siftDown(0, i);
+    }
+
     return 0;
 }
 

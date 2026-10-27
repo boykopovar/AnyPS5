@@ -1,0 +1,105 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI sceNpBandwidthTestAbort(int contextId);
+int APS5_VABI sceNpBandwidthTestGetStatus(int contextId, int* status);
+int APS5_VABI sceNpBandwidthTestInitStartDownload(const void* param);
+int APS5_VABI sceNpBandwidthTestInitStartUpload(const void* param);
+int APS5_VABI sceNpBandwidthTestShutdown(int contextId, void* result);
+int APS5_VABI sceNpBandwidthTestInitStart();
+int APS5_VABI sceNpLookupCreateRequest(int titleCtxId);
+int APS5_VABI sceNpLookupCreateTitleCtx(const void* selfNpId);
+int APS5_VABI sceNpLookupDeleteRequest(int reqId);
+int APS5_VABI sceNpLookupDeleteTitleCtx(int titleCtxId);
+int APS5_VABI sceNpLookupNpId(int reqId, const NpOnlineId* onlineId, void* npId, void* option);
+int APS5_VABI sceNpWordFilterAbortRequest(int reqId);
+int APS5_VABI sceNpWordFilterCensorComment(int reqId, const char* comment, void* option);
+int APS5_VABI sceNpWordFilterCreateAsyncRequest(int titleCtxId, const std::uint64_t* param);
+int APS5_VABI sceNpWordFilterCreateRequest(int titleCtxId);
+int APS5_VABI sceNpWordFilterCreateTitleCtx(const void* selfNpId);
+int APS5_VABI sceNpWordFilterDeleteRequest(int reqId);
+int APS5_VABI sceNpWordFilterDeleteTitleCtx(int titleCtxId);
+int APS5_VABI sceNpWordFilterPollAsync(int reqId, int* result);
+int APS5_VABI sceNpLookupAbortRequest(int reqId);
+int APS5_VABI sceNpLookupCreateAsyncRequest(int titleCtxId, const std::uint64_t* param);
+int APS5_VABI sceNpLookupPollAsync(int reqId, int* result);
+int APS5_VABI sceNpLookupSetTimeout(int id, int resolveRetry, std::uint32_t resolveTimeout, std::uint32_t connTimeout, std::uint32_t sendTimeout, std::uint32_t recvTimeout);
+int APS5_VABI sceNpLookupWaitAsync(int reqId, int* result);
+int APS5_VABI sceNpWordFilterSetTimeout(int id, int resolveRetry, std::uint32_t resolveTimeout, std::uint32_t connTimeout, std::uint32_t sendTimeout, std::uint32_t recvTimeout);
+int APS5_VABI sceNpWordFilterWaitAsync(int reqId, int* result);
+int APS5_VABI sceNpWordFilterSanitizeComment(int reqId, const char* comment, char* sanitizedComment, void* option);
+
+int APS5_VABI sceNpAppInfoIntAbortRequest();
+int APS5_VABI sceNpAppInfoIntCheckAvailability();
+int APS5_VABI sceNpAppInfoIntCheckAvailabilityA();
+int APS5_VABI sceNpAppInfoIntCheckAvailabilityAll();
+int APS5_VABI sceNpAppInfoIntCheckAvailabilityAllA();
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailability();
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityA();
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityAll();
+int APS5_VABI sceNpAppInfoIntCheckServiceAvailabilityAllA();
+int APS5_VABI sceNpAppInfoIntCreateRequest();
+int APS5_VABI sceNpAppInfoIntDestroyRequest();
+int APS5_VABI sceNpAppInfoIntFinalize();
+int APS5_VABI sceNpAppInfoIntInitialize();
+int APS5_VABI sceNpAppLaunchLink2IntAbortRequest();
+int APS5_VABI sceNpAppLaunchLink2IntCreateRequest();
+int APS5_VABI sceNpAppLaunchLink2IntDestroyRequest();
+int APS5_VABI sceNpAppLaunchLink2IntFinalize();
+int APS5_VABI sceNpAppLaunchLink2IntGetCompatibleTitleIdList();
+int APS5_VABI sceNpAppLaunchLink2IntGetCompatibleTitleIdNum();
+int APS5_VABI sceNpAppLaunchLink2IntInitialize();
+int APS5_VABI sceNpAppLaunchLinkIntAbortRequest();
+int APS5_VABI sceNpAppLaunchLinkIntCreateRequest();
+int APS5_VABI sceNpAppLaunchLinkIntDestroyRequest();
+int APS5_VABI sceNpAppLaunchLinkIntFinalize();
+int APS5_VABI sceNpAppLaunchLinkIntGetCompatibleTitleIdList();
+int APS5_VABI sceNpAppLaunchLinkIntGetCompatibleTitleIdNum();
+int APS5_VABI sceNpAppLaunchLinkIntInitialize();
+int APS5_VABI sceNpBandwidthTestShutdownWithDetailedInfo();
+int APS5_VABI sceNpLookupCreateTitleCtxA();
+int APS5_VABI sceNpLookupNetAbortRequest();
+int APS5_VABI sceNpLookupNetCensorComment();
+int APS5_VABI sceNpLookupNetConvertJidToNpId();
+int APS5_VABI sceNpLookupNetConvertNpIdToJid();
+int APS5_VABI sceNpLookupNetCreateRequest();
+int APS5_VABI sceNpLookupNetCreateTitleCtx();
+int APS5_VABI sceNpLookupNetDeleteRequest();
+int APS5_VABI sceNpLookupNetDeleteTitleCtx();
+int APS5_VABI sceNpLookupNetInit();
+int APS5_VABI sceNpLookupNetInitWithFunctionPointer();
+int APS5_VABI sceNpLookupNetInitWithMemoryPool();
+int APS5_VABI sceNpLookupNetIsInit();
+int APS5_VABI sceNpLookupNetNpId();
+int APS5_VABI sceNpLookupNetSanitizeComment();
+int APS5_VABI sceNpLookupNetSetTimeout();
+int APS5_VABI sceNpLookupNetTerm();
+int APS5_VABI sceNpServiceChecker2IntAbortRequest();
+int APS5_VABI sceNpServiceChecker2IntCreateRequest();
+int APS5_VABI sceNpServiceChecker2IntDestroyRequest();
+int APS5_VABI sceNpServiceChecker2IntFinalize();
+int APS5_VABI sceNpServiceChecker2IntGetServiceAvailability();
+int APS5_VABI sceNpServiceChecker2IntGetServiceAvailabilityA();
+int APS5_VABI sceNpServiceChecker2IntInitialize();
+int APS5_VABI sceNpServiceChecker2IntIsSetServiceType();
+int APS5_VABI sceNpServiceCheckerIntAbortRequest();
+int APS5_VABI sceNpServiceCheckerIntCreateRequest();
+int APS5_VABI sceNpServiceCheckerIntDestroyRequest();
+int APS5_VABI sceNpServiceCheckerIntFinalize();
+int APS5_VABI sceNpServiceCheckerIntGetAvailability();
+int APS5_VABI sceNpServiceCheckerIntGetAvailabilityList();
+int APS5_VABI sceNpServiceCheckerIntInitialize();
+int APS5_VABI sceNpServiceCheckerIntIsCached();
+int APS5_VABI sceNpTitleMetadataIntAbortRequest();
+int APS5_VABI sceNpTitleMetadataIntCreateRequest();
+int APS5_VABI sceNpTitleMetadataIntDeleteRequest();
+int APS5_VABI sceNpTitleMetadataIntGetInfo();
+int APS5_VABI sceNpTitleMetadataIntGetNpTitleId();
+int APS5_VABI sceNpUtilityInit();
+int APS5_VABI sceNpUtilityTerm();
+int APS5_VABI sceNpWordFilterCreateTitleCtxA();
+
+}

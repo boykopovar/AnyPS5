@@ -1,21 +1,93 @@
+#include "prx/libSceRegMgr/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+constexpr int SCE_REG_MGR_ERROR_INVALID_PARAM = static_cast<int>(0x80820001);
+constexpr int SCE_REG_MGR_ERROR_NOT_FOUND = static_cast<int>(0x80820002);
+constexpr int SCE_REG_MGR_ERROR_BUFFER_TOO_SMALL = static_cast<int>(0x80820004);
+constexpr int SCE_REG_MGR_ERROR_INVALID_TYPE = static_cast<int>(0x80820006);
+
+enum EntryType {
+    TypeInt = 0,
+    TypeStr = 1,
+    TypeBin = 2,
+};
+
+struct RegEntry {
+    EntryType type;
+    int32_t intVal = 0;
+    std::string strVal;
+    std::vector<uint8_t> binVal;
+};
+
+class RegistryStore {
+public:
+    RegistryStore() = default;
+
+    int getInt(int64_t key, int32_t* out) {
+        if (out == nullptr) return SCE_REG_MGR_ERROR_INVALID_PARAM;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = entries_.find(key);
+        if (it == entries_.end()) return SCE_REG_MGR_ERROR_NOT_FOUND;
+        if (it->second.type != TypeInt) return SCE_REG_MGR_ERROR_INVALID_TYPE;
+        *out = it->second.intVal;
+        return 0;
+    }
+
+    int getStr(int64_t key, char* out, int len) {
+        if (len == 0) NotImplemented_nid_no_patch(__func__);
+        if (out == nullptr || len < 0) return SCE_REG_MGR_ERROR_INVALID_PARAM;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = entries_.find(key);
+        if (it == entries_.end()) return SCE_REG_MGR_ERROR_NOT_FOUND;
+        if (it->second.type != TypeStr) return SCE_REG_MGR_ERROR_INVALID_TYPE;
+        if (static_cast<size_t>(len) <= it->second.strVal.size()) return SCE_REG_MGR_ERROR_BUFFER_TOO_SMALL;
+        std::memcpy(out, it->second.strVal.c_str(), it->second.strVal.size() + 1);
+        return 0;
+    }
+
+    int getBin(int64_t key, void* out, int size) {
+        if (size == 0) NotImplemented_nid_no_patch(__func__);
+        if (out == nullptr || size < 0) return SCE_REG_MGR_ERROR_INVALID_PARAM;
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = entries_.find(key);
+        if (it == entries_.end()) return SCE_REG_MGR_ERROR_NOT_FOUND;
+        if (it->second.type != TypeBin) return SCE_REG_MGR_ERROR_INVALID_TYPE;
+        if (static_cast<size_t>(size) < it->second.binVal.size()) return SCE_REG_MGR_ERROR_BUFFER_TOO_SMALL;
+        std::memcpy(out, it->second.binVal.data(), it->second.binVal.size());
+        return 0;
+    }
+
+private:
+    std::mutex mutex_;
+    std::unordered_map<int64_t, RegEntry> entries_;
+};
+
+RegistryStore gStore;
+
+} // namespace
+
 extern "C" {
 
-int APS5_VABI sceRegMgrGetBin(std::uint32_t optionId, void* data, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRegMgrGetBin(std::int64_t optionId, void* data, int size) {
+    return gStore.getBin(optionId, data, size);
 }
-int APS5_VABI sceRegMgrGetInt(int32_t optionId, int32_t* outInt) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+
+int APS5_VABI sceRegMgrGetInt(std::int64_t optionId, int32_t* outInt) {
+    return gStore.getInt(optionId, outInt);
 }
-int APS5_VABI sceRegMgrGetStr(int32_t optionId, char* outString, std::size_t stringLength) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+
+int APS5_VABI sceRegMgrGetStr(std::int64_t optionId, char* outString, int stringLength) {
+    return gStore.getStr(optionId, outString, stringLength);
 }
 int APS5_VABI sceRegMgrSetBin(std::uint32_t optionId, const void* data, std::size_t size) {
     NotImplemented_nid_no_patch(__func__);

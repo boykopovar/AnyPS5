@@ -6,10 +6,12 @@ import tempfile
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_conventions
 import stubgen
+from nid_names import compute_nid
 
 
 class StubgenTests(unittest.TestCase):
@@ -30,6 +32,29 @@ class StubgenTests(unittest.TestCase):
         self.assertIn("APS5_VABI", code)
         self.assertIn("NotImplemented_nid_no_patch", code)
 
+    def test_unknown_exports_cannot_consume_verified_known_names(self):
+        known_name = "sceAmprUnknown00"
+        known_nid = compute_nid(known_name)
+        unknown_nid = "AAAAAAAAAAA"
+        for order in ((unknown_nid, known_nid), (known_nid, unknown_nid)):
+            with self.subTest(order=order):
+                code, debt = stubgen.generate("libSceAmpr", order, {known_nid: known_name})
+                self.assertIn("int APS5_VABI sceAmprUnknown00(void)", code)
+                self.assertIn('APS5_EXPORT("AAAAAAAAAAA", sceAmprUnknown01);', code)
+                self.assertIn("int APS5_VABI sceAmprUnknown01(void)", code)
+                self.assertIn("[sceAmprUnknown00]", debt)
+                self.assertIn("[AAAAAAAAAAA]", debt)
+                self.assertNotIn(f'APS5_EXPORT("{known_nid}", sceAmprUnknown', code)
+
+    def test_generate_preserves_single_pass_iterable_inputs(self):
+        known = "6OkOa1SOKuY"
+        db = {known: "sceAmprUnknown00"}
+        for values in (("AAAAAAAAAAA", known), (known, "AAAAAAAAAAA")):
+            expected = stubgen.generate("libSceAmpr", values, db)
+            for label, factory in (("iterator", iter), ("generator", lambda items: (nid for nid in items))):
+                with self.subTest(values=values, input=label):
+                    self.assertEqual(stubgen.generate("libSceAmpr", factory(values), db), expected)
+
     def test_prx_suffix_is_stripped_from_module_name(self):
         nids = ["AAAAAAAAAAA", "BBBBBBBBBBB"]
         expected = stubgen.generate("libSceAmpr", nids, {})
@@ -41,6 +66,34 @@ class StubgenTests(unittest.TestCase):
 
 
 class StubGeneratorTests(unittest.TestCase):
+    def test_long_output_names(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            if os.name == "nt":
+                root = Path("\\\\?\\" + str(root))
+            limit = os.pathconf(root, "PC_NAME_MAX") if os.name == "posix" else 255
+            nids = root / "nids.txt"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            expected = stubgen.generate("libSceExample", ["AAAAAAAAAAA"], {})
+            for option, extra, content in (("--out", [], expected[0]),
+                                           ("--td-out", ["--td-only"], expected[1])):
+                for existing in (False, True):
+                    with self.subTest(option=option, existing=existing):
+                        output = root / ("a" * (limit - 4) + ".txt")
+                        output.write_bytes(b"previous output\n")
+                        if not existing:
+                            output.unlink()
+                        result = subprocess.run(
+                            [sys.executable, str(Path(stubgen.__file__)), "--module", "libSceExample",
+                             "--nids", str(nids), option, str(output), *extra],
+                            capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(output.read_text(encoding="utf-8"), content)
+                        self.assertEqual(nids.read_text(encoding="utf-8"), "AAAAAAAAAAA\n")
+                        self.assertEqual(set(root.iterdir()), {nids, output})
+                        output.unlink()
+
     @unittest.skipUnless(os.name == "nt", "Windows denies replacing read-only output files")
     def test_readonly_second_output_preserves_both_outputs(self):
         import subprocess
@@ -122,6 +175,43 @@ class StubGeneratorTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid NID"):
                 stubgen.parse_nids(path)
 
+    def test_malformed_database_rows_are_rejected_with_location(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "names.txt"
+            cases = {
+                "missing name": "AAAAAAAAAAA\n",
+                "short NID": "AAAAAAAAAA sceShort\n",
+                "invalid NID": 'AAAAAAAA"AA sceQuoted\n',
+                "blank name after comment": "AAAAAAAAAAA # sceCommented\n",
+            }
+            for label, content in cases.items():
+                with self.subTest(label=label):
+                    path.write_text(content, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, r"names\.txt:1:"):
+                        stubgen.parse_db(path)
+
+    def test_valid_database_rows_are_parsed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "names.txt"
+            path.write_text("# comment\nAAAAAAAAAAA sceGood\n"
+                            "BBBBBBBBBBB sceOther # trailing note\n\n"
+                            "+CCCCCCCCCC scePlus\n", encoding="utf-8")
+            self.assertEqual(stubgen.parse_db(path),
+                             {"AAAAAAAAAAA": "sceGood", "BBBBBBBBBBB": "sceOther", "+CCCCCCCCCC": "scePlus"})
+
+    def test_malformed_database_reaches_the_cli_as_an_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nids, database = root / "nids.txt", root / "names.txt"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            database.write_text("AAAAAAAAAA sceShort\n", encoding="utf-8")
+            arguments = ["--module", "libSceExample", "--nids", str(nids), "--db", str(database)]
+            with contextlib.redirect_stderr(io.StringIO()) as output, \
+                    contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as error:
+                stubgen.main(arguments)
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("invalid NID", output.getvalue())
+
     def test_code_and_debt_outputs_cannot_overwrite_each_other(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -198,6 +288,38 @@ class ReadOnlyOutputTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8"), original)
             self.assertFalse(output.stat().st_mode & stat.S_IWRITE)
             self.assertEqual(sorted(path.name for path in root.iterdir()), ["Export.cpp", "nids.txt"])
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+                self.newline = None
+
+            def reconfigure(self, encoding=None, errors=None, newline=None):
+                self.encoding = encoding
+                self.errors = errors
+                self.newline = newline
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(stubgen.sys, "stdout", out), patch.object(stubgen.sys, "stderr", err):
+            try:
+                stubgen.main([])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(out.newline, "\n")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+        self.assertEqual(err.newline, "\n")
 
 
 if __name__ == "__main__":

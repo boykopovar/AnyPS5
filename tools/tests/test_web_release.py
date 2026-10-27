@@ -1,6 +1,8 @@
+import contextlib
 import hashlib
 import io
 import json
+import struct
 import subprocess
 import sys
 import tempfile
@@ -12,6 +14,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import build_web
 import package_release
+import test_web
 
 FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "output-directory.mjs", "worker.mjs",
          "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
@@ -28,6 +31,48 @@ def zipped(entries):
 
 
 class WebReleaseTests(unittest.TestCase):
+    def unsupported_zip(self, payload, encrypted):
+        data = bytearray(payload)
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            local = archive.infolist()[0].header_offset
+            central = archive.start_dir
+        if encrypted:
+            for position in (local + 6, central + 8):
+                struct.pack_into("<H", data, position, struct.unpack_from("<H", data, position)[0] | 1)
+        else:
+            for position in (local + 8, central + 10):
+                struct.pack_into("<H", data, position, 99)
+        return bytes(data)
+
+    def test_unsupported_zip_members_preserve_previous_site_and_allow_retry(self):
+        originals = dict(self.responses)
+        for encrypted in (False, True):
+            for name in ("web-v1.zip", "prx-windows-v1.zip", "prx-linux-v1.zip"):
+                with self.subTest(encrypted=encrypted, asset=name):
+                    original = originals["https://example.test/" + name]
+                    self.set_asset(name, self.unsupported_zip(original, encrypted))
+                    self.requests.clear()
+                    self.assert_rejected("[Aa]rchive|[Ee]ncrypted")
+                    self.set_asset(name, original)
+                    self.requests.clear()
+                    self.publish()
+                    self.assertEqual(json.loads((self.output / "release.json").read_text())["revision"], REVISION)
+                    self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
+    def test_cli_reports_unsupported_zip_without_traceback_or_site_changes(self):
+        name = "web-v1.zip"
+        self.set_asset(name, self.unsupported_zip(self.responses["https://example.test/" + name], False))
+        self.seed_previous()
+        previous = self.snapshot()
+        errors = io.StringIO()
+        with patch.object(build_web, "request", self.request), contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+            build_web.main(["--build", str(self.build), "--release"])
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("Invalid release archive", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
+        self.assertEqual(self.snapshot(), previous)
+        self.assertEqual(list(self.build.glob(".web-release-*")), [])
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -102,6 +147,20 @@ class WebReleaseTests(unittest.TestCase):
                 self.assertEqual(archive.read("libs/libkernel.prx"), platform.encode())
         self.assertTrue((self.output / ".nojekyll").is_file())
         self.assertEqual(self.requests.count(LATEST), 1)
+
+    def test_rewritten_library_paths_preserve_the_previous_site(self):
+        invalid = zipped([("libs/libkernel.prx!ignored", b"content")])
+        invalid = invalid.replace(b"libs/libkernel.prx!ignored", b"libs/libkernel.prx\0ignored")
+        for platform in ("windows", "linux"):
+            with self.subTest(platform=platform):
+                self.requests.clear()
+                name = f"prx-{platform}-v1.zip"
+                original = self.responses["https://example.test/" + name]
+                self.set_asset(name, invalid)
+                try:
+                    self.assert_rejected("Invalid library archive layout")
+                finally:
+                    self.set_asset(name, original)
 
     def test_libraries_flag_also_replaces_an_incompatible_local_converter(self):
         self.seed_previous()
@@ -209,6 +268,27 @@ class WebReleaseTests(unittest.TestCase):
                 patch.object(sys, "argv", ["build_web.py", "--build", str(self.build), "--release"]):
             build_web.main()
         self.assertEqual((self.output / "native/relinker_wasm.mjs").read_bytes(), self.contents["native/relinker_wasm.mjs"])
+
+    def test_invalid_zip_reports_cli_error_and_preserves_previous_site(self):
+        self.seed_previous()
+        previous = self.snapshot()
+        for name in ("web-v1.zip", "prx-windows-v1.zip", "prx-linux-v1.zip"):
+            with self.subTest(asset=name):
+                self.requests.clear()
+                original = self.responses[f"https://example.test/{name}"]
+                self.set_asset(name, original[:-22])
+                errors = io.StringIO()
+                try:
+                    with patch.object(build_web, "request", self.request), contextlib.redirect_stderr(errors):
+                        with self.assertRaises(SystemExit) as error:
+                            build_web.main(["--build", str(self.build), "--release"])
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertIn(f"error: Invalid release archive {name}: File is not a zip file", errors.getvalue())
+                    self.assertNotIn("Traceback", errors.getvalue())
+                    self.assertEqual(self.snapshot(), previous)
+                    self.assertEqual(list(self.build.glob(".web-release-*")), [])
+                finally:
+                    self.set_asset(name, original)
 
     def test_local_build_still_copies_sources_without_network(self):
         source = self.root / "source/demo/web"
@@ -373,6 +453,66 @@ class WebPackageTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("--revision", result.stderr)
                 self.assertEqual(self.asset.read_bytes(), b"previous asset")
+
+
+class TestWebRunnerTests(unittest.TestCase):
+    def test_main_rejects_missing_archive_file_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build"
+            build.mkdir()
+            with self.assertRaises(SystemExit) as error, contextlib.redirect_stderr(io.StringIO()) as err:
+                test_web.main(["--build", str(build)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("archive module does not exist", err.getvalue())
+
+    def test_main_rejects_archive_missing_zip_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build"
+            (build / "web").mkdir(parents=True)
+            (build / "web/archive.mjs").write_text("const x = 1;\n", encoding="utf-8")
+            with patch("subprocess.run"):
+                with self.assertRaises(SystemExit) as error, contextlib.redirect_stderr(io.StringIO()) as err:
+                    test_web.main(["--build", str(build)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("zip library URL not found", err.getvalue())
+
+    def test_main_decodes_archive_with_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build"
+            (build / "web").mkdir(parents=True)
+            (build / "web/archive.mjs").write_text('\ufefffrom "https://cdn.jsdelivr.net/example/zip.mjs";\n', encoding="utf-8")
+            with patch("subprocess.run"), \
+                    patch("urllib.request.urlopen") as mock_url:
+                mock_resp = mock_url.return_value.__enter__.return_value
+                mock_resp.read.return_value = b"zip-content"
+                result = test_web.main(["--build", str(build)])
+                self.assertEqual(result, 0)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                return len(text)
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(test_web.sys, "stdout", out), patch.object(test_web.sys, "stderr", err):
+            with self.assertRaises(SystemExit) as error:
+                test_web.main([])
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

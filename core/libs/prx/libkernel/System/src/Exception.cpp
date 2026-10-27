@@ -1,14 +1,19 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <vector>
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <thread>
+#include <condition_variable>
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -26,7 +31,6 @@
 #include <unistd.h>
 #endif
 
-extern "C" Pthread APS5_VABI scePthreadSelf();
 #ifdef _WIN32
 extern "C" void Aps5RedirectedEntryStub();
 extern "C" [[noreturn]] void Aps5RedirectedExit(CONTEXT* context, const void* vectors, void (*restore)(CONTEXT*, EXCEPTION_RECORD*));
@@ -192,7 +196,6 @@ void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucont
 constexpr std::size_t RedZone = 128;
 constexpr std::size_t HomeArea = 32;
 constexpr auto RetryLimit = std::chrono::seconds(1);
-constexpr auto HostCodeLimit = std::chrono::milliseconds(50);
 constexpr std::size_t VectorBytes = 16 * 32;
 
 struct Delivery {
@@ -263,6 +266,17 @@ void Deliver(GuestExceptionHandler handler, int signum, CONTEXT& context) {
     Aps5RedirectedExit(&context, delivery->saveVectors != 0 ? delivery->vectors : nullptr, RtlRestoreContext);
 }
 
+bool CodeReadable(DWORD64 low, DWORD64 high) {
+    constexpr DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    for (DWORD64 address = low; address < high;) {
+        MEMORY_BASIC_INFORMATION info{};
+        if (VirtualQuery(reinterpret_cast<void*>(address), &info, sizeof(info)) != sizeof(info)) return false;
+        if (info.State != MEM_COMMIT || (info.Protect & PAGE_GUARD) != 0 || (info.Protect & readable) == 0) return false;
+        address = reinterpret_cast<DWORD64>(info.BaseAddress) + info.RegionSize;
+    }
+    return true;
+}
+
 bool StackWritable(DWORD64 low, DWORD64 high) {
     for (DWORD64 address = low; address < high;) {
         MEMORY_BASIC_INFORMATION info{};
@@ -273,11 +287,25 @@ bool StackWritable(DWORD64 low, DWORD64 high) {
     return true;
 }
 
+struct QueuedDelivery {
+    GuestExceptionHandler handler;
+    int signum;
+    std::atomic<bool> taken{false};
+    std::atomic<bool> waiting{false};
+    std::atomic<int> references{1};
+};
+
+void ReleaseQueued(QueuedDelivery* queued) {
+    if (queued != nullptr && queued->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete queued;
+}
+
 void CALLBACK WaitingEntry(ULONG_PTR parameter) {
-    auto* delivery = reinterpret_cast<Delivery*>(parameter);
-    const auto handler = delivery->handler;
-    const int signum = delivery->signum;
-    delete delivery;
+    auto* queued = reinterpret_cast<QueuedDelivery*>(parameter);
+    const auto handler = queued->handler;
+    const int signum = queued->signum;
+    const bool claimed = !queued->taken.exchange(true, std::memory_order_acq_rel);
+    ReleaseQueued(queued);
+    if (!claimed) return;
     CONTEXT context{};
     RtlCaptureContext(&context);
     Deliver(handler, signum, context);
@@ -299,12 +327,6 @@ bool RestoringContext(DWORD64 rip) {
     for (const DWORD64 stub : stubs)
         if (stub != 0 && rip - stub < 0x20) return true;
     return false;
-}
-
-bool InWinpthread(DWORD64 rip) {
-    static const HMODULE winpthread = GetModuleHandleW(L"libwinpthread-1.dll");
-    MEMORY_BASIC_INFORMATION info{};
-    return winpthread != nullptr && VirtualQuery(reinterpret_cast<const void*>(rip), &info, sizeof(info)) == sizeof(info) && info.AllocationBase == winpthread;
 }
 
 enum class CodeKind : std::uint8_t { Unknown, Guest, Host };
@@ -362,95 +384,25 @@ CodeKind ClassifyImage(DWORD64 base) {
     return kind;
 }
 
-bool BlockedInWait(DWORD64 rip) {
-    static const std::vector<DWORD64> waits = [] {
-        std::vector<DWORD64> stubs;
-        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        for (const char* name : {"NtWaitForSingleObject", "NtWaitForMultipleObjects", "NtWaitForAlertByThreadId", "NtDelayExecution", "NtRemoveIoCompletion", "NtRemoveIoCompletionEx", "NtWaitForKeyedEvent", "NtSignalAndWaitForSingleObject", "NtWaitForWorkViaWorkerFactory"}) {
-            if (const auto address = reinterpret_cast<DWORD64>(GetProcAddress(ntdll, name)); address != 0) stubs.push_back(address);
-        }
-        if (const HMODULE win32u = GetModuleHandleW(L"win32u.dll"); win32u != nullptr) {
-            if (const auto address = reinterpret_cast<DWORD64>(GetProcAddress(win32u, "NtUserMsgWaitForMultipleObjectsEx")); address != 0) stubs.push_back(address);
-        }
-        return stubs;
-    }();
-    return std::any_of(waits.begin(), waits.end(), [rip](DWORD64 stub) { return rip - stub < 0x20; });
-}
-
-DWORD64 NtdllBase() {
-    static const auto ntdll = reinterpret_cast<DWORD64>(GetModuleHandleW(L"ntdll.dll"));
-    return ntdll;
-}
-
-bool InSystemCall(DWORD64 rip, DWORD64 base) {
-    if (base == 0 || base != NtdllBase() || rip < base + 2) return false;
-    const auto* code = reinterpret_cast<const unsigned char*>(rip - 2);
-    return code[0] == 0x0f && code[1] == 0x05;
-}
-
 CodeKind RunningCode(DWORD64 rip, DWORD64& base) {
     base = ImageBase(rip);
     auto kind = CachedKind(base);
     if (kind == CodeKind::Unknown && Images().count.load(std::memory_order_acquire) >= ImageKinds::Capacity) kind = CodeKind::Host;
-    return kind == CodeKind::Host && BlockedInWait(rip) ? CodeKind::Guest : kind;
+    return kind;
 }
 
-bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
-    if (thread == scePthreadSelf()) {
-        CONTEXT context{};
-        RtlCaptureContext(&context);
-        Deliver(handler, signum, context);
-        return true;
-    }
-    const auto native = static_cast<HANDLE>(thread->nativeHandle);
-    auto queued = std::make_unique<Delivery>(Delivery{handler, signum, {}, {}, 0});
-    alignas(16) Delivery delivery{handler, signum, {}, {}, SaveVectors ? 1u : 0u};
-    const auto start = std::chrono::steady_clock::now();
-    const auto retryDeadline = start + RetryLimit;
-    auto hostDeadline = start + HostCodeLimit;
-    static_cast<void>(RestoringContext(0));
-    static_cast<void>(InWinpthread(0));
-    static_cast<void>(BlockedInWait(0));
-    static_cast<void>(ExecutableBase());
-    static_cast<void>(Images());
-    static_cast<void>(NtdllBase());
-    for (;;) {
-        if (SuspendThread(native) == static_cast<DWORD>(-1)) {
-            if (Exited(native)) return false;
-            throw std::runtime_error("sceKernelRaiseException: cannot suspend the target thread");
-        }
-        if (Exited(native)) {
-            ResumeThread(native);
-            return false;
-        }
-        delivery.context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
-        if (!GetThreadContext(native, &delivery.context)) {
-            ResumeThread(native);
-            if (std::chrono::steady_clock::now() >= retryDeadline) throw std::runtime_error("sceKernelRaiseException: cannot read the target thread context");
-            SwitchToThread();
-            continue;
-        }
-        if (thread->waitCount.load(std::memory_order_seq_cst) > 0) {
-            const bool accepted = QueueUserAPC(WaitingEntry, native, reinterpret_cast<ULONG_PTR>(queued.get())) != 0;
-            ResumeThread(native);
-            if (!accepted) throw std::runtime_error("sceKernelRaiseException: cannot queue delivery to the waiting thread");
-            queued.release();
-            return true;
-        }
-        const bool restoring = RestoringContext(delivery.context.Rip) || InWinpthread(delivery.context.Rip);
-        DWORD64 image = 0;
-        const auto running = restoring ? CodeKind::Guest : RunningCode(delivery.context.Rip, image);
-        const auto now = std::chrono::steady_clock::now();
-        if (running == CodeKind::Host && InSystemCall(delivery.context.Rip, image) && now < retryDeadline) hostDeadline = std::max(hostDeadline, std::min(retryDeadline, now + HostCodeLimit));
-        if (!restoring && (running == CodeKind::Guest || (running == CodeKind::Host && now >= hostDeadline))) break;
-        ResumeThread(native);
-        if (running == CodeKind::Unknown) {
-            static_cast<void>(ClassifyImage(image));
-            continue;
-        }
-        if (restoring && std::chrono::steady_clock::now() >= retryDeadline) throw std::runtime_error("sceKernelRaiseException: the target thread stayed inside NtContinue or winpthreads for 1 s");
-        SwitchToThread();
-    }
+enum class Attempt : std::uint8_t { Delivered, Exited, Host, Restoring };
+
+bool QueueWaitingDelivery(HANDLE native, QueuedDelivery* queued) {
+    if (queued->waiting.exchange(true, std::memory_order_acq_rel)) return true;
+    queued->references.fetch_add(1, std::memory_order_relaxed);
+    if (QueueUserAPC(WaitingEntry, native, reinterpret_cast<ULONG_PTR>(queued)) != 0) return true;
+    queued->references.fetch_sub(1, std::memory_order_relaxed);
+    queued->waiting.store(false, std::memory_order_release);
+    return false;
+}
+
+void Redirect(HANDLE native, Delivery& delivery) {
     const DWORD64 slot = (delivery.context.Rsp - RedZone - sizeof(Delivery)) & ~static_cast<DWORD64>(15);
     if (!StackWritable(slot - HomeArea - 8, delivery.context.Rsp - RedZone)) {
         ResumeThread(native);
@@ -465,7 +417,456 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         throw std::runtime_error("sceKernelRaiseException: cannot redirect the target thread");
     }
     ResumeThread(native);
+}
+
+const RUNTIME_FUNCTION* ImageFunction(DWORD64 image, DWORD64 rip) {
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
+    const auto* headers = reinterpret_cast<const IMAGE_NT_HEADERS64*>(image + static_cast<DWORD64>(dos->e_lfanew));
+    const auto& directory = headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+    if (directory.VirtualAddress == 0 || directory.Size < sizeof(RUNTIME_FUNCTION)) return nullptr;
+    const auto* functions = reinterpret_cast<const RUNTIME_FUNCTION*>(image + directory.VirtualAddress);
+    const auto count = directory.Size / sizeof(RUNTIME_FUNCTION);
+    const auto offset = static_cast<DWORD>(rip - image);
+    std::size_t low = 0;
+    std::size_t high = count;
+    while (low < high) {
+        const auto middle = low + (high - low) / 2;
+        if (offset < functions[middle].BeginAddress) high = middle;
+        else if (offset >= functions[middle].EndAddress) low = middle + 1;
+        else return &functions[middle];
+    }
+    return nullptr;
+}
+
+bool PushesMachineFrame(DWORD64 image, const RUNTIME_FUNCTION* function) {
+    constexpr std::uint8_t ChainInfo = 4;
+    constexpr std::uint8_t PushMachineFrame = 10;
+    for (int links = 0; links < 32; ++links) {
+        const auto* info = reinterpret_cast<const std::uint8_t*>(image + function->UnwindData);
+        const std::uint8_t flags = info[0] >> 3;
+        const std::uint8_t codes = info[2];
+        const auto* code = info + 4;
+        for (std::uint8_t index = 0; index < codes; ++index) {
+            if ((code[index * 2 + 1] & 0x0f) == PushMachineFrame) return true;
+        }
+        if ((flags & ChainInfo) == 0) return false;
+        function = reinterpret_cast<const RUNTIME_FUNCTION*>(code + ((codes + 1u) & ~1u) * 2);
+    }
     return true;
+}
+
+bool ReturnSite(DWORD64 at) {
+    if (at < 7 || !CodeReadable(at - 7, at)) return false;
+    const auto* code = reinterpret_cast<const std::uint8_t*>(at);
+    const auto callModrm = [](std::uint8_t modrm) { return (modrm & 0x38u) == 0x10u; };
+    if (code[-5] == 0xe8u) return true;
+    if (code[-2] == 0xffu && callModrm(code[-1]) && (code[-1] & 0xc0u) == 0xc0u) return true;
+    if (code[-3] == 0xffu && callModrm(code[-2])) return true;
+    if (code[-6] == 0xffu && callModrm(code[-5])) return true;
+    return code[-7] == 0xffu && callModrm(code[-6]);
+}
+
+void*** UnwindGuard() {
+    static thread_local void** guard = nullptr;
+    return &guard;
+}
+
+[[noreturn]] void UnwindRecovery() {
+    __builtin_longjmp(*UnwindGuard(), 1);
+}
+
+bool UnwindToGuest(CONTEXT& context, DWORD64& at, DWORD64& unknown) {
+    for (int depth = 0; depth < 64; ++depth) {
+        const auto image = ImageBase(context.Rip);
+        const auto kind = CachedKind(image);
+        if (kind == CodeKind::Guest) {
+            at = context.Rip;
+            return depth != 0 && ReturnSite(at);
+        }
+        if (kind == CodeKind::Unknown && image != 0) unknown = image;
+        if (image == 0 || kind != CodeKind::Host) return false;
+        const auto rsp = context.Rsp;
+        if (!StackWritable(rsp, rsp + sizeof(DWORD64))) return false;
+        if (const auto* function = ImageFunction(image, context.Rip)) {
+            if (PushesMachineFrame(image, function)) return false;
+            void* handlerData = nullptr;
+            DWORD64 establisher = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, context.Rip, const_cast<RUNTIME_FUNCTION*>(function), &context, &handlerData, &establisher, nullptr);
+            if (context.Rsp <= rsp) return false;
+        } else {
+            if (!StackWritable(context.Rsp, context.Rsp + sizeof(DWORD64))) return false;
+            context.Rip = *reinterpret_cast<const DWORD64*>(context.Rsp);
+            context.Rsp += sizeof(DWORD64);
+        }
+    }
+    return false;
+}
+
+bool GuestReturn(CONTEXT context, DWORD64& at, DWORD64& unknown) {
+    void* buffer[5]{};
+    if (__builtin_setjmp(buffer) != 0) {
+        *UnwindGuard() = nullptr;
+        return false;
+    }
+    *UnwindGuard() = buffer;
+    const bool found = UnwindToGuest(context, at, unknown);
+    *UnwindGuard() = nullptr;
+    return found;
+}
+
+constexpr DWORD ReservedThread = 0xffffffffu;
+constexpr DWORD64 ReturnBreakBits = 0xf0003ull;
+
+struct ReturnBreak {
+    std::atomic<DWORD> thread{0};
+    DWORD64 at = 0;
+    QueuedDelivery* queued = nullptr;
+};
+
+std::atomic<bool>& ReturnBreaksInstalled() {
+    static std::atomic<bool> installed{false};
+    return installed;
+}
+
+std::array<ReturnBreak, 256>& ReturnBreaks() {
+    static std::array<ReturnBreak, 256> breaks;
+    return breaks;
+}
+
+struct ArmedBreak {
+    std::atomic<DWORD64> at{0};
+    std::atomic<DWORD> thread{0};
+};
+
+std::array<ArmedBreak, 256>& ArmedBreaks() {
+    static std::array<ArmedBreak, 256> armed;
+    return armed;
+}
+
+std::atomic<std::size_t>& ArmedCount() {
+    static std::atomic<std::size_t> count{0};
+    return count;
+}
+
+void NoteArmedBreak(DWORD thread, DWORD64 at) {
+    auto& slot = ArmedBreaks()[ArmedCount().fetch_add(1, std::memory_order_relaxed) % ArmedBreaks().size()];
+    slot.at.store(0, std::memory_order_release);
+    slot.thread.store(thread, std::memory_order_release);
+    slot.at.store(at, std::memory_order_release);
+}
+
+bool ArmedOnThread(DWORD thread, DWORD64 at) {
+    if (at == 0) return false;
+    for (const auto& armed : ArmedBreaks()) {
+        if (armed.at.load(std::memory_order_acquire) != at) continue;
+        const DWORD owner = armed.thread.load(std::memory_order_acquire);
+        if (owner == thread && armed.at.load(std::memory_order_acquire) == at) return true;
+    }
+    return false;
+}
+
+bool DisarmedReturnBreak(const EXCEPTION_POINTERS& info) {
+    const auto& context = *info.ContextRecord;
+    constexpr DWORD TrapFlag = 0x100u;
+    constexpr DWORD64 BreakpointHits = 0xfu;
+    constexpr DWORD64 EnabledBreakpoints = 0xffu;
+    if ((context.EFlags & TrapFlag) != 0) return false;
+    if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS && ((context.Dr6 & BreakpointHits) != 0 || (context.Dr7 & EnabledBreakpoints) != 0)) return false;
+    const auto at = reinterpret_cast<DWORD64>(info.ExceptionRecord->ExceptionAddress);
+    return at == context.Rip && ArmedOnThread(GetCurrentThreadId(), at);
+}
+
+QueuedDelivery* ClaimReturnBreak(ReturnBreak& entry, DWORD thread) {
+    DWORD expected = thread;
+    if (!entry.thread.compare_exchange_strong(expected, ReservedThread, std::memory_order_acq_rel)) return nullptr;
+    auto* queued = entry.queued;
+    entry.thread.store(0, std::memory_order_release);
+    return queued;
+}
+
+[[noreturn]] void ReturnBreakEntry(Delivery* stored) {
+    CONTEXT context = stored->context;
+    const auto handler = stored->handler;
+    const int signum = stored->signum;
+    delete stored;
+    Deliver(handler, signum, context);
+    Aps5RedirectedExit(&context, nullptr, RtlRestoreContext);
+}
+
+LONG CALLBACK ReturnBreakHandler(EXCEPTION_POINTERS* info) {
+    auto* context = info->ContextRecord;
+    if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && *UnwindGuard() != nullptr) {
+        context->Rsp = (context->Rsp & ~static_cast<DWORD64>(15)) - 8;
+        context->Rip = reinterpret_cast<DWORD64>(&UnwindRecovery);
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (info->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP) return EXCEPTION_CONTINUE_SEARCH;
+    if ((context->Dr6 & 1u) == 0) return DisarmedReturnBreak(*info) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
+    const DWORD64 at = context->Dr0;
+    const DWORD self = GetCurrentThreadId();
+    QueuedDelivery* queued = nullptr;
+    for (auto& entry : ReturnBreaks()) {
+        if (entry.thread.load(std::memory_order_acquire) != self || entry.at != at) continue;
+        queued = ClaimReturnBreak(entry, self);
+        if (queued != nullptr) break;
+    }
+    if (queued == nullptr && !ArmedOnThread(self, at)) return EXCEPTION_CONTINUE_SEARCH;
+    context->Dr0 = 0;
+    context->Dr6 = 0;
+    context->Dr7 &= ~ReturnBreakBits;
+    context->ContextFlags |= CONTEXT_DEBUG_REGISTERS;
+    if (queued == nullptr) return EXCEPTION_CONTINUE_EXECUTION;
+    if (context->Rip == at && !queued->taken.exchange(true, std::memory_order_acq_rel)) {
+        auto* stored = new Delivery{queued->handler, queued->signum, *context, {}, 0};
+        stored->context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
+        stored->context.Dr0 = stored->context.Dr1 = stored->context.Dr2 = stored->context.Dr3 = stored->context.Dr6 = stored->context.Dr7 = 0;
+        context->Rsp = ((context->Rsp - RedZone - 64) & ~static_cast<DWORD64>(15)) - 8;
+        context->Rip = reinterpret_cast<DWORD64>(&ReturnBreakEntry);
+        context->Rcx = reinterpret_cast<DWORD64>(stored);
+    }
+    ReleaseQueued(queued);
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+bool InstallReturnBreaks() {
+    static const bool installed = [] {
+        const bool added = AddVectoredExceptionHandler(1, ReturnBreakHandler) != nullptr;
+        ReturnBreaksInstalled().store(added, std::memory_order_release);
+        return added;
+    }();
+    return installed;
+}
+
+bool SetReturnBreak(HANDLE native, DWORD64 at, bool armed) {
+    CONTEXT debug{};
+    debug.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    if (!GetThreadContext(native, &debug)) return false;
+    if (!armed && debug.Dr0 != at) return true;
+    debug.Dr0 = armed ? at : 0;
+    debug.Dr7 = (debug.Dr7 & ~ReturnBreakBits) | (armed ? 1ull : 0ull);
+    debug.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    return SetThreadContext(native, &debug) != 0;
+}
+
+struct ReturnArm {
+    ReturnBreak* entry = nullptr;
+    DWORD thread = 0;
+    DWORD64 at = 0;
+};
+
+void ArmReturnBreak(HANDLE native, const CONTEXT& context, QueuedDelivery* queued, ReturnArm& arm, DWORD64& unknown) {
+    if (!ReturnBreaksInstalled().load(std::memory_order_acquire) || queued == nullptr) return;
+    DWORD64 at = 0;
+    if (!GuestReturn(context, at, unknown)) return;
+    if (arm.entry != nullptr && arm.at == at) return;
+    if (arm.entry != nullptr) {
+        static_cast<void>(SetReturnBreak(native, arm.at, false));
+        ReleaseQueued(ClaimReturnBreak(*arm.entry, arm.thread));
+        arm = {};
+    }
+    const DWORD thread = GetThreadId(native);
+    for (auto& entry : ReturnBreaks()) {
+        DWORD expected = 0;
+        if (!entry.thread.compare_exchange_strong(expected, ReservedThread, std::memory_order_acq_rel)) continue;
+        entry.at = at;
+        entry.queued = queued;
+        queued->references.fetch_add(1, std::memory_order_relaxed);
+        entry.thread.store(thread, std::memory_order_release);
+        NoteArmedBreak(thread, at);
+        if (!SetReturnBreak(native, at, true)) {
+            ReleaseQueued(ClaimReturnBreak(entry, thread));
+            return;
+        }
+        arm = {&entry, thread, at};
+        return;
+    }
+}
+
+void DisarmReturnBreak(HANDLE native, ReturnArm& arm) {
+    if (arm.entry == nullptr) return;
+    const bool suspended = SuspendThread(native) != static_cast<DWORD>(-1);
+    if (suspended && !Exited(native)) static_cast<void>(SetReturnBreak(native, arm.at, false));
+    ReleaseQueued(ClaimReturnBreak(*arm.entry, arm.thread));
+    if (suspended) ResumeThread(native);
+    arm = {};
+}
+
+Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler, int signum, QueuedDelivery*& queued, ReturnArm* arm = nullptr) {
+    alignas(16) Delivery delivery{handler, signum, {}, {}, SaveVectors ? 1u : 0u};
+    const auto contextDeadline = std::chrono::steady_clock::now() + RetryLimit;
+    for (;;) {
+        if (SuspendThread(native) == static_cast<DWORD>(-1)) {
+            if (Exited(native)) return Attempt::Exited;
+            throw std::runtime_error("sceKernelRaiseException: cannot suspend the target thread");
+        }
+        if (Exited(native)) {
+            ResumeThread(native);
+            return Attempt::Exited;
+        }
+        if (queued != nullptr && queued->taken.load(std::memory_order_acquire)) {
+            ResumeThread(native);
+            return Attempt::Delivered;
+        }
+        delivery.context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
+        if (!GetThreadContext(native, &delivery.context)) {
+            ResumeThread(native);
+            if (std::chrono::steady_clock::now() >= contextDeadline) throw std::runtime_error("sceKernelRaiseException: cannot read the target thread context");
+            SwitchToThread();
+            continue;
+        }
+        if (thread->waitCount.load(std::memory_order_seq_cst) > 0) {
+            if (queued == nullptr) queued = new QueuedDelivery{handler, signum};
+            const bool accepted = QueueWaitingDelivery(native, queued);
+            ResumeThread(native);
+            if (!accepted) throw std::runtime_error("sceKernelRaiseException: cannot queue delivery to the waiting thread");
+            return Attempt::Delivered;
+        }
+        const bool restoring = RestoringContext(delivery.context.Rip);
+        DWORD64 image = 0;
+        const auto running = restoring ? CodeKind::Host : RunningCode(delivery.context.Rip, image);
+        if (running == CodeKind::Guest && arm != nullptr && arm->entry != nullptr && delivery.context.Rip == arm->at) {
+            ResumeThread(native);
+            return Attempt::Host;
+        }
+        if (running == CodeKind::Guest) {
+            if (queued != nullptr && queued->taken.exchange(true, std::memory_order_acq_rel)) {
+                ResumeThread(native);
+                return Attempt::Delivered;
+            }
+            Redirect(native, delivery);
+            return Attempt::Delivered;
+        }
+        if (running == CodeKind::Host && queued == nullptr) queued = new QueuedDelivery{handler, signum};
+        DWORD64 unknown = 0;
+        if (arm != nullptr && running == CodeKind::Host && !restoring) ArmReturnBreak(native, delivery.context, queued, *arm, unknown);
+        ResumeThread(native);
+        if (running == CodeKind::Unknown) {
+            static_cast<void>(ClassifyImage(image));
+            continue;
+        }
+        if (unknown != 0) {
+            static_cast<void>(ClassifyImage(unknown));
+            continue;
+        }
+        return restoring ? Attempt::Restoring : Attempt::Host;
+    }
+}
+
+struct PendingRaise {
+    Pthread thread;
+    HANDLE native;
+    GuestExceptionHandler handler;
+    int signum;
+    QueuedDelivery* queued;
+    ReturnArm arm{};
+};
+
+class RaiseDeliverer {
+public:
+    void Add(PendingRaise raise) {
+        {
+            std::lock_guard lock(mutex);
+            pending.push_back(raise);
+            if (!started) {
+                started = true;
+                std::thread([this] { run(); }).detach();
+            }
+        }
+        wake.notify_one();
+    }
+
+private:
+    void run() {
+        std::vector<PendingRaise> sweep;
+        unsigned idleSweeps = 0;
+        for (;;) {
+            {
+                std::unique_lock lock(mutex);
+                if (sweep.empty()) {
+                    wake.wait(lock, [this] { return !pending.empty(); });
+                    idleSweeps = 0;
+                }
+                sweep.insert(sweep.end(), pending.begin(), pending.end());
+                pending.clear();
+            }
+            std::vector<PendingRaise> kept;
+            for (auto& raise : sweep) {
+                Attempt attempt;
+                try {
+                    attempt = TryDeliver(raise.thread, raise.native, raise.handler, raise.signum, raise.queued, &raise.arm);
+                } catch (const std::exception& error) {
+                    std::fprintf(stderr, "[exception] signal 0x%x: %s\n", raise.signum, error.what());
+                    std::abort();
+                }
+                if (attempt == Attempt::Host || attempt == Attempt::Restoring) {
+                    kept.push_back(raise);
+                    continue;
+                }
+                DisarmReturnBreak(raise.native, raise.arm);
+                ReleaseQueued(raise.queued);
+                CloseHandle(raise.native);
+            }
+            sweep = std::move(kept);
+            if (sweep.empty()) continue;
+            const bool armed = std::all_of(sweep.begin(), sweep.end(), [](const PendingRaise& raise) { return raise.arm.entry != nullptr; });
+            if (!armed && ++idleSweeps < 64) SwitchToThread();
+            else Sleep(1);
+        }
+    }
+
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::vector<PendingRaise> pending;
+    bool started = false;
+};
+
+RaiseDeliverer& Deliverer() {
+    static auto& deliverer = *new RaiseDeliverer();
+    return deliverer;
+}
+
+bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
+    if (thread == scePthreadSelf()) {
+        CONTEXT context{};
+        RtlCaptureContext(&context);
+        Deliver(handler, signum, context);
+        return true;
+    }
+    const auto native = static_cast<HANDLE>(thread->nativeHandle);
+    const auto retryDeadline = std::chrono::steady_clock::now() + RetryLimit;
+    static_cast<void>(InstallReturnBreaks());
+    static_cast<void>(RestoringContext(0));
+    static_cast<void>(ExecutableBase());
+    static_cast<void>(Images());
+    QueuedDelivery* queued = nullptr;
+    ReturnArm arm;
+    for (;;) {
+        const auto attempt = TryDeliver(thread, native, handler, signum, queued, &arm);
+        if (attempt == Attempt::Delivered || attempt == Attempt::Exited) {
+            DisarmReturnBreak(native, arm);
+            ReleaseQueued(queued);
+            return attempt == Attempt::Delivered;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (attempt == Attempt::Restoring && now >= retryDeadline) {
+            const bool taken = queued != nullptr && queued->taken.exchange(true, std::memory_order_acq_rel);
+            DisarmReturnBreak(native, arm);
+            ReleaseQueued(queued);
+            if (taken) return true;
+            throw std::runtime_error("sceKernelRaiseException: the target thread stayed inside NtContinue for 1 s");
+        }
+        if (attempt == Attempt::Host) {
+            HANDLE owned = nullptr;
+            if (!DuplicateHandle(GetCurrentProcess(), native, GetCurrentProcess(), &owned, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+                DisarmReturnBreak(native, arm);
+                ReleaseQueued(queued);
+                throw std::runtime_error("sceKernelRaiseException: cannot keep the target thread for a later delivery");
+            }
+            Deliverer().Add({thread, owned, handler, signum, queued, arm});
+            return true;
+        }
+        SwitchToThread();
+    }
 }
 #else
 constexpr int HostSignal = SIGUSR1;
@@ -521,7 +922,8 @@ void ToHost(const GuestMcontext& m, mcontext_t& host) {
     if (host.fpregs != nullptr) std::memcpy(host.fpregs, m.fpstate, FxsaveRegisterBytes);
 }
 
-void Deliver(int, siginfo_t*, void* context) {
+void Deliver(int signum, siginfo_t*, void* context) {
+    if (TimedWait::DeferDelivery(signum)) return;
     const auto handler = Handler(RaisedSignal);
     if (handler == nullptr) {
         static constexpr char message[] = "sceKernelRaiseException: the handler was removed before the signal was delivered\n";
@@ -673,6 +1075,7 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  const auto handler = Handler(signum);
  if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: no handler installed for the signal");
 #ifdef _WIN32
+ if (thread->suspended.load(std::memory_order_acquire)) throw std::runtime_error("sceKernelRaiseException: the target thread is still suspended at creation");
  return RaiseOn(thread, handler, signum) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 #else
  return RaiseOn(thread) ? 0 : SCE_KERNEL_ERROR_ESRCH;

@@ -1,4 +1,5 @@
 #include "Optimization/ShaderInfoCollector.hpp"
+#include "Optimization/ResourceMaterializer.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -285,6 +286,8 @@ void CollectPixelInputs(const IrProgram& program, const ShaderPixelInputInfo* pi
     std::array<bool, 32> perVertex {};
     std::array<bool, 32> interpolated {};
     std::array<bool, 32> halfRead {};
+    std::array<bool, 32> readsP10 {};
+    std::array<bool, 32> readsP20 {};
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
             if (inst->Opcode() == IrOpcode::GetAttribute) {
@@ -298,7 +301,9 @@ void CollectPixelInputs(const IrProgram& program, const ShaderPixelInputInfo* pi
                 const auto input = inst->Argument(0)->Resolve()->ImmediateU32();
                 const auto mode = inst->Argument(2)->Resolve()->ImmediateU32();
                 read[input] = true;
-                perVertex[input] = perVertex[input] || mode == 1u || !IsPixelParameterFlat(*pixel, input);
+                readsP10[input] = readsP10[input] || mode == 0u;
+                readsP20[input] = readsP20[input] || mode == 1u;
+                perVertex[input] = perVertex[input] || (readsP10[input] && readsP20[input]) || !IsPixelParameterFlat(*pixel, input);
             } else if (inst->Opcode() == IrOpcode::GetInterpolationParameterF16) {
                 const auto input = inst->Argument(0)->Resolve()->ImmediateU32();
                 const bool high = inst->Argument(3)->Resolve()->ImmediateU32() != 0u;
@@ -419,8 +424,12 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     AddInput(info, kind, 0, 1, "gl_SampleMaskIn");
                     break;
                 case StageInputKind::BaryCoordSmooth:
+                    AddInput(info, StageInputKind::BaryCoordSmooth, 0, 3, "gl_BaryCoordKHR");
+                    if (program.Metadata().barycentricBuiltinsUnnormalized) AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
+                    break;
                 case StageInputKind::BaryCoordSmoothCenter:
                 case StageInputKind::BaryCoordSmoothSample:
+                    info.smoothOffsetBarycentrics = true;
                     AddInput(info, StageInputKind::BaryCoordSmooth, 0, 3, "gl_BaryCoordKHR");
                     if (kind == StageInputKind::BaryCoordSmoothSample && program.Metadata().pixelIteratesSamples) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
                     break;
@@ -548,6 +557,25 @@ std::uint16_t SamplerUseOf(IrOpcode opcode, std::uint32_t flags, IrShaderStage s
     return static_cast<std::uint16_t>(use);
 }
 
+void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
+    if (info.runtimeImageModes.size() != info.images.size() || std::ranges::any_of(info.images, [](const ImageResource& image) { return image.targetMerge; })) {
+        return Fail("color target merge image cannot join the prepared images");
+    }
+    ImageResource image;
+    image.source = std::numeric_limits<std::uint32_t>::max();
+    image.resourceClass = ImageResourceClass::Storage;
+    image.numericClass = IrTextureNumericClass::Uint;
+    image.dimension = pixel.mergeSamples > 1u ? RdnaImageDimension::Dim2DMsaa : RdnaImageDimension::Dim2D;
+    image.read = true;
+    image.written = true;
+    image.fmaskCompatible = false;
+    image.targetMerge = true;
+    info.images.push_back(image);
+    info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
+    if (pixel.mergeSamples > 1u) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
+}
+
 void CollectSamplerUses(const IrProgram& program, ShaderInfo& info) {
     for (auto& sampler : info.samplers) {
         sampler.uses = 0;
@@ -596,7 +624,7 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
             return SharedAccessOf(inst->Opcode()) == SharedAccess::Atomic && inst->Type() == IrType::U64;
         });
     });
-    next.usesFaultBuffer = next.usesFaultBuffer || (next.sharedMemoryBytes != 0u && ldsAtomic64);
+    next.usesFaultBuffer = next.usesFaultBuffer || ldsAtomic64;
     switch (program.Resources().stage) {
         case IrShaderStage::Vertex:
         case IrShaderStage::Local:
@@ -620,6 +648,8 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
     }
     CollectBuiltinInputs(program, next);
     CollectOutputs(program, inputInfo, next);
+    if (program.Resources().stage == IrShaderStage::Pixel && inputInfo.pixel->mergeMask != 0u) AddTargetMerge(*inputInfo.pixel, next);
+    if ((program.Resources().stage == IrShaderStage::Vertex || program.Resources().stage == IrShaderStage::Mesh) && inputInfo.vertex != nullptr && inputInfo.vertex->pointList) AddOutput(next, StageOutputKind::PointSize, 0, 0, "gl_PointSize");
     CollectSamplerUses(program, next);
     program.Info() = std::move(next);
     program.Metadata().shaderInfoComplete = true;

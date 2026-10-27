@@ -1,3 +1,4 @@
+#include "prx/libSceSsl/include/Ssl.hpp"
 #ifdef _WIN32
 #include <winsock2.h>
 #else
@@ -466,8 +467,6 @@ struct Session {
     }
 };
 
-using SslVerifyCallback = int (APS5_VABI *)(int, unsigned int, void**, int, void*);
-
 constexpr int SslVersionSsl30 = 2;
 constexpr int SslVersionTls12 = 5;
 
@@ -657,7 +656,9 @@ int APS5_VABI sceSslInit_nid_postfix(std::uint64_t poolSize) {
 int APS5_VABI sceSslTerm_nid_postfix(int sslCtxId) {
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    if (!state.contexts.erase(sslCtxId)) return ErrorInvalidId;
+    if (!state.contexts.contains(sslCtxId)) return ErrorInvalidId;
+    std::erase_if(state.connections, [sslCtxId](const auto& entry) { return entry.second.context == sslCtxId; });
+    state.contexts.erase(sslCtxId);
     return 0;
 }
 
@@ -997,6 +998,10 @@ int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) 
     return static_cast<int>(received);
 }
 
+int SslRead_nid_no_patch(int sslConnectionId, void* buffer, std::size_t length, int flags) {
+    return sceSslRead(sslConnectionId, buffer, length, flags);
+}
+
 int APS5_VABI sceSslWrite(int sslConnectionId, void* buf, size_t len, int flags) {
     if (flags != 0) return ErrorInvalidValue;
     if (!buf && len) throw std::invalid_argument("sceSslWrite: null buffer");
@@ -1262,7 +1267,6 @@ int APS5_VABI CRYPTO_initAsymmetricKey() {
 }
 
 int APS5_VABI CRYPTO_uninitAsymmetricKey() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1272,7 +1276,6 @@ int APS5_VABI RSA_verifySignature() {
 }
 
 int APS5_VABI VLONG_freeVlongQueue() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1337,8 +1340,7 @@ int APS5_VABI sceSslLoadRootCACert() {
 }
 
 int APS5_VABI sceSslRecv(int sslConnectionId, void* buf, std::size_t fulllen) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceSslRead(sslConnectionId, buf, fulllen, 0);
 }
 
 int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId) {
@@ -1347,11 +1349,15 @@ int APS5_VABI sceSslReuseConnection(int sslConnectionId, int sockId) {
 }
 
 int APS5_VABI sceSslSend(int sslConnectionId, void* msg, std::size_t fulllen) {
+    return sceSslWrite(sslConnectionId, msg, fulllen, 0);
+}
+
+int APS5_VABI sceSslSetSslVersion() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceSslSetSslVersion() {
+int APS5_VABI sceSslSetServerName() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

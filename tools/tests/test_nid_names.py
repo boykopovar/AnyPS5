@@ -1,10 +1,12 @@
 import contextlib
+import http.server
 import io
 import json
 import os
 import subprocess
 import tempfile
 import sys
+import threading
 import unittest
 from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
@@ -15,6 +17,128 @@ import nid_names
 
 
 class DatabaseCacheTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def database_server(self, payload):
+        state = {"payload": payload, "requests": 0}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                state["requests"] += 1
+                body = state["payload"]
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
+        thread.start()
+        try:
+            with patch.object(nid_names, "DB_URL", f"http://127.0.0.1:{server.server_port}/aerolib.csv"):
+                yield state
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
+
+    def test_unusable_successful_downloads_are_not_cached_and_retry(self):
+        valid = b"\xef\xbb\xbf# database\nmFq1M6vw-JM ACProcessMain\n"
+        for payload in (b"", b"# comment only\n", b"not-a-database\n", b"<!doctype html>\n<html>unavailable</html>\n"):
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as directory, self.database_server(payload) as state:
+                cache = Path(directory) / "aerolib.csv"
+                with self.assertRaisesRegex(ValueError, "no valid NID records") as raised:
+                    nid_names.load_db(cache)
+                self.assertIn(str(cache), str(raised.exception))
+                self.assertEqual(list(cache.parent.iterdir()), [])
+                state["payload"] = valid
+                self.assertEqual(nid_names.load_db(cache), {"mFq1M6vw-JM": "ACProcessMain"})
+                self.assertEqual(cache.read_bytes(), valid)
+                self.assertEqual(state["requests"], 2)
+                self.assertEqual(nid_names.load_db(cache), {"mFq1M6vw-JM": "ACProcessMain"})
+                self.assertEqual(state["requests"], 2)
+                self.assertEqual(list(cache.parent.iterdir()), [cache])
+
+    def test_download_content_errors_are_reported_by_cli(self):
+        with tempfile.TemporaryDirectory() as directory, self.database_server(b""):
+            cache = Path(directory) / "aerolib.csv"
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                nid_names.main(["--db", str(cache), "--nid", "mFq1M6vw-JM", "--json"])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(str(cache), stderr.getvalue())
+            self.assertIn("no valid NID records", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertFalse(cache.exists())
+
+    def test_existing_database_files_keep_permissive_parsing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "custom.csv"
+            for payload, expected in ((b"", {}), (b"# comment\n", {}), (b"legacy customName\n", {"legacy": "customName"})):
+                with self.subTest(payload=payload):
+                    cache.write_bytes(payload)
+                    with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=AssertionError("unexpected download")):
+                        self.assertEqual(nid_names.load_db(cache), expected)
+                    self.assertEqual(cache.read_bytes(), payload)
+
+    def long_cache_path(self, directory):
+        root = Path(directory)
+        if os.name == "nt":
+            root = Path("\\\\?\\" + str(root.resolve()))
+        limit = os.pathconf(root, "PC_NAME_MAX") if os.name == "posix" else 255
+        cache = root / ("n" * (limit - len(".csv")) + ".csv")
+        cache.touch()
+        cache.unlink()
+        return cache
+
+    def test_valid_long_cache_filename_can_be_downloaded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = self.long_cache_path(directory)
+
+            def complete(url, filename):
+                self.assertEqual(url, nid_names.DB_URL)
+                self.assertEqual(Path(filename).parent, cache.parent)
+                self.assertFalse(cache.exists())
+                Path(filename).write_text("AAAAAAAAAAA sceComplete\n", encoding="utf-8")
+
+            try:
+                with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=complete) as download:
+                    self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
+                    download.assert_called_once()
+                self.assertEqual(list(cache.parent.iterdir()), [cache])
+                with patch.object(nid_names.urllib.request, "urlretrieve") as download:
+                    self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
+                    download.assert_not_called()
+            finally:
+                cache.unlink(missing_ok=True)
+
+    def test_long_cache_filename_preserves_interruption_cleanup_and_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = self.long_cache_path(directory)
+
+            def interrupted(url, filename):
+                Path(filename).write_text("AAAAAAAAAAA scePartial\n", encoding="utf-8")
+                raise URLError("connection interrupted")
+
+            def complete(url, filename):
+                Path(filename).write_text("AAAAAAAAAAA sceComplete\n", encoding="utf-8")
+
+            try:
+                with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=interrupted):
+                    with self.assertRaises(URLError):
+                        nid_names.load_db(cache)
+                self.assertFalse(cache.exists())
+                self.assertEqual(list(cache.parent.iterdir()), [])
+                with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=complete):
+                    self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
+                self.assertEqual(list(cache.parent.iterdir()), [cache])
+            finally:
+                cache.unlink(missing_ok=True)
+
     def test_empty_symbol_filters_do_not_open_database(self):
         with tempfile.TemporaryDirectory() as directory:
             for option in ("--name", "--symbol", "--na", "--sym"):
@@ -30,12 +154,51 @@ class DatabaseCacheTests(unittest.TestCase):
                         else:
                             self.assertEqual(result.stdout.split(), ["NAME", "NID"])
 
+    def test_empty_nid_filters_do_not_open_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for option in ("--nid", "--ni"):
+                for json_output in (False, True):
+                    with self.subTest(option=option, json_output=json_output):
+                        result = subprocess.run(
+                            [sys.executable, str(Path(nid_names.__file__)), option, "--db", directory,
+                             *(["--json"] if json_output else [])], capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stderr, "")
+                        if json_output:
+                            self.assertEqual(json.loads(result.stdout), {"db_entries": 0, "rows": []})
+                        else:
+                            self.assertIn("0 unknowns, 0 suggestions (0 already implemented)", result.stdout)
+
+    def test_environment_variable_selects_the_database_and_help_names_it(self):
+        script = str(Path(nid_names.__file__))
+        helped = subprocess.run([sys.executable, script, "--help"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(helped.returncode, 0, helped.stderr)
+        self.assertIn("ANYPS5_NID_DB", " ".join(helped.stdout.split()))
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "nid database.csv"
+            nid = nid_names.compute_nid("sceExample")
+            database.write_text(f"{nid} sceExample\n", encoding="utf-8")
+            scratch = str(Path(directory) / "scratch")
+            Path(scratch).mkdir()
+            tree = Path(directory) / "tree"
+            (tree / "core" / "libs" / "prx").mkdir(parents=True)
+            (tree / "tools").mkdir()
+            tool = tree / "tools" / "nid_names.py"
+            tool.write_bytes(Path(script).read_bytes())
+            environment = {**os.environ, "ANYPS5_NID_DB": str(database), "TEMP": scratch, "TMP": scratch, "TMPDIR": scratch}
+            result = subprocess.run([sys.executable, str(tool), "--nid", nid, "--json"], capture_output=True, text=True,
+                                    env=environment, timeout=20)
+            self.assertEqual(list(Path(scratch).iterdir()), [])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("downloading", result.stderr)
+        self.assertIn("sceExample", result.stdout)
+
     def test_interrupted_download_does_not_publish_a_partial_cache(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "cache" / "aerolib.csv"
 
             def interrupted(url, filename):
-                Path(filename).write_text("nid1 scePartial\n", encoding="utf-8")
+                Path(filename).write_text("AAAAAAAAAAA scePartial\n", encoding="utf-8")
                 raise URLError("connection interrupted")
 
             with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=interrupted):
@@ -49,17 +212,17 @@ class DatabaseCacheTests(unittest.TestCase):
             cache = Path(directory) / "aerolib.csv"
 
             def interrupted(url, filename):
-                Path(filename).write_text("nid1 scePartial\n", encoding="utf-8")
+                Path(filename).write_text("AAAAAAAAAAA scePartial\n", encoding="utf-8")
                 raise URLError("connection interrupted")
 
             def complete(url, filename):
-                Path(filename).write_text("nid1 sceComplete\nnid2 sceOther\n", encoding="utf-8")
+                Path(filename).write_text("AAAAAAAAAAA sceComplete\nBBBBBBBBBBB sceOther\n", encoding="utf-8")
 
             with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=interrupted):
                 with self.assertRaises(URLError):
                     nid_names.load_db(cache)
             with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=complete) as download:
-                self.assertEqual(nid_names.load_db(cache), {"nid1": "sceComplete", "nid2": "sceOther"})
+                self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete", "BBBBBBBBBBB": "sceOther"})
                 download.assert_called_once()
             self.assertEqual(list(cache.parent.iterdir()), [cache])
 
@@ -72,19 +235,19 @@ class DatabaseCacheTests(unittest.TestCase):
                 self.assertNotEqual(Path(filename), cache)
                 self.assertEqual(Path(filename).parent, cache.parent)
                 self.assertFalse(cache.exists())
-                Path(filename).write_text("nid1 sceComplete\n", encoding="utf-8")
+                Path(filename).write_text("AAAAAAAAAAA sceComplete\n", encoding="utf-8")
 
             with patch.object(nid_names.urllib.request, "urlretrieve", side_effect=complete):
-                self.assertEqual(nid_names.load_db(cache), {"nid1": "sceComplete"})
-            self.assertEqual(cache.read_text(encoding="utf-8"), "nid1 sceComplete\n")
+                self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceComplete"})
+            self.assertEqual(cache.read_text(encoding="utf-8"), "AAAAAAAAAAA sceComplete\n")
             self.assertEqual(list(cache.parent.iterdir()), [cache])
 
     def test_existing_cache_is_used_without_downloading(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory) / "aerolib.csv"
-            cache.write_text("nid1 sceExisting\n", encoding="utf-8")
+            cache.write_text("AAAAAAAAAAA sceExisting\n", encoding="utf-8")
             with patch.object(nid_names.urllib.request, "urlretrieve") as download:
-                self.assertEqual(nid_names.load_db(cache), {"nid1": "sceExisting"})
+                self.assertEqual(nid_names.load_db(cache), {"AAAAAAAAAAA": "sceExisting"})
                 download.assert_not_called()
 
     def test_utf8_bom_does_not_change_the_first_nid(self):
@@ -405,6 +568,33 @@ int APS5_VABI sceReal() { return 0; }
     def test_spliced_line_comment_and_macro_tokens(self):
         self.write_source('// continued \\\nAPS5_EXPORT("AAAAAAAAAAA", exampleUnknown00);\nAPS5_EX\\\nPORT("BBBBBBBBBBB", exampleUnknown01);\n')
         self.assertEqual(nid_names.collect_unknowns(), {"BBBBBBBBBBB": "core/libs/prx/libSceExample/Export.cpp:exampleUnknown01"})
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(nid_names.sys, "stdout", out), patch.object(nid_names.sys, "stderr", err):
+            try:
+                nid_names.main(["--invalid-argument"])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 
