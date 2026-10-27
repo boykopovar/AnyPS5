@@ -496,8 +496,10 @@ bool& guestZoneNamesInitialized() {
 void refreshGuestZoneNames() {
     char** names = HostZoneNames();
     auto& utf8Names = guestZoneNamesUtf8();
-    for (std::size_t index = 0; index < utf8Names.size(); ++index)
-        utf8Names[index] = GuestTimeZoneNameToUtf8(names[index], CP_ACP);
+    for (std::size_t index = 0; index < utf8Names.size(); ++index) {
+        const auto converted = GuestTimeZoneNameToUtf8(names[index], CP_ACP);
+        if (utf8Names[index] != converted) utf8Names[index] = converted;
+    }
     guestZoneNamesInitialized() = true;
 }
 #endif
