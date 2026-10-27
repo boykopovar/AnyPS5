@@ -51,7 +51,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, CloseHandshake, AlertHandshake, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 
 class Server {
@@ -215,6 +215,7 @@ private:
         Require(mbedtls_net_accept(&listener, &client, nullptr, 0, nullptr) == 0, "server accept");
         Stage(1);
         if (mode == Mode::StallHandshake) Stall();
+        else if (mode == Mode::CloseHandshake || mode == Mode::AlertHandshake) RefuseHello(client);
         else {
             Require(mbedtls_ssl_setup(&ssl, &config) == 0, "server TLS setup");
             mbedtls_ssl_set_bio(&ssl, &client, mbedtls_net_send, mbedtls_net_recv, mbedtls_net_recv_timeout);
@@ -226,6 +227,19 @@ private:
         }
         mbedtls_ssl_free(&ssl);
         mbedtls_net_free(&client);
+    }
+
+    void RefuseHello(mbedtls_net_context& client) {
+        std::vector<unsigned char> hello(5);
+        std::size_t received = 0;
+        while (received < hello.size()) {
+            const int count = mbedtls_net_recv(&client, hello.data() + received, hello.size() - received);
+            if (count <= 0) return;
+            received += static_cast<std::size_t>(count);
+            if (received == 5) hello.resize(5 + ((static_cast<std::size_t>(hello[3]) << 8) | hello[4]));
+        }
+        static constexpr unsigned char Alert[] = {0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28};
+        if (mode == Mode::AlertHandshake) Require(mbedtls_net_send(&client, Alert, sizeof(Alert)) == static_cast<int>(sizeof(Alert)), "server alert");
     }
 
     void Exchange(mbedtls_ssl_context& ssl) {
@@ -353,11 +367,10 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "unsupported reuse throws");
 }
 
-void Failure(int ssl, Mode mode, bool verifyName = false) {
+void Failure(int ssl, Mode mode) {
     std::fprintf(stderr, "HTTP2 failure scenario %d\n", static_cast<int>(mode));
     Server server(mode);
     Client client(ssl);
-    if (verifyName) Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "enable numeric host name rejection");
     client.Create(server.Url());
     Require(sceHttp2SetConnectTimeOut(client.request, 1000000) == 0 && sceHttp2SetRecvTimeOut(client.request, 1000000) == 0, "failure deadlines");
     Require(Throws([&] {
@@ -367,6 +380,28 @@ void Failure(int ssl, Mode mode, bool verifyName = false) {
     }), "failure never reports complete success");
     int status = 1234;
     Require(Throws([&] { sceHttp2GetStatusCode(client.request, &status); }) && status == 1234, "failed outputs unchanged");
+}
+
+void AfterFailedSend(const Client& client, int expected) {
+    int status = 1234;
+    Require(sceHttp2GetStatusCode(client.request, &status) == 0 && status == 0, "status after a failed send");
+    int kind = 5;
+    std::uint64_t length = 999;
+    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == static_cast<int>(0x817b1065) && kind == 5 && length == 999,
+        "no content length after a failed send");
+    char byte = 'z';
+    Require(sceHttp2ReadData(client.request, &byte, 1) == static_cast<int>(0x817b1065) && byte == 'z', "no response to read after a failed send");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == expected, "another send repeats the failure");
+}
+
+void Handshake(int ssl, Mode mode, int expected, bool verifyName = false) {
+    std::fprintf(stderr, "HTTP2 handshake failure scenario %d\n", static_cast<int>(mode));
+    Server server(mode);
+    Client client(ssl);
+    if (verifyName) Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "enable numeric host name rejection");
+    client.Create(server.Url());
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == expected, "handshake failure result");
+    AfterFailedSend(client, expected);
 }
 
 void Cancellation(int ssl, Mode mode, int teardown) {
@@ -476,8 +511,7 @@ void Refused(int ssl) {
     Client client(ssl);
     client.Create(url);
     Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x8041013d), "raw connection refused error");
-    int status = 123;
-    Require(sceHttp2GetStatusCode(client.request, &status) == static_cast<int>(0x8041013d) && status == 123, "failed status untouched");
+    AfterFailedSend(client, static_cast<int>(0x8041013d));
 }
 
 void Capacity(int ssl) {
@@ -548,7 +582,9 @@ int main(int argc, char** argv) {
         Require(argc == 1, "test arguments");
         for (const auto mode : {Mode::Normal, Mode::Large, Mode::NoLength, Mode::Head, Mode::NotFound, Mode::Redirect, Mode::Auth, Mode::Informational}) Success(ssl, mode);
         for (const auto mode : {Mode::NoAlpn, Mode::Reset, Mode::Truncate, Mode::Redirect, Mode::Auth}) Failure(ssl, mode);
-        Failure(ssl, Mode::Normal, true);
+        Handshake(ssl, Mode::Normal, static_cast<int>(0x8095f00b), true);
+        Handshake(ssl, Mode::CloseHandshake, static_cast<int>(0x8095170d));
+        Handshake(ssl, Mode::AlertHandshake, static_cast<int>(0x8095f010));
         for (const auto mode : {Mode::StallHandshake, Mode::StallHeaders, Mode::StallBody, Mode::StallUpload}) {
             Deadline(ssl, mode, false);
             Deadline(ssl, mode, true);
@@ -558,7 +594,7 @@ int main(int argc, char** argv) {
         Capacity(ssl);
         const int untrusted = sceSslInit_nid_postfix(8 * 1024 * 1024);
         Require(untrusted > 0, "untrusted SSL context");
-        Failure(untrusted, Mode::Normal);
+        Handshake(untrusted, Mode::Normal, static_cast<int>(0x8095f00c));
         Success(untrusted, Mode::Normal, true);
         Require(sceSslTerm_nid_postfix(untrusted) == 0, "untrusted SSL term");
     }

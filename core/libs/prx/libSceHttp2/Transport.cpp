@@ -36,6 +36,10 @@ using Clock = std::chrono::steady_clock;
 constexpr int WantRead = static_cast<int>(0x8095f013);
 constexpr int WantWrite = static_cast<int>(0x8095f014);
 constexpr int InvalidValue = static_cast<int>(0x817B11FE);
+constexpr int ResponseUnavailable = static_cast<int>(0x817b1065);
+constexpr std::array<int, 7> HandshakeFailures{
+    static_cast<int>(0x8095f00b), static_cast<int>(0x8095f00c), static_cast<int>(0x8095f00d), static_cast<int>(0x8095f010),
+    static_cast<int>(0x8095170d), static_cast<int>(0x80951d78), static_cast<int>(0x80410136)};
 
 [[noreturn]] void Unknown(const char* message) {
     NotImplemented_nid_no_patch(message);
@@ -370,6 +374,7 @@ struct Request::State {
             if (result == WantRead || result == WantWrite) Wait(result == WantWrite, connectDeadline);
             else break;
         }
+        if (std::find(HandshakeFailures.begin(), HandshakeFailures.end(), result) != HandshakeFailures.end()) return result;
         Require(result == 0, "sceHttp2: TLS failed; console error mapping is unknown");
         const char* selected = sceSslGetAlpnSelected(ssl);
         Require(selected && std::string_view(selected) == "h2", "sceHttp2: server did not negotiate h2; fallback contract is unknown");
@@ -554,6 +559,7 @@ Request::~Request() = default;
 
 int Request::Send(const void* data, std::size_t size) {
     auto lock = state->Lock();
+    if (state->started && state->networkResult) return state->networkResult;
     Require(!state->started, "sceHttp2SendRequest: request reuse is not implemented");
     Require(data || size == 0, "sceHttp2SendRequest: null body");
     Require(state->settings.noContentLength || size == state->settings.contentLength, "sceHttp2SendRequest: body length mismatch");
@@ -587,7 +593,7 @@ int Request::Send(const void* data, std::size_t size) {
 
 int Request::Read(void* data, std::size_t size) {
     auto lock = state->Lock();
-    if (state->networkResult) return state->networkResult;
+    if (state->networkResult) return ResponseUnavailable;
     Require(state->ready, "sceHttp2ReadData: response unavailable");
     Require(data || size == 0, "sceHttp2ReadData: null buffer");
     if (!size) return 0;
@@ -609,7 +615,11 @@ int Request::Read(void* data, std::size_t size) {
 
 int Request::Status(int* status) {
     auto lock = state->Lock();
-    if (state->networkResult) return state->networkResult;
+    if (state->networkResult) {
+        Require(status, "sceHttp2GetStatusCode: null output");
+        *status = 0;
+        return 0;
+    }
     Require(status && state->ready, "sceHttp2GetStatusCode: null output or response unavailable");
     *status = state->status;
     return 0;
@@ -617,7 +627,7 @@ int Request::Status(int* status) {
 
 int Request::ContentLength(int* kind, std::uint64_t* length) {
     auto lock = state->Lock();
-    if (state->networkResult) return state->networkResult;
+    if (state->networkResult) return ResponseUnavailable;
     Require(kind && length && state->ready, "sceHttp2GetResponseContentLength: null output or response unavailable");
     *kind = state->hasLength ? 0 : 1;
     *length = state->hasLength ? state->contentLength : 0;
