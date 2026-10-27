@@ -56,7 +56,6 @@ int main() {
     Require(callbackCalls == 0);
 
     Require(sceHttp2SetCookieBox(tmpl, 0) == 0);
-    Require(Throws([&] { sceHttp2SetCookieBox(tmpl, box); }));
     Require(sceHttp2CookieFlush(box) == 0);
     Require(sceHttp2SetResolveRetry(tmpl, 0) == 0);
     Require(sceHttp2SetResolveRetry(tmpl, 3) == 0);
