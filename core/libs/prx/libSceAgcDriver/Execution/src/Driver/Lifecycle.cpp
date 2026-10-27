@@ -16,7 +16,9 @@
 #include "ShaderDiskCache.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cerrno>
@@ -143,12 +145,14 @@ Driver::~Driver() {
 
 void Driver::Shutdown() {
     stop();
+    if (LibcHostShutdownAbandoned_nid_no_patch()) LibcTerminate_nid_no_patch(LibcExitCode_nid_no_patch());
     std::lock_guard lock(mutex);
     rethrowFailure();
 }
 
 void Driver::stop() {
     require(!onWorkerThread(), "worker cannot stop itself");
+    if (LibcHostShutdownAbandoned_nid_no_patch()) LibcTerminate_nid_no_patch(LibcExitCode_nid_no_patch());
     std::lock_guard shutdownLock(shutdownMutex);
     if (stopped) return;
     LibcRequestShutdown_nid_postfix();
@@ -164,7 +168,15 @@ void Driver::stop() {
     }
     changed.notify_all();
     for (auto& [queue, worker] : workers) {
-        if (worker.thread.joinable()) worker.thread.join();
+        if (!worker.thread.joinable()) continue;
+        while (!worker.exited.load(std::memory_order_acquire)) {
+            if (LibcHostShutdownAbandoned_nid_no_patch()) {
+                worker.thread.detach();
+                LibcTerminate_nid_no_patch(LibcExitCode_nid_no_patch());
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        worker.thread.join();
     }
     try {
         DrawFinisher::Get().Drain();
@@ -176,7 +188,11 @@ void Driver::stop() {
     StopWorkerSampler();
     CloseRegistrationPreparation();
     Graphics::StopPipelineLibraryWorker();
-    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    while (!GuestMemory::GpuMutex().try_lock()) {
+        if (LibcHostShutdownAbandoned_nid_no_patch()) LibcTerminate_nid_no_patch(LibcExitCode_nid_no_patch());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    std::lock_guard gpuLock(GuestMemory::GpuMutex(), std::adopt_lock);
     Graphics::ReportHostImports();
     device.Reset();
     replacedDevices.clear();

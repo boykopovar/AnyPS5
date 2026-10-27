@@ -17,6 +17,7 @@
 #include <windows.h>
 #endif
 #include <atomic>
+#include <chrono>
 #include <stdexcept>
 #include "prx/libc/include/Shutdown.hpp"
 
@@ -35,6 +36,8 @@ std::exception_ptr shutdownFailure;
 std::stop_source shutdownSource;
 std::atomic<bool> exitRequested{false};
 std::atomic<bool> exitStarted{false};
+std::atomic<int> exitCode{0};
+std::atomic<bool> hostShutdownAbandoned{false};
 
 thread_local bool runningExit = false;
 
@@ -52,7 +55,24 @@ extern "C" void LibcRequestShutdown_nid_postfix() {
     shutdownSource.request_stop();
 }
 
+extern "C" int LibcExitCode_nid_no_patch() {
+    return exitCode.load();
+}
+
+extern "C" bool LibcExitRequested_nid_no_patch() {
+    return exitRequested.load();
+}
+
+extern "C" void LibcNoteHostShutdownAbandoned_nid_no_patch() {
+    hostShutdownAbandoned.store(true, std::memory_order_release);
+}
+
+extern "C" bool LibcHostShutdownAbandoned_nid_no_patch() {
+    return hostShutdownAbandoned.load(std::memory_order_acquire);
+}
+
 extern "C" void LibcRequestExit_nid_postfix(int code) {
+    exitCode.store(code);
     if (exitRequested.exchange(true)) return;
     LibcRequestShutdown_nid_postfix();
     std::thread([code] { LibcExitWithoutHandlers_nid_no_patch(code); }).detach();
@@ -89,6 +109,7 @@ extern "C" void LibcRunShutdown_nid_postfix() {
     std::exception_ptr error;
     for (auto it = callbacks.rbegin(); it != callbacks.rend(); ++it) {
         try { (*it)(); }
+        catch (const ProcessShutdown&) {}
         catch (...) { if (!error) error = std::current_exception(); }
     }
     lock.lock();
@@ -96,6 +117,7 @@ extern "C" void LibcRunShutdown_nid_postfix() {
     shutdownFinished = true;
     lock.unlock();
     shutdownChanged.notify_all();
+    if (hostShutdownAbandoned.load(std::memory_order_acquire)) LibcTerminate_nid_no_patch(exitCode.load());
     if (error) std::rethrow_exception(error);
 }
 
@@ -162,6 +184,35 @@ extern "C" {
     LibcTerminate_nid_no_patch(code);
 }
 
+[[noreturn]] void LibcFinishProcessExit_nid_no_patch(int code) {
+    exitCode.store(code);
+    exitRequested.store(true);
+    bool start = false;
+    bool wait = false;
+    {
+        std::lock_guard lock(shutdownMutex);
+        if (!shutdownStarted) start = true;
+        else if (!shutdownFinished && shutdownThread != std::this_thread::get_id()) wait = true;
+    }
+    if (start) {
+        try {
+            LibcRunShutdown_nid_postfix();
+        } catch (const ProcessShutdown&) {
+        } catch (...) {
+        }
+    } else if (wait) {
+        std::unique_lock lock(shutdownMutex);
+        while (!shutdownFinished) {
+            if (hostShutdownAbandoned.load(std::memory_order_acquire)) {
+                lock.unlock();
+                LibcTerminate_nid_no_patch(code);
+            }
+            shutdownChanged.wait_for(lock, std::chrono::milliseconds(20));
+        }
+    }
+    LibcTerminate_nid_no_patch(code);
+}
+
 [[noreturn]] void LibcTerminate_nid_no_patch(int code) {
     if (const auto drain = exitDrain.exchange(nullptr)) {
         try {
@@ -183,7 +234,7 @@ extern "C" {
             std::fputs("[libc] host exit drain failed\n", stderr);
         }
     }
-    LibcRunEndFlush_nid_no_patch();
+    if (!hostShutdownAbandoned.load(std::memory_order_acquire)) LibcRunEndFlush_nid_no_patch();
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
 #endif
@@ -195,6 +246,7 @@ void LibcStartExit_nid_postfix() {
 }
 
 [[noreturn]] void LibcExit_nid_no_patch(int code) {
+    exitCode.store(code);
     StartExit();
     CxaFinalize_nid_no_patch(nullptr);
     LibcRunShutdown_nid_postfix();
@@ -202,6 +254,7 @@ void LibcStartExit_nid_postfix() {
 }
 
 [[noreturn]] void LibcExitWithoutHandlers_nid_no_patch(int code) {
+    exitCode.store(code);
     StartExit();
     LibcRunShutdown_nid_postfix();
     std::fflush(nullptr);

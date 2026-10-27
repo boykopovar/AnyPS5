@@ -1,6 +1,7 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
@@ -262,6 +263,18 @@ bool Match(const std::type_info* caught, const std::type_info* thrown, void*& ob
 }
 }
 
+extern "C" bool LibcUnwindMissAtHostThreadRoot_nid_no_patch();
+
+[[noreturn]] static void PauseAbandonedHostThread() {
+    LibcNoteHostShutdownAbandoned_nid_no_patch();
+    LibcException::RawLog("[libc] ProcessShutdown could not unwind; ending the host thread\n");
+#if defined(_WIN32)
+    for (;;) Sleep(1000);
+#else
+    for (;;) pause();
+#endif
+}
+
 extern "C" {
 void* APS5_VABI __cxa_allocate_exception_nid_postfix(std::size_t size) {
     using namespace LibcException;
@@ -290,7 +303,12 @@ void APS5_VABI __cxa_free_exception_nid_postfix(void* object) {
     header->unwind.exception_cleanup = Cleanup;
     ++globals.uncaught;
     _Unwind_RaiseException_nid_postfix(&header->unwind);
-
+    if (type && std::strcmp(type->name(), typeid(ProcessShutdown).name()) == 0) {
+        const int code = LibcExitCode_nid_no_patch();
+        if (LibcUnwindMissAtHostThreadRoot_nid_no_patch()) PauseAbandonedHostThread();
+        RawLog("[libc] ProcessShutdown could not unwind; ending the process with status %d\n", code);
+        LibcFinishProcessExit_nid_no_patch(code);
+    }
     RawLog("[libc] unhandled exception '%s' thrown from %p\n", type ? type->name() : "?", throwSite);
     __cxa_begin_catch_nid_postfix(&header->unwind);
 

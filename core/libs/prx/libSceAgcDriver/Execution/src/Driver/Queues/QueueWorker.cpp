@@ -136,6 +136,15 @@ void Driver::reapCompletionLabels() {
 
 void Driver::run(std::uint32_t id) noexcept {
     onWorkerThread() = true;
+    std::atomic<bool>* exitedFlag = nullptr;
+    {
+        std::lock_guard lock(mutex);
+        exitedFlag = &workers.at(id).exited;
+    }
+    struct Exited {
+        std::atomic<bool>* flag;
+        ~Exited() { if (flag) flag->store(true, std::memory_order_release); }
+    } exited{exitedFlag};
     char role[32];
     std::snprintf(role, sizeof role, "queue worker 0x%x", id);
     PinWorkerThread(role);

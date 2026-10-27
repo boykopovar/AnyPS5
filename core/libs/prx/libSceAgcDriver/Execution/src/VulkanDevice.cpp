@@ -53,6 +53,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -3435,6 +3436,31 @@ FrameDumps& Dumps() {
     return dumps;
 }
 
+void DumpExitFrame(const DisplayBuffer& buffer) {
+    auto& dumps = Dumps();
+    if (!frameDumpOutput.Enabled_nid_no_patch() || dumps.dumped >= dumps.limit) return;
+    const int index = dumps.dumped++;
+    try {
+        std::vector<std::byte> pixels;
+        if (LibcHostShutdownAbandoned_nid_no_patch()) {
+            const auto size = DisplayBufferSize(buffer);
+            pixels = DecodeDisplayBuffer(buffer, {reinterpret_cast<const std::byte*>(buffer.address), size});
+        } else {
+            pixels = ReadDisplayBuffer(buffer);
+        }
+        WriteFrameBmp(index, buffer.width, buffer.height, pixels);
+    } catch (const std::exception& error) {
+        if (dumps.dumped == index + 1) --dumps.dumped;
+        std::fprintf(stderr, "[gpu] exit frame dump failed: %s\n", error.what());
+    } catch (...) {
+        if (dumps.dumped == index + 1) --dumps.dumped;
+    }
+}
+
+}
+
+extern "C" void AgcDriverDumpExitFrame_nid_postfix(const AgcDriver::DisplayBuffer& buffer) {
+    DumpExitFrame(buffer);
 }
 
 bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer, const DisplayBuffer* plane) {
