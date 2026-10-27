@@ -9,11 +9,6 @@
 #include <stdexcept>
 #include <thread>
 
-extern "C" {
-int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void*);
-int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void*);
-
-}
 static void Require(bool value) {
     if (!value) { std::fputs("Mspace check failed\n", stderr); std::abort(); }
 }
