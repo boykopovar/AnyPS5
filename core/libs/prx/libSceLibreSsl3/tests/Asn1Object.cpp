@@ -7,15 +7,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
-struct TestAsn1Object {
-    const char* shortName;
-    const char* longName;
-    int nid;
-    int length;
-    const unsigned char* data;
-    int flags;
-};
-
 namespace {
 
 constexpr int Dynamic = 0x01;
@@ -41,8 +32,8 @@ void* Allocate(std::size_t size) {
     return pointer;
 }
 
-TestAsn1Object* AllocateObject(int flags, int length, const unsigned char* data, const char* shortName, const char* longName) {
-    auto* object = static_cast<TestAsn1Object*>(Allocate(sizeof(TestAsn1Object)));
+Asn1Object_nid_no_patch* AllocateObject(int flags, int length, const unsigned char* data, const char* shortName, const char* longName) {
+    auto* object = static_cast<Asn1Object_nid_no_patch*>(Allocate(sizeof(Asn1Object_nid_no_patch)));
     object->shortName = shortName;
     object->longName = longName;
     object->nid = 7;
@@ -64,7 +55,7 @@ void TestNullAndStaticObject() {
     Reset();
     ASN1_OBJECT_free_nid_postfix(nullptr);
     unsigned char data[] {1, 2, 3};
-    TestAsn1Object object {"sn", "ln", 7, 3, data, 0x02};
+    Asn1Object_nid_no_patch object {"sn", "ln", 7, 3, data, 0x02};
     ASN1_OBJECT_free_nid_postfix(&object);
     Require(freeCalls == 0, "null and static objects do not free memory");
     Require(data[0] == 1 && data[1] == 2 && data[2] == 3, "static OID data remains unchanged");
@@ -98,7 +89,7 @@ void TestDynamicDataWithoutDynamicObject() {
     auto* data = static_cast<unsigned char*>(Allocate(2));
     wipedData = data;
     wipedLength = 2;
-    TestAsn1Object object {nullptr, nullptr, 7, 2, data, DynamicData};
+    Asn1Object_nid_no_patch object {nullptr, nullptr, 7, 2, data, DynamicData};
     ASN1_OBJECT_free_nid_postfix(&object);
     Require(freeCalls == 1 && wipeChecked, "dynamic data is erased and freed independently of the object");
     Require(object.data == nullptr && object.length == 0, "freed data fields are cleared");
@@ -152,7 +143,6 @@ int APS5_VABI memset_s_nid_postfix(void* destination, std::size_t destinationSiz
 }
 
 int main() {
-    static_assert(sizeof(TestAsn1Object) == 40);
     TestNullAndStaticObject();
     TestDynamicObjectOnly();
     TestDynamicStringsAndData();

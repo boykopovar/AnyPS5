@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include "SceTypes.hpp"
 #include "EvpDigest.hpp"
 #include "prx/libSceLibreSsl3/include/Key.hpp"
@@ -49,7 +50,20 @@ static_assert(sizeof(LibreSsl3X509Algor) == 16);
 static_assert(sizeof(LibreSsl3X509Pubkey) == 24);
 static_assert(offsetof(LibreSsl3X509Pubkey, publicKey) == 8);
 
-struct Asn1Object_nid_no_patch;
+struct Asn1Object_nid_no_patch {
+    const char* shortName;
+    const char* longName;
+    int nid;
+    int length;
+    const unsigned char* data;
+    int flags;
+};
+
+static_assert(sizeof(Asn1Object_nid_no_patch) == 40);
+static_assert(offsetof(Asn1Object_nid_no_patch, nid) == 16);
+static_assert(offsetof(Asn1Object_nid_no_patch, length) == 20);
+static_assert(offsetof(Asn1Object_nid_no_patch, data) == 24);
+static_assert(offsetof(Asn1Object_nid_no_patch, flags) == 32);
 
 extern "C" {
 

@@ -1,23 +1,9 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct Asn1Object_nid_no_patch {
-    const char* shortName;
-    const char* longName;
-    int nid;
-    int length;
-    const unsigned char* data;
-    int flags;
-};
-
-static_assert(sizeof(Asn1Object_nid_no_patch) == 40);
-static_assert(offsetof(Asn1Object_nid_no_patch, nid) == 16);
-static_assert(offsetof(Asn1Object_nid_no_patch, length) == 20);
-static_assert(offsetof(Asn1Object_nid_no_patch, data) == 24);
-static_assert(offsetof(Asn1Object_nid_no_patch, flags) == 32);
 
 extern "C" {
 
