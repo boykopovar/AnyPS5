@@ -16,6 +16,18 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 constexpr unsigned short SymbolicLinkMode = 0120777;
+constexpr LONG DeletePendingStatus = static_cast<LONG>(0xC0000056u);
+using LastNtStatusFunction = LONG(NTAPI*)();
+static const auto lastNtStatus = reinterpret_cast<LastNtStatusFunction>(
+    reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetLastNtStatus")));
+static int OpenFailure() {
+    const DWORD error = GetLastError();
+    if (error == ERROR_ACCESS_DENIED && lastNtStatus != nullptr && lastNtStatus() == DeletePendingStatus) {
+        errno = ENOENT;
+        return -1;
+    }
+    return File::WindowsFileTime::Failure(error);
+}
 struct NativeStat : __stat64 {
     FILE_BASIC_INFO times{};
     BY_HANDLE_FILE_INFORMATION identity{};
@@ -38,7 +50,7 @@ static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     }
     const auto handle = CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
+    if (handle == INVALID_HANDLE_VALUE) return OpenFailure();
     const int result = ReadHandleInfo(handle, st);
     CloseHandle(handle);
     return result;
@@ -59,7 +71,7 @@ static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
     const bool link = File::WindowsSymbolicLink::Read(p, target, "lstat") || File::WindowsSymbolicLink::ReadJunction(p, target, "lstat");
     const auto handle = CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
+    if (handle == INVALID_HANDLE_VALUE) return OpenFailure();
     const int result = ReadHandleInfo(handle, st);
     CloseHandle(handle);
     if (result != 0) return result;
