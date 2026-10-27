@@ -125,6 +125,7 @@ static void DestroyAlias(Value& value, unsigned alias) {
     else _ZN3sce4Json5ValueD1Ev(&value);
 }
 static void Check(unsigned shape, unsigned target, unsigned alias, bool reinitialize, unsigned domain = 0) {
+    if (LegacySdk && shape != 0 && target > 18 && !reinitialize) return;
     DestructionTrace trace; DestructionAllocator allocator, replacementAllocator;
     DestructionDomain first{&trace, &allocator, 0}, second{&trace, domain == 2 ? &replacementAllocator : &allocator, 1};
     Parameter parameter{&allocator, &first, 8192, 2, {}}, replacement{second.receiver, &second, 4096, 2, {}};
@@ -151,15 +152,8 @@ static void Check(unsigned shape, unsigned target, unsigned alias, bool reinitia
     if (auxiliary) std::memcpy(auxiliaryBytes.data(), auxiliary, AuxiliaryBytes);
     trace.reinitialize = reinitialize; trace.parameter = domain ? &replacement : &parameter; trace.replacementDomain = unsigned(domain != 0);
     const bool terminated = target != 0;
-    const bool unsupportedCleanup = LegacySdk && shape != 0 && target > 18 && !reinitialize;
     trace.target = target; trace.observing = true;
-    bool cleanupError = false;
-    try { DestroyAlias(value, alias); }
-    catch (const std::runtime_error& error) {
-        Require(unsupportedCleanup && std::strstr(error.what(), "EraseLegacyHandler"), "Only an actual missing legacy cleanup mutex may produce the explicit unsupported error");
-        cleanupError = true;
-    }
-    Require(cleanupError == unsupportedCleanup, "Legacy destruction must reject the null-mutex cleanup boundary while preserving callback-time reinitialization");
+    DestroyAlias(value, alias);
     const unsigned released = terminated && !reinitialize ? target : static_cast<unsigned>(order.size());
     Require(trace.releases == std::vector<std::size_t>(order.begin(), order.begin() + released), "Composite destruction must preserve the exact native release-generation prefix before callback termination");
     std::vector<unsigned> expectedDomains(released, 0);

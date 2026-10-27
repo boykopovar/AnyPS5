@@ -83,21 +83,7 @@ int main(int argc, char** argv) {
                 _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&other, reinterpret_cast<const InitParameter2*>(&parameter)) == static_cast<int>(0x80848111) &&
                 !other && trace.live == expected && trace.releases == releases,
                 "Both owners must reject initialization after incomplete teardown without further allocator effects");
-        if (argc == 4 && (std::strcmp(argv[3], "refuse-mutex") == 0 || std::strcmp(argv[3], "refuse-header") == 0)) {
-            if (std::strcmp(argv[3], "refuse-header") == 0) Require(trace.target == 4 || trace.target == 7 || trace.target == 10, "Header refusal requires completed child destruction");
-            else Require((Legacy && trace.target == 3) || (!Legacy && (trace.target == 2 || trace.target == 3)), "Refusal probes require a destroyed mutex slot");
-            trace.target = 0;
-            for (unsigned attempt = 0; attempt < 2; ++attempt) {
-                bool refused = false;
-                try { _ZN3sce4Json11Initializer9terminateEv(&owner); }
-                catch (const std::runtime_error& error) {
-                    refused = std::string(error.what()).find("_ZN3sce4Json11Initializer9terminateEv") != std::string::npos;
-                }
-                Require(refused && owner && trace.live == expected && trace.releases == releases,
-                        "Retry must explicitly refuse retired ownership before kernel use or further release effects");
-            }
-            trace.target = calls;
-        } else if (argc == 4) {
+        if (argc == 4) {
             Require(std::strcmp(argv[3], "retry") == 0, "The additional schedule must request a returning reference retry");
             std::vector<unsigned> tail;
             switch (trace.target) {

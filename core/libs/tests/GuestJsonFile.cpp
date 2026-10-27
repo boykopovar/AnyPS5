@@ -1,4 +1,5 @@
 #include "prx/libSceJson2/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -38,7 +39,7 @@ extern "C" int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_
     ++trace.opens;
     return trace.descriptor;
 }
-extern "C" std::int64_t APS5_VABI sceKernelRead(ValueType descriptor, void* output, std::size_t bytes) {
+extern "C" std::int64_t APS5_VABI sceKernelRead(int descriptor, void* output, std::size_t bytes) {
     auto& trace = *activeFile;
     Require(descriptor == trace.descriptor && output == trace.buffer && bytes == trace.bufferSize, "Read must use the configured buffer and descriptor");
     ++trace.reads;
@@ -48,7 +49,7 @@ extern "C" std::int64_t APS5_VABI sceKernelRead(ValueType descriptor, void* outp
     trace.position += count;
     return static_cast<std::int64_t>(count);
 }
-extern "C" int APS5_VABI sceKernelClose(ValueType descriptor) {
+extern "C" int APS5_VABI sceKernelClose(int descriptor) {
     auto& trace = *activeFile;
     Require(descriptor == trace.descriptor && trace.buffer != nullptr, "Close must precede release of the file buffer");
     ++trace.closes;

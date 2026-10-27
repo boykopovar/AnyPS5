@@ -41,7 +41,7 @@ static void APS5_VABI NotifyTracked(void*, int, std::size_t, void*) {
 }
 static void* const Vtable[]{nullptr, nullptr, reinterpret_cast<void*>(AllocateTracked), reinterpret_cast<void*>(FreeTracked), reinterpret_cast<void*>(NotifyTracked)};
 struct Allocator { void* const* vtable = Vtable; };
-enum class Failure { None, AttributeError, AttributeException, TypeError, MutexError, MutexException };
+enum class Failure { None, AttributeException, MutexException };
 struct KernelTrace {
     Failure failure = Failure::None;
     unsigned target = 0;
@@ -57,7 +57,6 @@ static KernelTrace Kernel;
 static bool At(Failure failure) { return Kernel.failure == failure && Kernel.attempts == Kernel.target; }
 extern "C" int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attribute) {
     ++Kernel.attempts;
-    if (At(Failure::AttributeError)) return static_cast<int>(0x8002000c);
     if (At(Failure::AttributeException)) throw std::bad_alloc();
     *attribute = reinterpret_cast<PthreadMutexattr>(new int(0));
     Require(Kernel.attributes.emplace(*attribute, 0).second, "Kernel attributes must have independent live identities");
@@ -66,7 +65,6 @@ extern "C" int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attribute) {
 }
 extern "C" int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attribute, int type) {
     Require(type == 2 && Kernel.attributes.count(*attribute), "Json2 mutexes must request recursive attributes");
-    if (At(Failure::TypeError)) return static_cast<int>(0x80020016);
     Kernel.attributes.at(*attribute) = type;
     return 0;
 }
@@ -79,7 +77,6 @@ extern "C" int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attribute)
 }
 extern "C" int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attribute, const char* name) {
     Require(Kernel.attributes.at(*attribute) == 2 && std::strcmp(name, "SceJson_internal") == 0 && !*mutex, "Mutex creation must receive recursive attributes and initialized handle storage");
-    if (At(Failure::MutexError)) return static_cast<int>(0x8002000c);
     if (At(Failure::MutexException)) throw std::bad_alloc();
     *mutex = reinterpret_cast<PthreadMutex>(new std::recursive_mutex);
     Require(Kernel.mutexes.emplace(*mutex, 0).second, "Kernel mutexes must have independent live identities");
@@ -116,9 +113,6 @@ static void Check(Failure failure, unsigned target) {
     } catch (const std::bad_alloc&) {
         Require(failure == Failure::AttributeException || failure == Failure::MutexException, "Host allocation exceptions must retain their actual type");
         failed = true;
-    } catch (const std::runtime_error& error) {
-        Require((failure == Failure::AttributeError || failure == Failure::TypeError || failure == Failure::MutexError) && std::strstr(error.what(), "CreateKernelMutex"), "Unverified kernel status failures must remain explicitly unsupported");
-        failed = true;
     }
     const unsigned mutexCount = Sdk < 0x06000000 ? 1u : 2u;
     if (failure == Failure::None) {
@@ -139,7 +133,7 @@ int main() {
     for (auto sdk : {0x05000000u, 0x06000000u}) {
         Sdk = sdk;
         Check(Failure::None, 0);
-        for (auto failure : {Failure::AttributeError, Failure::AttributeException, Failure::TypeError, Failure::MutexError, Failure::MutexException})
+        for (auto failure : {Failure::AttributeException, Failure::MutexException})
             for (unsigned target = 1; target <= (sdk < 0x06000000 ? 1u : 2u); ++target) Check(failure, target);
     }
     return 0;

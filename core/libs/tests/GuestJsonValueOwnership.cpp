@@ -71,6 +71,30 @@ int main() {
     _ZN3sce4Json5Value3setERKS1_(&copy, &Front(copy));
     Require(!copy.parent && Front(copy).parent == &copy && Front(copy).payload == 42,
             "Assignment from a descendant must finish copying before releasing the old tree");
+    Value cross{};
+    _ZN3sce4Json5ValueC1Ev(&cross);
+    const char objectInput[] = "{\"a\":[1,2]}";
+    Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&cross, objectInput, sizeof(objectInput) - 1) == 0, "Parse cross-type ownership tree");
+    const auto* arrayMember = _ZNK3sce4Json5ValueixEPKc(&cross, "a");
+    _ZN3sce4Json5ValueaSERKS1_(&cross, arrayMember);
+    Require(cross.type == 6 && Front(cross).payload == 1 && Front(cross).parent == &cross,
+            "Object-to-array descendant assignment must preserve the source before clearing its owner");
+    _ZN3sce4Json5Value5clearEv(&cross);
+    const char arrayInput[] = "[\"retained\"]";
+    Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&cross, arrayInput, sizeof(arrayInput) - 1) == 0, "Parse string descendant tree");
+    _ZN3sce4Json5Value3setERKS1_(&cross, &Front(cross));
+    Require(cross.type == 5 && std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&cross)), "retained") == 0,
+            "Array-to-string descendant assignment must preserve text before clearing its owner");
+    _ZN3sce4Json5Value5clearEv(&cross);
+    Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&cross, objectInput, sizeof(objectInput) - 1) == 0, "Parse raw Array descendant source");
+    _ZN3sce4Json5Value3setERKNS0_5ArrayE(&cross, _ZNK3sce4Json5Value8getArrayEv(_ZNK3sce4Json5ValueixEPKc(&cross, "a")));
+    Require(cross.type == TypeArray && Front(cross).payload == 1, "Array overload must retain a descendant before changing the destination type");
+    _ZN3sce4Json5Value5clearEv(&cross);
+    Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&cross, arrayInput, sizeof(arrayInput) - 1) == 0, "Parse raw String descendant source");
+    _ZN3sce4Json5Value3setERKNS0_6StringE(&cross, _ZNK3sce4Json5Value9getStringEv(&Front(cross)));
+    Require(cross.type == TypeString && std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&cross)), "retained") == 0,
+            "String overload must retain descendant text before changing the destination type");
+    _ZN3sce4Json5ValueD1Ev(&cross);
     _ZN3sce4Json5Value4swapERS1_(&root, &text);
     Require(root.type == 5 && text.type == 6, "Swap must exchange payloads");
     Tree(text);

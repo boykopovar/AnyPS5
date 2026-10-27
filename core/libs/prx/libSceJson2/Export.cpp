@@ -174,7 +174,6 @@ public:
     AllocationOperation() {
         auto& state = State();
         std::lock_guard lock(state.mutex);
-        KernelMutexLock kernelLock(state.internalMutex);
         ++state.allocationDepth;
     }
     ~AllocationOperation() { if (active) Finish(); }
@@ -183,13 +182,11 @@ public:
     static bool Failed() {
         auto& state = State();
         std::lock_guard lock(state.mutex);
-        KernelMutexLock kernelLock(state.internalMutex);
         return state.allocationFailed;
     }
     bool Finish() {
         auto& state = State();
         std::lock_guard lock(state.mutex);
-        KernelMutexLock kernelLock(state.internalMutex);
         const bool failed = state.allocationFailed;
         if (--state.allocationDepth == 0) state.allocationFailed = false;
         active = false;
@@ -230,7 +227,6 @@ void* Allocate(const AllocationContext& context, std::size_t size) {
         }
         auto& state = State();
         std::lock_guard lock(state.mutex);
-        KernelMutexLock kernelLock(state.internalMutex);
         if (state.allocationDepth) state.allocationFailed = true;
     }
     return memory;
@@ -1300,7 +1296,36 @@ void SetType(Node& n, ValueType type);
 void AssignArray(Array& destination, const Array& source);
 void AssignObject(Object& destination, const Object& source);
 
+bool HasPayloadStorage(const Node& value) {
+    if (value.type == TypeString) return value.string && value.string->text;
+    if (value.type == TypeArray) return value.array && value.array->items;
+    if (value.type == TypeObject) return value.object && value.object->items;
+    return value.type < TypeString;
+}
+
+bool OwnsPayload(const Node& owner, std::uintptr_t payload) {
+    if (owner.type < TypeString || !owner.payload) return false;
+    if (owner.payload == payload) return true;
+    if (owner.type == TypeArray && owner.array->items) {
+        for (const auto& item : *owner.array->items)
+            if (OwnsPayload(item, payload)) return true;
+    } else if (owner.type == TypeObject && owner.object->items) {
+        for (const auto& pair : *owner.object->items)
+            if (OwnsPayload(pair.value, payload)) return true;
+    }
+    return false;
+}
+
 void AssignPayload(Node& destination, const Node& source) {
+    if (source.type >= TypeString && HasPayloadStorage(source) && destination.type != source.type && OwnsPayload(destination, source.payload)) {
+        Node temporary{};
+        try {
+            AssignPayload(temporary, source);
+            AssignPayload(destination, temporary);
+        } catch (...) { Destroy(temporary); throw; }
+        Destroy(temporary);
+        return;
+    }
     if (source.type == TypeNull) { SetType(destination, TypeNull); return; }
     if (source.type == TypeBoolean) {
         const auto value = source.boolean;
@@ -1343,6 +1368,16 @@ void AssignPayload(Node& destination, const Node& source) {
 }
 
 void AssignNode(Node& destination, const Node& source) {
+    for (auto* parent = source.parent; parent; parent = parent->parent) {
+        if (parent != &destination || !HasPayloadStorage(source)) continue;
+        Node temporary{};
+        try {
+            AssignNode(temporary, source);
+            AssignNode(destination, temporary);
+        } catch (...) { Destroy(temporary); throw; }
+        Destroy(temporary);
+        return;
+    }
     AssignPayload(destination, source);
     if (!ModernValues()) CopyLegacyHandler(destination, source);
 }
@@ -2926,6 +2961,10 @@ Value* APS5_VABI _ZN3sce4Json5ValueaSERKS1_(Value* self, const Value* other) {
     return self;
 }
 void APS5_VABI _ZN3sce4Json5Value4swapERS1_(Value* self, Value* other) {
+    for (auto* parent = other->parent; parent; parent = parent->parent)
+        if (parent == self) NotImplemented_nid_no_patch(__func__);
+    for (auto* parent = self->parent; parent; parent = parent->parent)
+        if (parent == other) NotImplemented_nid_no_patch(__func__);
     Node temporary{};
     try {
         AssignNode(temporary, NodeOf(*self));
@@ -2952,18 +2991,24 @@ void APS5_VABI _ZN3sce4Json5Value3setEPKc(Value* self, const char* text) {
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6StringE(Value* self, const String* text) {
     if (!text->text) return;
-    SetType(NodeOf(*self), TypeString);
-    if (self->type == TypeString) AssignText(*self->string, View(*text), true);
+    Value source{};
+    source.type = TypeString;
+    source.string = const_cast<String*>(text);
+    AssignPayload(*self, source);
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_5ArrayE(Value* self, const Array* array) {
     if (!array->items) return;
-    SetType(*self, TypeArray);
-    if (self->array) AssignArray(*self->array, *array);
+    Value source{};
+    source.type = TypeArray;
+    source.array = const_cast<Array*>(array);
+    AssignPayload(*self, source);
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKNS0_6ObjectE(Value* self, const Object* object) {
     if (!object->items) return;
-    SetType(*self, TypeObject);
-    if (self->object) AssignObject(*self->object, *object);
+    Value source{};
+    source.type = TypeObject;
+    source.object = const_cast<Object*>(object);
+    AssignPayload(*self, source);
 }
 void APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value* self, const Value* other) {
     AssignNode(NodeOf(*self), NodeOf(*other));

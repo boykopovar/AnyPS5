@@ -426,7 +426,7 @@ static void CheckInheritedMap(LegacyTrace& trace, Context& first, Context& secon
         if (shape) {
             const auto payload = shape == 1 ? std::vector<std::size_t>{8, 24, 48, 48, 48, 8, 24, 104, 104, 104, 2, 24, 2, 8, 24, 5}
                                             : std::vector<std::size_t>{8, 24, 104, 104, 104, 2, 24, 2, 8, 24, 48, 48, 48, 8, 24, 5};
-            expected.insert(expected.end(), payload.begin(), payload.end());
+            for (auto bytes : payload) expected.push_back(bytes);
         }
         expected.push_back(24); expected.push_back(32);
         if (alias) Require(pair.reserved == UINT64_C(0xa5a5a5a5a5a5a5a5) && pair.key.text != key.text && std::strcmp(_ZNK3sce4Json6String5c_strEv(&pair.key), "key") == 0,
