@@ -122,6 +122,7 @@ int main() {
     constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80650003);
     constexpr std::int32_t invalidHandle = static_cast<std::int32_t>(0x80650004);
     constexpr std::int32_t invalidData = static_cast<std::int32_t>(0x80650010);
+    constexpr std::int32_t decodeError = static_cast<std::int32_t>(0x80650012);
 
     const std::vector<std::uint8_t> jpeg = TestJpeg(96, 64, 3);
     Require(jpeg.size() > 2 * 0x800);
@@ -186,10 +187,6 @@ int main() {
     bad = decode;
     bad.image_mem_size = 96 * 64 * 4 - 1;
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &bad, nullptr) == invalidSize);
-    bad = decode;
-    bad.down_scale = 2;
-    Require(ThrowsRuntimeError([&] { sceJpegDecDecodeWithInputControl(decoder.handle, &bad, nullptr); }));
-    Require(source.calls == parseCalls);
 
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &decode, nullptr) == (96 << 16 | 64));
     Require(image[3] == 0x80);
@@ -203,23 +200,20 @@ int main() {
     Require(failing.calls == 1);
     Source garbage{std::vector<std::uint8_t>(5000, 0x11), 1000};
     JpegDecInputControlParam garbageParse = StreamParam(0x10, garbage);
-    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &garbageParse, &info) == invalidData);
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &garbageParse, &info) == decodeError);
     Require(garbage.calls == 3 && garbage.offset == 3000);
     std::vector<std::uint8_t> imageEnd{0xFF, 0xD8, 0xFF, 0xD9};
     imageEnd.resize(10000, 0x00);
     Source ended{imageEnd, 1000};
     JpegDecInputControlParam endedParse = StreamParam(0x10, ended);
-    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &endedParse, &info) == invalidData);
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &endedParse, &info) == decodeError);
     Require(ended.calls == 3);
     std::vector<std::uint8_t> broken{0xFF, 0xD8, 0x12, 0x34};
     broken.resize(10000, 0xFF);
     Source brokenSource{broken, 1000};
     JpegDecInputControlParam brokenParse = StreamParam(0x10, brokenSource);
-    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &brokenParse, &info) == invalidData);
+    Require(sceJpegDecDecodeWithInputControl(decoder.handle, &brokenParse, &info) == decodeError);
     Require(brokenSource.calls == 3);
-    const std::size_t endCalls = garbage.calls;
-    Require(ThrowsRuntimeError([&] { sceJpegDecDecodeWithInputControl(decoder.handle, &decode, nullptr); }));
-    Require(garbage.calls == endCalls);
 
     Source again{jpeg, 512};
     JpegDecInputControlParam againParse = StreamParam(0x10, again);

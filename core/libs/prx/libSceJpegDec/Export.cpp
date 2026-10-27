@@ -315,7 +315,7 @@ std::int32_t parseStream(const Context* context, const JpegDecInputControlParam*
     stream.argument = param->input_argument;
     while (!(stream.header = Decoder::Jpeg::ParseHeader(stream.data)) && stream.status == 0 && mayBecomeHeader(stream)) pull(stream, INPUT_BLOCK_SIZE);
     if (stream.status < 0) return stream.status;
-    if (!stream.header) return SCE_JPEG_DEC_ERROR_INVALID_DATA;
+    if (!stream.header) return SCE_JPEG_DEC_ERROR_DECODE_ERROR;
     stream.downScale = param->down_scale;
     fillImageInfo(*stream.header, stream.downScale, imageInfo);
     return 0;
