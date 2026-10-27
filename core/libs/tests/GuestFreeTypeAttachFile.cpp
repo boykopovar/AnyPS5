@@ -1,5 +1,6 @@
 #include "FontFixture.hpp"
 #include "Type1Fixture.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -14,10 +15,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Attach_File_nid_postfix(GuestFaceRec*, const char*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
