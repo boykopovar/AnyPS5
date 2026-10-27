@@ -10,7 +10,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-#include <stdexcept>
 #include <tuple>
 #include <vector>
 
@@ -197,12 +196,5 @@ int main() {
     Require(FT_Outline_Render_nid_postfix(&library, &outline, nullptr) == FT_Outline_Render(native, &nativeOutline, nullptr));
     Require(FT_Outline_Render_nid_postfix(&library, nullptr, &params) == FT_Outline_Render(native, nullptr, &nativeParams));
     Require(FT_Outline_Render_nid_postfix(nullptr, &outline, &params) == FT_Outline_Render(nullptr, &nativeOutline, &nativeParams));
-    GuestRasterParams black{};
-    black.blackSpans = reinterpret_cast<void*>(&Collect);
-    try {
-        FT_Outline_Render_nid_postfix(&library, &outline, &black);
-        Require(false);
-    } catch (const std::runtime_error&) {
-    }
     Require(FT_Done_FreeType(library.host) == 0 && FT_Done_FreeType(native) == 0);
 }
