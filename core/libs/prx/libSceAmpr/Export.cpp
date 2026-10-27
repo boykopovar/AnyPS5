@@ -1,3 +1,4 @@
+#include "prx/libSceAmpr/include/InventoryExports.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceAmpr/include/Api.hpp"
 #include <cstdint>
@@ -215,6 +216,19 @@ static constexpr std::uint16_t AmmPageTablePoolEntries = 512;
 static constexpr std::uint32_t AmmRingIdleFlags = 0x7;
 
 extern "C" {
+
+int APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromCounterOnCompletion() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromTimeCounterOnCompletion() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int APS5_VABI sceAmprCommandBufferWriteAddressOnCompletion(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint64_t value) {
     if (!ValidWriteAddress(address)) return SCE_KERNEL_ERROR_EINVAL;

@@ -2,6 +2,14 @@
 
 ### Unknown function info
 
+- [libSceAmpr additional exports](../../../core/libs/prx/libSceAmpr/Export.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `sceAmprMeasureCommandSizeWriteAddressFromCounterOnCompletion` | `32AcaTaBPSY` |
+| `sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion` | `vxC58+DRk-U` |
+| `sceAmprMeasureCommandSizeWriteAddressFromTimeCounterOnCompletion` | `x7SQEXfeovg` |
+
 - [AMPR command buffer null arguments](../../../core/libs/prx/libSceAmpr/Export.cpp) (libSceAmpr) - the result for a null command buffer is unknown for `sceAmprCommandBufferConstructor`, `sceAmprAprCommandBufferConstructor`, `sceAmprCommandBufferReset` and `sceAmprCommandBufferSetBuffer`; these return `SCE_KERNEL_ERROR_EINVAL` here, but the behavior has not been confirmed on a PS5.
 - [AMPR WriteAddressFromCounterPairOnCompletion](../../../core/libs/prx/libSceAmpr/Export.cpp) (libSceAmpr) - the pair of an even counter n is assumed to give counter n in the low 32 bits and n + 1 in the high 32 bits. Wait compare values, wait flush and counter index ranges follow the [ampr_emu](https://github.com/drakmor/ampr_emu) reimplementation; the flush is accepted and has no effect, as commands run in order
 - [AMPR command buffer offsets](../../../core/libs/prx/libSceAmpr/Export.cpp) (libSceAmpr) - recording with a current offset greater than the bound memory size throws before calculating remaining capacity or writing a command. This validates the emulator's own command-buffer encoding; the console's response to a corrupted opaque buffer object is unknown.
