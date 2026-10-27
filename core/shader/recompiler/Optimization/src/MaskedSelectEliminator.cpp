@@ -1220,15 +1220,12 @@ MaskedSelectEliminationStats MaskedSelectEliminator::Eliminate(IrProgram& progra
     const auto regions = blockRegions(program);
     const BlockSet uniform = uniformEntryBlocks(program);
     std::vector<IrValue*> selects;
-    std::uint32_t removed = 1;
-    while (removed != 0u) {
-        removed = removeFullWaveSelects(program, regions, selects);
-        for (const MaskFamily family : {MaskFamily{true, false}, MaskFamily{true, true}, MaskFamily{false, false}, MaskFamily{false, true}}) {
-            if (hasUnreadCandidate(selects, regions, family, program.WaveSize())) removed += UnreadLanes(program, regions, uniform, family, stats.steps).Remove();
-        }
-        stats.removedSelects += removed;
-        if (removed != 0u) DeadCodeEliminator{}.Eliminate(program);
+    std::uint32_t removed = removeFullWaveSelects(program, regions, selects);
+    for (const MaskFamily family : {MaskFamily{true, false}, MaskFamily{true, true}, MaskFamily{false, false}, MaskFamily{false, true}}) {
+        if (hasUnreadCandidate(selects, regions, family, program.WaveSize())) removed += UnreadLanes(program, regions, uniform, family, stats.steps).Remove();
     }
+    stats.removedSelects = removed;
+    if (removed != 0u) DeadCodeEliminator{}.Eliminate(program);
     return stats;
 }
 

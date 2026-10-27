@@ -1,3 +1,5 @@
+#include "prx/libSceAgc/Shader/include/LinkShaders.hpp"
+#include "prx/libSceAgc/Misc/include/RegisterDefaults.hpp"
 #include "SceShaders.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
@@ -6,9 +8,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <span>
-extern "C" int APS5_VABI sceAgcLinkShaders(ShaderRegister*, ShaderRegister*, const void*, const Shader*, const Shader*, std::uint32_t);
-extern "C" void* APS5_VABI sceAgcGetRegisterDefaults();
-extern "C" void* APS5_VABI sceAgcGetRegisterDefaults2(std::uint32_t);
+
 static void Require(bool value) { if (!value) std::abort(); }
 static unsigned preparations = 0;
 static unsigned mappings = 0;

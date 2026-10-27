@@ -162,11 +162,18 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         if (pixel.ditheredAlphaToCoverage && !pixel.alphaToCoverage) throw std::runtime_error("dithered alpha-to-coverage requires enabled coverage");
         pixelStorage.psAlphaToCoverage = pixel.alphaToCoverage;
         pixelStorage.psDitheredAlphaToCoverage = pixel.ditheredAlphaToCoverage;
+        pixelStorage.psDitheredAlphaSamples = pixel.ditheredAlphaSamples;
         pixelStorage.quadPixelMask = pixel.quadPixelMask;
         pixelStorage.quadSampleMask = pixel.quadSampleMask;
         pixelStorage.psIteratesSamples = pixel.iteratesSamples;
         pixelStorage.psPositionLocation = pixel.positionLocation;
         pixelStorage.sampleLocations = pixel.sampleLocations;
+        if (pixel.targetMerge.mask != 0u && (pixel.targetMerge.target >= 8u || (pixel.targetMerge.samples != 1u && pixel.targetMerge.samples != 2u && pixel.targetMerge.samples != 4u && pixel.targetMerge.samples != 8u))) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target merge");
+        pixelStorage.mergeTarget = pixel.targetMerge.target;
+        pixelStorage.mergeMask = pixel.targetMerge.mask;
+        pixelStorage.mergeSamples = pixel.targetMerge.samples;
+        pixelStorage.mergeDepthStencilWrites = pixel.targetMerge.depthStencilWrites;
+        pixelStorage.mergeDepthStencilTests = pixel.targetMerge.depthStencilTests;
         pixelStorage.sampleOrder = pixel.sampleOrder;
         ShaderStageInputInfo result;
         result.pixel = &pixelStorage;
@@ -221,6 +228,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.instancePatches = tessellation->instancePatches;
             target.drawParameters = tessellation->drawParameters;
             target.mergedHull = tessellation->mergedHull;
+            target.geometryItemDwords = stage == ShaderStageKind::TessellationEvaluation && mesh != nullptr ? mesh->esgsItemSize : 0u;
         }
         if (stage == ShaderStageKind::Mesh) {
             _validateMesh(mesh);
@@ -240,6 +248,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.esgsItemSize = mesh->esgsItemSize;
             target.outputPrimitiveSize = mesh->outputPrimitiveSize;
             if (target.outputPrimitiveSize == 1u) vertexStorage.pointList = true;
+            target.capturedInput = tessellation != nullptr;
         }
         ShaderStageInputInfo result;
         result.vertex = &vertexStorage;

@@ -1,38 +1,13 @@
+#include "prx/libSceMbus/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 
-struct MbusDeviceFunctionState {
-    std::byte data[180];
-};
-
 static_assert(sizeof(MbusDeviceFunctionState) == 180);
-struct MbusDeviceDescription;
-struct MbusDeviceInfo;
-struct MbusSimulatedHandleStatus;
-struct MbusSparkState;
-struct MbusDriverCallbacks;
-struct MbusUsbPowerEntry;
-struct MbusEvent;
-struct alignas(8) MbusDeviceCondition {
-    std::byte data[256];
-};
 
 static_assert(sizeof(MbusDeviceCondition) == 256);
-struct MbusDeviceServiceInfo;
-struct MbusEventCallbacks {
-    void (APS5_VABI *onOverflow)(std::int32_t eventHandle, void* userData);
-    void (APS5_VABI *onEvent)(std::int32_t eventHandle, void* userData, const MbusEvent* event);
-};
 
 static_assert(sizeof(MbusEventCallbacks) == 16);
-struct MbusProcessInfo;
-struct MbusStartupInfo;
-struct MbusStartupParam;
-struct MbusControlStatus;
-struct MbusDebugDeviceInfo;
-struct MbusInternalInfo;
-struct MbusPriorityInfo;
 
 extern "C" {
 

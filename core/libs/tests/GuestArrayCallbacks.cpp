@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -10,19 +11,6 @@ using CopyCallback = void (APS5_VABI *)(void*, void*);
 using AllocateCallback = void* (APS5_VABI *)(std::size_t);
 using FreeCallback = void (APS5_VABI *)(void*);
 using SizedFreeCallback = void (APS5_VABI *)(void*, std::size_t);
-
-extern "C" {
-void APS5_VABI __cxa_vec_ctor_nid_postfix(void*, std::size_t, std::size_t, ElementCallback, ElementCallback);
-void APS5_VABI __cxa_vec_cctor_nid_postfix(void*, void*, std::size_t, std::size_t, CopyCallback, ElementCallback);
-void APS5_VABI __cxa_vec_dtor_nid_postfix(void*, std::size_t, std::size_t, ElementCallback);
-void APS5_VABI __cxa_vec_cleanup_nid_postfix(void*, std::size_t, std::size_t, ElementCallback);
-void* APS5_VABI __cxa_vec_new_nid_postfix(std::size_t, std::size_t, std::size_t, ElementCallback, ElementCallback);
-void* APS5_VABI __cxa_vec_new2_nid_postfix(std::size_t, std::size_t, std::size_t, ElementCallback, ElementCallback, AllocateCallback, FreeCallback);
-void* APS5_VABI __cxa_vec_new3_nid_postfix(std::size_t, std::size_t, std::size_t, ElementCallback, ElementCallback, AllocateCallback, SizedFreeCallback);
-void APS5_VABI __cxa_vec_delete_nid_postfix(void*, std::size_t, std::size_t, ElementCallback);
-void APS5_VABI __cxa_vec_delete2_nid_postfix(void*, std::size_t, std::size_t, ElementCallback, FreeCallback);
-void APS5_VABI __cxa_vec_delete3_nid_postfix(void*, std::size_t, std::size_t, ElementCallback, SizedFreeCallback);
-}
 
 namespace {
 
@@ -104,18 +92,23 @@ void checkCookie(const void* array) {
 void checkElements() {
     reset(source.data());
     __cxa_vec_ctor_nid_postfix(source.data(), Count, ElementBytes, construct, destroy);
+
     require(constructed == Count, "constructor count is wrong");
     __cxa_vec_dtor_nid_postfix(source.data(), Count, ElementBytes, destroy);
+
     require(destroyed == Count, "destructor count is wrong");
     reset(storage.data());
     __cxa_vec_cctor_nid_postfix(storage.data(), source.data(), Count, ElementBytes, copy, destroy);
+
     require(copied == Count && std::memcmp(storage.data(), source.data(), source.size()) == 0, "copy construction failed");
     __cxa_vec_cleanup_nid_postfix(storage.data(), Count, ElementBytes, destroy);
+
     require(destroyed == Count, "cleanup count is wrong");
     __cxa_vec_ctor_nid_postfix(nullptr, Count, ElementBytes, nullptr, nullptr);
     __cxa_vec_cctor_nid_postfix(nullptr, nullptr, Count, ElementBytes, nullptr, nullptr);
     __cxa_vec_dtor_nid_postfix(nullptr, Count, ElementBytes, nullptr);
     __cxa_vec_cleanup_nid_postfix(nullptr, Count, ElementBytes, nullptr);
+
 }
 
 void checkAllocation(bool sized) {
@@ -123,6 +116,7 @@ void checkAllocation(bool sized) {
     void* array = sized
         ? __cxa_vec_new3_nid_postfix(Count, ElementBytes, Padding, construct, destroy, allocate, releaseSized)
         : __cxa_vec_new2_nid_postfix(Count, ElementBytes, Padding, construct, destroy, allocate, release);
+
     require(array == destination && constructed == Count && allocated == 1, "array allocation failed");
     checkCookie(array);
     if (sized) __cxa_vec_delete3_nid_postfix(array, ElementBytes, Padding, destroy, releaseSized);
@@ -133,6 +127,7 @@ void checkAllocation(bool sized) {
     array = sized
         ? __cxa_vec_new3_nid_postfix(Count, ElementBytes, Padding, construct, destroy, allocate, releaseSized)
         : __cxa_vec_new2_nid_postfix(Count, ElementBytes, Padding, construct, destroy, allocate, release);
+
     require(array == nullptr && allocated == 1 && constructed == 0 && freed == 0, "failed allocation invoked element callbacks");
     if (sized) __cxa_vec_delete3_nid_postfix(nullptr, ElementBytes, Padding, destroy, releaseSized);
     else __cxa_vec_delete2_nid_postfix(nullptr, ElementBytes, Padding, destroy, release);
@@ -146,8 +141,10 @@ void checkDefaultAllocation() {
     reset(static_cast<std::byte*>(array));
     __cxa_vec_ctor_nid_postfix(array, Count, ElementBytes, construct, destroy);
     __cxa_vec_delete_nid_postfix(array, ElementBytes, Padding, destroy);
+
     require(constructed == Count && destroyed == Count, "default array deletion failed");
     __cxa_vec_delete_nid_postfix(nullptr, ElementBytes, Padding, destroy);
+
 }
 
 template<typename TAction>
@@ -170,6 +167,7 @@ void checkRollback(bool sized) {
     void* array = sized
         ? __cxa_vec_new3_nid_postfix(Count, ElementBytes, Padding, construct, destroy, allocate, releaseSized)
         : __cxa_vec_new2_nid_postfix(Count, ElementBytes, Padding, construct, destroy, allocate, release);
+
     failDestroy = true;
     expectException([&] {
         if (sized) __cxa_vec_delete3_nid_postfix(array, ElementBytes, Padding, destroy, releaseSized);
@@ -183,6 +181,7 @@ void checkCopyRollback() {
     failCopy = true;
     expectException([] {
         __cxa_vec_cctor_nid_postfix(storage.data(), source.data(), Count, ElementBytes, copy, destroy);
+
     });
     require(copied == 2 && destroyed == 2, "copy constructor rollback failed");
 }

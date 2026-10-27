@@ -1,3 +1,4 @@
+#include "prx/libSceIme/include/Api.hpp"
 #include <atomic>
 #include <algorithm>
 #include <cstdint>
@@ -14,25 +15,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
-
-struct ImeVshContext;
-struct ImeVshParameter;
-struct ImePreeditMetaInfo;
-struct ImeDictionaryWord;
-
-struct ImeVshCaretGeometry {
-    std::int32_t x;
-    std::int32_t y;
-    std::uint32_t height;
-    std::uint32_t index;
-};
-
-struct ImeVshTextGeometry {
-    std::int32_t x;
-    std::int32_t y;
-    std::uint32_t width;
-    std::uint32_t height;
-};
 
 static_assert(sizeof(ImeEditText) == 64);
 static_assert(offsetof(ImeEvent, param) == 8);
@@ -480,7 +462,7 @@ int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArr
 }
 
 int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param) {
- if (!param) APS5_INVALID_ARG_EX;
+ if (!param) return ErrorInvalidAddress;
  std::lock_guard lock(g_keyboardMutex);
  if (!g_openKeyboards.insert(user_id).second) return ErrorBusy;
  return 0;
@@ -548,7 +530,7 @@ int APS5_VABI sceImeSetTextGeometry(TextAreaMode mode, const TextGeometry* geome
 }
 
 int APS5_VABI sceImeUpdate(EventHandler handler) {
-    if (!handler) APS5_INVALID_ARG_EX;
+    if (!handler) return ErrorInvalidHandler;
     for (;;) {
         ImeEvent event{};
         void* arg = nullptr;

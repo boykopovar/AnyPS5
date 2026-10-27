@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <bit>
 #include <cstdint>
 #include <stdexcept>
@@ -7,9 +8,6 @@
 #include "prx/libc/include/SonyCrt.hpp"
 
 namespace {
-
-using Int128 = __int128;
-using Uint128 = unsigned __int128;
 
 constexpr Uint128 Int128SignBit = static_cast<Uint128>(1) << 127;
 constexpr Int128 Int128Max = static_cast<Int128>(~Int128SignBit);

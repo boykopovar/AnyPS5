@@ -1,3 +1,5 @@
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "nid/Sha1.hpp"
 #include <cstdint>
@@ -8,9 +10,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
-
-extern "C" int APS5_VABI shm_open_nid_postfix(const char*, int, int);
-extern "C" std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t);
 
 static void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);

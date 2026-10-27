@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
 
 namespace AgcDriver::Graphics {
@@ -57,7 +58,7 @@ BufferPool::~BufferPool() {
     for (auto& [memory, block] : slabBlocks) freeBlock(*block);
 }
 
-VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType) {
+VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType, bool newImage) {
     if (allocatedType != nullptr) *allocatedType = allocation.memoryTypeIndex;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     auto result = allocateMemory(device, &allocation, nullptr, &memory);
@@ -75,7 +76,7 @@ VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation
         }
     }
     if (exhausted(result)) {
-        if (cacheReclaim != nullptr) released = cacheReclaim(ReclaimTarget(allocation.allocationSize));
+        if (cacheReclaim != nullptr) released = cacheReclaim(ReclaimTarget(allocation.allocationSize), newImage);
         if (released != 0) {
             reclaimed += trim();
             memory = VK_NULL_HANDLE;
@@ -146,7 +147,7 @@ bool BufferPool::heapOverBudget() {
     return heapOver;
 }
 
-VkDeviceMemory BufferPool::TakeImageMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType) {
+VkDeviceMemory BufferPool::TakeImageMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType, std::uint32_t* allocatedType, bool newImage) {
     const auto type = allocation.memoryTypeIndex;
     if (imagePooled(allocation.allocationSize, type)) {
         std::lock_guard lock(mutex);
@@ -168,7 +169,7 @@ VkDeviceMemory BufferPool::TakeImageMemory(const VkMemoryAllocateInfo& allocatio
         }
         ++imageMisses;
     }
-    return AllocateMemory(allocation, operation, hostType, allocatedType);
+    return AllocateMemory(allocation, operation, hostType, allocatedType, newImage);
 }
 
 void BufferPool::PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::uint32_t memoryType) noexcept {
@@ -217,7 +218,9 @@ std::size_t BufferPool::RetainedImages() {
 }
 
 VkDeviceSize BufferPool::ReclaimTarget(VkDeviceSize bytes) {
-    return bytes + std::max<VkDeviceSize>(bytes, VkDeviceSize{256} << 20u);
+    const auto reserve = std::max<VkDeviceSize>(bytes, VkDeviceSize{256} << 20u);
+    const auto limit = std::numeric_limits<VkDeviceSize>::max();
+    return bytes > limit - reserve ? limit : bytes + reserve;
 }
 
 bool BufferPool::SlabEligible(std::size_t capacity, VkDeviceSize alignment, VkDeviceSize size, VkDeviceSize atom) {
@@ -409,9 +412,14 @@ std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsag
         ++tier.misses;
         return std::nullopt;
     }
-    auto result = found->second.back().allocation;
-    found->second.pop_back();
-    if (found->second.empty()) tier.free.erase(found);
+    auto& slots = found->second;
+    const auto newest = std::prev(slots.end());
+    auto chosen = newest;
+    for (std::size_t scanned = 1; chosen->allocation.bufferBytes != bytes && scanned < exactSizeScan && chosen != slots.begin(); ++scanned) --chosen;
+    if (chosen->allocation.bufferBytes != bytes) chosen = newest;
+    auto result = chosen->allocation;
+    slots.erase(chosen);
+    if (slots.empty()) tier.free.erase(found);
     --tier.slots;
     tier.retainedBytes -= result.allocationBytes;
     ++tier.hits;
@@ -452,6 +460,56 @@ bool BufferPool::evictOldestImage(std::vector<BufferAllocation>& evicted) {
     ++deviceTier.evictions;
     ++imageEvictions;
     return true;
+}
+
+VkDeviceSize BufferPool::ReclaimIdleDevice(VkDeviceSize bytes, std::chrono::steady_clock::time_point now) {
+    if (bytes == 0) return 0;
+    const auto heaps = std::min<std::uint32_t>(memoryProperties.memoryHeapCount, VK_MAX_MEMORY_HEAPS);
+    if (std::count_if(memoryProperties.memoryHeaps, memoryProperties.memoryHeaps + heaps, [](const auto& heap) { return (heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0; }) != 1) return 0;
+    std::vector<BufferAllocation> evicted;
+    {
+        std::lock_guard lock(mutex);
+        if (!idleRead) {
+            idleRead = now;
+            idleClock = clock;
+            return 0;
+        }
+        if (now < *idleRead) return 0;
+        if (now - *idleRead >= std::chrono::seconds(1)) {
+            reclaimBefore = idleClock;
+            idleClock = clock;
+            idleRead = now;
+        }
+        if (reclaimBefore <= scannedIdleClock) return 0;
+        VkDeviceSize selected = 0;
+        while (selected < bytes) {
+            auto oldest = deviceTier.free.end();
+            for (auto it = deviceTier.free.begin(); it != deviceTier.free.end(); ++it) {
+                if (it->second.empty()) continue;
+                const auto& slot = it->second.front();
+                if (slot.allocation.buffer == VK_NULL_HANDLE || slot.allocation.slab || slot.lastUse > reclaimBefore) continue;
+                if (oldest == deviceTier.free.end() || slot.lastUse < oldest->second.front().lastUse) oldest = it;
+            }
+            if (oldest == deviceTier.free.end()) {
+                scannedIdleClock = reclaimBefore;
+                break;
+            }
+            if (evicted.empty()) evicted.reserve(deviceTier.slots);
+            const auto allocation = oldest->second.front().allocation;
+            evicted.push_back(allocation);
+            selected += allocation.allocationBytes;
+            deviceTier.retainedBytes -= allocation.allocationBytes;
+            oldest->second.pop_front();
+            if (oldest->second.empty()) deviceTier.free.erase(oldest);
+            --deviceTier.slots;
+            ++deviceTier.evictions;
+        }
+    }
+    VkDeviceSize released = 0;
+    for (const auto& allocation : evicted) released += destroy(allocation);
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (profile && released != 0) AgcDriver::ProfilePrint_nid_no_patch("[bufferpool] idle device reclaim: %llu bytes released for %llu bytes of storage-cache pressure\n", static_cast<unsigned long long>(released), static_cast<unsigned long long>(bytes));
+    return released;
 }
 
 std::size_t BufferPool::MaxSlots() {
@@ -533,8 +591,8 @@ std::shared_ptr<BufferPool> GetBufferPool(const Context& context) {
     return context.bufferPool;
 }
 
-VkDeviceMemory AllocateImageMemory(const Context& context, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation, std::uint32_t* allocatedType) {
-    return GetBufferPool(context)->TakeImageMemory(allocation, operation, context.RefusedDeviceMemoryFallback(mask, allocation.memoryTypeIndex), allocatedType);
+VkDeviceMemory AllocateImageMemory(const Context& context, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation, std::uint32_t* allocatedType, bool newImage) {
+    return GetBufferPool(context)->TakeImageMemory(allocation, operation, context.RefusedDeviceMemoryFallback(mask, allocation.memoryTypeIndex), allocatedType, newImage);
 }
 
 void ReleaseImageMemory(const Context& context, VkDeviceMemory memory, VkDeviceSize bytes, std::uint32_t memoryType) noexcept {

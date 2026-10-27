@@ -1,6 +1,5 @@
+#include "prx/libSceRudp/include/Api.hpp"
 #include <atomic>
-#include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstddef>
@@ -11,6 +10,7 @@
 #include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 
 // Offline reliable-UDP: the library initialises and contexts can be created and bound, but no connection can
 // ever be established because there is no network.
@@ -58,10 +58,9 @@ enum RudpOption {
     RUDP_OPTION_KEEP_ALIVE_TIMEOUT = 19,
 };
 
-using GuestRudpEventHandler = RudpEventHandler;
-
 std::mutex g_mutex;
 bool g_inited = false;
+uint16_t g_max_segment_size = RUDP_MAX_SEGMENT_SIZE;
 int g_next_ctx = 0;
 struct RudpContext {
     bool bound = false;
@@ -93,10 +92,9 @@ struct RudpPoll {
     std::map<int, uint16_t> entries;
 };
 
-
 int g_next_poll = 1;
 std::map<int, RudpPoll> g_polls;
-std::condition_variable g_polls_changed;
+TimedWait::Condition g_polls_changed;
 
 bool valid_ctx(int ctx) {
     return g_ctx.count(ctx) != 0;
@@ -157,7 +155,7 @@ int APS5_VABI sceRudpEnd(void) {
     g_inited = false;
     g_ctx.clear();
     g_polls.clear();
-    g_polls_changed.notify_all();
+    g_polls_changed.NotifyAll();
     return 0;
 }
 
@@ -451,8 +449,8 @@ int APS5_VABI sceRudpPollWait(int pollId, RudpPollEvent* events, std::size_t eve
     }
     const auto closed = [pollId] { return !g_inited || g_polls.count(pollId) == 0; };
     if (timeout > RUDP_POLL_WAIT_MAX_USEC) {
-        g_polls_changed.wait(lk, closed);
-    } else if (!g_polls_changed.wait_for(lk, std::chrono::microseconds(timeout), closed)) {
+        g_polls_changed.Wait(lk, closed);
+    } else if (!g_polls_changed.WaitUntil(lk, TimedWait::DeadlineNanos(timeout), closed)) {
         return 0;
     }
     return g_inited ? RUDP_ERROR_INVALID_POLL_ID : RUDP_ERROR_NOT_INITIALIZED;
@@ -469,7 +467,7 @@ int APS5_VABI sceRudpPollDestroy(int pollId) {
     if (g_polls.erase(pollId) == 0) {
         return RUDP_ERROR_INVALID_POLL_ID;
     }
-    g_polls_changed.notify_all();
+    g_polls_changed.NotifyAll();
     return 0;
 }
 
@@ -498,8 +496,15 @@ int APS5_VABI sceRudpPollCancel() {
     return 0;
 }
 
-int APS5_VABI sceRudpSetMaxSegmentSize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceRudpSetMaxSegmentSize(uint16_t mss) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    if (!g_inited) {
+        return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (!g_ctx.empty()) {
+        return RUDP_ERROR_NOT_ACCEPTABLE;
+    }
+    g_max_segment_size = mss;
     return 0;
 }
 

@@ -18,7 +18,7 @@ def fixture(header_count, with_frame=True):
     image = bytearray(0x8000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16,
-                     3, 62, 1, 0x4000, 64, 0, 0, 64, 56, header_count, 64, 0, 0)
+                     3, 62, 1, 0, 64, 0, 0, 64, 56, header_count, 64, 0, 0)
     image[0x4000:0x4006] = b"\xb8\x2a\x00\x00\x00\xc3"
     tags = [(5, 0x600), (10, 1), (6, 0x620), (11, 24), (7, 0x700), (8, 0), (9, 24), (0, 0)]
     struct.pack_into("<IIQQQQQQ", image, 64,
@@ -131,19 +131,25 @@ def main():
             assert struct.unpack_from("<Q", elf, 0x20)[0] >= len(image), "The grown program header table must be moved past the input"
             assert elf[64 + 5 * 56:64 + 6 * 56] == image[64 + 5 * 56:64 + 6 * 56], "Bytes after the input program header table changed"
 
-        image = fixture(5, with_frame=False)
-        headers = image[64:64 + 4 * 56]
-        headers += struct.pack("<IIQQQQQQ", 4, 0, 0, 0, 0, 0, 0, 1) * 65530
-        struct.pack_into("<Q", image, 32, len(image))
-        struct.pack_into("<H", image, 56, 65534)
-        image += headers
-        source = Path(directory) / "overflowing-header-count.elf"
-        output = source.with_suffix(".out")
-        source.write_bytes(image)
-        result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)], capture_output=True, text=True, timeout=20)
-        assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
-        assert "Not enough program header slots: need 65537, available 65534" in result.stderr, result.stderr
-        assert not output.exists(), "An unrepresentable header count must not produce an executable"
+        for padding_count in (65527, 65528, 65530):
+            image = fixture(5, with_frame=False)
+            headers = image[64:64 + 4 * 56]
+            headers += struct.pack("<IIQQQQQQ", 4, 0, 0, 0, 0, 0, 0, 1) * padding_count
+            struct.pack_into("<Q", image, 32, len(image))
+            struct.pack_into("<H", image, 56, 4 + padding_count)
+            image += headers
+            source = Path(directory) / f"header-count-{padding_count}.elf"
+            output = source.with_suffix(".out")
+            source.write_bytes(image)
+            result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)], capture_output=True, text=True, timeout=20)
+            if padding_count == 65527:
+                assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+                assert len(program_headers(output.read_bytes())) == 65534
+            else:
+                assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
+                assert "Extended program header counts are not supported" in result.stderr, result.stderr
+                assert not output.exists(), "An unsupported extended count must not produce an executable"
+            assert source.read_bytes() == image, "Source changed"
     print("Linux eh_frame header test passed")
 
 

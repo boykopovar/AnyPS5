@@ -184,8 +184,29 @@ void RunGuestTextureResourceTests() {
     fmaskArray.baseArray = 1u;
     const auto fmaskArrayResource = DecodeTextureResource(pack(fmaskArray));
     Require(fmaskArrayResource.format == 20u && fmaskArrayResource.baseArray == 1u && fmaskArrayResource.depthOrLastArray == 2u, "FMASK normalization changed the array view");
-    for (std::uint32_t format = 156u; format <= 168u; ++format) {
-        if (format == 166u) continue;
+    constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 8> narrowFormats{{{156u, 5u}, {157u, 5u}, {158u, 5u}, {159u, 5u}, {160u, 5u}, {161u, 5u}, {163u, 11u}, {165u, 20u}}};
+    for (const auto& [format, surface] : narrowFormats) {
+        auto narrow = fmask;
+        narrow.format = format;
+        const auto narrowResource = DecodeTextureResource(pack(narrow));
+        Require(narrowResource.format == surface && narrowResource.tileMode == TextureTileMode::kZ64KBX, "FMASK " + std::to_string(format) + " did not use an integer Z surface of its storage width");
+        narrow.dstSelX = 4u;
+        narrow.dstSelY = 5u;
+        narrow.dstSelZ = 6u;
+        narrow.dstSelW = 7u;
+        Require(DecodeTextureResource(pack(narrow)).format == surface, "an expanded FMASK " + std::to_string(format) + " view with identity selectors was refused");
+        auto compressedNarrow = narrow;
+        compressedNarrow.metaCompress = compressedNarrow.metaPipeAligned = true;
+        compressedNarrow.metaAddr = 0x123456789aull;
+        rejectFields(compressedNarrow, "FMASK CMASK compression is implemented only for 8-sample, 8-fragment FMASK");
+    }
+    auto identityWord = fmask;
+    identityWord.dstSelX = 4u;
+    identityWord.dstSelY = 5u;
+    identityWord.dstSelZ = 6u;
+    identityWord.dstSelW = 7u;
+    rejectFields(identityWord, "FMASK destination channel selector is not implemented");
+    for (const auto format : {162u, 164u, 167u, 168u}) {
         auto unsupported = fmask;
         unsupported.format = format;
         rejectFields(unsupported, "FMASK format is not implemented");

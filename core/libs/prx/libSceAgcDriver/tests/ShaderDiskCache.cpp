@@ -62,11 +62,19 @@ void setEnvironment(const char* name, const std::string& value) {
 #endif
 }
 
+void setPathEnvironment(const char* name, const std::filesystem::path& value) {
+#ifdef _WIN32
+    _wputenv_s(std::filesystem::path(name).wstring().c_str(), value.wstring().c_str());
+#else
+    setenv(name, value.c_str(), 1);
+#endif
+}
+
 #ifdef _WIN32
 void verifyHostStandardError() {
     const auto directory = std::filesystem::temp_directory_path() / ("aps5-shader-host-stderr-" + std::to_string(std::random_device{}()));
     setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
-    setEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+    setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
     int capture[2], guest[2];
     require(::_pipe(capture, 65536, _O_BINARY) == 0, "cannot create host capture");
     require(::_pipe(guest, 65536, _O_BINARY) == 0, "cannot create guest capture");
@@ -105,6 +113,7 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
     }
     constexpr auto dispositionInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(21);
     constexpr DWORD deleteFile = 0x00000001, posixSemantics = 0x00000002;
+    bool pendingDeletes = false;
     for (const auto& file : files) {
         const auto handle = CreateFileW(file.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -112,11 +121,26 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
         require(!error, "cannot open " + file.string() + " for deletion: " + error.message());
         struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{handle};
         DWORD flags = deleteFile | posixSemantics;
-        if (!SetFileInformationByHandle(handle, dispositionInfoEx, &flags, sizeof(flags))) error.assign(static_cast<int>(GetLastError()), std::system_category());
+        if (!SetFileInformationByHandle(handle, dispositionInfoEx, &flags, sizeof(flags))) {
+            const DWORD failure = GetLastError();
+            FILE_DISPOSITION_INFO disposition{TRUE};
+            if (failure == ERROR_INVALID_PARAMETER) {
+                SetFileInformationByHandle(handle, FileDispositionInfo, &disposition, sizeof(disposition));
+                pendingDeletes = true;
+            } else {
+                error.assign(static_cast<int>(failure), std::system_category());
+            }
+        }
         require(!error, "cannot delete " + file.string() + ": " + error.message());
     }
-#endif
     std::filesystem::remove_all(directory, error);
+    if (error && pendingDeletes) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX delete (ERROR_INVALID_PARAMETER); entries the cache still maps cannot be deleted there, so the directory was left behind\n", directory.string().c_str());
+        return;
+    }
+#else
+    std::filesystem::remove_all(directory, error);
+#endif
     require(!error, "cannot remove the shader cache test directory: " + error.message());
 }
 
@@ -136,6 +160,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     const std::string prefix = std::string(what) + ": ";
     require(left.spirv == right.spirv, prefix + "SPIR-V differs");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
+    require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
     require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
     require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
     require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
@@ -148,6 +173,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.parameterExports == right.parameterExports, prefix + "parameter exports differ");
     require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
     require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
+    require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
     require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
     require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
     for (std::size_t i = 0; i < left.fragmentParameters.size(); ++i) {
@@ -238,6 +264,7 @@ RecompileResult sampleResult() {
     result.pushConstants = {std::byte{1}, std::byte{0xff}, std::byte{0}, std::byte{0x80}, std::byte{7}};
     result.readsDepthRemapPush = true;
     result.bdaAbiVersion = 3;
+    result.descriptorFaults = 2;
     result.memoryOffsetDword = 7;
     result.hostSubgroupSize = 32;
     result.fullSubgroups = true;
@@ -259,6 +286,7 @@ RecompileResult sampleResult() {
     result.fragmentParameters = {{0, 1, true, false, true}, {2, 3, false, true}};
     result.stencilReferences = {0u, 17u, 255u};
     result.stencilReplaySafe = true;
+    result.bdaWrites = true;
     result.stencilReferenceDword = 23u;
     result.poisonedSrtReads = 3;
     result.shaderDataUserWords = {2u, 0xffffffffu, 9u};
@@ -322,8 +350,10 @@ CompiledVariant sampleVariant() {
     image.volumeArraySampleCompatible = true;
     image.flatLineCompatible = false;
     image.flatVolumeLineCompatible = false;
+    image.dimensionQueryOnly = false;
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
+    image.optionalDescriptor = true;
     image.byElements = 4;
     image.byComponents = 1;
     image.emulatedCompare = 0x1a07u;
@@ -747,7 +777,9 @@ void verifyKeySensitivity() {
     changes("f32 denormal preservation", [](SampleRequest& sample) { sample.request.target.float32DenormPreserve = true; });
     changes("spanned waves", [](SampleRequest& sample) { sample.request.target.spannedWaves = true; });
     changes("robust buffer access 2", [](SampleRequest& sample) { sample.request.target.robustBufferAccess2 = true; });
+    changes("exact robust loads", [](SampleRequest& sample) { sample.request.target.exactRobustLoads = true; });
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
+    changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });
@@ -982,6 +1014,13 @@ void verifyAtomicReplacement(const std::filesystem::path& directory) {
         std::vector<std::byte> bytes;
         require(ReadWholeFile(path, bytes) && bytes == original, "cache reader failed while the published entry retained its rename handle");
     }
+    if (PosixReplaceUnsupported(root)) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so an entry another reader holds open cannot be replaced there; skipping that case\n", root.string().c_str());
+        require(std::filesystem::remove(path), "cannot remove the cache entry");
+        require(std::filesystem::is_empty(root), "atomic replacement left a temporary file behind");
+        require(std::filesystem::remove(root), "cannot remove the empty replacement directory");
+        return;
+    }
 #endif
     {
         Reader old(path);
@@ -1019,6 +1058,12 @@ void verifyStore() {
 
     std::vector<std::byte> file;
     require(ReadWholeFile(path, file), "cannot read the entry back");
+#ifdef _WIN32
+    if (PosixReplaceUnsupported(path.parent_path())) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so the entry the cache has mapped cannot be replaced there; skipping the damaged-entry checks\n", path.parent_path().string().c_str());
+        return;
+    }
+#endif
     require(WriteFileAtomically(path, std::span(file).first(file.size() / 2)), "cannot truncate the entry");
     require(!ShaderDiskCache::Load(key, loaded), "a truncated entry loads");
     auto corrupt = file;
@@ -1054,6 +1099,12 @@ void verifyPersist() {
     auto detached = persisted->artifact.spirv;
     detached[0] ^= 1u;
     require(detached[0] != persisted->artifact.spirv[0], "changing a copied mapped module changed its owner");
+#ifdef _WIN32
+    if (PosixReplaceUnsupported(path.parent_path())) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so a mapped persisted entry cannot be replaced there; skipping that check\n", path.parent_path().string().c_str());
+        return;
+    }
+#endif
     require(WriteFileAtomically(path, std::vector<std::byte>(64, std::byte{0x5a})), "cannot replace the persisted entry");
     std::error_code error;
     std::filesystem::remove(path, error);
@@ -1070,7 +1121,7 @@ void verifyLongHostPaths() {
     const auto extended = [](const auto& path) { return std::filesystem::path(L"\\\\?\\" + path.native()); };
     std::filesystem::create_directories(extended(directory));
     setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
-    setEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+    setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
     std::vector<std::filesystem::path> files;
     std::filesystem::path entries;
     struct Cleanup {
@@ -2117,6 +2168,36 @@ void verifyMalformedPlans() {
     require(!ShaderDiskCache::EncodePlan(unblocked, bytes), "a phi without predecessor blocks was encoded");
 }
 
+void verifySharedPlans() {
+    auto fixture = planFixtures().front();
+    const auto request = fixture.Request(false);
+    const auto plan = GetResourcePlan(request);
+    const std::vector<std::byte> first{std::byte{0x5a}, std::byte{0x01}, std::byte{0x02}};
+    const std::vector<std::byte> second{std::byte{0x5a}, std::byte{0x01}, std::byte{0x03}};
+    for (const auto* key : {&first, &second}) {
+        const auto entry = ShaderDiskCache::EncodePlanEntry(*key, *plan);
+        require(WriteFileAtomically(ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(*key), entry), "cannot write the shared plan entries");
+    }
+    constexpr std::uint64_t address = 0x7000u;
+    IrResourcePlan expected;
+    require(ShaderDiskCache::DecodePlan(encodedPlan(*plan), expected), "the shared plan fixture does not decode");
+    expected.shaderHash = address;
+    const auto hits = ShaderDiskCache::Totals().planHits;
+    auto a = ShaderDiskCache::LoadSharedPlan(first, address);
+    auto b = ShaderDiskCache::LoadSharedPlan(second, address);
+    require(a != nullptr && b != nullptr && ShaderDiskCache::Totals().planHits == hits + 2u, "the shared plan entries did not load");
+    require(a.get() == b.get(), "two plan entries with the same payload for one shader decoded into separate plans");
+    require(samePlan(*a, expected), "a shared plan differs from the stored plan");
+    const auto other = ShaderDiskCache::LoadSharedPlan(second, address + 0x100u);
+    require(other != nullptr && other.get() != a.get() && other->shaderHash == address + 0x100u && a->shaderHash == address, "a plan of another shader address was shared");
+    const std::weak_ptr<const IrResourcePlan> released = a;
+    a.reset();
+    b.reset();
+    require(released.expired(), "the shared plan table kept a plan no source uses");
+    const auto again = ShaderDiskCache::LoadSharedPlan(first, address);
+    require(again != nullptr && samePlan(*again, expected), "a released shared plan did not load again");
+}
+
 void verifyPlanRoundTrip() {
     const auto handBuilt = handBuiltPlan();
     const auto handBytes = encodedPlan(handBuilt);
@@ -2496,7 +2577,7 @@ int main(int argc, char** argv) {
         std::filesystem::remove_all(directory);
         verifyDefaultDirectory(argv[0]);
         setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
-        setEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
+        setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
         verifyAtomicReplacement(directory);
         verifyResultRoundTrip();
         verifyEntryRoundTrip();
@@ -2507,6 +2588,7 @@ int main(int argc, char** argv) {
         verifyFloatModeSerialization();
         verifyPlanRoundTrip();
         verifyPlanKey();
+        verifySharedPlans();
         verifyStore();
         verifyPersist();
         verifyAcrossProcesses(argv[0]);

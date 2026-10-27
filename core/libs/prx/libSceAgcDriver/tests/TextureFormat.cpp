@@ -63,6 +63,7 @@ void srgbTwinTests() {
     Require(SrgbTwinFormat(context, VK_FORMAT_R8_UNORM) == VK_FORMAT_UNDEFINED, "a device that decodes 8_SRGB in the shader must not give R8 an sRGB twin");
     Require(SrgbTwinFormat(context, VK_FORMAT_R8G8B8A8_UNORM) == VK_FORMAT_R8G8B8A8_SRGB && SrgbTwinFormat(context, VK_FORMAT_BC7_UNORM_BLOCK) == VK_FORMAT_BC7_SRGB_BLOCK, "formats without a shader decode must keep their sRGB twins");
     Require(SrgbTwinFormat(context, VK_FORMAT_R32_SFLOAT) == VK_FORMAT_UNDEFINED, "formats without an sRGB counterpart have no twin");
+    Require(SrgbTwinFormat(context, VK_FORMAT_R8G8B8A8_SNORM) == VK_FORMAT_R8G8B8A8_SRGB, "8_8_8_8 SNORM must read its bytes through the sRGB twin");
 }
 
 template<typename TAction>
@@ -116,6 +117,7 @@ void repackedFormatTests() {
     Require(IsRepackedTextureFormat(guest) && !IsRepackedTextureFormat(36u) && !IsRepackedTextureFormat(20u), "only texture format 43 is sampled through a repacked copy");
     Context context{};
     Require(SampledTextureFormat(context, guest) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && ResolveTextureFormat(guest) == VK_FORMAT_R32_UINT, "format 43 must be sampled as B10G11R11_UFLOAT and stored as R32_UINT");
+    Require(SampledTextureFormat(context, 36u) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && ResolveTextureFormat(36u) == VK_FORMAT_R32_UINT, "format 36 must be sampled as B10G11R11_UFLOAT and stored as R32_UINT");
     const auto field = [](std::uint32_t word, VkComponentSwizzle channel) -> std::pair<std::uint32_t, std::uint32_t> {
         switch (channel) {
             case VK_COMPONENT_SWIZZLE_R: return {word & 0x7ffu, 6u};
@@ -216,11 +218,38 @@ void packedFloatDccClearTests() {
             for (const auto texel : texels) Require(texel == expected, "packed float DCC clear did not encode RGB zero or one");
         }
     }
-    alignas(64) std::array<std::uint8_t, 4> keys{0xc0, 0xc0, 0xc0, 0xc0};
+    Require(DccClearTextureFormat(36u) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && DccClearTextureFormat(43u) == VK_FORMAT_B10G11R11_UFLOAT_PACK32, "formats 36 and 43 DCC clears must use native packed float layout");
+    alignas(64) std::array<std::uint8_t, 4> keys{};
     GuestTextureResource resource{};
-    resource.format = 36;
     resource.dccAddress = reinterpret_cast<std::uint64_t>(keys.data());
-    Require(TextureClearKeys(resource, 1024) == DccKeys::Clear1111, "packed float texture discarded its white fast-clear keys");
+    for (const std::uint32_t format : {36u, 43u}) {
+        resource.format = format;
+        keys.fill(0xc0);
+        Require(TextureClearKeys(resource, 1024) == DccKeys::Clear1111, "packed float texture format " + std::to_string(format) + " discarded its white fast-clear keys");
+        keys.fill(0x80);
+        Require(TextureClearKeys(resource, 1024) == DccKeys::Clear1110, "packed float texture format " + std::to_string(format) + " discarded its 1110 fast-clear keys");
+        for (const auto [keysVal, expected] : {std::pair{DccKeys::Clear1111, 0x781e03c0u}, {DccKeys::Clear1110, 0x781e03c0u}, {DccKeys::Clear0000, 0u}}) {
+            std::array<std::uint32_t, 4> surface{};
+            ReadTextureSurface(resource, keysVal, std::as_writable_bytes(std::span(surface)));
+            for (const auto texel : surface) Require(texel == expected, "packed float format " + std::to_string(format) + " DCC clear surface read produced unexpected texel value");
+        }
+    }
+}
+
+void fillContractTests() {
+    std::array<std::uint32_t, 4> texels;
+    texels.fill(0xdeadbeefu);
+    auto span = std::as_writable_bytes(std::span(texels));
+    Require(!FillDccClear(VK_FORMAT_R8G8B8A8_UNORM, DccKeys::ClearRegister, false, span), "a register clear encoded a texel");
+    for (const auto texel : texels) Require(texel == 0u, "a declined clear left its span untouched");
+    texels.fill(0xdeadbeefu);
+    Require(!FillDccClear(VK_FORMAT_R8G8B8A8_UNORM, DccKeys::Uncompressed, false, span), "an uncompressed code encoded a texel");
+    for (const auto texel : texels) Require(texel == 0u, "a declined clear left its span untouched");
+    std::array<std::byte, 10> partial;
+    partial.fill(std::byte{0x5a});
+    Require(FillDccClear(VK_FORMAT_B10G11R11_UFLOAT_PACK32, DccKeys::Clear1111, false, partial), "packed float fast clear was not encoded");
+    const std::array<std::byte, 4> white{std::byte{0xc0}, std::byte{0x03}, std::byte{0x1e}, std::byte{0x78}};
+    for (std::size_t index = 0; index < partial.size(); ++index) Require(partial[index] == (index < 8u ? white[index % 4u] : std::byte{0}), "a clear fill over a partial trailing element did not zero the tail");
 }
 
 }
@@ -287,5 +316,6 @@ void RunTextureFormatTests() {
     convertedDccClearTests();
     singleDccKeysTests();
     packedFloatDccClearTests();
+    fillContractTests();
     gcnBufferFormatTests();
 }

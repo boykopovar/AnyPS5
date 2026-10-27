@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SDL.h"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -7,12 +8,6 @@
 #include <stdexcept>
 #include <string_view>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOutOpen(int, int, int, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioOutClose(int);
-int APS5_VABI sceAudioOutOutput(int, const void*);
-}
 
 namespace {
 constexpr SDL_AudioDeviceID device = 7;

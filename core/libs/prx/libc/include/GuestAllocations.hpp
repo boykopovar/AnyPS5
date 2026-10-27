@@ -40,6 +40,7 @@ public:
     const value_type& front() const { return held().front(); }
     const value_type& back() const { return held().back(); }
     void clear() { ranges.reset(); }
+    const std::shared_ptr<const Ranges>& Snapshot() const { return ranges; }
 
 private:
     const Ranges& held() const {
@@ -68,6 +69,7 @@ void GuestAllocationsRemove_nid_postfix(void* mutation, const void* pointer);
 void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, const std::function<void()>& apply);
 void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply);
 Lease GuestAllocationsAcquire_nid_postfix();
+Lease GuestAllocationsAcquireMapped_nid_no_patch(const Mapped& mapped);
 Lease GuestAllocationsAcquireAll_nid_postfix();
 std::shared_ptr<const Range> GuestAllocationsLookup_nid_postfix(std::uintptr_t address, bool next);
 // Changes whenever a mutation ends, so callers can cache facts about guest mappings between changes.

@@ -42,6 +42,12 @@ struct TlsAccess {
     std::vector<MovedInstruction> Moved = {};
 };
 
+struct GsTrap {
+    std::uint32_t Rva;
+    std::size_t Length;
+    std::optional<Domain::FileByteOffset> Entry;
+};
+
 bool isAluReadOpcode(std::uint8_t opcode) {
     return opcode == 0x03 || opcode == 0x0b || opcode == 0x13 || opcode == 0x1b || opcode == 0x23 || opcode == 0x2b || opcode == 0x33 || opcode == 0x3b;
 }
@@ -113,7 +119,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     const Codegen::X64InstructionDecoder decoder;
 
     std::vector<TlsAccess> accesses;
-    std::vector<std::pair<std::uint32_t, std::size_t>> gsTraps;
+    std::vector<GsTrap> gsTraps;
     std::vector<std::uint32_t> branchTargets;
     std::set<Domain::VirtualAddress> entryRoots;
     const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, [&](auto completed, auto total) { report(7000 * completed / total); }, &entryRoots, message);
@@ -150,8 +156,10 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
             }
 
             if (info.SegmentPrefix == 0x65 && !insidePrevious) {
-                if (info.HasMemoryOperand)
-                    gsTraps.emplace_back(rva, info.Length);
+                if (info.HasMemoryOperand) {
+                    const auto entry = entryRoots.upper_bound(*instruction);
+                    gsTraps.push_back({rva, info.Length, entry != entryRoots.end() && *entry - *instruction < info.Length ? std::optional<Domain::FileByteOffset>(header.Offset + *entry - header.MappedAddress) : std::nullopt});
+                }
                 continue;
             }
             if (info.SegmentPrefix != 0 && !(insidePrevious && info.SegmentPrefix != 0x64)) {
@@ -221,15 +229,23 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     }
 
     report(9000);
-    for (const auto& [rva, length] : gsTraps)
+    std::sort(branchTargets.begin(), branchTargets.end());
+    branchTargets.erase(std::unique(branchTargets.begin(), branchTargets.end()), branchTargets.end());
+    for (const auto& [rva, length, entry] : gsTraps) {
+        const auto target = std::upper_bound(branchTargets.begin(), branchTargets.end(), rva);
+        if (target != branchTargets.end() && *target < rva + length)
+            throw Domain::RelinkerException("Branch enters a guest GS instruction", *target);
+        if (entry)
+            throw Domain::RelinkerException("GS trap would overwrite an executable entry point", *entry);
         trapInstruction(sections, rva, length);
+    }
     if (tls == nullptr) {
         if (!accesses.empty())
             throw Domain::RelinkerException("Guest TLS access without PT_TLS");
         return {};
     }
 
-    if (tls->FileSize > tls->MemorySize || tls->Offset > source.size() || tls->FileSize > source.size() - tls->Offset || (tls->Alignment > 1 && !std::has_single_bit(tls->Alignment)) || tls->Alignment > 8192 || tls->MemorySize > 0x7fff0000u)
+    if (tls->FileSize > tls->MemorySize || (tls->FileSize != 0 && (tls->Offset > source.size() || tls->FileSize > source.size() - tls->Offset)) || (tls->Alignment > 1 && !std::has_single_bit(tls->Alignment)) || tls->Alignment > 8192 || tls->MemorySize > 0x7fff0000u)
         throw Domain::RelinkerException("Invalid or unsupported ELF TLS layout", tls->Offset);
     // Native homebrew linkers can emit an empty PT_TLS placeholder.
     // It needs no Windows TLS directory unless guest code accesses TLS.
@@ -273,9 +289,6 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     code.Emit({0x48, 0x89, 0x00});
     code.PatchBranch(skipCallback, code.GetRva());
     code.Emit({0xc3});
-
-    std::sort(branchTargets.begin(), branchTargets.end());
-    branchTargets.erase(std::unique(branchTargets.begin(), branchTargets.end()), branchTargets.end());
 
     std::uint64_t patched = 0;
     for (const auto& access : accesses) {

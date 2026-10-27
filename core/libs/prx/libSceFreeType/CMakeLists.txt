@@ -1,10 +1,13 @@
 add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         Export.cpp
+        src/Bitmap.cpp
         src/Outline.cpp
         src/Charmap.cpp
         src/FaceInfo.cpp
         src/GuestObjects.cpp
         src/Names.cpp
+        src/Trigonometry.cpp
+        src/OutlineDecompose.cpp
 )
 target_include_directories(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceFreeType PRIVATE freetype)
@@ -28,7 +31,29 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 configure_windows_unwind(libSceFreeType)
 
+target_sources(libSceFreeType PRIVATE src/Sfnt.cpp)
 if(BUILD_TESTING)
+    add_test_executable(guest_freetype_sfnt_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeSfnt.cpp)
+    target_include_directories(guest_freetype_sfnt_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_sfnt_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_sfnt_tests)
+    add_test(NAME guest_freetype_sfnt COMMAND guest_freetype_sfnt_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_sfnt PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+endif()
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_bitmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeBitmap.cpp)
+    target_include_directories(guest_freetype_bitmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_bitmap_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_bitmap_tests)
+    add_test(NAME guest_freetype_bitmap COMMAND guest_freetype_bitmap_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_bitmap PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+
     add_test_executable(guest_freetype_outline_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutline.cpp)
     target_include_directories(guest_freetype_outline_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_outline_tests PRIVATE libSceFreeType freetype libc)
@@ -54,6 +79,15 @@ if(BUILD_TESTING)
     target_link_libraries(guest_freetype_face_info_tests PRIVATE libSceFreeType freetype libc)
     configure_windows_unwind(guest_freetype_face_info_tests)
     add_test(NAME guest_freetype_face_info COMMAND guest_freetype_face_info_tests)
+    add_test_executable(guest_freetype_bitmap_init_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeBitmapInit.cpp)
+    target_include_directories(guest_freetype_bitmap_init_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_bitmap_init_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_bitmap_init_tests)
+    add_test(NAME guest_freetype_bitmap_init COMMAND guest_freetype_bitmap_init_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_bitmap_init PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
     add_test_executable(guest_freetype_charmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeCharmap.cpp)
     target_include_directories(guest_freetype_charmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_charmap_tests PRIVATE libSceFreeType freetype libc)
@@ -101,3 +135,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/ModuleProperties.cmake")

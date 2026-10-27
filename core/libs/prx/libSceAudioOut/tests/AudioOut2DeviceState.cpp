@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/libSceAudioOut.hpp"
 #include "SceTypes.hpp"
 
 #include <cstddef>
@@ -8,23 +9,15 @@
 #include <random>
 #include <string>
 
-extern "C" {
-int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam*);
-int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam*, void*, std::size_t, AudioOut2ContextHandle*);
-int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle, const AudioOut2PortParam*, AudioOut2PortHandle*);
-int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle);
-int APS5_VABI sceAudioOut2PortGetState(AudioOut2PortHandle, AudioOut2PortState*);
-int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo*, std::uint32_t);
-int APS5_VABI sceAudioOut2GetSystemState(AudioOut2SystemState*);
-}
-
 static void Require(bool value) { if (!value) std::abort(); }
 
 namespace {
 
 constexpr int errorInvalidArgument = static_cast<int>(0x80260502);
 constexpr int errorInvalidHandle = static_cast<int>(0x80260503);
+constexpr int errorInvalidParam = static_cast<int>(0x80268001);
+constexpr int errorNotInitialized = static_cast<int>(0x80268006);
+constexpr int errorInvalidPointer = static_cast<int>(0x8026800C);
 constexpr std::uint16_t portTypeMain = 0;
 constexpr std::uint16_t outputMain = 1;
 constexpr std::int16_t volumeMax = 127;
@@ -101,7 +94,44 @@ void SpeakerInfoReportsTheFrontPair() {
     Require(info.speaker_angle[0].azimuth == 30 && info.speaker_angle[0].elevation == 0);
     Require(info.speaker_angle[1].azimuth == -30 && info.speaker_angle[1].elevation == 0);
     for (int index = 2; index < 16; index++) Require(info.speaker_angle[index].azimuth == -360 && info.speaker_angle[index].elevation == -360);
-    Require(sceAudioOut2GetSpeakerInfo(nullptr, 0) == errorInvalidArgument);
+    Require(sceAudioOut2GetSpeakerInfo(nullptr, 0) == errorInvalidPointer);
+}
+
+void SpeakerInfoRequiresInitialization() {
+    AudioOut2SpeakerInfo info;
+    std::memset(&info, 0xAB, sizeof(info));
+    const AudioOut2SpeakerInfo untouched = info;
+    Require(sceAudioOut2GetSpeakerInfo(&info, 0) == errorNotInitialized);
+    Require(sceAudioOut2GetSpeakerInfo(nullptr, 0) == errorNotInitialized);
+    Require(sceAudioOut2GetSpeakerInfo(&info, 2) == errorNotInitialized);
+    Require(std::memcmp(&info, &untouched, sizeof(info)) == 0);
+}
+
+void SpeakerInfoAfterAudioOutInit() {
+    AudioOut2SpeakerInfo info;
+    std::memset(&info, 0xAB, sizeof(info));
+    Require(sceAudioOutInit() == 0);
+    Require(sceAudioOut2GetSpeakerInfo(&info, 0) == 0);
+}
+
+void RepeatedInitializationAfterAudioOutInit() {
+    Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004));
+    Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004));
+    Require(sceAudioOutInit() == static_cast<int>(0x8026000e));
+}
+
+void SpeakerInfoRejectsBadFlags() {
+    AudioOut2SpeakerInfo info;
+    std::memset(&info, 0xAB, sizeof(info));
+    const AudioOut2SpeakerInfo untouched = info;
+    Require(sceAudioOut2GetSpeakerInfo(&info, 2) == errorInvalidParam);
+    Require(sceAudioOut2GetSpeakerInfo(&info, 0x80000000) == errorInvalidParam);
+    Require(sceAudioOut2GetSpeakerInfo(nullptr, 2) == errorInvalidPointer);
+    Require(std::memcmp(&info, &untouched, sizeof(info)) == 0);
+    Require(sceAudioOut2GetSpeakerInfo(&info, 1) == 0);
+    Require(info.type == 0);
+    Require(info.available_bits == 0x3);
+    Require(info.speaker_angle[0].azimuth == 30 && info.speaker_angle[1].azimuth == -30);
 }
 
 void SystemStateIsSilentAndRejectsNull() {
@@ -119,6 +149,10 @@ int main() {
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 
+    SpeakerInfoRequiresInitialization();
+    SpeakerInfoAfterAudioOutInit();
+    RepeatedInitializationAfterAudioOutInit();
+
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0);
     params.num_grains = 256;
@@ -129,6 +163,7 @@ int main() {
     PortStateFollowsTheDataFormat(context);
     PortStateRejectsBadArguments(context);
     SpeakerInfoReportsTheFrontPair();
+    SpeakerInfoRejectsBadFlags();
     SystemStateIsSilentAndRejectsNull();
 
     Require(sceAudioOut2ContextDestroy(context) == 0);
