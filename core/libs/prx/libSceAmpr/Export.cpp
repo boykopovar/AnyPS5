@@ -133,14 +133,11 @@ static bool InMap(const Apr::CommandBufferObject* buffer) {
     return buffer && (buffer->recording & Apr::MapActive) != 0u;
 }
 
-static bool ValidMapRange(std::uint64_t address, std::uint64_t size) {
-    constexpr std::uint64_t pageMask = 0x3FFFu;
-    return address != 0u && size != 0u && ((address | size) & pageMask) == 0u && address + size > address;
-}
-
-static bool ValidMap(std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::int32_t protection) {
-    return ValidMapRange(address, size) && (directOffset & 0x3FFFu) == 0u && (static_cast<std::uint32_t>(protection) & 0xFFFFFC0Cu) == 0u;
-}
+using Apr::ValidMapRange;
+using Apr::ValidMap;
+using Apr::ValidAmmProtection;
+using Apr::ValidRemap;
+using Apr::ValidProtect;
 
 static constexpr std::int64_t AmmMeasureInvalid = SCE_KERNEL_ERROR_EINVAL;
 
@@ -152,37 +149,25 @@ static int AppendAmm(Apr::CommandBufferObject* buffer, const void* command, std:
 static int RecordAmmMap(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::int32_t type, std::int32_t protection) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidMap(address, directOffset, size, protection)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmMapCommand command{{opcode, sizeof(command)}, address, directOffset, size, type, protection};
-    return AppendAmm(buffer, &command, sizeof(command));
-}
-
-static bool ValidAmmProtection(std::int32_t protection) {
-    return (static_cast<std::uint32_t>(protection) & 0xFFFFFC0Cu) == 0u;
-}
-
-static bool ValidRemap(std::uint64_t address, std::uint64_t source, std::uint64_t size, std::int32_t protection) {
-    return ValidMapRange(address, size) && ValidMapRange(source, size) && ValidAmmProtection(protection);
-}
-
-static bool ValidProtect(std::uint64_t address, std::uint64_t size, std::int32_t protection, std::int32_t mask) {
-    return ValidMapRange(address, size) && ValidAmmProtection(protection) && ValidAmmProtection(mask);
+    const auto command = Apr::EncodeAmmMap(opcode, address, directOffset, size, type, protection);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 static int RecordAmmRemap(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::int32_t protection) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidRemap(address, source, size, protection)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmRemapCommand command{{opcode, sizeof(command)}, address, source, size, protection, 0};
-    return AppendAmm(buffer, &command, sizeof(command));
+    const auto command = Apr::EncodeAmmRemap(opcode, address, source, size, protection);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 static int RecordAmmProtect(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection, std::int32_t mask) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidProtect(address, size, protection, mask)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmProtectCommand command{{opcode, sizeof(command)}, address, size, type, protection, mask, 0};
-    return AppendAmm(buffer, &command, sizeof(command));
+    const auto command = Apr::EncodeAmmProtect(opcode, address, size, type, protection, mask);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 static constexpr std::int32_t PrtAllocationMask = 1019;
@@ -646,9 +631,9 @@ int APS5_VABI sceAmprAmmCommandBufferMapDirectWithGpuMaskId(Apr::CommandBufferOb
 int APS5_VABI sceAmprAmmCommandBufferUnmap(Apr::CommandBufferObject* buffer, std::uint64_t address, std::uint64_t size) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidMapRange(address, size)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmUnmapCommand command{{Apr::Opcode::AmmUnmap, sizeof(command)}, address, size};
-    return AppendAmm(buffer, &command, sizeof(command));
+    const auto command = Apr::EncodeAmmUnmap(address, size);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMap(std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection) {

@@ -23,7 +23,12 @@
 #include <sstream>
 #include <system_error>
 #include <vector>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#else
 #include <link.h>
+#endif
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -95,7 +100,7 @@ void recordChange(void* mutation, const void* pointer, std::size_t bytes) {
     if (mutation != nullptr && bytes != 0) static_cast<MutationState*>(mutation)->changed.emplace_back(reinterpret_cast<std::uintptr_t>(pointer), bytes);
 }
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
 std::vector<std::pair<std::uintptr_t, std::size_t>> fileBackedWritableImage() {
     const auto image = std::filesystem::read_symlink("/proc/self/exe").string();
     std::ifstream maps("/proc/self/maps");
@@ -272,6 +277,38 @@ struct ImagePages {
     std::map<std::uint64_t, Page> pages;
 };
 
+#ifdef __APPLE__
+void addSegmentPages(ImagePages& collected, std::uintptr_t address, std::uint64_t bytes, bool readable, bool writable) {
+    const auto start = address & ~(collected.pageSize - 1);
+    const auto end = (address + bytes + collected.pageSize - 1) & ~(collected.pageSize - 1);
+    for (auto page = start; page < end; page += collected.pageSize) {
+        auto& entry = collected.pages[page];
+        entry.readable = entry.readable || readable;
+        entry.writable = entry.writable || writable;
+    }
+}
+
+void collectMachImagePages(ImagePages& collected) {
+    const auto count = _dyld_image_count();
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const auto* header = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(index));
+        if (header == nullptr || header->magic != MH_MAGIC_64) continue;
+        if (collected.main ? header->filetype != MH_EXECUTE : reinterpret_cast<std::uintptr_t>(header) != collected.base) continue;
+        collected.found = true;
+        const auto slide = static_cast<std::uintptr_t>(_dyld_get_image_vmaddr_slide(index));
+        const auto* command = reinterpret_cast<const load_command*>(header + 1);
+        for (std::uint32_t loaded = 0; loaded < header->ncmds; ++loaded) {
+            if (command->cmd == LC_SEGMENT_64) {
+                const auto& segment = *reinterpret_cast<const segment_command_64*>(command);
+                if (segment.vmsize != 0 && segment.initprot != VM_PROT_NONE)
+                    addSegmentPages(collected, slide + segment.vmaddr, segment.vmsize, (segment.initprot & (VM_PROT_READ | VM_PROT_WRITE)) != 0, (segment.initprot & VM_PROT_WRITE) != 0);
+            }
+            command = reinterpret_cast<const load_command*>(reinterpret_cast<const std::uint8_t*>(command) + command->cmdsize);
+        }
+        return;
+    }
+}
+#else
 int collectImagePages(dl_phdr_info* image, std::size_t, void* data) {
     auto& collected = *static_cast<ImagePages*>(data);
     if (!collected.main && image->dlpi_addr != collected.base) return 0;
@@ -289,6 +326,7 @@ int collectImagePages(dl_phdr_info* image, std::size_t, void* data) {
     }
     return 1;
 }
+#endif
 
 std::uintptr_t registerImagePages(const ImagePages& collected) {
     auto& state = registry();
@@ -318,7 +356,11 @@ void GuestAllocationsRegisterMainImage_nid_postfix(void*) {
     auto& state = registry();
     if (state.mainImageRegistered) return;
     ImagePages collected{.main = true, .pageSize = static_cast<std::uint64_t>(::sysconf(_SC_PAGESIZE))};
+#ifdef __APPLE__
+    collectMachImagePages(collected);
+#else
     dl_iterate_phdr(collectImagePages, &collected);
+#endif
     require(!collected.pages.empty(), "main guest image has no loadable segments");
     registerImagePages(collected);
     state.mainImageRegistered = true;
@@ -330,7 +372,11 @@ void GuestAllocationsRegisterImage_nid_postfix(void*, const void* image) {
     const auto base = reinterpret_cast<std::uintptr_t>(image);
     if (state.registeredImages.contains(base)) return;
     ImagePages collected{.base = base, .pageSize = static_cast<std::uint64_t>(::sysconf(_SC_PAGESIZE))};
+#ifdef __APPLE__
+    collectMachImagePages(collected);
+#else
     dl_iterate_phdr(collectImagePages, &collected);
+#endif
     require(collected.found, "cannot locate a guest image");
     require(!collected.pages.empty(), "guest image has no loadable segments");
     require(collected.pages.begin()->first == base, "guest image does not start at its base");
@@ -639,6 +685,42 @@ Lease GuestAllocationsAcquire_nid_postfix() {
         if (range->readable && range->bytes != 0) ranges->push_back(range);
     }
     registry().readableLease = ranges;
+    return Lease(std::move(ranges));
+}
+
+Lease GuestAllocationsAcquireMapped_nid_no_patch(const Mapped& mapped) {
+    std::lock_guard lock(registry().mutex);
+    auto& registered = registry().ranges;
+    std::vector<decltype(registered.begin())> targets;
+    targets.reserve(mapped.size());
+    for (const auto& weak : mapped) {
+        const auto range = weak.lock();
+        if (range == nullptr || !range->readable || range->bytes == 0) continue;
+        const auto found = registered.find(range->address);
+        if (found != registered.end() && found->second == range) targets.push_back(found);
+    }
+    std::sort(targets.begin(), targets.end(), [](const auto& a, const auto& b) { return a->first < b->first; });
+    auto ranges = std::make_shared<Lease::Ranges>();
+    const auto continues = [](const Range& before, const Range& after) {
+        return before.address + before.bytes == after.address && before.readable && after.readable && before.writable == after.writable && before.gpu == after.gpu;
+    };
+    for (const auto target : targets) {
+        if (!ranges->empty() && target->first < ranges->back()->address + ranges->back()->bytes) continue;
+        auto first = target;
+        while (first != registered.begin()) {
+            auto previous = std::prev(first);
+            while (previous != registered.begin() && previous->second->bytes == 0) --previous;
+            if (previous->second->bytes == 0 || !continues(*previous->second, *first->second)) break;
+            first = previous;
+        }
+        for (auto current = first;;) {
+            ranges->push_back(current->second);
+            auto next = std::next(current);
+            while (next != registered.end() && next->second->bytes == 0) ++next;
+            if (next == registered.end() || !continues(*current->second, *next->second)) break;
+            current = next;
+        }
+    }
     return Lease(std::move(ranges));
 }
 

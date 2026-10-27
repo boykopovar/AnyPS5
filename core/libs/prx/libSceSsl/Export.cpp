@@ -998,6 +998,10 @@ int APS5_VABI sceSslRead(int sslConnectionId, void* buf, size_t len, int flags) 
     return static_cast<int>(received);
 }
 
+int SslRead_nid_no_patch(int sslConnectionId, void* buffer, std::size_t length, int flags) {
+    return sceSslRead(sslConnectionId, buffer, length, flags);
+}
+
 int APS5_VABI sceSslWrite(int sslConnectionId, void* buf, size_t len, int flags) {
     if (flags != 0) return ErrorInvalidValue;
     if (!buf && len) throw std::invalid_argument("sceSslWrite: null buffer");

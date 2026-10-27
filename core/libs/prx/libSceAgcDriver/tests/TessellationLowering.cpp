@@ -79,6 +79,23 @@ struct Hull {
         return loaded;
     }
 
+    IrValue& read(IrValue& address, IrValue& predicate) {
+        auto& loaded = builder.Emit(IrOpcode::LoadSharedU32, IrType::U32, {&address, &predicate}, MemoryFlags{0u, ReadPc});
+        static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&loaded}));
+        return loaded;
+    }
+
+    IrValue& complementedOwnLaneBit(IrValue& condition) {
+        auto& ballot = builder.Emit(IrOpcode::Ballot, IrType::U32x4, {&condition});
+        auto& word = builder.Emit(IrOpcode::CompositeExtractU32x4, IrType::U32, {&ballot, &builder.Constant(0u)});
+        auto& complement = builder.Emit(IrOpcode::BitwiseNot32, IrType::U32, {&word});
+        auto& lane = builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& laneBit = builder.Emit(IrOpcode::BitwiseAnd32, IrType::U32, {&lane, &builder.Constant(31u)});
+        auto& shifted = builder.Emit(IrOpcode::ShiftRightLogical32, IrType::U32, {&complement, &laneBit});
+        auto& bit = builder.Emit(IrOpcode::BitwiseAnd32, IrType::U32, {&shifted, &builder.Constant(1u)});
+        return builder.Emit(IrOpcode::INotEqual32, IrType::Bool, {&bit, &builder.Constant(0u)});
+    }
+
     IrValue& merge(std::uint32_t firstMultiple, std::uint32_t secondMultiple) {
         IrBlock& entry = *block;
         IrBlock& first = newBlock();
@@ -186,6 +203,25 @@ std::uint32_t EmittedEvaluationControlPoint(std::uint32_t address) {
     throw std::runtime_error("the domain program reads no control point attribute");
 }
 
+enum class Conjunction { None, Before, After };
+
+bool LowersUnderComplementedBallot(Conjunction conjunction) {
+    Hull hull;
+    hull.program.SetWaveSize(32);
+    auto& first = hull.firstInvocation();
+    auto& notFirst = hull.builder.Emit(IrOpcode::LogicalNot, IrType::Bool, {&first});
+    auto& own = hull.complementedOwnLaneBit(notFirst);
+    auto& other = hull.builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&hull.invocation(), &hull.builder.Constant(2u)});
+    IrValue* predicate = &own;
+    if (conjunction == Conjunction::Before) predicate = &hull.builder.Emit(IrOpcode::LogicalAnd, IrType::Bool, {&own, &other});
+    if (conjunction == Conjunction::After) predicate = &hull.builder.Emit(IrOpcode::LogicalAnd, IrType::Bool, {&other, &own});
+    auto& square = hull.builder.IMul(hull.invocation(), hull.invocation());
+    auto& offset = hull.builder.Emit(IrOpcode::SelectU32, IrType::U32, {&notFirst, &square, &hull.computed(2u, LocalStride)});
+    auto& address = hull.inPatch(offset);
+    hull.read(address, *predicate);
+    return LoweredAt(hull.program, address);
+}
+
 bool run(const char* name, const std::function<bool()>& body) {
     bool passed = false;
     try {
@@ -255,6 +291,18 @@ int main() {
         if (!outcome.lowered || outcome.emitted->Opcode() != IrOpcode::ISub32 || outcome.emitted->Argument(0)->Resolve() != address.Resolve()) return false;
         const IrValue* patch = outcome.emitted->Argument(1)->Resolve();
         return patch->Opcode() == IrOpcode::IMul32 && patch->Argument(1)->Resolve()->ImmediateU32() == PatchStride;
+    });
+
+    passed &= run("a hull read under its own lane's bit of a complemented ballot takes the select arm that bit implies", [] {
+        return LowersUnderComplementedBallot(Conjunction::None);
+    });
+
+    passed &= run("a hull read under that bit and another condition takes the same select arm", [] {
+        return LowersUnderComplementedBallot(Conjunction::Before);
+    });
+
+    passed &= run("a hull read under another condition and that bit takes the same select arm", [] {
+        return LowersUnderComplementedBallot(Conjunction::After);
     });
 
     passed &= run("a domain read at an immediate address past the last control point reads the last control point", [] {

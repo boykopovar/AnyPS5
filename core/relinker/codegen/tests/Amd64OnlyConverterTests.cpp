@@ -23,6 +23,7 @@
 #include <io/ByteWriter.hpp>
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
@@ -1019,6 +1020,32 @@ void converterClaimedFollower() {
             kept = kept || (report.InstructionName == name && report.Lowering == Codegen::Amd64OnlyLowering::Kept);
         require(result.KeptCount == 1 && kept, "An optional short instruction followed by moved instructions was not kept");
     }
+}
+
+void converterWideStoreIslandAcrossInt64Max() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    Bytes text = {0xE8, 0x00, 0x00, 0x00, 0x00, 0xC5, 0xFC, 0x11, 0x07, 0xC3, 0xEB, 0xFD};
+    for (int index = 0; index < 4; ++index)
+        text.insert(text.end(), {0x48, 0x83, 0xC1, 0x01});
+    const auto convertAt = [&](const std::uint64_t base) {
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        return converter->Convert(file, {{1, 5, 0x200, base, 0, text.size(), text.size(), 16}});
+    };
+    const auto low = convertAt(0x1000);
+    const auto high = convertAt(0x8000000000000000 - 0x10);
+    require(high.Trampolines.size() == 2 && high.KeptCount == 0, "A 256-bit store just below 2^63 was not lowered through an island above it");
+    require(high.Bytes == low.Bytes, "An island across 2^63 changed the segment bytes");
+    for (std::size_t index = 0; index < 2; ++index) {
+        const auto& site = high.Trampolines[index];
+        const auto& reference = low.Trampolines[index];
+        require(site.Offset == reference.Offset && site.Length == reference.Length && site.Body == reference.Body, "An island across 2^63 changed a trampoline");
+        require(site.Relocations.size() == reference.Relocations.size(), "An island across 2^63 changed the number of relocations");
+        for (std::size_t relocation = 0; relocation < site.Relocations.size(); ++relocation)
+            require(site.Relocations[relocation].DisplacementOffset == reference.Relocations[relocation].DisplacementOffset &&
+                    site.Relocations[relocation].SiteTarget == reference.Relocations[relocation].SiteTarget, "An island across 2^63 changed where a stub jumps");
+    }
+    require(Bytes(high.Bytes.begin() + 0x205, high.Bytes.begin() + 0x207) == Bytes{0xEB, 0x0D}, "The short jump to an island across 2^63 has the wrong displacement");
 }
 
 void converterJumpTableTargets() {
@@ -2080,6 +2107,130 @@ void xsaveoptExecution() {
     require(std::memcmp(area + 160 + 3 * 16, pattern, 16) == 0 && std::memcmp(area + 576 + 3 * 16, pattern + 16, 16) == 0, "XSAVE did not store YMM3 in the standard format");
     require(std::memcmp(restored, pattern, sizeof(pattern)) == 0, "XRSTOR did not restore YMM3 from the area XSAVE wrote");
 }
+
+void scalarCompareExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0xF3, 0x0F, 0xC2, 0xC1, 0x05};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "scalar compare stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    struct Case {
+        float left;
+        float right;
+        std::uint32_t mask;
+        const char* name;
+    };
+    for (const auto& item : std::vector<Case>{{309.0f, 309.0f, 0xFFFFFFFFu, "309 is not less than 309"},
+                                              {309.0f, 310.0f, 0u, "309 is less than 310"}}) {
+        alignas(16) float left[4] = {item.left, 1.0f, 2.0f, 3.0f};
+        alignas(16) float right[4] = {item.right, 0.0f, 0.0f, 0.0f};
+        alignas(16) std::uint32_t result[4] = {};
+        asm volatile(
+            "movaps (%[left]), %%xmm0\n\t"
+            "movaps (%[right]), %%xmm1\n\t"
+            "sub $128, %%rsp\n\t"
+            "call *%[code]\n\t"
+            "add $128, %%rsp\n\t"
+            "movaps %%xmm0, (%[result])\n\t"
+            :
+            : [left] "r"(left), [right] "r"(right), [result] "r"(result), [code] "r"(code)
+            : "memory", "xmm0", "xmm1");
+        require(result[0] == item.mask, item.name);
+        require(result[1] == std::bit_cast<std::uint32_t>(1.0f) && result[2] == std::bit_cast<std::uint32_t>(2.0f)
+                    && result[3] == std::bit_cast<std::uint32_t>(3.0f),
+                "scalar compare stub changed the upper lanes of its destination");
+    }
+    munmap(code, 4096);
+}
+
+void rdpidExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0xF3, 0x0F, 0xC7, 0xF8};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "RDPID stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    std::uint64_t processor = ~std::uint64_t{0};
+    std::uint8_t carry = 0;
+    asm volatile(
+        "sub $128, %%rsp\n\t"
+        "stc\n\t"
+        "call *%[code]\n\t"
+        "setc %[carry]\n\t"
+        "add $128, %%rsp\n\t"
+        : "=&a"(processor), [carry] "=&q"(carry)
+        : [code] "r"(code)
+        : "memory", "cc");
+    munmap(code, 4096);
+    require(processor == 0, "RDPID stub left a value other than processor 0 in RAX");
+    require(carry == 1, "RDPID stub changed the flags");
+}
+
+void rdseedExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0x0F, 0xC7, 0xF8};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "RDSEED replacement was not produced");
+    require(match->ReplacementBytes.size() == site.size(), "RDSEED replacement changed the instruction length");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the replacement");
+    std::memcpy(code, body.data(), body.size());
+    bool produced = false;
+    for (unsigned attempt = 0; attempt < 16 && !produced; ++attempt) {
+        std::uint64_t value = 0;
+        std::uint8_t carry = 0;
+        asm volatile(
+            "sub $128, %%rsp\n\t"
+            "call *%[code]\n\t"
+            "setc %[carry]\n\t"
+            "add $128, %%rsp\n\t"
+            : "=&a"(value), [carry] "=&q"(carry)
+            : [code] "r"(code)
+            : "memory", "cc");
+        produced = carry == 1;
+    }
+    munmap(code, 4096);
+    require(produced, "RDSEED replacement never reported a random value");
+}
+
+void clwbExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0x66, 0x0F, 0xAE, 0x30};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "CLWB replacement was not produced");
+    require(match->ReplacementBytes.size() == site.size(), "CLWB replacement changed the instruction length");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the replacement");
+    std::memcpy(code, body.data(), body.size());
+    std::uint8_t line[64] = {};
+    std::uint64_t address = reinterpret_cast<std::uint64_t>(line);
+    std::uint64_t kept = 0x5A5A5A5A5A5A5A5Aull;
+    std::uint8_t carry = 0;
+    asm volatile(
+        "sub $128, %%rsp\n\t"
+        "stc\n\t"
+        "call *%[code]\n\t"
+        "setc %[carry]\n\t"
+        "add $128, %%rsp\n\t"
+        : "+a"(address), "+b"(kept), [carry] "=&q"(carry)
+        : [code] "r"(code)
+        : "memory", "cc");
+    munmap(code, 4096);
+    require(address == reinterpret_cast<std::uint64_t>(line), "CLWB replacement changed its address register");
+    require(kept == 0x5A5A5A5A5A5A5A5Aull, "CLWB replacement changed an unrelated register");
+    require(carry == 1, "CLWB replacement changed the flags");
+}
 #else
 void reciprocalExecution() {}
 void registerFormExecution() {}
@@ -2126,6 +2277,10 @@ void rdtscpExecution() {
 #else
 void rdtscpExecution() {}
 void wideStoreExecution() {}
+void scalarCompareExecution() {}
+void rdpidExecution() {}
+void rdseedExecution() {}
+void clwbExecution() {}
 #endif
 
 void scannerZeroTail() {
@@ -2187,8 +2342,13 @@ int main() {
         converterRosettaLegacyScalarCompare();
         rdtscpExecution();
         wideStoreExecution();
+        scalarCompareExecution();
+        rdpidExecution();
+        rdseedExecution();
+        clwbExecution();
         wideStoreSplit();
         converterWideStoreWindows();
+        converterWideStoreIslandAcrossInt64Max();
         converterClaimedFollower();
         converterJumpTableTargets();
         converterReciprocal();

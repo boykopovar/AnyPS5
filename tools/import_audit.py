@@ -90,6 +90,7 @@ def elf_program_dynamic_symbols(path, data):
     _, _, dynamic_offset, _, _, dynamic_size, _, _ = dynamic_segments[0]
     if dynamic_size % 16:
         raise AuditError(f"{path}: dynamic segment size {dynamic_size} is not a multiple of 16")
+    take(data, dynamic_offset, dynamic_size, path, "dynamic segment")
     dynamic = {}
     needed_offsets = []
     terminated = False
@@ -126,16 +127,18 @@ def elf_program_dynamic_symbols(path, data):
         bucket_data = take(data, bucket_offset, buckets * 4, path, "GNU hash buckets")
         chain_offset = bucket_offset + buckets * 4
         maximum = first_symbol - 1
+        visited_chain_entries = set()
         for index in struct.unpack(f"<{buckets}I", bucket_data) if buckets else ():
             if index == 0:
                 continue
             if index < first_symbol:
                 raise AuditError(f"{path}: GNU hash bucket index {index} precedes symbol offset {first_symbol}")
             symbol_index = index
-            while True:
+            while symbol_index not in visited_chain_entries:
                 chain_address = dynamic[0x6ffffef5] + (chain_offset - hash_offset) + (symbol_index - first_symbol) * 4
                 chain_file_offset = file_offset(chain_address, 4, "GNU hash chain")
                 chain_value = unpack("<I", data, chain_file_offset, path, "GNU hash chain entry")[0]
+                visited_chain_entries.add(symbol_index)
                 maximum = max(maximum, symbol_index)
                 if chain_value & 1:
                     break
@@ -207,6 +210,7 @@ def elf_imports(path, data):
         if kind == 11:
             if entry != 24 or size % 24 or link >= len(sections) or sections[link][1] != 3:
                 raise AuditError(f"{path}: invalid dynamic symbol table (entry size {entry}, size {size}, string table section {link})")
+            take(data, offset, size, path, "dynamic symbol table")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
             for position in range(0, size, 24):
@@ -218,6 +222,7 @@ def elf_imports(path, data):
         elif kind == 6:
             if entry != 16 or size % 16 or link >= len(sections) or sections[link][1] != 3:
                 raise AuditError(f"{path}: invalid dynamic section (entry size {entry}, size {size}, string table section {link})")
+            take(data, offset, size, path, "dynamic section")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
             terminated = False
@@ -273,6 +278,8 @@ def pe_headers(path, data):
 def pe_exports(path, data):
     to_offset, directory, _ = pe_headers(path, data)
     rva, size = unpack("<II", data, directory, path, "export data directory")
+    if not rva and not size:
+        return set()
     if not rva or size < 40:
         raise AuditError(f"{path}: PE file has no export table")
 
@@ -717,12 +724,19 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         if name:
             for suffix in (".sprx", ".suprx", ".debug_prx"):
                 if name.endswith(suffix):
-                    normalized = name.removesuffix(suffix) + ".prx"
+                    normalized = name[:-len(suffix)] + ".prx"
                     candidates = windows_names.get(normalized.casefold(), ())
                     if normalized in candidates:
                         return normalized
                     if len(candidates) == 1:
                         return next(iter(candidates))
+            if name.casefold().endswith(".prx"):
+                normalized = name[:-4] + ".prx"
+                candidates = windows_names.get(normalized.casefold(), ())
+                if normalized in candidates:
+                    return normalized
+                if len(candidates) == 1:
+                    return next(iter(candidates))
         return name
 
     def available(name):

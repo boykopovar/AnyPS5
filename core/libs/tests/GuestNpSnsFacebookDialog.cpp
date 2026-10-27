@@ -23,8 +23,10 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceNpSnsFacebookDialogTerminate() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogOpen(&param) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogClose() == kErrNotInitialized);
+    Require(sceNpSnsFacebookDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogGetResult(result) == kErrNotInitialized);
     Require(sceNpSnsFacebookDialogGetStatus() == kStatusNone);
     Require(sceNpSnsFacebookDialogUpdateStatus() == kStatusNone);

@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -222,6 +223,61 @@ struct SlabCopies {
     std::vector<VkBufferCopy> regions;
 };
 
+struct PublishOnCpuStorage {};
+
+bool& publishOnCpu() {
+    return HostThreadLocal<bool, PublishOnCpuStorage>();
+}
+
+std::atomic<void (*)(std::uint64_t, std::uint64_t)> publishSelectedHook{nullptr};
+
+bool recordCopiesOnCpu(const UnitShadow& shadow, const std::vector<SlabCopies>& copies, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, std::uint64_t bytes, std::uint64_t checked) {
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr) return false;
+    const auto& context = shadow.context;
+    auto host = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    struct Piece {
+        std::uint64_t address;
+        std::uint64_t offset;
+        std::uint64_t size;
+    };
+    std::vector<Piece> pieces;
+    const auto commands = recorder->Commands();
+    const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::ShadowPublish);
+    constexpr VkAccessFlags transferAccess = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, transferAccess);
+    Recorder::CountBarriers(Recorder::CommandClass::ShadowPublish);
+    const auto copyBuffer = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
+    std::uint64_t offset = 0;
+    for (const auto& entry : copies) {
+        std::vector<VkBufferCopy> regions;
+        for (const auto& region : entry.regions) {
+            regions.push_back({region.srcOffset, offset, region.size});
+            pieces.push_back({shadow.importBase + region.dstOffset - shadow.importLead, offset, region.size});
+            offset += region.size;
+        }
+        copyBuffer(commands, entry.slab->buffer, host->Handle(), static_cast<std::uint32_t>(regions.size()), regions.data());
+        recorder->Keep(entry.slab);
+    }
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    Recorder::CountBarriers(Recorder::CommandClass::ShadowPublish);
+    recorder->EndGpuTiming(timing, bytes);
+    recorder->NotePendingWrites(ranges);
+    recorder->OnComplete([host, pieces = std::move(pieces), checked] {
+        host->Invalidate();
+        for (const auto& piece : pieces) {
+            for (std::uint64_t at = piece.address; at < piece.address + piece.size;) {
+                const auto next = std::min(piece.address + piece.size, (at & ~(UnitBytes - 1)) + UnitBytes);
+                const auto bytes = static_cast<std::size_t>(next - at);
+                if (GuestMemory::UnchangedSinceCollected(at, bytes, checked)) GuestMemory::StoreOwnBytes(at, host->Bytes().subspan(static_cast<std::size_t>(piece.offset + (at - piece.address)), bytes));
+                else Stats().staleDroppedCpu.fetch_add(1, std::memory_order_relaxed);
+                at = next;
+            }
+        }
+    });
+    return true;
+}
+
 // Records the copies as one command group into the active recorder's open batch (a waited batch
 // without one). `ranges` are the guest ranges copied, for the note and the hazard tracker.
 void recordCopies(const UnitShadow& shadow, const std::vector<SlabCopies>& copies, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, std::uint64_t bytes) {
@@ -299,6 +355,7 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
     std::uint64_t bytes = 0;
     std::size_t units = 0;
+    const auto checked = GuestMemory::TrackerGeneration();
     {
         // The stamps judged below see every CPU store into the live selected units up to now: a
         // store no collect walked yet would read as fresh and the copy would land over it. Every
@@ -361,7 +418,8 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
         const auto packet = GuestMemory::CurrentPacket();
         std::fprintf(stderr, "[shadow] publish %s: 0x%llx+0x%llx, %zu units, %.2f MiB, %zu slabs (packet 0x%x queue 0x%x)\n", ReasonNames[static_cast<std::size_t>(reason)], static_cast<unsigned long long>(ranges.front().first), static_cast<unsigned long long>(ranges.back().second - ranges.front().first), units, bytes / 1048576.0, copies.size(), packet.opcode, packet.queue);
     }
-    recordCopies(*shadow, copies, ranges, bytes);
+    if (const auto hook = publishSelectedHook.load(std::memory_order_acquire)) hook(ranges.front().first, ranges.front().second);
+    if (!publishOnCpu() || !recordCopiesOnCpu(*shadow, copies, ranges, bytes, checked)) recordCopies(*shadow, copies, ranges, bytes);
     if (ShadowVerify()) verifyPublished(*shadow, copies);
     return units;
 }
@@ -471,6 +529,16 @@ ShadowSlabPin::ShadowSlabPin(std::shared_ptr<ShadowSlab> slab) : slab(std::move(
 
 ShadowSlabPin::~ShadowSlabPin() {
     slab->pins.fetch_sub(1, std::memory_order_relaxed);
+}
+
+void SetPublishSelectedHook(void (*hook)(std::uint64_t begin, std::uint64_t end)) {
+    publishSelectedHook.store(hook, std::memory_order_release);
+}
+
+PublishOnCpuScope::PublishOnCpuScope() : previous(std::exchange(publishOnCpu(), true)) {}
+
+PublishOnCpuScope::~PublishOnCpuScope() {
+    publishOnCpu() = previous;
 }
 
 std::size_t PublishShadow(std::uint64_t address, std::size_t bytes, PublishScope scope, PublishReason reason, bool waited) {

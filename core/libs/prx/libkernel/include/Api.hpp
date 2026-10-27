@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <thread>
+#include <string>
 
 struct KernelIovec {
     void* base;
@@ -116,6 +117,8 @@ struct PthreadBarrierPrivate {
     unsigned arrived = 0;
     unsigned active = 0;
     std::uint64_t generation = 0;
+    std::string name;
+    bool named = false;
 };
 
 struct PthreadBarrierattrPrivate {
@@ -215,6 +218,7 @@ int APS5_VABI sceKernelMapFlexibleMemory(void** addrInOut, size_t len, int prot,
 int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t directMemoryStart, size_t alignment, const char* name);
 int32_t APS5_VABI sceKernelMapNamedFlexibleMemory(void** addrInOut, size_t len, int prot, int flags, const char* name);
 int32_t APS5_VABI sceKernelMapNamedFlexibleMemoryInternal(void** addrInOut, size_t len, int prot, int flags, const char* name);
+int32_t APS5_VABI sceKernelMapNamedSystemFlexibleMemory(void** addrInOut, size_t len, int prot, int flags, const char* name);
 int APS5_VABI sceKernelMprotect(const void* addr, size_t len, int prot);
 int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len);
 int APS5_VABI sceKernelMmap(void* addr, size_t len, int prot, int flags, int fd, int64_t offset, void** res);
@@ -414,6 +418,7 @@ int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(PthreadBarrierattrPriva
 int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count);
 int APS5_VABI pthread_barrier_wait_nid_postfix(PthreadBarrierPrivate** barrier);
 int APS5_VABI pthread_barrier_destroy_nid_postfix(PthreadBarrierPrivate** barrier);
+int APS5_VABI pthread_barrier_setname_np_nid_postfix(PthreadBarrierPrivate** barrier, const char* name);
 int APS5_VABI pthread_cond_destroy_nid_postfix(PthreadCond* cond);
 int APS5_VABI pthread_cond_broadcast_nid_postfix(PthreadCond* cond);
 int APS5_VABI pthread_cond_init_nid_postfix(PthreadCond* cond, const PthreadCondattr* attr);
@@ -421,9 +426,11 @@ int APS5_VABI pthread_cond_signal_nid_postfix(PthreadCond* cond);
 int APS5_VABI pthread_cond_timedwait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime);
 int APS5_VABI pthread_cond_reltimedwait_np_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec);
 int APS5_VABI pthread_cond_wait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex);
+int APS5_VABI pthread_cond_setname_np_nid_postfix(PthreadCond* cond, const char* name);
 int APS5_VABI pthread_condattr_destroy_nid_postfix(PthreadCondattr* attr);
 int APS5_VABI pthread_condattr_init_nid_postfix(PthreadCondattr* attr);
 int APS5_VABI pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, KernelClockid clockId);
+int APS5_VABI pthread_condattr_getclock_nid_postfix(const PthreadCondattr* attr, KernelClockid* clockId);
 int APS5_VABI pthread_condattr_setpshared_nid_postfix(PthreadCondattr* attr, int pshared);
 int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* attr, int* pshared);
 int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex);
@@ -438,6 +445,7 @@ int APS5_VABI pthread_mutex_getspinloops_np_nid_postfix(PthreadMutex* mutex, int
 int APS5_VABI pthread_mutex_setspinloops_np_nid_postfix(PthreadMutex* mutex, int count);
 int APS5_VABI pthread_mutex_getyieldloops_np_nid_postfix(PthreadMutex* mutex, int* count);
 int APS5_VABI pthread_mutex_setyieldloops_np_nid_postfix(PthreadMutex* mutex, int count);
+int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const char* name);
 int APS5_VABI pthread_mutexattr_destroy_nid_postfix(PthreadMutexattr* attr);
 int APS5_VABI pthread_mutexattr_init_nid_postfix(PthreadMutexattr* attr);
 int APS5_VABI pthread_mutexattr_getpshared_nid_postfix(const PthreadMutexattr* attr, int* pshared);
@@ -464,6 +472,7 @@ int APS5_VABI pthread_rwlock_tryrdlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_trywrlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock);
 int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock);
+int APS5_VABI pthread_rwlock_setname_np_nid_postfix(PthreadRwlock* rwlock, const char* name);
 int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value);
 int APS5_VABI sem_destroy_nid_postfix(void* sem);
 int APS5_VABI sem_wait_nid_postfix(void* sem);
@@ -617,11 +626,11 @@ std::int64_t APS5_VABI _sendto_nid_postfix(int descriptor, const void* buffer, s
 std::int64_t APS5_VABI _recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength);
 std::int64_t APS5_VABI _sendmsg_nid_postfix(int descriptor, const GuestMsghdr* message, int flags);
 std::int64_t APS5_VABI _recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags);
-int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait8(std::uint8_t* address, std::uint8_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait16(std::uint16_t* address, std::uint16_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait32(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait64(std::uint64_t* address, std::uint64_t expected, const KernelUseconds* timeout, const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, KernelUseconds* timeout, const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait8(std::uint8_t* address, std::uint8_t expected, KernelUseconds* timeout, const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait16(std::uint16_t* address, std::uint16_t expected, KernelUseconds* timeout, const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait32(std::uint32_t* address, std::uint32_t expected, KernelUseconds* timeout, const char* name);
+int APS5_VABI sceKernelSyncOnAddressWait64(std::uint64_t* address, std::uint64_t expected, KernelUseconds* timeout, const char* name);
 int APS5_VABI sceKernelSyncOnAddressWake(void* address, std::int32_t count);
 int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t value, void* sizeArgument, void* timeArgument);
 int APS5_VABI sceCoredumpRegisterCoredumpHandler(uint64_t handler, size_t stackSize, uint64_t context);
@@ -647,6 +656,7 @@ void APS5_VABI sceKernelDebugRaiseException(int c1, int c2);
 void APS5_VABI sceKernelDebugRaiseExceptionOnReleaseMode(int c1, int c2);
 int APS5_VABI getlogin_r_nid_postfix(char* output, int size);
 char* APS5_VABI getlogin_nid_postfix(void);
+int SetLogin_nid_no_patch(const char* name);
 int APS5_VABI sceKernelDebugOutText(int channel, const char* text);
 int APS5_VABI sceKernelSendNotificationRequest(int device, const void* request, std::size_t size, int flags);
 int APS5_VABI getargc_nid_postfix(void);
@@ -682,6 +692,9 @@ int APS5_VABI sceKernelCreateUuidV4(std::uint8_t* uuid);
 void APS5_VABI sceKernelSync(void);
 void APS5_VABI sync_nid_postfix(void);
 int APS5_VABI sched_get_priority_max_nid_postfix(int policy);
+int APS5_VABI sched_getparam_nid_postfix(int pid, KernelSchedParam* param);
+int APS5_VABI sched_getscheduler_nid_postfix(int pid);
+int APS5_VABI sched_setparam_nid_postfix(int pid, const KernelSchedParam* param);
 int APS5_VABI sched_get_priority_min_nid_postfix(int policy);
 int APS5_VABI sysarch(int operation, void* parameters);
 int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage);
@@ -729,6 +742,7 @@ int APS5_VABI killpg_nid_postfix(int pgrp, int guest);
 int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest);
 int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previous);
 int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet);
+int APS5_VABI SetSignalMaskCatching_nid_no_patch(const GuestSignalSet* set, GuestSignalSet* previousSet);
 int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet);
 int APS5_VABI pthread_sigmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet);
 int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, const KernelTimespec* timeout);
@@ -788,12 +802,15 @@ int APS5_VABI scePthreadCondattrGetpshared(const PthreadCondattr* attr, int* psh
 int APS5_VABI pthread_mutexattr_setkind_np_nid_postfix(PthreadMutexattr* attr, int kind);
 int APS5_VABI pthread_mutexattr_getkind_np_nid_postfix(PthreadMutexattr attr);
 int APS5_VABI scePthreadMutexattrGettype(const PthreadMutexattr* attr, int* type);
+int APS5_VABI scePthreadMutexattrSetkind(PthreadMutexattr* attr, int kind);
+int APS5_VABI scePthreadMutexattrGetkind(PthreadMutexattr attr);
 int APS5_VABI scePthreadMutexattrGetprotocol(const PthreadMutexattr* attr, int* protocol);
 int APS5_VABI scePthreadMutexattrSetprioceiling(PthreadMutexattr* attr, int prioceiling);
 int APS5_VABI scePthreadMutexattrGetprioceiling(const PthreadMutexattr* attr, int* prioceiling);
 int APS5_VABI scePthreadMutexattrSetpshared(PthreadMutexattr* attr, int pshared);
 int APS5_VABI scePthreadMutexattrGetpshared(const PthreadMutexattr* attr, int* pshared);
 int APS5_VABI pthread_rwlockattr_gettype_np_nid_postfix(const PthreadRwlockattr* attr, int* type);
+int APS5_VABI pthread_rwlockattr_settype_np_nid_postfix(PthreadRwlockattr* attr, int type);
 int APS5_VABI scePthreadRwlockattrGettype(const PthreadRwlockattr* attr, int* type);
 int APS5_VABI scePthreadRwlockattrSetpshared(PthreadRwlockattr* attr, int pshared);
 int APS5_VABI scePthreadRwlockattrGetpshared(const PthreadRwlockattr* attr, int* pshared);
@@ -802,5 +819,9 @@ int APS5_VABI setpgrp_nid_postfix(int pid, int pgrp);
 int APS5_VABI sceKernelGetSystemExVersion(char* first, char* second);
 int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(char* version);
 int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(std::uint32_t* version);
+int APS5_VABI sysKernelGetUpdVersion_nid_postfix(std::uint32_t* version);
+int APS5_VABI sysKernelGetManufacturingMode_nid_postfix(void);
+int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_postfix(void);
+int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_postfix(void);
 
 }

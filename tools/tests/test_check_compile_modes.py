@@ -271,5 +271,17 @@ class CheckCompileModeTests(unittest.TestCase):
                 self.assertIn("unknown operand count", result.stderr)
 
 
+    def test_nested_response_modes_preserve_mode_named_include_directories(self):
+        def configure(root, build, source):
+            directory = build / "-E"
+            directory.mkdir()
+            (directory / "nested_header.h").write_text("#define FROM_RESPONSE 1\n", encoding="utf-8")
+            (build / "inner.rsp").write_text("-I -E", encoding="utf-8")
+            response = build / "outer flags.rsp"
+            response.write_text("@inner.rsp -E -P", encoding="utf-8")
+            return ["@" + str(response)], '#include "nested_header.h"\n#ifndef FROM_RESPONSE\n#error include lost\n#endif\n', ""
+        self.check_modes(((),), configure=configure)
+
+
 if __name__ == "__main__":
     unittest.main()

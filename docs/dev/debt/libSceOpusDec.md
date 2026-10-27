@@ -2,7 +2,8 @@
 
 ### Unknown function info
 
-- [sceOpusDecCancel, sceOpusDecCreate, sceOpusDecCtl, sceOpusDecDecodeFloat, sceOpusDecDecodeFloatWithPriority, sceOpusDecDecodeFloatWithPriorityAndTimeout, sceOpusDecDecodeWithPriority and sceOpusDecDecodeWithPriorityAndTimeout](../../../core/libs/prx/libSceOpusDec/Export.cpp) (libSceOpusDec) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusDec.c), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim.
+- [sceOpusDecCancel, sceOpusDecCreate and sceOpusDecCtl](../../../core/libs/prx/libSceOpusDec/Export.cpp) (libSceOpusDec) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusDec.c), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim.
+- [sceOpusDecDecodeWithPriorityAndTimeout and sceOpusDecDecodeFloatWithPriorityAndTimeout](../../../core/libs/prx/libSceOpusDec/Export.cpp) (libSceOpusDec) decode synchronously only for the infinite timeout 0xFFFFFFFF, the value sceOpusDecDecode passes, so the batch ID output is never written. libSceOpusDec.sprx (firmware 13.60, read from disassembly, not measured on a console) passes the timeout to its AJM batch wait; when the wait does not finish it stores the batch ID and returns 0x81740015. Whether a finite timeout finishes depends on the console's decode time, so any other timeout returns the argument errors and then throws. The priority (20 to 100) is validated but does not schedule anything
 
 ### Functional
 

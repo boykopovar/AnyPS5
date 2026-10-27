@@ -37,6 +37,7 @@ constexpr int PAD_ERROR_ALREADY_OPENED = static_cast<int>(0x80920004);
 constexpr int PAD_ERROR_UNKNOWN_USER = static_cast<int>(0x809b0081);
 constexpr int PAD_ERROR_INVALID_USER_ID = static_cast<int>(0x809b0001);
 constexpr int PAD_ERROR_INVALID_PORT_INDEX = static_cast<int>(0x809b0003);
+constexpr int PAD_ERROR_NOT_PERMITTED = static_cast<int>(0x80920101);
 constexpr int PAD_USER_ID_INVALID = -1;
 
 std::array<bool, PAD_MAX_CONTROLLERS> g_opened{false};
@@ -228,18 +229,8 @@ int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInfor
 int APS5_VABI scePadGetExtControllerInformation(int handle, void* info) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
  if (info == nullptr) return PAD_ERROR_INVALID_ARG;
+ if (!SpecialHandle(handle)) return PAD_ERROR_NOT_PERMITTED;
  std::memset(info, 0, 0x2c);
- if (SpecialHandle(handle)) return PAD_OK;
- PadControllerInformation* base = static_cast<PadControllerInformation*>(info);
- base->touchPadInfo.pixelDensity = 44.86f;
- base->touchPadInfo.resolution.x = kTouchPadWidth;
- base->touchPadInfo.resolution.y = kTouchPadHeight;
- base->stickInfo.deadZoneLeft = 13;
- base->stickInfo.deadZoneRight = 13;
- base->connectionType = PAD_CONNECTION_TYPE_LOCAL;
- base->connectedCount = 1;
- base->connected = true;
- base->deviceClass = PAD_DEVICE_CLASS_STANDARD;
  return PAD_OK;
 }
 

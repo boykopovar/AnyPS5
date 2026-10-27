@@ -16,8 +16,10 @@
 #include "prx/libSceAgc/DcbDraw/include/Instancing.hpp"
 #include "prx/libSceAgc/DcbDraw/include/IndexBuffer.hpp"
 #include "prx/libSceAgc/DcbDraw/include/DrawIndexed.hpp"
+#include "prx/libSceAgc/DcbDraw/include/DrawNonIndexed.hpp"
 #include "prx/libSceAgc/Cb/include/Registers.hpp"
 #include "prx/libSceAgc/Acb/include/Control.hpp"
+#include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/RegisterDefaults.hpp"
@@ -167,14 +169,50 @@ void testIndexedIndirectDraws() {
     alignas(4) std::uint32_t count = 0;
     const auto* multi = sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0x80, 1, 8, &count, 20, 0);
     const auto address = reinterpret_cast<std::uintptr_t>(&count);
-    const std::array<std::uint32_t, 10> expectedMulti{0xc0083800u, 0x80, 0x280, 0x280, 0x40000280u, 8, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 20, 0};
+    const std::array<std::uint32_t, 16> expectedMulti{0xc0017904u, 0x342, 0xc6000005u, 0xc0083800u, 0x80, 0x280, 0x280, 0x40000280u, 8, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 20, 0, 0xc0017904u, 0x342, 0xc6000000u};
     check(multi == storage.words.data() + expectedSingle.size() && std::equal(expectedMulti.begin(), expectedMulti.end(), multi), "indexed indirect multi draw packet mismatch");
     check(storage.buffer.cursor_up == storage.words.data() + expectedSingle.size() + expectedMulti.size(), "incorrect indexed indirect cursor advance");
+    check(sceAgcDcbDrawIndexIndirectMultiGetSize() == expectedMulti.size() * sizeof(std::uint32_t), "indexed indirect multi draw size differs from its packets");
     const auto before = storage.words;
     expectFailure([&] { sceAgcDcbDrawIndexIndirect(&storage.buffer, 2, 0); });
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 1, 8, &count, 16, 0); });
     expectFailure([&] { sceAgcDcbDrawIndexIndirectMulti(&storage.buffer, 0, 0, 8, &count, 20, 0); });
     check(storage.words == before, "invalid indexed indirect draw modified packet memory");
+}
+
+void testTagHeaders() {
+    Storage draw;
+    const auto* multi = sceAgcDcbDrawIndirectMulti(&draw.buffer, 0x40, 0, 5, nullptr, 16, 0);
+    const std::array<std::uint32_t, 16> expectedMulti{0xc0017904u, 0x342u, 0xc6000008u, 0xc0082c00u, 0x40u, 0x280u, 0x280u, 0x280u, 5u, 0u, 0u, 16u, 2u, 0xc0017904u, 0x342u, 0xc6000000u};
+    check(multi == draw.words.data() && std::equal(expectedMulti.begin(), expectedMulti.end(), multi), "indirect multi draw tag words mismatch");
+    alignas(8) std::uint64_t label = 0;
+    const auto address = reinterpret_cast<std::uintptr_t>(&label);
+    const auto low = static_cast<std::uint32_t>(address);
+    const auto high = static_cast<std::uint32_t>(address >> 32u);
+    for (const bool compute : {false, true}) {
+        const auto tagFlags = compute ? 0u : 4u;
+        const std::array<std::uint32_t, 14> expected32{0xc0027900u | tagFlags, 0x342u, 0xc8010000u | high, low, 0xc0053c00u, 0x13u, low, high, 1u, 0xffffffffu, 4u, 0xc0017900u | tagFlags, 0x342u, 0xc8000000u};
+        const std::array<std::uint32_t, 16> expected64{0xc0027900u | tagFlags, 0x342u, 0xc8020000u | high, low, 0xc0079300u, 0x13u, low, high, 1u, 0u, 0xffffffffu, 0xffffffffu, 4u, 0xc0017900u | tagFlags, 0x342u, 0xc8000000u};
+        Storage storage;
+        auto* wait32 = compute ? sceAgcAcbWaitRegMem(&storage.buffer, 0, 3, 0, &label, 1, 0xffffffffu, 0x40) : sceAgcDcbWaitRegMem(&storage.buffer, 0, 3, 0, 0, &label, 1, 0xffffffffu, 0x40);
+        auto* wait64 = compute ? sceAgcAcbWaitRegMem(&storage.buffer, 1, 3, 0, &label, 1, ~0ull, 0x40) : sceAgcDcbWaitRegMem(&storage.buffer, 1, 3, 0, 0, &label, 1, ~0ull, 0x40);
+        check(wait32 == storage.words.data() && std::equal(expected32.begin(), expected32.end(), wait32), "32-bit wait tag words mismatch");
+        check(wait64 == wait32 + expected32.size() && std::equal(expected64.begin(), expected64.end(), wait64), "64-bit wait tag words mismatch");
+        check(sceAgcWaitRegMemPatchReference(wait32, 2) == 0 && wait32[8] == 2u, "wait reference patch refused the queue's tag headers");
+        check(sceAgcWaitRegMemPatchReference(wait64, 3) == 0 && wait64[8] == 3u, "64-bit wait reference patch refused the queue's tag headers");
+        for (const auto header : {0xc0027901u, 0xc0027902u}) {
+            const auto start = wait32[0];
+            wait32[0] = header;
+            const auto before = storage.words;
+            expectFailure([&] { sceAgcWaitRegMemPatchReference(wait32, 5); });
+            check(storage.words == before, "a wait with another tag header was patched");
+            wait32[0] = start;
+        }
+        wait32[11] ^= 4u;
+        const auto before = storage.words;
+        expectFailure([&] { sceAgcWaitRegMemPatchReference(wait32, 5); });
+        check(storage.words == before, "a wait whose end tag header differs from its wrapper was patched");
+    }
 }
 
 void testMarkers() {
@@ -524,12 +562,12 @@ void testMemory() {
     const std::array<std::uint32_t, 7> expected{0xc0055000u, 0xc0000001u, 0x12345678, 0, 0x2000, 0, 0x80000010u};
     check(std::equal(expected.begin(), expected.end(), storage.words.begin()), "DMA packet mismatch");
     std::uint64_t value = 0;
-    auto* packet = Agc::Command::WriteWait(&storage.buffer, 1, 3, 0, 0, &value, 0x1122334455667788ull, 0xffffffffffffffffull, 32, __func__);
-    check(packet[0] == 0xc0027901u && packet[4] == 0xc0079300u && packet[5] == 0x13u, "wait packet header mismatch");
+    auto* packet = Agc::Command::WriteWait(&storage.buffer, false, 1, 3, 0, 0, &value, 0x1122334455667788ull, 0xffffffffffffffffull, 32, __func__);
+    check(packet[0] == 0xc0027904u && packet[4] == 0xc0079300u && packet[5] == 0x13u, "wait packet header mismatch");
     check(packet[8] == 0x55667788u && packet[9] == 0x11223344u && packet[12] == 2u, "wait reference or poll interval mismatch");
     sceAgcWaitRegMemPatchReference(packet, 7);
     check(packet[8] == 7 && packet[9] == 0x11223344u, "reference patch changed the high word");
-    auto* truncated = Agc::Command::WriteWait(&storage.buffer, 0, 3, 0, 0, &value, 0x100000000ull, 0xffffffff00000001ull, 32, __func__);
+    auto* truncated = Agc::Command::WriteWait(&storage.buffer, false, 0, 3, 0, 0, &value, 0x100000000ull, 0xffffffff00000001ull, 32, __func__);
     check(truncated[8] == 0u && truncated[9] == 1u, "32-bit wait did not keep the low halves of the reference and mask");
     sceAgcWaitRegMemPatchMask(packet, 0x0f0f0f0fu);
     check(packet[10] == 0x0f0f0f0fu && packet[11] == 0xffffffffu && packet[8] == 7, "64-bit mask patch changed the wrong word");
@@ -817,6 +855,7 @@ int main(int argc, char** argv) {
         testNop();
         testClearState();
         testIndexedIndirectDraws();
+        testTagHeaders();
         testMarkers();
         testMarkerSpans();
         testWorkloads();
