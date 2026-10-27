@@ -223,7 +223,7 @@ int APS5_VABI sceNpWebApiGetHttpResponseHeaderValueLength() {
     return 0;
 }
 
-int APS5_VABI sceNpWebApiGetHttpStatusCode() {
+int APS5_VABI sceNpWebApiGetHttpStatusCode(std::int64_t requestId, int* statusCode) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -239,7 +239,7 @@ int APS5_VABI sceNpWebApiInitialize(int libHttpCtxId, std::size_t poolSize) {
     return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_MAX;
 }
 
-int APS5_VABI sceNpWebApiReadData() {
+int APS5_VABI sceNpWebApiReadData(std::int64_t requestId, void* data, std::size_t size) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

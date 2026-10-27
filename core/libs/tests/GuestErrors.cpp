@@ -1,10 +1,12 @@
 #include "prx/libc/include/WindowsFormatting.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <thread>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -58,40 +60,51 @@ int main() {
     Require(std::strcmp(parent, "Invalid argument") == 0);
     char buffer[128];
     for (int error = 0; error <= 96; ++error) {
-        Require(strerror_r_nid_postfix(error, buffer, sizeof(buffer)) == 0);
-        Require(std::strcmp(buffer, freebsd[error]) == 0);
         char coded[32];
         std::snprintf(coded, sizeof(coded), "error_code=0x%08x", static_cast<unsigned>(error));
         const char* expected = error == 0 ? "No error" : error < 95 ? freebsd[error] : coded;
+        Require(strerror_r_nid_postfix(error, buffer, sizeof(buffer)) == 0);
+        Require(std::strcmp(buffer, expected) == 0);
         Require(std::strcmp(strerror_nid_postfix(error), expected) == 0);
         Require(*__error_nid_postfix() == 13);
     }
-    Require(strerror_r_nid_postfix(-1, buffer, sizeof(buffer)) == 22);
-    Require(std::strcmp(buffer, "Unknown error: -1") == 0);
-    Require(*__error_nid_postfix() == 13);
-    struct UnknownError {
-        int error;
-        const char* text;
-        const char* coded;
-    };
-    for (const UnknownError& unknown : {UnknownError{97, "Unknown error: 97", "error_code=0x00000061"},
-                                        UnknownError{9999, "Unknown error: 9999", "error_code=0x0000270f"},
-                                        UnknownError{INT_MAX, "Unknown error: 2147483647", "error_code=0x7fffffff"},
-                                        UnknownError{-1, "Unknown error: -1", "error_code=0xffffffff"},
-                                        UnknownError{INT_MIN, "Unknown error: -2147483648", "error_code=0x80000000"}}) {
-        Require(strerror_r_nid_postfix(unknown.error, buffer, sizeof(buffer)) == 22);
-        Require(std::strcmp(buffer, unknown.text) == 0);
+    for (const int error : {97, 100, 1000, 9999, INT_MAX, -1, INT_MIN}) {
+        char coded[32];
+        std::snprintf(coded, sizeof(coded), "error_code=0x%08x", static_cast<unsigned>(error));
+        Require(strerror_r_nid_postfix(error, buffer, sizeof(buffer)) == 0);
+        Require(std::strcmp(buffer, coded) == 0);
         Require(*__error_nid_postfix() == 13);
-        Require(std::strcmp(strerror_nid_postfix(unknown.error), unknown.coded) == 0);
+        Require(std::strcmp(strerror_nid_postfix(error), coded) == 0);
         Require(*__error_nid_postfix() == 13);
     }
-    char sentinel[] = "xyz";
-    Require(strerror_r_nid_postfix(22, sentinel, 1) == 34);
-    Require(sentinel[0] == 0 && sentinel[1] == 'y');
-    sentinel[0] = 'x';
-    Require(strerror_r_nid_postfix(22, sentinel, 0) == 34 && sentinel[0] == 'x');
+    for (const int error : {0, 19, 22, 95, -1}) {
+        for (const std::size_t length : {std::size_t{0}, std::size_t{1}, std::size_t{5}, std::size_t{16}, std::size_t{22}}) {
+            char canary[64];
+            std::memset(canary, 0xcc, sizeof(canary));
+            Require(strerror_r_nid_postfix(error, canary, length) == 34);
+            for (const char byte : canary) Require(static_cast<unsigned char>(byte) == 0xcc);
+            Require(*__error_nid_postfix() == 13);
+        }
+        char smallest[64];
+        std::memset(smallest, 0xcc, sizeof(smallest));
+        Require(strerror_r_nid_postfix(error, smallest, 23) == 0);
+        const char* text = strerror_nid_postfix(error);
+        const std::size_t copied = std::min<std::size_t>(std::strlen(text), 22);
+        Require(std::memcmp(smallest, text, copied) == 0);
+        for (std::size_t index = copied; index < 23; ++index) Require(smallest[index] == 0);
+        Require(static_cast<unsigned char>(smallest[23]) == 0xcc);
+        Require(*__error_nid_postfix() == 13);
+    }
+    char truncated[32];
+    Require(strerror_r_nid_postfix(19, truncated, 23) == 0);
+    Require(std::strcmp(truncated, "Operation not supporte") == 0);
     Require(strerror_r_nid_postfix(22, nullptr, 0) == 34);
-    char truncated[4];
-    Require(strerror_r_nid_postfix(97, truncated, sizeof(truncated)) == 22 && std::strcmp(truncated, "Unk") == 0);
-    Require(strerror_r_nid_postfix(-1, truncated, sizeof(truncated)) == 22 && std::strcmp(truncated, "Unk") == 0);
+    Require(strerror_r_nid_postfix(22, nullptr, 22) == 34);
+    bool threw = false;
+    try {
+        strerror_r_nid_postfix(22, nullptr, 23);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }

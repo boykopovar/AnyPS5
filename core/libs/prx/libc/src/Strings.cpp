@@ -230,6 +230,12 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
     return value;
 }
 
+bool HasHexadecimalPrefix(const char* text, const char* parsedEnd) {
+    while (std::isspace(static_cast<unsigned char>(*text))) ++text;
+    if (*text == '+' || *text == '-') ++text;
+    return text[0] == '0' && (text[1] == 'x' || text[1] == 'X') && parsedEnd > text + 2;
+}
+
 }
 
 extern "C" {
@@ -339,7 +345,27 @@ char* APS5_VABI rindex_nid_postfix(const char* s, int c) {
     return strrchr_nid_postfix(s, c);
 }
 
+int APS5_VABI ffs_nid_postfix(int value) {
+    return value == 0 ? 0 : std::countr_zero(static_cast<unsigned int>(value)) + 1;
+}
+
+int APS5_VABI ffsl_nid_postfix(std::int64_t value) {
+    return value == 0 ? 0 : std::countr_zero(static_cast<std::uint64_t>(value)) + 1;
+}
+
+int APS5_VABI ffsll_nid_postfix(std::int64_t value) {
+    return value == 0 ? 0 : std::countr_zero(static_cast<std::uint64_t>(value)) + 1;
+}
+
+int APS5_VABI fls_nid_postfix(int mask) {
+    return mask == 0 ? 0 : 32 - std::countl_zero(static_cast<std::uint32_t>(mask));
+}
+
 int APS5_VABI flsl_nid_postfix(std::int64_t mask) {
+    return mask == 0 ? 0 : 64 - std::countl_zero(static_cast<std::uint64_t>(mask));
+}
+
+int APS5_VABI flsll_nid_postfix(std::int64_t mask) {
     return mask == 0 ? 0 : 64 - std::countl_zero(static_cast<std::uint64_t>(mask));
 }
 
@@ -404,7 +430,12 @@ unsigned long long APS5_VABI strtouq_nid_postfix(const char* str, char** endptr,
 }
 
 double APS5_VABI strtod_nid_postfix(const char* str, char** endptr) {
-    return ParseFloat<double>(str, endptr, std::strtod);
+    char* parsedEnd = nullptr;
+    const double value = ParseFloat<double>(str, &parsedEnd, std::strtod);
+    const double magnitude = value < 0 ? -value : value;
+    if (parsedEnd != str && !HasHexadecimalPrefix(str, parsedEnd) && value != 0 && magnitude < std::numeric_limits<double>::min()) errno = ERANGE;
+    if (endptr != nullptr) *endptr = parsedEnd;
+    return value;
 }
 
 double APS5_VABI atof_nid_postfix(const char* str) { return strtod_nid_postfix(str, nullptr); }

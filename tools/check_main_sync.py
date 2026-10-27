@@ -30,9 +30,17 @@ def resolve_base(repo, name):
     raise RuntimeError(f"no base ref found ({name or ', '.join(BASES)}); fetch the upstream remote first")
 
 
+def git_version(repo):
+    match = re.match(r"git version (\d+)\.(\d+)", git(repo, "version", check=False).stdout)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
 def conflicts(repo, base, head):
     result = git(repo, "merge-tree", "-z", "--write-tree", "--name-only", "--no-messages", base, head, check=False)
     if result.returncode not in (0, 1):
+        version = git_version(repo)
+        if version and version < (2, 38):
+            raise RuntimeError(f"git merge-tree --write-tree needs git 2.38 or newer; this git is {version[0]}.{version[1]}")
         raise RuntimeError(f"git merge-tree failed: {result.stderr.strip()}")
     if result.returncode == 0:
         return []
@@ -59,10 +67,10 @@ def report(repo, base, head):
     if found.returncode:
         raise RuntimeError(f"git merge-base failed: {found.stderr.strip()}")
     mergebase = found.stdout.strip()
-    behind = int(git(repo, "rev-list", "--count", f"{head}..{base}").stdout)
-    ahead = int(git(repo, "rev-list", "--count", f"{base}..{head}").stdout)
-    mine = set(names(repo, "diff", "-z", "--name-only", mergebase, head))
-    theirs = set(names(repo, "diff", "-z", "--name-only", mergebase, base))
+    behind = int(git(repo, "rev-list", "--count", f"{head}..{base}", "--").stdout)
+    ahead = int(git(repo, "rev-list", "--count", f"{base}..{head}", "--").stdout)
+    mine = set(names(repo, "diff", "-z", "--name-only", mergebase, head, "--"))
+    theirs = set(names(repo, "diff", "-z", "--name-only", mergebase, base, "--"))
     shared = sorted(mine & theirs)
     return {
         "base": base,

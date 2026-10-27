@@ -4,6 +4,7 @@
 #include <atomic>
 #include <iostream>
 #include <set>
+#include <string>
 #include <thread>
 
 namespace {
@@ -345,6 +346,51 @@ void CheckForgottenSectionKeepsNoPages() {
     CloseHandle(section);
 }
 
+void CheckReleasedPrivateAllocation() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    std::array<void*, 32> pages{};
+    std::size_t count = pages.size();
+    Require(mappings.Collect(address, Bytes, pages.data(), &count, true), "a collect over a committed private allocation failed");
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0, "cannot release the private allocation behind the mappings");
+    bool collected = true;
+    try {
+        count = pages.size();
+        collected = mappings.Collect(address, Bytes, pages.data(), &count, true);
+    } catch (const std::exception& error) {
+        Require(false, (std::string("a collect over a private allocation released behind the mappings threw: ") + error.what()).c_str());
+    }
+    Require(!collected, "a collect over a private allocation released behind the mappings succeeded");
+}
+
+void CheckVerifiedPrivateCollect() {
+    auto& mappings = Mappings::Get();
+    auto* memory = static_cast<unsigned char*>(mappings.Reserve(nullptr, Bytes));
+    Require(memory != nullptr, "private reservation failed");
+    mappings.Commit(memory, Bytes, PAGE_READWRITE, Bytes, true);
+    const auto address = reinterpret_cast<std::uintptr_t>(memory);
+    std::array<void*, 64> pages{};
+    std::size_t available = pages.size();
+    Require(mappings.Collect(address, Bytes, pages.data(), &available, true), "a verified collect over a private allocation failed");
+    static_cast<volatile unsigned char*>(memory)[Small] = 1;
+    available = pages.size();
+    Require(mappings.Collect(address, Bytes, pages.data(), &available, true) && available == 1 && reinterpret_cast<std::uintptr_t>(pages[0]) == address + Small, "a verified collect over a recorded private allocation lost its write");
+    Require(VirtualFree(memory + 2 * Small, Small, MEM_DECOMMIT) != 0, "cannot decommit a private page in place");
+    bool collected = false;
+    try {
+        available = pages.size();
+        collected = mappings.Collect(address, Bytes, pages.data(), &available, true);
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()).find("APS5_VERIFY_DIRECT_COLLECT") != std::string::npos, error.what());
+    }
+    Require(!collected, "a collect over a recorded private allocation with a page decommitted in place succeeded under APS5_VERIFY_DIRECT_COLLECT");
+    mappings.Reset(memory, Bytes);
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
 void CheckConcurrentWrites() {
     Region region;
     std::atomic<bool> start{false};
@@ -632,10 +678,16 @@ void CheckSharedRunIsOneView() {
 }
 }
 
-int main() {
+int main(int argc, char** argv) {
     auto* handler = AddVectoredExceptionHandler(1, HandleWrite);
     try {
         Require(handler != nullptr, "cannot install test handler");
+        if (argc > 1 && std::string(argv[1]) == "--verify-direct") {
+            CheckVerifiedPrivateCollect();
+            std::cout << "Windows verified private collect tests passed\n";
+            RemoveVectoredExceptionHandler(handler);
+            return 0;
+        }
         CheckArmed();
         CheckFresh();
         CheckAliasesAndCapacity();
@@ -646,6 +698,7 @@ int main() {
         CheckForgottenSectionKeepsNoPages();
         CheckSharedMapQueriesPerMapping();
         CheckSharedRunIsOneView();
+        CheckReleasedPrivateAllocation();
         CheckComparedWhenShared();
         CheckResidentOnlyComparedWhenShared();
         CheckComparedWhenSharedRemapped();

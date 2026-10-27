@@ -18,6 +18,7 @@
 #include <type_traits>
 
 extern "C" std::FILE* GuestStandardOutputFile_nid_no_patch();
+extern "C" std::FILE* GuestStandardOutputForWriting_nid_no_patch();
 
 namespace LibcDetail {
 
@@ -208,12 +209,44 @@ inline std::string PadFloat(const FloatSpec& spec, const std::string& prefix, co
     return spec.zero ? prefix + padding + body : padding + prefix + body;
 }
 
-inline std::string HexFloat(const std::string& spec, char conversion, double value, std::size_t maximumLength = INT_MAX) {
+inline std::string HexDigits(const std::string& spec, char conversion, bool negative, std::uint64_t lead, std::uint64_t fraction, int total, int exponent,
+    std::size_t maximumLength) {
     const FloatSpec parsed = ParseFloatSpec(spec);
-    const bool plus = parsed.plus, space = parsed.space, alternate = parsed.alternate;
-    const std::size_t width = parsed.width;
     const int precision = parsed.precision;
     const bool upper = conversion == 'A';
+    int digits = total;
+    if (precision >= 0 && precision < total) {
+        const int dropped = (total - precision) * 4;
+        const std::uint64_t remainder = dropped == 64 ? fraction : fraction & ((std::uint64_t{1} << dropped) - 1);
+        fraction = dropped == 64 ? 0 : fraction >> dropped;
+        if (remainder >= std::uint64_t{1} << (dropped - 1) && ++fraction >> (precision * 4)) {
+            fraction &= (std::uint64_t{1} << (precision * 4)) - 1;
+            ++lead;
+        }
+        digits = precision;
+    } else if (precision < 0) {
+        for (; digits > 0 && (fraction & 0xf) == 0; --digits) fraction >>= 4;
+    }
+    const char* hex = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    std::string suffix = upper ? "P" : "p";
+    suffix += exponent < 0 ? '-' : '+';
+    suffix += std::to_string(exponent < 0 ? -exponent : exponent);
+    std::string prefix = negative ? "-" : parsed.plus ? "+" : parsed.space ? " " : "";
+    prefix += upper ? "0X" : "0x";
+    const auto fractionalDigits = static_cast<std::size_t>(precision > total ? precision : digits);
+    const bool point = fractionalDigits != 0 || parsed.alternate;
+    const std::size_t length = prefix.size() + 1 + point + fractionalDigits + suffix.size();
+    if (length > maximumLength || parsed.width > maximumLength)
+        throw std::overflow_error("Formatted output exceeds INT_MAX");
+    std::string body(1, hex[lead]);
+    if (point) body += '.';
+    for (int digit = digits - 1; digit >= 0; --digit) body += hex[(fraction >> (digit * 4)) & 0xf];
+    if (precision > total) body.append(static_cast<std::size_t>(precision - total), '0');
+    body += suffix;
+    return PadFloat(parsed, prefix, body);
+}
+
+inline std::string HexFloat(const std::string& spec, char conversion, double value, std::size_t maximumLength = INT_MAX) {
     const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
     int exponent = static_cast<int>((bits >> 52) & 0x7ff);
     std::uint64_t fraction = bits & ((std::uint64_t{1} << 52) - 1);
@@ -230,36 +263,14 @@ inline std::string HexFloat(const std::string& spec, char conversion, double val
         }
         fraction &= (std::uint64_t{1} << 52) - 1;
     }
-    int digits = 13;
-    if (precision >= 0 && precision < 13) {
-        const int dropped = (13 - precision) * 4;
-        const std::uint64_t remainder = fraction & ((std::uint64_t{1} << dropped) - 1);
-        fraction >>= dropped;
-        if (remainder >= std::uint64_t{1} << (dropped - 1) && ++fraction >> (precision * 4)) {
-            fraction &= (std::uint64_t{1} << (precision * 4)) - 1;
-            ++lead;
-        }
-        digits = precision;
-    } else if (precision < 0) {
-        for (; digits > 0 && (fraction & 0xf) == 0; --digits) fraction >>= 4;
-    }
-    const char* hex = upper ? "0123456789ABCDEF" : "0123456789abcdef";
-    std::string suffix = upper ? "P" : "p";
-    suffix += exponent < 0 ? '-' : '+';
-    suffix += std::to_string(exponent < 0 ? -exponent : exponent);
-    std::string prefix = (bits >> 63) != 0 ? "-" : plus ? "+" : space ? " " : "";
-    prefix += upper ? "0X" : "0x";
-    const auto fractionalDigits = static_cast<std::size_t>(precision > 13 ? precision : digits);
-    const bool point = fractionalDigits != 0 || alternate;
-    const std::size_t length = prefix.size() + 1 + point + fractionalDigits + suffix.size();
-    if (length > maximumLength || width > maximumLength)
-        throw std::overflow_error("Formatted output exceeds INT_MAX");
-    std::string body(1, hex[lead]);
-    if (point) body += '.';
-    for (int digit = digits - 1; digit >= 0; --digit) body += hex[(fraction >> (digit * 4)) & 0xf];
-    if (precision > 13) body.append(static_cast<std::size_t>(precision - 13), '0');
-    body += suffix;
-    return PadFloat(parsed, prefix, body);
+    return HexDigits(spec, conversion, (bits >> 63) != 0, lead, fraction, 13, exponent, maximumLength);
+}
+
+inline std::string HexFloat(const std::string& spec, char conversion, long double value, std::size_t maximumLength = INT_MAX) {
+    if (value == 0) return HexDigits(spec, conversion, std::signbit(value), 0, 0, 16, 0, maximumLength);
+    int exponent = 0;
+    const auto mantissa = static_cast<std::uint64_t>(std::ldexp(std::frexp(std::fabs(value), &exponent), 64));
+    return HexDigits(spec, conversion, std::signbit(value), 1, mantissa << 1, 16, exponent - 1, maximumLength);
 }
 
 struct DecimalDigits {
@@ -649,8 +660,9 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
                 const long double value = args.Next<long double>();
                 if (std::isnan(value)) {
                     output.Value(PaddedStringSpec(spec), NanText(spec, std::signbit(value), conversion < 'a').c_str());
-                } else if (conversion != 'a' && conversion != 'A' && std::isfinite(value)) {
-                    const std::string text = DecimalFloat(spec, conversion, value, static_cast<std::size_t>(INT_MAX - output.Count()));
+                } else if (std::isfinite(value)) {
+                    const auto remaining = static_cast<std::size_t>(INT_MAX - output.Count());
+                    const std::string text = conversion == 'a' || conversion == 'A' ? HexFloat(spec, conversion, value, remaining) : DecimalFloat(spec, conversion, value, remaining);
                     output.Append(text.data(), text.size());
                 } else {
                     output.Value(spec + "L" + conversion, value);
@@ -718,9 +730,11 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
 }
 
 inline int PrintWindows(const char* format, const void* args) {
+    auto* output = GuestStandardOutputForWriting_nid_no_patch();
+    if (!output) return -1;
     std::string buffer;
     const int size = FormatWindows(nullptr, 0, format, args, &buffer);
-    if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), GuestStandardOutputFile_nid_no_patch()) != static_cast<size_t>(size))
+    if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), output) != static_cast<size_t>(size))
         throw std::runtime_error("Formatted output write failed");
     return size;
 }

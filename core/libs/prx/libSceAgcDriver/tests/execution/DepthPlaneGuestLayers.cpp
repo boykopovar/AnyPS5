@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -46,6 +47,18 @@ PFN_vkCmdCopyImageToBuffer realCopyImageToBuffer = nullptr;
 PFN_vkCmdCopyBufferToImage realCopyBufferToImage = nullptr;
 std::atomic<std::uint32_t> imageToBufferCopies{0};
 std::atomic<std::uint32_t> bufferToImageCopies{0};
+std::atomic<VkImage> lastFilledImage{VK_NULL_HANDLE};
+PFN_vkAllocateMemory realAllocateMemory = nullptr;
+std::atomic<std::uint32_t> memoryAllocations{0};
+std::atomic<VkDeviceSize> lastAllocationBytes{0};
+std::atomic<std::uint32_t> lastAllocationType{0};
+
+VKAPI_ATTR VkResult VKAPI_CALL CountAllocateMemory(VkDevice device, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* allocator, VkDeviceMemory* memory) {
+    memoryAllocations.fetch_add(1);
+    lastAllocationBytes = info->allocationSize;
+    lastAllocationType = info->memoryTypeIndex;
+    return realAllocateMemory(device, info, allocator, memory);
+}
 
 VKAPI_ATTR void VKAPI_CALL CountImageToBuffer(VkCommandBuffer commands, VkImage image, VkImageLayout layout, VkBuffer buffer, std::uint32_t count, const VkBufferImageCopy* regions) {
     imageToBufferCopies.fetch_add(1);
@@ -54,6 +67,7 @@ VKAPI_ATTR void VKAPI_CALL CountImageToBuffer(VkCommandBuffer commands, VkImage 
 
 VKAPI_ATTR void VKAPI_CALL CountBufferToImage(VkCommandBuffer commands, VkBuffer buffer, VkImage image, VkImageLayout layout, std::uint32_t count, const VkBufferImageCopy* regions) {
     bufferToImageCopies.fetch_add(1);
+    lastFilledImage = image;
     realCopyBufferToImage(commands, buffer, image, layout, count, regions);
 }
 
@@ -63,6 +77,10 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL CountingDeviceProc(VkDevice device, con
     if (std::strcmp(name, "vkCmdCopyImageToBuffer") == 0) {
         realCopyImageToBuffer = reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(function);
         return reinterpret_cast<PFN_vkVoidFunction>(&CountImageToBuffer);
+    }
+    if (std::strcmp(name, "vkAllocateMemory") == 0) {
+        realAllocateMemory = reinterpret_cast<PFN_vkAllocateMemory>(function);
+        return reinterpret_cast<PFN_vkVoidFunction>(&CountAllocateMemory);
     }
     if (std::strcmp(name, "vkCmdCopyBufferToImage") == 0) {
         realCopyBufferToImage = reinterpret_cast<PFN_vkCmdCopyBufferToImage>(function);
@@ -434,6 +452,76 @@ void RecordedUploads(const Context& context, const WatchedBlock& block) {
     recorder.Sync();
 }
 
+void PooledPlaneCopies(const Context& context, const WatchedBlock& first, const WatchedBlock& second) {
+    ClearDepthSurfaces(context.device);
+    FillLayer(first.Data() + LayerBytes, 0.25f);
+    FillLayer(second.Data() + LayerBytes, 0.75f);
+    DepthSurfaceView(context, DepthTarget{first.Address(), 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    DepthSurfaceView(context, DepthTarget{second.Address(), 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    const auto sample = [&](const WatchedBlock& block, int round) {
+        lastFilledImage = VK_NULL_HANDLE;
+        bufferToImageCopies = 0;
+        Require(DepthSurfaceTexture(context, words, ArrayOver(block.Address()), components) != nullptr, "the 2D array over a depth surface was not sampled through its depth planes in round " + std::to_string(round));
+        Require(DepthPlaneCopyCount() == 1, "the depth plane copies outgrew a budget that holds one in round " + std::to_string(round) + ", " + std::to_string(DepthPlaneCopyCount()) + " copies");
+        Require(lastFilledImage.load() != VK_NULL_HANDLE && bufferToImageCopies.load() == 1, "a plane copy made again over a full budget was not filled from its surface once in round " + std::to_string(round) + ", " + std::to_string(bufferToImageCopies.load()) + " fills");
+    };
+    sample(first, 0);
+    sample(second, 0);
+    const auto keepsCopies = [&] {
+        if (context.bufferPool == nullptr) return false;
+        const VkMemoryAllocateInfo probe{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, lastAllocationBytes.load(), lastAllocationType.load()};
+        const auto memory = context.bufferPool->TakeImageMemory(probe, "vkAllocateMemory pool probe");
+        const auto before = context.bufferPool->RetainedImages();
+        context.bufferPool->PutImageMemory(memory, probe.allocationSize, probe.memoryTypeIndex);
+        const bool kept = context.bufferPool->RetainedImages() > before;
+        return kept;
+    }();
+    memoryAllocations = 0;
+    for (int round = 1; round <= 3; ++round) {
+        sample(first, round);
+        sample(second, round);
+    }
+    if (!keepsCopies) {
+        std::printf("note: the device memory pool does not keep a block of a plane copy's size and memory type here (not device-tiered, or its heap over budget); the reuse of evicted copies' memory is not checked\n");
+    } else {
+        Require(memoryAllocations.load() == 0, "plane copies evicted and made again over a full budget allocated device memory " + std::to_string(memoryAllocations.load()) + " times instead of taking the evicted copies' memory back");
+    }
+    ClearDepthSurfaces(context.device);
+}
+
+void SharedLayerRanges(const Context& context, const WatchedBlock& block) {
+    ClearDepthSurfaces(context.device);
+    auto resource = ArrayOver(block.Address());
+    resource.depthOrLastArray = 3;
+    const auto geometry = DescribeSurface(resource);
+    for (std::uint32_t layer = 0; layer < 4; ++layer) {
+        DepthSurfaceView(context, DepthTarget{block.Address() + geometry.GuestLayerOffset(layer), 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    }
+    DepthSurfaceView(context, DepthTarget{block.Address() + 16u * LayerBytes, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    const auto sample = [&](std::uint32_t lastArray, std::uint32_t baseArray, std::uint32_t fromSlices, std::uint32_t intoCopy) {
+        auto range = resource;
+        range.depthOrLastArray = lastArray;
+        range.baseArray = baseArray;
+        imageToBufferCopies = 0;
+        bufferToImageCopies = 0;
+        const auto texture = DepthSurfaceTexture(context, words, range, components);
+        const auto when = "layers " + std::to_string(baseArray) + "-" + std::to_string(lastArray);
+        Require(texture != nullptr, "the 2D array over depth surfaces was not sampled through its depth planes for " + when);
+        if (imageToBufferCopies.load() != fromSlices || bufferToImageCopies.load() != intoCopy) {
+            throw std::runtime_error("sampling " + when + " of the depth surfaces recorded " + std::to_string(imageToBufferCopies.load()) + " depth surface copies and " + std::to_string(bufferToImageCopies.load()) + " plane copy fills, expected " + std::to_string(fromSlices) + " and " + std::to_string(intoCopy));
+        }
+        const auto view = texture->SampledViewRange(false);
+        Require(view.layers == lastArray + 1u - baseArray, "the view sampling " + when + " covers " + std::to_string(view.layers) + " layers, not the texture's own");
+        return texture;
+    };
+    sample(3, 0, 4, 1);
+    sample(2, 0, 0, 0);
+    sample(1, 0, 0, 0);
+    sample(2, 1, 0, 0);
+    sample(3, 0, 0, 0);
+    ClearDepthSurfaces(context.device);
+}
+
 void RunCubeGather(const Context& base, const WatchedBlock& block) {
     TextureDetiler detiler(base);
     auto context = base;
@@ -508,6 +596,11 @@ void RunCubeTiledSlice(const Context& base, const WatchedBlock& block) {
 
 int main() {
     try {
+#ifdef _WIN32
+        _putenv_s("APS5_DEPTH_PLANE_COPY_MIB", "1");
+#else
+        setenv("APS5_DEPTH_PLANE_COPY_MIB", "1", 1);
+#endif
         if (!AgcDriver::GuestMemory::WriteWatched()) {
             std::puts("skipped, guest memory has no write watch");
             return Skipped;
@@ -528,6 +621,11 @@ int main() {
             Require(AgcDriver::GuestMemory::Watched(block.Address(), BlockBytes), "depth plane guest layers: the guest block is not write-watched");
             Run(context, block);
             RecordedUploads(context, block);
+            {
+                WatchedBlock second;
+                PooledPlaneCopies(context, block, second);
+            }
+            SharedLayerRanges(context, block);
             RunCubeGather(context, block);
             RunCubeTiledSlice(context, block);
             SparseGuestLayers(context);

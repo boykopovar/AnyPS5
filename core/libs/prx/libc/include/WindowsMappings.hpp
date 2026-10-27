@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <map>
@@ -52,6 +53,7 @@ public:
         };
         const auto replace = [&](std::uintptr_t at, std::size_t size) {
             if (!allocate(GetCurrentProcess(), reinterpret_cast<void*>(at), size, flags, protection, nullptr, 0)) fail("replace guest placeholder with private memory");
+            privateAllocations.emplace(at, at + size);
             if (!created.empty() && created.back().first + created.back().second == at) created.back().second += size;
             else created.emplace_back(at, size);
         };
@@ -61,6 +63,7 @@ public:
             const auto regionEnd = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
             const auto stop = std::min(end, regionEnd);
             if (memory.State == MEM_RESERVE && std::min(end, cursor + granule) <= regionEnd) {
+                privateAllocations.erase(privateAllocations.lower_bound(cursor), privateAllocations.lower_bound(stop));
                 forgetClean(cursor, stop);
                 const auto holder = reinterpret_cast<std::uintptr_t>(memory.AllocationBase);
                 if (holder != cursor) cut(holder, cursor - holder, "split guest placeholder prefix");
@@ -440,6 +443,14 @@ public:
         return true;
     }
 
+#ifdef APS5_COUNT_MAPPING_QUERIES
+    void CollectWork(std::uint64_t* systemCalls, std::uint64_t* pieces) {
+        std::lock_guard lock(mutex);
+        *systemCalls = collectSystemCalls;
+        *pieces = collectPieces;
+    }
+#endif
+
     bool Collect(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count, bool clear, Collection collection = Collection::All) {
         std::lock_guard lock(mutex);
         const auto capacity = *count;
@@ -575,14 +586,24 @@ public:
                     cursor = next == views.end() ? end : std::min(end, next->first);
                     continue;
                 }
-                const auto memory = query(cursor);
-                if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
-                const auto stop = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+                const auto allocationEnd = privateAllocationEnd(cursor);
+                if (allocationEnd == 0) return false;
+                const auto stop = std::min(end, allocationEnd);
                 if (capacity == *count) return true;
                 const auto touched = (((stop + 4095) & ~static_cast<std::uintptr_t>(4095)) - (cursor & ~static_cast<std::uintptr_t>(4095))) / 4096;
                 ULONG_PTR available = std::min<ULONG_PTR>(capacity - *count, touched);
                 DWORD granularity = 0;
-                if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) fail("collect private guest writes");
+#ifdef APS5_COUNT_MAPPING_QUERIES
+                ++collectSystemCalls;
+                collectPieces += (stop + pageBytes - 1) / pageBytes - cursor / pageBytes;
+#endif
+                const bool committed = !verifyDirect() || committedPrivate(cursor, stop);
+                if (GetWriteWatch(clear ? WRITE_WATCH_FLAG_RESET : 0, reinterpret_cast<void*>(cursor), stop - cursor, pages + *count, &available, &granularity) != 0) {
+                    const auto memory = query(cursor);
+                    if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
+                    fail("collect private guest writes");
+                }
+                if (!committed) staleProof(cursor, stop);
                 *count += available;
                 if (*count == capacity) return true;
                 cursor = stop;
@@ -604,12 +625,39 @@ private:
                 cursor = std::min(end, base + pageBytes);
                 continue;
             }
-            const auto memory = query(cursor);
-            if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
-            cursor = std::min(end, reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize);
+            const auto allocationEnd = privateAllocationEnd(cursor);
+            if (allocationEnd == 0) return false;
+            cursor = std::min(end, allocationEnd);
         }
         remember(collectableRanges, address, end);
         return true;
+    }
+
+    static bool verifyDirect() {
+        static const bool verify = std::getenv("APS5_VERIFY_DIRECT_COLLECT") != nullptr;
+        return verify;
+    }
+
+    static bool committedPrivate(std::uintptr_t address, std::uintptr_t end) {
+        for (auto cursor = address; cursor < end;) {
+            const auto memory = query(cursor);
+            if (memory.State != MEM_COMMIT || memory.Type != MEM_PRIVATE) return false;
+            cursor = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+        }
+        return true;
+    }
+
+    [[noreturn]] static void staleProof(std::uintptr_t address, std::uintptr_t end) {
+        char text[192];
+        std::snprintf(text, sizeof(text), "a private collect of guest writes succeeded over 0x%llx+0x%llx, which is no longer committed private memory (APS5_VERIFY_DIRECT_COLLECT)", static_cast<unsigned long long>(address), static_cast<unsigned long long>(end - address));
+        throw std::runtime_error(text);
+    }
+
+    std::uintptr_t privateAllocationEnd(std::uintptr_t address) const {
+        const auto next = privateAllocations.upper_bound(address);
+        if (next == privateAllocations.begin()) return 0;
+        const auto allocation = std::prev(next);
+        return address < allocation->second ? allocation->second : 0;
     }
 
     static constexpr std::size_t pageBytes = 0x4000;
@@ -1035,6 +1083,7 @@ private:
     void reset(std::uintptr_t address, std::size_t bytes) {
         collectableRanges.clear();
         const auto end = address + bytes;
+        privateAllocations.erase(privateAllocations.lower_bound(address), privateAllocations.lower_bound(end));
         forgetClean(address, end);
         breakRun(address);
         breakRun(end);
@@ -1130,6 +1179,11 @@ private:
 
     Ranges cleanRanges;
     Ranges collectableRanges;
+    Ranges privateAllocations;
+#ifdef APS5_COUNT_MAPPING_QUERIES
+    std::uint64_t collectSystemCalls = 0;
+    std::uint64_t collectPieces = 0;
+#endif
     Ranges freshRanges;
     std::map<std::uintptr_t, View> views;
 

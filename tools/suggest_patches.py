@@ -20,7 +20,10 @@ def confined(root, name):
     path = PurePosixPath(name)
     if path.is_absolute() or any(part in (".", "..") for part in name.split("/")):
         raise ValueError(f"invalid relative path: {name!r}")
-    resolved = (root / Path(*path.parts)).resolve()
+    try:
+        resolved = (root / Path(*path.parts)).resolve()
+    except RuntimeError as error:
+        raise ValueError(f"invalid relative path: {name!r}: {error}") from error
     if not resolved.is_relative_to(root.resolve()) or not resolved.is_file():
         raise ValueError(f"file missing or outside directory: {name}")
     return resolved

@@ -83,14 +83,11 @@ constexpr std::size_t GuestPathMax = 1024;
 constexpr std::size_t GuestNameMax = 255;
 
 constexpr int PcLinkMax = 1;
-constexpr int PcMaxCanon = 2;
-constexpr int PcMaxInput = 3;
 constexpr int PcNameMax = 4;
 constexpr int PcPathMax = 5;
 constexpr int PcPipeBuf = 6;
 constexpr int PcChownRestricted = 7;
 constexpr int PcNoTrunc = 8;
-constexpr int PcVdisable = 9;
 constexpr int PcAllocSizeMin = 10;
 constexpr int PcFileSizeBits = 12;
 constexpr int PcRecIncrXferSize = 14;
@@ -132,7 +129,7 @@ std::int64_t Fail(int error) {
     return -1;
 }
 
-std::int64_t PathConfigurationValue(int name, const char* function) {
+std::int64_t PathConfigurationValue(int name) {
     switch (name) {
     case PcLinkMax: return 32767;
     case PcNameMax: return static_cast<std::int64_t>(GuestNameMax);
@@ -145,20 +142,15 @@ std::int64_t PathConfigurationValue(int name, const char* function) {
     case PcSymlinkMax: return static_cast<std::int64_t>(GuestPathMax);
     case PcPrioIo: return 0;
     case PcSyncIo: return 0;
-    case PcMaxCanon:
-    case PcMaxInput:
-    case PcVdisable:
-    case PcAllocSizeMin:
-    case PcRecIncrXferSize:
-    case PcRecMinXferSize:
-    case PcRecXferAlign:
-    case PcMinHoleSize:
-    case PcAsyncIo:
-    case PcAclExtended:
-    case PcAclPathMax:
-    case PcMacPresent:
-    case PcAclNfs4:
-        throw std::runtime_error(std::string(function) + ": name " + std::to_string(name) + " depends on the console filesystem or kernel configuration");
+    case PcAllocSizeMin: return 65536;
+    case PcRecIncrXferSize: return 65536;
+    case PcRecMinXferSize: return 65536;
+    case PcRecXferAlign: return 16384;
+    case PcMinHoleSize: return 65536;
+    case PcAclExtended: return 0;
+    case PcAclPathMax: return 3;
+    case PcMacPresent: return 0;
+    case PcAclNfs4: return 0;
     default: return Fail(GuestEinval);
     }
 }
@@ -334,6 +326,16 @@ int APS5_VABI setsid_nid_postfix(void) {
     return static_cast<int>(Fail(GuestEperm));
 }
 
+int APS5_VABI profil_nid_postfix(void* samples, std::size_t size, std::size_t offset, unsigned int scale) {
+    (void)samples;
+    (void)size;
+    (void)offset;
+    constexpr unsigned int MaxScale = 1u << 16;
+    if (scale > MaxScale) return static_cast<int>(Fail(GuestEinval));
+    if (scale != 0) NotImplemented_nid_no_patch("profil: the profiling clock");
+    return 0;
+}
+
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask) {
     return File::ExchangeCreationMask_nid_no_patch(mask);
 }
@@ -356,6 +358,16 @@ int APS5_VABI get_authinfo_nid_postfix(int pid, KernelAuthInfo* info) {
     if (pid != 0 && pid != getpid_nid_postfix()) return static_cast<int>(Fail(GuestEsrch));
     *info = {};
     info->capabilities[0] = 0x2000000000000000;
+    return 0;
+}
+
+int APS5_VABI setlogin_nid_postfix(const char* name) {
+    constexpr std::size_t MaxLoginName = 33;
+    std::string copy;
+    const int copied = CopyGuestString_nid_no_patch(name, MaxLoginName, copy);
+    if (copied == GuestEnametoolong) return static_cast<int>(Fail(GuestEinval));
+    if (copied != 0) return static_cast<int>(Fail(copied));
+    if (const int error = SetLogin_nid_no_patch(copy.c_str())) return static_cast<int>(Fail(error));
     return 0;
 }
 
@@ -412,7 +424,7 @@ std::int64_t APS5_VABI pathconf_nid_postfix(const char* path, int name) {
     const auto status = std::filesystem::status(native, error);
     if (error) return Fail(error == std::errc::no_such_file_or_directory && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestError(error));
     if (!std::filesystem::exists(status)) return Fail(HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestEnoent);
-    return PathConfigurationValue(name, "pathconf");
+    return PathConfigurationValue(name);
 }
 
 std::int64_t APS5_VABI _fpathconf_nid_postfix(int fd, int name) {
@@ -427,7 +439,7 @@ std::int64_t APS5_VABI _fpathconf_nid_postfix(int fd, int name) {
 #endif
     if (name == PcAsyncIo) return PosixAsynchronousIo;
     if (withoutVnode) return name == PcPipeBuf ? 512 : Fail(GuestEinval);
-    return PathConfigurationValue(name, "fpathconf");
+    return PathConfigurationValue(name);
 }
 
 std::int64_t APS5_VABI fpathconf_nid_postfix(int fd, int name) {
@@ -562,6 +574,27 @@ int APS5_VABI chroot_nid_postfix(const char* path) {
     if (error) return static_cast<int>(Fail(GuestError(error)));
     if (root) return 0;
     throw std::runtime_error(std::string("chroot: changing the root directory to ") + path + " is not supported, the guest path resolver keeps a fixed root");
+}
+
+int APS5_VABI kldfind_nid_postfix(const char* file) {
+    std::string copy;
+    if (const int error = CopyPath(file, copy)) return static_cast<int>(Fail(error));
+    return static_cast<int>(Fail(GuestEnoent));
+}
+
+int APS5_VABI kldfirstmod_nid_postfix(int fileid) {
+    return static_cast<int>(Fail(GuestEnoent));
+}
+
+int APS5_VABI kldnext_nid_postfix(int fileid) {
+    if (fileid < 0) return static_cast<int>(Fail(GuestEnoent));
+    if (fileid == 0) return 0;
+    return static_cast<int>(Fail(GuestEnoent));
+}
+
+int APS5_VABI kldunload_nid_postfix(int fileid) {
+    (void)fileid;
+    return static_cast<int>(Fail(GuestEperm));
 }
 
 int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
@@ -720,11 +753,7 @@ int APS5_VABI fchmodat_nid_postfix(int fd, const char* path, int mode, int flag)
         return 0;
     }
     }
-#ifdef _WIN32
-    if (::_wchmod(native.wstring().c_str(), mode & 07777) != 0) return static_cast<int>(Fail(errno == ENOENT && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestFileError(errno)));
-#else
-    if (::chmod(native.c_str(), static_cast<mode_t>(mode & 07777)) != 0) return static_cast<int>(Fail(errno == ENOENT && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestFileError(errno)));
-#endif
+    if (ChmodNative_nid_no_patch(native, mode & 07777) != 0) return static_cast<int>(Fail(errno == ENOENT && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestFileError(errno)));
     RecordWrittenPath_nid_no_patch(native);
     return 0;
 }
@@ -821,6 +850,13 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
     if (IsDotOrDotDot(path)) return static_cast<int>(Fail(GuestEinval));
     if (flag & GuestAtRemovedir) {
         if (std::filesystem::is_symlink(symlinkStatus)) return static_cast<int>(Fail(GuestEnotdir));
+#ifdef _WIN32
+        const DWORD attributes = GetFileAttributesW(native.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            std::string junctionTarget;
+            if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "unlinkat")) return static_cast<int>(Fail(GuestEnotdir));
+        }
+#endif
         if (!std::filesystem::is_directory(symlinkStatus)) {
             if (HasNonDirectoryPrefix(native) || std::filesystem::exists(symlinkStatus))
                 return static_cast<int>(Fail(GuestEnotdir));
@@ -850,6 +886,17 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
                 return static_cast<int>(Fail(GuestEnotdir));
             return static_cast<int>(Fail(GuestEnoent));
         }
+#ifdef _WIN32
+        const DWORD attributes = GetFileAttributesW(native.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            std::string junctionTarget;
+            if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "unlinkat")) {
+                if (RemoveDirectoryW(native.c_str()) == 0) return static_cast<int>(Fail(GuestEperm));
+                RecordWrittenPath_nid_no_patch(native);
+                return 0;
+            }
+        }
+#endif
         if (std::filesystem::is_directory(symlinkStatus)) return static_cast<int>(Fail(GuestEperm));
 #ifdef _WIN32
         struct _stat64 status{};

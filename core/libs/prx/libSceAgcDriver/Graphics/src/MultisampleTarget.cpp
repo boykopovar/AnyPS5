@@ -33,6 +33,23 @@
 namespace AgcDriver::Graphics {
 namespace {
 
+VkFormat uintStorageViewFormat(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8G8_SINT: return VK_FORMAT_R8G8_UINT;
+        case VK_FORMAT_R8G8B8A8_SINT: return VK_FORMAT_R8G8B8A8_UINT;
+        case VK_FORMAT_R16_SINT:
+        case VK_FORMAT_R16_SFLOAT: return VK_FORMAT_R16_UINT;
+        case VK_FORMAT_R16G16_SINT:
+        case VK_FORMAT_R16G16_SFLOAT: return VK_FORMAT_R16G16_UINT;
+        case VK_FORMAT_R16G16B16A16_SINT:
+        case VK_FORMAT_R16G16B16A16_SFLOAT: return VK_FORMAT_R16G16B16A16_UINT;
+        case VK_FORMAT_R32_SINT: return VK_FORMAT_R32_UINT;
+        case VK_FORMAT_R32G32_SINT: return VK_FORMAT_R32G32_UINT;
+        case VK_FORMAT_R32G32B32A32_SINT: return VK_FORMAT_R32G32B32A32_UINT;
+        default: return VK_FORMAT_UNDEFINED;
+    }
+}
+
 std::uint32_t MultisampledBlockLog2(ColorTileMode mode) {
     switch (mode) {
         case ColorTileMode::Standard4KB: return 12u;
@@ -146,12 +163,19 @@ public:
         Check(context.imageFormatProperties(context.physical, target.format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, orderFlags, &supported), "vkGetPhysicalDeviceImageFormatProperties multisampled target");
         Require((supported.sampleCounts & samples) != 0 && target.extent.width <= supported.maxExtent.width && target.extent.height <= supported.maxExtent.height, "multisampled render target exceeds device image limits");
         storageFormat = HostStorageFormat(context, target.format);
-        storageFlags = storageFormat != target.format ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT : 0u;
+        const auto uintFormat = uintStorageViewFormat(storageFormat);
+        storageFlags = storageFormat != target.format || (uintFormat != VK_FORMAT_UNDEFINED && uintFormat != target.format) ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT : 0u;
         const auto storageSupports = [&](VkFormat format, VkImageUsageFlags formatUsage, VkImageCreateFlags flags) {
             VkImageFormatProperties properties{};
             return context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, formatUsage, flags, &properties) == VK_SUCCESS && (properties.sampleCounts & samples) != 0;
         };
-        if (storageFormat != VK_FORMAT_UNDEFINED && (!context.storageImageMultisample || !storageSupports(storageFormat, VK_IMAGE_USAGE_STORAGE_BIT, 0u) || !storageSupports(target.format, usage | VK_IMAGE_USAGE_STORAGE_BIT, storageFlags))) storageFormat = VK_FORMAT_UNDEFINED;
+        const auto uintStorageSupported = [&] {
+            if (uintFormat == VK_FORMAT_UNDEFINED) return true;
+            VkFormatProperties uintProperties{};
+            context.formatProperties(context.physical, uintFormat, &uintProperties);
+            return (uintProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0 && storageSupports(uintFormat, VK_IMAGE_USAGE_STORAGE_BIT, 0u);
+        };
+        if (storageFormat != VK_FORMAT_UNDEFINED && (!context.storageImageMultisample || !storageSupports(storageFormat, VK_IMAGE_USAGE_STORAGE_BIT, 0u) || !storageSupports(target.format, usage | VK_IMAGE_USAGE_STORAGE_BIT, storageFlags) || !uintStorageSupported())) storageFormat = VK_FORMAT_UNDEFINED;
         twinFormat = colorTwinFormat(context, target.format);
         if (twinFormat != VK_FORMAT_UNDEFINED) {
             VkFormatProperties twinProperties{};
@@ -332,7 +356,9 @@ public:
         colorFill = MultisampledColorFill(use);
         fromTexture = false;
         dccRanges.clear();
+        dccCopies.clear();
         fmaskRange.reset();
+        fmaskCopy = {};
         metadataValid = std::make_shared<std::atomic<bool>>(true);
         const auto initial = initialDccClear(use);
         recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
@@ -353,7 +379,7 @@ public:
         });
     }
 
-    VkImageView Storage(VkFormat format) {
+    VkImageView Storage(VkFormat format, bool uintStorage) {
         Require(storageFormat != VK_FORMAT_UNDEFINED, "the device cannot write the multisampled color target's format as a storage image at its sample count");
         Require(format == storageFormat, "a storage image access to a multisampled color target in another format than the target's storage form is not implemented");
         Require(cmask.Refusal().empty(), cmask.Refusal());
@@ -364,20 +390,28 @@ public:
         Keep();
         makeStorable(*recording);
         ApplyFastClear(target);
-        if (storageView == VK_NULL_HANDLE) {
+        const auto uintFormat = uintStorage ? uintStorageViewFormat(storageFormat) : VK_FORMAT_UNDEFINED;
+        const bool useUintStorage = uintStorage && uintFormat != VK_FORMAT_UNDEFINED;
+        auto& selectedView = useUintStorage ? uintStorageView : storageView;
+        if (selectedView == VK_NULL_HANDLE) {
             VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
             viewInfo.image = image;
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            viewInfo.format = storageFormat;
+            viewInfo.format = useUintStorage ? uintFormat : storageFormat;
             viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &storageView), "vkCreateImageView multisampled target storage");
+            VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+            if (useUintStorage) {
+                viewUsage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+                viewInfo.pNext = &viewUsage;
+            }
+            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &selectedView), "vkCreateImageView multisampled target storage");
         }
         recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             if (recorder != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 1);
         });
         storageWritten = true;
-        return storageView;
+        return selectedView;
     }
 
     bool Storable() const {
@@ -526,6 +560,7 @@ private:
     VkImageView twinView = VK_NULL_HANDLE;
     std::vector<Allocation> retired;
     VkImageView storageView = VK_NULL_HANDLE;
+    VkImageView uintStorageView = VK_NULL_HANDLE;
     bool storageWritten = false;
     VkDeviceSize allocationBytes = 0;
     std::optional<GuestMemory::UnchangedQuery> fmaskRange;
@@ -535,8 +570,34 @@ private:
     std::unique_ptr<FirstSampleCopy> firstSampleCopy;
     std::map<std::array<std::uint32_t, 4>, std::shared_ptr<Texture>> firstSampleTextures;
     std::vector<GuestMemory::UnchangedQuery> dccRanges;
+    struct DccCopy {
+        bool compared = false;
+        std::vector<std::byte> bytes;
+        std::uint64_t stamp = 0;
+        std::array<std::uint64_t, 2> checked{};
+    };
+    mutable std::vector<DccCopy> dccCopies;
+    mutable DccCopy fmaskCopy;
     std::optional<std::uint32_t> dccFill;
     std::optional<std::uint32_t> cmaskFill;
+
+    bool compared(std::size_t index) const {
+        return index < dccCopies.size() && dccCopies[index].compared;
+    }
+
+    static DccCopy comparedCopy(const GuestMemory::UnchangedQuery& range, std::vector<std::byte> bytes) {
+        return {true, std::move(bytes), GuestMemory::NewestStamp(range.address, range.bytes), {}};
+    }
+
+    static bool copyCurrent(const GuestMemory::UnchangedQuery& range, DccCopy& copy) {
+        if (GuestMemory::NewestStamp(range.address, range.bytes) != copy.stamp) return false;
+        const auto epoch = GuestMemory::CollectEpoch();
+        const std::array<std::uint64_t, 2> seen{epoch, GuestMemory::ForgetSerial()};
+        if (epoch != 0 && (seen[1] & 1u) == 0 && copy.checked == seen) return true;
+        if (!GuestMemory::EqualsCommittedUnsynced(range.address, copy.bytes)) return false;
+        copy.checked = seen;
+        return true;
+    }
 
     bool absorbDccFill(const ColorTarget& use, VkClearColorValue& clear) {
         const auto dcc = std::exchange(dccFill, std::nullopt);
@@ -548,19 +609,30 @@ private:
         if (dccRanges.size() > 2) {
             const auto& range = dccRanges[2];
             auto* recorder = Recorder::Active();
-            const bool written = !GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || (recorder != nullptr && recorder->PendingWriteOverlaps(range.address, range.bytes));
+            const bool unchanged = compared(2) ? copyCurrent(range, dccCopies[2]) : GuestMemory::UnchangedSince(range.address, range.bytes, range.generation);
+            const bool written = !unchanged || (recorder != nullptr && recorder->PendingWriteOverlaps(range.address, range.bytes));
             const auto landed = LandedUniformMetadataByte(range.address, range.bytes);
             if (!landed || (written && (!cmaskPattern || *cmaskPattern != *landed * 0x01010101u))) return false;
             cmaskKeys = *landed;
         }
         std::vector<GuestMemory::UnchangedQuery> metadata(dccRanges.begin() + 1, dccRanges.end());
-        for (auto& range : metadata) {
-            if (!GuestMemory::Watched(range.address, range.bytes)) return false;
+        std::vector<bool> comparedMetadata(metadata.size(), false);
+        for (std::size_t index = 0; index < metadata.size(); ++index) {
+            auto& range = metadata[index];
+            if (!GuestMemory::Watched(range.address, range.bytes)) {
+                if (!compared(index + 1) && !ComparedHostImportCovers(context, range.address, range.bytes)) return false;
+                comparedMetadata[index] = true;
+                range.generation = 0;
+                continue;
+            }
             range.generation = collectBlocks(range.address, range.bytes);
             if (range.generation == 0) return false;
         }
-        clear = MultisampledDccClear(use, std::vector<std::byte>(dccRanges[1].bytes, std::byte{*keys}), std::vector<std::byte>(use.cmaskBytes, std::byte{cmaskKeys}));
+        std::array<std::vector<std::byte>, 2> landedBytes{std::vector<std::byte>(dccRanges[1].bytes, std::byte{*keys}), std::vector<std::byte>(use.cmaskBytes, std::byte{cmaskKeys})};
+        clear = MultisampledDccClear(use, landedBytes[0], landedBytes[1]);
         std::copy(metadata.begin(), metadata.end(), dccRanges.begin() + 1);
+        dccCopies.resize(dccRanges.size());
+        for (std::size_t index = 0; index < metadata.size(); ++index) dccCopies[index + 1] = comparedMetadata[index] ? comparedCopy(dccRanges[index + 1], std::move(landedBytes[index])) : DccCopy{};
         return true;
     }
 
@@ -574,11 +646,19 @@ private:
         dccRanges.push_back({use.address, static_cast<std::size_t>(colorBytes), 0});
         dccRanges.push_back({use.dccAddress, dccBytes, 0});
         if (use.cmaskAddress != 0) dccRanges.push_back({use.cmaskAddress, use.cmaskBytes, 0});
-        for (auto& range : dccRanges) {
+        dccCopies.assign(dccRanges.size(), {});
+        std::vector<GuestMemory::UnchangedQuery> watched;
+        for (std::size_t index = 0; index < dccRanges.size(); ++index) {
+            auto& range = dccRanges[index];
             GuestMemory::CheckRange(reinterpret_cast<const void*>(range.address), range.bytes, 256);
-            Require(WatchedAfterSettle(context, range.address, range.bytes), "initial multisampled DCC contents require watched guest memory");
+            if (!WatchedAfterSettle(context, range.address, range.bytes) && ComparedHostImportCovers(context, range.address, range.bytes)) {
+                dccCopies[index].compared = true;
+                continue;
+            }
+            Require(GuestMemory::Watched(range.address, range.bytes), "initial multisampled DCC contents require watched guest memory");
             range.generation = collectBlocks(range.address, range.bytes);
             Require(range.generation != 0, "initial multisampled DCC contents have no write generation");
+            watched.push_back(range);
         }
         for (std::size_t first = 0; first < dccRanges.size(); ++first) {
             for (std::size_t second = first + 1; second < dccRanges.size(); ++second) {
@@ -593,17 +673,28 @@ private:
             fmaskRange = GuestMemory::UnchangedQuery{use.fmaskAddress, static_cast<std::size_t>(DescribeSurface(resource).guestBytes), 0};
             auto& range = *fmaskRange;
             GuestMemory::CheckRange(reinterpret_cast<const void*>(range.address), range.bytes, 65536u);
-            Require(WatchedAfterSettle(context, range.address, range.bytes), "native FMASK contents require watched guest memory");
-            range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
-            Require(range.generation != 0, "native FMASK contents have no write generation");
+            fmaskCopy.compared = !WatchedAfterSettle(context, range.address, range.bytes) && ComparedHostImportCovers(context, range.address, range.bytes);
+            Require(fmaskCopy.compared || GuestMemory::Watched(range.address, range.bytes), "native FMASK contents require watched guest memory");
+            if (!fmaskCopy.compared) {
+                range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                Require(range.generation != 0, "native FMASK contents have no write generation");
+            }
             for (const auto& other : dccRanges) Require(range.address >= other.address + other.bytes || other.address >= range.address + range.bytes, "native FMASK overlaps its color or metadata planes");
         }
-        std::vector<std::byte> dcc(dccRanges[1].bytes);
-        GuestMemory::Read(use.dccAddress, dcc);
-        std::vector<std::byte> cmask(use.cmaskBytes);
-        if (!cmask.empty()) GuestMemory::Read(use.cmaskAddress, cmask);
-        const auto clear = MultisampledDccClear(use, dcc, cmask);
-        Require(GuestMemory::UnchangedSinceAll(dccRanges) && (!fmaskRange || GuestMemory::UnchangedSinceAll(std::span(&*fmaskRange, 1u))), "initial multisampled DCC contents changed during import");
+        std::array<std::vector<std::byte>, 3> bytes{};
+        for (std::size_t index = 0; index < dccRanges.size(); ++index) {
+            if (index == 0 && !compared(0)) continue;
+            bytes[index].resize(dccRanges[index].bytes);
+            GuestMemory::Read(dccRanges[index].address, bytes[index]);
+        }
+        std::vector<std::byte> fmaskBytes(fmaskCopy.compared ? fmaskRange->bytes : 0u);
+        if (fmaskCopy.compared) GuestMemory::Read(fmaskRange->address, fmaskBytes);
+        const auto clear = MultisampledDccClear(use, bytes[1], bytes[2]);
+        Require((watched.empty() || GuestMemory::UnchangedSinceAll(watched)) && (!fmaskRange || fmaskCopy.compared || GuestMemory::UnchangedSinceAll(std::span(&*fmaskRange, 1u))), "initial multisampled DCC contents changed during import");
+        for (std::size_t index = 0; index < dccRanges.size(); ++index) {
+            if (compared(index)) dccCopies[index] = comparedCopy(dccRanges[index], std::move(bytes[index]));
+        }
+        if (fmaskCopy.compared) fmaskCopy = comparedCopy(*fmaskRange, std::move(fmaskBytes));
         return clear;
     }
 
@@ -623,19 +714,28 @@ private:
         Require(metadataValid->load(std::memory_order_acquire), "multisampled DCC metadata was released while its color target remains resident");
         static_cast<void>(MultisampledDccBytes(use));
         Require(use.address == target.address && use.dccAddress == target.dccAddress && use.dccControl == target.dccControl && use.dccAlphaOnMsb == target.dccAlphaOnMsb && use.dccPipeAligned == target.dccPipeAligned && use.cmaskAddress == target.cmaskAddress && use.cmaskBytes == target.cmaskBytes && use.tileMode == target.tileMode && use.elementBytes == target.elementBytes && use.pipeBankXor == target.pipeBankXor, "multisampled DCC target layout or metadata changed");
-        const auto ranges = std::span(dccRanges).first(metadataRefilled ? 1u : dccRanges.size());
-        for (const auto& range : ranges) requireDccRange(GuestMemory::Watched(range.address, range.bytes), range, "multisampled DCC target reuse requires watched guest memory");
-        for (const auto& range : ranges) {
-            GuestMemory::CollectWritesUncached(range.address, range.bytes);
-            requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
+        const auto ranges = metadataRefilled ? std::size_t{1} : dccRanges.size();
+        for (std::size_t index = 0; index < ranges; ++index) requireDccRange(compared(index) || GuestMemory::Watched(dccRanges[index].address, dccRanges[index].bytes), dccRanges[index], "multisampled DCC target reuse requires watched guest memory");
+        for (std::size_t index = 0; index < ranges; ++index) {
+            const auto& range = dccRanges[index];
+            if (compared(index)) {
+                requireDccRange(copyCurrent(range, dccCopies[index]), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
+            } else {
+                GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident multisampled DCC target or its metadata are not implemented");
+            }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident multisampled DCC target or its metadata are not implemented");
         }
         if (fmaskRange) {
             Require(use.fmaskAddress == target.fmaskAddress && use.fmaskPipeBankXor == target.fmaskPipeBankXor, "native FMASK target layout changed");
             const auto& range = *fmaskRange;
-            requireDccRange(WatchedAfterSettle(context, range.address, range.bytes), range, "native FMASK sampling requires watched guest memory");
-            GuestMemory::CollectWritesUncached(range.address, range.bytes);
-            requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident native FMASK are not implemented");
+            requireDccRange(fmaskCopy.compared || WatchedAfterSettle(context, range.address, range.bytes), range, "native FMASK sampling requires watched guest memory");
+            if (fmaskCopy.compared) {
+                requireDccRange(copyCurrent(range, fmaskCopy), range, "writes to a resident native FMASK are not implemented");
+            } else {
+                GuestMemory::CollectWritesUncached(range.address, range.bytes);
+                requireDccRange(GuestMemory::UnchangedSince(range.address, range.bytes, range.generation) || !GuestMemory::StoredOver(range.address, range.bytes, range.generation), range, "writes to a resident native FMASK are not implemented");
+            }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident native FMASK are not implemented");
         }
     }
@@ -650,6 +750,7 @@ private:
         if (orderView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, orderView, nullptr);
         if (twinView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, twinView, nullptr);
         if (storageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, storageView, nullptr);
+        if (uintStorageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uintStorageView, nullptr);
         destroy({image, memory, view});
         for (const auto& allocation : retired) destroy(allocation);
     }
@@ -1230,7 +1331,7 @@ void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget
     acquire(context, target);
 }
 
-VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource) {
+VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage) {
     std::lock_guard lock(targetsMutex());
     discardRetiredTargets();
     const auto format = ResolveTextureFormat(resource.format);
@@ -1241,13 +1342,13 @@ VkImageView MultisampleTargetStorageView(const Context& context, const GuestText
         const auto& rendered = target->target;
         if (sameStorageForm(context, rendered.format, format) && rendered.extent.width == resource.width && rendered.extent.height == resource.height && rendered.samples == resource.samples && rendered.mip == 0) {
             if (!holdHostOnly(*target)) continue;
-            return target->Storage(StorageFormatForGuest(context, resource.format));
+            return target->Storage(StorageFormatForGuest(context, resource.format), uintStorage);
         }
         other = target.get();
     }
     if (other == nullptr) {
         Require(Recorder::Active() != nullptr, "a multisampled color target is only written by recorded dispatches");
-        return createFilled(context, resource, format, "writing", true).Storage(StorageFormatForGuest(context, resource.format));
+        return createFilled(context, resource, format, "writing", true).Storage(StorageFormatForGuest(context, resource.format), uintStorage);
     }
     char text[320];
     std::snprintf(text, sizeof(text), "AGC graphics: storage image access to multisampled color target 0x%llx (%ux%u, %u samples, vk format %d) as a %ux%u texture of %u samples and guest format %u (vk %d) is not implemented", static_cast<unsigned long long>(resource.baseAddress), other->target.extent.width, other->target.extent.height, other->target.samples, static_cast<int>(other->target.format), resource.width, resource.height, resource.samples, resource.format, static_cast<int>(format));

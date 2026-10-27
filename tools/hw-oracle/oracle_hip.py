@@ -215,7 +215,11 @@ def main(argv=None):
             return 0
         if args.assemble and not args.target and not args.dispatch:
             source, output, isa_target = args.assemble
-            Path(output).write_bytes(assemble(Path(source).read_bytes(), isa_target, args.wave64))
+            source, output = Path(source), Path(output)
+            source_bytes = source.read_bytes()
+            if output.exists() and source.samefile(output):
+                parser.error("--assemble output must not overwrite the source")
+            output.write_bytes(assemble(source_bytes, isa_target, args.wave64))
             return 0
         if len(args.dispatch) != 5 or args.target or args.assemble or args.wave64:
             parser.error("give --target, --assemble SOURCE OUTPUT TARGET, or CODE THREADS IN OUT OUT_DWORDS")
@@ -223,8 +227,12 @@ def main(argv=None):
         threads, out_dwords = int(threads), int(out_dwords)
         if threads not in range(1, 1025) or out_dwords not in range(1, 17):
             parser.error("THREADS must be 1 to 1024 and OUT_DWORDS 1 to 16")
-        result = dispatch(Path(code).read_bytes(), threads, Path(inputs).read_bytes(), out_dwords, os.environ.get("COARSE") is not None)
-        Path(output).write_bytes(result)
+        code, inputs, output = Path(code), Path(inputs), Path(output)
+        code_bytes, input_bytes = code.read_bytes(), inputs.read_bytes()
+        if output.exists() and any(source.samefile(output) for source in (code, inputs)):
+            parser.error("dispatch output must not overwrite an input file")
+        result = dispatch(code_bytes, threads, input_bytes, out_dwords, os.environ.get("COARSE") is not None)
+        output.write_bytes(result)
         return 0
     except (OSError, OracleError) as error:
         print(error, file=sys.stderr)
