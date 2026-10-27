@@ -144,7 +144,7 @@ class Symbolizer:
         if path is not None:
             try:
                 module = PeModule(path)
-            except (ValueError, struct.error) as error:
+            except (OSError, ValueError, struct.error) as error:
                 self.warn(f"{name}: {error}")
             if module is not None and name not in self.headers and not self.unverified:
                 self.warn(f"{name}: the samples have no '# module' record for it, so {path} may be another build; its frames stay unsymbolized (--unverified symbolizes them anyway)")

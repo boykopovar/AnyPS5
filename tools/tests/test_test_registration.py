@@ -16,6 +16,27 @@ import check_test_registration
 
 class RegistrationTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the argument oracle")
+    def test_quoted_semicolons_match_real_cmake_arguments(self):
+        values = ["left" + "\\" * count + ";right" for count in range(9)]
+        values += [r"\;", r"a\;b\;c", r"a;\;b", "a\\\n\\;b", "a\\\r\n\\;b", "\u00e9\\;tail"]
+        commands = [f'add_test("case{index}" "{value}")\n' for index, value in enumerate(values)]
+        commands += ['add_test("bracket" [=[a\\;b]=])\n']
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "oracle.cmake"
+            script.write_bytes(('cmake_minimum_required(VERSION 3.20)\n'
+                                'function(add_test name value)\n'
+                                'string(HEX "${value}" encoded)\n'
+                                'file(WRITE "${CMAKE_CURRENT_LIST_DIR}/${name}.hex" "${encoded}")\n'
+                                'endfunction()\n' + "".join(commands)).encode("utf-8"))
+            subprocess.run(["cmake", "-P", str(script)], capture_output=True, text=True, check=True)
+            for content in commands:
+                command, arguments = list(check_test_registration.commands(content))[0]
+                with self.subTest(name=arguments[0]):
+                    actual = bytes.fromhex((root / f"{arguments[0]}.hex").read_text(encoding="ascii")).decode("utf-8")
+                    self.assertEqual((command, arguments), ("add_test", [arguments[0], actual]))
+
+    @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the argument oracle")
     def test_quoted_continuations_follow_cmake(self):
         for ending, backslashes in (("\n", 1), ("\r\n", 1), ("\n", 2), ("\n", 3), ("\n", 4)):
             with self.subTest(ending=repr(ending), backslashes=backslashes), tempfile.TemporaryDirectory() as directory:
