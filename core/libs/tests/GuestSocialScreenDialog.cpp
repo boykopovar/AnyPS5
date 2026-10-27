@@ -23,8 +23,10 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceSocialScreenDialogTerminate() == kErrNotInitialized);
+    Require(sceSocialScreenDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceSocialScreenDialogOpen(&param) == kErrNotInitialized);
     Require(sceSocialScreenDialogClose() == kErrNotInitialized);
+    Require(sceSocialScreenDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceSocialScreenDialogGetResult(result) == kErrNotInitialized);
     Require(sceSocialScreenDialogGetStatus() == kStatusNone);
     Require(sceSocialScreenDialogUpdateStatus() == kStatusNone);

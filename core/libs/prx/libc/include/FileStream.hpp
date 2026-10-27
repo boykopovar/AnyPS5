@@ -234,6 +234,9 @@ public:
 #ifdef _WIN32
         const bool endOfFile = std::feof(GetHandle()) != 0;
         const bool error = std::ferror(GetHandle()) != 0;
+#elif defined(__APPLE__)
+        const bool endOfFile = feof_unlocked(GetHandle()) != 0;
+        const bool error = ferror_unlocked(GetHandle()) != 0;
 #else
         const bool endOfFile = feof_unlocked(GetHandle()) != 0;
         const bool error = ferror_unlocked(GetHandle()) != 0;

@@ -27,7 +27,11 @@ int main() {
     Require(sceAppContentAddcontUnmount(nullptr) == notInitialized);
     Require(sceAppContentGetAddcontInfo(0, nullptr, nullptr) == notInitialized);
     Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, nullptr) == notInitialized);
+    Require(sceAppContentGetEntitlementKey(0, nullptr, nullptr) == notInitialized);
     Require(sceAppContentAppParamGetInt(0, nullptr) == notInitialized);
+    AppContentMountPoint uninitializedMount{};
+    Require(sceAppContentTemporaryDataMount(nullptr) == notInitialized);
+    Require(sceAppContentTemporaryDataMount(&uninitializedMount) == notInitialized);
     Require(sceAppContentTemporaryDataMount2(0, nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataUnmount(nullptr) == notInitialized);
     Require(sceAppContentTemporaryDataFormat(nullptr) == notInitialized);
@@ -192,6 +196,16 @@ int main() {
     Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
     Require(sceAppContentGetAddcontInfo(0, nullptr, reinterpret_cast<AppContentAddcontInfo*>(info)) == ErrorParameter);
     Require(sceAppContentGetAddcontInfo(0, &label, nullptr) == ErrorParameter);
+    AppContentEntitlementKey key;
+    std::memset(&key, 0x5a, sizeof(key));
+    const AppContentEntitlementKey untouchedKey = key;
+    for (const std::uint32_t serviceLabel : {0u, 7u, 8u, 0xffffffffu}) {
+        Require(sceAppContentGetEntitlementKey(serviceLabel, &label, &key) == ErrorDrmNoEntitlement);
+        Require(std::memcmp(&key, &untouchedKey, sizeof(key)) == 0);
+    }
+    Require(sceAppContentGetEntitlementKey(0, nullptr, &key) == ErrorParameter);
+    Require(std::memcmp(&key, &untouchedKey, sizeof(key)) == 0);
+    Require(sceAppContentGetEntitlementKey(0, &label, nullptr) == ErrorParameter);
 
     for (const std::uint32_t version : {0x014fffffu, 0x01500000u, 0x034fffffu, 0x03500000u}) {
         std::memcpy(process.data() + 16, &version, sizeof(version));
@@ -202,6 +216,8 @@ int main() {
             const int lateError = version >= 0x03500000 ? ErrorParameter : ErrorNotFound;
             Require(sceAppContentAddcontMount(0, &label, &mountPoint) == earlyError);
             Require(sceAppContentGetAddcontInfo(0, &label, reinterpret_cast<AppContentAddcontInfo*>(info)) == infoError);
+            Require(sceAppContentGetEntitlementKey(0, &label, &key) == infoError);
+            Require(std::memcmp(&key, &untouchedKey, sizeof(key)) == 0);
             Require(sceAppContentAddcontEnqueueDownload(0, &label) == earlyError);
             Require(sceAppContentAddcontDelete(0, &label) == lateError);
             Require(sceAppContentGetAddcontDownloadProgress(0, &label, progress) == lateError);

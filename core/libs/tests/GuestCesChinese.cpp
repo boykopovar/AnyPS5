@@ -12,6 +12,7 @@ static constexpr int invalidParameter = static_cast<int>(0x805C0001);
 static constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
 static constexpr int srcBufferEnd = static_cast<int>(0x805C0011);
 static constexpr int invalidEncode = static_cast<int>(0x805C0014);
+ constexpr int outOfCodeSpace = static_cast<int>(0x805C0015);
 static constexpr int unassignedCode = static_cast<int>(0x805C0020);
 static constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
 static constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
@@ -81,7 +82,7 @@ static std::uint32_t Gb18030Decode(const void* gb, std::uint32_t packed) {
     std::uint32_t code = 0xDEADBEEF;
     const int result = sceCesGbToUtf32(gb, bytes, size, &consumed, &code);
     if (result != 0) {
-        Require(result == unassignedCode && consumed == 0x55 && code == 0xDEADBEEF);
+        Require(result == unassignedCode && consumed == size && code == 0);
         return 0;
     }
     Require(consumed == size);
@@ -97,12 +98,13 @@ static std::uint32_t Gb18030Encode(const void* gb, std::uint32_t code) {
     return packed;
 }
 
-static void RequireGb18030Error(const void* gb, const char* bytes, std::uint32_t size, int error) {
+static void RequireGb18030Error(const void* gb, const char* bytes, std::uint32_t size, int error, std::uint32_t length) {
     std::uint32_t consumed = 0x55;
     std::uint32_t utf32 = 0xDEADBEEF;
-    Require(sceCesGbToUtf32(gb, Bytes(bytes), size, &consumed, &utf32) == error && consumed == 0x55 && utf32 == 0xDEADBEEF);
+    Require(sceCesGbToUtf32(gb, Bytes(bytes), size, &consumed, &utf32) == error && consumed == length && utf32 == 0);
     std::uint16_t ucs2 = 0xBEEF;
-    Require(sceCesMbcToUcs2(gb, Bytes(bytes), size, &consumed, &ucs2) == error && consumed == 0x55 && ucs2 == 0xBEEF);
+    consumed = 0x55;
+    Require(sceCesMbcToUcs2(gb, Bytes(bytes), size, &consumed, &ucs2) == error && consumed == length && ucs2 == 0);
 }
 
 static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByteHash, std::uint32_t fourByteHash, std::uint32_t encodeHash, int fourByteOneWay, int codeOneWay) {
@@ -163,25 +165,25 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
         if (revision2005 && entry.fallback) Require(Gb18030Encode(gb, entry.code2000) == entry.bytes);
     }
 
-    RequireGb18030Error(gb, "\x80", 1, invalidEncode);
-    RequireGb18030Error(gb, "\xFF", 1, invalidEncode);
-    RequireGb18030Error(gb, "\x81", 1, srcBufferEnd);
-    RequireGb18030Error(gb, "\x81\x30", 2, srcBufferEnd);
-    RequireGb18030Error(gb, "\x81\x30\x81", 3, srcBufferEnd);
-    RequireGb18030Error(gb, "\x81\x00", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x2F", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x3A", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x7F", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\xFF", 2, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x80\x30", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\xFF\x30", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x30\x30", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x81\x2F", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x81\x3A", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x81\x30\x81\x81", 4, invalidEncode);
-    RequireGb18030Error(gb, "\x84\x31\xA5\x30", 4, unassignedCode);
-    RequireGb18030Error(gb, "\xE3\x32\x9A\x36", 4, unassignedCode);
-    RequireGb18030Error(gb, "\xFE\x39\xFE\x39", 4, unassignedCode);
+    RequireGb18030Error(gb, "\x80", 1, invalidEncode, 1);
+    RequireGb18030Error(gb, "\xFF", 1, invalidEncode, 1);
+    RequireGb18030Error(gb, "\x81", 1, srcBufferEnd, 2);
+    RequireGb18030Error(gb, "\x81\x30", 2, srcBufferEnd, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81", 3, srcBufferEnd, 4);
+    RequireGb18030Error(gb, "\x81\x00", 2, invalidEncode, 1);
+    RequireGb18030Error(gb, "\x81\x2F", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\x3A", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\x7F", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\xFF", 2, invalidEncode, 2);
+    RequireGb18030Error(gb, "\x81\x30\x80\x30", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\xFF\x30", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x30\x30", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81\x2F", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81\x3A", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x81\x30\x81\x81", 4, invalidEncode, 4);
+    RequireGb18030Error(gb, "\x84\x31\xA5\x30", 4, unassignedCode, 4);
+    RequireGb18030Error(gb, "\xE3\x32\x9A\x36", 4, unassignedCode, 4);
+    RequireGb18030Error(gb, "\xFE\x39\xFE\x39", 4, unassignedCode, 4);
 
     std::uint32_t consumed = 0x55;
     std::uint32_t produced = 0x55;
@@ -202,8 +204,8 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
 
     std::uint8_t mbcs[4] = {1, 2, 3, 4};
     produced = 0x55;
-    Require(sceCesUtf32ToGb(0x10000, gb, mbcs, 3, &produced) == dstBufferEnd && produced == 0x55 && std::memcmp(mbcs, "\x01\x02\x03\x04", 4) == 0);
-    Require(sceCesUtf32ToGb(0xD800, gb, mbcs, sizeof(mbcs), &produced) == invalidEncode);
+    Require(sceCesUtf32ToGb(0x10000, gb, mbcs, 3, &produced) == dstBufferEnd && produced == 4 && std::memcmp(mbcs, "\x01\x02\x03\x04", 4) == 0);
+    Require(sceCesUtf32ToGb(0xD800, gb, mbcs, sizeof(mbcs), &produced) == outOfCodeSpace);
     Require(sceCesUtf32ToGb(0x110000, gb, mbcs, sizeof(mbcs), &produced) == invalidEncode);
     Require(sceCesUcs2ToGb(0x80, gb, mbcs, sizeof(mbcs), &produced) == 0 && produced == 4 && std::memcmp(mbcs, "\x81\x30\x81\x30", 4) == 0);
     Require(sceCesUcs2ToGb(0x20AC, gb, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\xA2\xE3", 2) == 0);
@@ -227,7 +229,8 @@ static void CheckGb18030(const void* gb, bool revision2005, std::uint32_t twoByt
     std::uint16_t backUtf16[8] = {};
     Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 8, &produced) == 0 && consumed == gbSize && produced == 6);
     Require(backUtf16[0] == 'A' && backUtf16[1] == 0x4E2D && backUtf16[2] == 0x80 && backUtf16[3] == 0xD83D && backUtf16[4] == 0xDE00 && backUtf16[5] == 0xFE10);
-    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, backUtf16, 4, &produced) == dstBufferEnd);
+    std::uint16_t shortUtf16[4] = {};
+    Require(sceCesMbcsStrToUtf16Str(context, text, gbSize, &consumed, shortUtf16, 4, &produced) == dstBufferEnd);
     Require(sceCesMbcsStrGetUtf16Len(context, text, gbSize, &consumed, &produced) == 0 && consumed == gbSize && produced == 6);
     std::uint8_t again[16] = {};
     Require(sceCesUtf16StrToMbcsStr(context, backUtf16, 6, &consumed, again, sizeof(again), &produced) == 0 && consumed == 6 && produced == gbSize);
@@ -289,7 +292,7 @@ int main() {
     Require(sceCesUcs2ToEucCn(0x4E02, euc, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUcs2ToEucCn(0x20AC, euc, mbcs, sizeof(mbcs), &produced) == unassignedCode);
     Require(sceCesUcs2ToEucCn(0x4E2D, euc, mbcs, 1, &produced) == dstBufferEnd);
-    Require(sceCesUcs2ToEucCn(0xDC00, euc, mbcs, sizeof(mbcs), &produced) == invalidEncode);
+    Require(sceCesUcs2ToEucCn(0xDC00, euc, mbcs, sizeof(mbcs), &produced) == outOfCodeSpace);
     Require(sceCesUcs2ToGb(0x4E02, gbk, mbcs, sizeof(mbcs), &produced) == 0 && produced == 2 && std::memcmp(mbcs, "\x81\x40", 2) == 0);
     Require(sceCesUcs2ToGb(0x20AC, gbk, mbcs, sizeof(mbcs), &produced) == 0 && produced == 1 && mbcs[0] == 0x80);
     Require(sceCesUcs2ToGb(0x3042, euc, mbcs, sizeof(mbcs), &produced) == invalidParameter);
