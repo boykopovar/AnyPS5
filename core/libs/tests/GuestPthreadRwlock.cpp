@@ -182,7 +182,7 @@ static void CheckFailedLockAttempts() {
     PthreadRwlock rwlock = nullptr;
     Require(pthread_rwlock_wrlock_nid_postfix(&rwlock) == 0);
     const KernelTimespec timeout = After(10);
-    Require(pthread_rwlock_timedrdlock_nid_postfix(&rwlock, &timeout) == GUEST_EDEADLK);
+    Require(pthread_rwlock_timedrdlock_nid_postfix(&rwlock, &timeout) == GUEST_ETIMEDOUT);
     Require(pthread_rwlock_tryrdlock_nid_postfix(&rwlock) == GUEST_EBUSY);
     Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
     Require(pthread_rwlock_destroy_nid_postfix(&rwlock) == 0);
@@ -371,6 +371,11 @@ static void CheckAttrProcessSharing() {
     Require(Throws([&] { pthread_rwlockattr_getpshared_nid_postfix(nullptr, &pshared); }));
     Require(Throws([&] { pthread_rwlockattr_getpshared_nid_postfix(&unset, &pshared); }));
     Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+    Require(attr != nullptr);
+    pshared = -1;
+    Require(pthread_rwlockattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
+    Require(pthread_rwlockattr_setpshared_nid_postfix(&attr, PROCESS_PRIVATE) == 0);
+    Require(Throws([&] { scePthreadRwlockattrDestroy(&attr); }));
 }
 
 static void CheckAttrSettype() {
@@ -385,7 +390,7 @@ static void CheckAttrSettype() {
     }
     for (const int type : {0, 3, -1, static_cast<int>(0x80000000u)}) Require(scePthreadRwlockattrSettype(&attr, type) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
-    Require(scePthreadRwlockattrSettype(&attr, 1) == SCE_KERNEL_ERROR_EINVAL);
+    for (const int type : {1, 2}) Require(scePthreadRwlockattrSettype(&attr, type) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockattrSettype(nullptr, 1) == SCE_KERNEL_ERROR_EINVAL);
 }
 
@@ -406,6 +411,9 @@ static void CheckAttrType() {
     Require(scePthreadRwlockattrSetpshared(&attr, 1) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadRwlockattrSetpshared(&attr, PROCESS_PRIVATE) == SCE_OK);
     Require(pthread_rwlockattr_destroy_nid_postfix(&attr) == 0);
+    type = -1;
+    Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(&attr, &type); }) && type == -1);
+    Require(Throws([&] { scePthreadRwlockattrGettype(&attr, &type); }) && type == -1);
     PthreadRwlockattr unset = nullptr;
     Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(nullptr, &type); }));
     Require(Throws([&] { pthread_rwlockattr_gettype_np_nid_postfix(&unset, &type); }));
@@ -447,9 +455,10 @@ int main() {
     Require(pthread_rwlock_trywrlock_nid_postfix(&rwlock) == 0);
     Require(pthread_rwlock_tryrdlock_nid_postfix(&rwlock) == GUEST_EBUSY);
     Require(pthread_rwlock_trywrlock_nid_postfix(&rwlock) == GUEST_EBUSY);
-    KernelTimespec deadline = After(5000);
-    Require(pthread_rwlock_timedrdlock_nid_postfix(&rwlock, &deadline) == GUEST_EDEADLK);
-    Require(pthread_rwlock_timedwrlock_nid_postfix(&rwlock, &deadline) == GUEST_EDEADLK);
+    KernelTimespec deadline = After(20);
+    Require(pthread_rwlock_timedrdlock_nid_postfix(&rwlock, &deadline) == GUEST_ETIMEDOUT);
+    deadline = After(20);
+    Require(pthread_rwlock_timedwrlock_nid_postfix(&rwlock, &deadline) == GUEST_ETIMEDOUT);
     Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == 0);
     Require(pthread_rwlock_unlock_nid_postfix(&rwlock) == GUEST_EPERM);
     Require(pthread_rwlock_tryrdlock_nid_postfix(&rwlock) == 0);

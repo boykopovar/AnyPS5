@@ -80,6 +80,17 @@ int main() {
     Require(unconnected >= 0);
     sent = 77;
     Require(Fails(sendfile_nid_postfix(file, unconnected, size + 10, 0, nullptr, &sent, 0), 57) && sent == 0);
+    const int random = open_nid_postfix("/dev/urandom", 0, 0);
+    Require(random >= 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(random, pair[0], 0, 16, &parts, &sent, 0), 22) && sent == 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(random, pair[0], 0, 0, nullptr, &sent, 0), 22) && sent == 0);
+    const int queue = kqueue_nid_postfix();
+    Require(queue >= 0);
+    sent = 77;
+    Require(Fails(sendfile_nid_postfix(queue, pair[0], 0, 0, nullptr, &sent, 0), 22) && sent == 0);
+    Require(close_nid_postfix(queue) == 0 && close_nid_postfix(random) == 0);
 
     const std::string large = Content(32 << 20);
     const int largeFile = OpenWritten("sendfile_large.bin", large);

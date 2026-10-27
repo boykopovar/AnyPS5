@@ -67,8 +67,9 @@ function update() {
     const totalBytes = sum(summaries.map(summary => summary.totalBytes));
     const modules = sum(summaries.map(summary => summary.modules));
     const sizeText = value => value === null ? "beyond the supported size range" : bytes(value);
+    const countText = value => value === null ? "beyond the supported range" : value;
     $("archive-info").textContent = multi
-      ? `${selectedInputs.length} apps · ${sizeText(totalFiles)} files · ${sizeText(totalBytes)} expanded · ${sizeText(modules)} modules · ${sizeText(selectedBytes)} ${target} conversion input`
+      ? `${selectedInputs.length} apps · ${countText(totalFiles)} files · ${sizeText(totalBytes)} expanded · ${countText(modules)} modules · ${sizeText(selectedBytes)} ${target} conversion input`
       : `${summaries[0].files} files · ${bytes(summaries[0].totalBytes)} expanded · ${summaries[0].modules} modules · ${bytes(target === "windows" ? summaries[0].windowsSelectedBytes : summaries[0].selectedBytes)} ${target} conversion input` + (summaries[0].root ? ` · Root: ${summaries[0].root}` : "");
   }
   $("save-note").textContent = multi ? $("save").value === "memory" ? "Creates one ZIP with each app in its own folder. The complete bundle must fit in the 256 MiB memory-download budget." : "Writes one compressed ZIP containing each app in its own folder, without holding the whole bundle in memory." : $("save").value === "disk" ? "Creates a subfolder with the executable, libs and app0. No ZIP compression. Incomplete output folders are removed after cancellation or failure. Browsers may block DLL and other restricted files; use ZIP for those apps." : $("save").value === "zip" ? "Writes a compressed ZIP directly to disk without holding the whole archive in memory." : "Up to 256 MiB including expanded files and output overhead.";
@@ -262,12 +263,16 @@ async function selectInputs(inputs) {
 $("choose").onclick = () => { $("file").value = ""; $("file").click(); };
 $("change").onclick = () => {
   if (working) return;
+  worker?.terminate();
+  worker = null;
   if (downloadUrl) { URL.revokeObjectURL(downloadUrl); downloadUrl = null; }
-  file = null;
-  summary = null;
+  selectedInputs = [];
+  summaries = [];
+  inspectionComplete = false;
   $("file").value = "";
   $("folder").value = "";
-  for (const id of ["selection", "warnings", "error", "done", "download"]) $(id).hidden = true;
+  $("app-list").replaceChildren();
+  for (const id of ["selection", "warnings", "error", "done", "download", "app-list"]) $(id).hidden = true;
   $("acknowledge").checked = false;
   $("drop").hidden = false;
   update();

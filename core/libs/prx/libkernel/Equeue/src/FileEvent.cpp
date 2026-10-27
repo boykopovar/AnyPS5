@@ -193,7 +193,7 @@ bool TakeSnapshot(HANDLE handle, Snapshot& snapshot) {
 }
 
 bool IsDeleted(const Snapshot& snapshot) {
-    return snapshot.deletePending || snapshot.links == 0;
+    return snapshot.deletePending || snapshot.links == 0 || snapshot.path.find(L"\\$Extend\\$Deleted\\") != std::wstring::npos;
 }
 
 std::vector<std::uint32_t> SnapshotHints(const Snapshot& before, const Snapshot& after, bool directory) {
@@ -213,7 +213,7 @@ std::vector<std::uint32_t> SnapshotHints(const Snapshot& before, const Snapshot&
     } else if (!directory && hints.empty() && after.change != before.change) {
         hints.push_back(NOTE_ATTRIB);
     }
-    if ((after.deletePending && !before.deletePending) || after.links < before.links) {
+    if ((after.deletePending && !before.deletePending) || after.links < before.links || (!IsDeleted(before) && IsDeleted(after))) {
         hints.push_back(NOTE_DELETE);
     }
     if (!after.path.empty() && after.path != before.path && !IsDeleted(after)) {

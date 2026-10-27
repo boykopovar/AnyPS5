@@ -179,6 +179,15 @@ int main() {
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + 1, &color) == USER_SERVICE_OK);
     Require(color == 1);
 
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    for (const Setting& setting : settings) {
+        std::int32_t value = 0x5a5a5a5a;
+        Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(value == 0x5a5a5a5a);
+        Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    }
+
     UserServiceSetUserConnected_nid_postfix(1, true);
     Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
     Require(registered.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
@@ -186,10 +195,26 @@ int main() {
     for (int i = 2; i < 16; ++i) {
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
     }
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_OK);
+    Require(age_level == 0xffffffffu);
+    for (const Setting& setting : settings) {
+        std::int32_t value = 0x5a5a5a5a;
+        Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_OK);
+        Require(value == setting.value);
+    }
+
     UserServiceSetUserConnected_nid_postfix(1, false);
     Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
     Require(registered.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     for (int i = 1; i < 16; ++i) {
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
+    }
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    for (const Setting& setting : settings) {
+        std::int32_t value = 0x5a5a5a5a;
+        Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(value == 0x5a5a5a5a);
+        Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     }
 }

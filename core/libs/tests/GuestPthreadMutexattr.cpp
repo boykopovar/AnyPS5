@@ -202,6 +202,9 @@ int main() {
     Require(pthread_mutexattr_setprotocol_nid_postfix(&attr, PRIO_PROTECT) == 0);
     Require(pthread_mutexattr_getprotocol_nid_postfix(&attr, &protocol) == 0 && protocol == PRIO_PROTECT);
     Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, &ceiling) == 0 && ceiling == sched_get_priority_max_nid_postfix(GuestSched_Rr));
+    for (const int outside : {0, 255, 768, 1000}) Require(pthread_mutexattr_setprioceiling_nid_postfix(&attr, outside) == GUEST_EINVAL);
+    Require(pthread_mutexattr_setprioceiling_nid_postfix(&attr, 256) == 0);
+    Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, &ceiling) == 0 && ceiling == 256);
     Require(pthread_mutexattr_setprioceiling_nid_postfix(&attr, 300) == 0);
     Require(pthread_mutexattr_getprioceiling_nid_postfix(&attr, &ceiling) == 0 && ceiling == 300);
     PthreadMutex mutex = nullptr;
