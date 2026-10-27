@@ -113,7 +113,7 @@ static void CheckZone(const char* zone) {
     Require(setenv_nid_postfix("TZ", zone, 1) == 0, "Could not set the time zone");
     tzset_nid_postfix();
 
-    constexpr std::array<Converter, 2> converters{libc_mktime_nid_postfix, mktime_nid_postfix};
+    constexpr std::array<Converter, 3> converters{libc_mktime_nid_postfix, mktime_nid_postfix, timelocal_nid_postfix};
     constexpr std::array<std::int64_t, 8> timers{-86401, -2, -1, 0, 1, 59, 60, 86400};
     for (auto convert : converters) {
         for (const auto timer : timers) {
