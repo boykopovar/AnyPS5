@@ -1,4 +1,5 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
+#include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
@@ -234,26 +235,6 @@ int APS5_VABI sceLncUtilGetAppFocusedAppStatus(LncAppStatus* status) {
     return 0;
 }
 
-int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilGetAppIdOfRunningBigApp() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilGetAppStatus(LncAppStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -344,16 +325,6 @@ int APS5_VABI sceLncUtilIsActiveCdlg(bool* active) {
     return 0;
 }
 
-int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilIsAppSuspended(std::int32_t appId, bool* suspended) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLncUtilIsCdlgActivated(std::uint8_t* activated) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -380,7 +351,9 @@ bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode() {
 }
 
 int APS5_VABI sceLncUtilIsSpeculativeLaunch(std::int32_t appId, bool* speculative) {
-    NotImplemented_nid_no_patch(__func__);
+    if (speculative == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) NotImplemented_nid_no_patch("sceLncUtilIsSpeculativeLaunch: application other than the running title");
+    *speculative = false;
     return 0;
 }
 
@@ -395,11 +368,6 @@ int APS5_VABI sceLncUtilKillLocalProcess(std::int32_t appId, std::int32_t proces
 }
 
 int APS5_VABI sceLncUtilLaunchApp(const char* titleId, const char* const* argv, const LncLaunchParam* param) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceLncUtilLoadExec(const char* path, const char* const* argv) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1065,11 +1033,6 @@ int APS5_VABI sceShellCoreUtilGetUIStatus(std::uint64_t* status) {
 }
 
 int APS5_VABI sceShellCoreUtilGetUmmStatus(std::int32_t userId, ShellCoreUmmStatus* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceShellCoreUtilGetUserFocus(std::int32_t appId, std::int32_t* userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1835,16 +1798,6 @@ int APS5_VABI sceSystemServiceGetAppFocusedAppStatus(SystemServiceAppStatus* sta
     return 0;
 }
 
-int APS5_VABI sceSystemServiceGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceSystemServiceGetAppStatus(SystemServiceAppStatus* status) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1966,11 +1919,6 @@ int APS5_VABI sceSystemServiceInitializeForShellCore() {
 }
 
 int APS5_VABI sceSystemServiceInvokeAppLaunchLink(const char* uri) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceIsAppSuspended(std::int32_t appId, bool* suspended) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

@@ -222,6 +222,7 @@ struct Context {
     bool conservativeRasterization = false;
     bool meshWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
+    bool exactRobustLoads = false;
     // The device's list of recorded dispatches whose copied written buffers await a CPU write-back
     // (VulkanDevice's State::copiedWriters; the draw counterpart is DrawCopiedWriters): an indirect
     // draw whose records one of them produces reads them on the CPU. Null in tests.
@@ -240,6 +241,7 @@ struct Context {
     std::uint32_t imageTableCapacity = 0;
     std::uint32_t samplerTableCapacity = 0;
     bool individuallyFreeDescriptorSets = false;
+    bool tessellationPipelineCache = true;
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
@@ -261,6 +263,7 @@ struct Context {
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
     bool pipelineExecutableInfo = false;
+    bool maintenance8 = false;
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
     std::uint32_t srgbDecodeFormats = 0;

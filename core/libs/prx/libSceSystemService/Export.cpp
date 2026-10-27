@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <vector>
 #if defined(_WIN32)
 #include <windows.h>
@@ -29,6 +30,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 
 namespace {
@@ -260,6 +262,32 @@ void CopyRunningTitleId(const std::string& caller, bool running, char* destinati
     std::memcpy(destination, titleId.c_str(), titleId.size() + 1);
 }
 
+bool WellFormedTitleId(const char* titleId) {
+    return titleId != nullptr && std::strlen(titleId) == SYSTEM_SERVICE_TITLE_ID_LENGTH;
+}
+
+int RunningAppId(const std::string& caller, const char* titleId) {
+    if (!WellFormedTitleId(titleId)) return SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
+    if (RunningTitleId() != titleId) NotImplemented_nid_no_patch((caller + ": title other than the running title").c_str());
+    return SYSTEM_SERVICE_RUNNING_APP_ID;
+}
+
+template<typename TValue>
+int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* destination, std::type_identity_t<TValue> value, int nullOutputResult) {
+    if (destination == nullptr) return nullOutputResult;
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch((caller + ": application other than the running title").c_str());
+    *destination = value;
+    return SYSTEM_SERVICE_OK;
+}
+
+int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
+    if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+    if (capacity == 0) NotImplemented_nid_no_patch((caller + ": a list with no room for the running title").c_str());
+    appIds[0] = SYSTEM_SERVICE_RUNNING_APP_ID;
+    *count = 1;
+    return SYSTEM_SERVICE_OK;
+}
+
 }
 
 extern "C" {
@@ -455,13 +483,7 @@ int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
 }
 
 int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
- if (titleId == nullptr) {
-  NotImplemented_nid_no_patch("sceSystemServiceGetAppId: null title ID");
- }
- if (RunningTitleId() != titleId) {
-  NotImplemented_nid_no_patch("sceSystemServiceGetAppId: title other than the running title");
- }
- return SYSTEM_SERVICE_RUNNING_APP_ID;
+ return RunningAppId("sceSystemServiceGetAppId", titleId);
 }
 
 int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
@@ -472,6 +494,55 @@ int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
 int APS5_VABI sceLncUtilGetAppTitleId(std::int32_t appId, char* titleId) {
  CopyRunningTitleId("sceLncUtilGetAppTitleId", appId == SYSTEM_SERVICE_RUNNING_APP_ID, titleId);
  return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilGetAppId(const char* titleId) {
+ return RunningAppId("sceLncUtilGetAppId", titleId);
+}
+
+int APS5_VABI sceLncUtilIsAppLaunched(const char* titleId, bool* launched) {
+ if (!WellFormedTitleId(titleId) || launched == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ static_cast<void>(RunningAppId("sceLncUtilIsAppLaunched", titleId));
+ *launched = true;
+ return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilGetAppIdOfRunningBigApp() {
+ return sceSystemServiceGetAppIdOfRunningBigApp();
+}
+
+int APS5_VABI sceLncUtilGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
+ return ListRunningBigApp("sceLncUtilGetAppIdListOfBigApp", appIds, capacity, count);
+}
+
+int APS5_VABI sceSystemServiceGetAppIdListOfBigApp(std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
+ return ListRunningBigApp("sceSystemServiceGetAppIdListOfBigApp", appIds, capacity, count);
+}
+
+int APS5_VABI sceLncUtilGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
+ return AnswerForRunningApp("sceLncUtilGetAppLaunchedUser", appId, userId, USER_SERVICE_INITIAL_USER_ID, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceSystemServiceGetAppLaunchedUser(std::int32_t appId, std::int32_t* userId) {
+ return AnswerForRunningApp("sceSystemServiceGetAppLaunchedUser", appId, userId, USER_SERVICE_INITIAL_USER_ID, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceShellCoreUtilGetUserFocus(std::int32_t appId, std::int32_t* userId) {
+ return AnswerForRunningApp("sceShellCoreUtilGetUserFocus", appId, userId, USER_SERVICE_INITIAL_USER_ID, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceLncUtilIsAppSuspended(std::int32_t appId, bool* suspended) {
+ return AnswerForRunningApp("sceLncUtilIsAppSuspended", appId, suspended, false, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceSystemServiceIsAppSuspended(std::int32_t appId, bool* suspended) {
+ return AnswerForRunningApp("sceSystemServiceIsAppSuspended", appId, suspended, false, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceLncUtilLoadExec(const char* path, const char* const* argv) {
+ if (path == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
+ if (path[0] == '\0') NotImplemented_nid_no_patch("sceLncUtilLoadExec: empty path");
+ return sceSystemServiceLoadExec(path, argv);
 }
 
 int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDump) {

@@ -1,6 +1,7 @@
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/ThreadLifecycle.hpp"
 #include "../include/WindowsThreadLocal.hpp"
@@ -53,6 +54,7 @@ extern "C" bool IsInitialPthread_nid_no_patch() {
 
 static constexpr int SCE_OK = 0;
 static constexpr std::size_t GUEST_THREAD_NAME_CAPACITY = 32;
+static constexpr int GUEST_EINVAL = 22;
 
 static constexpr std::size_t HOST_STACK_MARGIN = 1u << 20;
 static constexpr int DETACH_DETACHED = 1;
@@ -488,6 +490,7 @@ PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false
     affinity.store(attr && attr->_affinityExplicit ? attr->_affinity : inherited, std::memory_order_relaxed);
     constexpr int ExplicitSched = 0;
     const bool explicitSched = attr && attr->_inheritsched == ExplicitSched;
+    if (attr) inheritSched = attr->_inheritsched;
     const int inheritedPolicy = parent ? parent->schedPolicy.load(std::memory_order_relaxed) : schedPolicy.load(std::memory_order_relaxed);
     schedPolicy.store(explicitSched ? attr->_schedpolicy : inheritedPolicy, std::memory_order_relaxed);
     const int attrPriority = attr ? attr->_schedpriority : DEFAULT_THREAD_PRIORITY;
@@ -553,6 +556,26 @@ std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread) {
 
 bool GuestThreadIsLive(const PthreadPrivate* thread) {
     return LockLiveGuestThread(thread).owns_lock();
+}
+
+extern "C" int ResumeGuestThread_nid_no_patch(PthreadPrivate* thread) {
+    constexpr int GuestEsrch = 3;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live.owns_lock()) return GuestEsrch;
+    thread->suspended.store(false, std::memory_order_release);
+    thread->suspended.notify_all();
+    return 0;
+}
+
+extern "C" void ResumeAllGuestThreads_nid_no_patch() {
+    const auto* self = CurrentGuestState().current;
+    auto& registry = CpuClocks();
+    std::lock_guard lock(registry.lock);
+    for (const auto& [id, thread] : registry.threads) {
+        if (thread == self) continue;
+        thread->suspended.store(false, std::memory_order_release);
+        thread->suspended.notify_all();
+    }
 }
 
 bool GetLiveGuestThreadAffinity_nid_no_patch(std::int64_t tid, KernelCpumask& mask) {
@@ -775,6 +798,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     const sigset_t signalMask = args->signalMask;
 #endif
     args.reset();
+    self->suspended.wait(true, std::memory_order_acquire);
 #ifndef _WIN32
     pthread_sigmask(SIG_SETMASK, &signalMask, nullptr);
 #endif
@@ -934,7 +958,10 @@ extern "C" {
 
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name) {
     if (!thread || !entry) throw std::runtime_error("scePthreadCreate: null arg");
-    if (name && std::strlen(name) >= GUEST_THREAD_NAME_CAPACITY) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    if (name && std::strlen(name) >= GUEST_THREAD_NAME_CAPACITY) {
+        *thread = nullptr;
+        return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    }
     if (attr && !*attr) attr = nullptr;
     auto p = std::make_unique<PthreadPrivate>(attr ? *attr : nullptr);
     bool detached = false;
@@ -950,6 +977,8 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
         p->scope = CurrentGuestState().current->scope;
     }
     if (name) p->name = name;
+    p->createdSuspended = attr && (*attr)->_createSuspended;
+    p->suspended.store(p->createdSuspended, std::memory_order_relaxed);
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
 #ifdef _WIN32
@@ -1306,6 +1335,13 @@ void APS5_VABI scePthreadTestcancel() {
 
 int APS5_VABI scePthreadSetprio(Pthread thread, int prio) {
     if (!thread) return SCE_KERNEL_ERROR_EINVAL;
+    const auto live = LockLiveGuestThread(thread);
+    if (!live) return SCE_KERNEL_ERROR_ESRCH;
+    const auto level = static_cast<std::uint32_t>(prio) & 0xffffu;
+    if (!((level >= 256 && level <= 767) || (level >= 896 && level <= 959))) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return SCE_KERNEL_ERROR_EINVAL;
+    }
     thread->priority.store(prio, std::memory_order_relaxed);
     return SCE_OK;
 }

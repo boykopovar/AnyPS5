@@ -36,4 +36,4 @@ jobs:
           node --check demo/web/output-directory.mjs
           node --check demo/web/worker.mjs
       - name: Test browser converter helpers
-        run: node --test demo/web/tests/batch.test.mjs demo/web/tests/output-directory.test.mjs
+        run: node --test demo/web/tests/app.test.mjs demo/web/tests/batch.test.mjs demo/web/tests/output-directory.test.mjs

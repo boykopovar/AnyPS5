@@ -71,10 +71,10 @@ def depends_on(body):
     body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
     repo = re.escape(globals().get("REPO", "boykopovar/AnyPS5"))
     repo_pattern = rf"(?:{repo}|boykopovar/AnyPS5)"
-    body = re.sub(rf"\[([^\]]*)\]\(https?://github\.com/{repo_pattern}/pull/(\d+)(?:[#/?][^)\s]*)?\)", r"#\2", body, flags=re.IGNORECASE)
-    body = re.sub(rf"\[([^\]]*)\]\(https?://github\.com/(?!{repo_pattern}/)[^/\s]+/[^/\s]+/pull/\d+[^)\s]*\)", "", body, flags=re.IGNORECASE)
+    body = re.sub(rf"\[([^\]]*)\]\(https?://(?:www\.)?github\.com/{repo_pattern}/pull/(\d+)(?:[#/?][^)\s]*)?\)", r"#\2", body, flags=re.IGNORECASE)
+    body = re.sub(rf"\[([^\]]*)\]\(https?://(?:www\.)?github\.com/(?!{repo_pattern}/)[^/\s]+/[^/\s]+/pull/\d+[^)\s]*\)", "", body, flags=re.IGNORECASE)
     body = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", body)
-    body = re.sub(rf"https?://github\.com/{repo_pattern}/pull/(\d+)\b(?:/[^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
+    body = re.sub(rf"https?://(?:www\.)?github\.com/{repo_pattern}/pull/(\d+)\b(?:/[^\s]*)?", r"#\1", body, flags=re.IGNORECASE)
     match = next((match for match in DEPENDS.finditer(body) if match.group(1).strip()), None) or PLAIN_DEPENDS.search(body)
     return {int(n) for n in re.findall(r"#(\d+)", match.group(1))} if match else set()
 
@@ -127,6 +127,12 @@ def merge(*args):
                             cwd=root, capture_output=True)
     lines = result.stdout.decode("utf-8", errors="replace").rstrip("\0").split("\0")
     if result.returncode not in (0, 1) or not lines[0]:
+        required = (2, 40) if any(arg.startswith("--merge-base") for arg in args) else (2, 38)
+        found = re.match(rb"git version (\d+)\.(\d+)", subprocess.run(["git", "version"], capture_output=True).stdout)
+        version = (int(found.group(1)), int(found.group(2))) if found else None
+        if version and version < required:
+            raise RuntimeError(f"git merge-tree {' '.join(args)} needs git {required[0]}.{required[1]} or newer; "
+                               f"this git is {version[0]}.{version[1]}")
         error = result.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"git merge-tree {' '.join(args)} failed: {error}")
     return lines[0], set(lines[1:]) if result.returncode else set()
@@ -301,13 +307,31 @@ def overlaps(prs, a, b):
     return found if any(found.values()) else None
 
 
+
+def code_span(item):
+    item = str(item)
+    runs = re.findall(r"`+", item)
+    delimiter = "`" * (max((len(run) for run in runs), default=0) + 1)
+    if "`" in item:
+        return f"{delimiter} {item} {delimiter}"
+    return f"{delimiter}{item}{delimiter}"
+
+
 def cell(items):
-    return "<br>".join(f"`{item}`" for item in sorted(items or ()))
+    return "<br>".join(code_span(item) for item in sorted(items or ()))
+
+
 
 
 def spans(conflicts, blob):
-    return "<br>".join(f"`{path}` " + ", ".join(f"[L{s}-{e}]({blob}/{quote(path)}#L{s}-L{e})" if s != e else f"[L{s}]({blob}/{quote(path)}#L{s})"
-                                               for s, e in ranges) for path, ranges in sorted((conflicts or {}).items()))
+    return "<br>".join(
+        f"{code_span(path)} " + ", ".join(
+            f"[L{s}-{e}]({blob}/{quote(path)}#L{s}-L{e})"
+            if s != e else f"[L{s}]({blob}/{quote(path)}#L{s})"
+            for s, e in ranges
+        )
+        for path, ranges in sorted((conflicts or {}).items())
+    )
 
 
 def pull(blob, number):

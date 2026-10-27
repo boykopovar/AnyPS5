@@ -35,9 +35,12 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceNpAuthAuthorizedAppDialogGetStatus() == kStatusNone);
+    Require(sceNpAuthAuthorizedAppDialogUpdateStatus() == kStatusNone);
     Require(sceNpAuthAuthorizedAppDialogTerminate() == kErrNotInitialized);
     Require(sceNpAuthAuthorizedAppDialogClose() == kErrNotInitialized);
+    Require(sceNpAuthAuthorizedAppDialogOpen(nullptr) == kErrArgNull);
     Require(sceNpAuthAuthorizedAppDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNpAuthAuthorizedAppDialogGetResult(nullptr) == kErrArgNull);
     Require(sceNpAuthAuthorizedAppDialogGetResult(result) == kErrNotInitialized);
 
     Require(sceNpAuthAuthorizedAppDialogInitialize() == 0);
@@ -83,7 +86,13 @@ int main() {
     Require(sceNpAuthAuthorizedAppDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceNpAuthAuthorizedAppDialogTerminate() == 0);
     Require(sceNpAuthAuthorizedAppDialogTerminate() == kErrNotInitialized);
+    Require(sceNpAuthAuthorizedAppDialogClose() == kErrNotInitialized);
+    Require(sceNpAuthAuthorizedAppDialogOpen(nullptr) == kErrArgNull);
+    Require(sceNpAuthAuthorizedAppDialogOpen(&param) == kErrNotInitialized);
+    Require(sceNpAuthAuthorizedAppDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceNpAuthAuthorizedAppDialogGetResult(result) == kErrNotInitialized);
     Require(sceNpAuthAuthorizedAppDialogGetStatus() == kStatusNone);
+    Require(sceNpAuthAuthorizedAppDialogUpdateStatus() == kStatusNone);
 
     Require(sceNpAuthAuthorizedAppDialogInitialize() == 0);
     Require(sceNpAuthAuthorizedAppDialogGetStatus() == kStatusInitialized);
@@ -91,8 +100,14 @@ int main() {
     Require(sceNpAuthAuthorizedAppDialogGetStatus() == kStatusInitialized);
     Require(sceNpAuthAuthorizedAppDialogGetResult(result) == kErrNotFinished);
     Require(sceNpAuthAuthorizedAppDialogTerminate() == 0);
+    Require(sceNpAuthAuthorizedAppDialogTerminate() == kErrNotInitialized);
+    Require(sceNpAuthAuthorizedAppDialogClose() == kErrNotInitialized);
     Require(sceNpAuthAuthorizedAppDialogOpen(nullptr) == kErrArgNull);
+    Require(sceNpAuthAuthorizedAppDialogOpen(&param) == kErrNotInitialized);
     Require(sceNpAuthAuthorizedAppDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceNpAuthAuthorizedAppDialogGetResult(result) == kErrNotInitialized);
+    Require(sceNpAuthAuthorizedAppDialogGetStatus() == kStatusNone);
+    Require(sceNpAuthAuthorizedAppDialogUpdateStatus() == kStatusNone);
     Require(sceUserServiceTerminate() == 0);
     return 0;
 }

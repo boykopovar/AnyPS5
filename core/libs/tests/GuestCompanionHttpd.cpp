@@ -57,10 +57,12 @@ void CheckStates() {
     unsigned char untouched[0x104];
     std::memset(untouched, 0x5a, sizeof(untouched));
     auto* callback = reinterpret_cast<void*>(&RequestCallback);
+    Require(sceCompanionHttpdGetEvent(nullptr) == InvalidParam, "a null event before initialization");
     Require(sceCompanionHttpdGetEvent(event) == NotInitialized, "an event before initialization");
     Require(sceCompanionHttpdStart() == NotInitialized, "a start before initialization");
     Require(sceCompanionHttpdStop() == NotInitialized, "a stop before initialization");
     Require(sceCompanionHttpdTerminate() == NotInitialized, "a termination before initialization");
+    Require(sceCompanionHttpdRegisterRequestCallback(nullptr, nullptr) == InvalidParam, "a null callback before initialization");
     Require(sceCompanionHttpdRegisterRequestCallback(reinterpret_cast<CompanionHttpdRequestCallback>(callback), nullptr) == NotInitialized, "a callback before initialization");
     Require(sceCompanionHttpdUnregisterRequestCallback() == NotInitialized, "an unregistration before initialization");
     Require(sceCompanionHttpdInitialize(nullptr) == InvalidParam, "a null parameter must be rejected");

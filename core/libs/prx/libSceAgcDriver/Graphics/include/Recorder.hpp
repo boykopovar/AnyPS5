@@ -22,6 +22,7 @@
 #include <tuple>
 #include <unordered_set>
 #include <utility>
+#include <string>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -183,6 +184,7 @@ public:
     // Whether the OPEN (unsubmitted) batch writes the range: a wait on such a range must submit it.
     bool OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t PendingWriterSerial(std::uint64_t address, std::size_t bytes) const;
+    std::uint64_t PendingWriterSerial(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> exceptNotes) const;
     // What SyncThrough(address, bytes) would wait for, for the [hooksync] attribution: the newest
     // batch whose noted range overlaps the access (the open batch counts first, with the serial it
     // will get), whether that batch's fence has already signaled (its GPU work is done, so the
@@ -471,9 +473,13 @@ public:
     // queries around each timed range; the totals per key are reported every 10 s. Begin returns the
     // range index to pass to End, or NoTiming when timing is off or the batch's queries are used up.
     static constexpr std::uint32_t NoTiming = 0xffffffffu;
+    static constexpr std::uint64_t DrawTimingFlag = std::uint64_t{1} << 63u;
+    static constexpr std::uint64_t DrawTimingKey(std::uint64_t variantId) { return variantId | DrawTimingFlag; }
+    static std::string TimingKeyLabel(std::uint64_t key);
     static bool GpuTimingEnabled();
     static bool BatchStampsEnabled();
     std::uint32_t BeginGpuTiming(std::uint64_t key);
+    std::uint32_t BeginInPassGpuTiming(std::uint64_t key);
     // `bytes`: what the range moved (a fill's, a copy's), summed per key on the [gputime] line.
     void EndGpuTiming(std::uint32_t index, std::uint64_t bytes = 0);
     // The key of the whole-batch range (first to last command; reported as "batch" on the [gputime]

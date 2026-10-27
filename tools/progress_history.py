@@ -25,8 +25,13 @@ def git(*args):
 
 
 def daily_commits(ref):
+    try:
+        log = git("log", "--first-parent", "--format=%H %ct", ref)
+    except subprocess.CalledProcessError as error:
+        reason = error.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"cannot read the history of {ref}: {reason}") from error
     seen = {}
-    for line in git("log", "--first-parent", "--format=%H %ct", ref).decode("utf-8").splitlines():
+    for line in log.decode("utf-8").splitlines():
         sha, timestamp = line.split()
         seen.setdefault(datetime.fromtimestamp(int(timestamp), timezone.utc).date().isoformat(), sha)
     return sorted(seen.items())
@@ -238,10 +243,13 @@ def main(argv=None):
         parser.error(str(error))
     if not points:
         parser.error("no commit with a measurable tree")
-    args.output.mkdir(parents=True, exist_ok=True)
-    (args.output / "history.json").write_text(json.dumps(points, indent=2), encoding="utf-8")
-    (args.output / "history.svg").write_text(chart(points) + "\n", encoding="utf-8")
-    (args.output / "history.html").write_text(page(points), encoding="utf-8")
+    try:
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / "history.json").write_text(json.dumps(points, indent=2), encoding="utf-8")
+        (args.output / "history.svg").write_text(chart(points) + "\n", encoding="utf-8")
+        (args.output / "history.html").write_text(page(points), encoding="utf-8")
+    except OSError as error:
+        parser.error(f"{error.filename or args.output}: {error.strerror or error}")
     print(f"{len(points)} days, {points[0]['date']} .. {points[-1]['date']}")
 
 

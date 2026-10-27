@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -175,6 +176,120 @@ static int RenderedPixels(FontHandle font, std::uint32_t code, float& advance) {
     return lit;
 }
 
+struct GlyphImage {
+    int rc = SCE_FONT_OK;
+    std::vector<std::uint8_t> pixels = std::vector<std::uint8_t>(128 * 128);
+    FontGlyphMetrics metrics{};
+    FontRenderOutput result{};
+};
+
+template<typename TRender> static GlyphImage RenderInto(TRender render) {
+    GlyphImage image;
+    FontRenderSurface surface{};
+    sceFontRenderSurfaceInit(&surface, image.pixels.data(), 128, 1, 128, 128);
+    image.rc = render(&surface, &image.metrics, &image.result);
+    return image;
+}
+
+static bool SurfaceOffset(const GlyphImage& image, std::uintptr_t& offset) {
+    const auto& surface = image.result.SurfaceImage;
+    const auto& rect = image.result.UpdateRect;
+    const auto base = reinterpret_cast<std::uintptr_t>(image.pixels.data());
+    const auto address = reinterpret_cast<std::uintptr_t>(surface.address);
+    const std::uintptr_t span = rect.w == 0 || rect.h == 0 ? 0 : static_cast<std::uintptr_t>(rect.h - 1) * surface.widthByte + static_cast<std::uintptr_t>(rect.w) * surface.pixelSizeByte;
+    if (address < base || address - base > image.pixels.size() || span > image.pixels.size() - (address - base)) return false;
+    offset = address - base;
+    return true;
+}
+
+static bool SameImage(const GlyphImage& left, const GlyphImage& right) {
+    int lit = 0;
+    for (const std::uint8_t pixel : left.pixels) lit += pixel != 0 ? 1 : 0;
+    const auto& a = left.result;
+    const auto& b = right.result;
+    std::uintptr_t leftOffset = 0;
+    std::uintptr_t rightOffset = 0;
+    const bool sameSurface = SurfaceOffset(left, leftOffset) && SurfaceOffset(right, rightOffset) && leftOffset == rightOffset && a.SurfaceImage.widthByte == b.SurfaceImage.widthByte && a.SurfaceImage.pixelSizeByte == b.SurfaceImage.pixelSizeByte && a.SurfaceImage.pixelFormat == b.SurfaceImage.pixelFormat;
+    const bool sameOutput = a.stage == b.stage && sameSurface && std::memcmp(&a.UpdateRect, &b.UpdateRect, sizeof(a.UpdateRect)) == 0 && std::memcmp(&a.ImageMetrics, &b.ImageMetrics, sizeof(a.ImageMetrics)) == 0;
+    return left.rc == SCE_FONT_OK && right.rc == SCE_FONT_OK && lit > 0 && left.pixels == right.pixels && std::memcmp(&left.metrics, &right.metrics, sizeof(left.metrics)) == 0 && sameOutput;
+}
+
+static bool Cleared(const GlyphImage& image, int rc) {
+    const FontGlyphMetrics noMetrics{};
+    const FontRenderOutput noResult{};
+    return image.rc == rc && std::memcmp(&image.metrics, &noMetrics, sizeof(noMetrics)) == 0 && std::memcmp(&image.result, &noResult, sizeof(noResult)) == 0;
+}
+
+static void CheckGlyphImages(FontHandle font, FontRenderer renderer) {
+    Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
+    Require(sceFontSetScalePixel(font, 40.0f, 40.0f) == SCE_FONT_OK);
+    Require(sceFontSetupRenderScalePixel(font, 40.0f, 40.0f) == SCE_FONT_OK);
+    FontGlyph glyph = nullptr;
+    Require(sceFontGenerateCharGlyph(font, 'A', nullptr, &glyph) == SCE_FONT_OK && glyph != nullptr);
+
+    const auto horizontal = RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontRenderCharGlyphImageHorizontal(font, 'A', surface, 10.0f, 100.0f, metrics, result); });
+    Require(SameImage(horizontal, RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontGlyphRenderImageHorizontal(glyph, nullptr, renderer, surface, 10.0f, 100.0f, metrics, result); })));
+    const auto written = RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontRenderCharGlyphImage(font, 'A', surface, 10.0f, 20.0f, metrics, result); });
+    Require(SameImage(written, RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontGlyphRenderImage(glyph, nullptr, renderer, surface, 10.0f, 20.0f, metrics, result); })));
+
+    Require(sceFontSetupRenderScalePixel(font, 20.0f, 20.0f) == SCE_FONT_OK);
+    Require(sceFontSetScalePixel(font, 20.0f, 20.0f) == SCE_FONT_OK);
+    const auto smaller = RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontRenderCharGlyphImageHorizontal(font, 'A', surface, 10.0f, 100.0f, metrics, result); });
+    Require(smaller.rc == SCE_FONT_OK && smaller.pixels != horizontal.pixels);
+    Require(SameImage(horizontal, RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontGlyphRenderImageHorizontal(glyph, nullptr, renderer, surface, 10.0f, 100.0f, metrics, result); })));
+    FontStyleFrame frame{};
+    Require(sceFontStyleFrameInit(&frame) == SCE_FONT_OK && sceFontStyleFrameSetScalePixel(&frame, 20.0f, 20.0f) == SCE_FONT_OK);
+    Require(SameImage(smaller, RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontGlyphRenderImageHorizontal(glyph, &frame, renderer, surface, 10.0f, 100.0f, metrics, result); })));
+    Require(SameImage(smaller, RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+        Require(sceFontRenderSurfaceSetStyleFrame(surface, &frame) == SCE_FONT_OK);
+        return sceFontGlyphRenderImageHorizontal(glyph, nullptr, renderer, surface, 10.0f, 100.0f, metrics, result);
+    })));
+    FontStyleFrame larger{};
+    Require(sceFontStyleFrameInit(&larger) == SCE_FONT_OK && sceFontStyleFrameSetScalePixel(&larger, 30.0f, 30.0f) == SCE_FONT_OK);
+    const auto surfaceLarger = RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+        Require(sceFontRenderSurfaceSetStyleFrame(surface, &larger) == SCE_FONT_OK);
+        return sceFontGlyphRenderImageHorizontal(glyph, nullptr, renderer, surface, 10.0f, 100.0f, metrics, result);
+    });
+    Require(surfaceLarger.rc == SCE_FONT_OK && surfaceLarger.pixels != smaller.pixels && surfaceLarger.pixels != horizontal.pixels);
+    Require(SameImage(surfaceLarger, RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+        Require(sceFontRenderSurfaceSetStyleFrame(surface, &larger) == SCE_FONT_OK);
+        return sceFontGlyphRenderImageHorizontal(glyph, &frame, renderer, surface, 10.0f, 100.0f, metrics, result);
+    })));
+    Require(SameImage(smaller, RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) {
+        Require(sceFontRenderSurfaceSetStyleFrame(surface, &frame) == SCE_FONT_OK);
+        return sceFontGlyphRenderImageHorizontal(glyph, &larger, renderer, surface, 10.0f, 100.0f, metrics, result);
+    })));
+    FontStyleFrame notAFrame{};
+    FontStyleFrame initialized{};
+    Require(sceFontStyleFrameInit(&initialized) == SCE_FONT_OK);
+    for (const FontStyleFrame* unscaled : {&notAFrame, &initialized}) {
+        Require(SameImage(horizontal, RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontGlyphRenderImageHorizontal(glyph, unscaled, renderer, surface, 10.0f, 100.0f, metrics, result); })));
+        Require(SameImage(written, RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontGlyphRenderImage(glyph, unscaled, renderer, surface, 10.0f, 20.0f, metrics, result); })));
+    }
+
+    Require(sceFontUnbindRenderer(font) == SCE_FONT_OK);
+    Require(RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontRenderCharGlyphImageHorizontal(font, 'A', surface, 10.0f, 100.0f, metrics, result); }).rc == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
+    Require(SameImage(horizontal, RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { return sceFontGlyphRenderImageHorizontal(glyph, nullptr, renderer, surface, 10.0f, 100.0f, metrics, result); })));
+
+    const auto filled = [](FontGlyphMetrics* metrics, FontRenderOutput* result) {
+        std::memset(metrics, 0xA5, sizeof(*metrics));
+        std::memset(result, 0xA5, sizeof(*result));
+    };
+    FontGlyphOpaque notAGlyph{};
+    for (const FontGlyph wrong : {static_cast<FontGlyph>(nullptr), &notAGlyph}) {
+        for (const auto render : {sceFontGlyphRenderImage, sceFontGlyphRenderImageHorizontal, sceFontGlyphRenderImageVertical}) {
+            Require(Cleared(RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { filled(metrics, result); return render(wrong, nullptr, renderer, surface, 10.0f, 100.0f, metrics, result); }), SCE_FONT_ERROR_INVALID_GLYPH));
+        }
+    }
+    for (const auto render : {sceFontGlyphRenderImage, sceFontGlyphRenderImageHorizontal, sceFontGlyphRenderImageVertical}) {
+        Require(Cleared(RenderInto([&](FontRenderSurface*, FontGlyphMetrics* metrics, FontRenderOutput* result) { filled(metrics, result); return render(glyph, nullptr, renderer, nullptr, 10.0f, 100.0f, metrics, result); }), SCE_FONT_ERROR_INVALID_PARAMETER));
+        Require(Cleared(RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics*, FontRenderOutput* result) { std::memset(result, 0xA5, sizeof(*result)); return render(glyph, nullptr, renderer, surface, 10.0f, 100.0f, nullptr, result); }), SCE_FONT_ERROR_INVALID_PARAMETER));
+        Require(Cleared(RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput*) { std::memset(metrics, 0xA5, sizeof(*metrics)); return render(glyph, nullptr, renderer, surface, 10.0f, 100.0f, metrics, nullptr); }), SCE_FONT_ERROR_INVALID_PARAMETER));
+        Require(Cleared(RenderInto([&](FontRenderSurface* surface, FontGlyphMetrics* metrics, FontRenderOutput* result) { filled(metrics, result); return render(glyph, nullptr, nullptr, surface, 10.0f, 100.0f, metrics, result); }), SCE_FONT_ERROR_INVALID_RENDERER));
+    }
+    Require(sceFontDeleteGlyph(nullptr, &glyph) == SCE_FONT_OK && glyph == nullptr);
+}
+
 int main() {
     constexpr std::uint32_t EuropeanLight = 0x180700C3u;
     constexpr std::uint32_t EuropeanBold = 0x180700C7u;
@@ -310,6 +425,7 @@ int main() {
     Require(sceFontGetKerning(mixed, 'A', 0x4E00, &kerning) == SCE_FONT_OK && kerning.offsetX == 0.0f);
     FontRenderer renderer = nullptr;
     Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), &renderer) == SCE_FONT_OK);
+    CheckGlyphImages(memoryFont, renderer);
     Require(sceFontBindRenderer(mixed, renderer) == SCE_FONT_OK);
     Require(sceFontSetupRenderScalePixel(mixed, 100.0f, 100.0f) == SCE_FONT_OK);
     float advance = 0.0f;
@@ -342,6 +458,20 @@ int main() {
     Require(sceFontRenderCharGlyphImageHorizontal(mixed, 'A', &measuring, 10.0f, 100.0f, &measured, &measuredResult) == SCE_FONT_ERROR_NO_SUPPORT_SURFACE);
     Require(sceFontUnbindRenderer(mixed) == SCE_FONT_OK);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK);
+
+    const auto hangulFonts = root / "hangul-fonts";
+    std::filesystem::create_directories(hangulFonts);
+    for (const auto* name : {"SST-Light.otf", "SST-Roman.otf", "SST-Bold.otf", "SSTJpPro-Regular.otf"}) {
+        WriteFile(hangulFonts / name, SquareGlyphFont('A', 600));
+    }
+    WriteFile(hangulFonts / "SCEPS4Yoongd-Light.otf", SquareGlyphFont(0xAC00, 400));
+    WriteFile(hangulFonts / "SCEPS4Yoongd-Medium.otf", SquareGlyphFont(0xAC00, 650));
+    WriteFile(hangulFonts / "SCEPS4Yoongd-Bold.otf", SquareGlyphFont(0xAC00, 800));
+    SetFontDirectory(hangulFonts);
+    Require(SetAdvanceOf(library, 0x1A072543u, 0xAC00) == 40.0f);
+    Require(SetAdvanceOf(library, 0x1A082543u, 0xAC00) == 40.0f);
+    Require(SetAdvanceOf(library, 0x18072444u, 0xAC00) == 65.0f);
+    Require(SetAdvanceOf(library, 0x18072447u, 0xAC00) == 80.0f);
 
     for (FontHandle handle : {font, instance, substitute, memoryFont, mixed, mixedInstance}) Require(sceFontCloseFont(handle) == SCE_FONT_OK);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
