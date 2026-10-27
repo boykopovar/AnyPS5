@@ -5,12 +5,6 @@
 
 extern "C" {
 
-int APS5_VABI sceLibcInternalUnknown_YLEc5sPn1Rg_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("YLEc5sPn1Rg", sceLibcInternalUnknown_YLEc5sPn1Rg_nid_no_patch);
-
 int APS5_VABI sceLibcInternalUnknown_77uWF3Z2q90_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -112,12 +106,6 @@ int APS5_VABI sceLibcInternalUnknown_SkRR6WxCTcE_nid_no_patch() {
     return 0;
 }
 APS5_EXPORT("SkRR6WxCTcE", sceLibcInternalUnknown_SkRR6WxCTcE_nid_no_patch);
-
-int APS5_VABI sceLibcInternalUnknown_OCbJ96N1utA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("OCbJ96N1utA", sceLibcInternalUnknown_OCbJ96N1utA_nid_no_patch);
 
 int APS5_VABI sceLibcInternalUnknown_0JidN6q9yGo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
