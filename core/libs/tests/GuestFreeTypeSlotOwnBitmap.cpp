@@ -1,4 +1,5 @@
 #include "FontFixture.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -12,11 +13,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec*, std::uint32_t, std::int32_t);
-int APS5_VABI FT_GlyphSlot_Own_Bitmap_nid_postfix(GuestGlyphSlotRec*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {

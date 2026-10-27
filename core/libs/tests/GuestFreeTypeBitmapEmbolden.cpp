@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -12,12 +13,6 @@
 #include <stdexcept>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Bitmap_Copy_nid_postfix(GuestLibrary*, const GuestBitmap*, GuestBitmap*);
-int APS5_VABI FT_Bitmap_Embolden_nid_postfix(GuestLibrary*, GuestBitmap*, std::int64_t, std::int64_t);
-int APS5_VABI FT_Bitmap_Done_nid_postfix(GuestLibrary*, GuestBitmap*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
