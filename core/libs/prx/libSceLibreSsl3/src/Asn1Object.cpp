@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 struct Asn1Object_nid_no_patch {
@@ -19,8 +20,6 @@ static_assert(offsetof(Asn1Object_nid_no_patch, data) == 24);
 static_assert(offsetof(Asn1Object_nid_no_patch, flags) == 32);
 
 extern "C" {
-void APS5_VABI free_nid_postfix(void* pointer);
-int APS5_VABI memset_s_nid_postfix(void* destination, std::size_t destinationSize, int value, std::size_t count);
 
 void APS5_VABI ASN1_OBJECT_free_nid_postfix(Asn1Object_nid_no_patch* object) {
     if (!object) return;

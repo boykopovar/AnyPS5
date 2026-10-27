@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 struct TestAsn1Object {
@@ -13,12 +15,6 @@ struct TestAsn1Object {
     const unsigned char* data;
     int flags;
 };
-
-extern "C" {
-void APS5_VABI ASN1_OBJECT_free_nid_postfix(void* object);
-void APS5_VABI free_nid_postfix(void* pointer);
-int APS5_VABI memset_s_nid_postfix(void* destination, std::size_t destinationSize, int value, std::size_t count);
-}
 
 namespace {
 
