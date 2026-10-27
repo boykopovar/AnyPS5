@@ -1566,7 +1566,15 @@ std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
             EmitIfCondition(state, poisoned, [&] {
                 const auto record = Binary(state, spv::OpIAdd, u32, ConstantU32(state, records), Binary(state, spv::OpIMul, u32, Binary(state, spv::OpISub, u32, flag, ConstantU32(state, 1u)), ConstantU32(state, 3u)));
                 const auto stage = ConstantU32(state, static_cast<std::uint32_t>(resources.stage) << BdaAbi::SrtGuardStageShift);
-                state.module.AddFunction(spv::OpAtomicStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, BdaAbi::SrtGuardWord)), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), Binary(state, spv::OpBitwiseOr, u32, record, stage));
+                const auto word = BdaWord(state, state.faultBufferVariable, ConstantU32(state, BdaAbi::SrtGuardWord));
+                const auto scope = ConstantU32(state, spv::ScopeDevice);
+                const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
+                const auto value = Binary(state, spv::OpBitwiseOr, u32, record, stage);
+                if (state.bdaStopsInvocations) {
+                    state.module.AddFunction(spv::OpAtomicStore, word, scope, relaxed, value);
+                } else {
+                    state.module.AddFunction(spv::OpAtomicCompareExchange, u32, state.module.AllocateId(), word, scope, relaxed, relaxed, value, ConstantU32(state, 0u));
+                }
             });
             StopBdaInvocationIf(state, poisoned);
         }
