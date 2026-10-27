@@ -233,23 +233,11 @@ int APS5_VABI sceLibcInternalUnknown_fzgkSILqRHE_nid_no_patch() {
 }
 APS5_EXPORT("fzgkSILqRHE", sceLibcInternalUnknown_fzgkSILqRHE_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown_4nRn_exUJAM_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("4nRn+exUJAM", sceLibcInternalUnknown_4nRn_exUJAM_nid_no_patch);
-
 int APS5_VABI sceLibcInternalUnknown_RlewTNtWEcg_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 APS5_EXPORT("RlewTNtWEcg", sceLibcInternalUnknown_RlewTNtWEcg_nid_no_patch);
-
-int APS5_VABI sceLibcInternalUnknown_GUuiOcxL_r0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("GUuiOcxL-r0", sceLibcInternalUnknown_GUuiOcxL_r0_nid_no_patch);
 
 int APS5_VABI sceLibcInternalUnknown_FHJlhz0wVts_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -263,35 +251,17 @@ int APS5_VABI sceLibcInternalUnknown_JZ9gGlJ22hg_nid_no_patch() {
 }
 APS5_EXPORT("JZ9gGlJ22hg", sceLibcInternalUnknown_JZ9gGlJ22hg_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown_w3gRFGRjpZ4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("w3gRFGRjpZ4", sceLibcInternalUnknown_w3gRFGRjpZ4_nid_no_patch);
-
 int APS5_VABI sceLibcInternalUnknown_waexoHL0Bf4_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 APS5_EXPORT("waexoHL0Bf4", sceLibcInternalUnknown_waexoHL0Bf4_nid_no_patch);
 
-int APS5_VABI sceLibcInternalUnknown_OmDPJeJXkBM_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("OmDPJeJXkBM", sceLibcInternalUnknown_OmDPJeJXkBM_nid_no_patch);
-
 int APS5_VABI sceLibcInternalUnknown_43PYQ2fMT8k_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 APS5_EXPORT("43PYQ2fMT8k", sceLibcInternalUnknown_43PYQ2fMT8k_nid_no_patch);
-
-int APS5_VABI sceLibcInternalUnknown_9iCP_hTL5z8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-APS5_EXPORT("9iCP-hTL5z8", sceLibcInternalUnknown_9iCP_hTL5z8_nid_no_patch);
 
 int APS5_VABI sceLibcInternalUnknown_DmUIy7m0cyE_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
