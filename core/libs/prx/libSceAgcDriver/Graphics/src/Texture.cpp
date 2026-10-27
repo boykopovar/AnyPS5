@@ -6141,6 +6141,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         for (auto at = layerBegin(layer) & ~(block - 1); at < end; at += block) generations[static_cast<std::size_t>((at - spanBegin) / block)] = unitBlockGeneration(layer, at);
     }
     const auto drawn = drawnArea();
+    const bool rectStore = drawn.rect && drawOriginal == nullptr;
     std::vector<std::uint8_t> changedBlocks(spanBlocks);
     std::vector<std::uint8_t> cpuBlocks(drawn.drawn ? spanBlocks : 0);
     const bool tracked = GuestMemory::ChangedBlocks(firstStored, static_cast<std::size_t>(lastStored - firstStored), generations, changedBlocks, cpuBlocks);
@@ -6176,7 +6177,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             continue;
         }
         const bool unknown = tracked ? layerGeneration[layer] == 0 : !compared[layer];
-        if (unknown && !drawn.rect) {
+        if (unknown && !rectStore) {
             unsavedOutsideWatch = unsavedOutsideWatch || !tracked;
             keep.emplace_back(begin, end);
             continue;
@@ -6189,13 +6190,13 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             const auto index = static_cast<std::size_t>((at - spanBegin) / block);
             const bool kept = keptAtUnwatchHolds(from, layer);
             const bool written = kept || unknown || (changedBlocks[index] == GuestMemory::BlockWritten && (compared[layer] || !edge || GuestMemory::StoredOver(from, static_cast<std::size_t>(to - from), unitBlockGeneration(layer, at))) && !unchangedSinceBaseline(from, to));
-            if (written && (!drawn.rect || (tracked && !kept && !unknown && cpuBlocks[index] == 0))) {
+            if (written && (!rectStore || (tracked && !kept && !unknown && cpuBlocks[index] == 0))) {
                 skippedAny = true;
                 skippedLayer[layer] = true;
                 ++skipped;
                 continue;
             }
-            if (written && drawn.rect) skippedLayer[layer] = true;
+            if (written && rectStore) skippedLayer[layer] = true;
             if (!keep.empty() && keep.back().second == from) keep.back().second = to;
             else keep.emplace_back(from, to);
         }
@@ -6210,10 +6211,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         std::fprintf(stderr, "[flush] image 0x%llx+0x%llx keeps %zu CPU-written 64 KiB blocks (first stored byte at +0x%llx, %zu ranges stored, generation %llu)\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), skipped, static_cast<unsigned long long>(first - descriptor.baseAddress), keep.size(), static_cast<unsigned long long>(generation));
     }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
-    if (drawn.rect) spans = drawnSpans(drawn, keep);
-    const auto& stores = drawn.rect ? spans : keep;
-    const auto stampBegin = drawn.rect && !stores.empty() ? stores.front().first : firstStored;
-    const auto stampEnd = drawn.rect && !stores.empty() ? stores.back().second : lastStored;
+    if (rectStore) spans = drawnSpans(drawn, keep);
+    const auto& stores = rectStore ? spans : keep;
+    const auto stampBegin = rectStore && !stores.empty() ? stores.front().first : firstStored;
+    const auto stampEnd = rectStore && !stores.empty() ? stores.back().second : lastStored;
     // Taken before this write-back stamps anything (see advanceAdjacent), with the 64 KiB block span
     // its stamps cover.
     const auto firstBlock = stampBegin / block;
@@ -6286,7 +6287,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             ++Profile().storageDirectWriteBacks;
             return;
         }
-        if (drawn.rect) {
+        if (rectStore) {
             PublishShadow(stampBegin, static_cast<std::size_t>(stampEnd - stampBegin), PublishScope::PartialUnits, PublishReason::Upload);
             const auto storedBytes = storeDrawnRect(drawn, segments, stores, saveUnits);
             countStorageWriteBack(storedBytes, true, true);
@@ -6496,7 +6497,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     std::vector<bool> unsaved = layerOriginal;
     unsaved.flip();
     for (const auto& [begin, end] : unitRuns(unsaved)) {
-        if (drawn.rect) {
+        if (rectStore) {
             GuestMemory::ReadCommitted(descriptor.baseAddress + begin, std::span(original).subspan(static_cast<std::size_t>(begin), static_cast<std::size_t>(end - begin)));
             continue;
         }
@@ -6569,7 +6570,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     APS5_LOG_CHARS_OUT_DEBUG("StorageTexture writeback done");
     std::uint64_t storedBytes = 0;
     for (const auto& [from, to] : stores) storedBytes += to - from;
-    countStorageWriteBack(drawn.rect ? storedBytes : guestBytes, false, drawn.drawn);
+    countStorageWriteBack(rectStore ? storedBytes : guestBytes, false, drawn.drawn);
     if (profile) Profile().storageGpu += timer.lap();
     if (dump) {
         char name[64];
