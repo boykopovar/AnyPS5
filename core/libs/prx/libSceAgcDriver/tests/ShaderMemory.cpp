@@ -1706,7 +1706,7 @@ void verifyTypeZeroImageMaterialization() {
     gateSecondWaitOnSrtRoot = false;
 }
 
-void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t address, const char* message) {
+void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t address, const char* message, std::ptrdiff_t optionalImages = 2) {
     using namespace ShaderRecompiler;
     constexpr std::uint32_t Format8888UNorm = 56;
     constexpr std::uint32_t Type2D = 9;
@@ -1745,7 +1745,7 @@ void CompileDescriptorWeb(const std::vector<std::uint32_t>& code, std::uint32_t 
     request.target.fragmentShaderBarycentricEnabled = false;
     request.layout.pushConstantSizeBytes = 128;
     const auto plan = GetResourcePlan(request);
-    require(plan->info.usesFaultBuffer && plan->info.images.size() >= 2u && std::ranges::all_of(plan->info.images, [](const ImageResource& image) { return image.optionalDescriptor; }), message);
+    require(plan->info.usesFaultBuffer && plan->info.images.size() >= 2u && std::ranges::count_if(plan->info.images, [](const ImageResource& image) { return image.optionalDescriptor; }) >= optionalImages, message);
     AgcDriver::ShaderMemory memory({});
     const auto capture = memory.Capture(request);
     const auto memoryRegions = memory.Regions();
@@ -1761,6 +1761,16 @@ void verifyDescriptorWebLaneIndexFold() {
         0xbf820009u, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0xd7650009u, 0x000100c1u, 0x7e100502u, 0x7e120503u,
         0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u, 0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
     CompileDescriptorWeb(code, 0x24000u, "descriptor web lane index: the path whose T# holds the lane index was not folded beside the two T#s into faulting arms");
+}
+
+void verifyDescriptorWebTexelFold() {
+    const std::vector<std::uint32_t> code{
+        0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xf0000108u, 0x00020900u, 0xbf8c3f70u,
+        0xbf068010u, 0xbf850005u, 0xbf068110u, 0xbf85000cu, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu,
+        0x7e0e020du, 0x7e10020eu, 0x7e12020fu, 0xbf820007u, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e100502u,
+        0x7e120503u, 0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u, 0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u,
+        0xbf810000u};
+    CompileDescriptorWeb(code, 0x26000u, "descriptor web texel: the path whose T# holds a texel from an image read was not folded beside the read's T# into a faulting arm", 1);
 }
 
 void verifyDescriptorWebSelectOrder() {
@@ -9651,6 +9661,7 @@ int main(int argc, char** argv) {
         verifyTypeZeroImageMaterialization();
         verifyOutOfRangeConstantReads();
         verifyDescriptorWebLaneIndexFold();
+        verifyDescriptorWebTexelFold();
         verifyDescriptorWebSelectOrder();
         verifySignedMinimum();
         verifyMayEvaluate();

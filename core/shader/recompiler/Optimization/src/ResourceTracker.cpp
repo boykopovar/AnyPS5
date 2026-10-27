@@ -1,4 +1,5 @@
 #include "Optimization/ResourceTracker.hpp"
+#include "Optimization/DeadCodeEliminator.hpp"
 #include "Optimization/SrtWalker.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
@@ -120,6 +121,9 @@ public:
             fail("SRT plan is not ready");
         }
         SplitDescriptorPhis();
+        if (m_foldedWeb) {
+            DeadCodeEliminator{}.Eliminate(m_program);
+        }
         PlanTableColumns();
         std::unordered_map<const IrBlock*, std::uint32_t> blockIndices;
         for (const IrBlock* block : m_program.BlockOrder()) {
@@ -1691,6 +1695,7 @@ private:
         }
 
         if (web.foldedValue) {
+            m_foldedWeb = true;
             const std::array<IrValue*, 2> compare {selector, &m_builder.Constant(DescriptorWeb::foldedArm)};
             IrValue* folded = EmitBefore(inst, IrOpcode::IEqual32, IrType::Bool, compare);
             EmitDescriptorFault(inst, *folded, m_builder.Constant(0u), m_builder.Constant(0u));
@@ -2448,6 +2453,7 @@ private:
     };
     std::vector<EdgeSelectorEntry> m_edgeSelectors;
     std::unordered_map<const IrValue*, std::string> m_splitFailures;
+    bool m_foldedWeb = false;
 };
 
 }
