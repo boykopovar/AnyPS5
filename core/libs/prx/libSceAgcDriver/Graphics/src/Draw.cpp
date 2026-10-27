@@ -516,6 +516,7 @@ bool materializeCmaskClearOf(const Context& context, const ColorTarget& color, c
 
 bool materializeCmaskClear(const Context& context, const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
     if (color.cmaskAddress == 0 || color.arrayLastSlice == 0) return materializeCmaskClearOf(context, color, resident);
+    Require(color.samples == 1, "CMASK fast clears of a multisampled array or layered color target are unsupported");
     const auto sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
     bool filled = false;
     for (std::uint32_t layer = 0; layer < color.layers; ++layer) {
@@ -525,6 +526,7 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
         one.arraySlice += layer;
         if (ColorTileModeIsXor(color.tileMode)) one.pipeBankXor ^= ColorSliceXor(color, color.arraySlice + layer);
         one.cmaskAddress += layer * color.cmaskSliceBytes;
+        one.cmaskSlice = color.cmaskSlice + layer;
         filled = materializeCmaskClearOf(context, one, resident) || filled;
     }
     return filled;

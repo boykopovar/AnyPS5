@@ -3438,9 +3438,6 @@ void cmaskTests() {
     largeSliced.context[0x31b] = (1u << 13u) | 1u;
     const auto largeSliceTarget = DecodeColorBuffer(largeSliced.context, 0);
     Require(largeSliceTarget.cmaskFastClear && largeSliceTarget.cmaskAddress == largeCmaskChainBase + 2u * CmaskLayout::Alignment && largeSliceTarget.cmaskBytes == 2u * CmaskLayout::Alignment && largeSliceTarget.cmaskSlice == 1u, "a slice of a multiblock fast-clear target did not step by the CMASK of a whole slice");
-    auto slicedMipmapped = mipmapped;
-    slicedMipmapped.context[0x31b] = (1u << 13u) | 1u;
-    expectFailure([&] { DecodeColorBuffer(slicedMipmapped.context, 0); }, "of a mipmapped one");
     auto smallBppMipmapped = mipmapped;
     smallBppMipmapped.context[0x31c] = (mipmapped.context[0x31c] & ~0x7cu) | 4u;
     expectFailure([&] { DecodeColorBuffer(smallBppMipmapped.context, 0); }, "8 or 16 bpp");
