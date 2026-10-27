@@ -3,6 +3,7 @@
 
 #include FT_OUTLINE_H
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -91,10 +92,14 @@ static void CompareNegativePitchBitmap(GuestLibrary& library, FT_Library native,
     FT_Outline expected{1, count, nativePoints.data(), tags.data(), contours.data(), 0};
     const std::int32_t pitch = mode == FT_PIXEL_MODE_MONO ? 2 : 12;
     constexpr std::uint32_t rows = 12;
-    std::vector<unsigned char> guestPixels(static_cast<std::size_t>(pitch) * rows, 0);
+    constexpr std::size_t guard = 16;
+    const std::size_t size = static_cast<std::size_t>(pitch) * rows;
+    std::vector<unsigned char> guestPixels(guard + size + guard, 0xA5);
+    std::fill(guestPixels.begin() + guard, guestPixels.begin() + guard + size, 0);
     std::vector<unsigned char> nativePixels = guestPixels;
-    auto* guestBuffer = guestPixels.data() + static_cast<std::size_t>(pitch) * (rows - 1);
-    auto* nativeBuffer = nativePixels.data() + static_cast<std::size_t>(pitch) * (rows - 1);
+    const std::vector<unsigned char> untouched = guestPixels;
+    auto* guestBuffer = guestPixels.data() + guard;
+    auto* nativeBuffer = nativePixels.data() + guard;
     const GuestBitmap guestBitmap{rows, 12, -pitch, guestBuffer, static_cast<std::uint16_t>(mode == FT_PIXEL_MODE_MONO ? 2 : 256), mode, 0, nullptr};
     FT_Bitmap nativeBitmap{rows, 12, -pitch, nativeBuffer, guestBitmap.num_grays, mode, 0, nullptr};
     GuestRasterParams params{};
@@ -106,6 +111,16 @@ static void CompareNegativePitchBitmap(GuestLibrary& library, FT_Library native,
     Require(FT_Outline_Render_nid_postfix(&library, &guest, &params) == FT_Outline_Render(native, &expected, &nativeParams));
     Require(guestPixels == nativePixels);
     Require(params.source == &guest);
+    const RasterTargetSpan tracked = RasterTargetSpan_nid_no_patch(guestBitmap);
+    Require(tracked.begin == guestBuffer && tracked.bytes == size);
+    bool written = false;
+    for (std::size_t index = 0; index < guestPixels.size(); ++index) {
+        if (guestPixels[index] == untouched[index]) continue;
+        written = true;
+        const unsigned char* at = guestPixels.data() + index;
+        Require(at >= tracked.begin && at < tracked.begin + tracked.bytes);
+    }
+    Require(written);
 }
 
 static void CompareSpans(GuestLibrary& library, FT_Library native, const Shape& shape, bool clip) {
