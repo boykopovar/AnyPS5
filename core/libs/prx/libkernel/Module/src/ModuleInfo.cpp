@@ -27,6 +27,7 @@
 #include <mach-o/dyld.h>
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #else
 #include <link.h>
 #endif
@@ -178,6 +179,22 @@ bool Fill(std::uintptr_t address, TInfo& info) {
         if (const auto* frames = getsectiondata(image->header, SEG_TEXT, "__eh_frame", &size); frames && size != 0) {
             info.eh_frame_addr = reinterpret_cast<std::uintptr_t>(frames);
             info.eh_frame_size = ToU32(size, "eh_frame size");
+        }
+        if (const auto* meta = getsectiondata(image->header, "__APS5DATA", "__meta", &size); meta && size >= 0x60) {
+            std::uint64_t version = 0, loadBias = 0, count = 0;
+            std::memcpy(&version, meta, sizeof(version));
+            std::memcpy(&loadBias, meta + 0x08, sizeof(loadBias));
+            std::memcpy(&count, meta + 0x58, sizeof(count));
+            if (version == 2 && count <= (size - 0x60) / sizeof(Elf64_Phdr)) {
+                for (std::uint64_t index = 0; index < count; ++index) {
+                    Elf64_Phdr header;
+                    std::memcpy(&header, meta + 0x60 + index * sizeof(header), sizeof(header));
+                    if (header.p_type != PT_GNU_EH_FRAME) continue;
+                    info.eh_frame_hdr_addr = loadBias + header.p_vaddr;
+                    info.eh_frame_hdr_size = ToU32(header.p_memsz, "eh_frame_hdr size");
+                    break;
+                }
+            }
         }
     }
     return true;
