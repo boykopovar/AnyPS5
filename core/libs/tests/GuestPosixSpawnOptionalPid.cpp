@@ -16,7 +16,12 @@ static void Require(bool condition, int line) {
 #define Check(value) Require((value), __LINE__)
 
 int main(int count, char** arguments) {
-    if (count == 2 && std::strcmp(arguments[1], "spawn-optional-pid-child") == 0) return 43;
+#ifdef _WIN32
+    constexpr int ChildArgument = 2;
+#else
+    constexpr int ChildArgument = 1;
+#endif
+    if (count == ChildArgument + 1 && std::strcmp(arguments[ChildArgument], "spawn-optional-pid-child") == 0) return 43;
     std::filesystem::create_directories("app0");
     {
         std::ofstream image("app0/eboot.bin");
