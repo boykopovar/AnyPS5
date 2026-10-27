@@ -22,6 +22,8 @@
 #include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgc/Command/include/Memory.hpp"
+#include "prx/libSceAgc/Acb/include/Memory.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/RegisterDefaults.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
@@ -688,6 +690,37 @@ void testAtomicGds() {
     }
 }
 
+void testCopyDataAndComputeEvents() {
+    Storage graphics;
+    const auto* copy = sceAgcDcbCopyData(&graphics.buffer, 4, 1, 0x1122334455ull, 0xb, 2, 0x12345678u, 0, 1);
+    const std::array<std::uint32_t, 6> graphicsExpected{0xc0044000u, 0x42104205u, 0x12345678u, 0, 0x22334455u, 0x11u};
+    check(copy == graphics.words.data() && std::equal(graphicsExpected.begin(), graphicsExpected.end(), graphics.words.begin()), "graphics COPY_DATA packet mismatch");
+    Storage wide;
+    sceAgcDcbCopyData(&wide.buffer, 4, 0, 0x1000, 0xa, 0, 0x100000000ull, 1, 0);
+    check(wide.words[1] == 0x00010205u && wide.words[2] == 0 && wide.words[3] == 1, "a 64-bit immediate COPY_DATA lost its high word");
+    Storage compute;
+    sceAgcAcbCopyData(&compute.buffer, 2, 0, 0x4000, 5, 0, 7, 0, 0);
+    const std::array<std::uint32_t, 6> computeExpected{0xc0044000u, 0x205u, 7, 0, 0x4000u, 0};
+    check(std::equal(computeExpected.begin(), computeExpected.end(), compute.words.begin()), "compute COPY_DATA packet mismatch");
+    Storage rejected;
+    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 0, 0x1000, 0xa, 0, 0x100000000ull, 0, 0); });
+    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 4, 0x1000, 0xa, 0, 1, 0, 0); });
+    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 0, 0x1000, 0xa, 4, 1, 0, 0); });
+    expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 2, 0); });
+    expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 0, 2); });
+    check(rejected.words[0] == 0, "a rejected COPY_DATA wrote a packet");
+    check(sceAgcDcbCopyDataGetSize() == 24 && sceAgcAcbCopyDataGetSize() == 24, "COPY_DATA packet sizes");
+    Storage events;
+    sceAgcAcbEventWrite(&events.buffer, 7, nullptr);
+    sceAgcAcbEventWrite(&events.buffer, 0x16, nullptr);
+    const std::array<std::uint32_t, 4> eventsExpected{0xc0004600u, 0x407u, 0xc0004600u, 0x16u};
+    check(std::equal(eventsExpected.begin(), eventsExpected.end(), events.words.begin()), "compute EVENT_WRITE packet mismatch");
+    Storage refused;
+    expectFailure([&] { sceAgcAcbEventWrite(&refused.buffer, 0x40, nullptr); });
+    expectFailure([&] { sceAgcAcbEventWrite(&refused.buffer, 7, reinterpret_cast<const volatile void*>(0x1000)); });
+    check(refused.words[0] == 0 && sceAgcAcbEventWriteGetSize(7) == 8, "a rejected compute EVENT_WRITE wrote a packet or the size differs");
+}
+
 void testDebugRaiseException() {
     int result = -1;
     try {
@@ -871,6 +904,7 @@ int main(int argc, char** argv) {
         testMemory();
         testAtomicGds();
         testDebugRaiseException();
+        testCopyDataAndComputeEvents();
         testDefaults();
         testDefaultsTypes();
         LibcRunShutdown_nid_postfix();
