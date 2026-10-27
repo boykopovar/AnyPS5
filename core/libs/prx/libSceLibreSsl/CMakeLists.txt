@@ -189,3 +189,32 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 endif()
+
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjectTable.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjectText.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_object_text_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ObjectText.cpp)
+    target_include_directories(guest_libressl_object_text_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_object_text_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_object_text_tests)
+    add_test(NAME guest_libressl_object_text COMMAND guest_libressl_object_text_tests)
+    set_tests_properties(guest_libressl_object_text PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_object_text PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_object_allocation_tests
+        tests/ObjectTextAllocation.cpp src/ObjectText.cpp src/ObjectTable.cpp src/Error.cpp)
+    target_include_directories(guest_libressl_object_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_object_allocation_tests PRIVATE libc)
+    configure_windows_unwind(guest_libressl_object_allocation_tests)
+    add_test(NAME guest_libressl_object_allocation COMMAND guest_libressl_object_allocation_tests)
+    set_tests_properties(guest_libressl_object_allocation PROPERTIES TIMEOUT 8)
+    if(WIN32)
+        set_tests_properties(guest_libressl_object_allocation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

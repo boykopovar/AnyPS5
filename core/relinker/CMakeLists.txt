@@ -152,6 +152,15 @@ target_link_libraries(relinker PRIVATE relinker_core)
 target_include_directories(relinker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
 set_target_properties(relinker PROPERTIES CXX_EXTENSIONS OFF)
 
+find_package(Git QUIET)
+set(relinkerRevisionHeader ${CMAKE_CURRENT_BINARY_DIR}/RelinkerRevision.hpp)
+add_custom_target(relinker_revision
+    COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${relinkerRevisionHeader} -P ${CMAKE_CURRENT_SOURCE_DIR}/revision.cmake
+    BYPRODUCTS ${relinkerRevisionHeader}
+    VERBATIM)
+add_dependencies(relinker relinker_revision)
+target_include_directories(relinker PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
 if(BUILD_TESTING AND WIN32)
     add_test_executable(windows_guest_export_alias_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/WindowsExportAliasTests.cpp)
     target_link_libraries(windows_guest_export_alias_tests PRIVATE relinker_core)

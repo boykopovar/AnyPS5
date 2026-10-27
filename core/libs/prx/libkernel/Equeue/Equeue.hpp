@@ -6,6 +6,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -115,7 +116,9 @@ private:
 
     std::list<KernelEqueueEvent> m_events;
     std::vector<std::uintptr_t> m_pollers;
+    std::vector<int> m_measuring;
     std::mutex m_mutex;
+    std::condition_variable m_measured;
     TimedWait::Condition m_cond;
     std::string m_name;
     KernelEqueue m_handle;
