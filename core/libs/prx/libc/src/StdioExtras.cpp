@@ -81,14 +81,16 @@ int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* forma
     std::abort();
 }
 
+extern "C" FileStream* __stderrp_nid_postfix;
+
 [[noreturn]] void APS5_VABI _ZSt14_Atomic_assertPKcS0__nid_postfix(const char* expression, const char* function) {
-    std::fputs(expression ? expression : "", stderr);
+    fputs_nid_postfix(expression, __stderrp_nid_postfix);
     if (function) {
-        std::fputs(" in function ", stderr);
-        std::fputs(function, stderr);
+        fputs_nid_postfix(" in function ", __stderrp_nid_postfix);
+        fputs_nid_postfix(function, __stderrp_nid_postfix);
     }
-    std::fputs("\n", stderr);
-    std::fflush(stderr);
+    fputs_nid_postfix("\n", __stderrp_nid_postfix);
+    fflush_nid_postfix(__stderrp_nid_postfix);
     std::abort();
 }
 
