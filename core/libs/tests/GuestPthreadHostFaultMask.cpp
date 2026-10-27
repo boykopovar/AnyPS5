@@ -1,12 +1,8 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <csignal>
 #include <cstdlib>
 #include <pthread.h>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-}
 
 static constexpr int FaultSignals[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP};
 static void Require(bool value) { if (!value) std::abort(); }
