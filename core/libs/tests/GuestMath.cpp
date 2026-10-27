@@ -902,6 +902,26 @@ static void CheckAcoshDomainErrno() {
     }
 }
 
+static void CheckAcoshNaNInputs() {
+    constexpr int sentinel = 1234;
+    // msun's quiet NaNs pass through without errno or FE_INVALID, its signalling NaNs come back quieted with FE_INVALID; neither touches errno.
+    constexpr std::uint64_t cases[][2] = {
+        {0xfff8000000000000ull, 0xfff8000000000000ull}, {0x7ff8000000000000ull, 0x7ff8000000000000ull}, {0xfff8000000000123ull, 0xfff8000000000123ull},
+        {0x7ff4000000000000ull, 0x7ffc000000000000ull}, {0xfff4000000000000ull, 0xfffc000000000000ull},
+    };
+    for (const auto& [input, expected] : cases) {
+        const bool signalling = (input & 0x0008000000000000ull) == 0;
+        errno = sentinel;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        const double result = acosh_nid_postfix(std::bit_cast<double>(input));
+        const bool invalid = std::fetestexcept(FE_INVALID) != 0;
+        if (std::bit_cast<std::uint64_t>(result) != expected || errno != sentinel || invalid != signalling) {
+            std::fprintf(stderr, "Guest acosh NaN failed for %016llx: got %016llx, expected %016llx, errno %d, FE_INVALID %d, expected %d\n", static_cast<unsigned long long>(input), static_cast<unsigned long long>(std::bit_cast<std::uint64_t>(result)), static_cast<unsigned long long>(expected), errno, invalid, signalling);
+            std::abort();
+        }
+    }
+}
+
 static void CheckRoundingNaNConsoleBits() {
     constexpr std::uint64_t cases[][2] = {
         {0x7ff0000000000001ull, 0x7ff8000000000001ull}, {0xfff4000000000123ull, 0xfffc000000000123ull}, {0x7ff8000000000456ull, 0x7ff8000000000456ull},
@@ -2278,6 +2298,7 @@ int main() {
     CheckAcoshMsunBits();
     CheckAcoshLargeArguments();
     CheckAcoshDomainErrno();
+    CheckAcoshNaNInputs();
     CheckRoundingNaNConsoleBits();
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});

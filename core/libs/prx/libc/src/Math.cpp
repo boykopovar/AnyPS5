@@ -1133,7 +1133,7 @@ double APS5_VABI acosh_nid_postfix(double x) {
     const std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
     const std::uint32_t lx = static_cast<std::uint32_t>(bits);
     if (hx < 0x3ff00000) {
-        _Feraise_nid_postfix(0x01);
+        if (!std::isnan(x)) _Feraise_nid_postfix(0x01);
         return (x - x) / (x - x);
     }
     if (hx >= 0x41b00000) {
