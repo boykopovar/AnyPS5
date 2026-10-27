@@ -287,6 +287,28 @@ def unwrap(path, output, verbose=False):
                             "vaddr": header["vaddr"], "align": header["align"]})
 
     regions.sort(key=lambda region: region["old"])
+
+    def output_region(header):
+        host = header if header["type"] == PT_LOAD else header["host"]
+        region = load_regions.get(host["index"]) if host is not None else None
+        return region if region is not None else region_for(header["source"], header["size"])
+
+    for header in headers:
+        if header["size"] == 0 and (header["type"] == PT_LOAD or header["source"] == 0):
+            continue
+        region = output_region(header)
+        alignment = header["align"]
+        if region is None or alignment <= 1 or alignment & (alignment - 1):
+            continue
+        current = region["align"]
+        current = current if current and (current & (current - 1)) == 0 else 1
+        address = header["vaddr"] - (header["source"] - region["old"])
+        if (address - region["vaddr"]) % min(current, alignment):
+            raise Refused("segment %d has incompatible alignment within its output region" % header["index"])
+        if alignment > current:
+            region["align"] = alignment
+            region["vaddr"] = address
+
     program_offset = struct.unpack_from("<Q", elf_header, 0x20)[0]
     cursor = max(FIRST_REGION, program_offset + len(headers) * 56)
     padding = 0
@@ -314,10 +336,7 @@ def unwrap(path, output, verbose=False):
         if header["size"] == 0 and (header["type"] == PT_LOAD or header["source"] == 0):
             header["new"] = header["vaddr"] % max(header["align"], 1) if header["type"] == PT_LOAD else 0
             continue
-        host = header if header["type"] == PT_LOAD else header["host"]
-        region = load_regions.get(host["index"]) if host is not None else None
-        if region is None:
-            region = region_for(header["source"], header["size"])
+        region = output_region(header)
         header["new"] = header["source"] if region is None else region["new"] + (header["source"] - region["old"])
         if header["new"] + header["size"] > len(result):
             raise Refused("segment %d escaped the output" % header["index"])

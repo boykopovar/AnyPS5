@@ -31,6 +31,7 @@ static constexpr int SCE_NGS2_ERROR_INVALID_PAN_PARAM = static_cast<int>(0x804A8
 static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_HANDLE = static_cast<int>(0x804A8203);
 static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_ACCESS = static_cast<int>(0x804A8351);
 static constexpr int SCE_NGS2_ERROR_NULL_PARAM_LIST = static_cast<int>(0x804A8360);
+static constexpr int SCE_NGS2_ERROR_INVALID_PARAM_ID = static_cast<int>(0x804A835A);
 static constexpr int SCE_NGS2_ERROR_INVALID_GEOM_LISTENER_ADDRESS = static_cast<int>(0x804A8461);
 static constexpr int SCE_NGS2_ERROR_INVALID_GEOM_FLAG = static_cast<int>(0x804A8463);
 static constexpr int SCE_NGS2_ERROR_INVALID_OPTION_SIZE = static_cast<int>(0x804A8013);

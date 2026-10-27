@@ -494,6 +494,138 @@ class UnwrapTest(unittest.TestCase):
         self.assertEqual(tls[2], read_only[2] + 0x80)
         self.assertEqual(tls[5], 0)
 
+    def test_contained_segments_keep_stronger_alignment_than_their_load(self):
+        payload = b"TLS template data" * 16
+        for kind in (PT_DYNAMIC, PT_TLS):
+            for size in (0, 0x20):
+                for recorded in (False, True):
+                    with self.subTest(kind=kind, size=size, recorded=recorded):
+                        segments = [(PT_LOAD, 6, 0x2000, 0x4000, len(payload), 0x100),
+                                    (kind, 4, 0x2040, 0x4040, size, PAGE)]
+                        records = [(0x800, 0x800, len(payload))] if recorded else []
+                        if recorded and size:
+                            records.append((0x100800, 0x840, size))
+                        source = 0x800 if recorded else 0x2000
+                        container = build_container(segments, records, {source: payload})
+                        result, output = self.convert(container)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        data, headers = read_program_headers(output)
+                        load, embedded = headers
+                        for header in headers:
+                            self.assertEqual(header[2] % header[7], header[3] % header[7])
+                        self.assertEqual(embedded[2] - load[2], 0x40)
+                        self.assertEqual(data[load[2]:load[2] + load[5]], payload)
+                        self.assertEqual(data[embedded[2]:embedded[2] + size], payload[0x40:0x40 + size])
+                        self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_incompatible_contained_alignment_preserves_output(self):
+        segments = [(PT_LOAD, 6, 0x2000, 0x4000, 0x100, 0x100),
+                    (PT_TLS, 4, 0x2040, 0x40C0, 0x20, PAGE)]
+        records = [(0x800, 0x800, 0x100), (0x100800, 0x840, 0x20)]
+        container = build_container(segments, records, {0x800: b"TLS data" * 32})
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        for previous in (None, b"previous output"):
+            with self.subTest(previous=previous):
+                if previous is not None:
+                    output.write_bytes(previous)
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors):
+                    self.assertEqual(unwrap_self.main([str(source), str(output)]), 2)
+                self.assertIn("segment 1 has incompatible alignment", errors.getvalue())
+                self.assertEqual(source.read_bytes(), container)
+                self.assertEqual(output.read_bytes() if output.exists() else None, previous)
+                self.assertEqual(set(Path(self.directory).iterdir()),
+                                 {source, output} if previous is not None else {source})
+
+    def test_contained_alignment_obeys_the_padding_limit(self):
+        segments = [(PT_LOAD, 6, 0x2000, 0x4000, 0x100, 0x100),
+                    (PT_TLS, 4, 0x2040, 0x4040, 0x20, PAGE)]
+        container = build_container(segments, [], {0x2000: b"TLS data" * 32})
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        output.write_bytes(b"previous output")
+
+        def allocate(value):
+            if isinstance(value, int):
+                self.assertLessEqual(value, len(container) + 0x800)
+            return bytearray(value)
+
+        with mock.patch.object(unwrap_self, "MAX_ALIGNMENT_PADDING", 0x800), \
+                mock.patch.object(unwrap_self, "bytearray", side_effect=allocate, create=True):
+            with self.assertRaisesRegex(unwrap_self.Refused, "alignment requires more than"):
+                unwrap_self.unwrap(source, output)
+        self.assertEqual(output.read_bytes(), b"previous output")
+        self.assertEqual(source.read_bytes(), container)
+
+    def test_multiple_contained_alignments_keep_a_nonzero_residue_in_either_order(self):
+        payload = b"TLS template data" * 16
+        embedded = [(PT_DYNAMIC, 4, 0x2140, 0x4140, 0x20, PAGE),
+                    (PT_TLS, 4, 0x2180, 0x4180, 0x20, 2 * PAGE)]
+        for order in (embedded, list(reversed(embedded))):
+            with self.subTest(order=order):
+                segments = [(PT_LOAD, 6, 0x2100, 0x4100, len(payload), 0x100), *order]
+                container = build_container(segments, [], {0x2100: payload})
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                self.assertEqual(headers[0][2], 0x2100)
+                for header, segment in zip(headers, segments):
+                    self.assertEqual(header[7], segment[5])
+                    self.assertEqual(header[2] % header[7], header[3] % header[7])
+                    delta = header[3] - headers[0][3]
+                    self.assertEqual(header[2] - headers[0][2], delta)
+                    self.assertEqual(data[header[2]:header[2] + header[5]], payload[delta:delta + header[5]])
+
+    def test_recorded_overlaps_use_the_same_region_for_constraints_and_output(self):
+        payload = bytes(0x30 + (index * 7) % 0x40 for index in range(0x200))
+        prefix = bytes(0x41 + index % 20 for index in range(0x50))
+        cases = [
+            ([(PT_LOAD, 5, 0x2040, 0x11040, 0xC0, PAGE),
+              (PT_LOAD, 6, 0x2000, 0x20000, 0x200, PAGE),
+              (PT_TLS, 4, 0x2120, 0x20120, 0x20, 0x100)],
+             [(0x800, 0x900, 0xC0), (0x100800, 0x800, 0x200), (0x200800, 0x920, 0x20)],
+             {0x800: payload}, [payload[0x100:0x1C0], payload, payload[0x120:0x140]]),
+            ([(PT_LOAD, 5, 0x2040, 0x11040, 0xC0, PAGE),
+              (PT_LOAD, 6, 0x2000, 0x20000, 0x100, 0x10),
+              (PT_TLS, 4, 0x2080, 0x11080, 0x20, 0x100),
+              (PT_LOAD, 4, 0x5000, 0x30000, 0x50, 0x10)],
+             [(0x800, 0x840, 0xC0), (0x100800, 0x800, 0x100),
+              (0x200800, 0x880, 0x20), (0x300800, 0x700, 0x50)],
+             {0x800: payload[:0x100], 0x700: prefix},
+             [payload[0x40:0x100], payload[:0x100], payload[0x80:0xA0], prefix]),
+        ]
+        for segments, records, payloads, expected in cases:
+            with self.subTest(segments=segments):
+                container = build_container(segments, records, payloads)
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                for header, segment, block in zip(headers, segments, expected):
+                    self.assertEqual(header[7], segment[5])
+                    self.assertEqual(header[2] % header[7], header[3] % header[7])
+                    self.assertEqual(data[header[2]:header[2] + header[5]], block)
+                self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
+    def test_inferred_overlaps_apply_stronger_alignment_to_the_host(self):
+        payload = b"overlapping load payload\0" * 16
+        segments = [(PT_LOAD, 5, 0x1000, 0x1000, 0x100, 0x100),
+                    (PT_LOAD, 6, 0x1080, 0x3080, 0x100, 0x100),
+                    (PT_TLS, 4, 0x1090, 0x3090, 0x10, PAGE)]
+        container = build_container(segments, [], {0x1000: payload})
+        result, output = self.convert(container)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        for header, segment, delta in zip(headers, segments, (0, 0x80, 0x90)):
+            self.assertEqual(header[7], segment[5])
+            self.assertEqual(header[2] % header[7], header[3] % header[7])
+            self.assertEqual(data[header[2]:header[2] + header[5]], payload[delta:delta + header[5]])
+        host, tls = headers[1:]
+        self.assertEqual(tls[2] - host[2], tls[3] - host[3])
+        self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
     def test_overlapping_load_sources_keep_each_load_alignment(self):
         payload = b"shared load payload\0" * 16
         for delta, size in ((0, len(payload)), (0, 0x80), (0x40, 0x80)):
@@ -1154,6 +1286,35 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
         self.toolchain = self.root / "toolchain"
         self.toolchain.mkdir()
         self.module = self.root / "module.self"
+
+    def test_reference_timeouts_are_bounded_before_setup(self):
+        import run_job_manager_reference
+        cases = ((None, 20), ("0.001", 0.001), ("30", 30), ("nan", None), ("NaN", None),
+                 ("-nan", None), ("inf", None), ("-inf", None), ("0", None), ("-1", None), ("30.001", None))
+        for platform in ("linux", "win32"):
+            for number, (value, expected) in enumerate(cases):
+                with self.subTest(platform=platform, value=value):
+                    output = self.root / f"artifacts-{platform}-{number}"
+                    arguments = ["run_job_manager_reference.py", "--host", "--build", str(self.build),
+                                 "--relinker", str(self.relinker), "--toolchain", str(self.toolchain),
+                                 "--output", str(output)] + ([] if value is None else [f"--timeout={value}"])
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    with mock.patch.object(sys, "argv", arguments), mock.patch.object(sys, "platform", platform), \
+                            mock.patch.object(run_job_manager_reference, "run", return_value=0) as run, \
+                            contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                        if expected is None:
+                            with self.assertRaises(SystemExit) as stopped:
+                                run_job_manager_reference.main()
+                            self.assertEqual(stopped.exception.code, 2)
+                            self.assertIn("--timeout must be greater than zero and at most 30 seconds", stderr.getvalue())
+                            self.assertEqual(stdout.getvalue(), "")
+                            self.assertFalse(output.exists())
+                            run.assert_not_called()
+                        else:
+                            self.assertEqual(run_job_manager_reference.main(), 0)
+                            run.assert_called_once()
+                            self.assertEqual(run.call_args.args[0].timeout, expected)
+                            self.assertTrue(output.is_dir())
 
     def invoke(self, output):
         import run_job_manager_reference

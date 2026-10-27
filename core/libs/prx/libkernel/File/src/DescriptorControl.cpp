@@ -45,6 +45,7 @@ constexpr int GuestEfault = 14;
 constexpr int GuestEinval = 22;
 constexpr int GuestEnotty = 25;
 constexpr int GuestEagain = 35;
+constexpr int GuestEopnotsupp = 45;
 constexpr int GuestEnolck = 77;
 constexpr int GuestEoverflow = 84;
 
@@ -489,21 +490,20 @@ FcntlArgument FcntlArgumentOf(int command) {
 
 int Fcntl(int fd, int command, std::intptr_t argument) {
     switch (command) {
-        case DuplicateCommand:
-        case DuplicateCloseOnExec: {
+        case DuplicateCommand: {
             if (fd < 0) return Fail(GuestEbadf);
             if (static_cast<int>(argument) < 0) return Fail(GuestEinval);
             if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
-            const int duplicate = DuplicateFrom(fd, static_cast<int>(argument));
-            if (duplicate >= 0 && command == DuplicateCloseOnExec) SetCloseOnExec(duplicate, true);
-            return duplicate;
+            return DuplicateFrom(fd, static_cast<int>(argument));
         }
+        case DuplicateCloseOnExec:
+            if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
+            return Fail(GuestEopnotsupp);
         case DuplicateToCommand:
-        case DuplicateToCloseOnExec: {
-            const int duplicate = dup2_nid_postfix(fd, static_cast<int>(argument));
-            if (duplicate >= 0 && command == DuplicateToCloseOnExec) SetCloseOnExec(duplicate, true);
-            return duplicate;
-        }
+            return dup2_nid_postfix(fd, static_cast<int>(argument));
+        case DuplicateToCloseOnExec:
+            if (fd < 0 || !Classify(fd, "fcntl")) return Fail(GuestEbadf);
+            return DuplicateFrom(fd, 0);
         case GetDescriptorFlags: {
             if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
             std::lock_guard lock(g_mutex);

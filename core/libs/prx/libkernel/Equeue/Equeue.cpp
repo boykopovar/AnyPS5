@@ -584,6 +584,13 @@ void KernelEqueuePrivate::RemoveDescriptorEvents(uintptr_t ident) {
     }
 }
 
+void KernelEqueuePrivate::WakeReadWaiters(uintptr_t ident) {
+    std::unique_lock lock(m_mutex);
+    if (std::any_of(m_events.begin(), m_events.end(), [ident](const KernelEqueueEvent& event) { return event.event.ident == ident && event.event.filter == EVFILT_READ; })) {
+        WakePollers();
+    }
+}
+
 KernelEqueueRef EqueuePin_nid_postfix(KernelEqueue eq) {
     if (eq == 0) {
         return {};
@@ -894,5 +901,19 @@ void EqueueDescriptorClosed(int descriptor) {
     }
     for (const auto& owner : owners) {
         owner->RemoveDescriptorEvents(static_cast<uintptr_t>(descriptor));
+    }
+}
+
+void EqueueDescriptorReadShut(int descriptor) {
+    KqueueDescriptorReadShut(descriptor);
+    std::vector<KernelEqueueRef> owners;
+    {
+        std::unique_lock lock(g_equeueMutex);
+        for (const auto& [handle, owner] : g_equeues) {
+            owners.push_back(owner);
+        }
+    }
+    for (const auto& owner : owners) {
+        owner->WakeReadWaiters(static_cast<uintptr_t>(descriptor));
     }
 }

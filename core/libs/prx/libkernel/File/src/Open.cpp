@@ -14,6 +14,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libkernel/File/include/FileLock.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
+#include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #include "prx/libkernel/File/include/HostStreams.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
@@ -32,6 +33,7 @@
 #include <io.h>
 #include <sys/stat.h>
 #include <windows.h>
+#include "prx/libc/include/WindowsDescriptor.hpp"
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     const int access = nativeFlags & (_O_RDONLY | _O_WRONLY | _O_RDWR);
@@ -54,10 +56,11 @@ static std::int64_t NativeLseek(int fd, std::int64_t offset, int whence) {
     const auto positioned = File::LockPositionedTransfer(fd);
     const auto result = File::SeekSharedMemory_nid_no_patch(fd, offset, whence);
     if (result != -2) return result;
-    const auto position = ::_lseeki64(fd, offset, whence);
-    if (position < 0 || GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(fd))) != FILE_TYPE_PIPE) return position;
-    errno = ESPIPE;
-    return -1;
+    if (GetFileType(WindowsDescriptorHandle_nid_no_patch(fd)) == FILE_TYPE_PIPE) {
+        errno = ESPIPE;
+        return -1;
+    }
+    return ::_lseeki64(fd, offset, whence);
 }
 static int NativeRead(int fd, void* buf, std::size_t n) {
     if (n > static_cast<std::size_t>(std::numeric_limits<unsigned int>::max())) {
@@ -85,6 +88,7 @@ static int NativeWrite(int fd, const void* buf, std::size_t n) {
     }
     const int result = ::_write(fd, buf, static_cast<unsigned int>(n));
     if (result < 0 && errno == ENOSPC && _doserrno == 0 && ::GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(fd))) == FILE_TYPE_PIPE) errno = EAGAIN;
+    if (result < 0 && (_doserrno == ERROR_NO_DATA || _doserrno == ERROR_BROKEN_PIPE) && ::GetFileType(reinterpret_cast<HANDLE>(::_get_osfhandle(fd))) == FILE_TYPE_PIPE) errno = EPIPE;
     return result;
 }
 extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handler(_invalid_parameter_handler);
@@ -139,6 +143,9 @@ static int MapFlags(int sceFlags) {
 #else
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/stat.h>
+#endif
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     return ::open(p.c_str(), nativeFlags, static_cast<mode_t>(mode));
 }
@@ -244,6 +251,16 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
 #endif
     }
     int fd = NativeOpen(native, MapFlags(flags), mode);
+#ifdef __APPLE__
+    if (fd >= 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == SCE_KERNEL_O_CREAT) {
+        struct stat opened{};
+        if (::fstat(fd, &opened) == 0 && S_ISDIR(opened.st_mode)) {
+            ::close(fd);
+            fd = -1;
+            errno = EISDIR;
+        }
+    }
+#endif
 #ifdef _WIN32
     if (fd < 0 && (errno != ENOENT || !native.has_filename())) {
         const int openError = errno;
@@ -316,6 +333,8 @@ int OpenInDirectory_nid_no_patch(int directory, const char* path, int flags, std
 
 int APS5_VABI sceKernelClose(int d) {
     if (File::IsHostStream(d)) return SCE_KERNEL_ERROR_EPERM;
+    int socketError = 0;
+    if (KernelCloseSocket_nid_no_patch(d, &socketError)) return socketError == 0 ? 0 : SceKernelError(socketError);
     if (GuestSockets::IsOpen(d)) return GuestSockets::Close(d) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
     EqueueDescriptorClosed(d);
 #ifdef _WIN32
@@ -469,7 +488,20 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     constexpr int GuestEperm = 1;
     std::error_code error;
-    if (std::filesystem::is_directory(std::filesystem::symlink_status(native, error))) return SceErrorFromErrno(GuestEperm);
+    if (std::filesystem::is_directory(std::filesystem::symlink_status(native, error))) {
+#ifdef _WIN32
+        const DWORD attributes = GetFileAttributesW(native.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+            std::string junctionTarget;
+            if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "unlink")) {
+                if (RemoveDirectoryW(native.c_str()) == 0) return SceErrorFromErrno(GuestEperm);
+                RecordWrittenPath_nid_no_patch(native);
+                return 0;
+            }
+        }
+#endif
+        return SceErrorFromErrno(GuestEperm);
+    }
     if (NativeUnlink(native) != 0) {
 #ifdef _WIN32
         if (NativeSymbolicLinkLoop(native.parent_path())) return SCE_KERNEL_ERROR_ELOOP;

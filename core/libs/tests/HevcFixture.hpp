@@ -3,9 +3,19 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <span>
 #include <vector>
 
 namespace HevcFixture {
+
+inline std::span<std::uint8_t> AlignedFrameStorage(std::vector<std::uint8_t>& storage, std::size_t bytes, std::size_t alignment) {
+    storage.resize(bytes + alignment);
+    void* pointer = storage.data();
+    auto space = storage.size();
+    if (!std::align(alignment, bytes, pointer, space)) throw std::bad_alloc();
+    return {static_cast<std::uint8_t*>(pointer), bytes};
+}
 
 inline constexpr std::array<std::uint8_t, 933> HevcStream{
     0x00, 0x00, 0x00, 0x01, 0x46, 0x01, 0x10, 0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff,

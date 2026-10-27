@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include <climits>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -138,6 +139,12 @@ static void CheckCount() {
     Require(Format(buffer, 16, u"a%n", nullCount) < 0, "vswprintf null %n argument");
 }
 
+static void CheckUnsignedSignFlags() {
+    char16_t buffer[32];
+    Require(swprintf_nid_postfix(buffer, 32, u"[% u|%+u|% lu|% 5u|%+x|% #o]", 7u, 7u, 7ul, 7u, 7u, 7u) == 18 &&
+        buffer == std::u16string(u"[7|7|7|    7|7|07]"), "unsigned conversions ignore the space and plus flags");
+}
+
 static void CheckGroupingFlag() {
     char16_t buffer[48];
     Require(swprintf_nid_postfix(buffer, 48, u"%'d|%'-6u|%'.2f|%'+05d|%'g", 1234567, 42u, 1234.5, 12, 1e6) == 34 &&
@@ -213,6 +220,13 @@ static void CheckSwprintf() {
     Require(swprintf_nid_postfix(wide, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
     Require(wide == std::u16string(u" wide|z  |€"), "swprintf padded output");
     Require(swprintf_nid_postfix(wide, 16, u"%q") < 0 && wide[0] == 0, "swprintf invalid conversion");
+    for (const char16_t* format : {u"%99999999999d", u"%.99999999999d", u"%4294967296s", u"%.4294967296s", u"%2147483648ls", u"%.2147483648ls"}) {
+        wide[0] = u'x';
+        Require(swprintf_nid_postfix(wide, 16, format, 7, u"a") < 0 && wide[0] == 0, "swprintf width or precision beyond int");
+    }
+    wide[0] = u'x';
+    Require(swprintf_nid_postfix(wide, 16, u"%*d", INT_MIN, 7) < 0 && wide[0] == 0, "swprintf INT_MIN width");
+    Require(swprintf_nid_postfix(wide, 16, u"%*d", -5, 7) == 5 && wide == std::u16string(u"7    "), "swprintf negative width");
 }
 
 static bool WcsftimeThrows(char16_t* buffer, const char16_t* format, const GuestTm* time) {
@@ -340,4 +354,5 @@ int main() {
     Check(u"%.1s", "\xf0\x9f\x98\x80x", u"");
     Check(u"%.3s", "\xf0\x9f\x98\x80x", u"\U0001f600x");
     CheckGroupingFlag();
+    CheckUnsignedSignFlags();
 }

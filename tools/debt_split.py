@@ -43,7 +43,8 @@ def key(kind, text):
     return debt_name(text) if kind == "entry" else None
 
 
-def relink(text, source, destination):
+
+def relink_unfenced(text, source, destination):
     def replace(match):
         target = match.group(1)
         if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:|/", target):
@@ -52,7 +53,84 @@ def relink(text, source, destination):
         resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), path)) if path else source
         moved = posixpath.relpath(resolved, posixpath.dirname(destination))
         return "](" + moved + ("#" + anchor if anchor else "") + ")"
-    return LINK.sub(replace, text)
+
+    runs = list(re.finditer(r"`+", text))
+    result = []
+    position = 0
+    index = 0
+
+    while index < len(runs):
+        opening = runs[index]
+        opening_start = opening.start()
+        delimiter = opening.group()
+
+        preceding = text[:opening_start]
+        backslashes = len(preceding) - len(preceding.rstrip("\\"))
+        if backslashes % 2:
+            opening_start += 1
+            delimiter = delimiter[1:]
+            if not delimiter:
+                index += 1
+                continue
+
+        closing_index = next(
+            (i for i in range(index + 1, len(runs))
+             if runs[i].group() == delimiter),
+            None,
+        )
+
+        if closing_index is None:
+            index += 1
+            continue
+
+        closing = runs[closing_index]
+        result.append(LINK.sub(replace, text[position:opening_start]))
+        result.append(text[opening_start:closing.end()])
+        position = closing.end()
+        index = closing_index + 1
+
+    result.append(LINK.sub(replace, text[position:]))
+    return "".join(result)
+
+def relink(text, source, destination):
+    result = []
+    outside = []
+    fence_char = None
+    fence_length = 0
+
+    def flush_outside():
+        if outside:
+            result.append(relink_unfenced(
+                "".join(outside), source, destination
+            ))
+            outside.clear()
+
+    for line in text.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)", line)
+        if marker and marker.group(1).startswith("`") and "`" in marker.group(2):
+            marker = None
+
+
+        if fence_char is None:
+            if marker:
+                flush_outside()
+                fence_char = marker.group(1)[0]
+                fence_length = len(marker.group(1))
+                result.append(line)
+            else:
+                outside.append(line)
+        else:
+            result.append(line)
+            if re.match(
+                r"^ {0,3}" + re.escape(fence_char) +
+                "{" + str(fence_length) + r",}[ \t]*$",
+                line.rstrip("\r\n"),
+            ):
+                fence_char = None
+                fence_length = 0
+
+    flush_outside()
+    return "".join(result)
 
 
 def debt_file(name):

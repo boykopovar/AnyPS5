@@ -5,12 +5,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-extern "C" {
-
-int APS5_VABI sceVoiceChatRequestAcsTts(int requestId, void* a, void* b);
-
-}
-
 static void Require(bool value, const char* what) {
     if (value) return;
     std::printf("VoiceChat: %s\n", what);

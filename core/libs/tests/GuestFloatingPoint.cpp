@@ -66,13 +66,14 @@ void CheckEnabledExceptions() {
             state.x87[1] = (state.x87[1] & ~0x3fu) | (x87 & 0x15u);
             state.sse = (state.sse & ~0x7fbfu) | 0x2000 | (sse << 7) | (sse & 0x2au);
             WriteEnvironment(state);
+            const auto written = ReadEnvironment();
             *__error_nid_postfix() = 123;
             const int enabled = fegetexcept_nid_postfix();
             const int error = *__error_nid_postfix();
             const auto after = ReadEnvironment();
             WriteEnvironment(seeded);
             Require(enabled == static_cast<int>(0x3f ^ x87), "enabled exceptions use the x87 masks independently of SSE");
-            Require(after.x87[0] == state.x87[0] && after.x87[1] == state.x87[1] && after.sse == state.sse,
+            Require(after.x87[0] == written.x87[0] && after.x87[1] == written.x87[1] && after.sse == written.sse,
                     "enabled exception query preserves control modes and flags");
             Require(error == 123, "enabled exception query preserves errno");
         }

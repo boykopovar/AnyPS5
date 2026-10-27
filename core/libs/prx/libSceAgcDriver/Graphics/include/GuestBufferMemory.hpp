@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -271,6 +272,24 @@ struct AddressCopy {
     bool overBudget = false;
 };
 std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t limit);
+
+class AddressCopyCounters {
+public:
+    struct Totals {
+        std::uint64_t bytes = 0;
+        std::uint64_t largest = 0;
+    };
+
+    static AddressCopyCounters& ThisThread();
+    static Totals Fold();
+    static std::uint64_t Limit();
+
+    void Count(std::uint64_t copied);
+
+private:
+    alignas(64) std::atomic<std::uint64_t> bytes{0};
+    std::atomic<std::uint64_t> largest{0};
+};
 
 class GuestBufferMemory {
 public:

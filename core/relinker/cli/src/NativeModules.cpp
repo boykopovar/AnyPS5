@@ -115,31 +115,9 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
     result.Directories = std::move(directories);
     result.RuntimeDirectories = std::move(runtimeDirectories);
     for (const auto& path : paths) result.Modules.push_back({path, Io::FileReader().Read(Io::Utf8Path(path))});
-    std::map<std::size_t, std::string> sonames;
-    const auto soname = [&](std::size_t index) -> const std::string& {
-        const auto [found, inserted] = sonames.try_emplace(index);
-        if (inserted) found->second = GuestImageReader().Read(result.Modules[index].Path, result.Modules[index].Bytes, true).Soname;
-        return found->second;
-    };
-    std::vector<bool> copies(result.Modules.size());
-    for (std::size_t copy = 0; copy < result.Modules.size(); ++copy) {
-        const auto& path = result.Modules[copy].Path;
-        const auto name = Io::Utf8Path(path.filename());
-        for (std::size_t original = 0; original < result.Modules.size(); ++original) {
-            const auto& kept = result.Modules[original].Path;
-            const auto prefix = Io::Utf8Path(kept.filename());
-            if (kept.parent_path() != path.parent_path() || prefix.size() >= name.size() || !name.starts_with(prefix)) continue;
-            if (soname(copy).empty() || soname(copy) != soname(original)) continue;
-            copies[copy] = true;
-            std::cout << "Skipping backup copy: " << path.lexically_relative(root).generic_string() << " (same SONAME as "
-                      << kept.lexically_relative(root).generic_string() << ")\n";
-            break;
-        }
-    }
-    std::vector<GuestModuleInput> modules;
-    for (std::size_t index = 0; index < result.Modules.size(); ++index)
-        if (!copies[index]) modules.push_back(std::move(result.Modules[index]));
-    result.Modules = std::move(modules);
+    for (const auto& [copy, kept] : RemoveBackupCopies(result.Modules))
+        std::cout << "Skipping backup copy: " << copy.lexically_relative(root).generic_string() << " (same SONAME as "
+                  << kept.lexically_relative(root).generic_string() << ")\n";
     return result;
 }
 

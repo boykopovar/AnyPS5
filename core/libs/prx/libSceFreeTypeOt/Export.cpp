@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -206,10 +207,10 @@ int APS5_VABI sceFreeTypeOtUnknown_BgUMBGvhATU_nid_no_patch() {
 }
 APS5_EXPORT("BgUMBGvhATU", sceFreeTypeOtUnknown_BgUMBGvhATU_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_0Aal_TIC4so_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtOutlineGetBBox_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("0Aal-TIC4so", sceFreeTypeOtUnknown_0Aal_TIC4so_nid_no_patch);
+APS5_EXPORT("0Aal-TIC4so", sceFreeTypeOtOutlineGetBBox_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_4RRjK_Wd1lU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -241,15 +242,15 @@ int APS5_VABI sceFreeTypeOtUnknown_0Lv6K1d47jg_nid_no_patch() {
 }
 APS5_EXPORT("0Lv6K1d47jg", sceFreeTypeOtUnknown_0Lv6K1d47jg_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_8fAMdZCnewA_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtPropertyGet_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("8fAMdZCnewA", sceFreeTypeOtUnknown_8fAMdZCnewA_nid_no_patch);
+APS5_EXPORT("8fAMdZCnewA", sceFreeTypeOtPropertyGet_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_LsB538_IPrE_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtPropertySet_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("LsB538+IPrE", sceFreeTypeOtUnknown_LsB538_IPrE_nid_no_patch);
+APS5_EXPORT("LsB538+IPrE", sceFreeTypeOtPropertySet_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_hz_J3hohXW8_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

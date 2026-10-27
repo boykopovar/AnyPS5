@@ -16,6 +16,7 @@
 #include "Optimization/SrtWalker/SrtFlatSlotClasses.hpp"
 #include "Optimization/SrtWalker/SrtTape.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "Optimization/SrtWalker.hpp"
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
@@ -4373,6 +4374,9 @@ void verifyDescriptorPhis() {
         });
     };
     require(loopImages.size() == 2u && holdsLoopImage(first) && holdsLoopImage(second), "descriptor Phi: the loop's chained T# Phis were not split into the two SRT T#s");
+    auto loopRequest = makeRequest(loopCode);
+    const auto loopPlan = GetResourcePlan(loopRequest);
+    require(std::ranges::all_of(loopPlan->info.images, [](const ImageResource& image) { return image.optionalDescriptor; }), "descriptor Phi: the arms of a descriptor web without a folded path were not planned as optional");
 
     const std::vector<std::uint32_t> sequentialCode{0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0xfa000030u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
     auto sequential = makeRequest(sequentialCode);
@@ -4404,14 +4408,15 @@ void verifyDescriptorPhis() {
         code.insert(code.begin() + 8, words);
         return code;
     };
-    const std::array<std::pair<std::vector<std::uint32_t>, const char*>, 3> invalidEntries{{
-        {entryWrites({0xbe8e1f00u}), "descriptor Phi: a T# holding the program counter was accepted"},
-        {entryWrites({0xbe8e037eu}), "descriptor Phi: a T# holding EXEC was accepted"},
-        {entryWrites({0x7d840080u, 0xbe8e036au}), "descriptor Phi: a T# holding a compare mask was accepted"},
+    const std::array<std::pair<std::vector<std::uint32_t>, const char*>, 3> controlEntries{{
+        {entryWrites({0xbe8e1f00u}), "descriptor Phi: a loop entry whose T# registers hold the program counter was not folded onto the loop's two SRT T#s with a fault"},
+        {entryWrites({0xbe8e037eu}), "descriptor Phi: a loop entry whose T# registers hold EXEC was not folded onto the loop's two SRT T#s with a fault"},
+        {entryWrites({0x7d840080u, 0xbe8e036au}), "descriptor Phi: a loop entry whose T# registers hold a compare mask was not folded onto the loop's two SRT T#s with a fault"},
     }};
-    for (const auto& [code, message] : invalidEntries) {
+    for (const auto& [code, message] : controlEntries) {
         auto request = makeRequest(code);
-        expectFailure([&] { static_cast<void>(GetResourcePlan(request)); }, "GetImageResource dword 0 is not a valid runtime value", message);
+        const auto plan = GetResourcePlan(request);
+        require(plan->info.images.size() == 2u && plan->info.usesFaultBuffer, message);
     }
     auto unwritten = loopCode;
     unwritten[4] = 0xf4080200u;
@@ -4436,6 +4441,7 @@ void verifyDescriptorPhis() {
     };
     require(planImages(distinctLoads(63u)) == 64u, "descriptor Phi: 64 distinct T#s were not given one image each");
     expectFailure([&] { static_cast<void>(planImages(distinctLoads(64u))); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: more than 64 distinct T#s were accepted");
+    expectFailure([&] { static_cast<void>(planImages(distinctLoads(64u))); }, "; descriptor web: more than 64 distinct descriptors", "descriptor Phi: the failure did not name the descriptor limit");
 
     const auto splitReloads = [](std::uint32_t joins) {
         std::vector<std::uint32_t> body;
@@ -4446,6 +4452,7 @@ void verifyDescriptorPhis() {
     };
     require(planImages(splitReloads(8u)) == 4u, "descriptor Phi: separate reloads of T# dword 7 and dwords 0-6 were not split into their 4 T#s");
     expectFailure([&] { static_cast<void>(planImages(splitReloads(260u))); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a web over more than 512 descriptor tuples was accepted");
+    expectFailure([&] { static_cast<void>(planImages(splitReloads(260u))); }, "; descriptor web: more than 512 descriptor states", "descriptor Phi: the failure did not name the state limit");
 }
 
 void verifyUniformTableImage() {
@@ -4506,6 +4513,107 @@ void verifyUniformTableImage() {
         require(tables.tables.size() == 1u && TableSelected(tables, 0u, "uniform table image: a table does not hold one readable selected record") == expected, "uniform table image: the T# of the record the user data selects was not read");
         const auto regions = memory.Regions();
         require(TableCovered(regions, guest.table[key].data() + 4, sizeof(expected)) && !TableCovered(regions, guest.table[3u - key].data() + 4, sizeof(std::uint32_t)), "uniform table image: the record the user data does not select was read");
+    }
+}
+
+void verifyUndefinedImageFormats() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t UndefinedFormat = 300;
+    constexpr std::uint32_t Type2D = 9;
+    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
+    static Texture texture;
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+    const auto imageDescriptor = [&](std::uint32_t format) {
+        return std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (format << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+    };
+    const auto valid = imageDescriptor(Format8888UNorm);
+    const auto undefined = imageDescriptor(UndefinedFormat);
+    require(IsDefinedImageFormat(static_cast<IrBufferFormat>(Format8888UNorm)) && !IsDefinedImageFormat(static_cast<IrBufferFormat>(UndefinedFormat)), "undefined image formats: the GFX10 format table is wrong");
+    std::array<std::uint32_t, 4> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    std::array<std::uint32_t, 32> srt{};
+    const auto fill = [&](const std::array<std::uint32_t, 8>& first, const std::array<std::uint32_t, 8>& second) {
+        srt = {};
+        std::copy(first.begin(), first.end(), srt.begin());
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+        srt[20] = 1u;
+        std::copy(second.begin(), second.end(), srt.begin() + 24);
+    };
+    const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    const auto makeRequest = [&](const std::vector<std::uint32_t>& code, std::uint64_t address) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, address, code, 0, {}};
+        request.context.waveSize = 32;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 128;
+        return request;
+    };
+    const auto isNull = [](const DescriptorValue& value) {
+        return std::ranges::all_of(value.dwords, [](std::uint32_t word) { return word == 0u; });
+    };
+
+    const std::vector<std::uint32_t> armCode{0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf40c0200u, 0xfa000000u, 0xbf820002u, 0xf40c0200u, 0xfa000060u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    const auto armRequest = makeRequest(armCode, 0x24000u);
+    const auto armPlan = GetResourcePlan(armRequest);
+    require(armPlan->info.images.size() == 2u && std::ranges::none_of(armPlan->info.images, [](const ImageResource& image) { return image.optionalDescriptor; }) && !armPlan->info.usesFaultBuffer, "undefined image formats: the arms of a split along incoming edges were planned as optional");
+    fill(valid, undefined);
+    {
+        AgcDriver::ShaderMemory memory({});
+        expectFailure([&] { static_cast<void>(memory.Capture(armRequest)); }, "runtime image descriptor is invalid", "undefined image formats: an arm of a split along incoming edges was bound as a null image");
+    }
+
+    const std::vector<std::uint32_t> webCode{0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850007u, 0xbf068110u, 0xbf850004u, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu, 0xbf820001u, 0xbe8e1f00u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    auto webRequest = makeRequest(webCode, 0x27000u);
+    const auto webPlan = GetResourcePlan(webRequest);
+    require(webPlan->info.images.size() == 2u && std::ranges::all_of(webPlan->info.images, [](const ImageResource& image) { return image.optionalDescriptor; }) && webPlan->info.usesFaultBuffer, "undefined image formats: the arms of a web with a folded path were not planned as optional images with a fault");
+    fill(valid, undefined);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(webRequest);
+        const auto& images = capture->snapshot.images;
+        const auto holdsValid = std::ranges::any_of(images, [&](const DescriptorValue& value) { return std::equal(valid.begin(), valid.end(), value.dwords.begin()); });
+        require(images.size() == 2u && holdsValid && std::ranges::count_if(images, isNull) == 1, "undefined image formats: an arm whose T# has no GFX10 format was not bound as a null image");
+        const auto regions = memory.Regions();
+        webRequest.context.memory = regions;
+        static_cast<void>(Recompile(webRequest, *capture));
+    }
+
+    const std::vector<std::uint32_t> directCode{0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xbf068010u, 0xbf850006u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    const auto directRequest = makeRequest(directCode, 0x25000u);
+    fill(undefined, valid);
+    {
+        AgcDriver::ShaderMemory memory({});
+        expectFailure([&] { static_cast<void>(memory.Capture(directRequest)); }, "runtime image descriptor is invalid", "undefined image formats: a sampled T# with no GFX10 format was accepted");
+    }
+    fill(valid, valid);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(directRequest);
+        require(capture->snapshot.images.size() == 1u && std::equal(valid.begin(), valid.end(), capture->snapshot.images[0].dwords.begin()), "undefined image formats: a valid T# was not read");
+    }
+
+    const std::vector<std::uint32_t> samplerCode{0xf4000400u, 0xfa000050u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0xfa000060u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    const auto samplerRequest = makeRequest(samplerCode, 0x26000u);
+    const auto samplerPlan = GetResourcePlan(samplerRequest);
+    require(samplerPlan->info.images.size() == 1u && samplerPlan->info.samplers.size() == 2u && !samplerPlan->info.images[0].optionalDescriptor, "undefined image formats: a T# shared by every arm of a split S# was planned as optional");
+    fill(undefined, {});
+    {
+        AgcDriver::ShaderMemory memory({});
+        expectFailure([&] { static_cast<void>(memory.Capture(samplerRequest)); }, "runtime image descriptor is invalid", "undefined image formats: a T# shared by every arm of a split S# was bound as a null image");
     }
 }
 
@@ -5632,7 +5740,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQS4AAAA=", "new requests did not use serialization version 46");
+    require(requestPrefix(encoded, 8u) == "NVNQQS8AAAA=", "new requests did not use serialization version 47");
     const std::array<std::uint32_t, 2> fallbacks{0x40u, 0x1ac4u};
     auto withFallbacks = minimal;
     withFallbacks.context.linkedCallFallbacks = fallbacks;
@@ -5750,7 +5858,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQS8AAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTAAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -6136,7 +6244,7 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 54u + pointTailBytes && legacy[4] == 46u, "a merged hull request did not use serialization version 46");
+    require(legacy.size() > 54u + pointTailBytes && legacy[4] == 47u, "a merged hull request did not use serialization version 47");
     legacy.resize(legacy.size() - sizeof(std::uint32_t) - 2u - pointTailBytes);
     legacy.pop_back();
     require(legacy[legacy.size() - 52u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
@@ -8693,6 +8801,7 @@ int main(int argc, char** argv) {
         verifySplitWaterfallImageTable();
         verifyDescriptorPhis();
         verifyUniformTableImage();
+        verifyUndefinedImageFormats();
         verifyLaneSelectedDescriptors();
         verifyProgramCounterRelativeData();
         verifyLanesOutsideHostSubgroup();

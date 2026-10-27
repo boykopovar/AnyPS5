@@ -52,7 +52,7 @@
 - [sceAudioOutExGetLastOutputTime](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutGetInfoOpenNum](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutGetInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOutSetPadSpkVolume](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
+- [sceAudioOutSetPadSpkVolume](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) throws: what the volume changes on the console, its range and the error codes are unknown. PSBox Cloud Gaming (PPSA99810) [declares](https://github.com/RafaelNGP/xbox-cloud-gaming-ps5/blob/84f973793678580a55a5be06d53f3f99f99793dc/src/media/audio_out_ps5.cpp#L23-L27) it as `(int handle, int volume)`, the signature used here. It [calls](https://github.com/RafaelNGP/xbox-cloud-gaming-ps5/blob/84f973793678580a55a5be06d53f3f99f99793dc/src/media/audio_out_ps5.cpp#L151-L184) it on a pad speaker port it opened with `sceAudioOutOpen(user, 4, 0, ...)`, right after `sceAudioOutSetMixLevelPadSpk(handle, 32768)`, with `(percent * 127 + 50) / 100`, so it treats 127 as full volume
 - [sceAudioOutSetPadJackVolume](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutSetUsbVolume](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutSetCaesarVolume](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
