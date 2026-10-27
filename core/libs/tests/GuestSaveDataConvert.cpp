@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -57,6 +58,9 @@ int main() {
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds");
     Check(progress == 0.0f, "convert progress reports 0.0f initially");
     Check(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress pointer is rejected");
+    Check(sceSaveDataConvert(nullptr) == SaveDataErrorParameter, "null convert pointer is rejected");
+    SaveDataConvert nullDir{};
+    Check(sceSaveDataConvert(&nullDir) == SaveDataErrorParameter, "null dir_name pointer is rejected");
     Check(Convert("missing", sizeof("missing")) == SaveDataErrorNotFound, "a missing save is not found");
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds after failed convert");
     Check(progress < 1.0f, "convert progress is below 1.0f after failed convert");

@@ -1,9 +1,13 @@
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <cfenv>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
+#include <stdexcept>
 #include <string>
 
 #include "prx/libc/include/General.hpp"
@@ -73,6 +77,67 @@ TInteger ParsedInteger(const char* text, char** end, int base, int* error, TInte
     return value;
 }
 
+constexpr short Denormal = -2, Finite = -1, Zero = 0, Infinite = 1, NotANumber = 2;
+
+void RaiseLibcError(int exceptions) {
+    if ((exceptions & (FE_OVERFLOW | FE_UNDERFLOW)) != 0) exceptions |= FE_INEXACT;
+    std::feraiseexcept(exceptions);
+    const bool range = (exceptions & FE_INVALID) == 0 &&
+        (exceptions & (FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW)) != 0;
+    errno = range ? ERANGE : EDOM;
+}
+
+template<typename TFloat>
+short ClassifyValue(TFloat value) {
+    switch (std::fpclassify(value)) {
+    case FP_NAN:
+        return NotANumber;
+    case FP_INFINITE:
+        return Infinite;
+    case FP_ZERO:
+        return Zero;
+    case FP_SUBNORMAL:
+        return Denormal;
+    default:
+        return Finite;
+    }
+}
+
+template<typename TFloat>
+short ScaleProduct(TFloat& value, TFloat factor, TFloat multiplier, long exponent) {
+    std::fexcept_t saved;
+    std::fegetexceptflag(&saved, FE_ALL_EXCEPT);
+    const int savedErrno = errno;
+    TFloat result = factor * multiplier;
+    if (!std::isfinite(result) || result == static_cast<TFloat>(0)) {
+        int factorExponent = 0;
+        int multiplierExponent = 0;
+        const TFloat factorMantissa = std::frexp(factor, &factorExponent);
+        const TFloat multiplierMantissa = std::frexp(multiplier, &multiplierExponent);
+        const long long combinedExponent = static_cast<long long>(factorExponent) + multiplierExponent + exponent;
+        result = std::scalbn(factorMantissa * multiplierMantissa, static_cast<int>(combinedExponent));
+    } else {
+        result = std::scalbn(result, static_cast<int>(exponent));
+    }
+    value = result;
+    const short kind = ClassifyValue(result);
+    const int raised = std::fetestexcept(FE_ALL_EXCEPT) & ~static_cast<int>(saved) & FE_ALL_EXCEPT;
+    std::fesetexceptflag(&saved, FE_ALL_EXCEPT);
+    errno = savedErrno;
+    if (kind == Infinite) {
+        RaiseLibcError(FE_OVERFLOW);
+        return Infinite;
+    }
+    if (kind == Zero) {
+        RaiseLibcError(FE_UNDERFLOW);
+        return Zero;
+    }
+    if (kind == Denormal) return Finite;
+    if (kind == NotANumber) return NotANumber;
+    if ((raised & FE_INEXACT) != 0) std::feraiseexcept(FE_INEXACT);
+    return Finite;
+}
+
 }
 
 extern "C" {
@@ -129,6 +194,200 @@ std::int64_t APS5_VABI _Stolx_nid_postfix(const char* text, char** end, int base
 
 long long APS5_VABI _Stoll_nid_postfix(const char* text, char** end, int base) {
     return _Stollx_nid_postfix(text, end, base, nullptr);
+}
+
+short APS5_VABI _Exp_nid_postfix(double* value, double y, short offset) {
+    if (value == nullptr) throw std::invalid_argument("_Exp: null value");
+    std::fexcept_t entryFlags;
+    std::fegetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+    const int entryErrno = errno;
+    const double x = *value;
+    constexpr double HugeExp = 1842.0;
+    constexpr double Eps = std::numeric_limits<double>::epsilon();
+    constexpr double InverseLn2 = 1.4426950408889634073599246810018921;
+    constexpr double Ln2High = 22713.0 / 32768.0;
+    constexpr double Ln2Low = 1.4286068203094172321214581765680755e-6;
+    constexpr double P1 = 420.30235984910635;
+    constexpr double P2 = 15132.70094680474802;
+    constexpr double Q0 = 30.01511290683317;
+    constexpr double Q1 = 3362.72154416553028;
+    constexpr double Q2 = 30265.40189360949691;
+    constexpr double E = 0x1.5bf0a8b145769p+1;
+    const short xKind = ClassifyValue(x);
+    const short yKind = ClassifyValue(y);
+    if (xKind == NotANumber) return NotANumber;
+    if (yKind == NotANumber) return NotANumber;
+    if (xKind == Infinite) {
+        if (x > 0.0) {
+            if (yKind == Zero) {
+                *value = std::numeric_limits<double>::quiet_NaN();
+                RaiseLibcError(FE_INVALID);
+                return NotANumber;
+            }
+            if (yKind == Infinite) {
+                *value = y;
+            } else {
+                *value = std::copysign(std::numeric_limits<double>::infinity(), y);
+            }
+            return Infinite;
+        }
+        if (yKind == Infinite) {
+            *value = std::numeric_limits<double>::quiet_NaN();
+            RaiseLibcError(FE_INVALID);
+            return NotANumber;
+        }
+        *value = std::copysign(0.0, y);
+        return Zero;
+    }
+    if (yKind == Zero) {
+        *value = y;
+        return Zero;
+    }
+    if (yKind == Infinite) {
+        *value = y;
+        return Infinite;
+    }
+    if (xKind == Zero) {
+        if (offset == 0) {
+            *value = y;
+            return Finite;
+        }
+        const short result = ScaleProduct(*value, 1.0, y, offset);
+        if (result == Finite && std::fpclassify(*value) == FP_SUBNORMAL) {
+            std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+            errno = entryErrno;
+        }
+        return result;
+    }
+    if (offset == 0 && x == 1.0 && y == 1.0) {
+        *value = E;
+        return Finite;
+    }
+    if (x < -HugeExp) {
+        *value = std::copysign(0.0, y);
+        return Zero;
+    }
+    if (x > HugeExp) {
+        *value = std::copysign(std::numeric_limits<double>::infinity(), y);
+        RaiseLibcError(FE_OVERFLOW);
+        return Infinite;
+    }
+    double g = x * InverseLn2;
+    long exponent = static_cast<long>(g + (g < 0.0 ? -0.5 : 0.5));
+    g = static_cast<double>(exponent);
+    g = (x - g * Ln2High) - g * Ln2Low;
+    double factor;
+    if (-Eps < g && g < Eps) {
+        factor = 1.0;
+    } else {
+        const double z = g * g;
+        const double w = (Q0 * z + Q1) * z + Q2;
+        g *= (z + P1) * z + P2;
+        factor = (w + g) / (w - g) * 2.0;
+        --exponent;
+    }
+    const short result = ScaleProduct(*value, factor, y, exponent + offset);
+    if (result == Finite && std::fpclassify(*value) == FP_SUBNORMAL) {
+        std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+        errno = entryErrno;
+    }
+    return result;
+}
+
+short APS5_VABI _FExp_nid_postfix(float* value, float y, short offset) {
+    if (value == nullptr) throw std::invalid_argument("_FExp: null value");
+    std::fexcept_t entryFlags;
+    std::fegetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+    const int entryErrno = errno;
+    const float x = *value;
+    constexpr float HugeExp = 229.0f;
+    constexpr float Eps = std::numeric_limits<float>::epsilon();
+    constexpr float InverseLn2 = 1.4426950216f;
+    constexpr float Ln2High = 0.69287109375f;
+    constexpr float Ln2Low = 0.00027608682f;
+    constexpr float Q = 0.09997485578f;
+    constexpr float P0 = 0.5f;
+    constexpr float P1 = 0.0083208261f;
+    constexpr float E = 0x1.5bf0a8p+1f;
+    const short xKind = ClassifyValue(x);
+    const short yKind = ClassifyValue(y);
+    if (xKind == NotANumber) return NotANumber;
+    if (yKind == NotANumber) return NotANumber;
+    if (xKind == Infinite) {
+        if (x > 0.0f) {
+            if (yKind == Zero) {
+                *value = std::numeric_limits<float>::quiet_NaN();
+                RaiseLibcError(FE_INVALID);
+                return NotANumber;
+            }
+            if (yKind == Infinite) {
+                *value = y;
+            } else {
+                *value = std::copysign(std::numeric_limits<float>::infinity(), y);
+            }
+            return Infinite;
+        }
+        if (yKind == Infinite) {
+            *value = std::numeric_limits<float>::quiet_NaN();
+            RaiseLibcError(FE_INVALID);
+            return NotANumber;
+        }
+        *value = std::copysign(0.0f, y);
+        return Zero;
+    }
+    if (yKind == Zero) {
+        *value = y;
+        return Zero;
+    }
+    if (yKind == Infinite) {
+        *value = y;
+        return Infinite;
+    }
+    if (xKind == Zero) {
+        if (offset == 0) {
+            *value = y;
+            return Finite;
+        }
+        const short result = ScaleProduct(*value, 1.0f, y, offset);
+        if (result == Finite && std::fpclassify(*value) == FP_SUBNORMAL) {
+            std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+            errno = entryErrno;
+        }
+        return result;
+    }
+    if (offset == 0 && x == 1.0f && y == 1.0f) {
+        *value = E;
+        return Finite;
+    }
+    if (x < -HugeExp) {
+        *value = std::copysign(0.0f, y);
+        return Zero;
+    }
+    if (x > HugeExp) {
+        *value = std::copysign(std::numeric_limits<float>::infinity(), y);
+        RaiseLibcError(FE_OVERFLOW);
+        return Infinite;
+    }
+    float g = x * InverseLn2;
+    long exponent = static_cast<long>(g + (g < 0.0f ? -0.5f : 0.5f));
+    g = static_cast<float>(exponent);
+    g = (x - g * Ln2High) - g * Ln2Low;
+    float factor;
+    if (-Eps < g && g < Eps) {
+        factor = 1.0f;
+    } else {
+        const float z = g * g;
+        const float w = Q * z + 1.0f;
+        g *= P0 + P1 * z;
+        factor = (w + g) / (w - g) * 2.0f;
+        --exponent;
+    }
+    const short result = ScaleProduct(*value, factor, y, exponent + offset);
+    if (result == Finite && std::fpclassify(*value) == FP_SUBNORMAL) {
+        std::fesetexceptflag(&entryFlags, FE_ALL_EXCEPT);
+        errno = entryErrno;
+    }
+    return result;
 }
 
 double APS5_VABI _Sin_nid_postfix(double x, unsigned int quadrant) {

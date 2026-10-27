@@ -1,5 +1,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -11,18 +13,24 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <xmmintrin.h>
 #include <filesystem>
 #include <fstream>
 #include <source_location>
 #include <stdexcept>
 #include <set>
 #include <string>
+#include <thread>
+#include <tuple>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #include <winioctl.h>
@@ -45,16 +53,6 @@ void Require(bool condition, std::source_location location = std::source_locatio
 
 int Error() {
     return *__error_nid_postfix();
-}
-
-bool PathconfThrows(const char* path, int name) {
-    try {
-        pathconf_nid_postfix(path, name);
-
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
 }
 
 bool ChrootThrows(const std::string& path) {
@@ -104,13 +102,11 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
     Require(fchownat_nid_postfix(-100, missing.c_str(), 1000, 0, 0) == -1 && Error() == 2);
     Require(fchownat_nid_postfix(4321, "owned.txt", 1000, 0, 0) == -1 && Error() == 9);
     Require(fchownat_nid_postfix(-100, file.c_str(), 1000, 0, 0x400) == -1 && Error() == 22);
-    Require(ThrowsNaming([&] { chown_nid_postfix(file.c_str(), 1000, 0); }, "chown: an owner"));
-    Require(ThrowsNaming([&] { lchown_nid_postfix(file.c_str(), 0, 1000); }, "lchown: a group"));
-    Require(ThrowsNaming([&] { fchownat_nid_postfix(-100, file.c_str(), 5, Unchanged, 0); }, "fchownat: an owner"));
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     Require(fchownat_nid_postfix(directory, "owned.txt", 0, 0, 0) == 0);
     Require(fchownat_nid_postfix(directory, "missing.txt", 0, 0, 0) == -1 && Error() == 2);
+    Require(fchownat_nid_postfix(directory, "missing.txt", 1000, 0, 0) == -1 && Error() == 2);
     Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0) == 0);
     Require(std::filesystem::hard_link_count(file) == 2);
     Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0x400) == -1 && Error() == 17);
@@ -283,6 +279,7 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     Require(link_nid_postfix("missing", paths.Unreadable()) == -1 && Error() == 2);
     posixFault([&] { return shm_open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDWR, 0600); });
     posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return kldfind_nid_postfix(paths.Unreadable()); });
     Require(sceKernelOpen(paths.Unreadable(), SCE_KERNEL_O_RDONLY, 0) == KernelFault);
     Require(sceKernelStat(paths.Unreadable(), &status) == KernelFault);
     Require(sceKernelMkdir(paths.Unreadable(), 0755) == KernelFault);
@@ -326,6 +323,100 @@ void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
     }
 }
 
+UserUcontext sigreturnContext{};
+UserUcontext sigreturnResume{};
+volatile int sigreturnPasses = 0;
+volatile std::uint32_t sigreturnMxcsr = 0;
+
+std::uint32_t RoundingAndMasks(std::uint32_t mxcsr) {
+    return mxcsr & ~0x3fu;
+}
+
+void SetContextMxcsr(UserUcontext& context, std::uint32_t mxcsr) {
+    std::memcpy(reinterpret_cast<std::uint8_t*>(context.mcontext.fpstate) + 24, &mxcsr, sizeof(mxcsr));
+}
+
+void CheckSigreturnRefusals(const UserUcontext& valid) {
+    UserUcontext bad = valid;
+    bad.mcontext.flags = 0x8;
+    Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    for (const std::uint64_t privileged : {0x200ull, 0x3000ull, 0x20000ull, 0x80000ull}) {
+        bad = valid;
+        bad.mcontext.rflags ^= privileged;
+        Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    }
+    bad = valid;
+    bad.mcontext.fpformat = 0x10001;
+    Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    bad = valid;
+    bad.mcontext.ownedfp = 0x20003;
+    Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    bad = valid;
+    bad.mcontext.cs &= ~std::uint64_t{3};
+    Require(ThrowsNaming([&] { sigreturn_nid_postfix(&bad); }, "not a user selector"));
+}
+
+void CheckSigreturn() {
+    Require(sigreturn_nid_postfix(nullptr) == -1 && Error() == 14);
+    const std::uint32_t savedMxcsr = _mm_getcsr();
+    sigreturnPasses = 0;
+    Require(getcontext_nid_postfix(&sigreturnContext) == 0);
+    sigreturnMxcsr = _mm_getcsr();
+    sigreturnPasses = sigreturnPasses + 1;
+    std::uint32_t mask[4] = {};
+    Require(sigprocmask_nid_postfix(1, nullptr, mask) == 0);
+    const bool blocked = (mask[0] & (1u << 29)) != 0;
+    if (sigreturnPasses == 1) {
+        CheckSigreturnRefusals(sigreturnContext);
+        sigreturnResume = sigreturnContext;
+        sigreturnResume.mcontext.len = 0;
+        sigreturnResume.sigmask[0] |= 1u << 29;
+        SetContextMxcsr(sigreturnResume, 0x7f80);
+        Require(setcontext_nid_postfix(&sigreturnResume) == -1 && Error() == 22);
+        sigreturn_nid_postfix(&sigreturnResume);
+        Require(false);
+    }
+    if (sigreturnPasses == 2) {
+        Require(RoundingAndMasks(sigreturnMxcsr) == 0x7f80 && blocked);
+        sigreturnResume = sigreturnContext;
+        sigreturnResume.mcontext.fpformat = 0x10000;
+        SetContextMxcsr(sigreturnResume, 0x5f80);
+        _mm_setcsr(0x3f80);
+        sigreturn_nid_postfix(&sigreturnResume);
+        Require(false);
+    }
+    if (sigreturnPasses == 3) {
+        Require(RoundingAndMasks(sigreturnMxcsr) == 0x3f80 && !blocked);
+        sigreturnResume = sigreturnContext;
+        sigreturnResume.mcontext.ownedfp = 0x20000;
+        SetContextMxcsr(sigreturnResume, 0x5f80);
+        sigreturn_nid_postfix(&sigreturnResume);
+        Require(false);
+    }
+    Require(sigreturnPasses == 4 && RoundingAndMasks(sigreturnMxcsr) == 0x1f80 && !blocked);
+    _mm_setcsr(savedMxcsr);
+}
+
+void CheckSchedSetscheduler() {
+    const Pthread self = scePthreadSelf();
+    int savedPolicy = 0;
+    KernelSchedParam saved{};
+    Require(scePthreadGetschedparam(self, &savedPolicy, &saved) == 0);
+    KernelSchedParam param{700};
+    Require(sched_setscheduler_nid_postfix(0, 1, nullptr) == -1 && Error() == 14);
+    Require(sched_setscheduler_nid_postfix(getpid_nid_postfix() + 1, 1, &param) == -1 && Error() == 3);
+    Require(sched_setscheduler_nid_postfix(-1, 1, &param) == -1 && Error() == 3);
+    for (const int policy : {-1, 0, 4, 7}) Require(sched_setscheduler_nid_postfix(0, policy, &param) == -1 && Error() == 22);
+    int policy = 0;
+    KernelSchedParam current{};
+    Require(sched_setscheduler_nid_postfix(0, 1, &param) == 0);
+    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 1 && current.sched_priority == 700);
+    param.sched_priority = 300;
+    Require(sched_setscheduler_nid_postfix(0, 3, &param) == 0);
+    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 3 && current.sched_priority == 300);
+    Require(scePthreadSetschedparam(self, savedPolicy, &saved) == 0);
+}
+
 void CheckCondattrClock() {
     constexpr KernelClockid Realtime = 0;
     constexpr KernelClockid Monotonic = 4;
@@ -346,6 +437,132 @@ void CheckCondattrClock() {
     Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
 }
 
+template<class TRecord, class TWrite>
+void CheckAmmWriter(TRecord record, TWrite write, int expected) {
+    std::array<std::uint8_t, 64> recorded{};
+    Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, 0, 0, static_cast<std::uint32_t>(recorded.size()), recorded.data()};
+    Require(record(&buffer) == expected);
+    std::uint64_t measured = ~std::uint64_t{0};
+    Require(write(nullptr, &measured) == expected);
+    std::array<std::uint8_t, 64> written{};
+    written.fill(0xCC);
+    std::uint64_t reported = ~std::uint64_t{0};
+    Require(write(written.data(), &reported) == expected);
+    if (expected != 0) {
+        Require(buffer.offset == 0 && measured == ~std::uint64_t{0} && reported == ~std::uint64_t{0});
+        Require(std::all_of(written.begin(), written.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+        return;
+    }
+    Require(buffer.offset != 0 && measured == buffer.offset && reported == buffer.offset);
+    Require(std::memcmp(written.data(), recorded.data(), buffer.offset) == 0 && written[buffer.offset] == 0xCC);
+    written.fill(0xCC);
+    Require(write(written.data(), nullptr) == 0 && std::memcmp(written.data(), recorded.data(), buffer.offset) == 0);
+}
+
+void CheckAmmWriteCommands() {
+    constexpr std::uint64_t page = 0x4000;
+    constexpr std::uint64_t address = 0x10000000;
+    constexpr std::uint64_t source = 0x20000000;
+    constexpr std::uint64_t directOffset = 0x300000;
+    constexpr std::uint64_t size = 2 * page;
+    constexpr std::int32_t type = 3;
+    constexpr std::int32_t protection = 0x33;
+    constexpr std::int32_t mask = 0x13;
+    constexpr std::uint8_t gpuMaskId = 5;
+    constexpr std::int32_t badProtection = 0x04;
+    for (const auto [mapped, offset, protect, expected] : {std::tuple{address, directOffset, protection, 0}, std::tuple{address + 8, directOffset, protection, SCE_KERNEL_ERROR_EINVAL}, std::tuple{address, directOffset + 8, protection, SCE_KERNEL_ERROR_EINVAL}, std::tuple{address, directOffset, badProtection, SCE_KERNEL_ERROR_EINVAL}}) {
+        const bool alignedOffset = offset == directOffset;
+        if (alignedOffset) {
+            CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMap(buffer, mapped, size, type, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapCommand(dst, mapped, size, type, static_cast<std::uint32_t>(protect), outSize); }, expected);
+            CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapWithGpuMaskId(buffer, mapped, size, type, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapWithGpuMaskIdCommand(dst, mapped, size, type, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+        }
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirect(buffer, mapped, offset, size, type, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectCommand(dst, mapped, offset, size, type, static_cast<std::uint32_t>(protect), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirectWithGpuMaskId(buffer, mapped, offset, size, type, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectWithGpuMaskIdCommand(dst, mapped, offset, size, type, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+    }
+    for (const auto [mapped, length, expected] : {std::tuple{address, size, 0}, std::tuple{address + 8, size, SCE_KERNEL_ERROR_EINVAL}, std::tuple{address, std::uint64_t{0}, SCE_KERNEL_ERROR_EINVAL}}) {
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferUnmap(buffer, mapped, length); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteUnmapCommand(dst, mapped, length, outSize); }, expected);
+    }
+    for (const auto [from, protect, expected] : {std::tuple{source, protection, 0}, std::tuple{source + 8, protection, SCE_KERNEL_ERROR_EINVAL}, std::tuple{source, badProtection, SCE_KERNEL_ERROR_EINVAL}}) {
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferRemap(buffer, address, from, size, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteRemapCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferRemapWithGpuMaskId(buffer, address, from, size, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteRemapWithGpuMaskIdCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMultiMap(buffer, address, from, size, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMultiMapCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMultiMapWithGpuMaskId(buffer, address, from, size, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMultiMapWithGpuMaskIdCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+    }
+    for (const auto [protect, masked, expected] : {std::tuple{protection, mask, 0}, std::tuple{badProtection, mask, SCE_KERNEL_ERROR_EINVAL}, std::tuple{protection, badProtection, SCE_KERNEL_ERROR_EINVAL}}) {
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyProtect(buffer, address, size, protect, masked); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyProtectCommand(dst, address, size, static_cast<std::uint32_t>(protect), static_cast<std::uint32_t>(masked), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyProtectWithGpuMaskId(buffer, address, size, protect, masked, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyProtectWithGpuMaskIdCommand(dst, address, size, static_cast<std::uint32_t>(protect), static_cast<std::uint32_t>(masked), gpuMaskId, outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyMtypeProtectWithGpuMaskId(buffer, address, size, type, protect, masked, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(dst, address, size, type, static_cast<std::uint32_t>(protect), static_cast<std::uint32_t>(masked), gpuMaskId, outSize); }, expected);
+    }
+    std::uint64_t untouched = ~std::uint64_t{0};
+    constexpr std::uint64_t wide = std::uint64_t{1} << 32 | 0x33;
+    Require(sceKernelWriteMapCommand(nullptr, address, size, type, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWriteRemapCommand(nullptr, address, source, size, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWriteModifyProtectCommand(nullptr, address, size, protection, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Require(untouched == ~std::uint64_t{0});
+    constexpr std::uint64_t wideType = std::uint64_t{1} << 32 | static_cast<std::uint64_t>(type);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMap(buffer, address, size, type, protection); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapWithGpuMaskId(buffer, address, size, type, protection, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapWithGpuMaskIdCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), gpuMaskId, outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirect(buffer, address, directOffset, size, type, protection); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectCommand(dst, address, directOffset, size, wideType, static_cast<std::uint32_t>(protection), outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirectWithGpuMaskId(buffer, address, directOffset, size, type, protection, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectWithGpuMaskIdCommand(dst, address, directOffset, size, wideType, static_cast<std::uint32_t>(protection), gpuMaskId, outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyMtypeProtectWithGpuMaskId(buffer, address, size, type, protection, mask, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), static_cast<std::uint32_t>(mask), gpuMaskId, outSize); }, 0);
+}
+
+void CheckAmmWaitCompletion() {
+    constexpr std::uint64_t page = 0x4000;
+    constexpr std::int32_t cpuReadWrite = 0x03;
+    std::uint64_t start = 0;
+    std::uint64_t end = 0;
+    std::uint64_t multimapStart = 0;
+    std::uint64_t multimapEnd = 0;
+    Require(sceAmprAmmGetVirtualAddressRanges(&start, &end, &multimapStart, &multimapEnd) == 0);
+    std::int64_t pool = -1;
+    Require(sceAmprAmmGiveDirectMemory(0, static_cast<std::int64_t>(sceKernelGetDirectMemorySize()), 2 * page, page, 1, &pool) == 0);
+    const std::uint64_t target = start + 0x400000;
+    std::array<std::uint8_t, 64> commands{};
+    std::uint64_t bytes = 0;
+    Require(sceKernelWriteMapCommand(commands.data(), target, page, 0, cpuReadWrite, &bytes) == 0);
+    std::uint32_t id = 0;
+    Require(sceAmprAmmSubmitCommandBuffer3(commands.data(), static_cast<std::uint32_t>(bytes), 0, &id) == 0 && id != 0);
+    Require(sceKernelWaitCommandBufferCompletion(id) == 0);
+    auto* mapped = reinterpret_cast<volatile std::uint8_t*>(target);
+    *mapped = 0x5A;
+    Require(*mapped == 0x5A);
+    Require(sceKernelWaitCommandBufferCompletion(id) == 0);
+    Require(sceKernelWaitCommandBufferCompletion(0) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelWaitCommandBufferCompletion(id + 1) == SCE_KERNEL_ERROR_ESRCH && sceAmprAmmWaitCommandBufferCompletion(id + 1) == SCE_KERNEL_ERROR_ESRCH);
+}
+
+void CheckAmmWaitConcurrentSubmits() {
+    constexpr int submitters = 4;
+    constexpr int submissions = 4000;
+    std::array<std::uint8_t, 16> empty{};
+    std::atomic<std::uint32_t> newest{0};
+    std::atomic<int> running{submitters};
+    std::atomic<int> rejected{0};
+    std::vector<std::thread> threads;
+    for (int thread = 0; thread < submitters; ++thread) {
+        threads.emplace_back([&] {
+            for (int index = 0; index < submissions; ++index) {
+                std::uint32_t id = 0;
+                if (sceAmprAmmSubmitCommandBuffer3(empty.data(), 0, 0, &id) != 0 || id == 0) ++rejected;
+                auto seen = newest.load();
+                while (seen < id && !newest.compare_exchange_weak(seen, id)) {}
+            }
+            --running;
+        });
+    }
+    std::thread waiter([&] {
+        while (running.load() != 0) {
+            const auto id = newest.load();
+            if (id != 0 && (sceKernelWaitCommandBufferCompletion(id) != 0 || sceAmprAmmWaitCommandBufferCompletion(id) != 0)) ++rejected;
+        }
+    });
+    for (auto& thread : threads) thread.join();
+    waiter.join();
+    Require(rejected.load() == 0);
+    Require(sceKernelWaitCommandBufferCompletion(newest.load()) == 0);
+}
+
 void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
     const auto directory = root.generic_string();
     for (const auto& path : {file, directory}) {
@@ -361,11 +578,13 @@ void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
         Require(pathconf_nid_postfix(path.c_str(), 18) == 1024);
         Require(pathconf_nid_postfix(path.c_str(), 54) == 0);
         Require(pathconf_nid_postfix(path.c_str(), 55) == 0);
+        for (const int name : {10, 14, 16, 21}) Require(pathconf_nid_postfix(path.c_str(), name) == 65536);
+        Require(pathconf_nid_postfix(path.c_str(), 17) == 16384);
+        Require(pathconf_nid_postfix(path.c_str(), 60) == 3);
+        for (const int name : {59, 63, 64}) Require(pathconf_nid_postfix(path.c_str(), name) == 0);
     }
-    for (const int name : {0, 11, 61, 62, 65, -1})
+    for (const int name : {0, 2, 3, 9, 11, 53, 61, 62, 65, -1})
         Require(pathconf_nid_postfix(file.c_str(), name) == -1 && Error() == 22);
-    for (const int name : {2, 3, 9, 10, 14, 16, 17, 21, 53, 59, 60, 63, 64})
-        Require(PathconfThrows(file.c_str(), name));
     const auto missing = (root / "missing").string();
     Require(pathconf_nid_postfix(missing.c_str(), 4) == -1 && Error() == 2);
     Require(pathconf_nid_postfix(missing.c_str(), 0) == -1 && Error() == 2);
@@ -384,10 +603,18 @@ void CheckSettimeofday() {
     Require(settimeofday_nid_postfix(nullptr, nullptr) == 0);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
     const KernelTimezone west{60, 1};
-    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
+    const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(1);
+    const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(1);
+    Require(settimeofday_nid_postfix(unreadableTime, &west) == -1 && Error() == 14);
+    Require(settimeofday_nid_postfix(unreadableTime, unreadableZone) == -1 && Error() == 14);
+    Require(settimeofday_nid_postfix(nullptr, unreadableZone) == -1 && Error() == 14);
+    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}}) {
         Require(settimeofday_nid_postfix(&invalid, &west) == -1 && Error() == 22);
+        Require(settimeofday_nid_postfix(&invalid, unreadableZone) == -1 && Error() == 14);
+    }
     Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
     const KernelTimeval valid{1000000000, 0};
+    Require(settimeofday_nid_postfix(&valid, unreadableZone) == -1 && Error() == 14);
     bool rejected = false;
     try {
         settimeofday_nid_postfix(&valid, &west);
@@ -503,16 +730,6 @@ static void CheckProcessQueries() {
 }
 
 template <typename F>
-bool DescriptorPathconfThrows(F fn, int descriptor, int name) {
-    try {
-        fn(descriptor, name);
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
-template <typename F>
 void CheckDescriptorPathconf(F fn, int descriptor) {
     Require(fn(descriptor, 1) == 32767);
     Require(fn(descriptor, 4) == 255);
@@ -526,11 +743,13 @@ void CheckDescriptorPathconf(F fn, int descriptor) {
     Require(fn(descriptor, 18) == 1024);
     Require(fn(descriptor, 54) == 0);
     Require(fn(descriptor, 55) == 0);
-    for (const int name : {0, 11, 61, 62, 65, -1})
+    for (const int name : {10, 14, 16, 21}) Require(fn(descriptor, name) == 65536);
+    Require(fn(descriptor, 17) == 16384);
+    Require(fn(descriptor, 60) == 3);
+    for (const int name : {59, 63, 64}) Require(fn(descriptor, name) == 0);
+    for (const int name : {0, 2, 3, 9, 11, 61, 62, 65, -1})
         Require(fn(descriptor, name) == -1 && Error() == 22);
     Require(fn(descriptor, 53) == 200112);
-    for (const int name : {2, 3, 9, 10, 14, 16, 17, 21, 59, 60, 63, 64})
-        Require(DescriptorPathconfThrows(fn, descriptor, name));
     Require(fn(-1, 4) == -1 && Error() == 9);
     Require(fn(descriptor + 1000, 4) == -1 && Error() == 9);
 }
@@ -556,10 +775,19 @@ int main() {
 #endif
     CheckProcessQueries();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
+    Require(profil_nid_postfix(nullptr, 0, 0, (1u << 16) + 1) == -1 && Error() == 22);
+    Require(profil_nid_postfix(nullptr, 0, 0, 0xFFFFFFFFu) == -1 && Error() == 22);
+    Require(profil_nid_postfix(reinterpret_cast<void*>(0x10), 4096, 0, 0) == 0);
+    Require(profil_nid_postfix(nullptr, 0, 0, 0) == 0);
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);
     Require(umask_nid_postfix(022) == 07777);
     CheckCondattrClock();
+    CheckAmmWriteCommands();
+    CheckAmmWaitCompletion();
+    CheckAmmWaitConcurrentSubmits();
+    CheckSchedSetscheduler();
+    CheckSigreturn();
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
@@ -794,6 +1022,21 @@ int main() {
     Require(chroot_nid_postfix((root / "file.txt" / "..").string().c_str()) == -1 && Error() == 20);
     Require(chroot_nid_postfix((root / std::string(256, 'n')).string().c_str()) == -1 && Error() == 63);
     Require(chroot_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    Require(kldfind_nid_postfix(nullptr) == -1 && Error() == 14);
+    Require(kldfind_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
+    Require(kldfind_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    Require(kldfind_nid_postfix("") == -1 && Error() == 2);
+    Require(kldfind_nid_postfix("kernel") == -1 && Error() == 2);
+    Require(kldfind_nid_postfix("missing.ko") == -1 && Error() == 2);
+    Require(kldnext_nid_postfix(-1) == -1 && Error() == 2);
+    Require(kldnext_nid_postfix(0) == 0);
+    Require(kldnext_nid_postfix(1) == -1 && Error() == 2);
+    Require(kldfirstmod_nid_postfix(-1) == -1 && Error() == 2);
+    Require(kldfirstmod_nid_postfix(0) == -1 && Error() == 2);
+    Require(kldfirstmod_nid_postfix(1) == -1 && Error() == 2);
+    Require(kldunload_nid_postfix(-1) == -1 && Error() == 1);
+    Require(kldunload_nid_postfix(0) == -1 && Error() == 1);
+    Require(kldunload_nid_postfix(1) == -1 && Error() == 1);
     const std::string throughFile = (root / "file.txt" / "child").string();
     Require(pathconf_nid_postfix(throughFile.c_str(), 4) == -1 && Error() == 20);
     Require(fchmodat_nid_postfix(-100, throughFile.c_str(), 0600, 0) == -1 && Error() == 20);
@@ -988,6 +1231,29 @@ int main() {
     std::filesystem::create_directory(root / "nonempty");
     { std::ofstream out(root / "nonempty" / "f.bin"); out << 'x'; }
     Require(unlinkat_nid_postfix(base, "nonempty", 0x800) == -1 && Error() == 66);
+#ifdef _WIN32
+    const auto fullJunctionTarget = root / "junction-full-target";
+    Require(std::filesystem::create_directory(fullJunctionTarget));
+    { std::ofstream out(fullJunctionTarget / "inside.txt"); out << 'x'; }
+    const auto fullJunctionCommand = L"cmd /c mklink /J \"" + (root / "junction-full").wstring() + L"\" \"" + std::filesystem::absolute(fullJunctionTarget).wstring() + L"\"";
+    Require(_wsystem(fullJunctionCommand.c_str()) == 0);
+    Require(unlinkat_nid_postfix(base, "junction-full", 0x800) == -1 && Error() == 20);
+    Require(std::filesystem::is_regular_file(fullJunctionTarget / "inside.txt"));
+    Require(unlinkat_nid_postfix(base, "junction-full", 0) == 0);
+    Require(!std::filesystem::exists(std::filesystem::symlink_status(root / "junction-full")));
+    Require(std::filesystem::is_regular_file(fullJunctionTarget / "inside.txt"));
+    Require(std::filesystem::remove(fullJunctionTarget / "inside.txt") && std::filesystem::remove(fullJunctionTarget));
+    { std::ofstream out(root / "symlink-target.bin"); out << 'x'; }
+    const int madeLink = symlink_nid_postfix("symlink-target.bin", (root / "symlink-file").string().c_str());
+    if (madeLink == 0) {
+        Require(unlinkat_nid_postfix(base, "symlink-file", 0) == 0);
+        Require(!std::filesystem::exists(std::filesystem::symlink_status(root / "symlink-file")));
+        Require(std::filesystem::is_regular_file(root / "symlink-target.bin"));
+        Require(std::filesystem::remove(root / "symlink-target.bin"));
+    } else {
+        Require(std::filesystem::remove(root / "symlink-target.bin"));
+    }
+#endif
     Require(unlinkat_nid_postfix(base, "nonempty/f.bin", 0) == 0 && !std::filesystem::exists(root / "nonempty" / "f.bin"));
     Require(unlinkat_nid_postfix(base, "nonempty", 0x800) == 0 && !std::filesystem::exists(root / "nonempty"));
     { std::ofstream out(root / "to_unlink.bin"); out << 'x'; }
@@ -1105,6 +1371,29 @@ int main() {
     Require((std::filesystem::status(modeFile).permissions() & std::filesystem::perms::all) == readable);
     Require(RemoveSymlink(modeLink));
 #endif
+    const auto chmodTarget = (root / "chmod-target.txt").string();
+    { std::ofstream file(chmodTarget); file << "x"; }
+    const auto chmodLink = (root / "chmod-link.txt").string();
+    const auto chmodDangling = (root / "chmod-dangling.txt").string();
+    const auto chmodLoopA = (root / "chmod-loop-a").string();
+    const auto chmodLoopB = (root / "chmod-loop-b").string();
+    if (symlink_nid_postfix("chmod-target.txt", chmodLink.c_str()) == 0) {
+        Require(symlink_nid_postfix("chmod-missing.txt", chmodDangling.c_str()) == 0);
+        Require(symlink_nid_postfix("chmod-loop-b", chmodLoopA.c_str()) == 0 && symlink_nid_postfix("chmod-loop-a", chmodLoopB.c_str()) == 0);
+        const auto writable = [&] {
+            FileStat linked{};
+            Require(stat_nid_postfix(chmodTarget.c_str(), &linked) == 0);
+            return (linked.st_mode & 0222) != 0;
+        };
+        Require(writable());
+        Require(fchmodat_nid_postfix(base, "chmod-link.txt", 0400, 0) == 0 && !writable());
+        Require(fchmodat_nid_postfix(-100, chmodLink.c_str(), 0600, 0) == 0 && writable());
+        Require(fchmodat_nid_postfix(base, "chmod-dangling.txt", 0600, 0) == -1 && Error() == 2);
+        Require(fchmodat_nid_postfix(-100, chmodDangling.c_str(), 0600, 0) == -1 && Error() == 2);
+        Require(fchmodat_nid_postfix(base, "chmod-loop-a", 0600, 0) == -1 && Error() == 62);
+        Require(fchmodat_nid_postfix(base, "chmod-link.txt/child", 0600, 0) == -1 && Error() == 20);
+        Require(RemoveSymlink(chmodLink) && RemoveSymlink(chmodDangling) && RemoveSymlink(chmodLoopA) && RemoveSymlink(chmodLoopB));
+    }
     Require(fchown_nid_postfix(base, 0, 0) == 0);
     Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);
     Require(fchown_nid_postfix(base, 0, 0xFFFFFFFFu) == 0);

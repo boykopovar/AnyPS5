@@ -100,6 +100,29 @@ static void MutexBasics() {
     RequireThrows<std::invalid_argument>([] { _Mtx_unlock_nid_postfix(nullptr); });
 }
 
+static void DefaultNameOverrideMutex() {
+    void* mutex = nullptr;
+    Require(_Mtx_init_with_default_name_override_nid_postfix(&mutex, tryable, "guest mutex") == success && mutex != nullptr);
+    Require(_Mtx_lock_nid_postfix(&mutex) == success && _Mtx_lock_nid_postfix(&mutex) == busy);
+    Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+    _Mtx_destroy_nid_postfix(&mutex);
+    Require(mutex == nullptr);
+
+    void* unnamedMutex = nullptr;
+    Require(_Mtx_init_with_default_name_override_nid_postfix(&unnamedMutex, 0, nullptr) == success && unnamedMutex != nullptr);
+    Require(_Mtx_lock_nid_postfix(&unnamedMutex) == success);
+    Require(_Mtx_unlock_nid_postfix(&unnamedMutex) == success);
+    _Mtx_destroy_nid_postfix(&unnamedMutex);
+
+    void* recursiveMutex = nullptr;
+    Require(_Mtx_init_with_default_name_override_nid_postfix(&recursiveMutex, recursive, "recursive") == success && recursiveMutex != nullptr);
+    Require(_Mtx_lock_nid_postfix(&recursiveMutex) == success && _Mtx_lock_nid_postfix(&recursiveMutex) == success);
+    Require(_Mtx_unlock_nid_postfix(&recursiveMutex) == success && _Mtx_unlock_nid_postfix(&recursiveMutex) == success);
+    _Mtx_destroy_nid_postfix(&recursiveMutex);
+
+    RequireThrows<std::invalid_argument>([] { _Mtx_init_with_default_name_override_nid_postfix(nullptr, tryable, "null"); });
+}
+
 static void RecursiveMutex() {
     void* mutex = CreateMutex(tryable | recursive);
     for (int i = 0; i < 3; ++i) Require(_Mtx_lock_nid_postfix(&mutex) == success);
@@ -490,6 +513,8 @@ static void ForwardedCalls() {
     Require(_Tss_get_nid_postfix(6) == &forwardLog && forwardLog.key == 6);
     Require(_Tss_set_nid_postfix(8, &flag) == success && forwardLog.key == 8 && forwardLog.value == &flag);
     Require(_Thrd_equal_nid_postfix(&flag, &key) == 1 && forwardLog.first == &flag && forwardLog.second == &key);
+    Require(_Thrd_lt_nid_postfix(&flag, &flag) == 0);
+    Require(_Thrd_lt_nid_postfix(&flag, &key) != _Thrd_lt_nid_postfix(&key, &flag));
     Require(_Thrd_current_nid_postfix() == &forwardLog.key);
     Require(_Thrd_id_nid_postfix() == &forwardLog.key);
     Require(_Mtx_current_owns_nid_postfix(nullptr) == 1);
@@ -587,6 +612,7 @@ int main() {
     VersionedSync();
     ForwardedCalls();
     MutexBasics();
+    DefaultNameOverrideMutex();
     RecursiveMutex();
     TimedMutex();
     MutualExclusion();

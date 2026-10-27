@@ -163,7 +163,9 @@ static void WaitAllReceivesTheWholeRequest() {
 }
 
 static void ReceiveAnsweredWithoutTheHost() {
+    constexpr int Peek = 0x02;
     constexpr int DontWait = 0x80;
+    constexpr std::uint64_t ReadableBytes = 0x4004667f;
     const int listener = socket_nid_postfix(2, 1, 0);
     Require(listener >= 0);
     std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
@@ -185,15 +187,19 @@ static void ReceiveAnsweredWithoutTheHost() {
     std::uint32_t senderSize = sender.size();
     Require(recvfrom_nid_postfix(accepted, &byte, 0, 0, sender.data(), &senderSize) == 0 && senderSize == 0);
 
-#ifdef _WIN32
-    Require(shutdown_nid_postfix(accepted, 0) == 0);
-    Require(send_nid_postfix(client, "x", 1, 0) == 1);
     char received[4];
+    Require(send_nid_postfix(client, "x", 1, 0) == 1);
+    Require(recv_nid_postfix(accepted, received, 1, Peek) == 1);
+    Require(shutdown_nid_postfix(accepted, 0) == 0);
+    int queued = -1;
+    Require(ioctl_nid_postfix(accepted, ReadableBytes, &queued) == 0 && queued == 0);
     Require(recv_nid_postfix(accepted, received, sizeof(received), 0) == 0);
     Require(recv_nid_postfix(accepted, received, sizeof(received), DontWait) == 0);
     senderSize = sender.size();
     Require(recvfrom_nid_postfix(accepted, received, sizeof(received), 0, sender.data(), &senderSize) == 0 && senderSize == 0);
-#endif
+    KernelIovec vector{received, sizeof(received)};
+    GuestMsghdr message{sender.data(), static_cast<std::uint32_t>(sender.size()), &vector, 1, nullptr, 0, -1};
+    Require(recvmsg_nid_postfix(accepted, &message, 0) == 0 && message.nameLength == 0 && message.flags == 0);
     for (const int descriptor : {unconnected, client, accepted, listener}) Require(close_nid_postfix(descriptor) == 0);
 }
 

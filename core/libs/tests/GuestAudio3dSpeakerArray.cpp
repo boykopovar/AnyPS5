@@ -55,6 +55,8 @@ int main() {
     Require(coefficients2[3] == 0.0f, "mix coefficients 2 are written");
     RequireThrows([&] { sceAudio3dGetSpeakerArrayMixCoefficients(handle, AudioOut2Position{1, 0, 0}, 0.0f, coefficients, 3); }, "a coefficient count that differs from the array is rejected");
     RequireThrows([&] { sceAudio3dGetSpeakerArrayMixCoefficients(handle, AudioOut2Position{1, 0, 0}, 0.0f, nullptr, 4); }, "null coefficients pointer throws invalid_argument");
+    RequireThrows([&] { sceAudio3dGetSpeakerArrayMixCoefficients2(handle, AudioOut2Position{1, 0, 0}, 0.0f, coefficients, 3, 1, 0.5f); }, "a coefficient count that differs from the array is rejected in v2");
+    RequireThrows([&] { sceAudio3dGetSpeakerArrayMixCoefficients2(handle, AudioOut2Position{1, 0, 0}, 0.0f, nullptr, 4, 1, 0.5f); }, "null coefficients pointer throws invalid_argument in v2");
 
     Require(sceAudio3dDeleteSpeakerArray(handle) == 0, "delete succeeds");
     RequireThrows([&] { sceAudio3dDeleteSpeakerArray(handle); }, "a deleted array is no longer valid");

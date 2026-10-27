@@ -38,24 +38,6 @@ int main() {
         }
     }
 
-    for (std::int64_t requestId : {std::int64_t{0}, std::int64_t{1}, INT64_MAX}) {
-        bool abortFailed = false;
-        bool deleteFailed = false;
-        try {
-            sceNpEntitlementAccessAbortRequest(requestId);
-
-        } catch (const std::logic_error&) {
-            abortFailed = true;
-        }
-        try {
-            sceNpEntitlementAccessDeleteRequest(requestId);
-
-        } catch (const std::logic_error&) {
-            deleteFailed = true;
-        }
-        Require(abortFailed && deleteFailed);
-    }
-
     constexpr int network = static_cast<int>(0x80431063);
     Require(sceHttpSendRequest(1, nullptr, 0) == network);
 

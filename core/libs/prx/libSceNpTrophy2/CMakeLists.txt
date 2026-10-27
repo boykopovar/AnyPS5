@@ -1,4 +1,5 @@
 add_library(libSceNpTrophy2 SHARED EXCLUDE_FROM_ALL
+        ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Context.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Handle.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GameInfo.cpp

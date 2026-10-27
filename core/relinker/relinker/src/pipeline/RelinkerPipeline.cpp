@@ -22,6 +22,8 @@ namespace {
 constexpr std::uint16_t kEtNone = 0;
 constexpr std::uint16_t kEtRel = 1;
 constexpr std::uint16_t kEtCore = 4;
+constexpr std::uint16_t kEtSceDynExec = 0xfe10;
+constexpr std::uint16_t kEtSceDynamic = 0xfe18;
 
 }
 
@@ -42,6 +44,7 @@ RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::s
 std::string RelinkerPipeline::relocationTypeName(std::uint32_t type) {
     switch (type) {
         case 1: return "R_X86_64_64";
+        case 2: return "R_X86_64_PC32";
         case 6: return "R_X86_64_GLOB_DAT";
         case 7: return "R_X86_64_JUMP_SLOT";
         case 10: return "R_X86_64_32";
@@ -64,6 +67,11 @@ RelinkResult RelinkerPipeline::Relink() {
         throw RelinkerException("ET_NONE inputs do not specify an ELF object type");
     if (inputType == kEtCore)
         throw RelinkerException("ET_CORE core dumps are not executable images");
+    if (inputType != ET_EXEC && inputType != ET_DYN && inputType != kEtSceDynExec && inputType != kEtSceDynamic) {
+        std::ostringstream message;
+        message << "Unsupported ELF object type 0x" << std::hex << inputType << ": expected ET_EXEC, ET_DYN, 0xfe10 or 0xfe18";
+        throw RelinkerException(message.str(), 0x10);
+    }
 
     auto programHeaders = elfReader->ReadProgramHeaders();
 
@@ -308,6 +316,9 @@ RelinkResult RelinkerPipeline::Relink() {
         if (symOff < dynSymTabOffset || symOff > raw.size() || raw.size() - symOff < symEntSize
             || (dynSymTabSize && (off > *dynSymTabSize || symEntSize > *dynSymTabSize - off)))
             throw RelinkerException("Symbol table entry out of bounds", symOff);
+        if (symIdx == 0 && std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
+                                       [](const std::uint8_t byte) { return byte != 0; }))
+            throw RelinkerException("Dynamic symbol table entry 0 is not a null symbol entry", symOff);
         return symOff;
     };
 
@@ -322,8 +333,9 @@ RelinkResult RelinkerPipeline::Relink() {
         return type == R_X86_64_DTPMOD64 || type == R_X86_64_DTPOFF64 || type == R_X86_64_TPOFF64;
     };
 
-    const bool hasNonEmptyTlsSegment = std::any_of(programHeaders.begin(), programHeaders.end(),
-                                                   [](const ProgramHeader& ph) { return ph.Type == PT_TLS && ph.MemorySize != 0; });
+    const auto tlsSegment = std::find_if(programHeaders.begin(), programHeaders.end(),
+                                         [](const ProgramHeader& ph) { return ph.Type == PT_TLS && ph.MemorySize != 0; });
+    const bool hasNonEmptyTlsSegment = tlsSegment != programHeaders.end();
 
     const auto definedTlsSymbolValue = [&](const std::uint32_t symIdx, const FileByteOffset pos) -> std::optional<std::uint64_t> {
         const FileByteOffset symOff = symbolEntryPos(symIdx);
@@ -333,8 +345,14 @@ RelinkResult RelinkerPipeline::Relink() {
             return std::nullopt;
         if ((raw[symOff + 4] & 15) != STT_TLS)
             throw RelinkerException("TLS relocation names a defined symbol that is not STT_TLS", pos);
+        if (section >= SHN_LORESERVE)
+            throw RelinkerException("Unsupported executable TLS symbol section", pos);
         std::uint64_t value = 0;
         std::memcpy(&value, raw.data() + symOff + 8, sizeof(value));
+        std::uint64_t size = 0;
+        std::memcpy(&size, raw.data() + symOff + 16, sizeof(size));
+        if (hasNonEmptyTlsSegment && (value > tlsSegment->MemorySize || size > tlsSegment->MemorySize - value))
+            throw RelinkerException("TLS symbol exceeds TLS segment", pos);
         return value;
     };
     const auto definedTlsSymbol = [&](const std::uint32_t symIdx, const FileByteOffset pos) {
@@ -395,17 +413,20 @@ RelinkResult RelinkerPipeline::Relink() {
 
     std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
-    if (std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_SCE_DYNLIBDATA; })) {
+    const bool sceImage = std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_SCE_DYNLIBDATA; });
+    const bool hasEhFrame = sceImage || std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
+    if (hasEhFrame) {
         const auto functions = UnusedNidFilter::ReadExceptionFunctions(raw, programHeaders, {}, {});
         for (const auto& function : functions) unwindRanges.emplace_back(function.Begin, function.End);
         std::sort(unwindRanges.begin(), unwindRanges.end());
-        for (std::size_t index = 0; index < executableSegments.size(); ++index) {
-            auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
-            static_cast<void>(segmentFileOffset);
-            if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
-                segment.resize(*codeEnd - segmentVAddr);
-            segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, functions);
-        }
+        if (sceImage)
+            for (std::size_t index = 0; index < executableSegments.size(); ++index) {
+                auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
+                static_cast<void>(segmentFileOffset);
+                if (const auto codeEnd = FindSceCodeEnd(segment, segmentVAddr, functions, gotVAddr, dynJmpRelSize))
+                    segment.resize(*codeEnd - segmentVAddr);
+                segmentUnwindRanges[index] = SceUnwindRanges(segment, segmentVAddr, functions);
+            }
     }
 
     std::vector<std::vector<std::uint8_t>> scanSegments;

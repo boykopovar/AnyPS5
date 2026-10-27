@@ -5,8 +5,10 @@
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "prx/libSceIme/include/ImeInput.hpp"
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 #undef main
 
 namespace {
@@ -15,6 +17,73 @@ static void Require(bool condition) {
     if (!condition) {
         std::abort();
     }
+}
+
+std::vector<ImeHostPad> forwarded;
+
+void Forward(const ImeHostPad& pad) {
+    forwarded.push_back(pad);
+}
+
+void HandOff(PadInput& padInput, const DisplayWindow& window, int device) {
+    constexpr std::uint32_t Cross = 0x4000;
+    constexpr std::uint32_t R2 = 0x0200;
+    constexpr std::uint32_t Intercepted = 0x80000000;
+    Pad::Initialize();
+    SDL_Joystick* joystick = SDL_JoystickFromInstanceID(SDL_JoystickGetDeviceInstanceID(device));
+    Require(joystick != nullptr);
+    const auto button = [&](SDL_GameControllerButton which, bool down) {
+        Require(SDL_JoystickSetVirtualButton(joystick, which, down ? 1 : 0) == 0);
+        padInput.Update(window);
+    };
+    const auto trigger = [&](bool down) {
+        Require(SDL_JoystickSetVirtualAxis(joystick, SDL_CONTROLLER_AXIS_TRIGGERRIGHT, down ? SDL_JOYSTICK_AXIS_MAX : SDL_JOYSTICK_AXIS_MIN) == 0);
+        padInput.Update(window);
+    };
+    Require(SDL_JoystickSetVirtualAxis(joystick, SDL_CONTROLLER_AXIS_TRIGGERLEFT, SDL_JOYSTICK_AXIS_MIN) == 0);
+    trigger(false);
+    button(SDL_CONTROLLER_BUTTON_A, true);
+    Require((Pad::ReadState(0).buttons & Cross) != 0);
+    button(SDL_CONTROLLER_BUTTON_A, false);
+    Require((Pad::ReadState(0).buttons & Cross) == 0);
+    button(SDL_CONTROLLER_BUTTON_A, true);
+    button(SDL_CONTROLLER_BUTTON_A, false);
+
+    ImeSetHostPadSink_nid_no_patch(&Forward);
+    padInput.Update(window);
+    button(SDL_CONTROLLER_BUTTON_A, true);
+    const PadData held = Pad::ReadState(0);
+    Require(held.buttons == Intercepted);
+    Require(held.left_stick_x == 128 && held.left_stick_y == 128 && held.right_stick_x == 128 && held.right_stick_y == 128);
+    Require(held.analog_buttons_l2 == 0 && held.analog_buttons_r2 == 0);
+    Require(held.connected);
+    Require(!forwarded.empty() && (forwarded.back().buttons & Cross) != 0);
+    PadData queued[64]{};
+    const int count = Pad::Read(queued, 64, 0);
+    Require(count >= 1);
+    for (int index = 0; index < count; ++index) Require(queued[index].buttons == Intercepted);
+    button(SDL_CONTROLLER_BUTTON_A, false);
+    Require((forwarded.back().buttons & Cross) == 0);
+    trigger(true);
+    Require(Pad::ReadState(0).buttons == Intercepted);
+    Require((forwarded.back().buttons & R2) != 0);
+
+    ImeSetHostPadSink_nid_no_patch(nullptr);
+    const auto received = forwarded.size();
+    padInput.Update(window);
+    Require(forwarded.size() == received);
+    PadData after = Pad::ReadState(0);
+    Require((after.buttons & (R2 | Intercepted)) == 0 && after.analog_buttons_r2 == 0);
+    padInput.Update(window);
+    Require((Pad::ReadState(0).buttons & R2) == 0);
+    trigger(false);
+    Require((Pad::ReadState(0).buttons & R2) == 0);
+    trigger(true);
+    Require((Pad::ReadState(0).buttons & R2) != 0);
+    button(SDL_CONTROLLER_BUTTON_A, true);
+    Require((Pad::ReadState(0).buttons & Cross) != 0);
+    button(SDL_CONTROLLER_BUTTON_A, false);
+    trigger(false);
 }
 
 }
@@ -28,6 +97,18 @@ int main() {
 #endif
 
     Require(SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) == 0);
+
+    const int hostJoysticks = SDL_NumJoysticks();
+    if (hostJoysticks < 0) {
+        std::fprintf(stderr, "pad_sdl: SDL_NumJoysticks failed: %s\n", SDL_GetError());
+        SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK);
+        return 1;
+    }
+    if (hostJoysticks > 0) {
+        std::fprintf(stderr, "pad_sdl: skipped, SDL sees %d host joysticks, which take the pad slots this test checks\n", hostJoysticks);
+        SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK);
+        return 77;
+    }
 
     SDL_VirtualJoystickDesc desc{};
     desc.version = SDL_VIRTUAL_JOYSTICK_DESC_VERSION;
@@ -77,6 +158,7 @@ int main() {
     padInput.HandleEvent(add0, window);
     Require(padInput.SlotOccupied(0));
     Require(padInput.SlotOccupied(1));
+    HandOff(padInput, window, dev0);
 
     const SDL_JoystickID id1 = SDL_JoystickGetDeviceInstanceID(dev1);
     SDL_Event rem1{};

@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubmissionCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
@@ -440,6 +441,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
             ++flipsCounted;
             submission.flips.begin()->second->GpuReady(frame);
             lock.unlock();
+            Graphics::NoteHostImportFrame();
             AgcDriverDeliverEopInterrupt(0);
             return;
         }

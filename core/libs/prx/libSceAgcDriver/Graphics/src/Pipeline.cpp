@@ -251,6 +251,15 @@ bool ValidateSampleLocations(const Context& context, const State& state) {
     return enabled;
 }
 
+void ValidateMeshLimits(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t invocations) {
+    const auto& limits = context.meshLimits;
+    Require(invocations <= limits.maxMeshWorkGroupInvocations && invocations <= limits.maxMeshWorkGroupSize[0], "mesh workgroup of " + std::to_string(invocations) + " invocations exceeds device limits (" + std::to_string(limits.maxMeshWorkGroupInvocations) + " invocations, " + std::to_string(limits.maxMeshWorkGroupSize[0]) + " wide)");
+    Require(mesh.maxVertices <= limits.maxMeshOutputVertices, "mesh output vertices " + std::to_string(mesh.maxVertices) + " exceed the device limit " + std::to_string(limits.maxMeshOutputVertices));
+    Require(mesh.maxPrimitives <= limits.maxMeshOutputPrimitives, "mesh output primitives " + std::to_string(mesh.maxPrimitives) + " exceed the device limit " + std::to_string(limits.maxMeshOutputPrimitives));
+    const auto sharedBytes = static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4;
+    Require(sharedBytes <= limits.maxMeshSharedMemorySize, "mesh LDS " + std::to_string(sharedBytes) + " bytes exceeds the device shared memory limit " + std::to_string(limits.maxMeshSharedMemorySize));
+}
+
 void ValidateViewport(const Context& context, const VkViewport& viewport) {
     Require(std::isfinite(viewport.minDepth) && std::isfinite(viewport.maxDepth), "non-finite viewport depth range");
     Require(context.depthRangeUnrestricted || (viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1), "viewport depth outside [0, 1] requires VK_EXT_depth_range_unrestricted");
@@ -479,8 +488,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         Require(context.meshShader, "device does not support VK_EXT_mesh_shader");
         const auto& mesh = *state.stages.mesh;
         const auto invocations = state.stages.vertexWaveSize == 64u && context.subgroup.subgroupSize == 32u ? mesh.threadsPerGroup / 2u : mesh.threadsPerGroup;
-        Require(invocations <= context.meshLimits.maxMeshWorkGroupInvocations && invocations <= context.meshLimits.maxMeshWorkGroupSize[0], "mesh workgroup exceeds device limits");
-        Require(mesh.maxVertices <= context.meshLimits.maxMeshOutputVertices && mesh.maxPrimitives <= context.meshLimits.maxMeshOutputPrimitives && static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4 <= context.meshLimits.maxMeshSharedMemorySize, "mesh output or LDS exceeds device limits");
+        ValidateMeshLimits(context, mesh, invocations);
     }
     const auto pushStages = PushConstantStages(shaders);
     Require(pushStages == 0 || context.limits.maxPushConstantsSize >= PushBlockBytes(dynamicRendering), "graphics push constant range exceeds device limit");
@@ -621,6 +629,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         Require(state.polygonMode == VK_POLYGON_MODE_FILL || context.fillModeNonSolid, "a point or line polygon mode needs the fillModeNonSolid feature");
         Require(state.polygonMode != VK_POLYGON_MODE_POINT || context.maintenance5, "a point polygon mode needs VK_KHR_maintenance5 for its one-pixel point size");
         raster.polygonMode = state.polygonMode;
+        raster.rasterizerDiscardEnable = state.rasterizerDiscard ? VK_TRUE : VK_FALSE;
         raster.depthClampEnable = state.depthClamp && context.depthClamp ? VK_TRUE : VK_FALSE;
         Require(!state.depthBiasPerFace || (depthBias && state.cullMode == VK_CULL_MODE_NONE), "per-face depth bias needs both faces rasterized");
         raster.cullMode = state.depthBiasPerFace ? VK_CULL_MODE_BACK_BIT : state.cullMode;
@@ -879,10 +888,11 @@ void Pipeline::Begin(VkCommandBuffer commands, const Framebuffer& framebuffer, V
         VkRenderingInfoKHR rendering{VK_STRUCTURE_TYPE_RENDERING_INFO_KHR};
         rendering.renderArea = {{0, 0}, extent};
         rendering.layerCount = state.renderLayers;
-        rendering.colorAttachmentCount = static_cast<std::uint32_t>(colors.size());
-        rendering.pColorAttachments = colors.empty() ? nullptr : colors.data();
-        if (depthFormat != VK_FORMAT_UNDEFINED) rendering.pDepthAttachment = &depth;
-        if (depthFormat != VK_FORMAT_UNDEFINED && HasStencil(depthFormat)) rendering.pStencilAttachment = &depth;
+        const bool outputs = !state.rasterizerDiscard;
+        rendering.colorAttachmentCount = outputs ? static_cast<std::uint32_t>(colors.size()) : 0u;
+        rendering.pColorAttachments = outputs && !colors.empty() ? colors.data() : nullptr;
+        if (outputs && depthFormat != VK_FORMAT_UNDEFINED) rendering.pDepthAttachment = &depth;
+        if (outputs && depthFormat != VK_FORMAT_UNDEFINED && HasStencil(depthFormat)) rendering.pStencilAttachment = &depth;
         context.Resolved(&DeviceFunctions::cmdBeginRendering, "vkCmdBeginRenderingKHR")(commands, &rendering);
         Continue(commands, state);
         return;
@@ -1070,6 +1080,7 @@ void pipelineKey(std::vector<std::byte>& key, const Context& context, const Stat
         append(key, front);
         append(key, back);
     }
+    append(key, state.rasterizerDiscard);
     append(key, state.stages.mesh.has_value());
     if (state.stages.mesh) {
         const auto& mesh = *state.stages.mesh;
@@ -1316,7 +1327,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         }
     }
     if (created != nullptr) *created = true;
-    if (PipelineJournalEnabled() && !PipelineJournalReplaying()) RecordGraphicsPipeline(MakeGraphicsPipelineRecipe(state, vertexInput, resources, shaders, attachmentLayout), shaders);
+    if (PipelineJournalEnabled() && !PipelineJournalReplaying() && state.tessellationCapture == nullptr) RecordGraphicsPipeline(MakeGraphicsPipelineRecipe(state, vertexInput, resources, shaders, attachmentLayout), shaders);
     return pipeline;
 }
 

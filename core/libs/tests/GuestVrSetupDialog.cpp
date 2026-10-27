@@ -25,6 +25,7 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceVrSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
     Require(sceVrSetupDialogOpen(&param) == kErrNotInitialized);
     Require(sceVrSetupDialogClose() == kErrNotInitialized);
     Require(sceVrSetupDialogGetResult(nullptr) == kErrArgNull);
@@ -64,6 +65,8 @@ int main() {
     Require(sceVrSetupDialogClose() == 0);
     Require(sceVrSetupDialogTerminate() == 0);
     Require(sceVrSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
+    Require(sceVrSetupDialogGetResult(nullptr) == kErrArgNull);
     Require(sceVrSetupDialogGetStatus() == kStatusNone);
     Require(sceVrSetupDialogUpdateStatus() == kStatusNone);
 

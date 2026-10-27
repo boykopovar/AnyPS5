@@ -1,16 +1,25 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
+#include <cfenv>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 
 namespace {
 
 constexpr int RangeError = 34;
 constexpr int InvalidArgument = 22;
+constexpr short Denormal = -2;
+constexpr short Finite = -1;
+constexpr short Zero = 0;
+constexpr short Infinite = 1;
+constexpr short NotANumber = 2;
+constexpr int FloatingExceptions = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -25,6 +34,24 @@ void CheckStod(const char* text, std::int64_t pten, double expected, long consum
     const double value = _Stod_nid_postfix(text, &end, pten);
     const bool same = std::isnan(expected) ? std::isnan(value) : value == expected && std::signbit(value) == std::signbit(expected);
     Require(same && end - text == consumed && *__error_nid_postfix() == error, message);
+}
+
+void CheckExp(double x, double y, short offset, double expected, short expectedKind, int expectedErrno, int expectedFlags, const char* message) {
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    double result = x;
+    const short kind = _Exp_nid_postfix(&result, y, offset);
+    const bool same = std::isnan(expected) ? std::isnan(result) : result == expected && std::signbit(result) == std::signbit(expected);
+    Require(kind == expectedKind && same && errno == expectedErrno && (std::fetestexcept(FE_ALL_EXCEPT) & FloatingExceptions) == expectedFlags, message);
+}
+
+void CheckFExp(float x, float y, short offset, float expected, short expectedKind, int expectedErrno, int expectedFlags, const char* message) {
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    float result = x;
+    const short kind = _FExp_nid_postfix(&result, y, offset);
+    const bool same = std::isnan(expected) ? std::isnan(result) : result == expected && std::signbit(result) == std::signbit(expected);
+    Require(kind == expectedKind && same && errno == expectedErrno && (std::fetestexcept(FE_ALL_EXCEPT) & FloatingExceptions) == expectedFlags, message);
 }
 
 void TestStod() {
@@ -182,6 +209,182 @@ void TestIntegerErrors() {
     Require(_Stoullx_nid_postfix("18446744073709551616", &end, 10, &error) == 18446744073709551615ull && error == RangeError && *__error_nid_postfix() == RangeError, "_Stoullx overflow");
 }
 
+void TestDoubleHelpers() {
+    const double e = 0x1.5bf0a8b145769p+1;
+    CheckExp(1.0, 1.0, 0, e, Finite, 0, 0, "_Exp e");
+    CheckExp(0.0, 1.0, 0, 1.0, Finite, 0, 0, "_Exp zero exponent");
+    CheckExp(0.0, 5.0, 0, 5.0, Finite, 0, 0, "_Exp multiplier at zero exponent");
+    CheckExp(1.0, -0.0, 0, -0.0, Zero, 0, 0, "_Exp keeps a negative zero multiplier");
+    CheckExp(1.0, 0.0, 0, 0.0, Zero, 0, 0, "_Exp zero multiplier");
+    CheckExp(-1.0, -0.0, 0, -0.0, Zero, 0, 0, "_Exp negative zero multiplier");
+    CheckExp(INFINITY, -0.0, 0, std::numeric_limits<double>::quiet_NaN(), NotANumber, EDOM, FE_INVALID, "_Exp positive infinity with zero multiplier is invalid");
+    CheckExp(INFINITY, 0.0, 0, std::numeric_limits<double>::quiet_NaN(), NotANumber, EDOM, FE_INVALID, "_Exp positive infinity with positive zero is invalid");
+    CheckExp(INFINITY, 1.0, 0, INFINITY, Infinite, 0, 0, "_Exp positive infinity");
+    CheckExp(INFINITY, -1.0, 0, -INFINITY, Infinite, 0, 0, "_Exp positive infinity preserves the multiplier sign");
+    CheckExp(INFINITY, INFINITY, 0, INFINITY, Infinite, 0, 0, "_Exp positive infinity with infinite multiplier");
+    CheckExp(INFINITY, -INFINITY, 0, -INFINITY, Infinite, 0, 0, "_Exp positive infinity with negative infinite multiplier");
+    CheckExp(-INFINITY, 1.0, 0, 0.0, Zero, 0, 0, "_Exp negative infinity");
+    CheckExp(-INFINITY, -1.0, 0, -0.0, Zero, 0, 0, "_Exp negative infinity preserves the multiplier sign");
+    CheckExp(-INFINITY, 0.0, 0, 0.0, Zero, 0, 0, "_Exp negative infinity with positive zero");
+    CheckExp(-INFINITY, -0.0, 0, -0.0, Zero, 0, 0, "_Exp negative infinity with negative zero");
+    CheckExp(-INFINITY, INFINITY, 0, std::numeric_limits<double>::quiet_NaN(), NotANumber, EDOM, FE_INVALID, "_Exp negative infinity with infinite multiplier is invalid");
+    CheckExp(-INFINITY, -INFINITY, 0, std::numeric_limits<double>::quiet_NaN(), NotANumber, EDOM, FE_INVALID, "_Exp negative infinity with negative infinite multiplier is invalid");
+    CheckExp(0.0, INFINITY, 0, INFINITY, Infinite, 0, 0, "_Exp zero exponent with infinite multiplier");
+    CheckExp(0.0, -INFINITY, 0, -INFINITY, Infinite, 0, 0, "_Exp zero exponent with negative infinite multiplier");
+    CheckExp(1.0, INFINITY, 0, INFINITY, Infinite, 0, 0, "_Exp finite exponent with infinite multiplier");
+    CheckExp(1.0, -INFINITY, 0, -INFINITY, Infinite, 0, 0, "_Exp finite exponent with negative infinite multiplier");
+    CheckExp(1.0, std::numeric_limits<double>::quiet_NaN(), 0, 1.0, NotANumber, 0, 0, "_Exp NaN multiplier leaves the exponent");
+    CheckExp(INFINITY, std::numeric_limits<double>::quiet_NaN(), 0, INFINITY, NotANumber, 0, 0, "_Exp NaN multiplier leaves an infinite exponent");
+    CheckExp(std::numeric_limits<double>::quiet_NaN(), 0.0, 0, std::numeric_limits<double>::quiet_NaN(), NotANumber, 0, 0, "_Exp NaN exponent with zero multiplier");
+    CheckExp(std::numeric_limits<double>::quiet_NaN(), 1.0, 0, std::numeric_limits<double>::quiet_NaN(), NotANumber, 0, 0, "_Exp NaN exponent");
+    CheckExp(std::numeric_limits<double>::quiet_NaN(), INFINITY, 0, std::numeric_limits<double>::quiet_NaN(), NotANumber, 0, 0, "_Exp NaN exponent with infinite multiplier");
+    CheckExp(1843.0, 1.0, 0, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_Exp positive cutoff");
+    CheckExp(1843.0, -1.0, 0, -INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_Exp positive cutoff preserves the multiplier sign");
+    CheckExp(1843.0, 1.0, -2660, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_Exp positive cutoff ignores a compensating offset");
+    CheckExp(-1843.0, 1.0, 0, 0.0, Zero, 0, 0, "_Exp negative cutoff");
+    CheckExp(-1843.0, -1.0, 0, -0.0, Zero, 0, 0, "_Exp negative cutoff preserves the multiplier sign");
+    CheckExp(-1843.0, 1.0, 2660, 0.0, Zero, 0, 0, "_Exp negative cutoff ignores a compensating offset");
+    CheckExp(1843.0, 0.0, 0, 0.0, Zero, 0, 0, "_Exp positive cutoff with zero multiplier");
+    CheckExp(1843.0, std::numeric_limits<double>::quiet_NaN(), 0, 1843.0, NotANumber, 0, 0, "_Exp positive cutoff with NaN multiplier");
+    CheckExp(0.0, 1.0, -1074, std::numeric_limits<double>::denorm_min(), Finite, 0, 0, "_Exp exact minimum subnormal");
+    CheckExp(0.0, 1.0, -1075, 0.0, Zero, ERANGE, FE_UNDERFLOW | FE_INEXACT, "_Exp scaled underflow");
+    CheckExp(0.0, -1.0, -1075, -0.0, Zero, ERANGE, FE_UNDERFLOW | FE_INEXACT, "_Exp scaled underflow preserves the multiplier sign");
+    CheckExp(0.0, 1.0, 100, std::scalbn(1.0, 100), Finite, 0, 0, "_Exp scaled finite result");
+    CheckExp(0.0, 1.0, 2000, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_Exp scaled overflow");
+    CheckExp(1842.0, 1.0, 0, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_Exp inside the positive cutoff overflows");
+    CheckExp(-1842.0, 1.0, 0, 0.0, Zero, ERANGE, FE_UNDERFLOW | FE_INEXACT, "_Exp inside the negative cutoff underflows");
+
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    double result = 1.0;
+    Require(_Exp_nid_postfix(&result, 3.0, 0) == Finite && std::fabs(result - 3.0 * e) <= 3.0 * e * 1e-14, "_Exp multiplier");
+    result = 1.0;
+    Require(_Exp_nid_postfix(&result, -2.0, 0) == Finite && std::fabs(result + 2.0 * e) <= 2.0 * e * 1e-14, "_Exp negative multiplier");
+    result = 1.0;
+    Require(_Exp_nid_postfix(&result, 1.0, 10) == Finite && std::fabs(result - e * 1024.0) <= e * 1024.0 * 1e-14, "_Exp scale");
+    for (int i = -200; i <= 200; ++i) {
+        const double x = static_cast<double>(i) / 16.0;
+        result = x;
+        Require(_Exp_nid_postfix(&result, 1.0, 0) == Finite && std::fabs(result - std::exp(x)) <= std::fabs(std::exp(x)) * 1e-13, "_Exp finite sweep");
+    }
+
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = 1.0;
+    Require(_Exp_nid_postfix(&result, std::numeric_limits<double>::denorm_min(), 0) == Finite && std::fpclassify(result) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0, "_Exp subnormal result classification");
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = -740.0;
+    Require(_Exp_nid_postfix(&result, 1.0, 0) == Finite && std::fpclassify(result) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0, "_Exp negative exponent subnormal result");
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = 1.0;
+    Require(_Exp_nid_postfix(&result, std::numeric_limits<double>::max(), 0) == Infinite && std::isinf(result) && errno == ERANGE && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_INEXACT)) == (FE_OVERFLOW | FE_INEXACT), "_Exp finite multiplier overflow");
+
+    const double largeExpected = std::scalbn(std::exp(710.0 - 1024.0 * std::log(2.0)) * 1e-100, 1024);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = 710.0;
+    Require(_Exp_nid_postfix(&result, 1e-100, 0) == Finite && std::isfinite(result) && std::fabs(result - largeExpected) <= largeExpected * 1e-13 && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_Exp large exponent stays finite");
+    const double smallExpected = std::scalbn(std::exp(-710.0 + 1024.0 * std::log(2.0)) * 1e300, -1024);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = -710.0;
+    Require(_Exp_nid_postfix(&result, 1e300, 0) == Finite && std::isfinite(result) && std::fabs(result - smallExpected) <= smallExpected * 1e-13 && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_Exp small exponent stays finite");
+    const double multiplierExpected = std::exp(-0.5) * std::numeric_limits<double>::max();
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = -0.5;
+    Require(_Exp_nid_postfix(&result, std::numeric_limits<double>::max(), 0) == Finite && std::isfinite(result) && std::fabs(result - multiplierExpected) <= multiplierExpected * 1e-13 && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_Exp large multiplier stays finite");
+
+    const float ef = 0x1.5bf0a8p+1f;
+    CheckFExp(1.0f, 1.0f, 0, ef, Finite, 0, 0, "_FExp e");
+    CheckFExp(0.0f, 1.0f, 0, 1.0f, Finite, 0, 0, "_FExp zero exponent");
+    CheckFExp(0.0f, 5.0f, 0, 5.0f, Finite, 0, 0, "_FExp multiplier at zero exponent");
+    CheckFExp(1.0f, -0.0f, 0, -0.0f, Zero, 0, 0, "_FExp keeps a negative zero multiplier");
+    CheckFExp(1.0f, 0.0f, 0, 0.0f, Zero, 0, 0, "_FExp zero multiplier");
+    CheckFExp(-1.0f, -0.0f, 0, -0.0f, Zero, 0, 0, "_FExp negative zero multiplier");
+    CheckFExp(INFINITY, -0.0f, 0, std::numeric_limits<float>::quiet_NaN(), NotANumber, EDOM, FE_INVALID, "_FExp positive infinity with zero multiplier is invalid");
+    CheckFExp(INFINITY, 0.0f, 0, std::numeric_limits<float>::quiet_NaN(), NotANumber, EDOM, FE_INVALID, "_FExp positive infinity with positive zero is invalid");
+    CheckFExp(INFINITY, 1.0f, 0, INFINITY, Infinite, 0, 0, "_FExp positive infinity");
+    CheckFExp(INFINITY, -1.0f, 0, -INFINITY, Infinite, 0, 0, "_FExp positive infinity preserves the multiplier sign");
+    CheckFExp(INFINITY, INFINITY, 0, INFINITY, Infinite, 0, 0, "_FExp positive infinity with infinite multiplier");
+    CheckFExp(INFINITY, -INFINITY, 0, -INFINITY, Infinite, 0, 0, "_FExp positive infinity with negative infinite multiplier");
+    CheckFExp(-INFINITY, 1.0f, 0, 0.0f, Zero, 0, 0, "_FExp negative infinity");
+    CheckFExp(-INFINITY, -1.0f, 0, -0.0f, Zero, 0, 0, "_FExp negative infinity preserves the multiplier sign");
+    CheckFExp(-INFINITY, 0.0f, 0, 0.0f, Zero, 0, 0, "_FExp negative infinity with positive zero");
+    CheckFExp(-INFINITY, -0.0f, 0, -0.0f, Zero, 0, 0, "_FExp negative infinity with negative zero");
+    CheckFExp(-INFINITY, INFINITY, 0, std::numeric_limits<float>::quiet_NaN(), NotANumber, EDOM, FE_INVALID, "_FExp negative infinity with infinite multiplier is invalid");
+    CheckFExp(-INFINITY, -INFINITY, 0, std::numeric_limits<float>::quiet_NaN(), NotANumber, EDOM, FE_INVALID, "_FExp negative infinity with negative infinite multiplier is invalid");
+    CheckFExp(0.0f, INFINITY, 0, INFINITY, Infinite, 0, 0, "_FExp zero exponent with infinite multiplier");
+    CheckFExp(0.0f, -INFINITY, 0, -INFINITY, Infinite, 0, 0, "_FExp zero exponent with negative infinite multiplier");
+    CheckFExp(1.0f, INFINITY, 0, INFINITY, Infinite, 0, 0, "_FExp finite exponent with infinite multiplier");
+    CheckFExp(1.0f, -INFINITY, 0, -INFINITY, Infinite, 0, 0, "_FExp finite exponent with negative infinite multiplier");
+    CheckFExp(1.0f, std::numeric_limits<float>::quiet_NaN(), 0, 1.0f, NotANumber, 0, 0, "_FExp NaN multiplier leaves the exponent");
+    CheckFExp(INFINITY, std::numeric_limits<float>::quiet_NaN(), 0, INFINITY, NotANumber, 0, 0, "_FExp NaN multiplier leaves an infinite exponent");
+    CheckFExp(std::numeric_limits<float>::quiet_NaN(), 0.0f, 0, std::numeric_limits<float>::quiet_NaN(), NotANumber, 0, 0, "_FExp NaN exponent with zero multiplier");
+    CheckFExp(std::numeric_limits<float>::quiet_NaN(), 1.0f, 0, std::numeric_limits<float>::quiet_NaN(), NotANumber, 0, 0, "_FExp NaN exponent");
+    CheckFExp(std::numeric_limits<float>::quiet_NaN(), INFINITY, 0, std::numeric_limits<float>::quiet_NaN(), NotANumber, 0, 0, "_FExp NaN exponent with infinite multiplier");
+    CheckFExp(230.0f, 1.0f, 0, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_FExp positive cutoff");
+    CheckFExp(230.0f, -1.0f, 0, -INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_FExp positive cutoff preserves the multiplier sign");
+    CheckFExp(230.0f, 1.0f, -332, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_FExp positive cutoff ignores the offset");
+    CheckFExp(-230.0f, 1.0f, 0, 0.0f, Zero, 0, 0, "_FExp negative cutoff");
+    CheckFExp(-230.0f, -1.0f, 0, -0.0f, Zero, 0, 0, "_FExp negative cutoff preserves the multiplier sign");
+    CheckFExp(-230.0f, 1.0f, 332, 0.0f, Zero, 0, 0, "_FExp negative cutoff ignores the offset");
+    CheckFExp(230.0f, 0.0f, 0, 0.0f, Zero, 0, 0, "_FExp positive cutoff with zero multiplier");
+    CheckFExp(230.0f, std::numeric_limits<float>::quiet_NaN(), 0, 230.0f, NotANumber, 0, 0, "_FExp positive cutoff with NaN multiplier");
+    CheckFExp(0.0f, 1.0f, -149, std::numeric_limits<float>::denorm_min(), Finite, 0, 0, "_FExp exact minimum subnormal");
+    CheckFExp(0.0f, 1.0f, -150, 0.0f, Zero, ERANGE, FE_UNDERFLOW | FE_INEXACT, "_FExp scaled underflow");
+    CheckFExp(0.0f, -1.0f, -150, -0.0f, Zero, ERANGE, FE_UNDERFLOW | FE_INEXACT, "_FExp scaled underflow preserves the multiplier sign");
+    CheckFExp(0.0f, 1.0f, 100, std::scalbn(1.0f, 100), Finite, 0, 0, "_FExp scaled finite result");
+    CheckFExp(0.0f, 1.0f, 200, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_FExp scaled overflow");
+    CheckFExp(229.0f, 1.0f, 0, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_FExp inside the positive cutoff overflows");
+    CheckFExp(-229.0f, 1.0f, 0, 0.0f, Zero, ERANGE, FE_UNDERFLOW | FE_INEXACT, "_FExp inside the negative cutoff underflows");
+
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    float resultf = 1.0f;
+    Require(_FExp_nid_postfix(&resultf, 3.0f, 0) == Finite && std::fabs(resultf - 3.0f * ef) <= 3.0f * ef * 1e-6f, "_FExp multiplier");
+    resultf = 1.0f;
+    Require(_FExp_nid_postfix(&resultf, -2.0f, 0) == Finite && std::fabs(resultf + 2.0f * ef) <= 2.0f * ef * 1e-6f, "_FExp negative multiplier");
+    resultf = 1.0f;
+    Require(_FExp_nid_postfix(&resultf, 1.0f, 10) == Finite && std::fabs(resultf - ef * 1024.0f) <= ef * 1024.0f * 1e-6f, "_FExp scale");
+    for (int i = -120; i <= 120; ++i) {
+        const float x = static_cast<float>(i) / 16.0f;
+        resultf = x;
+        Require(_FExp_nid_postfix(&resultf, 1.0f, 0) == Finite && std::fabs(resultf - std::exp(x)) <= std::fabs(std::exp(x)) * 1e-6f, "_FExp finite sweep");
+    }
+
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    resultf = 1.0f;
+    Require(_FExp_nid_postfix(&resultf, std::numeric_limits<float>::denorm_min(), 0) == Finite && std::fpclassify(resultf) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0, "_FExp subnormal result classification");
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    resultf = -100.0f;
+    Require(_FExp_nid_postfix(&resultf, 1.0f, 0) == Finite && std::fpclassify(resultf) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0, "_FExp negative exponent subnormal result");
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    resultf = 1.0f;
+    Require(_FExp_nid_postfix(&resultf, std::numeric_limits<float>::max(), 0) == Infinite && std::isinf(resultf) && errno == ERANGE && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_INEXACT)) == (FE_OVERFLOW | FE_INEXACT), "_FExp finite multiplier overflow");
+
+    const float largeExpectedf = static_cast<float>(std::exp(100.0) * 1e-35);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    resultf = 100.0f;
+    Require(_FExp_nid_postfix(&resultf, 1e-35f, 0) == Finite && std::isfinite(resultf) && std::fabs(resultf - largeExpectedf) <= largeExpectedf * 1e-6f && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_FExp large exponent stays finite");
+    const float smallExpectedf = static_cast<float>(std::exp(-100.0) * 1e30);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    resultf = -100.0f;
+    Require(_FExp_nid_postfix(&resultf, 1e30f, 0) == Finite && std::isfinite(resultf) && std::fabs(resultf - smallExpectedf) <= smallExpectedf * 1e-6f && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_FExp small exponent stays finite");
+    const float multiplierExpectedf = static_cast<float>(std::exp(-0.5) * std::numeric_limits<float>::max());
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    resultf = -0.5f;
+    Require(_FExp_nid_postfix(&resultf, std::numeric_limits<float>::max(), 0) == Finite && std::isfinite(resultf) && std::fabs(resultf - multiplierExpectedf) <= multiplierExpectedf * 1e-6f && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_FExp large multiplier stays finite");
+}
+
 void TestDispatch() {
     Require(_Sin_nid_postfix(0.5, 0) == std::sin(0.5) && _Sin_nid_postfix(0.5, 1) == std::cos(0.5) && _Sin_nid_postfix(0.5, 7) == std::cos(0.5), "_Sin");
     Require(_FSin_nid_postfix(0.5f, 0) == std::sin(0.5f) && _FSin_nid_postfix(0.5f, 2) == std::cos(0.5f), "_FSin");
@@ -206,6 +409,7 @@ void TestLongDoubleHelpers() {
 int main() {
     TestStod();
     TestStoll();
+    TestDoubleHelpers();
     TestFloatErrors();
     TestIntegerErrors();
     TestArithmetic();

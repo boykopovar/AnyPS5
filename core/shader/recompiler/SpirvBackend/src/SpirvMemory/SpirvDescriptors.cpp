@@ -137,8 +137,8 @@ std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image) {
         if (sampled == 2u) {
             if (std::ranges::find(state.supportedCapabilities, spv::CapabilityStorageImageMultisample) == state.supportedCapabilities.end()) FailEmit("storage image multisampling is unavailable on the target device");
             state.module.EmitCapability(spv::CapabilityStorageImageMultisample);
+            if (info.arrayed != 0u) state.module.EmitCapability(spv::CapabilityImageMSArray);
         }
-        if (info.arrayed != 0u) state.module.EmitCapability(spv::CapabilityImageMSArray);
     }
     const auto scalar = image.atomic64 ? TypeScalarU64(state) : ImageScalarType(state, image.numericClass);
     return state.module.Type(spv::OpTypeImage, scalar, info.spirvDimension, image.depthCompare ? 1u : 0u, info.arrayed, info.multisampled, sampled, format);

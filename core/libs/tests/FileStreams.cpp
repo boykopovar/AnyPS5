@@ -198,10 +198,79 @@ static void CheckUpdateStreamReadsAfterWrites(const std::string& base) {
     Require(std::remove(path.c_str()) == 0);
 }
 
+template<typename TAccess>
+static void CheckWriteAfterRead(const std::string& path, const char* mode, const char* expected, TAccess access) {
+    auto* stream = fopen_nid_postfix(path.c_str(), "wb");
+    Require(stream != nullptr && fputs_nid_postfix("0123456789", stream) >= 0 && fclose_nid_postfix(stream) == 0, "Creating the written file");
+    stream = fopen_nid_postfix(path.c_str(), mode);
+    Require(stream != nullptr, "fopen of the written file");
+    access(stream);
+    Require(fclose_nid_postfix(stream) == 0, "fclose after a write after read");
+    Require(ReadWhole(path) == expected, "Write after read wrote other bytes");
+}
+
+static void CheckStreamWritesAfterReads(const std::string& base) {
+    const std::string path = base + ".written";
+    constexpr char appended[] = "0123456789XY";
+#if defined(__GLIBC__)
+    constexpr char afterReadAhead[] = "0XY3456789";
+    constexpr char afterPushBack[] = "XY23456789";
+#else
+    constexpr char afterReadAhead[] = "0123456789XY";
+    constexpr char afterPushBack[] = "0123456789XY";
+#endif
+    using Write = void (*)(FileStream*);
+    for (const Write write : {
+             +[](FileStream* stream) { Require(fwrite_nid_postfix("XY", 1, 2, stream) == 2, "fwrite after fgetc on an update stream"); },
+             +[](FileStream* stream) { Require(fputs_nid_postfix("XY", stream) >= 0, "fputs after fgetc on an update stream"); },
+             +[](FileStream* stream) { Require(fputc_nid_postfix('X', stream) == 'X' && fputc_nid_postfix('Y', stream) == 'Y', "fputc after fgetc on an update stream"); },
+             +[](FileStream* stream) { Require(putc_unlocked_nid_postfix('X', stream) == 'X' && putc_unlocked_nid_postfix('Y', stream) == 'Y', "putc_unlocked after fgetc on an update stream"); },
+             +[](FileStream* stream) { Require(fprintf_nid_postfix(stream, "%s", "XY") == 2, "fprintf after fgetc on an update stream"); },
+             +[](FileStream* stream) { Require(fprintf_s_nid_postfix(stream, "%s", "XY") == 2, "fprintf_s after fgetc on an update stream"); },
+             +[](FileStream* stream) { Require(fputwc_nid_postfix(u'X', stream) == u'X' && fputwc_nid_postfix(u'Y', stream) == u'Y', "fputwc after fgetc on an update stream"); },
+             +[](FileStream* stream) { Require(fputws_nid_postfix(u"XY", stream) >= 0, "fputws after fgetc on an update stream"); },
+             +[](FileStream* stream) { Require(fwprintf_nid_postfix(stream, u"XY") == 2, "fwprintf after fgetc on an update stream"); },
+         }) {
+        for (const char* mode : {"r+b", "a+b"}) {
+            CheckWriteAfterRead(path, mode, std::string_view(mode) == "a+b" ? appended : afterReadAhead, [write](FileStream* stream) {
+                Require(fseek_nid_postfix(stream, 0, SEEK_SET) == 0 && fgetc_nid_postfix(stream) == '0', "fgetc on an update stream");
+                write(stream);
+                Require(ferror_nid_postfix(stream) == 0, "Write after fgetc on an update stream set the error indicator");
+            });
+        }
+    }
+    CheckWriteAfterRead(path, "r+b", appended, [](FileStream* stream) {
+        std::array<char, 10> buffer{};
+        Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == buffer.size() && feof_nid_postfix(stream) == 0, "fread of every byte of an r+ stream");
+        Require(fwrite_nid_postfix("XY", 1, 2, stream) == 2 && ferror_nid_postfix(stream) == 0, "fwrite after reading every byte of an r+ stream");
+    });
+    CheckWriteAfterRead(path, "r+b", afterReadAhead, [](FileStream* stream) {
+        Require(fgetc_nid_postfix(stream) == '0' && fflush_nid_postfix(stream) == 0, "fflush after fgetc on an r+ stream");
+        Require(fputs_nid_postfix("XY", stream) >= 0 && ferror_nid_postfix(stream) == 0, "fputs after fgetc and fflush on an r+ stream");
+    });
+    CheckWriteAfterRead(path, "r+b", afterPushBack, [](FileStream* stream) {
+        Require(fgetc_nid_postfix(stream) == '0' && ungetc_nid_postfix('Z', stream) == 'Z', "ungetc after fgetc on an r+ stream");
+        Require(fputs_nid_postfix("XY", stream) >= 0 && ferror_nid_postfix(stream) == 0, "fputs after ungetc on an r+ stream");
+    });
+    CheckWriteAfterRead(path, "rb", "0123456789", [](FileStream* stream) {
+        Require(fgetc_nid_postfix(stream) == '0', "fgetc on a read-only stream");
+        errno = 0;
+        Require(fputc_nid_postfix('X', stream) == EOF && errno == EBADF && ferror_nid_postfix(stream) != 0, "fputc after fgetc on a read-only stream");
+        clearerr_nid_postfix(stream);
+        errno = 0;
+        Require(fwrite_nid_postfix("XY", 1, 2, stream) == 0 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fwrite after fgetc on a read-only stream");
+        clearerr_nid_postfix(stream);
+        errno = 0;
+        Require(fprintf_nid_postfix(stream, "%s", "XY") == -1 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fprintf after fgetc on a read-only stream");
+    });
+    Require(std::remove(path.c_str()) == 0);
+}
+
 int main(int argc, char** argv) {
     Require(argc == 2);
     CheckExclusiveCppOpen(argv[1]);
     CheckUpdateStreamReadsAfterWrites(argv[1]);
+    CheckStreamWritesAfterReads(argv[1]);
     Require(_Stdout_nid_postfix.GetHandle() == stdout);
     Require(_Stderr_nid_postfix.GetHandle() == stderr);
     Require(fputs_nid_postfix("stdout object works\n", &_Stdout_nid_postfix) >= 0);

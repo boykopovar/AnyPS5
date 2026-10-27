@@ -16,6 +16,10 @@
 #include <fstream>
 #include <string>
 #endif
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -35,7 +39,7 @@ static void RequireLockAllUnsupported(int flags) {
     Require(rejected);
 }
 
-#if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN)
+#if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
 #define HAS_LOCKED_KILOBYTES
 static std::size_t LockedKilobytes() {
     std::ifstream status("/proc/self/status");
@@ -44,6 +48,19 @@ static std::size_t LockedKilobytes() {
         if (line.rfind("VmLck:", 0) == 0) return std::strtoull(line.c_str() + 6, nullptr, 10);
     }
     return 0;
+}
+#endif
+
+#ifdef __APPLE__
+static unsigned WiredCount(const void* page) {
+    mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(page);
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t info{};
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    Require(mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) == KERN_SUCCESS);
+    Require(address <= reinterpret_cast<mach_vm_address_t>(page));
+    return info.user_wired_count;
 }
 #endif
 
@@ -71,6 +88,14 @@ int main() {
 #endif
     Require(mlock_nid_postfix(mapped, length) == 0);
     Require(mlock_nid_postfix(mapped, length) == 0);
+#ifdef __APPLE__
+    Require(WiredCount(mapped) == 1);
+    void* remapped = mapped;
+    Require(sceKernelMapFlexibleMemory(&remapped, length, 3, 0x10) == 0 && remapped == mapped);
+    Require(WiredCount(mapped) == 0);
+    Require(mlock_nid_postfix(mapped, length) == 0);
+    Require(WiredCount(mapped) == 1);
+#endif
     bytes[length - 1] = 7;
 
     *__error_nid_postfix() = untouched;
@@ -85,6 +110,9 @@ int main() {
     *__error_nid_postfix() = untouched;
     Require(munlock_nid_postfix(mapped, length) == 0);
     Require(*__error_nid_postfix() == untouched);
+#ifdef __APPLE__
+    Require(WiredCount(mapped) == 0);
+#endif
     bytes[0] = 7;
     Require(mlock_nid_postfix(mapped, page) == 0);
 #ifdef HAS_LOCKED_KILOBYTES
@@ -107,11 +135,14 @@ int main() {
 #ifdef HAS_LOCKED_KILOBYTES
     Require(LockedKilobytes() - lockedBefore == page / 1024);
 #endif
+    Require(mlock_nid_postfix(mapped, page) == 0);
     *__error_nid_postfix() = untouched;
     Require(munlockall_nid_postfix() == 0);
     Require(*__error_nid_postfix() == untouched);
 #ifdef HAS_LOCKED_KILOBYTES
     Require(LockedKilobytes() == lockedBefore);
+#elif defined(__APPLE__)
+    Require(WiredCount(mapped) == 0);
 #elif defined(_WIN32)
     Require(!VirtualUnlock(mapped, page) && GetLastError() == ERROR_NOT_LOCKED);
 #endif
@@ -125,7 +156,7 @@ int main() {
 
     void* reserved = nullptr;
     Require(sceKernelReserveVirtualRange(&reserved, page, 0, 0) == 0);
-#ifndef ANYPS5_ENABLE_ASAN
+#if !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
     *__error_nid_postfix() = 0;
     Require(mlock_nid_postfix(reserved, page) == -1 && *__error_nid_postfix() == 12);
 #endif
@@ -135,7 +166,7 @@ int main() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page) == 0);
 
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), length) == 0);
-#ifndef ANYPS5_ENABLE_ASAN
+#if !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
     *__error_nid_postfix() = 0;
     Require(mlock_nid_postfix(mapped, page) == -1 && *__error_nid_postfix() == 12);
     *__error_nid_postfix() = 0;

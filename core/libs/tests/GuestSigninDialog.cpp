@@ -25,8 +25,10 @@ int main() {
     std::memset(result, 0x5a, sizeof(result));
 
     Require(sceSigninDialogTerminate() == kErrNotInitialized);
+    Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceSigninDialogOpen(&param) == kErrNotInitialized);
     Require(sceSigninDialogClose() == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceSigninDialogGetResult(result) == kErrNotInitialized);
     Require(sceSigninDialogGetStatus() == kStatusNone);
     Require(sceSigninDialogUpdateStatus() == kStatusNone);
@@ -36,6 +38,7 @@ int main() {
     Require(sceSigninDialogGetStatus() == kStatusInitialized);
 
     Require(sceSigninDialogOpen(nullptr) == kErrArgNull);
+    Require(sceSigninDialogGetResult(nullptr) == kErrNotFinished);
     Require(sceSigninDialogGetResult(result) == kErrNotFinished);
 
     Require(sceSigninDialogOpen(&param) == 0);
@@ -52,7 +55,13 @@ int main() {
     Require(sceSigninDialogClose() == 0);
     Require(sceSigninDialogTerminate() == 0);
     Require(sceSigninDialogTerminate() == kErrNotInitialized);
+    Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogOpen(&param) == kErrNotInitialized);
+    Require(sceSigninDialogClose() == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(result) == kErrNotInitialized);
     Require(sceSigninDialogGetStatus() == kStatusNone);
+    Require(sceSigninDialogUpdateStatus() == kStatusNone);
 
     Require(sceSigninDialogInitialize() == 0);
     Require(sceSigninDialogGetStatus() == kStatusInitialized);
@@ -65,4 +74,12 @@ int main() {
     Require(result[2] == 0);
     Require(result[3] == 0);
     Require(sceSigninDialogTerminate() == 0);
+    Require(sceSigninDialogTerminate() == kErrNotInitialized);
+    Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogOpen(&param) == kErrNotInitialized);
+    Require(sceSigninDialogClose() == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(result) == kErrNotInitialized);
+    Require(sceSigninDialogGetStatus() == kStatusNone);
+    Require(sceSigninDialogUpdateStatus() == kStatusNone);
 }

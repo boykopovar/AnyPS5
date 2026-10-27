@@ -45,6 +45,7 @@
 
 namespace AgcDriver {
 class PerformanceTimer;
+struct OverlayDriverCounters;
 }
 
 namespace AgcDriver::DriverDetail {
@@ -76,7 +77,7 @@ public:
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void AttachWindow(const PresentationWindow& window);
-    void Present(const PresentationWindow& window, const DisplayBuffer* buffer, bool opaque, void (*gpuReady)(void*), void* context);
+    void Present(const PresentationWindow& window, const DisplayBuffer* buffer, const DisplayBuffer* plane, bool opaque, void (*gpuReady)(void*), void* context);
     void ReleaseWindow(void* window);
     void RegisterShader(const Shader* shader);
     void ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive);
@@ -99,6 +100,7 @@ public:
     static void tagVariantRuns(DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, const ShaderRecompiler::SrtUserDataUse& use, bool eligible, std::uint32_t hiddenWords, std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> supplied = {});
     static std::string dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request, std::string_view suffix = {});
     DrawEntryCounters DrawCacheCounters();
+    OverlayDriverCounters OverlayCounters();
     EntryCounters DispatchCacheCounters();
     struct DispatchCacheFootprint {
         std::size_t entries = 0;
