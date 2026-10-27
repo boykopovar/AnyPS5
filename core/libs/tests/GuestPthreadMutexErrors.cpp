@@ -1,38 +1,13 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
 
-extern "C" {
-int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr);
-int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr);
-int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type);
-int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol);
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexGetspinloops(PthreadMutex* mutex, int* count);
-int APS5_VABI scePthreadMutexSetspinloops(PthreadMutex* mutex, int count);
-int APS5_VABI scePthreadMutexGetyieldloops(PthreadMutex* mutex, int* count);
-int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI pthread_mutex_lock_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_unlock_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_reltimedlock_np_nid_postfix(PthreadMutex* mutex, KernelUseconds usec);
-int APS5_VABI pthread_mutex_isowned_np_nid_postfix(PthreadMutex* mutex);
-int APS5_VABI pthread_mutex_getspinloops_np_nid_postfix(PthreadMutex* mutex, int* count);
-int APS5_VABI pthread_mutex_setspinloops_np_nid_postfix(PthreadMutex* mutex, int count);
-int APS5_VABI pthread_mutex_getyieldloops_np_nid_postfix(PthreadMutex* mutex, int* count);
-int APS5_VABI pthread_mutex_setyieldloops_np_nid_postfix(PthreadMutex* mutex, int count);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
-static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010u);
 
 static constexpr int POSIX_EDEADLK = 11;
 static constexpr int POSIX_EINVAL = 22;
@@ -72,7 +47,7 @@ static void CheckOwnershipAndRelativeLock() {
     Require(pthread_mutex_isowned_np_nid_postfix(&adaptive) == 0 && adaptive == AdaptiveInitializer);
     Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == 0 && mutex != nullptr);
     Require(pthread_mutex_isowned_np_nid_postfix(&mutex) == 1);
-    Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == POSIX_EDEADLK);
+    Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == POSIX_ETIMEDOUT);
     OtherThread other{&mutex};
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, CheckFromOtherThread, &other, nullptr) == SCE_OK);
@@ -126,8 +101,8 @@ static void CheckLoops(PthreadMutexattr* attr) {
     Require(pthread_mutex_getspinloops_np_nid_postfix(&mutex, &count) == POSIX_EINVAL);
     Require(pthread_mutex_setspinloops_np_nid_postfix(&mutex, 1) == POSIX_EINVAL);
     Require(pthread_mutex_getyieldloops_np_nid_postfix(&mutex, &count) == POSIX_EINVAL && count == -1);
-    Require(scePthreadMutexSetyieldloops(&mutex, 1) == SCE_OK);
-    Require(pthread_mutex_setyieldloops_np_nid_postfix(&mutex, 1) == 0);
+    Require(scePthreadMutexSetyieldloops(&mutex, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutex_setyieldloops_np_nid_postfix(&mutex, 1) == POSIX_EINVAL);
     Require(mutex == DestroyedMutex);
 
     for (const int type : {1, 2, 3}) {

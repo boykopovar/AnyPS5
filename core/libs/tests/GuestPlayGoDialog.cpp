@@ -1,18 +1,9 @@
+#include "prx/libScePlayGoDialog/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI scePlayGoDialogInitialize(void);
-int APS5_VABI scePlayGoDialogTerminate(void);
-int APS5_VABI scePlayGoDialogOpen(const void* param);
-int APS5_VABI scePlayGoDialogClose(void);
-int APS5_VABI scePlayGoDialogUpdateStatus(void);
-int APS5_VABI scePlayGoDialogGetStatus(void);
-int APS5_VABI scePlayGoDialogGetResult(PlayGoDialogResult* result);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -47,6 +38,8 @@ int main() {
     Require(scePlayGoDialogOpen(&openParam) == 0);
     Require(scePlayGoDialogGetStatus() == 3);
     Require(scePlayGoDialogUpdateStatus() == 3);
+    Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
+    Require(scePlayGoDialogOpen(&openParam) == 0);
 
     PlayGoDialogResult result{};
     Require(scePlayGoDialogGetResult(&result) == 0);
@@ -60,5 +53,13 @@ int main() {
     Require(scePlayGoDialogTerminate() == 0);
     Require(scePlayGoDialogGetStatus() == 0);
     Require(scePlayGoDialogTerminate() == notInitialized);
+    Require(scePlayGoDialogClose() == notInitialized);
+    Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
+    Require(scePlayGoDialogOpen(&openParam) == notInitialized);
+    Require(scePlayGoDialogGetResult(nullptr) == paramInvalid);
+    Require(scePlayGoDialogGetResult(&result) == static_cast<std::int32_t>(0x80B8000Au));
+    result.reserved[0] = 0;
+    Require(scePlayGoDialogGetResult(&result) == notInitialized);
+    Require(scePlayGoDialogUpdateStatus() == 0);
     return 0;
 }

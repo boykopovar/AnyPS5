@@ -1,8 +1,11 @@
+#include "prx/libSceMove/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 #include "SceTypes.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 
@@ -17,6 +20,7 @@ constexpr int MOVE_ERROR_INVALID_HANDLE = static_cast<int>(0x80EE0004);
 constexpr int MOVE_ERROR_ALREADY_OPENED = static_cast<int>(0x80EE0007);
 constexpr int32_t MOVE_FIRST_HANDLE = 0x30B0100;
 constexpr int32_t MOVE_HANDLE_STEP = 0x100;
+constexpr uint32_t MOVE_LAST_SDK_ALLOWING_NULL_DATA = 0x03ffffff;
 
 std::mutex stateMutex;
 bool initialized = false;
@@ -34,6 +38,13 @@ int checkHandle(int32_t handle, bool validArguments = true) {
     if (!validArguments) return MOVE_ERROR_INVALID_ARG;
     if (!openHandles.contains(handle)) return MOVE_ERROR_INVALID_HANDLE;
     return MOVE_OK;
+}
+
+uint32_t compiledSdkVersion() {
+    static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    uint32_t version;
+    std::memcpy(&version, processParameters + 0x10, sizeof(version));
+    return version;
 }
 
 }
@@ -90,7 +101,8 @@ int APS5_VABI sceMoveReadStateLatest(int32_t handle, void* data) {
 }
 
 int APS5_VABI sceMoveReadStateRecent(int32_t handle, int64_t timestamp, void* data, int32_t* outCount) {
-    if (const int result = checkHandle(handle, timestamp >= 0 && data != nullptr && outCount != nullptr); result != MOVE_OK) return result;
+    const bool dataAccepted = data != nullptr || compiledSdkVersion() <= MOVE_LAST_SDK_ALLOWING_NULL_DATA;
+    if (const int result = checkHandle(handle, timestamp >= 0 && dataAccepted && outCount != nullptr); result != MOVE_OK) return result;
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
 

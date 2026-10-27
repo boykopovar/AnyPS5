@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include <cerrno>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
@@ -21,13 +23,6 @@
 #define APS5_VA_BEGIN(last) std::va_list args; va_start(args, last)
 #define APS5_VA_END() va_end(args)
 #endif
-
-extern "C" int APS5_VABI iswspace_nid_postfix(std::uint32_t c);
-extern "C" std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
-extern "C" std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream);
-extern "C" int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream);
-extern "C" void APS5_VABI flockfile_nid_postfix(FileStream* stream);
-extern "C" void APS5_VABI funlockfile_nid_postfix(FileStream* stream);
 
 namespace {
 
@@ -381,15 +376,18 @@ private:
         const std::string field = Field(directive.width, FloatFit);
         if (FloatFit(field) != Fit::Valid) return Outcome::Matching;
         if (target != nullptr) {
+            const int savedError = errno;
             if (directive.length == "L") {
                 const long double value = std::strtold(field.c_str(), nullptr);
                 std::memcpy(target, &value, sizeof(value));
             } else if (directive.length == "l") {
                 const double value = std::strtod(field.c_str(), nullptr);
                 std::memcpy(target, &value, sizeof(value));
+                errno = savedError;
             } else {
                 const float value = std::strtof(field.c_str(), nullptr);
                 std::memcpy(target, &value, sizeof(value));
+                errno = savedError;
             }
             ++assigned;
         }

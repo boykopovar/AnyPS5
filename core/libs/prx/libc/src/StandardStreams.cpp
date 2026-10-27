@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -80,8 +81,7 @@ const bool standardDescriptorsOpen = [] {
 FileStream input{stdin};
 }
 extern "C" {
-void APS5_VABI flockfile_nid_postfix(FileStream*);
-void APS5_VABI funlockfile_nid_postfix(FileStream*);
+
 FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
 FileStream* __stderrp_nid_postfix = &_Stderr_nid_postfix;
@@ -124,8 +124,8 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
     return static_cast<std::int32_t>(code);
 }
 
-
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
+    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (value == -1) return -1;
     if (value < 0 || value > 255) {
         errno = 86;
@@ -159,6 +159,7 @@ char* APS5_VABI gets_nid_postfix(char* buffer) {
     auto* stream = __stdinp_nid_postfix;
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
     flockfile_nid_postfix(stream);
+
     struct Unlock {
         FileStream* stream;
         ~Unlock() { funlockfile_nid_postfix(stream); }
@@ -183,17 +184,21 @@ std::int32_t APS5_VABI getwchar_nid_postfix() { return fgetwc_nid_postfix(__stdi
 int APS5_VABI getchar_unlocked_nid_postfix() { return getc_unlocked_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
-    const int result = std::fputc(value, GetNativeStream(stream));
+    auto* native = GetNativeStream(stream);
+    if (!stream->SwitchToWriting()) return -1;
+    const int result = std::fputc(value, native);
     stream->SyncStatus();
     return result;
 }
 int APS5_VABI putc_nid_postfix(int value, FileStream* stream) { return fputc_nid_postfix(value, stream); }
 int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    auto* native = GetNativeStream(stream);
+    if (!stream->SwitchToWritingUnlocked()) return -1;
 #ifdef _WIN32
-    const int result = _fputc_nolock(value, GetNativeStream(stream));
+    const int result = _fputc_nolock(value, native);
 #else
-    const int result = putc_unlocked(value, GetNativeStream(stream));
+    const int result = putc_unlocked(value, native);
 #endif
     stream->SyncUnlockedStatus();
     return result;
@@ -281,5 +286,6 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
 }
 void APS5_VABI setbuf_nid_postfix(FileStream* stream, char* buffer) {
     setvbuf_nid_postfix(stream, buffer, buffer ? 0 : 2, buffer ? 1024 : 0);
+
 }
 }

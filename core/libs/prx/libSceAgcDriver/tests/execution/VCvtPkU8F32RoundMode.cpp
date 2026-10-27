@@ -26,6 +26,11 @@ alignas(256) constexpr std::array<std::uint32_t, 10> Code{
     0x80010a02u, 0xbf810000u,
 };
 
+alignas(256) std::array<std::uint32_t, 11> RoundModeCode{
+    0x34020084u, 0x34040082u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0xbfa40000u, 0xd55e000au, 0x02010104u,
+    0xe0701000u, 0x80010a02u, 0xbf810000u,
+};
+
 struct PackVector {
     std::uint32_t value;
     std::uint32_t denormalsFlushed[4];
@@ -84,7 +89,7 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Run(AgcDriver::VulkanDevice& device, ShaderRecompiler::ShaderFloatMode floatMode) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, ShaderRecompiler::ShaderFloatMode floatMode) {
     Input.fill(0u);
     for (std::uint32_t lane = 0; lane < Vectors.size(); ++lane) Input[lane * Inputs] = Vectors[lane].value;
     Output.fill(0xdeadbeefu);
@@ -93,7 +98,6 @@ void Run(AgcDriver::VulkanDevice& device, ShaderRecompiler::ShaderFloatMode floa
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -109,11 +113,11 @@ void Run(AgcDriver::VulkanDevice& device, ShaderRecompiler::ShaderFloatMode floa
     device.WaitIdle();
 }
 
-void Check(bool kept, std::uint32_t rounding, bool ieee) {
+void Check(bool kept, std::uint32_t rounding, bool ieee, const std::string& setting) {
     for (std::uint32_t lane = 0; lane < Vectors.size(); ++lane) {
         const auto& vector = Vectors[lane];
         const auto expected = kept ? vector.denormalsKept[rounding] : vector.denormalsFlushed[rounding];
-        Require(Output[lane] == expected, std::string("v_cvt_pk_u8_f32 round mode ") + std::to_string(rounding) + (kept ? ", f32 denormals kept" : ", f32 denormals flushed") +
+        Require(Output[lane] == expected, std::string("v_cvt_pk_u8_f32 round mode ") + std::to_string(rounding) + setting + (kept ? ", f32 denormals kept" : ", f32 denormals flushed") +
                                               (ieee ? ", IEEE=1" : ", IEEE=0") + " of " + Hex(vector.value) + " is " + Hex(Output[lane]) + ", expected " + Hex(expected));
     }
 }
@@ -124,11 +128,16 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        for (const bool kept : {false, true}) {
+        for (std::uint32_t denormals = 0; denormals < 4u; ++denormals) {
+            const bool kept = (denormals & 1u) != 0u;
+            const std::string field = ", f32 denormal mode " + std::to_string(denormals);
             for (std::uint32_t rounding = 0; rounding < 4u; ++rounding) {
                 for (const bool ieee : {false, true}) {
-                    Run(*device, ShaderRecompiler::ShaderFloatMode{(kept ? 0xf0u : 0xc0u) | rounding, true, ieee, false});
-                    Check(kept, rounding, ieee);
+                    Run(*device, Code, ShaderRecompiler::ShaderFloatMode{0xc0u | denormals << 4u | rounding, true, ieee, false});
+                    Check(kept, rounding, ieee, field);
+                    RoundModeCode[5] = 0xbfa40000u | rounding;
+                    Run(*device, RoundModeCode, ShaderRecompiler::ShaderFloatMode{0xc0u | denormals << 4u, true, ieee, false});
+                    Check(kept, rounding, ieee, field + " set by s_round_mode");
                 }
             }
         }

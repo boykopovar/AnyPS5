@@ -201,6 +201,8 @@ private:
 Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchMovnts(const DecodedInstruction& instr, const Entry& entry) const {
     using namespace X64OpcodeConstants;
     const auto opcodeOffset = instr.OpcodeOffset();
+    if (std::find(instr.Data, instr.Data + opcodeOffset, PrefixLock) != instr.Data + opcodeOffset)
+        throw CodegenException("MOVNTSS/MOVNTSD with a LOCK prefix");
     if (opcodeOffset + 2 >= instr.Length)
         throw CodegenException("MOVNTSS/MOVNTSD truncated before its ModRM byte");
     const auto modrm = instr.Data[opcodeOffset + 2];

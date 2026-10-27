@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,16 @@ namespace {
 
 int CompareUnits(char16_t left, char16_t right) {
     return left < right ? -1 : 1;
+}
+
+int ByteDifference(const void* s1, const void* s2, size_t n, bool stopAtNul) {
+    const auto* left = static_cast<const unsigned char*>(s1);
+    const auto* right = static_cast<const unsigned char*>(s2);
+    for (size_t index = 0; index < n; ++index) {
+        if (left[index] != right[index]) return left[index] - right[index];
+        if (stopAtNul && left[index] == 0) return 0;
+    }
+    return 0;
 }
 
 bool Contains(const char16_t* set, char16_t character) {
@@ -219,6 +230,12 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
     return value;
 }
 
+bool HasHexadecimalPrefix(const char* text, const char* parsedEnd) {
+    while (std::isspace(static_cast<unsigned char>(*text))) ++text;
+    if (*text == '+' || *text == '-') ++text;
+    return text[0] == '0' && (text[1] == 'x' || text[1] == 'X') && parsedEnd > text + 2;
+}
+
 }
 
 extern "C" {
@@ -245,7 +262,7 @@ void* APS5_VABI memmove_nid_postfix(void* dest, const void* src, size_t n) {
 }
 
 int APS5_VABI memcmp_nid_postfix(const void* s1, const void* s2, size_t n) {
-    return std::memcmp(s1, s2, n);
+    return std::memcmp(s1, s2, n) == 0 ? 0 : ByteDifference(s1, s2, n, false);
 }
 
 const void* APS5_VABI memchr_nid_postfix(const void* s, int c, size_t n) {
@@ -289,11 +306,11 @@ void* APS5_VABI memmem_nid_postfix(const void* haystack, size_t haystacklen, con
 }
 
 int APS5_VABI strcmp_nid_postfix(const char* s1, const char* s2) {
-    return std::strcmp(s1, s2);
+    return std::strcmp(s1, s2) == 0 ? 0 : ByteDifference(s1, s2, std::numeric_limits<size_t>::max(), true);
 }
 
 int APS5_VABI strncmp_nid_postfix(const char* s1, const char* s2, size_t n) {
-    return std::strncmp(s1, s2, n);
+    return std::strncmp(s1, s2, n) == 0 ? 0 : ByteDifference(s1, s2, n, true);
 }
 
 size_t APS5_VABI strlen_nid_postfix(const char* s) {
@@ -328,7 +345,27 @@ char* APS5_VABI rindex_nid_postfix(const char* s, int c) {
     return strrchr_nid_postfix(s, c);
 }
 
+int APS5_VABI ffs_nid_postfix(int value) {
+    return value == 0 ? 0 : std::countr_zero(static_cast<unsigned int>(value)) + 1;
+}
+
+int APS5_VABI ffsl_nid_postfix(std::int64_t value) {
+    return value == 0 ? 0 : std::countr_zero(static_cast<std::uint64_t>(value)) + 1;
+}
+
+int APS5_VABI ffsll_nid_postfix(std::int64_t value) {
+    return value == 0 ? 0 : std::countr_zero(static_cast<std::uint64_t>(value)) + 1;
+}
+
+int APS5_VABI fls_nid_postfix(int mask) {
+    return mask == 0 ? 0 : 32 - std::countl_zero(static_cast<std::uint32_t>(mask));
+}
+
 int APS5_VABI flsl_nid_postfix(std::int64_t mask) {
+    return mask == 0 ? 0 : 64 - std::countl_zero(static_cast<std::uint64_t>(mask));
+}
+
+int APS5_VABI flsll_nid_postfix(std::int64_t mask) {
     return mask == 0 ? 0 : 64 - std::countl_zero(static_cast<std::uint64_t>(mask));
 }
 
@@ -393,7 +430,12 @@ unsigned long long APS5_VABI strtouq_nid_postfix(const char* str, char** endptr,
 }
 
 double APS5_VABI strtod_nid_postfix(const char* str, char** endptr) {
-    return ParseFloat<double>(str, endptr, std::strtod);
+    char* parsedEnd = nullptr;
+    const double value = ParseFloat<double>(str, &parsedEnd, std::strtod);
+    const double magnitude = value < 0 ? -value : value;
+    if (parsedEnd != str && !HasHexadecimalPrefix(str, parsedEnd) && value != 0 && magnitude < std::numeric_limits<double>::min()) errno = ERANGE;
+    if (endptr != nullptr) *endptr = parsedEnd;
+    return value;
 }
 
 double APS5_VABI atof_nid_postfix(const char* str) { return strtod_nid_postfix(str, nullptr); }
@@ -447,10 +489,7 @@ char16_t* APS5_VABI wmemmove_nid_postfix(char16_t* dest, const char16_t* src, si
 
 }
 
-
 extern "C" {
-
-int APS5_VABI tolower_nid_postfix(int);
 
 int APS5_VABI strcasecmp_nid_postfix(const char* s1, const char* s2) {
     for (;; ++s1, ++s2) {
@@ -479,7 +518,11 @@ size_t APS5_VABI strspn_nid_postfix(const char* s, const char* accept) {
 }
 
 int APS5_VABI strcoll_nid_postfix(const char* s1, const char* s2) {
-    return std::strcmp(s1, s2);
+    for (;; ++s1, ++s2) {
+        const int a = static_cast<unsigned char>(*s1);
+        const int b = static_cast<unsigned char>(*s2);
+        if (a != b || a == 0) return a - b;
+    }
 }
 
 int APS5_VABI strncpy_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {
@@ -811,6 +854,7 @@ int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_
     if (destsz > RsizeMax) return GuestErange;
     if (!src || count > destsz) {
         wmemset_nid_postfix(dest, 0, destsz);
+
         return src ? GuestErange : GuestEinval;
     }
     const auto destination = reinterpret_cast<std::uintptr_t>(dest);
@@ -818,6 +862,7 @@ int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_
     const auto distance = destination < source ? source - destination : destination - source;
     if (count != 0 && distance < count * sizeof(char16_t)) {
         wmemset_nid_postfix(dest, 0, destsz);
+
         return GuestEinval;
     }
     if (count != 0) std::memcpy(dest, src, count * sizeof(char16_t));
@@ -832,6 +877,7 @@ int APS5_VABI wmemmove_s_nid_postfix(char16_t* dest, size_t destsz, const char16
     if (destsz > RsizeMax) return GuestErange;
     if (!src || count > destsz) {
         wmemset_nid_postfix(dest, 0, destsz);
+
         return src ? GuestErange : GuestEinval;
     }
     if (count != 0) std::memmove(dest, src, count * sizeof(char16_t));

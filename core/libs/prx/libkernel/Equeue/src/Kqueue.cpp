@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Equeue/include/EdgeWatch.hpp"
 #include "prx/libc/include/General.hpp"
@@ -31,8 +33,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -363,20 +363,20 @@ int ModifyTimerKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     if ((change.flags & ~(EV_ADD | EV_ONESHOT)) != 0) {
         NotImplemented_nid_no_patch("kevent: re-adding an EVFILT_TIMER with flags other than EV_ONESHOT");
     }
-    if (change.data <= 0 || change.fflags != 0) {
-        NotImplemented_nid_no_patch("kevent: re-adding an EVFILT_TIMER with nonzero fflags or a period of 0 or less");
-    }
     const auto periodNs = TimerPeriodNanos(change.data, change.fflags);
+    if (change.data <= 0 || (change.fflags & ~NOTE_TIMER_PRECMASK) != 0 || !periodNs) {
+        NotImplemented_nid_no_patch("kevent: re-adding an EVFILT_TIMER with a period of 0 or less or an unknown unit");
+    }
     bool oneShot = false;
-    bool disabled = false;
     bool overflow = false;
-    const int error = GuestErrno(queue->EditEvent(change.ident, change.filter, [&change, &oneShot, &disabled, &overflow, periodNs](KernelEqueueEvent& event) {
+    const int error = GuestErrno(queue->EditEvent(change.ident, change.filter, [&change, &oneShot, &overflow, periodNs](KernelEqueueEvent& event) {
         if (event.intervalNs == 0) {
             oneShot = true;
             return;
         }
         if (!event.enabled) {
-            disabled = true;
+            event.intervalNs = *periodNs;
+            event.event.udata = change.udata;
             return;
         }
         if (*periodNs > std::numeric_limits<std::uint64_t>::max() - event.deadlineNs) {
@@ -389,9 +389,6 @@ int ModifyTimerKnote(const KernelEqueueRef& queue, KernelEvent& change) {
     if (oneShot) {
         NotImplemented_nid_no_patch("kevent: re-adding a one-shot EVFILT_TIMER");
     }
-    if (disabled) {
-        NotImplemented_nid_no_patch("kevent: re-adding a disabled EVFILT_TIMER");
-    }
     if (overflow) {
         NotImplemented_nid_no_patch("kevent: re-adding an EVFILT_TIMER with a period that overflows the armed expiry");
     }
@@ -401,7 +398,7 @@ int ModifyTimerKnote(const KernelEqueueRef& queue, KernelEvent& change) {
 }
 
 int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
-    if (change.filter == EVFILT_TIMER) {
+    if (change.filter == EVFILT_TIMER && ((change.flags & EV_ADD) != 0 || change.data != 0 || change.fflags != 0)) {
         NotImplemented_nid_no_patch("kevent: changing an existing EVFILT_TIMER");
     }
     const bool descriptor = change.filter == EVFILT_READ || change.filter == EVFILT_WRITE;
@@ -543,6 +540,19 @@ void KqueueDescriptorClosed(int descriptor) {
     }
     for (const auto& queue : queues) {
         queue->RemoveDescriptorEvents(static_cast<std::uintptr_t>(descriptor));
+    }
+}
+
+void KqueueDescriptorReadShut(int descriptor) {
+    std::vector<KernelEqueueRef> queues;
+    {
+        std::lock_guard lock(g_kqueueMutex);
+        for (const auto& [kqueueDescriptor, queue] : g_kqueues) {
+            queues.push_back(queue);
+        }
+    }
+    for (const auto& queue : queues) {
+        queue->WakeReadWaiters(static_cast<std::uintptr_t>(descriptor));
     }
 }
 

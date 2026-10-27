@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -7,15 +8,14 @@
 
 #include "prx/libc/include/General.hpp"
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include <dlfcn.h>
 #include <execinfo.h>
 #elif defined(_WIN32)
 #include <windows.h>
 #include "prx/libc/include/exceptions/Unwind.hpp"
 extern "C" {
-_Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn, void*);
-_Unwind_Ptr APS5_VABI _Unwind_GetIP_nid_postfix(_Unwind_Context*);
+
 std::string BacktraceModulePath_nid_no_patch(HMODULE handle, std::size_t initialCapacity) {
     std::string module;
     std::size_t capacity = initialCapacity == 0 ? 1 : initialCapacity;
@@ -35,7 +35,7 @@ std::string BacktraceModulePath_nid_no_patch(HMODULE handle, std::size_t initial
 }
 #endif
 
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
 
 namespace {
 
@@ -57,7 +57,7 @@ static_assert(sizeof(FrameRecord) == NameOffset);
 
 [[gnu::noinline]] std::vector<Frame> CaptureFrames(int limit) {
     void* addresses[MaxFrames];
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     const int captured = backtrace(addresses, MaxFrames);
 #elif defined(_WIN32)
     struct TraceState {
@@ -74,11 +74,12 @@ static_assert(sizeof(FrameRecord) == NameOffset);
     };
     TraceState state{addresses, MaxFrames, 0};
     _Unwind_Backtrace_nid_postfix(traceCallback, &state);
+
     const int captured = state.count;
 #endif
     std::vector<Frame> frames;
     for (int index = 2; index < captured && (limit < 0 || static_cast<int>(frames.size()) < limit); ++index) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
         Dl_info info{};
         if (dladdr(addresses[index], &info) == 0 || info.dli_fbase == nullptr || info.dli_fname == nullptr) continue;
         const auto offset = reinterpret_cast<std::uintptr_t>(addresses[index]) - reinterpret_cast<std::uintptr_t>(info.dli_fbase);

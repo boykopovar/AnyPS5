@@ -1,3 +1,4 @@
+#include "prx/libSceNpMatching2/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -17,25 +18,9 @@ static constexpr std::uint64_t CREATE_CONTEXT_PARAMETER_SIZE = 0x28;
 
 namespace {
 
-struct NpMatching2InitializeParameter {
-    std::uint64_t poolSize;
-    std::uint64_t cpuAffinityMask;
-    std::int32_t threadPriority;
-    std::uint8_t padding[4];
-    std::uint64_t threadStackSize;
-    std::uint64_t size;
-    std::uint64_t sslPoolSize;
-};
 static_assert(offsetof(NpMatching2InitializeParameter, size) == 0x20);
 static_assert(sizeof(NpMatching2InitializeParameter) == 0x30);
 
-struct NpMatching2CreateContextParameter {
-    const void* npId;
-    const void* npCommunicationId;
-    const void* npPassphrase;
-    std::uint32_t serviceLabel;
-    std::uint64_t size;
-};
 static_assert(sizeof(NpMatching2CreateContextParameter) == CREATE_CONTEXT_PARAMETER_SIZE);
 
 std::mutex matching2Mutex;
@@ -227,6 +212,206 @@ int APS5_VABI sceNpMatching2Terminate(void) {
     matching2Initialized = false;
     contexts.clear();
     nextContextId = 1;
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2AbortContextStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2CreateContextA(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2CreateContextInternal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2CreateJoinRoomA(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetLobbyInfoList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetLobbyMemberDataInternal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetLobbyMemberDataInternalList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetMemoryInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetRoomJoinedSlotMaskLocal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetRoomMemberDataExternalList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetRoomMemberIdListLocal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetRoomPasswordLocal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetSignalingOptParamLocal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetSslMemoryInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetUserInfoListA(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GetWorldIdArrayForAllServers(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2GrantRoomOwner(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2JoinLobby(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2JoinRoomA(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2LeaveLobby(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2RegisterLobbyEventCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2RegisterLobbyMessageCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2RegisterManualUdpSignalingCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SendLobbyChatMessage(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SetExtraInitParam(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SetLobbyMemberDataInternal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SetRoomDataInternalExt(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SetSignalingOptParam(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingAbortConnection(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingCancelPeerNetInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingEnableManualUdpMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingEstablishConnection(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingGetConnectionInfoA(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingGetLocalNetInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingGetPeerNetInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingGetPeerNetInfoResult(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingGetPingInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingGetPort(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpMatching2SignalingSetPort(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

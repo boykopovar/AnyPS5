@@ -1,22 +1,10 @@
+#include "prx/libScePlayerSelectionDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceUserService/UserService.hpp"
-
-extern "C" {
-int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* param);
-int APS5_VABI sceUserServiceTerminate();
-int APS5_VABI scePlayerSelectionDialogInitialize(void);
-int APS5_VABI scePlayerSelectionDialogOpen(const PlayerSelectionDialogParam* param);
-int APS5_VABI scePlayerSelectionDialogUpdateStatus(void);
-int APS5_VABI scePlayerSelectionDialogGetStatus(void);
-int APS5_VABI scePlayerSelectionDialogGetResult(PlayerSelectionDialogResult* result);
-int APS5_VABI scePlayerSelectionDialogParamInitialize(void* param);
-int APS5_VABI scePlayerSelectionDialogClose(void);
-int APS5_VABI scePlayerSelectionDialogTerminate(void);
-}
 
 namespace {
 
@@ -41,17 +29,20 @@ int main() {
     PlayerSelectionDialogResult result{-1, 99, nullptr, 77, 55};
 
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
+    Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogOpen(&param) == kErrNotInitialized);
     Require(scePlayerSelectionDialogClose() == kErrNotInitialized);
     Require(scePlayerSelectionDialogParamInitialize(nullptr) == kErrArgNull);
     bool threw = false;
     try {
         scePlayerSelectionDialogParamInitialize(&param);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
     Require(threw);
     Require(param.size == sizeof(param));
+    Require(scePlayerSelectionDialogGetResult(nullptr) == kErrArgNull);
     Require(scePlayerSelectionDialogGetResult(&result) == kErrNotInitialized);
     Require(scePlayerSelectionDialogGetStatus() == 0);
     Require(scePlayerSelectionDialogUpdateStatus() == 0);
@@ -106,7 +97,12 @@ int main() {
     Require(scePlayerSelectionDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(scePlayerSelectionDialogTerminate() == 0);
     Require(scePlayerSelectionDialogTerminate() == kErrNotInitialized);
-    Require(scePlayerSelectionDialogGetStatus() == 0);
+    Require(scePlayerSelectionDialogOpen(nullptr) == kErrArgNull);
+    Require(scePlayerSelectionDialogOpen(&param) == kErrNotInitialized);
     Require(scePlayerSelectionDialogClose() == kErrNotInitialized);
+    Require(scePlayerSelectionDialogGetResult(nullptr) == kErrArgNull);
+    Require(scePlayerSelectionDialogGetResult(&result) == kErrNotInitialized);
+    Require(scePlayerSelectionDialogGetStatus() == 0);
+    Require(scePlayerSelectionDialogUpdateStatus() == 0);
     Require(sceUserServiceTerminate() == 0);
 }

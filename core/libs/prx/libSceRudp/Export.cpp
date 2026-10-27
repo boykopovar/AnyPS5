@@ -1,3 +1,4 @@
+#include "prx/libSceRudp/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -57,10 +58,9 @@ enum RudpOption {
     RUDP_OPTION_KEEP_ALIVE_TIMEOUT = 19,
 };
 
-using GuestRudpEventHandler = RudpEventHandler;
-
 std::mutex g_mutex;
 bool g_inited = false;
+uint16_t g_max_segment_size = RUDP_MAX_SEGMENT_SIZE;
 int g_next_ctx = 0;
 struct RudpContext {
     bool bound = false;
@@ -91,7 +91,6 @@ struct RudpPoll {
     std::size_t capacity;
     std::map<int, uint16_t> entries;
 };
-
 
 int g_next_poll = 1;
 std::map<int, RudpPoll> g_polls;
@@ -497,8 +496,15 @@ int APS5_VABI sceRudpPollCancel() {
     return 0;
 }
 
-int APS5_VABI sceRudpSetMaxSegmentSize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceRudpSetMaxSegmentSize(uint16_t mss) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    if (!g_inited) {
+        return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (!g_ctx.empty()) {
+        return RUDP_ERROR_NOT_ACCEPTABLE;
+    }
+    g_max_segment_size = mss;
     return 0;
 }
 

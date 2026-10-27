@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SDL.h"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -7,12 +8,6 @@
 #include <stdexcept>
 #include <string_view>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOutOpen(int, int, int, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioOutClose(int);
-int APS5_VABI sceAudioOutOutput(int, const void*);
-}
 
 namespace {
 constexpr SDL_AudioDeviceID device = 7;
@@ -58,6 +53,7 @@ void RunOverflow(std::uint32_t frames, std::uint32_t format, std::uint32_t frame
 }
 
 int InitializeSdlAudio_nid_no_patch() { return 0; }
+bool WasapiDefaultOutputAbsent_nid_no_patch() { return false; }
 extern "C" Uint32 SDLCALL SDL_WasInit(Uint32) { return SDL_INIT_AUDIO; }
 extern "C" int SDLCALL SDL_GetNumAudioDevices(int) { return 1; }
 extern "C" const char* SDLCALL SDL_GetAudioDeviceName(int, int) { return "Main speakers"; }

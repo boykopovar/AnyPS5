@@ -88,7 +88,7 @@ ShaderRecompiler::ShaderPixelStageInfo PixelInfo(std::uint32_t shaderControl) {
     return AgcDriver::Graphics::DecodePixelStageInfo(context, {0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u});
 }
 
-void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t shaderControl, const VkStencilOpState& stencil, std::uint32_t vertices = 3u, std::uint32_t instances = 1u, bool depthFail = false, const std::function<void(AgcDriver::Graphics::State&)>& alter = {}, const std::function<void(AgcDriver::Pm4::DrawParameters&)>& alterDraw = {}, std::span<const std::array<float, 4>> vertexData = Vertices, std::span<const std::uint32_t> vertexCode = VertexCode, std::span<const std::uint32_t> pixelData = {}, std::span<const ShaderRecompiler::MemoryRegion> pixelSrt = {}, const std::function<void(ShaderRecompiler::RecompileResult&)>& alterVertex = {}) {
+void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelCode, std::uint32_t shaderControl, const VkStencilOpState& stencil, std::uint32_t vertices = 3u, std::uint32_t instances = 1u, bool depthFail = false, const std::function<void(AgcDriver::Graphics::State&)>& alter = {}, const std::function<void(AgcDriver::Pm4::DrawParameters&)>& alterDraw = {}, std::span<const std::array<float, 4>> vertexData = Vertices, std::span<const std::uint32_t> vertexCode = VertexCode, std::span<const std::uint32_t> pixelData = {}, std::span<const ShaderRecompiler::MemoryRegion> pixelSrt = {}, const std::function<void(ShaderRecompiler::RecompileResult&)>& alterVertex = {}, std::uint32_t pixelPushBytes = 0u) {
     Pixels.fill(Kept);
     auto target = device.Target();
     std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
@@ -113,11 +113,13 @@ void Draw(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> pixelC
     auto pixelUserData = pixelData.empty() ? std::vector<std::uint32_t>(8, 0u) : std::vector<std::uint32_t>(pixelData.begin(), pixelData.end());
     std::vector<ShaderRecompiler::MemoryRegion> pixelMemory{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}};
     pixelMemory.insert(pixelMemory.end(), pixelSrt.begin(), pixelSrt.end());
+    auto pixelLayout = PixelPushLayout(vertexPush, target);
+    if (pixelPushBytes != 0u) pixelLayout.pushConstantSizeBytes = pixelPushBytes;
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
         {WaveSize, 0, pixelUserData, std::nullopt, PixelInfo(shaderControl), std::nullopt, pixelMemory},
         target,
-        PixelPushLayout(vertexPush, target)
+        pixelLayout
     };
     fragment.useCache = false;
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
@@ -350,6 +352,14 @@ int main() {
         const std::array<std::uint32_t, 1> colorData{0x3f800000u};
         Draw(*device, userColor, exported, replace(), 3u, 1u, false, {}, {}, Vertices, VertexCode, colorData);
         Check(all, "dynamic reference preserves the adjacent shader-data push payload");
+        auto bufferColor = std::vector<std::uint32_t>(alternating.begin(), alternating.end());
+        *std::find(bufferColor.begin(), bufferColor.end(), 0x7e0e02f2u) = 0x7e0e0208u;
+        bufferColor.insert(bufferColor.begin(), {0xf4200200u, 0xfa000000u, 0xbf8cc07fu});
+        alignas(256) const std::array<std::uint32_t, 4> colorBuffer{0x3f800000u, 0u, 0u, 0u};
+        const auto colorDescriptor = BufferDescriptor(colorBuffer.data(), 4u, static_cast<std::uint32_t>(colorBuffer.size()));
+        const std::array<ShaderRecompiler::MemoryRegion, 1> colorMemory{{{reinterpret_cast<std::uintptr_t>(colorBuffer.data()), std::as_bytes(std::span(colorBuffer))}}};
+        Draw(*device, bufferColor, exported, replace(), 3u, 1u, false, {}, {}, Vertices, VertexCode, colorDescriptor, colorMemory, {}, sizeof(std::uint32_t));
+        Check(all, "dynamic reference keeps guest buffer offsets in shader data outside the push constants");
         auto guarded = std::vector<std::uint32_t>(alternating.begin(), alternating.end());
         *std::find(guarded.begin(), guarded.end(), 0x7e0e02f2u) = 0x7e0e020cu;
         guarded.insert(guarded.begin(), {0xf4040280u, 0xfa000018u, 0xf4000305u, 0xfa000000u, 0xbf8cc07fu});
@@ -369,6 +379,29 @@ int main() {
         catch (const std::exception& error) { faultThrown = std::string(error.what()).find("BDA") != std::string::npos; }
         Require(faultThrown, "poisoned readonly SRT replay did not throw a host fault");
         Require(std::ranges::all_of(Pixels, [](std::byte value) { return value == Kept; }), "poisoned replay published guest color results before its fault");
+        alignas(256) std::array<std::uint32_t, Width + 1u> columnValues{};
+        alignas(256) std::array<float, Width> columnTexels{};
+        columnValues[0] = 0x2fu;
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            columnValues[x + 1u] = 0x30u + x;
+            columnTexels[x] = 1.0f;
+        }
+        constexpr std::array<std::uint32_t, 15> bufferImageCode{
+            0x7e060f00u, 0x7e080280u, 0xf0001108u, 0x00010503u, 0xe0302000u, 0x80000603u, 0xe0302000u, 0x80030803u,
+            0xbf8c3f70u, 0x7e0e02f2u, 0xf8000082u, 0x00000600u, 0xf800180fu, 0x07050805u, 0xbf810000u,
+        };
+        const auto columnBuffer = BufferDescriptor(columnValues.data() + 1, 4u, Width);
+        const auto alignedBuffer = BufferDescriptor(columnValues.data(), 4u, Width + 1u);
+        const auto texelAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(columnTexels.data()));
+        const std::array<std::uint32_t, 8> columnTexture{static_cast<std::uint32_t>(texelAddress >> 8u), static_cast<std::uint32_t>((texelAddress >> 40u) & 0xffu) | (22u << 20u) | (((Width - 1u) & 3u) << 30u), (Width - 1u) >> 2u, 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+        std::vector<std::uint32_t> bufferImageData(columnBuffer.begin(), columnBuffer.end());
+        bufferImageData.insert(bufferImageData.end(), columnTexture.begin(), columnTexture.end());
+        bufferImageData.insert(bufferImageData.end(), alignedBuffer.begin(), alignedBuffer.end());
+        Draw(*device, PlainPixelCode, plain, replace(0u));
+        Draw(*device, bufferImageCode, exported, replace(), 3u, 1u, false, {}, {}, Vertices, VertexCode, bufferImageData);
+        Check(all, "a replayed export beside an image draws the image's texels");
+        Draw(*device, PlainPixelCode, plain, equal(0x35u));
+        Check([](std::uint32_t x, std::uint32_t) { return x == 5u; }, "a replayed export beside an image reads its guest buffer at a 4-byte offset");
         std::puts("stencil replay tests passed");
         return 0;
     } catch (const std::exception& error) {

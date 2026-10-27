@@ -1,9 +1,12 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "DirectMemory.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include <algorithm>
 #include <limits>
@@ -17,19 +20,8 @@
 #include <unistd.h>
 #elif defined(_WIN32)
 #include "prx/libc/include/WindowsDescriptor.hpp"
-#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI sceKernelMunmap(std::uint64_t address, std::size_t length);
-extern "C" int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length);
-extern "C" int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length);
-extern "C" int APS5_VABI sceKernelMunlockall_nid_postfix();
-extern "C" int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size);
-extern "C" std::int64_t APS5_VABI sceKernelPread(int descriptor, void* buffer, std::size_t length, std::int64_t offset);
-extern "C" int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept;
-extern "C" int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept;
 
 namespace {
 // FreeBSD/PS5 ABI values, independent of the host's errno and mmap constants.
@@ -131,6 +123,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
         const auto read = sceKernelPread(descriptor, static_cast<unsigned char*>(mapped) + done, static_cast<std::size_t>(copied - done), static_cast<std::int64_t>(start + done));
         if (read <= 0) {
             munmap_nid_postfix(mapped, rounded);
+
             return failed(read < 0 ? static_cast<int>(read & 0xffff) : GuestIoError);
         }
         done += static_cast<std::uint64_t>(read);
@@ -138,6 +131,7 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     if (protection != 3 && mprotect_nid_postfix(mapped, rounded, protection) != 0) {
         const int error = *__error_nid_postfix();
         munmap_nid_postfix(mapped, rounded);
+
         return failed(error);
     }
     return mapped;
@@ -170,12 +164,11 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
 #ifndef _WIN32
         if (fixedAnonymous && !GuestArena::GuestArenaContains_nid_postfix(address, rounded)) return failed(GuestInvalid);
 #endif
-        const bool exclusive = fixedAnonymous && (mappingFlags & GuestMapExclusive) != 0;
-        const int placement = fixedAnonymous ? GuestMapFixed | (exclusive ? GuestMapNoOverwrite : 0) : 0;
+        const int placement = fixedAnonymous ? GuestMapFixed : 0;
         void* mapped = address;
         const auto alignment = !fixedAnonymous && (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
         try {
-            const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive, fixedAnonymous);
+            const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, false, fixedAnonymous);
             if (result != 0) return failed(result == SCE_KERNEL_ERROR_EINVAL ? GuestInvalid : GuestNoMemory);
             if (fixedAnonymous) ReleaseFlexibleMappingRange(start, rounded);
             return mapped;
@@ -194,6 +187,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         (mappingFlags & ~(GuestShared | GuestPrivate | GuestMapFixed | GuestMapNoOverwrite | GuestMapNoCoalesce)) != 0)
         return failed(GuestNotSupported);
     if (descriptor < 0) return failed(GuestBadDescriptor);
+    if (File::IsVirtualDirectoryDescriptor(descriptor)) return failed(GuestNotSupported);
     File::RefuseArchivedFile(descriptor, "mmap");
     if (offset < 0 || (static_cast<std::uint64_t>(offset) & (PS5_PAGE_SIZE - 1)) != 0 ||
         rounded > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) ||
@@ -257,9 +251,10 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
         return -1;
     };
     std::size_t rounded;
-    const auto start = reinterpret_cast<std::uintptr_t>(address);
-    if (!RoundLength(length, rounded) || start == 0 ||
-        (start & (PS5_PAGE_SIZE - 1)) != 0 ||
+    const auto offset = reinterpret_cast<std::uintptr_t>(address) & (PS5_PAGE_SIZE - 1);
+    const auto start = reinterpret_cast<std::uintptr_t>(address) - offset;
+    if (length == 0 || length > std::numeric_limits<std::size_t>::max() - offset ||
+        !RoundLength(length + offset, rounded) || start == 0 ||
         rounded > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
     try {
@@ -369,6 +364,7 @@ int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char*
     for (auto cursor = first; cursor < end;) {
         VirtualQueryInfo info{};
         sceKernelVirtualQuery(reinterpret_cast<const void*>(cursor), 0, &info, sizeof(info));
+
         const auto extentEnd = std::min<std::uintptr_t>(info.end, end);
         std::fill_n(vec + (cursor - first) / PS5_PAGE_SIZE, (extentEnd - cursor) / PS5_PAGE_SIZE, static_cast<char>(info.is_committed != 0 ? 1 : 0));
         cursor = extentEnd;

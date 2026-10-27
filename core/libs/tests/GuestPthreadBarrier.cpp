@@ -1,23 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
 #include <cstdlib>
 #include <stdexcept>
-
-struct GuestBarrier;
-struct GuestBarrierattr;
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI pthread_barrierattr_init_nid_postfix(GuestBarrierattr** attr);
-int APS5_VABI pthread_barrierattr_destroy_nid_postfix(GuestBarrierattr** attr);
-int APS5_VABI pthread_barrierattr_getpshared_nid_postfix(GuestBarrierattr* const* attr, int* pshared);
-int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(GuestBarrierattr** attr, int pshared);
-int APS5_VABI pthread_barrier_init_nid_postfix(GuestBarrier** barrier, GuestBarrierattr* const* attr, unsigned count);
-int APS5_VABI pthread_barrier_wait_nid_postfix(GuestBarrier** barrier);
-int APS5_VABI pthread_barrier_destroy_nid_postfix(GuestBarrier** barrier);
-}
 
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int PROCESS_PRIVATE = 0;
@@ -28,7 +14,7 @@ static constexpr unsigned WAITERS = 4;
 static void Require(bool value) { if (!value) std::abort(); }
 
 struct Context {
-    GuestBarrier* barrier = nullptr;
+    PthreadBarrierPrivate* barrier = nullptr;
     std::atomic<int> serial{0};
     std::atomic<int> released{0};
 };
@@ -57,7 +43,7 @@ static void RunWaiters(Context& context) {
 }
 
 int main() {
-    GuestBarrierattr* missing = nullptr;
+    PthreadBarrierattrPrivate* missing = nullptr;
     int pshared = -1;
     Require(pthread_barrierattr_init_nid_postfix(nullptr) == GUEST_EINVAL);
     Require(pthread_barrierattr_destroy_nid_postfix(nullptr) == GUEST_EINVAL);
@@ -68,7 +54,7 @@ int main() {
     Require(pthread_barrierattr_setpshared_nid_postfix(&missing, PROCESS_PRIVATE) == GUEST_EINVAL);
     Require(pshared == -1);
 
-    GuestBarrierattr* attr = nullptr;
+    PthreadBarrierattrPrivate* attr = nullptr;
     Require(pthread_barrierattr_init_nid_postfix(&attr) == 0 && attr != nullptr);
     Require(pthread_barrierattr_getpshared_nid_postfix(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
     Require(pthread_barrierattr_setpshared_nid_postfix(&attr, 2) == GUEST_EINVAL);
@@ -88,7 +74,7 @@ int main() {
     catch (const std::invalid_argument&) { rejected = true; }
     Require(rejected);
 
-    GuestBarrier* invalid = nullptr;
+    PthreadBarrierPrivate* invalid = nullptr;
     Require(pthread_barrier_init_nid_postfix(nullptr, &attr, 1) == GUEST_EINVAL);
     Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0) == GUEST_EINVAL && invalid == nullptr);
     Require(pthread_barrier_init_nid_postfix(&invalid, &attr, 0x80000000u) == GUEST_EINVAL && invalid == nullptr);
@@ -120,7 +106,7 @@ int main() {
         Require(destroyed.serial == 1);
     }
 
-    GuestBarrier* single = nullptr;
+    PthreadBarrierPrivate* single = nullptr;
     Require(pthread_barrierattr_init_nid_postfix(&attr) == 0);
     Require(pthread_barrier_init_nid_postfix(&single, &attr, 1) == 0);
     Require(pthread_barrier_wait_nid_postfix(&single) == BARRIER_SERIAL_THREAD);
