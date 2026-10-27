@@ -338,6 +338,7 @@ struct SpirvTarget {
     std::uint32_t registrationWordLimit = 200000u;
     bool vertexSubgroups = true;
     bool float16DenormPreserve = false;
+    bool coupledF16F64Denorms = false;
     bool spannedWaves = false;
     bool robustBufferAccess2 = false;
     bool exactRobustLoads = false;

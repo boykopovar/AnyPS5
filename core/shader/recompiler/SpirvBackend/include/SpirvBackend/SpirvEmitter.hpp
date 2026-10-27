@@ -26,6 +26,7 @@ struct SpirvTargetOptions {
     bool registrationModules = false;
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
+    bool coupledF16F64Denorms = false;
     bool spannedWaves = false;
     bool robustBufferAccess2 = false;
     bool exactRobustLoads = false;

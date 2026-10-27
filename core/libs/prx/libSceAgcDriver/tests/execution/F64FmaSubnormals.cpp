@@ -97,7 +97,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::vector<std::uint32_t> Recompile(bool float64DenormPreserve) {
+std::vector<std::uint32_t> Recompile(bool float64DenormPreserve, bool coupled = false) {
     constexpr std::array<std::uint32_t, 9> capabilities{
         spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot,
         spv::CapabilityInt64, spv::CapabilityFloat64, spv::CapabilityPhysicalStorageBufferAddresses,
@@ -133,16 +133,18 @@ std::vector<std::uint32_t> Recompile(bool float64DenormPreserve) {
     request.target.maxWorkgroupInvocations = 1024;
     request.target.maxWorkgroupSharedMemoryBytes = 49152;
     request.target.float64DenormPreserve = float64DenormPreserve;
+    request.target.float16DenormPreserve = coupled;
+    request.target.coupledF16F64Denorms = coupled;
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     return ShaderRecompiler::Recompile(request).spirv.Copy();
 }
 
-bool HasDenormPreserve64(std::span<const std::uint32_t> words) {
+bool HasDenormPreserve(std::span<const std::uint32_t> words, std::uint32_t width) {
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         Require(count != 0 && cursor + count <= words.size(), "malformed SPIR-V while scanning denorm modes");
-        if ((words[cursor] & 0xffffu) == spv::OpExecutionMode && count == 4 && words[cursor + 2] == spv::ExecutionModeDenormPreserve && words[cursor + 3] == 64u) return true;
+        if ((words[cursor] & 0xffffu) == spv::OpExecutionMode && count == 4 && words[cursor + 2] == spv::ExecutionModeDenormPreserve && words[cursor + 3] == width) return true;
         cursor += count;
     }
     return false;
@@ -151,8 +153,11 @@ bool HasDenormPreserve64(std::span<const std::uint32_t> words) {
 void VerifySpirvDenormMode() {
     const auto enabled = Recompile(true);
     const auto disabled = Recompile(false);
-    Require(HasDenormPreserve64(enabled), "float64DenormPreserve=true did not emit DenormPreserve 64");
-    Require(!HasDenormPreserve64(disabled), "float64DenormPreserve=false emitted DenormPreserve 64");
+    const auto coupled = Recompile(true, true);
+    Require(HasDenormPreserve(enabled, 64u), "float64DenormPreserve=true did not emit DenormPreserve 64");
+    Require(!HasDenormPreserve(disabled, 64u), "float64DenormPreserve=false emitted DenormPreserve 64");
+    Require(!HasDenormPreserve(enabled, 16u), "an f64 shader declared DenormPreserve 16 on a device with independent f16 and f64 modes");
+    Require(HasDenormPreserve(coupled, 64u) && HasDenormPreserve(coupled, 16u), "an f64 shader with coupled f16 and f64 denormal modes did not declare DenormPreserve 16 and 64 together");
 }
 
 std::string Hex(std::uint64_t value) {
