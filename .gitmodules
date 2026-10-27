@@ -26,6 +26,7 @@
 	path = 3rdparty/llvm-project
 	url = https://github.com/llvm/llvm-project.git
 	shallow = true
+	update = none
 [submodule "3rdparty/VulkanMemoryAllocator"]
 	path = 3rdparty/VulkanMemoryAllocator
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git

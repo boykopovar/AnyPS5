@@ -36,7 +36,7 @@ build-fuzz/tests/relinker_conversion_fuzzer build-fuzz/fuzz-corpus -fork=2 -max_
 This compiler translates one named x86-64 ELF function to a native x86-64 object. It does not convert a console executable or provide a guest runtime. The caller must declare the input function's System V ABI: zero to six `uint64_t` arguments and a `uint64_t` result. Argument registers are RDI, RSI, RDX, RCX, R8 and R9; LLVM lowers them to the output target's C calling convention.
 
 ```sh
-git submodule update --init 3rdparty/llvm-project
+git submodule update --init --checkout 3rdparty/llvm-project
 cmake -S . -B build-leaf -G Ninja -DCMAKE_BUILD_TYPE=Release -DANYPS5_RELINKER_ONLY=ON -DANYPS5_BUILD_AOT=ON -DBUILD_TESTING=ON
 cmake --build build-leaf --target aot_compiler_cli aot_ir_check --parallel 2
 ctest --test-dir build-leaf -R "^aot_leaf_" --output-on-failure
@@ -53,7 +53,7 @@ The tests link and execute emitted objects and emitted assembly, compare both ag
 
 ## Full build
 
-The experimental integer leaf compiler is disabled by default in every root build configuration. Set `ANYPS5_BUILD_AOT=ON` to build it and LLVM 20.1.5 from the pinned `3rdparty/llvm-project` submodule. Existing build directories retain their cached setting; set `ANYPS5_BUILD_AOT=OFF` explicitly to disable a previously enabled build. The recursive submodule command below still downloads the LLVM checkout even when the compiler is disabled. The measured LLVM working tree is 1.66 GiB across 154,024 files, plus 396.50 MiB of Git pack data in the local shallow checkout; filesystem allocation and download sizes can differ. Build-time measurements, memory limits and machine details are recorded in [PR #9776](https://github.com/boykopovar/AnyPS5/pull/9776). Use bounded build parallelism for LLVM; the leaf-compiler example uses two workers.
+The experimental integer leaf compiler is disabled by default in every root build configuration. Set `ANYPS5_BUILD_AOT=ON` to build it and LLVM 20.1.5 from the pinned `3rdparty/llvm-project` submodule. Existing build directories retain their cached setting; set `ANYPS5_BUILD_AOT=OFF` explicitly to disable a previously enabled build. The LLVM submodule uses `update = none`, so the recursive submodule command below skips it unless local Git configuration overrides that setting. To opt in, run `git submodule update --init --checkout 3rdparty/llvm-project`; naming the path without `--checkout` still skips it. The measured LLVM working tree is 1.66 GiB across 154,024 files, plus 396.50 MiB of Git pack data in the local shallow checkout; filesystem allocation and download sizes can differ. Build-time measurements, memory limits and machine details are recorded in [PR #9776](https://github.com/boykopovar/AnyPS5/pull/9776). Use bounded build parallelism for LLVM; the leaf-compiler example uses two workers.
 
 ```sh
 git submodule update --init --recursive
