@@ -658,15 +658,60 @@ void AsyncTeardown(int ssl) {
 
 void AsyncFailure(int ssl) {
     std::fprintf(stderr, "HTTP2 async failure scenario\n");
-    Server server(Mode::Reset);
     Client client(ssl);
-    client.Create(server.Url());
+    client.Create("https://localhost/", "POST", 0);
     AsyncQueue queue(client.request);
-    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async failure submission");
+    const char body = 'x';
+    Require(sceHttp2SendRequestAsync(client.request, &body, 1, &queue.option, nullptr) == 0, "async failure submission");
     queue.ExpectEvent();
     Http2AsyncResult result{};
     Require(Throws([&] { sceHttp2WaitAsync(client.request, &result, nullptr, nullptr); }), "async worker failure reaches waiter");
-    server.Join();
+}
+
+struct PublishGate {
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+};
+
+void AsyncDeletePublished(int ssl, bool parent) {
+    std::fprintf(stderr, "HTTP2 async delete published scenario parent %d\n", parent ? 1 : 0);
+    Client client(ssl);
+    client.Create("https://localhost/", "POST", 0);
+    const int request = client.request;
+    const int tmpl = client.tmpl;
+    AsyncQueue queue(request);
+    PublishGate gate;
+    GuestSceHttp2Test::SetAsyncPublishHookForTests_nid_no_patch([](void* data) {
+        auto& gate = *static_cast<PublishGate*>(data);
+        gate.entered.store(true, std::memory_order_release);
+        while (!gate.release.load(std::memory_order_acquire)) std::this_thread::yield();
+    }, &gate);
+    const char body = 'x';
+    Require(sceHttp2SendRequestAsync(request, &body, 1, &queue.option, nullptr) == 0, "async published submission");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!gate.entered.load(std::memory_order_acquire)) {
+        Require(std::chrono::steady_clock::now() < deadline, "async publication entered");
+        std::this_thread::yield();
+    }
+    std::atomic<bool> started{false};
+    std::atomic<bool> deleted{false};
+    int deleteResult = -1;
+    std::thread deleter([&] {
+        started.store(true, std::memory_order_release);
+        deleteResult = parent ? sceHttp2DeleteTemplate(tmpl) : sceHttp2DeleteRequest(request);
+        deleted.store(true, std::memory_order_release);
+    });
+    while (!started.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(!deleted.load(std::memory_order_acquire), "deletion waits for event delivery");
+    gate.release.store(true, std::memory_order_release);
+    deleter.join();
+    GuestSceHttp2Test::SetAsyncPublishHookForTests_nid_no_patch(nullptr, nullptr);
+    Require(deleteResult == 0, "deletion after publication");
+    queue.ExpectEvent();
+    queue.ExpectNoEvent();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(request, &result, nullptr, nullptr) == static_cast<int>(0x817b1100), "published completion retired");
 }
 
 void Failure(int ssl, Mode mode, bool verifyName = false) {
@@ -922,6 +967,8 @@ int main(int argc, char** argv) {
         AsyncTwoWaiters(ssl);
         AsyncTeardown(ssl);
         AsyncFailure(ssl);
+        AsyncDeletePublished(ssl, false);
+        AsyncDeletePublished(ssl, true);
         const int untrusted = sceSslInit_nid_postfix(8 * 1024 * 1024);
         Require(untrusted > 0, "untrusted SSL context");
         Failure(untrusted, Mode::Normal);

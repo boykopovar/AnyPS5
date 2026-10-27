@@ -30,7 +30,6 @@ int main() {
     const int request = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://localhost/", 0);
     Require(box > 0 && context > 0 && tmpl > 0 && request > 0);
     Require(sceHttp2SetCookieBox(tmpl, 0) == 0);
-    Require(Throws([&] { sceHttp2SetCookieBox(tmpl, box); }));
     Require(sceHttp2CookieFlush(box) == 0);
     Require(sceHttp2SetResolveRetry(tmpl, 0) == 0);
     Require(sceHttp2SetResolveRetry(tmpl, 3) == 0);

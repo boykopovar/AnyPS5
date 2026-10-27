@@ -27,6 +27,11 @@ using Http2WebSocketErrorCallback = void (APS5_VABI*)(std::int32_t requestId, st
 
 using Http2AuthInfoCallback = int (APS5_VABI*)(int request, int authType, const char* realm, char* username, char* password, int isNeedEntity, std::uint8_t** entityBody, std::size_t* entitySize, int* isSave, void* userArg);
 
+namespace GuestSceHttp2Test {
+using AsyncPublishHook = void (*)(void*);
+void SetAsyncPublishHookForTests_nid_no_patch(AsyncPublishHook hook, void* data) noexcept;
+}
+
 extern "C" {
 
 int APS5_VABI sceHttp2AddRequestHeader(int id, const char* name, const char* value, uint32_t mode);
