@@ -41,14 +41,14 @@ PlaceholderImages::PlaceholderImages(const Context& context) : context(context) 
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &image.memory), "vkAllocateMemory placeholder");
+            Check(context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &image.memory), "vkAllocateMemory placeholder");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image.image, image.memory, 0), "vkBindImageMemory placeholder");
             VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
             viewInfo.image = image.image;
             viewInfo.viewType = shape->viewType;
             viewInfo.format = shape->format;
             viewInfo.subresourceRange = {shape->aspect, 0, 1, 0, 1};
-            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &image.view), "vkCreateImageView placeholder");
+            Check(context.Resolved(&DeviceFunctions::createImageView, "vkCreateImageView")(context.device, &viewInfo, nullptr, &image.view), "vkCreateImageView placeholder");
             VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -62,7 +62,7 @@ PlaceholderImages::PlaceholderImages(const Context& context) : context(context) 
         if (toClear.empty()) return;
         CommandBatch batch(context);
         const auto commands = batch.Handle();
-        const auto pipelineBarrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+        const auto pipelineBarrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
         pipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, static_cast<std::uint32_t>(toClear.size()), toClear.data());
         std::vector<VkImageMemoryBarrier> toGeneral;
         for (const auto& barrier : toClear) {
@@ -71,7 +71,7 @@ PlaceholderImages::PlaceholderImages(const Context& context) : context(context) 
                 context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, barrier.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &barrier.subresourceRange);
             } else {
                 const VkClearColorValue zero{};
-                context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, barrier.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &barrier.subresourceRange);
+                context.Resolved(&DeviceFunctions::cmdClearColorImage, "vkCmdClearColorImage")(commands, barrier.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &barrier.subresourceRange);
             }
             auto general = barrier;
             general.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -94,9 +94,9 @@ PlaceholderImages::~PlaceholderImages() {
 
 void PlaceholderImages::release() noexcept {
     for (auto& image : images) {
-        if (image.view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, image.view, nullptr);
+        if (image.view) context.Resolved(&DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, image.view, nullptr);
         if (image.image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image.image, nullptr);
-        if (image.memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, image.memory, nullptr);
+        if (image.memory) context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, image.memory, nullptr);
         image = {};
     }
 }

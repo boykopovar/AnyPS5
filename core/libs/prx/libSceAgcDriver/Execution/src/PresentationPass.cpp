@@ -55,7 +55,7 @@ PresentationPass::PresentationPass(const Graphics::Context& context, std::size_t
             allocation.descriptorPool = descriptorPool;
             allocation.descriptorSetCount = 1;
             allocation.pSetLayouts = &descriptorLayout;
-            Graphics::Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &slot.set), "vkAllocateDescriptorSets presentation pass");
+            Graphics::Check(context.Resolved(&Graphics::DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &slot.set), "vkAllocateDescriptorSets presentation pass");
         }
         const auto& luminance = PqEotfNits();
         pqNits = std::make_unique<Graphics::Buffer>(context, sizeof(luminance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -69,7 +69,7 @@ PresentationPass::PresentationPass(const Graphics::Context& context, std::size_t
             tableWrites[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             tableWrites[i].pBufferInfo = &tableInfo;
         }
-        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(tableWrites.size()), tableWrites.data(), 0, nullptr);
+        context.Resolved(&Graphics::DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(tableWrites.size()), tableWrites.data(), 0, nullptr);
         vertex = Graphics::CreateShaderModule(context, PRESENTATION_PASS_VERT_SPV, sizeof(PRESENTATION_PASS_VERT_SPV), "vkCreateShaderModule presentation vertex");
         fragment = Graphics::CreateShaderModule(context, PRESENTATION_PASS_FRAG_SPV, sizeof(PRESENTATION_PASS_FRAG_SPV), "vkCreateShaderModule presentation fragment");
     } catch (...) {
@@ -120,11 +120,11 @@ void PresentationPass::Release(std::size_t index) noexcept {
     if (index >= slots.size()) return;
     auto& slot = slots[index];
     for (const auto& [view, framebuffer] : slot.transient) {
-        if (framebuffer) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
-        if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+        if (framebuffer) context.Resolved(&Graphics::DeviceFunctions::destroyFramebuffer, "vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
+        if (view) context.Resolved(&Graphics::DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, view, nullptr);
     }
     slot.transient.clear();
-    if (slot.source) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, slot.source, nullptr);
+    if (slot.source) context.Resolved(&Graphics::DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, slot.source, nullptr);
     slot.source = VK_NULL_HANDLE;
 }
 
@@ -139,7 +139,7 @@ VkImageView PresentationPass::createView(VkImage image, VkFormat format, VkImage
     viewInfo.components = {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, layer, 1};
     VkImageView view = VK_NULL_HANDLE;
-    Graphics::Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView presentation pass");
+    Graphics::Check(context.Resolved(&Graphics::DeviceFunctions::createImageView, "vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView presentation pass");
     return view;
 }
 
@@ -152,7 +152,7 @@ VkFramebuffer PresentationPass::createFramebuffer(VkRenderPass renderPass, VkIma
     info.height = extent.height;
     info.layers = 1;
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
-    Graphics::Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &info, nullptr, &framebuffer), "vkCreateFramebuffer presentation pass");
+    Graphics::Check(context.Resolved(&Graphics::DeviceFunctions::createFramebuffer, "vkCreateFramebuffer")(context.device, &info, nullptr, &framebuffer), "vkCreateFramebuffer presentation pass");
     return framebuffer;
 }
 
@@ -271,7 +271,7 @@ void PresentationPass::Bind(std::size_t index, VkImage image, std::uint32_t widt
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &imageInfo;
-    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
+    context.Resolved(&Graphics::DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
 }
 
 void PresentationPass::releaseUploadImage(Slot& slot) noexcept {
@@ -347,15 +347,15 @@ void PresentationPass::draw(VkCommandBuffer commands, const Slot& slot, const Ta
     begin.renderPass = entry.renderPass;
     begin.framebuffer = framebuffer;
     begin.renderArea = {{0, 0}, extent};
-    context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, entry.pipeline);
+    context.Resolved(&Graphics::DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, entry.pipeline);
     const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
-    context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
-    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &scissor);
-    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &slot.set, 0, nullptr);
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), parameters);
-    context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
-    context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
+    context.Resolved(&Graphics::DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &viewport);
+    context.Resolved(&Graphics::DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &scissor);
+    context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &slot.set, 0, nullptr);
+    context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), parameters);
+    context.Resolved(&Graphics::DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, 3, 1, 0, 0);
+    context.Resolved(&Graphics::DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
 }
 
 VkFramebuffer PresentationPass::destinationFramebuffer(Slot& slot, const Target& entry, VkImage destination, VkFormat format, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout) {
@@ -369,7 +369,7 @@ VkFramebuffer PresentationPass::destinationFramebuffer(Slot& slot, const Target&
     try {
         framebuffer = createFramebuffer(entry.renderPass, view, extent);
     } catch (...) {
-        context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+        context.Resolved(&Graphics::DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, view, nullptr);
         throw;
     }
     slot.transient.emplace_back(view, framebuffer);
@@ -405,10 +405,10 @@ void PresentationPass::RecordOverlay(VkCommandBuffer commands, std::size_t index
 }
 
 void PresentationPass::releaseDumpTarget(Slot& slot) noexcept {
-    if (slot.dumpFramebuffer) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, slot.dumpFramebuffer, nullptr);
-    if (slot.dumpView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, slot.dumpView, nullptr);
+    if (slot.dumpFramebuffer) context.Resolved(&Graphics::DeviceFunctions::destroyFramebuffer, "vkDestroyFramebuffer")(context.device, slot.dumpFramebuffer, nullptr);
+    if (slot.dumpView) context.Resolved(&Graphics::DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, slot.dumpView, nullptr);
     if (slot.dumpImage) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, slot.dumpImage, nullptr);
-    if (slot.dumpMemory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, slot.dumpMemory, nullptr);
+    if (slot.dumpMemory) context.Resolved(&Graphics::DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, slot.dumpMemory, nullptr);
     slot.dumpFramebuffer = VK_NULL_HANDLE;
     slot.dumpView = VK_NULL_HANDLE;
     slot.dumpImage = VK_NULL_HANDLE;
@@ -437,7 +437,7 @@ void PresentationPass::ensureDumpTarget(Slot& slot, VkExtent2D extent) {
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Graphics::Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &slot.dumpMemory), "vkAllocateMemory presentation dump");
+        Graphics::Check(context.Resolved(&Graphics::DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &slot.dumpMemory), "vkAllocateMemory presentation dump");
         Graphics::Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, slot.dumpImage, slot.dumpMemory, 0), "vkBindImageMemory presentation dump");
         slot.dumpView = createView(slot.dumpImage, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
         slot.dumpFramebuffer = createFramebuffer(target(VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL).renderPass, slot.dumpView, extent);
@@ -480,7 +480,7 @@ void PresentationPass::RecordDumpReadback(VkCommandBuffer commands, std::size_t 
     VkBufferImageCopy copy{};
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.imageExtent = {extent.width, extent.height, 1u};
-    context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination, 1, &copy);
+    context.Resolved(&Graphics::DeviceFunctions::cmdCopyImageToBuffer, "vkCmdCopyImageToBuffer")(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination, 1, &copy);
     Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
 }
 

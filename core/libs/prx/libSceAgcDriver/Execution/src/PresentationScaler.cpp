@@ -19,7 +19,7 @@ PresentationScaler::PresentationScaler(const Graphics::Context& context, VkForma
 PresentationScaler::~PresentationScaler() {
     release();
     if (blackImage != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, blackImage, nullptr);
-    if (blackMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, blackMemory, nullptr);
+    if (blackMemory != VK_NULL_HANDLE) context.Resolved(&Graphics::DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, blackMemory, nullptr);
 }
 
 void PresentationScaler::release() noexcept {
@@ -63,7 +63,7 @@ void PresentationScaler::EnsureSourceImage(std::uint32_t width, std::uint32_t he
 
 void PresentationScaler::RecordUpload(VkCommandBuffer commands, VkBuffer uploadBuffer) {
     Graphics::Require(sourceImage != VK_NULL_HANDLE, "presentation source image has not been created");
-    const auto pipelineBarrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+    const auto pipelineBarrier = context.Resolved(&Graphics::DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -76,7 +76,7 @@ void PresentationScaler::RecordUpload(VkCommandBuffer commands, VkBuffer uploadB
     VkBufferImageCopy copy{};
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.imageExtent = {sourceWidth, sourceHeight, 1u};
-    context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, uploadBuffer, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    context.Resolved(&Graphics::DeviceFunctions::cmdCopyBufferToImage, "vkCmdCopyBufferToImage")(commands, uploadBuffer, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -86,7 +86,7 @@ void PresentationScaler::RecordUpload(VkCommandBuffer commands, VkBuffer uploadB
 
 void PresentationScaler::RecordClear(VkCommandBuffer commands, const VkClearColorValue& color) {
     Graphics::Require(sourceImage != VK_NULL_HANDLE, "presentation source image has not been created");
-    const auto pipelineBarrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+    const auto pipelineBarrier = context.Resolved(&Graphics::DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -96,7 +96,7 @@ void PresentationScaler::RecordClear(VkCommandBuffer commands, const VkClearColo
     barrier.image = sourceImage;
     barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     pipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
-    context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &barrier.subresourceRange);
+    context.Resolved(&Graphics::DeviceFunctions::cmdClearColorImage, "vkCmdClearColorImage")(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &barrier.subresourceRange);
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -111,7 +111,7 @@ void PresentationScaler::RecordBlitInto(VkCommandBuffer commands, VkImage image,
 void PresentationScaler::RecordBlitInto(VkCommandBuffer commands, VkImage image, VkImageLayout layout, VkFilter filter, std::uint32_t width, std::uint32_t height, std::uint32_t layer) {
     Graphics::Require(sourceImage != VK_NULL_HANDLE && image != VK_NULL_HANDLE, "presentation image is unavailable");
     Graphics::Require(width != 0 && height != 0, "presentation blit extent must be non-zero");
-    const auto pipelineBarrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+    const auto pipelineBarrier = context.Resolved(&Graphics::DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
     VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -139,7 +139,7 @@ void PresentationScaler::RecordReadback(VkCommandBuffer commands, VkBuffer desti
     VkBufferImageCopy copy{};
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.imageExtent = {sourceWidth, sourceHeight, 1u};
-    context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination, 1, &copy);
+    context.Resolved(&Graphics::DeviceFunctions::cmdCopyImageToBuffer, "vkCmdCopyImageToBuffer")(commands, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination, 1, &copy);
     Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
 }
 
@@ -176,7 +176,7 @@ std::vector<AspectFitRect> PresentationScaler::LetterboxBands(std::uint32_t widt
 void PresentationScaler::RecordLetterbox(VkCommandBuffer commands, std::uint32_t width, std::uint32_t height, VkImage destinationImage, std::uint32_t destinationWidth, std::uint32_t destinationHeight) {
     const auto bands = LetterboxBands(width, height, destinationWidth, destinationHeight);
     if (bands.empty()) return;
-    const auto pipelineBarrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+    const auto pipelineBarrier = context.Resolved(&Graphics::DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
     if (blackImage == VK_NULL_HANDLE) {
         VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -198,11 +198,11 @@ void PresentationScaler::RecordLetterbox(VkCommandBuffer commands, std::uint32_t
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Graphics::Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory letterbox");
+            Graphics::Check(context.Resolved(&Graphics::DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory letterbox");
             Graphics::Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory letterbox");
         } catch (...) {
             context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-            if (memory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+            if (memory != VK_NULL_HANDLE) context.Resolved(&Graphics::DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, memory, nullptr);
             throw;
         }
         blackImage = image;
@@ -218,7 +218,7 @@ void PresentationScaler::RecordLetterbox(VkCommandBuffer commands, std::uint32_t
         pipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
         VkClearColorValue black{};
         black.float32[3] = 1.0f;
-        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, blackImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &barrier.subresourceRange);
+        context.Resolved(&Graphics::DeviceFunctions::cmdClearColorImage, "vkCmdClearColorImage")(commands, blackImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &barrier.subresourceRange);
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;

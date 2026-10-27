@@ -110,7 +110,7 @@ public:
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory sample order copy");
+            Check(context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory sample order copy");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory sample order copy");
             depthView = createView(VK_IMAGE_ASPECT_DEPTH_BIT);
             if (stencil) stencilView = createView(VK_IMAGE_ASPECT_STENCIL_BIT);
@@ -141,15 +141,15 @@ private:
         info.format = format;
         info.subresourceRange = {aspect, 0, 1, 0, 1};
         VkImageView view = VK_NULL_HANDLE;
-        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &info, nullptr, &view), "vkCreateImageView sample order copy");
+        Check(context.Resolved(&DeviceFunctions::createImageView, "vkCreateImageView")(context.device, &info, nullptr, &view), "vkCreateImageView sample order copy");
         return view;
     }
 
     void release() noexcept {
-        if (stencilView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, stencilView, nullptr);
-        if (depthView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, depthView, nullptr);
+        if (stencilView) context.Resolved(&DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, stencilView, nullptr);
+        if (depthView) context.Resolved(&DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, depthView, nullptr);
         if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-        if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+        if (memory) context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, memory, nullptr);
     }
 };
 
@@ -172,7 +172,7 @@ public:
         write.descriptorCount = 1;
         write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         write.pImageInfo = &imageInfo;
-        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
+        context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
         const StoragePush push{map, {region.width, region.height}, target.samples};
         context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
         context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, storagePipelineLayout, 0, 1, &set, 0, nullptr);
@@ -223,7 +223,7 @@ public:
             writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             writes[binding].pImageInfo = &images[binding];
         }
-        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, stencil ? 2u : 1u, writes.data(), 0, nullptr);
+        context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, stencil ? 2u : 1u, writes.data(), 0, nullptr);
         const std::array<VkImageView, 1> views{target.view};
         auto framebuffer = std::make_shared<Framebuffer>(context, pass.renderPass, views, region);
         kept.push_back(framebuffer);
@@ -485,7 +485,7 @@ private:
                 }
             }
             if (next < ring.pools.size()) {
-                Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, ring.pools[next], 0), "vkResetDescriptorPool sample order");
+                Check(context.Resolved(&DeviceFunctions::resetDescriptorPool, "vkResetDescriptorPool")(context.device, ring.pools[next], 0), "vkResetDescriptorPool sample order");
             } else {
                 VkDescriptorPoolCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
                 info.maxSets = setsPerPool;
@@ -504,7 +504,7 @@ private:
         allocation.descriptorSetCount = 1;
         allocation.pSetLayouts = &layout;
         VkDescriptorSet set = VK_NULL_HANDLE;
-        Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets sample order");
+        Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets sample order");
         ++ring.used;
         ring.serials[ring.current] = recorder != nullptr && recorder->Device() == context.device ? recorder->OpenSerial() : std::numeric_limits<std::uint64_t>::max();
         return set;

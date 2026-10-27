@@ -51,7 +51,7 @@ GpuColorTransfer::GpuColorTransfer(const Context& context) : context(context) {
         allocation.descriptorPool = descriptorPool;
         allocation.descriptorSetCount = 1;
         allocation.pSetLayouts = &descriptorLayout;
-        Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &descriptorSet), "vkAllocateDescriptorSets color transfer");
+        Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &descriptorSet), "vkAllocateDescriptorSets color transfer");
         const auto& table = HalfFloatScanoutThresholds();
         thresholds = std::make_unique<Buffer>(context, sizeof(table), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         std::memcpy(thresholds->Bytes().data(), table.data(), sizeof(table));
@@ -68,7 +68,7 @@ GpuColorTransfer::GpuColorTransfer(const Context& context) : context(context) {
             tableWrites[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             tableWrites[i].pBufferInfo = &tableInfo[i];
         }
-        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(tableWrites.size()), tableWrites.data(), 0, nullptr);
+        context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(tableWrites.size()), tableWrites.data(), 0, nullptr);
     } catch (...) {
         if (module) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
         release();
@@ -108,7 +108,7 @@ void GpuColorTransfer::prepare(std::uint32_t newWidth, std::uint32_t newHeight, 
         writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[i].pBufferInfo = &buffers[i];
     }
-    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
     tiled = std::move(newTiled);
     tiledDevice = std::move(newTiledDevice);
     linear = std::move(newLinear);
@@ -143,13 +143,13 @@ void GpuColorTransfer::dispatch(VkCommandBuffer commands, bool toTiled, bool swa
     VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     before.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
     before.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    const auto barrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+    const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
     barrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
     const std::array<std::uint32_t, 5> push{width, height, (width + 127u) / 128u, (toTiled ? 1u : 0u) | (swapRedBlue ? 2u : 0u) | (tiledSource ? 4u : 0u) | (tenBit ? 8u : 0u) | (halfFloat ? 16u : 0u) | (pqWhiteNits ? 32u : 0u), std::bit_cast<std::uint32_t>(pqWhiteNits.value_or(0.0f))};
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-    context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
-    context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, (width + 7u) / 8u, (height + 7u) / 8u, 1);
+    context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+    context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push.data());
+    context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, (width + 7u) / 8u, (height + 7u) / 8u, 1);
     VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     after.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     after.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -164,7 +164,7 @@ void GpuColorTransfer::DetileImage(VkCommandBuffer commands, VkImage image, VkIm
     VkBufferImageCopy copy{};
     copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1};
     copy.imageExtent = {width, height, 1};
-    context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image, layout, tiledDevice->Handle(), 1, &copy);
+    context.Resolved(&DeviceFunctions::cmdCopyImageToBuffer, "vkCmdCopyImageToBuffer")(commands, image, layout, tiledDevice->Handle(), 1, &copy);
     dispatch(commands, false, swapRedBlue, tenBit, false, halfFloat, std::nullopt);
 }
 

@@ -119,11 +119,11 @@ Framebuffer::Framebuffer(const Context& context, VkRenderPass renderPass, std::s
     framebufferInfo.width = extent.width;
     framebufferInfo.height = extent.height;
     framebufferInfo.layers = layers;
-    Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer), "vkCreateFramebuffer");
+    Check(context.Resolved(&DeviceFunctions::createFramebuffer, "vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer), "vkCreateFramebuffer");
 }
 
 Framebuffer::~Framebuffer() {
-    if (framebuffer) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
+    if (framebuffer) context.Resolved(&DeviceFunctions::destroyFramebuffer, "vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
 }
 
 void ValidateDepthBounds(const Context& context, const State& state) {
