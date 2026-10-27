@@ -35,6 +35,17 @@ FT_Pos HostCoordinate(std::int64_t value) {
 
 }
 
+namespace FreeType {
+
+RasterTargetSpan RasterTargetSpan_nid_no_patch(const GuestBitmap& target) {
+    if (!target.buffer) return {};
+    const std::int64_t pitch = target.pitch;
+    const auto stride = static_cast<std::size_t>(pitch < 0 ? -pitch : pitch);
+    return {static_cast<unsigned char*>(target.buffer), stride * target.rows};
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI FT_Outline_Render_nid_postfix(GuestLibrary* library, GuestOutline* outline, GuestRasterParams* params) {
@@ -69,13 +80,8 @@ int APS5_VABI FT_Outline_Render_nid_postfix(GuestLibrary* library, GuestOutline*
         nativeParams.clip_box = {HostCoordinate(params->clipBox.xMin), HostCoordinate(params->clipBox.yMin), HostCoordinate(params->clipBox.xMax),
                                  HostCoordinate(params->clipBox.yMax)};
     }
-    const std::size_t pitch = params->target ? static_cast<std::size_t>(params->target->pitch < 0 ? -static_cast<std::int64_t>(params->target->pitch) : params->target->pitch) : 0;
-    auto* writeStart = params->target ? static_cast<unsigned char*>(params->target->buffer) : nullptr;
-    if (writeStart && params->target->pitch < 0 && params->target->rows > 0) {
-        const auto rowOffset = static_cast<std::int64_t>(params->target->pitch) * (params->target->rows - 1);
-        writeStart += rowOffset;
-    }
-    GuestArena::HostWrite write(writeStart, writeStart ? pitch * params->target->rows : 0);
+    const auto written = params->target ? RasterTargetSpan_nid_no_patch(*params->target) : RasterTargetSpan{};
+    GuestArena::HostWrite write(written.begin, written.bytes);
     const FT_Error error = FT_Outline_Render(host, &native, &nativeParams);
     if (nativeParams.source == &native) {
         params->source = outline;
