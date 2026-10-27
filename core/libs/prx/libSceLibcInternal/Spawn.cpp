@@ -4,6 +4,7 @@
 #include "prx/libc/include/ChildProcesses.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #ifdef _WIN32
 #include "prx/libc/include/WindowsDescriptor.hpp"
 #endif
@@ -382,6 +383,10 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
     return 0;
 }
 #else
+int HostSpawnError(int error) {
+    return error == 0 ? 0 : GuestErrnoFromHost_nid_no_patch(error);
+}
+
 int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileActions* const* actions,
     PosixSpawnAttributes* const* attributes, std::int32_t* processId, char* const* arguments, char* const* environment) {
     const auto target = ConvertedExecutableTarget(function, guest);
@@ -391,7 +396,7 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
     if ((flags & ~SpawnFlagsImplemented) != 0)
         NotImplemented_nid_no_patch(("posix_spawn: the attribute flags " + HexFlag(flags)).c_str());
     if (flags != 0) {
-        if (posix_spawnattr_init(&hostAttributes) != 0) return Fault;
+        if (const int error = HostSpawnError(posix_spawnattr_init(&hostAttributes))) return error;
         usedAttributes = &hostAttributes;
         if ((flags & SpawnFlagResetIds) != 0) posix_spawnattr_setflags(usedAttributes, POSIX_SPAWN_RESETIDS);
         if ((flags & SpawnFlagSetGroup) != 0) {
@@ -402,9 +407,9 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
     posix_spawn_file_actions_t hostActions;
     posix_spawn_file_actions_t* usedActions = nullptr;
     if (actions != nullptr && !(*actions)->actions.empty()) {
-        if (posix_spawn_file_actions_init(&hostActions) != 0) {
+        if (const int error = HostSpawnError(posix_spawn_file_actions_init(&hostActions))) {
             if (usedAttributes != nullptr) posix_spawnattr_destroy(usedAttributes);
-            return Fault;
+            return error;
         }
         usedActions = &hostActions;
     }
@@ -413,17 +418,17 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
         for (const auto& action : (*actions)->actions) {
             switch (action.kind) {
             case PosixSpawnFileActionKind::Close:
-                result = posix_spawn_file_actions_addclose(usedActions, action.descriptor);
+                result = HostSpawnError(posix_spawn_file_actions_addclose(usedActions, action.descriptor));
                 break;
             case PosixSpawnFileActionKind::Duplicate:
-                result = posix_spawn_file_actions_adddup2(usedActions, action.descriptor, action.newDescriptor);
+                result = HostSpawnError(posix_spawn_file_actions_adddup2(usedActions, action.descriptor, action.newDescriptor));
                 break;
             case PosixSpawnFileActionKind::Open: {
                 std::filesystem::path native;
                 if (const int error = ResolvePathError_nid_no_patch(action.path.c_str(), native)) result = error;
                 else {
                     try {
-                        result = posix_spawn_file_actions_addopen(usedActions, action.descriptor, native.c_str(), HostOpenFlags(action.openFlags), action.mode);
+                        result = HostSpawnError(posix_spawn_file_actions_addopen(usedActions, action.descriptor, native.c_str(), HostOpenFlags(action.openFlags), action.mode));
                     } catch (const std::invalid_argument&) {
                         result = InvalidArgument;
                     }
@@ -441,7 +446,7 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
         if (hostEnvironment == nullptr) hostEnvironment = *_NSGetEnviron();
 #endif
         pid_t childPid = -1;
-        result = posix_spawn(&childPid, target.c_str(), usedActions, usedAttributes, arguments, hostEnvironment);
+        result = HostSpawnError(posix_spawn(&childPid, target.c_str(), usedActions, usedAttributes, arguments, hostEnvironment));
         if (result == 0) *processId = static_cast<std::int32_t>(childPid);
     }
     if (usedActions != nullptr) posix_spawn_file_actions_destroy(usedActions);
