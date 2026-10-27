@@ -157,6 +157,16 @@ def collect_provided(module_dir):
             for match in VABI.finditer(line):
                 name = match.group(1)
                 base, postfix = base_of(name)
+                if postfix == "_nid_no_patch_cut":
+                    if base not in provided:
+                        provided[base] = f"literally as {base} under {name}"
+                    continue
+                if postfix == "_nid_no_patch":
+                    if name not in provided:
+                        provided[name] = f"literally as {name}"
+                    continue
+                if postfix is not None and postfix != "_nid_postfix":
+                    continue
                 nid = nid_names.compute_nid(base)
                 if nid not in provided:
                     if postfix is None:
@@ -176,7 +186,17 @@ def collect_provided(module_dir):
                     continue
                 for match in call.finditer(masked[index]):
                     symbol = match.group(1)
-                    base, _ = base_of(symbol)
+                    base, postfix = base_of(symbol)
+                    if postfix == "_nid_no_patch_cut":
+                        if base not in provided:
+                            provided[base] = f"through macro {macro} literally as {base} under {symbol}"
+                        continue
+                    if postfix == "_nid_no_patch":
+                        if symbol not in provided:
+                            provided[symbol] = f"through macro {macro} literally as {symbol}"
+                        continue
+                    if postfix is not None and postfix != "_nid_postfix":
+                        continue
                     nid = nid_names.compute_nid(base)
                     if nid not in provided:
                         provided[nid] = f"through macro {macro} as {symbol}"
@@ -317,10 +337,8 @@ def main(argv=None):
             if destination.exists() and destination.is_dir():
                 raise GapError(f"{destination}: output is a directory")
             try:
-                if missing_nids:
-                    destination.write_text("".join(nid + "\n" for nid in missing_nids), encoding="utf-8", newline="\n")
-                else:
-                    destination.write_text("", encoding="utf-8", newline="\n")
+                with open(destination, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write("".join(nid + "\n" for nid in missing_nids))
             except OSError as error:
                 raise GapError(f"{destination}: cannot write output: {error.strerror or error}") from error
         else:

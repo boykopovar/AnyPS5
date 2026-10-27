@@ -64,6 +64,23 @@ def run_tool_with_stderr(root, prx, args):
     return code, output.getvalue(), error.getvalue()
 
 
+def nid_of(name):
+    return nid_names.compute_nid(name)
+
+
+def provides(name, nid):
+    with tempfile.TemporaryDirectory() as directory:
+        root, prx, tables = tree(directory)
+        write_module(prx, MODULE, {"Export.cpp": f"int APS5_VABI {name}(void) {{ return 0; }}\n"})
+        write_table(tables, MODULE, [nid])
+        db = write_db(directory, [(nid, "sceExamplePlaceholder")])
+        out = Path(directory) / "out.txt"
+        code, _ = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+        if code != 0:
+            raise AssertionError(f"export_gap failed for {name}")
+        return out.read_text(encoding="utf-8") == ""
+
+
 class ExportGapTests(unittest.TestCase):
     def test_all_missing_are_reported(self):
         first = nid_names.compute_nid("sceExampleAlpha")
@@ -94,6 +111,56 @@ class ExportGapTests(unittest.TestCase):
             self.assertFalse([line for line in report.splitlines() if line.startswith("missing ")])
             self.assertIn("already provided", report)
             self.assertIn("sceExamplePostfixBase_nid_postfix", report)
+
+    def test_no_patch_name_does_not_provide_hashed_nid(self):
+        self.assertFalse(provides("sceExampleNoPatchBase_nid_no_patch", "T2IWNGg3cnI"))
+
+    def test_no_patch_cut_name_does_not_provide_hashed_nid(self):
+        self.assertFalse(provides("sceExampleNoPatchBase_nid_no_patch_cut", "T2IWNGg3cnI"))
+
+    def test_postfix_name_provides_hashed_base_nid(self):
+        self.assertTrue(provides("sceExampleBase_nid_postfix", nid_of("sceExampleBase")))
+
+    def test_no_patch_cut_base_counts_as_literally_provided(self):
+        base = "sceCutBase1"
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": f"int APS5_VABI {base}_nid_no_patch_cut(void) {{ return 0; }}\n"})
+            write_table(tables, MODULE, [base])
+            db = write_db(directory, [(base, base)])
+            out = Path(directory) / "out.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.read_text(encoding="utf-8"), "")
+            self.assertFalse([line for line in report.splitlines() if line.startswith("missing ")])
+            self.assertIn("already provided", report)
+            self.assertIn(base, report)
+
+    def test_no_patch_full_name_counts_as_literally_provided(self):
+        name = "sceExampleHelper_nid_no_patch"
+        with tempfile.TemporaryDirectory() as directory:
+            _, prx, _ = tree(directory)
+            library = write_module(prx, MODULE, {"Export.cpp": f"int APS5_VABI {name}(void) {{ return 0; }}\n"})
+            provided = export_gap.collect_provided(library)
+            self.assertIn(name, provided)
+            self.assertIn(name, provided[name])
+            self.assertNotIn(nid_of(name), provided)
+            self.assertNotIn(nid_of("sceExampleHelper"), provided)
+
+    def test_no_patch_cut_literal_provided_while_hashed_base_still_missing(self):
+        base = "sceCutBase1"
+        hashed = nid_of(base)
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, tables = tree(directory)
+            write_module(prx, MODULE, {"Export.cpp": f"int APS5_VABI {base}_nid_no_patch_cut(void) {{ return 0; }}\n"})
+            write_table(tables, MODULE, [base, hashed])
+            db = write_db(directory, [(base, base), (hashed, "sceCutBaseHashed")])
+            out = Path(directory) / "out.txt"
+            code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
+            self.assertEqual(code, 0)
+            self.assertEqual(out.read_text(encoding="utf-8").split(), [hashed])
+            self.assertIn(f"already provided {base}", report)
+            self.assertIn(f"missing {hashed} sceCutBaseHashed", report)
 
     def test_macro_invocation_counts_as_provided(self):
         nid = nid_names.compute_nid("sceExampleMacroProvided")
@@ -230,24 +297,6 @@ class ExportGapTests(unittest.TestCase):
             for line in out.read_text(encoding="utf-8").split("\n"):
                 if line:
                     self.assertEqual(len(line), 11)
-
-    def test_no_patch_variants_count_as_provided(self):
-        for suffix in ("_nid_no_patch_cut", "_nid_no_patch"):
-            base = "sceExampleNoPatchBase"
-            nid = nid_names.compute_nid(base)
-            with self.subTest(suffix=suffix):
-                with tempfile.TemporaryDirectory() as directory:
-                    root, prx, tables = tree(directory)
-                    write_module(prx, MODULE, {"Export.cpp": f"int APS5_VABI {base}{suffix}(void) {{ return 0; }}\n"})
-                    write_table(tables, MODULE, [nid])
-                    db = write_db(directory, [(nid, base)])
-                    out = Path(directory) / "out.txt"
-                    code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
-                    self.assertEqual(code, 0)
-                    self.assertEqual(out.read_text(encoding="utf-8"), "")
-                    self.assertFalse([line for line in report.splitlines() if line.startswith("missing ")])
-                    self.assertIn("already provided", report)
-                    self.assertIn(f"{base}{suffix}", report)
 
     def test_self_call_in_header_is_reported(self):
         nid = nid_names.compute_nid("sceExampleHeaderCall")
