@@ -85,6 +85,7 @@ static void CheckCollateVtableObject() {
     const auto* vtable = reinterpret_cast<const GuestLocale::CollateVtable*>(&_ZTVSt7collateIcE_nid_postfix[2]);
     GuestLocale::CollateFacet facet{};
     facet.base.references = 0;
+    facet.base.vtable = &vtable->facet;
     vtable->facet.destroy(&facet.base);
     vtable->facet.retain(&facet.base);
     Require(facet.base.references == 1);
@@ -95,6 +96,8 @@ static void CheckCollateVtableObject() {
     GuestLocale::String result{};
     Require(vtable->transform(&result, &facet, "abc", "abc" + 3) == &result);
     Require(result.size == 3 && result.capacity == 15 && std::memcmp(result.buffer, "abc", 3) == 0);
+    Require(_ZNKSt7collateIcE9transformEPKcS2__nid_postfix(&result, &facet, "xyz", "xyz" + 3) == &result);
+    Require(result.size == 3 && result.capacity == 15 && std::memcmp(result.buffer, "xyz", 3) == 0);
     Require(vtable->hash(&facet, "abc", "abc" + 3) == -1792535898324117685LL);
 }
 
