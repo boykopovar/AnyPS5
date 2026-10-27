@@ -787,13 +787,15 @@ GuestTextureResource BoundArrayWindow(const GuestTextureResource& viewed, std::u
     Require(viewed.baseArray <= viewed.depthOrLastArray, "an image view's first array slice lies past its last");
     const auto geometry = DescribeSurface(viewed);
     Require(!geometry.thick && geometry.layerBytes != 0, "an array window must use thin slices");
-    const auto availableLayers = availableBytes / geometry.layerBytes;
+    auto availableLayers = availableBytes / geometry.layerBytes;
     if (availableLayers > viewed.depthOrLastArray) return viewed;
-    Require(availableLayers != 0, "an array view has no complete slice in its registered guest allocation");
+    const bool cube = viewed.dimension == TextureDimension::kCube;
+    if (cube) availableLayers -= availableLayers % 6u;
+    Require(availableLayers != 0, cube ? "a cube view has no complete cube in its registered guest allocation" : "an array view has no complete slice in its registered guest allocation");
     auto bounded = viewed;
-    if (viewed.baseArray >= availableLayers) {
+    if (viewed.baseArray >= availableLayers || (cube && viewed.baseArray + 6u > availableLayers)) {
         bounded.baseArray = 0;
-        bounded.depthOrLastArray = 0;
+        bounded.depthOrLastArray = cube ? 5u : 0u;
         return bounded;
     }
     bounded.depthOrLastArray = static_cast<std::uint32_t>(availableLayers - 1u);
