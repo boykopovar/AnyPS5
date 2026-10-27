@@ -99,7 +99,8 @@ void Clean() {
 void ResetMock() {
     SetAllocationFailureCountdown(-1);
     Clean();
-    mock = {};
+    std::destroy_at(&mock);
+    std::construct_at(&mock);
     reclaimAction = nullptr;
     reclaimCalls = 0;
     reclaimImages = {};
