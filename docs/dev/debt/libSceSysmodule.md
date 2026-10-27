@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceSysmoduleIsLoaded, sceSysmoduleLoadModule, sceSysmoduleUnloadModule](../../../core/libs/prx/libSceSysmodule/Export.cpp) (libSceSysmodule) accept a module id missing from the module table: they log it and return 0 without loading anything, so `sceSysmoduleIsLoaded` reports an unknown module as loaded and unloading it succeeds, because titles that load or unload such an id aborted otherwise. The internal variants (`sceSysmoduleLoadModuleInternal`, `sceSysmoduleUnloadModuleInternal`, `sceSysmoduleLoadModuleInternalWithArg`, `sceSysmoduleUnloadModuleInternalWithArg`, `sceSysmoduleGetModuleHandleInternal`) throw for an unknown id. What the console returns for an id it does not know is not verified.
+- [sceSysmoduleIsLoaded, sceSysmoduleLoadModule, sceSysmoduleUnloadModule](../../../core/libs/prx/libSceSysmodule/Export.cpp) (libSceSysmodule) accept the 141 ids `sceSysmoduleIsLoaded` did not reject in a payload process on a PS5 (firmware 13.60) and return `0x805A1000` for every other id, as the console does; that includes 51 ids the module table names from older firmware, such as 0x0001 (`libSceAudioOut`) and 0x0080 (`libSceJson`). Load and unload are counted as measured. The 21 accepted ids the table does not name (0x0111, 0x0117, 0x011c to 0x011f, 0x0121 to 0x0124, 0x0129, 0x012c to 0x012e, 0x0133, 0x0134, 0x0136 and 0x013a to 0x013d) are logged and return 0 without loading anything, so `sceSysmoduleIsLoaded` reports them as loaded; which module each loads is not known. Loading id 0x00ff ended the payload process. One title (PPSA04354) calls `sceSysmoduleIsLoaded` with id 0x96 at twelve sites and loads it only when the result is 0x805a1001; any other result lets it continue.
 
 ### Unknown function info
 

@@ -3,11 +3,13 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "AudioOut2Internal.hpp"
 
 extern "C" {
 
 int APS5_VABI sceAudioOut2LoInit(void) {
-    return sceAudioOut2Initialize();
+    AudioOut2MarkInitialized_nid_no_patch();
+    return 0;
 }
 
 int APS5_VABI sceAudioOut2LoTerminate(void) {

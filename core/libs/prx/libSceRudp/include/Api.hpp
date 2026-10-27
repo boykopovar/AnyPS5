@@ -39,6 +39,6 @@ int APS5_VABI sceRudpFlush();
 int APS5_VABI sceRudpGetLocalInfo();
 int APS5_VABI sceRudpListen();
 int APS5_VABI sceRudpPollCancel();
-int APS5_VABI sceRudpSetMaxSegmentSize();
+int APS5_VABI sceRudpSetMaxSegmentSize(uint16_t mss);
 
 }

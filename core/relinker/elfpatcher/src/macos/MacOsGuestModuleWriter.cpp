@@ -97,11 +97,12 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteMacOs(const Relinker::GuestIma
         if (symbol.Section == 0 || symbol.Section == Relinker::AbsoluteSection || (symbol.Info >> 4) == 0 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
         if (symbol.Section >= 0xff00) throw Domain::RelinkerException("Unsupported guest export section: " + symbol.Name);
         const auto name = "_" + DynamicName(guest, index);
+        const auto flags = (symbol.Info >> 4) == 2 ? ExportWeakDefinition : std::uint64_t{0};
         if ((symbol.Info & 15) == 6) {
-            input.TlsExports.push_back({name, symbol.Value});
+            input.TlsExports.push_back({name, symbol.Value, flags});
             continue;
         }
-        input.Exports.push_back({name, image.GetRva(symbol.Value, std::max<std::uint64_t>(symbol.Size, 1))});
+        input.Exports.push_back({name, image.GetRva(symbol.Value, std::max<std::uint64_t>(symbol.Size, 1)), flags});
     }
 
     for (const auto& dependency : dependencies) input.Dylibs.push_back(MachODependency(dependency, "@loader_path"));

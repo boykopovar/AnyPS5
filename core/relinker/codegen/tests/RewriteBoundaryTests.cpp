@@ -54,6 +54,16 @@ int main() {
         Require(result.Bytes == std::vector<std::uint8_t>{
             0x90, 0x90, 0x90, 0xC3});
 
+        bool targetInsideCutRejected = false;
+        try {
+            (void)rewriter.Rewrite(
+                {0xEB, 0x01, 0xB8, 0x11, 0x22, 0x33, 0x44, 0xC3},
+                {2, {0x90}});
+        } catch (const std::exception&) {
+            targetInsideCutRejected = true;
+        }
+        Require(targetInsideCutRejected);
+
         for (const auto& code : {
                  std::vector<std::uint8_t>{
                      0x66, 0xEB, 0x01, 0x90, 0xC3},
@@ -107,7 +117,7 @@ int main() {
         }
         RequireTruncatedBranchRejected(backwardWraparoundRejected);
 
-        std::cout << "21 rewrite boundary cases passed\n";
+        std::cout << "22 rewrite boundary cases passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

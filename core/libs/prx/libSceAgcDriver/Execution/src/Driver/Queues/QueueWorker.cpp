@@ -146,7 +146,7 @@ void Driver::run(std::uint32_t id) noexcept {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& costs = submissionCosts(id);
     try {
-        if (PerformanceTrace::Configured()) PerformanceTrace::BindThread(role);
+        PerformanceTrace::BindThread(role);
         for (;;) {
             submission = Submission{};
             struct Running {

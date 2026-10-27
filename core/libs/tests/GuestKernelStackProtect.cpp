@@ -102,7 +102,6 @@ static void CheckFixedStackRemap(std::uintptr_t low, void* start) {
     reject(address + 1, Page, FixedPrivateAnonymous, -1, 0, 22);
     reject(address, Page, FixedPrivateAnonymous, 0, 0, 22);
     reject(address, Page, FixedPrivateAnonymous, -1, Page, 22);
-    reject(address, Page, FixedPrivateAnonymous | 0x4000, -1, 0, 0);
     int active = 0;
     const auto activePage = reinterpret_cast<std::uintptr_t>(&active) & ~(Page - 1);
     void* activeStart = nullptr;

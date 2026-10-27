@@ -107,6 +107,11 @@ int main() {
     Require(sceZlibWaitForDone(&completed, &timeout) == static_cast<std::int32_t>(0x81120027));
     const auto waited = std::chrono::steady_clock::now() - start;
     Require(waited >= std::chrono::microseconds(20000) && waited < std::chrono::seconds(1));
+    timeout = 1000;
+    const auto shortStart = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) Require(sceZlibWaitForDone(&completed, &timeout) == static_cast<std::int32_t>(0x81120027));
+    const auto shortWaits = std::chrono::steady_clock::now() - shortStart;
+    Require(shortWaits >= std::chrono::milliseconds(20) && shortWaits < std::chrono::milliseconds(200));
     std::thread waiter([&] { Require(sceZlibWaitForDone(&completed, nullptr) == 0); });
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     Require(sceZlibInflate(compressed.data(), compressed.size(), output, 8192, &id) == 0);
