@@ -80,6 +80,7 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImage(image.c_str(), maxX + 1, 0) == ErrorArgument, "x past the screen");
     Require(sceScreenShotSetOverlayImage(image.c_str(), 0, maxY + 1) == ErrorArgument, "y past the screen");
     Require(sceScreenShotSetOverlayImage(image.c_str(), -1, 0) == ErrorArgument, "negative x");
+    Require(sceScreenShotSetOverlayImage(image.c_str(), 0, -1) == ErrorArgument, "negative y");
     Require(sceScreenShotSetOverlayImage(nullptr, 0, 0) == ErrorArgument, "null path");
     const std::string longPath(1024, 'a');
     Require(sceScreenShotSetOverlayImage(longPath.c_str(), 0, 0) == ErrorArgument, "path of 1024 characters");
@@ -100,6 +101,11 @@ void TestOverlay(bool large) {
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, 0, 0) == ErrorArgument, "origin 0");
     Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, 0, 10) == ErrorArgument, "origin 10");
     Require(sceScreenShotSetOverlayImageWithOrigin(nullptr, 0, 0, 0) == ErrorArgument, "origin checked first");
+    Require(sceScreenShotSetOverlayImageWithOrigin(nullptr, 0, 0, 1) == ErrorArgument, "null path with valid origin");
+    Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), -1, 0, 1) == ErrorArgument, "negative x with valid origin");
+    Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, -1, 1) == ErrorArgument, "negative y with valid origin");
+    Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), maxX + 1, 0, 1) == ErrorArgument, "x past screen with valid origin");
+    Require(sceScreenShotSetOverlayImageWithOrigin(image.c_str(), 0, maxY + 1, 1) == ErrorArgument, "y past screen with valid origin");
 }
 
 }

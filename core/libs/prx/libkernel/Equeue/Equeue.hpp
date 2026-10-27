@@ -6,6 +6,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -95,6 +96,7 @@ public:
     int WaitForEvents(KernelEvent* ev, int num, uint32_t micros);
     int WaitForEventsUntil(KernelEvent* ev, int num, std::uint64_t deadlineNanos);
     void RemoveDescriptorEvents(uintptr_t ident);
+    void WakeReadWaiters(uintptr_t ident);
     void Close();
     static uint64_t MonotonicNs();
 
@@ -114,7 +116,9 @@ private:
 
     std::list<KernelEqueueEvent> m_events;
     std::vector<std::uintptr_t> m_pollers;
+    std::vector<int> m_measuring;
     std::mutex m_mutex;
+    std::condition_variable m_measured;
     TimedWait::Condition m_cond;
     std::string m_name;
     KernelEqueue m_handle;
@@ -125,6 +129,8 @@ private:
 using KernelEqueueRef = std::shared_ptr<KernelEqueuePrivate>;
 void EqueueDescriptorClosed(int descriptor);
 void KqueueDescriptorClosed(int descriptor);
+void EqueueDescriptorReadShut(int descriptor);
+void KqueueDescriptorReadShut(int descriptor);
 bool IsKqueueDescriptor(int descriptor);
 std::optional<bool> KqueueReadable(int descriptor);
 KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t flags, void* udata);

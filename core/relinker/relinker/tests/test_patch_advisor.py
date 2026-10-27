@@ -15,7 +15,7 @@ def main():
     image = bytes(main_fixture())
     address, expected = patch_site(image)
     with tempfile.TemporaryDirectory(prefix="anyps5-patch-advisor-") as directory:
-        root = Path(directory)
+        root = Path(directory).resolve()
         source = root / "eboot.bin"
         source.write_bytes(image)
         catalog = root / "catalog"

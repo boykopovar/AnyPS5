@@ -73,6 +73,7 @@ int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t length
 }
 
 void APS5_VABI perror_nid_postfix(const char* prefix) {
+    if (!_Stderr_nid_postfix.IsOpen()) return;
     const int saved = *__error_nid_postfix();
     char message[128];
     strerror_r_nid_postfix(saved, message, sizeof(message));

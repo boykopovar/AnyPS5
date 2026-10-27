@@ -243,11 +243,6 @@ int APS5_VABI sceCesUcs2StrToIso2022Str(void) {
     return 0;
 }
 
-int APS5_VABI sceCesUcsProfileInitEucJis2004(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceCesUcsProfileInitIso2022JpCp50221(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -259,11 +254,6 @@ int APS5_VABI sceCesUcsProfileInitIso2022JpCp50222(void) {
 }
 
 int APS5_VABI sceCesUcsProfileInitIso2022JpRfc1468(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceCesUcsProfileInitSJis2004X0213(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

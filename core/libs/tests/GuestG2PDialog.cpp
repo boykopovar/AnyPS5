@@ -79,7 +79,13 @@ int main() {
     Require(sceG2PDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceG2PDialogTerminate() == 0);
     Require(sceG2PDialogTerminate() == kErrNotInitialized);
+    Require(sceG2PDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceG2PDialogOpen(&param) == kErrNotInitialized);
+    Require(sceG2PDialogClose() == kErrNotInitialized);
+    Require(sceG2PDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == kErrNotInitialized);
     Require(sceG2PDialogGetStatus() == kStatusNone);
+    Require(sceG2PDialogUpdateStatus() == kStatusNone);
 
     Require(sceG2PDialogInitialize() == 0);
     Require(sceG2PDialogGetStatus() == kStatusInitialized);
@@ -90,5 +96,13 @@ int main() {
     Require(result[0] == -1 && result[1] == -1 && result[3] == -1);
     Require(result[2] == -1);
     Require(sceG2PDialogTerminate() == 0);
+    Require(sceG2PDialogTerminate() == kErrNotInitialized);
+    Require(sceG2PDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceG2PDialogOpen(&param) == kErrNotInitialized);
+    Require(sceG2PDialogClose() == kErrNotInitialized);
+    Require(sceG2PDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == kErrNotInitialized);
+    Require(sceG2PDialogGetStatus() == kStatusNone);
+    Require(sceG2PDialogUpdateStatus() == kStatusNone);
     Require(sceUserServiceTerminate() == 0);
 }

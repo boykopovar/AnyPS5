@@ -1236,9 +1236,78 @@ int main() {
         return StencilReplaySafe(b.program);
     };
 
+    const auto optionalPredicateBody = [&](bool negated) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& body = b.newBlock();
+        auto& merge = b.newBlock();
+        entry.AddBranch(&body);
+        entry.AddBranch(&merge);
+        body.AddBranch(&merge);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = body.Id();
+        entryInfo.condition = &condition;
+        auto& bodyInfo = b.program.Metadata().blockInfo[1u];
+        bodyInfo.terminator.kind = TerminatorKind::Branch;
+        bodyInfo.terminator.trueBlock = merge.Id();
+        b.block = &body;
+        auto& written = negated ? b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate}) : b.ballotBit(predicate);
+        b.block = &merge;
+        auto& merged = b.phi(IrType::Bool, entry, predicate);
+        merged.AddPhiOperand(&body, &written);
+        b.keep(b.select(merged, b.constant(1u), b.constant(0u)));
+        exportUnder(b, b.truth(), true, true);
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body may merge a lane's own bit of the predicate's ballot with the skipped predicate", [&] { return optionalPredicateBody(false); });
+    passed &= run("an optional wave body cannot merge a value that differs from the skipped predicate on inactive lanes", [&] { return !optionalPredicateBody(true); });
     passed &= run("an optional wave body preserves inactive values consumed only within a lane", [&] { return optionalPixelBody(false); });
     passed &= run("an optional wave body cannot change helper coordinates for later implicit samples", [&] { return !optionalPixelBody(true); });
     passed &= run("an optional wave body cannot change helper coordinates for LOD queries", [&] { return !optionalPixelBody(true, IrOpcode::ImageQueryLod); });
+
+    const auto optionalHelperFreeBallot = [&](bool helperLive) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& zero = b.constant(0u);
+        const auto [liveLow, liveHigh] = b.ballotWords(helperPredicate(b, helperLive));
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& body = b.newBlock();
+        auto& merge = b.newBlock();
+        entry.AddBranch(&body);
+        entry.AddBranch(&merge);
+        body.AddBranch(&merge);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = body.Id();
+        entryInfo.condition = &condition;
+        auto& bodyInfo = b.program.Metadata().blockInfo[1u];
+        bodyInfo.terminator.kind = TerminatorKind::Branch;
+        bodyInfo.terminator.trueBlock = merge.Id();
+        b.block = &body;
+        auto& written = b.select(predicate, b.constant(42u), zero);
+        b.block = &merge;
+        auto& merged = b.phi(IrType::U32, entry, zero);
+        merged.AddPhiOperand(&body, &written);
+        auto& kept = b.logicalAnd(b.threadBit(*liveLow, *liveHigh), b.emit(IrOpcode::INotEqual32, IrType::Bool, {&merged, &zero}));
+        const auto [keptLow, keptHigh] = b.ballotWords(kept);
+        b.keep(*keptLow);
+        exportUnder(b, b.threadBit(*keptLow, *keptHigh), true, true);
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body may merge a value into a ballot whose argument is false on every helper lane", [&] { return optionalHelperFreeBallot(false); });
+    passed &= run("an optional wave body cannot merge a value into a ballot that helper lanes contribute to", [&] { return !optionalHelperFreeBallot(true); });
 
     const auto optionalPixelRegion = [&](bool unmaskedArm) {
         Builder b;
@@ -1665,7 +1734,7 @@ int main() {
     passed &= run("selects that each reach the rest of the program are settled in steps that grow with the program, not with its square", [&] {
         const auto [small, smallKept] = shaded(500u);
         const auto [large, largeKept] = shaded(4000u);
-        return small.removedSelects == 500u && smallKept == 500u && large.removedSelects == 4000u && largeKept == 4000u && small.steps != 0u && large.steps <= 9u * small.steps;
+        return small.removedSelects == 500u && smallKept == 500u && large.removedSelects == 4000u && largeKept == 4000u && small.steps != 0u && large.steps <= 9u * small.steps && large.steps < 90'000u;
     });
 
     return passed ? 0 : 1;

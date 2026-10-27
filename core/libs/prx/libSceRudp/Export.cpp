@@ -60,6 +60,7 @@ enum RudpOption {
 
 std::mutex g_mutex;
 bool g_inited = false;
+uint16_t g_max_segment_size = RUDP_MAX_SEGMENT_SIZE;
 int g_next_ctx = 0;
 struct RudpContext {
     bool bound = false;
@@ -495,8 +496,15 @@ int APS5_VABI sceRudpPollCancel() {
     return 0;
 }
 
-int APS5_VABI sceRudpSetMaxSegmentSize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceRudpSetMaxSegmentSize(uint16_t mss) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    if (!g_inited) {
+        return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (!g_ctx.empty()) {
+        return RUDP_ERROR_NOT_ACCEPTABLE;
+    }
+    g_max_segment_size = mss;
     return 0;
 }
 

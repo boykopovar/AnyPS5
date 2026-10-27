@@ -173,6 +173,10 @@ def check_options(relinker, directory):
     source.write_bytes(bytes(import_fixture()))
     result = subprocess.run([str(relinker), "--macos", "--windows", "--skip-sce-module", str(source), str(Path(directory) / "conflict")], capture_output=True, text=True, timeout=120)
     check(result.returncode != 0 and "--windows conflicts with --macos" in result.stdout + result.stderr, "--macos together with --windows was accepted")
+    lazy = Path(directory) / "lazy"
+    result = subprocess.run([str(relinker), "--macos", "--lazy-binding", "--skip-sce-module", str(source), str(lazy)], capture_output=True, text=True, timeout=120)
+    check(result.returncode == 2 and "macOS target does not support --lazy-binding" in result.stderr, f"--macos with --lazy-binding: exit {result.returncode}: {result.stdout}{result.stderr}")
+    check(not lazy.exists(), "--macos with --lazy-binding created an output")
 
 
 def check_runpath_lists(relinker, directory):

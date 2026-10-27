@@ -292,6 +292,114 @@ void CheckIdMapperLookup(const char* name, decltype(&sceNpIdMapperNpIdToAccountI
     Require(std::memcmp(output, untouched, sizeof(output)) == 0, name);
 }
 
+struct SentinelBuffer {
+    unsigned char bytes[64];
+    SentinelBuffer() { std::memset(bytes, 0x5a, sizeof(bytes)); }
+    bool Untouched() const {
+        for (const unsigned char byte : bytes) {
+            if (byte != 0x5a) return false;
+        }
+        return true;
+    }
+};
+
+void CheckManagerIntProfileGetters() {
+    const int live = sceNpManagerIntCreateRequest();
+    const int deleted = sceNpManagerIntCreateRequest();
+    Require(live > 0 && deleted > 0 && sceNpManagerIntDeleteRequest(deleted) == 0, "NpManagerInt requests for the profile getters");
+    SentinelBuffer out;
+    Require(sceNpManagerIntGetAccountAge(live, -1, out.bytes) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetAccountAge must refuse user id -1");
+    Require(sceNpManagerIntGetAccountAge(live, InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountAge must refuse a null output");
+    Require(sceNpManagerIntGetAccountAge(deleted, InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountAge checks its arguments before the request");
+    Require(sceNpManagerIntGetAccountLanguageA(live, -1, out.bytes) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetAccountLanguageA must refuse user id -1");
+    Require(sceNpManagerIntGetAccountLanguageA(live, InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountLanguageA must refuse a null output");
+    Require(sceNpManagerIntGetAccountLanguageA(deleted, InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountLanguageA checks its arguments before the request");
+    for (const int request : {live, deleted, 0x7fffffff, 0, -1}) {
+        Require(sceNpManagerIntGetAccountAge(request, InitialUserId, out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetAccountAge must report NP as signed out and write nothing");
+        Require(sceNpManagerIntGetAccountLanguageA(request, InitialUserId, out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetAccountLanguageA must report NP as signed out and write nothing");
+    }
+    Require(sceNpManagerIntGetAccountCountryA(-1, out.bytes) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetAccountCountryA must refuse user id -1");
+    Require(sceNpManagerIntGetAccountCountryA(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetAccountCountryA must refuse a null output");
+    Require(sceNpManagerIntGetAccountCountryA(InitialUserId, out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetAccountCountryA must report NP as signed out and write nothing");
+    NpId* npId = reinterpret_cast<NpId*>(out.bytes);
+    Require(sceNpManagerIntGetNpId(-1, npId) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetNpId must refuse user id -1");
+    Require(sceNpManagerIntGetNpId(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetNpId must refuse a null output");
+    Require(sceNpManagerIntGetNpId(InitialUserId, npId) == SignedOut && out.Untouched(), "sceNpManagerIntGetNpId must report NP as signed out and write nothing");
+    NpOnlineId* onlineId = reinterpret_cast<NpOnlineId*>(out.bytes);
+    Require(sceNpManagerIntGetOnlineId(-1, onlineId) == InvalidArgument && out.Untouched(), "sceNpManagerIntGetOnlineId must refuse user id -1");
+    Require(sceNpManagerIntGetOnlineId(InitialUserId, nullptr) == InvalidArgument, "sceNpManagerIntGetOnlineId must refuse a null output");
+    Require(sceNpManagerIntGetOnlineId(InitialUserId, onlineId) == SignedOut && out.Untouched(), "sceNpManagerIntGetOnlineId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntDeleteRequest(live) == 0, "the profile getters leave a live request live");
+    Require(sceNpManagerIntDeleteRequest(deleted) == ManagerIntNotInTable, "the profile getters leave a deleted request deleted");
+}
+
+void CheckManagerIntUserLookups() {
+    NpOnlineId onlineId{};
+    std::memcpy(onlineId.data, "player", 6);
+    NpId npId{};
+    npId.online_id = onlineId;
+    int userId = 0x5a5a5a5a;
+    Require(sceNpManagerIntGetUserIdByOnlineId(nullptr, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByOnlineId must refuse a null online id");
+    Require(sceNpManagerIntGetUserIdByOnlineId(&onlineId, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByOnlineId must refuse a null output");
+    Require(sceNpManagerIntGetUserIdByOnlineId(&onlineId, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByOnlineId must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetUserIdByNpId(nullptr, &userId) == InvalidArgument && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByNpId must refuse a null NpId");
+    Require(sceNpManagerIntGetUserIdByNpId(&npId, nullptr) == InvalidArgument, "sceNpManagerIntGetUserIdByNpId must refuse a null output");
+    Require(sceNpManagerIntGetUserIdByNpId(&npId, &userId) == SignedOut && userId == 0x5a5a5a5a, "sceNpManagerIntGetUserIdByNpId must report NP as signed out and write nothing");
+}
+
+void CheckManagerIntAuthorization() {
+    constexpr int InvalidPlatformType = static_cast<int>(0x80550004u);
+    constexpr int OutOfMemory = static_cast<int>(0x80550005u);
+    const int live = sceNpManagerIntCreateRequest();
+    Require(live > 0, "an NpManagerInt request for the authorization calls");
+    SentinelBuffer parameter;
+    SentinelBuffer code;
+    SentinelBuffer extra;
+    auto untouched = [&] { return parameter.Untouched() && code.Untouched() && extra.Untouched(); };
+    Require(sceNpManagerIntAuthGetAuthorizationCode(live, -1, parameter.bytes, nullptr, 0, 1, 0, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetAuthorizationCode must refuse user id -1");
+    Require(sceNpManagerIntAuthGetAuthorizationCode(live, InitialUserId, nullptr, nullptr, 0, 1, 0, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetAuthorizationCode must refuse a null parameter");
+    Require(sceNpManagerIntAuthGetAuthorizationCode(live, InitialUserId, parameter.bytes, nullptr, 0, 1, 0, nullptr) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetAuthorizationCode must refuse a null output");
+    Require(sceNpManagerIntAuthGetAuthorizationCode(live, InitialUserId, parameter.bytes, nullptr, 4, 1, 0, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetAuthorizationCode must refuse a first value above 3");
+    Require(sceNpManagerIntAuthGetAuthorizationCode(live, InitialUserId, parameter.bytes, nullptr, 0, 0, 0, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetAuthorizationCode must refuse a second value of 0");
+    Require(sceNpManagerIntAuthGetAuthorizationCode(live, InitialUserId, parameter.bytes, nullptr, 0, 4, 0, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetAuthorizationCode must refuse a second value above 3");
+    Require(sceNpManagerIntAuthGetAuthorizationCode(live, InitialUserId, parameter.bytes, nullptr, 0, 1, 0, code.bytes) == SignedOut && untouched(), "sceNpManagerIntAuthGetAuthorizationCode must report NP as signed out and write nothing");
+    Require(sceNpManagerIntAuthGetAuthorizationCode(0x7fffffff, InitialUserId, parameter.bytes, extra.bytes, 3, 3, 0xff, code.bytes) == SignedOut && untouched(), "sceNpManagerIntAuthGetAuthorizationCode with the optional pointer and the upper values");
+    Require(sceNpManagerIntAuthGetIdToken(live, -1, parameter.bytes, parameter.bytes, parameter.bytes, 0, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetIdToken must refuse user id -1");
+    Require(sceNpManagerIntAuthGetIdToken(live, InitialUserId, nullptr, parameter.bytes, parameter.bytes, 0, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetIdToken must refuse a null first pointer");
+    Require(sceNpManagerIntAuthGetIdToken(live, InitialUserId, parameter.bytes, nullptr, parameter.bytes, 0, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetIdToken must refuse a null second pointer");
+    Require(sceNpManagerIntAuthGetIdToken(live, InitialUserId, parameter.bytes, parameter.bytes, nullptr, 0, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetIdToken must refuse a null third pointer");
+    Require(sceNpManagerIntAuthGetIdToken(live, InitialUserId, parameter.bytes, parameter.bytes, parameter.bytes, 0, nullptr) == InvalidArgument && untouched(), "sceNpManagerIntAuthGetIdToken must refuse a null output");
+    Require(sceNpManagerIntAuthGetIdToken(live, InitialUserId, parameter.bytes, parameter.bytes, parameter.bytes, ~std::uint64_t{0}, code.bytes) == SignedOut && untouched(), "sceNpManagerIntAuthGetIdToken must report NP as signed out and write nothing");
+    Require(sceNpManagerIntGetAuthorizationCode(live, -1, parameter.bytes, parameter.bytes, nullptr, 0, 0, nullptr, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCode must refuse user id -1");
+    Require(sceNpManagerIntGetAuthorizationCode(live, InitialUserId, nullptr, parameter.bytes, nullptr, 0, 0, nullptr, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCode must refuse a null first pointer");
+    Require(sceNpManagerIntGetAuthorizationCode(live, InitialUserId, parameter.bytes, nullptr, nullptr, 0, 0, nullptr, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCode must refuse a null second pointer");
+    Require(sceNpManagerIntGetAuthorizationCode(live, InitialUserId, parameter.bytes, parameter.bytes, nullptr, 0, 0, nullptr, nullptr) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCode must refuse a null output");
+    for (const std::uint32_t mode : {1u, 2u, 4u, 6u, 0xffffffffu}) {
+        Require(sceNpManagerIntGetAuthorizationCode(live, InitialUserId, parameter.bytes, parameter.bytes, nullptr, mode, 0, nullptr, code.bytes) == InvalidPlatformType && untouched(), "sceNpManagerIntGetAuthorizationCode must refuse a mode other than 0, 3 or 5");
+    }
+    Require(sceNpManagerIntGetAuthorizationCode(live, -1, parameter.bytes, parameter.bytes, nullptr, 1, 0, nullptr, code.bytes) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCode checks the user id before the mode");
+    for (const std::uint32_t mode : {0u, 3u, 5u}) {
+        Require(sceNpManagerIntGetAuthorizationCode(live, InitialUserId, parameter.bytes, parameter.bytes, extra.bytes, mode, 0xff, extra.bytes, code.bytes) == SignedOut && untouched(), "sceNpManagerIntGetAuthorizationCode must report NP as signed out and write nothing");
+    }
+    static char longUri[0x2001];
+    std::memset(longUri, 'a', 0x2000);
+    const char* uri = "https://example.com/";
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, -1, uri, 0, code.bytes, 0x801) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse user id -1");
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, nullptr, 0, code.bytes, 0x801) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a null URI");
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 0, nullptr, 0x801) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a null output");
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 0, code.bytes, 0) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a size of 0");
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 0, code.bytes, 0x802) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a size above 0x801");
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 4, code.bytes, 0x801) == InvalidPlatformType && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a mode other than 0, 3 or 5");
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, longUri, 0, code.bytes, 0x801) == OutOfMemory && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must refuse a URI of 0x2000 bytes");
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, nullptr, 0, code.bytes, 0) == InvalidArgument && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri checks a null URI before the size");
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 4, code.bytes, 0) == InvalidSize && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri checks the size before the mode");
+    Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, longUri, 4, code.bytes, 0x801) == InvalidPlatformType && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri checks the mode before the URI length");
+    for (const std::size_t size : {std::size_t{1}, std::size_t{0x801}}) {
+        Require(sceNpManagerIntGetAuthorizationCodeWithPsnoUri(live, InitialUserId, uri, 5, code.bytes, size) == SignedOut && untouched(), "sceNpManagerIntGetAuthorizationCodeWithPsnoUri must report NP as signed out and write nothing");
+    }
+    Require(sceNpManagerIntDeleteRequest(live) == 0, "the authorization calls leave a live request live");
+}
+
 void CheckOnlineIdQueries() {
     NpOnlineId onlineId{};
     std::memcpy(onlineId.data, "player", 6);
@@ -454,6 +562,9 @@ int main() {
     CheckManagerIntRequests();
     CheckIdMapperLookup("sceNpIdMapperNpIdToAccountId", sceNpIdMapperNpIdToAccountId);
     CheckIdMapperLookup("sceNpIdMapperOnlineIdToAccountId", sceNpIdMapperOnlineIdToAccountId);
+    CheckManagerIntProfileGetters();
+    CheckManagerIntUserLookups();
+    CheckManagerIntAuthorization();
     CheckPlusAndContentRestriction();
     NpId npId{};
     std::memset(&npId, 0x5a, sizeof(npId));
@@ -476,6 +587,9 @@ int main() {
     Require(sceNpGetOnlineId(0x10000, &onlineId) == SignedOut, "sceNpGetOnlineId must report the user as signed out");
     Require(std::memcmp(&onlineId, &untouchedOnlineId, sizeof(onlineId)) == 0, "sceNpGetOnlineId must leave the online id untouched");
     Require(sceNpGetOnlineId(0x10000, nullptr) == InvalidArgument, "sceNpGetOnlineId must reject a null online id");
+    std::uint64_t accountIdA = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceNpGetAccountIdA(0x10000, &accountIdA) == SignedOut, "sceNpGetAccountIdA must report the user as signed out");
+    Require(accountIdA == 0x5a5a5a5a5a5a5a5aull, "sceNpGetAccountIdA must leave the account id untouched");
     int userId = 0x5a5a;
     Require(sceNpGetUserIdByAccountId(0, &userId) == InvalidArgument, "sceNpGetUserIdByAccountId must reject account id 0");
     Require(sceNpGetUserIdByAccountId(0x1234, nullptr) == InvalidArgument, "sceNpGetUserIdByAccountId must reject a null output");
@@ -498,5 +612,19 @@ int main() {
         Require(std::string(error.what()) == "sceNpUnknown_WxLcN76q19o not implemented",
             "sceNpUnknown_WxLcN76q19o threw");
     }
+    std::uint32_t state = 0x5a5a;
+    Require(sceNpGetState(0x10000, &state) == 0 && state == StateSignedOut, "sceNpGetState must report the user as signed out");
+    Require(sceNpGetState(0x10000, nullptr) == InvalidArgument, "sceNpGetState must reject a null state");
+    bool hasSignedUp = true;
+    Require(sceNpHasSignedUp(0x10000, &hasSignedUp) == 0 && !hasSignedUp, "sceNpHasSignedUp must report no sign-up");
+    Require(sceNpHasSignedUp(0x10000, nullptr) == InvalidArgument, "sceNpHasSignedUp must reject a null output");
+    Require(sceNpCheckNpReachability(1, 0x10000) == SignedOut, "sceNpCheckNpReachability must report the user as signed out");
+    NpCheckPremiumParameter premiumParameter{};
+    NpCheckPremiumResult premiumResult{};
+    std::memset(&premiumResult, 0x5a, sizeof(premiumResult));
+    NpCheckPremiumResult untouchedPremiumResult{};
+    std::memset(&untouchedPremiumResult, 0x5a, sizeof(untouchedPremiumResult));
+    Require(sceNpCheckPremium(1, &premiumParameter, &premiumResult) == SignedOut, "sceNpCheckPremium must report the user as signed out");
+    Require(std::memcmp(&premiumResult, &untouchedPremiumResult, sizeof(premiumResult)) == 0, "sceNpCheckPremium must leave the result untouched");
     return 0;
 }
