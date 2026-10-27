@@ -1,0 +1,10 @@
+# AOT
+
+### Functional
+
+- The [leaf compiler](../../../core/aot/compiler/src/AotCompilerDriver.cpp) has no production consumer in AnyPS5, qualified title, or committed integration follow-up. Its only callers are the standalone CLI and its regression tests; root builds leave it disabled unless explicitly requested.
+- The [leaf compiler](../../../core/aot/compiler/src/AotCompilerDriver.cpp) cannot compile whole executables, recover function signatures, resolve relocations/imports, or provide runtime services. It requires a named, sized ELF function and an explicit integer System V ABI; no title is qualified.
+- The [lifter](../../../core/aot/compiler/src/LlvmLifter.cpp) rejects memory operands, stack/callee-saved state, branches, calls, syscalls, flag consumers, floating-point/vector instructions and unrecognized encodings. It accepts only straight-line integer leaf functions with a terminal RET. Flags and caller-saved registers other than RAX are not function results. Instruction semantics follow Intel SDM Volume 2 entries MOV, MOVSXD, ADD, SUB, AND, OR, XOR, IMUL, NEG, NOT, SAL/SAR/SHL/SHR, NOP and RET; PS5 hardware has not been tested.
+- The [ELF reader](../../../core/aot/compiler/src/ElfBinaryParser.cpp) requires a regular symbol table and rejects all input relocations, including those outside the selected function. Stripped executables, SELF files and SCE-specific ELF types reject.
+- [Output emission](../../../core/aot/compiler/src/AotCompilerDriver.cpp) supports only x86-64 ELF, COFF and Mach-O targets. It stages code generation in memory and replaces each output through a temporary file, but publishing multiple outputs is not one transaction: a later output error can leave earlier outputs updated.
+- The [execution tests](../../../core/aot/tests/test_aot_compiler.py) have not been run on macOS. They compile separate x86-64 programs with `-arch x86_64` on macOS, so Apple Silicon requires Rosetta; the Python process does not load or execute the generated machine code. Windows execution is verified. Neither Mach-O emission checks nor Windows results qualify the macOS execution path.
