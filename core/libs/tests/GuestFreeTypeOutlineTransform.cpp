@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -10,12 +11,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Outline_Embolden_nid_postfix(GuestOutline*, std::int64_t);
-int APS5_VABI FT_Outline_EmboldenXY_nid_postfix(GuestOutline*, std::int64_t, std::int64_t);
-void APS5_VABI FT_Outline_Transform_nid_postfix(const GuestOutline*, const GuestMatrix*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
