@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -27,14 +28,21 @@
 
 namespace {
 
+int Fault() {
+    *__error_nid_postfix() = 14;
+    return -1;
+}
+
 int CopyOut(const void* value, std::size_t size, void* oldValue, std::size_t* oldLength) {
     if (oldValue == nullptr) {
-        if (oldLength != nullptr) *oldLength = size;
+        if (oldLength != nullptr && !GuestCopyOut_nid_no_patch(oldLength, &size, sizeof(size))) return Fault();
         return 0;
     }
-    const std::size_t copied = std::min(oldLength != nullptr ? *oldLength : 0, size);
-    if (copied != 0) std::memcpy(oldValue, value, copied);
-    if (oldLength != nullptr) *oldLength = copied;
+    std::size_t capacity = 0;
+    if (oldLength != nullptr && !GuestCopyIn_nid_no_patch(&capacity, oldLength, sizeof(capacity))) return Fault();
+    const std::size_t copied = std::min(capacity, size);
+    if (!GuestCopyOut_nid_no_patch(oldValue, value, copied)) return Fault();
+    if (oldLength != nullptr && !GuestCopyOut_nid_no_patch(oldLength, &copied, sizeof(copied))) return Fault();
     if (copied < size) {
         *__error_nid_postfix() = 12;
         return -1;
@@ -299,10 +307,11 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         *__error_nid_postfix() = 22;
         return -1;
     }
-    if (name == nullptr) {
-        *__error_nid_postfix() = 14;
-        return -1;
-    }
+    int guestName[24];
+    if (!GuestCopyIn_nid_no_patch(guestName, name, nameLength * sizeof(int))) return Fault();
+    name = guestName;
+    std::size_t capacity = 0;
+    if (oldLength != nullptr && !GuestCopyIn_nid_no_patch(&capacity, oldLength, sizeof(capacity))) return Fault();
     if (IsMeasuredAbsentMib(name, nameLength)) {
         if (newValue != nullptr) throw std::runtime_error(std::string(__func__) + ": writing an unmeasured absent MIB");
         *__error_nid_postfix() = 2;
@@ -439,13 +448,14 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             return -1;
         }
         if (oldLength == nullptr) return 0;
-        const std::size_t count = std::min(*oldLength, static_cast<std::size_t>(256));
+        const std::size_t count = std::min(capacity, static_cast<std::size_t>(256));
         if (oldValue != nullptr) {
             static std::random_device device;
-            auto* bytes = static_cast<std::uint8_t*>(oldValue);
+            std::array<std::uint8_t, 256> bytes{};
             for (std::size_t i = 0; i < count; ++i) bytes[i] = static_cast<std::uint8_t>(device());
+            if (!GuestCopyOut_nid_no_patch(oldValue, bytes.data(), count)) return Fault();
         }
-        *oldLength = count;
+        if (!GuestCopyOut_nid_no_patch(oldLength, &count, sizeof(count))) return Fault();
         return 0;
     }
     if (nameLength == 2 && name[0] == 1 && name[1] == 50) {
@@ -472,14 +482,12 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
 }
 
 int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::size_t* oldLength, const void* newValue, std::size_t newLength) {
-    if (name == nullptr) {
-        *__error_nid_postfix() = 14;
+    std::string guestName;
+    if (const int error = CopyGuestPath_nid_no_patch(name, guestName)) {
+        *__error_nid_postfix() = error;
         return -1;
     }
-    if (strnlen(name, MaximumSysctlName) == MaximumSysctlName) {
-        *__error_nid_postfix() = 63;
-        return -1;
-    }
+    name = guestName.c_str();
     const std::string trimmed = WithoutTrailingDot(name);
     name = trimmed.c_str();
     if (TopLevelNode(trimmed) >= 0) {

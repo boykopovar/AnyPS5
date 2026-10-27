@@ -157,6 +157,44 @@ static void CheckMinMax() {
     Require(empty.minimum == wides && empty.maximum == wides);
 }
 
+static void CheckUnsignedMin32Value() {
+    const std::uint32_t edges[] = {0, 1, 0xffff, 0x10000, 0x7fffffff, 0x80000000, 0xfffffffe, 0xffffffff};
+    for (const auto& left : edges) {
+        Require(__std_min_4u_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::uint32_t pair[] = {left, right};
+            Require(__std_min_4u_nid_postfix(pair, pair + 2) == std::min(left, right));
+        }
+    }
+    std::uint32_t state = 0x8e47396b;
+    for (const std::size_t count : {1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::uint32_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            value = state;
+        }
+        const auto expected = *std::min_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 32; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::uint32_t) + 64, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::uint32_t));
+            const auto original = storage;
+            Require(__std_min_4u_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::uint32_t)) == expected);
+            Require(storage == original);
+        }
+        std::fill(values.begin(), values.end(), UINT32_MAX);
+        Require(__std_min_4u_nid_postfix(values.data(), values.data() + count) == UINT32_MAX);
+        for (std::size_t position = 0; position < count; ++position) {
+            values[position] = 0x10005;
+            Require(__std_min_4u_nid_postfix(values.data(), values.data() + count) == 0x10005);
+            values[position] = UINT32_MAX;
+        }
+    }
+    const std::uint32_t repeated[] = {9, 9, 9, 9};
+    Require(__std_min_4u_nid_postfix(repeated, repeated + 4) == 9);
+}
+
 static void CheckReverseAndSwap() {
     std::uint16_t halves[] = {1, 2, 3, 4, 5};
     __std_reverse_trivially_swappable_2_nid_postfix(halves, halves + 5);
@@ -177,12 +215,45 @@ static void CheckReverseAndSwap() {
     for (int i = 0; i < 37; ++i) Require(left[i] == 100 + i && right[i] == i);
 }
 
+static void CheckMaxValue() {
+    const std::uint64_t edges[] = {0, 1, 0xffffffff, 0x100000000, 0x7fffffffffffffff, 0x8000000000000000, 0xfffffffffffffffe, 0xffffffffffffffff};
+    for (const auto& left : edges) {
+        Require(__std_max_8u_nid_postfix(&left, &left + 1) == left);
+        for (const auto& right : edges) {
+            const std::uint64_t pair[] = {left, right};
+            Require(__std_max_8u_nid_postfix(pair, pair + 2) == std::max(left, right));
+        }
+    }
+    std::uint64_t state = 0x7698f1b33a25c04d;
+    for (const std::size_t count : {1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257}) {
+        std::vector<std::uint64_t> values(count);
+        for (auto& value : values) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            value = state;
+        }
+        const auto expected = *std::max_element(values.begin(), values.end());
+        for (std::size_t offset = 0; offset < 16; ++offset) {
+            std::vector<unsigned char> storage(count * sizeof(std::uint64_t) + 32, 0xff);
+            std::memcpy(storage.data() + offset, values.data(), count * sizeof(std::uint64_t));
+            const auto original = storage;
+            Require(__std_max_8u_nid_postfix(storage.data() + offset, storage.data() + offset + count * sizeof(std::uint64_t)) == expected);
+            Require(storage == original);
+        }
+    }
+    const std::uint64_t repeated[] = {9, 9, 9, 9};
+    Require(__std_max_8u_nid_postfix(repeated, repeated + 4) == 9);
+}
+
 int main() {
     CheckMinValue();
     CheckSizedHelpers();
     CheckFindAndCount();
+    CheckUnsignedMin32Value();
     CheckUnsizedRescan();
     CheckMinMax();
+    CheckMaxValue();
     CheckReverseAndSwap();
     return 0;
 }

@@ -314,6 +314,7 @@ void frameSegment(
         std::vector<ExitSite> exits;
         std::map<std::size_t, std::pair<std::size_t, std::vector<std::uint8_t>>> moves;
         std::vector<std::size_t> stubbed;
+        std::vector<std::size_t> stackMoves;
         const auto functionEnd = limit;
         std::int64_t depth = 0;
         bool wholeRedZone = rbpPrologue;
@@ -336,6 +337,7 @@ void frameSegment(
             if (reason != nullptr) continue;
             if (code[insn.Info.OpcodeOffset] == 0xc9 || code[insn.Info.OpcodeOffset] == 0xc8) { reason = "leave or enter"; continue; }
             if (!rbpPrologue && pushed.empty() && allocation == 0 && pushesOrPops(code, insn)) { reason = "push or pop in a leaf without pushes"; continue; }
+            if (!rbpPrologue && pushesOrPops(code, insn)) stackMoves.push_back(k);
             if (rbpPrologue) {
                 if (use.UsesRsp) { reason = "other use of rsp"; continue; }
             } else {
@@ -382,6 +384,7 @@ void frameSegment(
         if (!leaf || !redZone) continue;
         ++report.RedZoneFunctions;
         const auto prologueEnd = p > 0 ? body[p - 1].Offset + body[p - 1].Length : start;
+        if (reason == nullptr && std::any_of(stackMoves.begin(), stackMoves.end(), [&](const std::size_t k) { return std::none_of(exits.begin(), exits.end(), [&](const ExitSite& exit) { return exit.Begin <= body[k].Offset && body[k].Offset < exit.End; }); })) reason = "push or pop inside the body";
         auto entryEnd = prologueEnd;
         auto entryLast = p;
         std::vector<std::uint8_t> entryTail;

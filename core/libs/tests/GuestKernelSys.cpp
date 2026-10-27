@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <xmmintrin.h>
 #include <filesystem>
 #include <fstream>
 #include <source_location>
@@ -101,13 +102,11 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
     Require(fchownat_nid_postfix(-100, missing.c_str(), 1000, 0, 0) == -1 && Error() == 2);
     Require(fchownat_nid_postfix(4321, "owned.txt", 1000, 0, 0) == -1 && Error() == 9);
     Require(fchownat_nid_postfix(-100, file.c_str(), 1000, 0, 0x400) == -1 && Error() == 22);
-    Require(ThrowsNaming([&] { chown_nid_postfix(file.c_str(), 1000, 0); }, "chown: an owner"));
-    Require(ThrowsNaming([&] { lchown_nid_postfix(file.c_str(), 0, 1000); }, "lchown: a group"));
-    Require(ThrowsNaming([&] { fchownat_nid_postfix(-100, file.c_str(), 5, Unchanged, 0); }, "fchownat: an owner"));
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     Require(fchownat_nid_postfix(directory, "owned.txt", 0, 0, 0) == 0);
     Require(fchownat_nid_postfix(directory, "missing.txt", 0, 0, 0) == -1 && Error() == 2);
+    Require(fchownat_nid_postfix(directory, "missing.txt", 1000, 0, 0) == -1 && Error() == 2);
     Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0) == 0);
     Require(std::filesystem::hard_link_count(file) == 2);
     Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0x400) == -1 && Error() == 17);
@@ -322,6 +321,100 @@ void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
         Require(link == -1 && Error() == 1);
         std::fprintf(stderr, "symbolic links unavailable: the symlink target success cases not tested\n");
     }
+}
+
+UserUcontext sigreturnContext{};
+UserUcontext sigreturnResume{};
+volatile int sigreturnPasses = 0;
+volatile std::uint32_t sigreturnMxcsr = 0;
+
+std::uint32_t RoundingAndMasks(std::uint32_t mxcsr) {
+    return mxcsr & ~0x3fu;
+}
+
+void SetContextMxcsr(UserUcontext& context, std::uint32_t mxcsr) {
+    std::memcpy(reinterpret_cast<std::uint8_t*>(context.mcontext.fpstate) + 24, &mxcsr, sizeof(mxcsr));
+}
+
+void CheckSigreturnRefusals(const UserUcontext& valid) {
+    UserUcontext bad = valid;
+    bad.mcontext.flags = 0x8;
+    Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    for (const std::uint64_t privileged : {0x200ull, 0x3000ull, 0x20000ull, 0x80000ull}) {
+        bad = valid;
+        bad.mcontext.rflags ^= privileged;
+        Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    }
+    bad = valid;
+    bad.mcontext.fpformat = 0x10001;
+    Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    bad = valid;
+    bad.mcontext.ownedfp = 0x20003;
+    Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    bad = valid;
+    bad.mcontext.cs &= ~std::uint64_t{3};
+    Require(ThrowsNaming([&] { sigreturn_nid_postfix(&bad); }, "not a user selector"));
+}
+
+void CheckSigreturn() {
+    Require(sigreturn_nid_postfix(nullptr) == -1 && Error() == 14);
+    const std::uint32_t savedMxcsr = _mm_getcsr();
+    sigreturnPasses = 0;
+    Require(getcontext_nid_postfix(&sigreturnContext) == 0);
+    sigreturnMxcsr = _mm_getcsr();
+    sigreturnPasses = sigreturnPasses + 1;
+    std::uint32_t mask[4] = {};
+    Require(sigprocmask_nid_postfix(1, nullptr, mask) == 0);
+    const bool blocked = (mask[0] & (1u << 29)) != 0;
+    if (sigreturnPasses == 1) {
+        CheckSigreturnRefusals(sigreturnContext);
+        sigreturnResume = sigreturnContext;
+        sigreturnResume.mcontext.len = 0;
+        sigreturnResume.sigmask[0] |= 1u << 29;
+        SetContextMxcsr(sigreturnResume, 0x7f80);
+        Require(setcontext_nid_postfix(&sigreturnResume) == -1 && Error() == 22);
+        sigreturn_nid_postfix(&sigreturnResume);
+        Require(false);
+    }
+    if (sigreturnPasses == 2) {
+        Require(RoundingAndMasks(sigreturnMxcsr) == 0x7f80 && blocked);
+        sigreturnResume = sigreturnContext;
+        sigreturnResume.mcontext.fpformat = 0x10000;
+        SetContextMxcsr(sigreturnResume, 0x5f80);
+        _mm_setcsr(0x3f80);
+        sigreturn_nid_postfix(&sigreturnResume);
+        Require(false);
+    }
+    if (sigreturnPasses == 3) {
+        Require(RoundingAndMasks(sigreturnMxcsr) == 0x3f80 && !blocked);
+        sigreturnResume = sigreturnContext;
+        sigreturnResume.mcontext.ownedfp = 0x20000;
+        SetContextMxcsr(sigreturnResume, 0x5f80);
+        sigreturn_nid_postfix(&sigreturnResume);
+        Require(false);
+    }
+    Require(sigreturnPasses == 4 && RoundingAndMasks(sigreturnMxcsr) == 0x1f80 && !blocked);
+    _mm_setcsr(savedMxcsr);
+}
+
+void CheckSchedSetscheduler() {
+    const Pthread self = scePthreadSelf();
+    int savedPolicy = 0;
+    KernelSchedParam saved{};
+    Require(scePthreadGetschedparam(self, &savedPolicy, &saved) == 0);
+    KernelSchedParam param{700};
+    Require(sched_setscheduler_nid_postfix(0, 1, nullptr) == -1 && Error() == 14);
+    Require(sched_setscheduler_nid_postfix(getpid_nid_postfix() + 1, 1, &param) == -1 && Error() == 3);
+    Require(sched_setscheduler_nid_postfix(-1, 1, &param) == -1 && Error() == 3);
+    for (const int policy : {-1, 0, 4, 7}) Require(sched_setscheduler_nid_postfix(0, policy, &param) == -1 && Error() == 22);
+    int policy = 0;
+    KernelSchedParam current{};
+    Require(sched_setscheduler_nid_postfix(0, 1, &param) == 0);
+    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 1 && current.sched_priority == 700);
+    param.sched_priority = 300;
+    Require(sched_setscheduler_nid_postfix(0, 3, &param) == 0);
+    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 3 && current.sched_priority == 300);
+    Require(scePthreadSetschedparam(self, savedPolicy, &saved) == 0);
 }
 
 void CheckCondattrClock() {
@@ -693,6 +786,8 @@ int main() {
     CheckAmmWriteCommands();
     CheckAmmWaitCompletion();
     CheckAmmWaitConcurrentSubmits();
+    CheckSchedSetscheduler();
+    CheckSigreturn();
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));

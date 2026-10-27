@@ -559,7 +559,7 @@ thread_local GuestStack alternateStack{nullptr, 0, SsDisable};
 
 namespace {
 
-int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previousSet, bool releaseHolds, bool* caught = nullptr) {
+int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previousSet, bool releaseHolds, bool* caught = nullptr, GuestSignalSet* guestPrevious = nullptr) {
     if (set != nullptr && (how < 1 || how > 3)) { *__error_nid_postfix() = 22; return -1; }
     {
         std::lock_guard lock(registration);
@@ -593,8 +593,10 @@ int ChangeBlockedMask(int how, const GuestSignalSet* set, GuestSignalSet* previo
             }
         }
     }
+    const bool faulted = guestPrevious != nullptr && !GuestCopyOut_nid_no_patch(guestPrevious, previousSet, sizeof(*previousSet));
     std::atomic_thread_fence(std::memory_order_seq_cst);
     if (DeliverUnblockedPending() && caught != nullptr) *caught = true;
+    if (faulted) { *__error_nid_postfix() = 14; return -1; }
     return 0;
 }
 
@@ -620,6 +622,11 @@ GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler) {
     return previous;
 }
 int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
+    GuestSigaction requested{};
+    if (action != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&requested, action, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
+        action = &requested;
+    }
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     if (action && action->handler > 1 && (action->flags & ~SaDefinedFlags) != 0) { *__error_nid_postfix() = 22; return -1; }
     if (action && (guest == GuestSigkill || guest == GuestSigstop) && action->handler != 0) { *__error_nid_postfix() = 22; return -1; }
@@ -631,7 +638,7 @@ int APS5_VABI sigaction_nid_postfix(int guest, const GuestSigaction* action, Gue
         dispositions[guest] = *action;
         DiscardPendingIfIgnored(guest, *action);
     }
-    if (previous) *previous = old;
+    if (previous && !GuestCopyOut_nid_no_patch(previous, &old, sizeof(old))) { *__error_nid_postfix() = 14; return -1; }
     return 0;
 }
 int APS5_VABI _sigaction_nid_postfix(int guest, const GuestSigaction* action, GuestSigaction* previous) {
@@ -681,18 +688,27 @@ int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest) {
 }
 int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previous) {
     GuestStack replacement = alternateStack;
+    GuestStack requested{};
     if (stack != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&requested, stack, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
+        stack = &requested;
         if ((stack->flags & ~SsDisable) != 0) { *__error_nid_postfix() = 22; return -1; }
         if (stack->flags & SsDisable) replacement.flags = SsDisable;
         else if (stack->size < MinSignalStackSize) { *__error_nid_postfix() = 12; return -1; }
         else replacement = {stack->sp, stack->size, 0};
     }
-    if (previous != nullptr) *previous = alternateStack;
+    const GuestStack old = alternateStack;
     alternateStack = replacement;
+    if (previous != nullptr && !GuestCopyOut_nid_no_patch(previous, &old, sizeof(old))) { *__error_nid_postfix() = 14; return -1; }
     return 0;
 }
 int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet) {
-    return ChangeBlockedMask(how, set, previousSet, true);
+    GuestSignalSet requested{}, old{};
+    if (set != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&requested, set, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
+        set = &requested;
+    }
+    return ChangeBlockedMask(how, set, previousSet != nullptr ? &old : nullptr, true, nullptr, previousSet);
 }
 
 int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet) {
@@ -701,8 +717,10 @@ int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSe
 }
 
 int APS5_VABI pthread_sigmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet) {
-    if (set != nullptr && (how < 1 || how > 3)) return 22;
-    return _sigprocmask_nid_postfix(how, set, previousSet);
+    const int saved = *__error_nid_postfix();
+    const int error = _sigprocmask_nid_postfix(how, set, previousSet) == 0 ? 0 : *__error_nid_postfix();
+    *__error_nid_postfix() = saved;
+    return error;
 }
 
 int APS5_VABI sigtimedwait_nid_postfix(const GuestSignalSet* set, void* info, const KernelTimespec* timeout) {
@@ -762,10 +780,14 @@ int APS5_VABI _sigsuspend_nid_postfix(const GuestSignalSet* set) {
 
 int APS5_VABI sigpending_nid_postfix(GuestSignalSet* set) {
     if (set == nullptr) { *__error_nid_postfix() = 14; return -1; }
-    auto& pending = Pending();
-    std::lock_guard lock(pending.lock);
-    for (int word = 0; word < 4; ++word)
-        set->bits[word] = pending.words[word].load(std::memory_order_relaxed) & BlockedWord(word);
+    GuestSignalSet result{};
+    {
+        auto& pending = Pending();
+        std::lock_guard lock(pending.lock);
+        for (int word = 0; word < 4; ++word)
+            result.bits[word] = pending.words[word].load(std::memory_order_relaxed) & BlockedWord(word);
+    }
+    if (!GuestCopyOut_nid_no_patch(set, &result, sizeof(result))) { *__error_nid_postfix() = 14; return -1; }
     return 0;
 }
 }

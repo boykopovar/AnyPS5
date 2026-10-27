@@ -4,7 +4,7 @@ Entries about one library or component are in [debt](debt/), one file per librar
 
 ### Build
 
-- Building on Windows requires a specific version of mingw - MinGW-w64 GCC 15.2.0 (`winlibs-gcc15`, `x86_64-ucrt-posix-seh`)
+- The full Windows build requires x86-64 MinGW-w64 GCC with POSIX threads and DWARF or SEH exception support for System V ABI functions. The build checks these capabilities; see the [Windows build requirements](BUILD.md#windows-setup-and-troubleshooting) for the validated WinLibs and MSYS2 toolchains.
 - Even compiled prx libraries on Windows require nearby (static linking of these dependencies causes conflicts):
   - libgcc_s_seh-1.dll
   - libstdc++-6.dll

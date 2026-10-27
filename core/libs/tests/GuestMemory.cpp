@@ -2259,6 +2259,63 @@ static void CheckRemappedDirectMemoryIsChargedOnce() {
 #endif
 }
 
+static void CheckResidentMappingBookkeepingStaysSmall() {
+#ifdef _WIN32
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t chunk = 0x200000;
+    constexpr std::size_t bytes = std::size_t{1} << 30;
+    constexpr std::size_t aliased = 0x10000;
+    constexpr std::int64_t mebibyte = 1 << 20;
+    const auto privateUsage = [] {
+        PROCESS_MEMORY_COUNTERS_EX counters{};
+        counters.cb = sizeof(counters);
+        Require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) != 0);
+        return static_cast<std::int64_t>(counters.PrivateUsage);
+    };
+    std::int64_t warm = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page, 0, 0, &warm) == 0);
+    void* warmMapping = nullptr;
+    Require(sceKernelMapDirectMemory(&warmMapping, page, 0x33, 0, warm, 0) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(warmMapping), page) == 0);
+    Require(sceKernelReleaseDirectMemory(warm, page) == 0);
+    const auto before = privateUsage();
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, chunk, 0, &phys) == 0);
+    const auto allocated = privateUsage();
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, bytes, 0x33, 0, phys, chunk) == 0);
+    const auto overhead = privateUsage() - allocated - static_cast<std::int64_t>(bytes);
+    std::printf("resident direct mapping bookkeeping: %.2f MiB per GiB mapped\n", static_cast<double>(overhead) / static_cast<double>(mebibyte) / static_cast<double>(bytes >> 30));
+    std::fflush(stdout);
+    RequireResidentMapping(mapped);
+    Require(overhead < 16 * mebibyte * static_cast<std::int64_t>(bytes >> 30));
+    auto* memory = static_cast<volatile unsigned char*>(mapped);
+    const auto at = chunk * 3 + page * 5;
+    for (std::size_t index = 0; index < aliased / page; ++index) memory[at + index * page + 5] = static_cast<unsigned char>(0x11 * (index + 1));
+    void* second = nullptr;
+    Require(sceKernelMapDirectMemory(&second, aliased, 3, 0, phys + static_cast<std::int64_t>(at), 0) == 0);
+    auto* through = static_cast<volatile unsigned char*>(second);
+    for (std::size_t index = 0; index < aliased / page; ++index) {
+        Require(through[index * page + 5] == 0x11 * (index + 1));
+        through[index * page + 6] = static_cast<unsigned char>(0x50 + index);
+        Require(memory[at + index * page + 6] == 0x50 + index);
+    }
+    memory[chunk * 5 + 7] = 0x77;
+    auto* alias = static_cast<volatile unsigned char*>(GuestArena::GuestArenaMapAlias_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped) + chunk * 5, chunk));
+    Require(alias != nullptr && alias[7] == 0x77);
+    alias[chunk - 1] = 0x78;
+    Require(memory[chunk * 6 - 1] == 0x78);
+    GuestArena::GuestArenaUnmapAlias_nid_postfix(const_cast<unsigned char*>(alias));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(second), aliased) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), bytes) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, bytes) == 0);
+    const auto left = privateUsage() - before;
+    std::printf("private usage after unmapping and releasing: %+.2f MiB\n", static_cast<double>(left) / static_cast<double>(mebibyte));
+    std::fflush(stdout);
+    Require(left < 4 * mebibyte);
+#endif
+}
+
 static void CheckSharedWriteTracking() {
 #ifdef _WIN32
     constexpr std::size_t page = 0x4000;
@@ -3460,6 +3517,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     Require(argc == 1);
+    CheckResidentMappingBookkeepingStaysSmall();
     CheckAvailableDirectMemoryIsLargestFreeBlock();
     CheckMappedLeasesPreserveReadableRuns();
     CheckVirtualQuerySplitFlexibleRanges();

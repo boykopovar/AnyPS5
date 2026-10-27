@@ -234,6 +234,34 @@ static void CheckTapBetweenReads() {
     Require((Pad::ReadState().buttons & cross) == 0);
 }
 
+static void CheckCaptureHidesEarlierInput() {
+    constexpr std::uint32_t intercepted = 0x80000000u;
+    PadInputState pressed;
+    pressed.buttons = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    PadInputState captured;
+    captured.intercepted = true;
+    PadData drained[64]{};
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::ReadState();
+    Pad::Read(drained, 64, 0);
+    PadPublishInput_nid_postfix(pressed);
+    PadPublishInput_nid_postfix(captured);
+    Require(Pad::ReadState().buttons == intercepted);
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::ReadState();
+    Pad::Read(drained, 64, 0);
+    PadPublishInput_nid_postfix(pressed);
+    PadPublishInput_nid_postfix(captured);
+    PadData data[64]{};
+    const int count = Pad::Read(data, 64, 0);
+    Require(count >= 1);
+    for (int index = 0; index < count; ++index) Require(data[index].buttons == intercepted);
+    Require(Pad::ReadState().buttons == intercepted);
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::ReadState();
+    Pad::Read(drained, 64, 0);
+}
+
 static void CheckLatchedPressLifetime(int handle) {
     const auto cross = static_cast<std::uint32_t>(Pad::PadButton::Cross);
     const auto circle = static_cast<std::uint32_t>(Pad::PadButton::Circle);
@@ -744,6 +772,7 @@ int main() {
     CheckPartialTrigger();
     CheckReadQueue(handle);
     CheckTapBetweenReads();
+    CheckCaptureHidesEarlierInput();
     CheckLatchedPressLifetime(handle);
     CheckLatchedPressAtSlowReads(handle);
     CheckLatchedPressPerPort();

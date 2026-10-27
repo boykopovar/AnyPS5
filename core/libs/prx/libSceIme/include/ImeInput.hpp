@@ -28,4 +28,17 @@ using ImeHostTextSink = void (*)(ImeHostInputKind kind, const char16_t* text, st
 
 extern "C" void ImeSetHostTextSink_nid_no_patch(ImeHostTextSink sink);
 
+struct ImeHostPad {
+    std::uint32_t buttons = 0;
+    std::uint8_t leftX = 128;
+    std::uint8_t leftY = 128;
+    std::uint8_t l2 = 0;
+};
+
+using ImeHostPadSink = void (*)(const ImeHostPad& pad);
+
+extern "C" bool ImeCapturesPad_nid_postfix();
+extern "C" void ImePublishPad_nid_postfix(const ImeHostPad& pad);
+extern "C" void ImeSetHostPadSink_nid_no_patch(ImeHostPadSink sink);
+
 #endif

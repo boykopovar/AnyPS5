@@ -3174,6 +3174,9 @@ void metadataPassTests() {
     queue.context[0x324] = 0;
     pass = DecodeColorMetadataPass(queue);
     Require(pass.has_value() && pass->targets.size() == 1 && pass->targets[0].dccAddress == keysAddress, "the metadata pass lost the target's DCC keys");
+    auto partial = queue;
+    partial.context[0x10f] = std::bit_cast<std::uint32_t>(16.0f);
+    expectFailure([&] { DecodeColorMetadataPass(partial); }, "over part of a color target");
     auto mipmapped = queue;
     mipmapped.context[0x3b0] |= 1u << 28u;
     expectFailure([&] { DecodeColorMetadataPass(mipmapped); }, "mipmapped DCC");
@@ -3397,6 +3400,11 @@ void cmaskTests() {
     queue.context[0x202] = 0xcc0020;
     auto pass = AgcDriver::Graphics::DecodeColorMetadataPass(queue);
     Require(pass.has_value() && pass->targets.size() == 1 && pass->targets[0].cmaskAddress == cmaskAddress, "the metadata pass lost the target's CMASK");
+    auto partial = queue;
+    partial.context[0x10f] = std::bit_cast<std::uint32_t>(16.0f);
+    Require(AgcDriver::Graphics::DecodeColorMetadataPass(partial).has_value(), "a fast-clear eliminate of a CMASK target without DCC keys over part of it was refused");
+    partial.context[0x202] = 0xcc0060;
+    expectFailure([&] { AgcDriver::Graphics::DecodeColorMetadataPass(partial); }, "over part of a color target");
     const AgcDriver::Graphics::Context context{};
     const auto texels = [&](std::uint32_t value) {
         for (std::size_t offset = 0; offset < colorMemory.size(); offset += 4) {
@@ -8448,7 +8456,7 @@ void barycentricEmulationTests() {
     for (std::uint32_t location = 0; location < 11u; ++location) crowded.push_back({location, location, false, true});
     expectFailure([&] { static_cast<void>(LayoutBarycentricEmulation(crowded, {true, false, false})); }, "exceed 32 locations");
 
-    const auto compile = [&](std::span<const std::uint32_t> code, bool barycentric, std::uint32_t secondInput = 0xffffffffu) {
+    const auto compile = [&](std::span<const std::uint32_t> code, bool barycentric, std::uint32_t secondInput = 0xffffffffu, bool builtins = false) {
         auto queue = makeState();
         queue.context[0x1b3] = 0x2u;
         queue.context[0x1b4] = 0x2u;
@@ -8463,6 +8471,7 @@ void barycentricEmulationTests() {
         request.target.spirvVersion = 0x00010300u;
         request.target.subgroupSize = 64;
         request.target.fragmentShaderBarycentricEnabled = barycentric;
+        request.target.fragmentBarycentricBuiltins = builtins;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
         return Recompile(request);
@@ -8510,6 +8519,15 @@ void barycentricEmulationTests() {
     static constexpr std::array<std::uint32_t, 6> sharedSlot{0xc8080000u, 0xc8090001u, 0xc80e0402u, 0xf800180fu, 0x03030202u, 0xbf810000u};
     const auto shared = compile(sharedSlot, false, 0x400u);
     Require(shared.barycentricEmulation.active && !barycentricCapability(shared), "inputs sharing a slot with different interpolation did not emulate per-vertex parameters");
+    static constexpr std::array<std::uint32_t, 5> interpolatesAndReadsIj{0xc8080000u, 0xc8090001u, 0xf800180fu, 0x02020100u, 0xbf810000u};
+    for (const auto& code : {std::span<const std::uint32_t>(readsIj), std::span<const std::uint32_t>(interpolatesAndReadsIj)}) {
+        const auto builtin = compile(code, false, 0xffffffffu, true);
+        const auto builtinDecorations = decorations(builtin, spv::DecorationBuiltIn);
+        Require(!builtin.barycentricEmulation.active && barycentricCapability(builtin) && std::find(builtinDecorations.begin(), builtinDecorations.end(), static_cast<std::uint32_t>(spv::BuiltInBaryCoordKHR)) != builtinDecorations.end() && decorations(builtin, spv::DecorationPerVertexKHR).empty(), "reading the I/J VGPRs with barycentric built-ins did not use BaryCoordKHR");
+        Require(std::ranges::none_of(builtin.fragmentParameters, [](const FragmentParameter& parameter) { return parameter.perVertex; }), "barycentric built-ins made a parameter per-vertex");
+    }
+    Require(compile(interpolatesAndReadsIj, false).barycentricEmulation.active, "reading the I/J VGPRs next to v_interp_p1/p2 without the extension did not emulate barycentrics");
+    Require(compile(readsVertex, false, 0xffffffffu, true).barycentricEmulation.active, "v_interp_mov of P10 with only barycentric built-ins did not emulate per-vertex parameters");
     fragment = compile(readsVertex, false);
     Require(fragment.barycentricEmulation.active && !fragment.barycentricEmulation.smooth && fragment.fragmentParameters.size() == 1u && fragment.fragmentParameters[0].perVertex, "v_interp_mov of P10 did not emulate per-vertex parameters");
     Require(decorations(fragment, spv::DecorationLocation) == std::vector<std::uint32_t>{0u} && decorations(fragment, spv::DecorationPerVertexKHR).empty() && !decorations(fragment, spv::DecorationFlat).empty() && !barycentricCapability(fragment), "the emulated per-vertex parameter was not a flat array at the first free location");
@@ -12502,7 +12520,7 @@ int main(int argc, char** argv) {
 #else
             setenv("APS5_ADDRESS_COPY_MAX_MIB", "1", 1);
 #endif
-            {
+            for (const int frames : {0, 1, 2}) {
                 mock = MockVulkan{};
                 auto context = mockContext();
                 context.bufferDeviceAddress = true;
@@ -12517,9 +12535,9 @@ int main(int argc, char** argv) {
                     },
                     {},
                     {}
-                }, std::string_view(argv[1]) == "--address-copy-cap-remembered");
+                }, std::string_view(argv[1]) == "--address-copy-cap-remembered", frames);
+                Require(mock.live == 0, "the address copy cap test leaked Vulkan objects");
             }
-            Require(mock.live == 0, "the address copy cap test leaked Vulkan objects");
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--address-space-teardown") {
@@ -12799,6 +12817,7 @@ int main(int argc, char** argv) {
         Require(mock.live == 0, "BDA resources leaked Vulkan objects");
         RunGuestAllocationTests();
         RunUnmappedGapTests();
+        RunVanishedPageReadTests();
         RunColorTargetLayoutTests();
         RunLiveStackAccessTests();
         RunTextureFormatTests();
