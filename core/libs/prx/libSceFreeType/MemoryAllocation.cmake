@@ -1,0 +1,21 @@
+target_sources(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR}/prx/libSceFreeType/src/MemoryAllocation.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_memory_allocation_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeMemoryAllocation.cpp)
+    target_include_directories(guest_freetype_memory_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_memory_allocation_tests PRIVATE ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(guest_freetype_memory_allocation_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_freetype_memory_allocation_tests)
+    add_dependencies(guest_freetype_memory_allocation_tests libs)
+    add_test(NAME guest_freetype_memory_allocation COMMAND guest_freetype_memory_allocation_tests $<TARGET_FILE:libSceFreeType> unpatched)
+    add_test(NAME guest_freetype_memory_allocation_nid COMMAND guest_freetype_memory_allocation_tests ${PATCHED_DIR}/libSceFreeType.prx patched)
+    set_tests_properties(guest_freetype_memory_allocation guest_freetype_memory_allocation_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_memory_allocation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+        set_tests_properties(guest_freetype_memory_allocation_nid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${PATCHED_DIR}")
+    endif()
+endif()
