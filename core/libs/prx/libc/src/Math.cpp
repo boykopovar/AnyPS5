@@ -1114,7 +1114,28 @@ float APS5_VABI sinhf_nid_postfix(float x) {
 
 double APS5_VABI asinh_nid_postfix(double x) { return std::asinh(x); }
 float APS5_VABI asinhf_nid_postfix(float x) { return std::asinh(x); }
-double APS5_VABI acosh_nid_postfix(double x) { return std::acosh(x); }
+double APS5_VABI acosh_nid_postfix(double x) {
+    const double one = 1.0;
+    const double ln2 = 6.93147180559945286227e-01;
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    const std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
+    const std::uint32_t lx = static_cast<std::uint32_t>(bits);
+    if (hx < 0x3ff00000) {
+        _Feraise_nid_postfix(0x01);
+        return (x - x) / (x - x);
+    }
+    if (hx >= 0x41b00000) {
+        if (hx >= 0x7ff00000) return x + x;
+        return log_nid_postfix(x) + ln2;
+    }
+    if (((hx - 0x3ff00000) | lx) == 0) return 0.0;
+    if (hx > 0x40000000) {
+        const double t = x * x;
+        return log_nid_postfix(2.0 * x - one / (x + std::sqrt(t - one)));
+    }
+    const double t = x - one;
+    return log1p_nid_postfix(t + std::sqrt(2.0 * t + t * t));
+}
 float APS5_VABI acoshf_nid_postfix(float x) {
     constexpr float ln2 = 6.9314718246e-01f;
     const std::uint32_t bits = std::bit_cast<std::uint32_t>(x);
