@@ -1399,6 +1399,9 @@ add_test_executable(agc_buffer_pool_tests EXCLUDE_FROM_ALL tests/BufferPool.cpp)
 if(BUILD_TESTING)
     add_test_executable(agc_image_memory_tests tests/ImageMemory.cpp Graphics/src/BufferPool.cpp tests/AllocationFailure.cpp)
     target_include_directories(agc_image_memory_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+    if(MINGW)
+        target_compile_options(agc_image_memory_tests PRIVATE -fasynchronous-unwind-tables)
+    endif()
     set_target_properties(agc_image_memory_tests PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(agc_image_memory_tests)
     add_test(NAME agc_image_memory COMMAND agc_image_memory_tests)
@@ -2520,8 +2523,14 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_image_memory_no_slabs PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
     set_property(TEST agc_driver_image_memory_no_slabs APPEND PROPERTY ENVIRONMENT "APS5_NO_IMAGE_SLABS=1")
+    add_test(NAME agc_driver_image_memory_teardown_failure COMMAND agc_driver_image_memory_tests --teardown-failure)
+    add_test(NAME agc_driver_image_memory_no_slabs_teardown_failure COMMAND agc_driver_image_memory_tests --no-sharing-check --teardown-failure)
+    set_tests_properties(agc_driver_image_memory_teardown_failure agc_driver_image_memory_no_slabs_teardown_failure PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    set_property(TEST agc_driver_image_memory_no_slabs_teardown_failure APPEND PROPERTY ENVIRONMENT "APS5_NO_IMAGE_SLABS=1")
     if(WIN32)
-        set_tests_properties(agc_driver_image_memory_no_slabs PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_image_memory_no_slabs agc_driver_image_memory_teardown_failure
+                agc_driver_image_memory_no_slabs_teardown_failure PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

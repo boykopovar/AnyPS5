@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -25,6 +26,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string_view>
 #include <vector>
@@ -66,14 +68,13 @@ public:
         bool armed = false;
     };
 
-    explicit Hooks(Context& context) : context(context), original(context.deviceProc) {
+    explicit Hooks(Context& context) : device(context.device), original(context.deviceProc) {
         Require(hooks == nullptr, "image memory: native hooks are already active");
         hooks = this;
         context.deviceProc = Resolve;
     }
 
     ~Hooks() {
-        context.deviceProc = original;
         hooks = nullptr;
     }
 
@@ -105,7 +106,7 @@ public:
 
     VkMemoryRequirements Requirements(VkImage image) {
         VkMemoryRequirements requirements{};
-        reinterpret_cast<PFN_vkGetImageMemoryRequirements>(original(context.device, "vkGetImageMemoryRequirements"))(context.device, image, &requirements);
+        reinterpret_cast<PFN_vkGetImageMemoryRequirements>(original(device, "vkGetImageMemoryRequirements"))(device, image, &requirements);
         return requirements;
     }
 
@@ -142,7 +143,7 @@ public:
             VkMemoryRequirements2 requirements{VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicated};
             VkImageMemoryRequirementsInfo2 info{VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2};
             info.image = images[i];
-            reinterpret_cast<PFN_vkGetImageMemoryRequirements2>(original(context.device, "vkGetImageMemoryRequirements2"))(context.device, &info, &requirements);
+            reinterpret_cast<PFN_vkGetImageMemoryRequirements2>(original(device, "vkGetImageMemoryRequirements2"))(device, &info, &requirements);
             const auto& memory = requirements.memoryRequirements;
             const auto binding = bindings.at(images[i]);
             Require(binding.offset % memory.alignment == 0, "image memory: an image is bound at an unaligned offset");
@@ -152,7 +153,7 @@ public:
                 if (other.memory != binding.memory) continue;
                 ++shared;
                 VkMemoryRequirements previous{};
-                reinterpret_cast<PFN_vkGetImageMemoryRequirements>(original(context.device, "vkGetImageMemoryRequirements"))(context.device, images[j], &previous);
+                reinterpret_cast<PFN_vkGetImageMemoryRequirements>(original(device, "vkGetImageMemoryRequirements"))(device, images[j], &previous);
                 Require(binding.offset + memory.size <= other.offset || other.offset + previous.size <= binding.offset, "image memory: live production images overlap inside a memory block");
             }
         }
@@ -164,6 +165,12 @@ public:
         std::lock_guard lock(mutex);
         Require(bindings.empty() && views.empty(), "image memory: production image objects outlive their final GPU use");
         Require(!freedLiveImage, "image memory: a memory block was freed while a sibling image remained live");
+    }
+
+    void CheckDeviceReleased() {
+        CheckReleased();
+        std::lock_guard lock(mutex);
+        Require(allocations.empty(), "image memory: device teardown retained hooked driver allocations");
     }
 
 private:
@@ -247,7 +254,7 @@ private:
         self.views.erase(view);
     }
 
-    Context& context;
+    VkDevice device;
     PFN_vkGetDeviceProcAddr original;
     std::mutex mutex;
     std::map<VkImage, Binding> bindings;
@@ -558,27 +565,51 @@ void CachePressure(Context context, Hooks& native) {
     native.CheckReleased();
 }
 
+struct TeardownFailure {};
+
+int RunImages(std::optional<Hooks>& lifetime, bool sharing, bool lifetimesOnly, bool teardownFailure) {
+    const auto device = OpenVulkanTestDevice();
+    if (!device) return VulkanTestSkipped;
+    std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto context = device->graphicsContext();
+    auto& native = lifetime.emplace(context);
+    context.bufferPool = std::make_shared<BufferPool>(context);
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    SampledImages(context, detiler, native, sharing);
+    if (!lifetimesOnly) StorageImages(context, detiler, native, sharing);
+    if (sharing) CachePressure(context, native);
+    if (teardownFailure) throw TeardownFailure{};
+    return 0;
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
         bool sharing = true;
         bool lifetimesOnly = false;
-        if (argc == 2 && std::string_view(argv[1]) == "--no-sharing-check") sharing = false;
-        else if (argc == 2 && std::string_view(argv[1]) == "--lifetimes-only") {
-            sharing = false;
-            lifetimesOnly = true;
-        } else Require(argc == 1, "image memory: unknown arguments");
-        const auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
-        std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
-        auto context = device->graphicsContext();
-        Hooks native(context);
-        TextureDetiler detiler(context);
-        context.detiler = &detiler;
-        SampledImages(context, detiler, native, sharing);
-        if (!lifetimesOnly) StorageImages(context, detiler, native, sharing);
-        if (sharing) CachePressure(context, native);
+        bool teardownFailure = false;
+        for (int i = 1; i < argc; ++i) {
+            const std::string_view argument = argv[i];
+            if (argument == "--no-sharing-check") sharing = false;
+            else if (argument == "--lifetimes-only") {
+                sharing = false;
+                lifetimesOnly = true;
+            } else if (argument == "--teardown-failure") teardownFailure = true;
+            else Require(false, "image memory: unknown arguments");
+        }
+        std::optional<Hooks> lifetime;
+        int result = 0;
+        bool failed = false;
+        try {
+            result = RunImages(lifetime, sharing, lifetimesOnly, teardownFailure);
+        } catch (const TeardownFailure&) {
+            failed = true;
+        }
+        if (result != 0) return result;
+        Require(failed == teardownFailure, "image memory: teardown failure injection did not run");
+        lifetime->CheckDeviceReleased();
         std::puts("production image memory tests passed");
         return 0;
     } catch (const std::exception& error) {
