@@ -38,7 +38,7 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 832, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(State) == 840, "State changed: update CanonicalPipelineState and the recipe codec");
 static_assert(sizeof(ShaderStages) == 112, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
@@ -1346,6 +1346,9 @@ public:
 
 private:
     void run() {
+#ifdef _WIN32
+        if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)) std::fprintf(stderr, "[pipeline-journal] replay thread priority not lowered (error %lu)\n", GetLastError());
+#endif
         std::call_once(loadOnce, [&] {
             try {
                 auto journal = Journal::Instance().Load();

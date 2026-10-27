@@ -40,6 +40,7 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
+#include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketConnect.hpp"
@@ -122,6 +123,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     GuestSockets::SocketOptionState options;
     bool receiveShut = false;
     bool sendShut = false;
+    std::weak_ptr<Socket> peer;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
     ~Socket() {
         if (value == Invalid) return;
@@ -1225,6 +1227,8 @@ int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* de
         firstGuard.value = Invalid;
         auto second = std::make_shared<Socket>(native[1], GuestUnix, plainType);
         secondGuard.value = Invalid;
+        first->peer = second;
+        second->peer = first;
         if (nonblocking && (SetNonBlocking(*first) || SetNonBlocking(*second))) return -1;
         const int firstDescriptor = Install(std::move(first));
         if (firstDescriptor < 0) return -1;
@@ -1307,6 +1311,7 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
             accepted->options.tcpKeepIdle = listener->options.tcpKeepIdle;
             accepted->options.tcpKeepInterval = listener->options.tcpKeepInterval;
             accepted->options.tcpKeepCount = listener->options.tcpKeepCount;
+            accepted->options.tcpFlags = listener->options.tcpFlags & 0x1000;
         }
         if (inheritNonblocking && SetNonBlocking(*accepted)) return -1;
         const int acceptedDescriptor = Install(std::move(accepted));
@@ -1351,7 +1356,9 @@ int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_
     sockaddr_storage native{};
     socklen_t size;
     if (!Address(address, length, native, size)) return -1;
+    if (socket->family == 28 && length < 28) return Fail(22);
     if (const int error = LongAddressError(*socket, address, length)) return Fail(error);
+    if (native.ss_family != (socket->family == 2 ? AF_INET : AF_INET6)) return Fail(47);
     return ::bind(socket->value, reinterpret_cast<sockaddr*>(&native), size) ? Fail(NativeError()) : 0;
 }
 int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
@@ -1386,6 +1393,7 @@ int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32
 int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
+    if (socket->family == GuestUnix && socket->peer.expired()) return Fail(57);
     if (!address || !length) return Fail(14);
     if (socket->family == GuestUnix) return UnnamedAddress(address, length);
     sockaddr_storage native{};
@@ -1678,6 +1686,12 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
     if (offset < 0) return Fail(22);
     if (headers && (!SendfileIovecs(headers->headers, headers->headerCount) || !SendfileIovecs(headers->trailers, headers->trailerCount)))
         return Fail(22);
+    std::int64_t sent = 0;
+    const auto finish = [&](int error) {
+        if (sbytes) *sbytes = sent;
+        return error ? Fail(error) : 0;
+    };
+    if (DescriptorIsOpen_nid_no_patch(file) && !File::IsVnode(file) && !File::IsSharedMemoryDescriptor_nid_no_patch(file)) return finish(22);
     std::vector<char> chunk;
     try {
         chunk.resize(0x10000);
@@ -1691,11 +1705,6 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
     std::uint64_t remaining = length ? length : UINT64_MAX;
     auto received = read(offset, remaining);
     if (received == -9) return Fail(9);
-    std::int64_t sent = 0;
-    const auto finish = [&](int error) {
-        if (sbytes) *sbytes = sent;
-        return error ? Fail(error) : 0;
-    };
     if (received < 0) return finish(received == -21 || received == -29 ? 22 : static_cast<int>(-received));
     const auto socket = Lookup(descriptor);
     if (!socket) return finish(*__error_nid_postfix());

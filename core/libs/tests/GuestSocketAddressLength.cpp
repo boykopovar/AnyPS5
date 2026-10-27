@@ -13,6 +13,7 @@ constexpr int Stream = 1;
 constexpr int Datagram = 2;
 constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
+constexpr int ErrorAddressFamilyNotSupported = 47;
 constexpr int ErrorNameTooLong = 63;
 
 void Require(bool condition, const char* what) {
@@ -44,6 +45,7 @@ void ShortAddressesAreInvalid() {
     const int stream6 = socket_nid_postfix(28, Stream, 0);
     Require(stream6 >= 0, "socket failed");
     Require(Fails(connect_nid_postfix(stream6, v6.data(), 20), ErrorInvalid), "connect with an AF_INET6 address shorter than sockaddr_in6 must fail with EINVAL (22)");
+    Require(Fails(bind_nid_postfix(stream6, v6.data(), 20), ErrorInvalid), "bind with an AF_INET6 address shorter than sockaddr_in6 must fail with EINVAL (22)");
     Require(Fails(bind_nid_postfix(stream, address.data(), 256), ErrorNameTooLong), "an address longer than SOCK_MAXADDRLEN (255) must fail with ENAMETOOLONG (63)");
     Require(Fails(bind_nid_postfix(stream, nullptr, address.size()), ErrorFault), "a null address must fail with EFAULT (14)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0 && close_nid_postfix(stream6) == 0, "close failed");
@@ -60,6 +62,29 @@ void ArgumentsAreCheckedBeforeTheDescriptor() {
     Require(Fails(bind_nid_postfix(-1, address.data(), address.size()), ErrorBadDescriptor), "bind(-1) with a valid address must fail with EBADF (9)");
     Require(Fails(connect_nid_postfix(-1, address.data(), address.size()), ErrorBadDescriptor), "connect(-1) with a valid address must fail with EBADF (9)");
     Require(Fails(sendto_nid_postfix(-1, "x", 1, 0, address.data(), address.size()), ErrorBadDescriptor), "sendto(-1) with a valid address must fail with EBADF (9)");
+}
+
+void MismatchedAndUnknownFamiliesFail() {
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    const int datagram = socket_nid_postfix(2, Datagram, 0);
+    const int stream6 = socket_nid_postfix(28, Stream, 0);
+    const int datagram6 = socket_nid_postfix(28, Datagram, 0);
+    Require(stream >= 0 && datagram >= 0 && stream6 >= 0 && datagram6 >= 0, "socket failed");
+    const auto address = Loopback();
+    std::array<std::uint8_t, 28> v6{28, 28};
+    v6[23] = 1;
+    Require(Fails(bind_nid_postfix(stream, v6.data(), v6.size()), ErrorInvalid), "bind with an address longer than sockaddr_in must fail with EINVAL (22)");
+    Require(Fails(bind_nid_postfix(stream6, address.data(), address.size()), ErrorInvalid), "bind with an AF_INET address on an AF_INET6 socket must fail with EINVAL (22)");
+    Require(Fails(connect_nid_postfix(stream, v6.data(), v6.size()), ErrorInvalid), "connect with an address longer than sockaddr_in must fail with EINVAL (22)");
+    Require(Fails(sendto_nid_postfix(datagram, "x", 1, 0, v6.data(), v6.size()), ErrorAddressFamilyNotSupported), "sendto with an AF_INET6 address on an AF_INET socket must fail with EAFNOSUPPORT (47)");
+    std::array<std::uint8_t, 16> unknownFamily{16, 99};
+    Require(Fails(connect_nid_postfix(stream, unknownFamily.data(), unknownFamily.size()), ErrorAddressFamilyNotSupported), "connect with an unknown family must fail with EAFNOSUPPORT (47)");
+    Require(Fails(sendto_nid_postfix(datagram, "x", 1, 0, unknownFamily.data(), unknownFamily.size()), ErrorAddressFamilyNotSupported), "sendto with an unknown family must fail with EAFNOSUPPORT (47)");
+    std::array<std::uint8_t, 28> unknownFamily6{28, 99};
+    Require(Fails(bind_nid_postfix(stream6, unknownFamily6.data(), unknownFamily6.size()), ErrorAddressFamilyNotSupported), "bind with an unknown family must fail with EAFNOSUPPORT (47)");
+    Require(Fails(connect_nid_postfix(stream6, unknownFamily6.data(), unknownFamily6.size()), ErrorAddressFamilyNotSupported), "connect with an unknown family must fail with EAFNOSUPPORT (47)");
+    Require(Fails(sendto_nid_postfix(datagram6, "x", 1, 0, unknownFamily6.data(), unknownFamily6.size()), ErrorAddressFamilyNotSupported), "sendto with an unknown family must fail with EAFNOSUPPORT (47)");
+    Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0 && close_nid_postfix(stream6) == 0 && close_nid_postfix(datagram6) == 0, "close failed");
 }
 
 void FullAddressesStillWork() {
@@ -131,6 +156,7 @@ void LongMappedAddressesBindOnlyDualStackDatagramSockets() {
 int main() {
     ShortAddressesAreInvalid();
     ArgumentsAreCheckedBeforeTheDescriptor();
+    MismatchedAndUnknownFamiliesFail();
     FullAddressesStillWork();
     LongAddressesAreInvalid(2, Stream);
     LongAddressesAreInvalid(2, Datagram);

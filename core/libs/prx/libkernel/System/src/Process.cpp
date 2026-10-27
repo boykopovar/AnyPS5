@@ -644,8 +644,12 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
+    GuestResourceUsage result{};
     if (who == -1) {
-        *usage = {};
+        if (!WriteGuest(usage, &result, sizeof(result))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
         return 0;
     }
 #ifdef _WIN32
@@ -665,47 +669,37 @@ int APS5_VABI getrusage_nid_postfix(int who, GuestResourceUsage* usage) {
     };
     const auto userMicros = toMicros(user);
     const auto kernelMicros = toMicros(kernel);
-    usage->ru_utime.tv_sec = static_cast<std::int64_t>(userMicros / 1000000ULL);
-    usage->ru_utime.tv_usec = static_cast<std::int64_t>(userMicros % 1000000ULL);
-    usage->ru_stime.tv_sec = static_cast<std::int64_t>(kernelMicros / 1000000ULL);
-    usage->ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
-    usage->ru_maxrss = 0;
-    usage->ru_ixrss = 0;
-    usage->ru_idrss = 0;
-    usage->ru_isrss = 0;
-    usage->ru_minflt = 0;
-    usage->ru_majflt = 0;
-    usage->ru_nswap = 0;
-    usage->ru_inblock = 0;
-    usage->ru_oublock = 0;
-    usage->ru_msgsnd = 0;
-    usage->ru_msgrcv = 0;
-    usage->ru_nsignals = 0;
-    usage->ru_nvcsw = 0;
-    usage->ru_nivcsw = 0;
+    result.ru_utime.tv_sec = static_cast<std::int64_t>(userMicros / 1000000ULL);
+    result.ru_utime.tv_usec = static_cast<std::int64_t>(userMicros % 1000000ULL);
+    result.ru_stime.tv_sec = static_cast<std::int64_t>(kernelMicros / 1000000ULL);
+    result.ru_stime.tv_usec = static_cast<std::int64_t>(kernelMicros % 1000000ULL);
 #else
     struct rusage native{};
     if (::getrusage(who == 0 ? RUSAGE_SELF : RUSAGE_THREAD, &native) != 0)
         throw std::system_error(errno, std::generic_category(), "getrusage: getrusage failed");
-    usage->ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
-    usage->ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
-    usage->ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
-    usage->ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
-    usage->ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
-    usage->ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
-    usage->ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
-    usage->ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
-    usage->ru_minflt = static_cast<std::int64_t>(native.ru_minflt);
-    usage->ru_majflt = static_cast<std::int64_t>(native.ru_majflt);
-    usage->ru_nswap = static_cast<std::int64_t>(native.ru_nswap);
-    usage->ru_inblock = static_cast<std::int64_t>(native.ru_inblock);
-    usage->ru_oublock = static_cast<std::int64_t>(native.ru_oublock);
-    usage->ru_msgsnd = static_cast<std::int64_t>(native.ru_msgsnd);
-    usage->ru_msgrcv = static_cast<std::int64_t>(native.ru_msgrcv);
-    usage->ru_nsignals = static_cast<std::int64_t>(native.ru_nsignals);
-    usage->ru_nvcsw = static_cast<std::int64_t>(native.ru_nvcsw);
-    usage->ru_nivcsw = static_cast<std::int64_t>(native.ru_nivcsw);
+    result.ru_utime.tv_sec = static_cast<std::int64_t>(native.ru_utime.tv_sec);
+    result.ru_utime.tv_usec = static_cast<std::int64_t>(native.ru_utime.tv_usec);
+    result.ru_stime.tv_sec = static_cast<std::int64_t>(native.ru_stime.tv_sec);
+    result.ru_stime.tv_usec = static_cast<std::int64_t>(native.ru_stime.tv_usec);
+    result.ru_maxrss = static_cast<std::int64_t>(native.ru_maxrss);
+    result.ru_ixrss = static_cast<std::int64_t>(native.ru_ixrss);
+    result.ru_idrss = static_cast<std::int64_t>(native.ru_idrss);
+    result.ru_isrss = static_cast<std::int64_t>(native.ru_isrss);
+    result.ru_minflt = static_cast<std::int64_t>(native.ru_minflt);
+    result.ru_majflt = static_cast<std::int64_t>(native.ru_majflt);
+    result.ru_nswap = static_cast<std::int64_t>(native.ru_nswap);
+    result.ru_inblock = static_cast<std::int64_t>(native.ru_inblock);
+    result.ru_oublock = static_cast<std::int64_t>(native.ru_oublock);
+    result.ru_msgsnd = static_cast<std::int64_t>(native.ru_msgsnd);
+    result.ru_msgrcv = static_cast<std::int64_t>(native.ru_msgrcv);
+    result.ru_nsignals = static_cast<std::int64_t>(native.ru_nsignals);
+    result.ru_nvcsw = static_cast<std::int64_t>(native.ru_nvcsw);
+    result.ru_nivcsw = static_cast<std::int64_t>(native.ru_nivcsw);
 #endif
+    if (!WriteGuest(usage, &result, sizeof(result))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
     return 0;
 }
 

@@ -54,8 +54,10 @@ def merged_pull_requests(repo, mergebase, base, paths):
 def report(repo, base, head):
     repo = git(repo, "rev-parse", "--show-toplevel").stdout.strip()
     found = git(repo, "merge-base", base, head, check=False)
-    if found.returncode:
+    if found.returncode == 1:
         raise RuntimeError(f"{head} and {base} have no common ancestor")
+    if found.returncode:
+        raise RuntimeError(f"git merge-base failed: {found.stderr.strip()}")
     mergebase = found.stdout.strip()
     behind = int(git(repo, "rev-list", "--count", f"{head}..{base}").stdout)
     ahead = int(git(repo, "rev-list", "--count", f"{base}..{head}").stdout)

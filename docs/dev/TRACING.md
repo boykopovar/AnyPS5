@@ -45,7 +45,7 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_HOST_IMPORT` | Host-import mapping attempts, memory-map details, failures and retirement. |
 | `APS5_TRACE_IMAGE_TABLE` | Image-table resource materialization and descriptor selection. |
 | `APS5_TRACE_INDIRECT_DRAWS` | Indirect draw packets that pass the draw precheck. |
-| `APS5_TRACE_LABEL` | `RELEASE_MEM` packets that target the address in this hexadecimal value. |
+| `APS5_TRACE_LABEL` | A matching `RELEASE_MEM` when recorded, and nearby `RELEASE_MEM`, `WRITE_DATA`, `COPY_DATA`, `DMA_DATA` and `WAIT_REG_MEM` packets when executed. Set the value to the guest address in hexadecimal. |
 | `APS5_TRACE_LATE_LABELS` | GPU label writes observed after their waiting submission was handled. |
 | `APS5_TRACE_QUERY` | Every sixteenth guest-memory page query, including cost and caller address. |
 | `APS5_TRACE_RESOURCE_KEY_MISSES` | Resource-content key changes that cause draw or dispatch resource-cache misses. |

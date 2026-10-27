@@ -47,6 +47,7 @@ constexpr std::uint32_t MaxGroups = 8;
 constexpr std::uint32_t Format32UInt = 20;
 constexpr std::uint32_t Format32SInt = 21;
 constexpr std::uint32_t Format32Float = 22;
+constexpr std::uint32_t Format32_32UInt = 62;
 constexpr std::uint32_t Format11_11_10UInt = 34;
 constexpr std::uint32_t Format8_8Srgb = 129;
 constexpr std::uint32_t Type2D = 9;
@@ -56,6 +57,7 @@ constexpr std::uint32_t DepthSwizzleMode = 0x18;
 alignas(256) std::array<float, Width * Height> FloatTexels{};
 alignas(256) std::array<float, Width * Height> OtherFloatTexels{};
 alignas(256) std::array<std::uint32_t, Width * Height> UintTexels{};
+alignas(256) std::array<std::uint64_t, Width * Height> Uint64Texels{};
 alignas(256) std::array<std::int32_t, Width * Height> SintTexels{};
 alignas(4096) std::array<std::uint32_t, 49152> DepthStorage{};
 alignas(256) std::array<std::uint32_t, Records * Stride / 4> Table{};
@@ -206,6 +208,12 @@ alignas(256) constexpr std::array<std::uint32_t, 16> StoreLaneTableCode{
 alignas(256) constexpr std::array<std::uint32_t, 16> AtomicAddLaneTableCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
     0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0xf0448108u, 0x00090401u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 18> AtomicAdd64LaneTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0x7e0a02ffu, 0x00000000u, 0xf0448308u,
+    0x00090401u, 0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 16> AtomicSwapLaneTableCode{
@@ -1168,6 +1176,32 @@ void RunAtomicTests(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t x = 0; x < Width; ++x) Require(UintTexels[x] == (x ^ 1u) && std::bit_cast<std::uint32_t>(FloatTexels[x]) == 0x3f800000u + x, "image table atomic: an add through a null entry reached an image:\n" + null.log);
 }
 
+void RunAtomic64Tests(AgcDriver::VulkanDevice& device) {
+    if (!TargetHasCapability(device.Target(), spv::CapabilityInt64ImageEXT)) {
+        std::puts("skipped the 64-bit table atomic rows, the device has no shaderImageInt64Atomics");
+        return;
+    }
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } registered(Uint64Texels.data(), sizeof(Uint64Texels));
+    SetClassRecords();
+    for (std::uint32_t x = 0; x < Width; ++x) Uint64Texels[x] = 0x5000000000000000ull + x;
+    SetRecord(9, PointClamp, Image(Uint64Texels.data(), Format32_32UInt));
+    Keys = {};
+    Keys[0] = 9;
+    const auto added = Run(device, AtomicAdd64LaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic64 test");
+    Require(!Faulted(added), "image table atomic64: an add through a table faulted:\n" + added.log);
+    Require(added.imageTableCount != 0u, "image table atomic64: the add bound no storage table elements");
+    for (std::uint32_t x = 0; x < Width; ++x) Require(Uint64Texels[x] == 0x5000000000000000ull + x + x, "image table atomic64: texel " + std::to_string(x) + " is wrong");
+    Keys[0] = 6;
+    const auto null = Run(device, AtomicAdd64LaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic64 test");
+    for (std::uint32_t x = 0; x < Width; ++x) Require(Uint64Texels[x] == 0x5000000000000000ull + x + x, "image table atomic64: an add through a null entry reached an image:\n" + null.log);
+}
+
 void RunSelectedStoreTests(AgcDriver::VulkanDevice& device) {
     alignas(256) static std::array<std::uint32_t, Width * Height> storeTexels{};
     struct Registration {
@@ -1561,6 +1595,7 @@ int main() {
         RunModeTests(*device);
         RunStoreTests(*device);
         RunAtomicTests(*device);
+        RunAtomic64Tests(*device);
         RunSelectedStoreTests(*device);
         RunPointerTests(*device);
         RunPointerRecordTests(*device);

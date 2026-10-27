@@ -317,6 +317,11 @@ void IpLevelFollowsThePs5() {
     size = sizeof(value);
     Require(getsockopt_nid_postfix(datagram, 99, 1, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "an unknown level must fail with EINVAL (22)");
     Require(SetFails(datagram, 99, 1, &value, sizeof(value), ErrorInvalid), "setsockopt at an unknown level must fail with EINVAL (22)");
+    for (const int option : {7, 20, 65}) {
+        Require(GetIp(datagram, option) == 0, "a receive option starts off");
+        Require(SetIp(datagram, option, 5) && GetIp(datagram, option) == 1, "a receive option reads back as 1");
+        Require(SetIp(datagram, option, 0) && GetIp(datagram, option) == 0, "a receive option turns off");
+    }
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(datagram6) == 0, "close failed");
 }
 

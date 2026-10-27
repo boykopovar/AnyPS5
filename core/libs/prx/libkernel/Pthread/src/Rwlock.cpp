@@ -105,8 +105,11 @@ int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock) {
 int APS5_VABI scePthreadRwlockTimedrdlock(PthreadRwlock* rwlock, KernelUseconds usec) {
     auto* lock = RequireRwlock(rwlock, __func__);
     if (!lock) return SCE_KERNEL_ERROR_EINVAL;
-    if (OwnsWrite(lock)) return SCE_KERNEL_ERROR_EDEADLK;
     const std::uint64_t deadline = TimedWait::DeadlineNanos(usec);
+    if (OwnsWrite(lock)) {
+        TimedWait::SleepUntil(deadline);
+        return SCE_KERNEL_ERROR_ETIMEDOUT;
+    }
     std::unique_lock state(lock->_state);
     if (!lock->_changed.WaitUntil(state, deadline, [&] { return ReaderMayEnter(lock); })) return SCE_KERNEL_ERROR_ETIMEDOUT;
     return EnterRead(lock);
@@ -134,8 +137,11 @@ int APS5_VABI scePthreadRwlockTrywrlock(PthreadRwlock* rwlock) {
 int APS5_VABI scePthreadRwlockTimedwrlock(PthreadRwlock* rwlock, KernelUseconds usec) {
     auto* lock = RequireRwlock(rwlock, __func__);
     if (!lock) return SCE_KERNEL_ERROR_EINVAL;
-    if (OwnsWrite(lock)) return SCE_KERNEL_ERROR_EDEADLK;
     const std::uint64_t deadline = TimedWait::DeadlineNanos(usec);
+    if (OwnsWrite(lock)) {
+        TimedWait::SleepUntil(deadline);
+        return SCE_KERNEL_ERROR_ETIMEDOUT;
+    }
     std::unique_lock state(lock->_state);
     ++lock->_waitingWriters;
     const bool acquired = lock->_changed.WaitUntil(state, deadline, [&] { return WriterMayEnter(lock); });

@@ -209,7 +209,8 @@ std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
     request.target.maxWorkgroupSharedMemoryBytes = 49152;
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
-    const auto& words = Recompile(request).spirv.Words();
+    const auto result = Recompile(request);
+    const auto& words = result.spirv.Words();
     return {words.begin(), words.end()};
 }
 

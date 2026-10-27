@@ -12,6 +12,6 @@ int APS5_VABI sceNpSignalingInitialize(std::int64_t memorySize, int threadPriori
 int APS5_VABI sceNpSignalingSetContextOption(int ctxId, int optionId, int optionValue);
 int APS5_VABI sceNpSignalingTerminate();
 int APS5_VABI sceNpSignalingTerminateConnection(int ctxId, int connId);
-int APS5_VABI sceNpSignalingDeactivateConnection(void);
+int APS5_VABI sceNpSignalingDeactivateConnection(int ctxId, int connId);
 
 }
