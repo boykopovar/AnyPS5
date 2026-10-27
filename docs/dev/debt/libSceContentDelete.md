@@ -7,4 +7,5 @@
 
 ### Unknown function info
 
-- [sceContentDeleteGlobalMstat](../../../core/libs/prx/libSceContentDelete/Export.cpp), `sceContentDeleteMemoryInitialize` and `sceContentDeleteMemoryTerminate`: neither exports nor callers were found in the supplied decompiled library corpus; their signatures remain unresolved.
+- [sceContentDeleteByIdListForSf](../../../core/libs/prx/libSceContentDelete/Export.cpp): the shim declares `const std::int64_t*` and `std::size_t` parameters, but neither a matching export nor callers were found in the supplied decompiled library corpus. The body calls `NotImplemented_nid_no_patch` without accessing either parameter. The shim declaration does not establish the console ABI; list semantics, memory access, initialization requirements, results and side effects remain unresolved.
+- [sceContentDeleteGlobalMstat](../../../core/libs/prx/libSceContentDelete/Export.cpp), `sceContentDeleteMemoryInitialize` and `sceContentDeleteMemoryTerminate`: neither matching exports nor callers were found in the supplied decompiled library corpus. Their current `int APS5_VABI(void)` shim declarations do not establish the console ABI. The bodies call `NotImplemented_nid_no_patch` without accessing arguments or state; signatures, lifecycle requirements, results and side effects remain unresolved.

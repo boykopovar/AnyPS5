@@ -25,9 +25,11 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ResidentPresent.hpp"
 #include "ImageTableAbi.hpp"
@@ -66,6 +68,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -247,6 +250,18 @@ bool hintMappingHistoryTests() {
 #else
     return false;
 #endif
+}
+
+void gpuTimingKeyTests() {
+    constexpr std::uint64_t variant = 0x2;
+    const auto key = Recorder::DrawTimingKey(variant);
+    Require(key != variant && (key & Recorder::DrawTimingFlag) != 0, "a draw's timing key is not flagged apart from the other keys");
+    char named[64];
+    std::snprintf(named, sizeof(named), "0x%llx", static_cast<unsigned long long>(variant));
+    Require(Recorder::TimingKeyLabel(key) == std::string("draw ") + named, "a draw's timing label is not 'draw ' plus the id [drawvariant] prints");
+    Require(Recorder::TimingKeyLabel(variant) == named, "a key that is not a draw's is labelled with the draw prefix");
+    Require(Recorder::TimingKeyLabel(Recorder::DrawTimingKey(0)) == "draw 0x0", "a draw with no program is not labelled as a draw");
+    Require(Recorder::TimingKeyLabel(Recorder::DrawTimingKey(0x123456789abcdefull)) == "draw 0x123456789abcdef", "a wide variant id was cut in the label");
 }
 
 void deviceSelectionTests() {
@@ -3025,15 +3040,33 @@ void requireImportServesGuest(const Context& context, Recorder& recorder, const 
     const auto bytes = static_cast<std::size_t>(end - begin);
     Require(begin >= import.base && end <= import.base + import.bytes, what + " is not inside its import");
     const auto collected = CollectWritesUncached(begin, bytes);
-    Require(collected != 0 && Watched(begin, bytes), what + " left the write watch");
-    Require(UnchangedSinceCollected(begin, page, collected) && UnchangedSinceCollected(end - page, page, collected), what + " reports writes nobody made");
+    const bool watched = Watched(begin, bytes);
+    Require(!watched || collected != 0, what + " is watched but cannot collect writes");
+    if (watched) {
+        Require(UnchangedSinceCollected(begin, page, collected) && UnchangedSinceCollected(end - page, page, collected), what + " reports writes nobody made");
+    } else {
+        Require(collected == 0, what + " collects writes without being watched");
+        const auto generation = WriteGeneration();
+        Require(UntrackedHint(begin, bytes) == 0 && !UnchangedSince(begin, bytes, generation), what + " provides an unchanged or untracked-hint proof without a write watch");
+        std::vector<void*> compared(bytes / page);
+        auto count = compared.size();
+        GuestArena::GuestArenaComparedPages_nid_no_patch(begin, bytes, compared.data(), &count);
+        Require(count == compared.size(), what + " left the write watch without compared shared pages");
+        for (std::size_t index = 0; index < count; ++index) {
+            Require(compared[index] == reinterpret_cast<void*>(begin + index * page), what + " has an unexpected compared shared page");
+            MEMORY_BASIC_INFORMATION memory{};
+            Require(VirtualQuery(compared[index], &memory, sizeof(memory)) == sizeof(memory) && memory.State == MEM_COMMIT, what + " has an inaccessible compared shared page");
+            const auto protection = memory.Protect & 0xff;
+            Require(protection == PAGE_READWRITE || protection == PAGE_EXECUTE_READWRITE, what + " has a compared shared page that is not writable");
+        }
+    }
     auto* first = reinterpret_cast<std::byte*>(begin);
     auto* last = reinterpret_cast<std::byte*>(end - page);
     for (std::size_t index = 0; index < probe; ++index) {
         first[index] = static_cast<std::byte>((index * 7u + salt) & 0xffu);
         last[index] = static_cast<std::byte>((index * 13u + salt * 5u + 1u) & 0xffu);
     }
-    Require(!UnchangedSinceCollected(begin, page, collected) && !UnchangedSinceCollected(end - page, page, collected), "a CPU store into " + what + " was not collected");
+    if (watched) Require(!UnchangedSinceCollected(begin, page, collected) && !UnchangedSinceCollected(end - page, page, collected), "a CPU store into " + what + " was not collected");
     Buffer readback(context, 2 * probe, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     const auto commands = recorder.Commands();
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -3163,7 +3196,7 @@ int reimportBench(const Device& device) {
         const auto* tail = HostImportFor(context, begin, static_cast<std::size_t>(end - begin));
         Require(tail != nullptr && tail->base == begin && tail->base + tail->bytes == end, "the re-import bench lost the import of its kept side");
         requireImportServesGuest(context, recorder, *tail, begin, end, ++salt, std::string("the kept side after the ") + pattern.name + " cuts");
-        std::printf("re-import bench, %s cuts: the kept side was imported again after %zu of %zu cuts, slowest import after a cut %.2f ms; CPU stores into it are collected and the GPU reads them through its buffer\n", pattern.name, again, moves, slowest);
+        std::printf("re-import bench, %s cuts: the kept side was imported again after %zu of %zu cuts, slowest import after a cut %.2f ms; write tracking sees its CPU stores and the GPU reads them through its buffer\n", pattern.name, again, moves, slowest);
         cleanup();
         gpu.unlock();
         return again;
@@ -3284,7 +3317,7 @@ int hostImportCutTests(const Device& device) {
         }
         cleanup();
         gpu.unlock();
-        std::cout << "host import after cut: " << name << ": the changed import was retired before the remaining range was imported, and the GPU and write watch see the guest's bytes" << (test.unmap ? ", also after the pages were mapped again" : "") << '\n';
+        std::cout << "host import after cut: " << name << ": the changed import was retired before the remaining range was imported, and the GPU and write tracking see the guest's bytes" << (test.unmap ? ", also after the pages were mapped again" : "") << '\n';
     };
     const auto remapWhileTrimmed = [&] {
         const std::string name = "an unmap and a new mapping of the retained side while the old import is retired";
@@ -3315,7 +3348,7 @@ int hostImportCutTests(const Device& device) {
         Require(remapped->memoryBase == begin && remapped->pinnedBytes == end - begin, "after " + name + " the pages mapped again are served from the import that pinned the old ones");
         cleanup();
         gpu.unlock();
-        std::cout << "host import cut: " << name << ": the pages mapped again were imported again and the GPU and the write watch see the guest's bytes\n";
+        std::cout << "host import cut: " << name << ": the pages mapped again were imported again and the GPU and write tracking see the guest's bytes\n";
     };
     gpu.unlock();
     try {
@@ -7372,6 +7405,164 @@ void unchangedCpuStampTests(const Device& device, Recorder& recorder) {
     std::cout << "unchanged CPU stamps: ok\n";
 }
 
+std::uint64_t publishRaceAddress = 0;
+
+void writeDuringPublish(std::uint64_t begin, std::uint64_t end) {
+    if (publishRaceAddress != 0) return;
+    publishRaceAddress = begin;
+    const auto bytes = static_cast<std::size_t>(std::min<std::uint64_t>(end - begin, 256));
+    std::memset(reinterpret_cast<void*>(begin), 0x6e, bytes);
+    AgcDriver::GuestMemory::CollectWritesUncached(begin, bytes);
+}
+
+void idleWriteBackRaceTests(const Device& device, Recorder& recorder) {
+    Require(AgcDriver::GuestMemory::WriteWatched(), "(v) kept-unit settle tests require host write watching");
+    const auto& base = device.GetContext();
+    constexpr std::uint32_t width = 60;
+    constexpr std::uint32_t height = 34;
+    constexpr std::uint32_t depth = 26;
+    constexpr std::size_t surfaceBytes = std::size_t{depth} * 65536;
+    constexpr std::size_t unitBytes = 65536;
+    constexpr std::array<std::uint8_t, 4> red{255, 0, 0, 255};
+    constexpr std::array<std::uint8_t, 4> blue{0, 0, 255, 255};
+    for (const bool direct : {false, true}) {
+        const std::string what = direct ? "GPU-mapped direct memory" : "watched memory";
+        if (direct && base.hostImportAlignment == 0) {
+            std::cout << "host imports unavailable: idle store of a dead 3D image over memory the CPU refilled in " << what << " not tested\n";
+            continue;
+        }
+        struct Backing {
+            Recorder& recorder;
+            bool direct;
+            void* block = nullptr;
+            std::int64_t physical = -1;
+            ~Backing() {
+                try {
+                    recorder.Sync();
+                } catch (const std::exception& error) {
+                    std::cerr << "(v) the recorded work did not finish, the test memory stays mapped: " << error.what() << '\n';
+                    return;
+                }
+                if (direct) {
+                    if (block != nullptr) sceKernelMunmap(reinterpret_cast<std::uint64_t>(block), surfaceBytes);
+                    if (physical >= 0) sceKernelReleaseDirectMemory(physical, surfaceBytes);
+                    return;
+                }
+                if (block == nullptr) return;
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                ReleaseWatched(block, surfaceBytes);
+            }
+        } backing{recorder, direct};
+        if (direct) {
+            Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, surfaceBytes, unitBytes, 0, &backing.physical) == 0, "(v) allocate the direct memory");
+            Require(sceKernelMapDirectMemory(&backing.block, surfaceBytes, 0x33, 0, backing.physical, unitBytes) == 0, "(v) map the direct memory for the GPU");
+        } else {
+            backing.block = AllocateWatched(surfaceBytes, unitBytes);
+            Require(backing.block != nullptr, "(v) no watched block although write watching is on");
+            GuestAllocations::Mutation mutation;
+            mutation.Add(backing.block, surfaceBytes, true, true, true);
+        }
+        auto* memory = static_cast<std::uint8_t*>(backing.block);
+        std::memset(memory, 0x5a, surfaceBytes);
+        const auto address = reinterpret_cast<std::uint64_t>(backing.block);
+        AgcDriver::GuestMemory::CollectWritesUncached(address, surfaceBytes);
+        TextureDetiler detiler(base);
+        auto context = base;
+        if (!direct) context.hostImportAlignment = 0;
+        context.detiler = &detiler;
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = width;
+        resource.height = height;
+        resource.mipCount = 1;
+        resource.depthOrLastArray = depth - 1;
+        resource.tileMode = static_cast<TextureTileMode>(7);
+        resource.dimension = TextureDimension::k3D;
+        resource.format = 36;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == surfaceBytes, "(v) unexpected surface size");
+        if (direct && !AgcDriver::GuestMemory::Watched(address, surfaceBytes)) {
+            std::cout << "GPU-mapped direct memory is not write-watched here: idle store of a dead 3D image over memory the CPU refilled in " << what << " not tested\n";
+            continue;
+        }
+        Require(AgcDriver::GuestMemory::Watched(address, surfaceBytes), "(v) " + what + " is not watched");
+        if (direct && HostImportFor(context, address, surfaceBytes) == nullptr) {
+            std::cout << "host import of the direct memory refused: idle store of a dead 3D image over memory the CPU refilled in " << what << " not tested\n";
+            continue;
+        }
+        if (direct && !AgcDriver::GuestMemory::Watched(address, surfaceBytes)) {
+            std::cout << "the host import of the direct memory took it out of the write watch (its imports are compared): idle store of a dead 3D image over memory the CPU refilled in " << what << " not tested\n";
+            continue;
+        }
+        Require(direct || HostImportFor(context, address, surfaceBytes) == nullptr, "(v) watched memory was imported although host imports are off for it");
+        std::string failures;
+        for (const char* scenario : {"idle", "publish:idle", "publish:idle-race"}) {
+            const bool publish = std::strncmp(scenario, "publish:", 8) == 0;
+            const bool race = std::strcmp(scenario, "publish:idle-race") == 0;
+            if (race && !direct) continue;
+            std::memset(memory, 0x11, surfaceBytes);
+            AgcDriver::GuestMemory::CollectWritesUncached(address, surfaceBytes);
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            {
+                const auto commands = recorder.Commands();
+                recorder.Keep(image);
+                const VkClearColorValue value{{0.0f, 1.0f, 0.0f, 1.0f}};
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                image->MarkDirty();
+            }
+            std::memset(memory, 0x3c, 19 * unitBytes);
+            if (publish) {
+                StorageTexture::FlushPending(address + 19 * unitBytes, 7 * unitBytes, nullptr, "storage refresh", PublishScope::None);
+                recorder.Submit();
+                device.WaitQueue();
+                recorder.Sync();
+                publishRaceAddress = 0;
+                if (race) SetPublishSelectedHook(writeDuringPublish);
+                StorageTexture::FlushAllPending("idle");
+                SetPublishSelectedHook(nullptr);
+            } else {
+                StorageTexture::FlushAllPending("idle");
+            }
+            if (!race) std::memset(memory + 19 * unitBytes, 0x4d, 5 * unitBytes);
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            if (race) {
+                Require(publishRaceAddress != 0, "(v) " + what + " " + scenario + ": the idle store published no shadow units on the CPU");
+                std::vector<std::byte> written(256);
+                AgcDriver::GuestMemory::Read(publishRaceAddress, written);
+                std::size_t lost = 0;
+                for (const auto byte : written) lost += std::to_integer<std::uint8_t>(byte) != 0x6e;
+                std::cout << "(v) " << what << " " << scenario << ": " << (lost == 0 ? "ok" : "CPU bytes lost " + std::to_string(lost)) << "\n";
+                if (lost != 0) failures += std::string(" ") + scenario;
+                continue;
+            }
+            std::vector<std::byte> read(5 * unitBytes);
+            AgcDriver::GuestMemory::Read(address + 19 * unitBytes, read);
+            std::size_t lost = 0;
+            for (const auto byte : read) lost += std::to_integer<std::uint8_t>(byte) != 0x4d;
+            {
+                std::vector<std::byte> stored(unitBytes);
+                AgcDriver::GuestMemory::Read(address + 24 * unitBytes, stored);
+                Require(std::any_of(stored.begin(), stored.end(), [](std::byte value) { return std::to_integer<std::uint8_t>(value) != 0x11; }), "(v) " + what + " " + scenario + ": the GPU results of slice 24, which the CPU never wrote, were not stored");
+            }
+            std::cout << "(v) " << what << " " << scenario << ": " << (lost == 0 ? "ok" : "CPU bytes lost " + std::to_string(lost)) << "\n";
+            if (lost != 0) failures += std::string(" ") + scenario;
+        }
+        Require(failures.empty(), "(v) " + what + ": a CPU store made while results were in flight was overwritten by them:" + failures);
+        std::cout << "idle store of a dead 3D image over memory the CPU refilled in " << what << ": ok\n";
+    }
+}
+
 void keptUnitSettleTests(const Device& device, Recorder& recorder) {
     Require(AgcDriver::GuestMemory::WriteWatched(), "(k) kept-unit settle tests require host write watching");
     const auto& base = device.GetContext();
@@ -9609,6 +9800,29 @@ void minLodTests(const Device& device, Recorder& recorder) {
     expectRed(sample(0x100, 0.0f, 1), unorm(1), "minimum LOD clamp: MIN_LOD at the view's base level reads its base level");
 }
 
+void failedCheckReportTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    Require(Recorder::Active() == &recorder, "the failed check test needs the active recorder");
+    TextureDetiler detiler(context);
+    GuestTextureResource resource{};
+    resource.baseAddress = 0x100000;
+    resource.width = 64;
+    resource.height = 64;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kLinear;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    const std::vector<std::byte> snapshot(static_cast<std::size_t>(DescribeSurface(resource).guestBytes), std::byte{0x40});
+    const VkComponentMapping identity{VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY};
+    Texture texture(context, detiler, resource, identity, snapshot);
+    Require(recorder.Recording(), "a texture upload was not recorded into the open batch");
+    Require(false, "a failed check stopped the test with a texture upload in its open batch");
+}
+
 void singleCubeTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     TextureDetiler detiler(context);
@@ -11058,6 +11272,97 @@ void denormalClearTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+class LibraryCreateFlags {
+public:
+    explicit LibraryCreateFlags(const Context& context) : resolver(context.deviceProc), device(context.device) {
+        create = function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines");
+        active = this;
+    }
+    ~LibraryCreateFlags() { active = nullptr; }
+    LibraryCreateFlags(const LibraryCreateFlags&) = delete;
+    LibraryCreateFlags& operator=(const LibraryCreateFlags&) = delete;
+    PFN_vkGetDeviceProcAddr Resolver() const { return resolve; }
+    std::uint32_t Libraries() const { return libraries.load(); }
+    std::uint32_t Retaining() const { return retaining.load(); }
+
+private:
+    template<typename TFunction>
+    TFunction function(const char* name) const { return reinterpret_cast<TFunction>(resolver(device, name)); }
+    static VKAPI_ATTR VkResult VKAPI_CALL createPipelines(VkDevice device, VkPipelineCache cache, std::uint32_t count, const VkGraphicsPipelineCreateInfo* infos, const VkAllocationCallbacks* callbacks, VkPipeline* pipelines) {
+        const auto result = active->create(device, cache, count, infos, callbacks, pipelines);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            if (pipelines[index] == VK_NULL_HANDLE || (infos[index].flags & VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) == 0) continue;
+            active->libraries.fetch_add(1);
+            if ((infos[index].flags & VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT) != 0) active->retaining.fetch_add(1);
+        }
+        return result;
+    }
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkCreateGraphicsPipelines") == 0) return reinterpret_cast<PFN_vkVoidFunction>(createPipelines);
+        return active->resolver(device, name);
+    }
+    PFN_vkGetDeviceProcAddr resolver;
+    VkDevice device;
+    PFN_vkCreateGraphicsPipelines create = nullptr;
+    std::atomic<std::uint32_t> libraries{0};
+    std::atomic<std::uint32_t> retaining{0};
+    static inline LibraryCreateFlags* active = nullptr;
+};
+
+void pipelineLibraryLtoInfoTests(const Device& device) {
+    std::lock_guard gpu(GpuMutex());
+    const auto& context = device.GetContext();
+    LibraryCreateFlags created(context);
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() { ClearCachedPipelines(device); }
+    } cleanup{context.device};
+    ClearCachedPipelines(context.device);
+    if (!context.graphicsPipelineLibrary) {
+        std::cout << "graphics pipeline libraries unavailable or disabled: no library retains link-time optimization info\n";
+        return;
+    }
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.variantId = 41;
+    fragment.variantId = 42;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_vert_SPV), std::end(TRIANGLE_vert_SPV));
+    fragment.spirv = std::vector<std::uint32_t>(std::begin(TRIANGLE_frag_SPV), std::end(TRIANGLE_frag_SPV));
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}};
+    State state{};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.hasColorTarget = true;
+    state.color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    state.colors.push_back(state.color);
+    state.blend.colorWriteMask = 15;
+    state.blends.push_back(state.blend);
+    ShaderResources resources(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), 0, 0);
+    VertexInputLayout input;
+    auto fast = context;
+    fast.deviceProc = created.Resolver();
+    fast.pipelineLinkTimeOptimization = false;
+    auto optimizing = fast;
+    optimizing.pipelineLinkTimeOptimization = true;
+    const bool lto = std::getenv("APS5_NO_PIPELINE_LTO") == nullptr;
+    const auto fastPipeline = CachedPipeline(fast, state, input, resources, shaders, VK_IMAGE_LAYOUT_GENERAL);
+    const auto fastLibraries = created.Libraries();
+    Require(fastLibraries != 0, "the pipeline was not linked from libraries created through the traced device");
+    Require(created.Retaining() == 0, std::to_string(created.Retaining()) + " of the " + std::to_string(fastLibraries) + " libraries made for a context without optimized links were created to retain link-time optimization info");
+    WaitForOptimizedPipelines(context.device);
+    Require(!fastPipeline->Optimized(), "a pipeline of a context without optimized links was optimized in the background");
+    const auto optimizedPipeline = CachedPipeline(optimizing, state, input, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    Require(optimizedPipeline != fastPipeline, "the two attachment layouts shared one cached pipeline");
+    const auto libraries = created.Libraries() - fastLibraries;
+    if (lto) {
+        Require(libraries == fastLibraries, "a link that will be optimized made " + std::to_string(libraries) + " libraries, expected " + std::to_string(fastLibraries) + ": it reused libraries made without link-time optimization info");
+        Require(created.Retaining() == libraries, std::to_string(created.Retaining()) + " of the " + std::to_string(libraries) + " libraries of a link that will be optimized were created to retain link-time optimization info");
+    } else {
+        Require(libraries == 0 && created.Retaining() == 0, "with APS5_NO_PIPELINE_LTO set, forcing pipelineLinkTimeOptimization changed the libraries or their create flags");
+    }
+    WaitForOptimizedPipelines(context.device);
+    Require(optimizedPipeline->Optimized() == lto, lto ? "the pipeline linked from libraries that retain link-time optimization info was not optimized in the background" : "a pipeline was optimized with APS5_NO_PIPELINE_LTO set");
+    std::cout << "Pipeline library link-time optimization info tests passed: " << fastLibraries << " libraries without the info, " << created.Retaining() << " with it\n";
+}
+
 void pipelineLibraryTests(const Device& device) {
     std::lock_guard gpu(GpuMutex());
     const auto& context = device.GetContext();
@@ -11325,7 +11630,23 @@ void Run(Context context) {
 #endif
 
 int main(int argc, char** argv) {
-    try {
+    _ZSt13set_terminatePFvvE_nid_postfix([] {
+        std::fflush(nullptr);
+        std::cout.flush();
+        if (const auto failure = std::current_exception()) {
+            try {
+                std::rethrow_exception(failure);
+            } catch (const std::exception& error) {
+                std::cerr << error.what() << '\n';
+            } catch (...) {
+                std::cerr << "terminated by an exception that is not a std::exception\n";
+            }
+        } else {
+            std::cerr << "terminated without an active exception\n";
+        }
+        LibcTerminate_nid_no_patch(1);
+    });
+    {
         if (argc == 2 && std::string_view(argv[1]) == "--collect-mapping-history-only") {
             if (!collectMappingHistoryTests()) return 77;
             std::cout << "collect mapping history tests passed\n";
@@ -11339,6 +11660,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--partial-watch-restoration-only") {
             if (!partialWatchRestorationTests()) return 77;
             std::cout << "partial private write-watch restoration tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--gpu-timing-key-only") {
+            gpuTimingKeyTests();
+            std::cout << "gpu timing key tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--device-selection-only") {
@@ -11438,6 +11764,10 @@ int main(int argc, char** argv) {
             }
             return sparseRunImportTests(device, true) ? 0 : 77;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-lto-info-only") {
+            pipelineLibraryLtoInfoTests(device);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-library-only") {
             pipelineLibraryTests(device);
             return 0;
@@ -11508,6 +11838,10 @@ int main(int argc, char** argv) {
             std::cout << "CB resolves into tiled targets tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--failed-check-only") {
+            failedCheckReportTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--cube-only") {
             singleCubeTests(device, recorder);
             cubeExtraSliceTests(device, recorder);
@@ -11520,6 +11854,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unchanged-cpu-stamps-only") {
             unchangedCpuStampTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--idle-writeback-race-only") {
+            idleWriteBackRaceTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--kept-unit-settle-only") {
@@ -11845,8 +12183,5 @@ int main(int argc, char** argv) {
         recorder.Activate();
         std::cout << "Recorder read tracking and label tests passed\n";
         return 0;
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
     }
 }

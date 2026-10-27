@@ -49,6 +49,8 @@ struct PthreadMutexPrivate {
     int _yieldloops = 0;
     int _protocol = 0;
     std::atomic<int> _ceiling{0};
+    std::string _name;
+    bool _named = false;
 
     PthreadMutexPrivate() : _type(MutexType::ErrorCheck), _owner(std::thread::id{}), _count(0) {}
 
@@ -62,12 +64,16 @@ struct PthreadRwlockattrPrivate {
     int type;
 };
 
+inline PthreadRwlockattr const DESTROYED_RWLOCKATTR = reinterpret_cast<PthreadRwlockattr>(std::uintptr_t{1});
+
 struct PthreadRwlockPrivate {
     std::mutex _state;
     TimedWait::Condition _changed;
     std::atomic<std::thread::id> _writer;
     std::atomic<int> _readers{0};
     int _waitingWriters = 0;
+    std::string _name;
+    bool _named = false;
 };
 
 struct PthreadCondattrPrivate {
@@ -136,6 +142,7 @@ struct PthreadPrivate {
     std::atomic<bool> suspended{false};
     bool createdSuspended = false;
     std::atomic<int> schedPolicy{1};
+    int inheritSched = 4;
     void* wakeEvent = nullptr;
     void* stackAddress = nullptr;
     std::size_t stackSize = 0;

@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- [sceOpusCeltDecCreate, sceOpusCeltDecCtl, sceOpusCeltDecDecodeFloat, sceOpusCeltDecDecodeFloatWithPriority, sceOpusCeltDecDecodeWithPriority](../../../core/libs/prx/libSceOpusCeltDec/Export.cpp) (libSceOpusCeltDec) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusCeltDec.c), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim.
+- [sceOpusCeltDecCreate, sceOpusCeltDecCtl](../../../core/libs/prx/libSceOpusCeltDec/Export.cpp) (libSceOpusCeltDec) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusCeltDec.c), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim.
 - [sceOpusCeltDecTerminate](../../../core/libs/prx/libSceOpusCeltDec/Export.cpp): the non-null path forwards the AJM finalization result, but the null path returns without setting the return register. Its source return type cannot be established from this callee alone. The existing integer return is retained.
 
 ### Functional

@@ -55,6 +55,7 @@ endif()
 
 option(ANYPS5_ENABLE_SPIRV_TOOLS "Enable SPIRV-Tools validation and optimization" OFF)
 option(ANYPS5_ENABLE_ASAN "Build Linux targets with AddressSanitizer and use an ASan-compatible guest arena range" OFF)
+option(ANYPS5_ENABLE_TSAN "Build Linux targets with ThreadSanitizer" OFF)
 option(APS5_ENABLE_TIMING_LOG "Write frame timings asynchronously to frame-timing.log" OFF)
 option(APS5_ENABLE_TRACY "Build the Tracy profiler client and report performance timer scopes as Tracy zones" OFF)
 option(ANYPS5_USE_SYSTEM_DEPS "Resolve SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools from the system instead of the bundled submodules" OFF)
@@ -76,6 +77,18 @@ if(NOT ANYPS5_CXX_LINKS_STANDARD_LIBRARY)
         "Supported toolchains are listed in docs/dev/BUILD.md.")
 endif()
 
+if(ANYPS5_ENABLE_ASAN AND ANYPS5_ENABLE_TSAN)
+    message(FATAL_ERROR "ANYPS5_ENABLE_ASAN and ANYPS5_ENABLE_TSAN cannot be combined")
+endif()
+if(ANYPS5_ENABLE_TSAN)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(FATAL_ERROR "ANYPS5_ENABLE_TSAN is supported only on Linux")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+        message(FATAL_ERROR "ANYPS5_ENABLE_TSAN requires GCC or Clang")
+    endif()
+endif()
+
 if(ANYPS5_ENABLE_ASAN)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
         message(FATAL_ERROR "ANYPS5_ENABLE_ASAN is supported only on Linux")
@@ -86,6 +99,10 @@ if(ANYPS5_ENABLE_ASAN)
     add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address)
     add_compile_definitions(ANYPS5_ENABLE_ASAN=1)
+elseif(ANYPS5_ENABLE_TSAN)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+    add_compile_definitions(ANYPS5_ENABLE_TSAN=1)
 elseif(NOT APPLE)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
 endif()
@@ -169,8 +186,15 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_read_encoding.py)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
+        if(NOT APPLE)
+            add_test(NAME annotate_module COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
+            set_tests_properties(annotate_module PROPERTIES TIMEOUT 20)
+        endif()
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
+        add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
         foreach(shard RANGE 0 11)
             if(shard EQUAL 0)
                 set(conventions_test_name conventions_function_bodies)
@@ -213,6 +237,12 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
         add_test(NAME configure_seed_parsing COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ChecksParsingTests)
+        add_test(NAME vulkan_validation_gate_reports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ReportTests)
+        add_test(NAME vulkan_validation_gate_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py IntegrationTests)
+        add_test(NAME vulkan_validation_gate_attribution COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py AttributionTests)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
@@ -255,7 +285,7 @@ if(BUILD_TESTING)
             string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
             add_test(NAME check_compile_modes_${test_case} COMMAND ${Python3_EXECUTABLE}
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_modes.py" CheckCompileModeTests.${test_case})
-            set_tests_properties(check_compile_modes_${test_case} PROPERTIES TIMEOUT 30)
+            set_tests_properties(check_compile_modes_${test_case} PROPERTIES TIMEOUT 60)
         endforeach()
         add_test(NAME trace_digest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py)
@@ -290,7 +320,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_preprocessor.py)
         set_tests_properties(check_compile_preprocessor PROPERTIES TIMEOUT 20)
         add_test(NAME check_compile COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py CheckCompileTests)
+        add_test(NAME check_compile_outputs COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py CheckCompileOutputTests)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
@@ -370,6 +402,8 @@ if(NOT ANYPS5_USE_SYSTEM_DEPS)
         set_target_properties(freetype PROPERTIES SOURCES "${freetypeSources}")
     endif()
 endif()
+
+include(cmake/Jxr.cmake)
 
 set(LIBUSB_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(LIBUSB_INSTALL_TARGETS OFF CACHE BOOL "" FORCE)

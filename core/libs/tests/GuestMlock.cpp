@@ -35,7 +35,7 @@ static void RequireLockAllUnsupported(int flags) {
     Require(rejected);
 }
 
-#if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN)
+#if defined(__linux__) && !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
 #define HAS_LOCKED_KILOBYTES
 static std::size_t LockedKilobytes() {
     std::ifstream status("/proc/self/status");
@@ -125,7 +125,7 @@ int main() {
 
     void* reserved = nullptr;
     Require(sceKernelReserveVirtualRange(&reserved, page, 0, 0) == 0);
-#ifndef ANYPS5_ENABLE_ASAN
+#if !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
     *__error_nid_postfix() = 0;
     Require(mlock_nid_postfix(reserved, page) == -1 && *__error_nid_postfix() == 12);
 #endif
@@ -135,7 +135,7 @@ int main() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page) == 0);
 
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), length) == 0);
-#ifndef ANYPS5_ENABLE_ASAN
+#if !defined(ANYPS5_ENABLE_ASAN) && !defined(ANYPS5_ENABLE_TSAN)
     *__error_nid_postfix() = 0;
     Require(mlock_nid_postfix(mapped, page) == -1 && *__error_nid_postfix() == 12);
     *__error_nid_postfix() = 0;

@@ -1,11 +1,13 @@
 #include <cstdio>
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
@@ -314,12 +316,32 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
     auto fixed = compare == 0 || compare == 7 ? 0u : face.compareMask;
     std::uint32_t invertMask = 0;
     std::uint32_t inverted = 0;
+    std::uint32_t logicMask = 0;
+    const auto logic = [](std::uint32_t op) { return op == 10 || op == 11 || op == 12 || op == 15; };
     const auto convert = [&](std::uint32_t op, bool testFailed) {
         if (face.writeMask == 0) return VK_STENCIL_OP_KEEP;
         char detail[112];
-        if (opValExport && ((op == 4 && !opValReference) || op == 5 || op == 6 || op == 8 || op == 9)) {
+        if (opValExport && ((op == 4 && !opValReference) || (op >= 5 && op != 7))) {
             std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operation %u with a pixel shader that exports the stencil operation value is unsupported", op);
             throw std::runtime_error(detail);
+        }
+        if (logic(op)) {
+            const auto bits = (op == 11 || op == 12 ? opValue : ~opValue) & face.writeMask;
+            if (bits == 0) return VK_STENCIL_OP_KEEP;
+            if (logicMask != 0 && logicMask != bits) {
+                std::snprintf(detail, sizeof(detail), "AGC graphics: stencil logic operations on write masks 0x%02x and 0x%02x are unsupported", logicMask, bits);
+                throw std::runtime_error(detail);
+            }
+            logicMask = bits;
+            if (op != 11) return op == 10 ? VK_STENCIL_OP_ZERO : VK_STENCIL_OP_INVERT;
+            if (testValExport) throw std::runtime_error("AGC graphics: stencil OR is unsupported with a pixel shader that exports the stencil test value");
+            if ((~reference & fixed & bits) != 0) {
+                std::snprintf(detail, sizeof(detail), "AGC graphics: stencil OR of 0x%02x against test value 0x%02x (masks 0x%02x/0x%02x) is unsupported", opValue, test, face.compareMask, face.writeMask);
+                throw std::runtime_error(detail);
+            }
+            reference |= bits;
+            fixed |= bits;
+            return VK_STENCIL_OP_REPLACE;
         }
         switch (op) {
             case 0: return VK_STENCIL_OP_KEEP;
@@ -376,6 +398,15 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
         const auto active = ((ops & 0xfu) != 0u) + (((ops >> 4u) & 0xfu) != 0u) + (((ops >> 8u) & 0xfu) != 0u);
         if (inverted != active) throw std::runtime_error("AGC graphics: a stencil replacement drawn as an inversion beside another stencil operation is unsupported");
         face.writeMask = invertMask;
+    }
+    if (logicMask != 0) {
+        const auto other = [&](std::uint32_t op) { return op != 0 && !logic(op); };
+        if ((other(ops & 0xfu) || other((ops >> 4u) & 0xfu) || other((ops >> 8u) & 0xfu)) && logicMask != face.writeMask) {
+            char detail[128];
+            std::snprintf(detail, sizeof(detail), "AGC graphics: stencil operations 0x%03x combine a logic operation on write mask 0x%02x with write mask 0x%02x", ops & 0xfffu, logicMask, face.writeMask);
+            throw std::runtime_error(detail);
+        }
+        face.writeMask = logicMask;
     }
     face.reference = reference;
     Require(!opValReference || compare == 0 || compare == 7 || face.compareMask == 0, "a stencil compare against the test value is unsupported with a pixel shader that exports the stencil operation value");
@@ -953,12 +984,17 @@ struct DecodedColorFormat {
 
 const char* PackedColorTargetName(ShaderRecompiler::ColorExportPacking packing) {
     if (packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4) return "4_4_4_4 unorm";
+    if (packing == ShaderRecompiler::ColorExportPacking::Uint) return "unsigned integer";
     return packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "11_11_10 float" : "10_11_11 unorm";
+}
+
+bool WordPacked(ShaderRecompiler::ColorExportPacking packing) {
+    return packing == ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 || packing == ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4;
 }
 
 // CB_COLOR_INFO FORMAT / NUMBER_TYPE / COMP_SWAP to a Vulkan attachment format. AMD formats list
 // components from the least significant bits, as Vulkan's non-packed formats do.
-DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number, std::uint32_t swap) {
+DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t number, std::uint32_t swap) {
     constexpr std::uint32_t unorm = 0, snorm = 1, sint = 5, srgb = 6, floating = 7;
     constexpr std::uint32_t uint = 4;
     const auto fail = [&]() -> DecodedColorFormat {
@@ -1202,44 +1238,24 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     validate(!vertexWorkgroup || ((value & 0x02002020u) == 0x2000u && !tessellation), "a vertex program that needs a workgroup requires PRIMGEN_EN without GS_EN, PRIMGEN_PASSTHRU_EN or tessellation");
     const bool geometry = (value & 0x20u) != 0 || vertexWorkgroup;
     validate(tessellation == ((value & 4u) != 0), "Patch topology and HS_EN disagree");
-    validate(!tessellation || !geometry, "combined tessellation and geometry is unsupported by the reference path");
-    const auto path = tessellation ? ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
+    const auto path = tessellation ? geometry ? ShaderPath::TessellationGeometry : ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
     ShaderStages result{path, value, (value & 0x00400000u) != 0 ? 32u : 64u, (read(queue.context, 0x1b6) & 0x8000u) != 0 ? 32u : 64u, {}, {}};
+    result.hullWaveSize = (value & 0x00200000u) != 0 ? 32u : 64u;
     APS5_LOG_OUT_DEBUG("DecodeShaderStages value=0x%x primitive=%u path=%u vertexWave=%u", value, primitive, static_cast<unsigned>(result.path), result.vertexWaveSize);
-    if (path == ShaderPath::Vertex) {
-        validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
-        validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
-    } else if (path == ShaderPath::Tessellation) {
-        validate((value & 0x00600020u) == 0, "wave32 tessellation or geometry amplification is unsupported");
-        validate((value & ~0x0207ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
-        const auto config = read(queue.context, 0x2d6);
-        const auto parameters = read(queue.context, 0x2db);
-        const auto primitiveGroup = find(queue.userConfig, 0x25b, RegisterBank::UserConfig);
-        ShaderRecompiler::TessellationConfiguration tess{(config >> 8u) & 0x3fu, (config >> 14u) & 0x3fu, parameters & 3u, (parameters >> 2u) & 7u, (parameters >> 5u) & 7u, config & 0xffu, primitiveGroup == queue.userConfig.end() ? 0u : primitiveGroup->second & 0x1ffu, primitiveGroup != queue.userConfig.end() && (primitiveGroup->second & 0x40000u) != 0u};
-        validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 && tess.outputControlPoints <= 32, "invalid tessellation control-point counts");
-        validate(tess.patchesPerGroup != 0, "VGT_LS_HS_CONFIG.NUM_PATCHES is zero");
-        if ((parameters & ~0x000600ffu) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
-        if (!((tess.domain == 1 || tess.domain == 2) && (tess.partitioning == 0 || tess.partitioning == 2 || tess.partitioning == 3) && (tess.outputTopology == 2 || tess.outputTopology == 3))) validate(false, tessellationMessage(config, parameters, tess).c_str());
-        result.minTessellationLevel = readFloat(queue.context, 0x287);
-        result.maxTessellationLevel = readFloat(queue.context, 0x286);
-        Require(result.minTessellationLevel >= 0.0f && result.minTessellationLevel <= 63.0f && result.minTessellationLevel <= result.maxTessellationLevel && result.maxTessellationLevel >= 1.0f, "tessellation level clamps need 0 <= VGT_HOS_MIN_TESS_LEVEL <= 63, VGT_HOS_MAX_TESS_LEVEL >= 1 and the minimum at most the maximum");
-        result.tessellation = tess;
-    } else {
-        const bool fastLaunch = ((value >> 19u) & 3u) == 1u;
-        validate((value & ~(fastLaunch ? 0x004fec30u : 0x0047ec30u)) == 0, "unsupported geometry routing, fast launch or wave-ID state");
+    const auto meshConfiguration = [&](std::uint32_t inputPrimitive, bool fastLaunch) {
         const auto group = read(queue.userConfig, 0x25b, RegisterBank::UserConfig);
         const auto vertices = (group >> 9u) & 0x1ffu;
         const auto primitives = group & 0x1ffu;
-        validate(!fastLaunch || (!vertexWorkgroup && primitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
+        validate(!fastLaunch || (!vertexWorkgroup && inputPrimitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
         const auto maxVertices = read(queue.context, 0x1ff);
         const auto verticesPerPrimitive = vertexWorkgroup ? 3u : read(queue.context, 0x2ce);
         const auto outputType = read(queue.context, 0x29b);
         validate(outputType == 2 || ((outputType == 0 || outputType == 1) && !vertexWorkgroup), "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a point list or line strip from a geometry program, is unsupported");
         const auto outputSize = outputType == 0 ? 1u : outputType == 1 ? 2u : 3u;
-        validate((primitive == 1 || primitive == 2 || primitive == 4 || primitive == 5 || primitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
-        const auto inputSize = primitive == 1 ? 1u : primitive == 2 ? 2u : 3u;
+        validate((inputPrimitive == 1 || inputPrimitive == 2 || inputPrimitive == 4 || inputPrimitive == 5 || inputPrimitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
+        const auto inputSize = inputPrimitive == 1 ? 1u : inputPrimitive == 2 ? 2u : 3u;
         validate(vertices >= inputSize && maxVertices != 0 && (!vertexWorkgroup || maxVertices >= inputSize) && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
-        const auto inputStep = primitive == 5 || primitive == 6 ? 1u : inputSize;
+        const auto inputStep = inputPrimitive == 5 || inputPrimitive == 6 ? 1u : inputSize;
         const auto outputLimit = vertexWorkgroup ? (maxVertices - inputSize) / inputStep + 1u : maxVertices / verticesPerPrimitive;
         const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, outputLimit});
         validate(groupPrimitives != 0, "geometry subgroup contains no primitives");
@@ -1252,9 +1268,52 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, maxPrimitives});
         const auto raster = find(queue.context, 0x205);
         const auto provokingVertex = raster != queue.context.end() && (raster->second & (1u << 19u)) != 0 ? outputSize - 1u : 0u;
-        result.mesh = ShaderRecompiler::MeshConfiguration{primitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
+        return ShaderRecompiler::MeshConfiguration{inputPrimitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
+    };
+    if (path == ShaderPath::Vertex) {
+        validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
+        validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
+    } else if (path == ShaderPath::Tessellation || path == ShaderPath::TessellationGeometry) {
+        if (path == ShaderPath::Tessellation) validate((value & ~0x0267ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
+        else validate((value & ~0x0067ed2du) == 0 && (value & 0x02002000u) == 0x2000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation and geometry routing");
+        const auto config = read(queue.context, 0x2d6);
+        const auto parameters = read(queue.context, 0x2db);
+        const auto primitiveGroup = find(queue.userConfig, 0x25b, RegisterBank::UserConfig);
+        ShaderRecompiler::TessellationConfiguration tess{(config >> 8u) & 0x3fu, (config >> 14u) & 0x3fu, parameters & 3u, (parameters >> 2u) & 7u, (parameters >> 5u) & 7u, config & 0xffu, primitiveGroup == queue.userConfig.end() ? 0u : primitiveGroup->second & 0x1ffu, primitiveGroup != queue.userConfig.end() && (primitiveGroup->second & 0x40000u) != 0u};
+        validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 && tess.outputControlPoints <= 32, "invalid tessellation control-point counts");
+        validate(tess.patchesPerGroup != 0, "VGT_LS_HS_CONFIG.NUM_PATCHES is zero");
+        if ((parameters & ~0x000600ffu) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
+        if (!((tess.domain == 1 || tess.domain == 2) && (tess.partitioning == 0 || tess.partitioning == 2 || tess.partitioning == 3) && (tess.outputTopology == 2 || tess.outputTopology == 3))) validate(false, tessellationMessage(config, parameters, tess).c_str());
+        result.minTessellationLevel = readFloat(queue.context, 0x287);
+        result.maxTessellationLevel = readFloat(queue.context, 0x286);
+        Require(result.minTessellationLevel >= 0.0f && result.minTessellationLevel <= 63.0f && result.minTessellationLevel <= result.maxTessellationLevel && result.maxTessellationLevel >= 1.0f, "tessellation level clamps need 0 <= VGT_HOS_MIN_TESS_LEVEL <= 63, VGT_HOS_MAX_TESS_LEVEL >= 1 and the minimum at most the maximum");
+        result.tessellation = tess;
+        if (path == ShaderPath::TessellationGeometry) result.tessellationGeometry = meshConfiguration(4u, false);
+    } else {
+        const bool fastLaunch = ((value >> 19u) & 3u) == 1u;
+        validate((value & ~(fastLaunch ? 0x004fec30u : 0x0047ec30u)) == 0, "unsupported geometry routing, fast launch or wave-ID state");
+        result.mesh = meshConfiguration(primitive, fastLaunch);
     }
     return result;
+}
+
+std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage) {
+    if (stage == ShaderRecompiler::ShaderStage::Fragment) return stages.fragmentWaveSize;
+    if (stage == ShaderRecompiler::ShaderStage::Local || stage == ShaderRecompiler::ShaderStage::TessellationControl) return stages.hullWaveSize;
+    return stages.vertexWaveSize;
+}
+
+std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage) {
+    if (stages.mesh) return stages.mesh;
+    if (stage == ShaderRecompiler::ShaderStage::TessellationEvaluation || stage == ShaderRecompiler::ShaderStage::Mesh) return stages.tessellationGeometry;
+    return std::nullopt;
+}
+
+std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset, bool depthRemap) {
+    const bool preRasterization = pushOffset < PipelinePushSlotBytes;
+    if (stages.mesh || (stages.tessellationGeometry && preRasterization)) return ShaderRecompiler::MeshDrawPushOffsetBytes;
+    if (stages.tessellation && preRasterization) return ShaderRecompiler::TessellationLevelPushOffsetBytes;
+    return depthRemap ? ShaderRecompiler::DepthRemapPushOffsetBytes : PipelinePushSlotBytes;
 }
 
 bool DepthResummarizeDrawsNothing(const QueueState& queue) {
@@ -1324,6 +1383,27 @@ ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t co
     blend.srcAlphaBlendFactor = routing->factors[2];
     blend.dstAlphaBlendFactor = routing->factors[3];
     return {blend, routing->code};
+}
+
+void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel) {
+    if (!state.depthBoundsTest || !state.depth || context.depthBounds) return;
+    ValidateDepthBounds(context, state);
+    Require(!context.depthRangeUnrestricted, "the depth bounds test without the depthBounds feature is emulated only where stored depth stays in [0, 1]");
+    Require(state.depth->format == VK_FORMAT_D32_SFLOAT || state.depth->format == VK_FORMAT_D32_SFLOAT_S8_UINT, "the depth bounds test on a normalized depth target needs the depthBounds feature");
+    Require(!state.depthTest && !state.depthWrite, "the depth bounds test with depth testing needs the depthBounds feature");
+    Require(!pixel.posZ && !pixel.depthExportEnable, "the depth bounds test from a pixel program that reads or exports depth needs the depthBounds feature");
+    const auto keepsOnFail = [](const VkStencilOpState& face) { return (face.writeMask & 0xffu) == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };
+    Require(!state.stencilTest || (keepsOnFail(state.stencilFront) && keepsOnFail(state.stencilBack)), "the depth bounds test with a stencil test that writes on a failed test needs the depthBounds feature");
+    const bool upper = state.minDepthBounds <= 0.0f;
+    Require(upper || state.maxDepthBounds >= 1.0f, "the depth bounds test with both bounds inside (0, 1) needs the depthBounds feature");
+    const float bound = upper ? state.maxDepthBounds : state.minDepthBounds;
+    state.depthBoundsTest = false;
+    state.depthTest = true;
+    state.depthCompare = upper ? VK_COMPARE_OP_GREATER_OR_EQUAL : VK_COMPARE_OP_LESS_OR_EQUAL;
+    state.depthBias = false;
+    state.depthBiasPerFace = false;
+    state.viewport.minDepth = bound;
+    state.viewport.maxDepth = bound;
 }
 
 void ApplyDepthRemap(const Context& context, State& state) {
@@ -1533,6 +1613,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         if (slotExport == 7 && ((read(cx, 0x31c + slot * 0xfu) >> 8u) & 7u) != 4u) throw std::runtime_error("AGC graphics: color export format 7 (UINT16_ABGR) into a target that is not unsigned integer is unsupported");
         color.exportIndex = index;
         color.uintExport = slotExport == 7;
+        if (color.uintExport && color.packing == ShaderRecompiler::ColorExportPacking::Uint) color.packing = ShaderRecompiler::ColorExportPacking::None;
         if (color.samples == 1 && result.samples > 1 && result.colors.empty() && !result.depth && (read(cx, 0x292) & 1u) == 0) {
             const auto sampleInputs = read(cx, 0x1b3) & read(cx, 0x1b4) & (ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage));
             Require(sampleInputs == 0 && (read(cx, 0x203) & 0x100u) == 0, "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index or coverage input, or a sample-mask export");
@@ -1690,7 +1771,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 if ((weighted(state.colorBlendOp) && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) || (weighted(state.alphaBlendOp) && (constantColor(state.srcAlphaBlendFactor) || constantColor(state.dstAlphaBlendFactor)))) throw std::runtime_error("AGC graphics: blending into an 8_8 color target with the alternate component order with a constant color factor, which Vulkan applies to the second channel with the green blend constant instead of the alpha one, is not implemented");
             }
         }
-        if (color.packing != ShaderRecompiler::ColorExportPacking::None) {
+        if (color.packing == ShaderRecompiler::ColorExportPacking::Uint) state.blendEnable = VK_FALSE;
+        if (WordPacked(color.packing)) {
             const std::string packed = std::string(color.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "an " : "a ") + PackedColorTargetName(color.packing);
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
             if (slotExport == 5 || slotExport == 6) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into " + packed + " target is unsupported");
@@ -1714,6 +1796,10 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                     result.perSampleShading = true;
                 }
             }
+        }
+        if (color.packing == ShaderRecompiler::ColorExportPacking::Uint) {
+            const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
+            if (slotExport != 1 && slotExport != 2 && slotExport != 3 && slotExport != 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
         }
         if (state.blendEnable && !reversed && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {
             const auto addition = [](VkBlendOp op) { return op == VK_BLEND_OP_ADD || op == VK_BLEND_OP_SUBTRACT || op == VK_BLEND_OP_REVERSE_SUBTRACT; };
@@ -1917,6 +2003,12 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dccPipeAligned = color.dccPipeAligned;
     return surface;
 }
+DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number, std::uint32_t swap) {
+    auto decoded = DecodeColorFormatRaw(format, number, swap);
+    if (number == 4u && decoded.packing == ShaderRecompiler::ColorExportPacking::None) decoded.packing = ShaderRecompiler::ColorExportPacking::Uint;
+    return decoded;
+}
+
 
 ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allowMultisampleDcc) {
     const auto stride = slot * 0xfu;
@@ -2025,7 +2117,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     color.format = decoded.format;
     color.componentMapping = decoded.componentMapping;
     color.packing = decoded.packing;
-    if (color.packing != ShaderRecompiler::ColorExportPacking::None && (info & 0x10000000u) != 0) throw std::runtime_error("AGC graphics: DCC-compressed " + std::string(PackedColorTargetName(color.packing)) + " color targets are unsupported");
+    if (WordPacked(color.packing) && (info & 0x10000000u) != 0) throw std::runtime_error("AGC graphics: DCC-compressed " + std::string(PackedColorTargetName(color.packing)) + " color targets are unsupported");
     Require(color.packing != ShaderRecompiler::ColorExportPacking::Unorm10_11_11 || (info & 0x00040000u) == 0, "truncating (ROUND_MODE) 10_11_11 unorm color targets are unsupported");
     Require(color.packing != ShaderRecompiler::ColorExportPacking::Unorm4_4_4_4 || (info & 0x00040000u) == 0, "truncating (ROUND_MODE) 4_4_4_4 unorm color targets are unsupported");
     Require(color.packing != ShaderRecompiler::ColorExportPacking::Float11_11_10 || (info & 0x00040000u) != 0, "rounding (ROUND_MODE 0) 11_11_10 float color targets are unsupported");
@@ -2197,7 +2289,7 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         Require(destination.samples == 1, "CB resolve into a multisampled target is unsupported");
         Require(destination.cmaskAddress == 0, "CB resolve into a fast-clear color target is unsupported (the resolve does not update its CMASK)");
         Require(source.format == destination.format && source.extent.width == destination.extent.width && source.extent.height == destination.extent.height, "CB resolve between different formats or extents is unsupported");
-        if (source.packing != ShaderRecompiler::ColorExportPacking::None) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
+        if (WordPacked(source.packing)) throw std::runtime_error("AGC graphics: CB resolves of " + std::string(PackedColorTargetName(source.packing)) + " color targets are unsupported");
         requireCovered(destination);
         pass.source = source;
         pass.targets.push_back(destination);

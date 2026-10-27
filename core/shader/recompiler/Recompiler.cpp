@@ -108,12 +108,26 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
     return request.target.subgroupSize;
 }
 
-RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code, bool mergedHull) {
+bool CapturesGeometryInput(const RecompileRequest& request) {
+    return request.shader.stage == ShaderStage::TessellationEvaluation && request.graphics && request.graphics->mesh;
+}
+
+RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code, bool mergedHull, bool vertexHalf) {
     static constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
     if (stage == ShaderStageKind::Local && mergedHull) {
         RdnaProgram program;
         program.code = EndProgram;
         program.instructions.push_back(DecodeRdnaInstruction(0u, EndProgram, 0u));
+        return program;
+    }
+    if (vertexHalf) {
+        auto program = RdnaInstructionDecoder{}.Decode(code);
+        const auto guard = std::ranges::find_if(program.instructions, [](const RdnaInstruction& instruction) { return instruction.op == RdnaOpcode::SCbranchExecz; });
+        if (guard == program.instructions.end()) throw std::runtime_error("the merged domain and geometry program has no s_cbranch_execz around its vertex half");
+        const auto end = std::ranges::find_if(program.instructions, [&](const RdnaInstruction& instruction) { return instruction.programCounter == guard->branchTarget; });
+        if (end == program.instructions.end() || end <= guard) throw std::runtime_error("the vertex half of the merged domain and geometry program ends outside the program");
+        *end = DecodeRdnaInstruction(end->programCounter, EndProgram, 0u);
+        program.instructions.erase(std::next(end), program.instructions.end());
         return program;
     }
     if (stage != ShaderStageKind::Local) return RdnaInstructionDecoder{}.Decode(code);
@@ -164,7 +178,7 @@ std::atomic<std::uint64_t> frontEndBuilds{0};
 struct PreparedControlFlow {
     PreparedControlFlow(const RecompileRequest& request, const SwappcInfo& swappcInfo)
         : stage(request.shader.stage), mergedHull(MergedHullStage(request)), fallbacks(swappcInfo.linkedCallFallbacks.begin(), swappcInfo.linkedCallFallbacks.end()), swappc(WithFallbacks(swappcInfo, fallbacks)), code(request.shader.code.begin(), request.shader.code.end()),
-          decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, mergedHull)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
+          vertexHalf(CapturesGeometryInput(request)), decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, mergedHull, vertexHalf)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
         Structurizer{}.Structurize(cfg);
     }
 
@@ -172,7 +186,7 @@ struct PreparedControlFlow {
     PreparedControlFlow& operator=(const PreparedControlFlow&) = delete;
 
     bool Matches(const RecompileRequest& request, const SwappcInfo& swappcInfo) const {
-        return stage == request.shader.stage && mergedHull == MergedHullStage(request) && swappc.fetchCallAllowed == swappcInfo.fetchCallAllowed &&
+        return stage == request.shader.stage && mergedHull == MergedHullStage(request) && vertexHalf == CapturesGeometryInput(request) && swappc.fetchCallAllowed == swappcInfo.fetchCallAllowed &&
                swappc.userDataBaseRegister == swappcInfo.userDataBaseRegister && swappc.userDataCount == swappcInfo.userDataCount && swappc.waveSize == swappcInfo.waveSize &&
                std::ranges::equal(fallbacks, swappcInfo.linkedCallFallbacks) && std::ranges::equal(code, request.shader.code);
     }
@@ -187,6 +201,7 @@ struct PreparedControlFlow {
     std::vector<std::uint32_t> fallbacks;
     SwappcInfo swappc;
     std::vector<std::uint32_t> code;
+    bool vertexHalf;
     RdnaProgram decoded;
     ControlFlowGraph cfg;
 };
@@ -369,6 +384,7 @@ struct ResultMemoEntry {
     std::shared_ptr<const RecompileResult> result;
     std::uint64_t used = 0;
     std::shared_ptr<const MemoPatch> patch;
+    std::uint64_t bytes = 0;
 };
 
 struct EmissionFailure {
@@ -399,7 +415,6 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::vector<EmissionFailure> emissionFailures;
     std::unique_ptr<ResultMemoTable> memo;
     std::unique_ptr<ResultMemoTable> maskedMemo;
-    std::uint64_t memoClock = 0;
 };
 
 namespace {
@@ -618,6 +633,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
     targetOptions.spannedWaves = request.target.spannedWaves;
     targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;
+    targetOptions.exactRobustLoads = request.target.exactRobustLoads;
     targetOptions.float32FlushToZero = HardwareFloat32Flush(request);
     targetOptions.float32DenormPreserve = request.target.float32DenormPreserve;
     targetOptions.fusedExactArithmetic = request.target.fusedExactArithmetic;
@@ -689,7 +705,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.windowLaneGuards = 0;
     for (const auto& block : program.Blocks()) result.windowLaneGuards += static_cast<std::uint32_t>(std::ranges::count_if(block->Instructions(), [](const IrValue* value) { return value->Opcode() == IrOpcode::WindowLaneGuard; }));
-    result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
+    result.descriptorFaults = 0;
+    for (const auto& block : program.Blocks()) result.descriptorFaults += static_cast<std::uint32_t>(std::ranges::count_if(block->Instructions(), [](const IrValue* value) { return value->Opcode() == IrOpcode::DescriptorFault; }));    result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
@@ -1091,6 +1108,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .runtimeImageResources = artifact.runtimeImageResources,
         .registrationModule = artifact.registrationModule,
         .bdaAbiVersion = artifact.bdaAbiVersion,
+        .windowLaneGuards = artifact.windowLaneGuards,
+        .descriptorFaults = artifact.descriptorFaults,
         .runtimeAbiVersion = artifact.runtimeAbiVersion,
         .vertexInputs = artifact.vertexInputs,
         .vertexOffsetSgpr = artifact.vertexOffsetSgpr,
@@ -1455,8 +1474,9 @@ ResultMemoEntry* memoSet(const std::unique_ptr<ResultMemoTable>& table, std::uin
 }
 
 struct ResultMemoCounters {
-    std::atomic<std::uint64_t> hits{0}, patched{0}, misses{0}, evictions{0}, populateNanoseconds{0}, patchNanoseconds{0}, mismatches{0};
+    std::atomic<std::uint64_t> hits{0}, patched{0}, misses{0}, evictions{0}, trimmed{0}, populateNanoseconds{0}, patchNanoseconds{0}, mismatches{0};
     std::atomic<std::int64_t> lastReport{0};
+    std::atomic<std::uint64_t> clock{0}, heldBytes{0}, heldEntries{0};
 };
 
 void applyMemoPatch(RecompileResult& result, const MemoPatch& patch, const ResourceSnapshot& snapshot) {
@@ -1503,6 +1523,123 @@ ResultMemoCounters& resultMemoCounters() {
     return counters;
 }
 
+std::uint64_t nextMemoUse() {
+    return resultMemoCounters().clock.fetch_add(1, std::memory_order_relaxed) + 1u;
+}
+
+template <typename T>
+std::uint64_t vectorBytes(const std::vector<T>& values) {
+    return static_cast<std::uint64_t>(values.capacity()) * sizeof(T);
+}
+
+std::uint64_t vectorBytes(const std::vector<bool>& values) {
+    return static_cast<std::uint64_t>(values.capacity() + 7u) / 8u;
+}
+
+std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
+    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead);
+}
+
+std::uint64_t resultBytes(const RecompileResult& result) {
+    const auto bytes = [](const auto& values) { return vectorBytes(values); };
+    auto total = static_cast<std::uint64_t>(sizeof(RecompileResult)) + bytes(result.vertexInputPatches) + bytes(result.runtimeImageResources) + bytes(result.vertexInputs) + bytes(result.parameterExports) + bytes(result.fragmentParameters) + bytes(result.stencilReferences) + bytes(result.shaderDataUserWords) + bytes(result.specialization) + bytes(result.bindings) + bytes(result.pushConstants) + bytes(result.vertexAttributes) + bytes(result.imageTablePoison) + bytes(result.imageTableRanges) + bytes(result.imageTableReadRanges);
+    for (const auto& ranges : result.imageTableReadRanges) total += bytes(ranges);
+    for (const auto& binding : result.bindings) total += descriptorBindingBytes(binding);
+    return total;
+}
+
+std::uint64_t patchBytes(const MemoPatch& patch) {
+    auto total = static_cast<std::uint64_t>(sizeof(MemoPatch)) + vectorBytes(patch.buffers) + vectorBytes(patch.userWords);
+    for (const auto& buffer : patch.buffers) total += vectorBytes(buffer.second);
+    return total;
+}
+
+std::atomic<std::uint64_t>& resultMemoBudgetBytes() {
+    static std::atomic<std::uint64_t> budget{[] {
+        const char* value = std::getenv("APS5_RESULT_MEMO_MB");
+        const std::uint64_t megabytes = value == nullptr || *value == '\0' ? 256u : std::strtoull(value, nullptr, 10);
+        return megabytes << 20u;
+    }()};
+    return budget;
+}
+
+std::uint64_t resultMemoBudget() {
+    return resultMemoBudgetBytes().load(std::memory_order_relaxed);
+}
+
+struct ResultMemoRegistry {
+    std::mutex mutex;
+    std::vector<std::weak_ptr<SourceEntry>> sources;
+};
+
+ResultMemoRegistry& resultMemoRegistry() {
+    static ResultMemoRegistry registry;
+    return registry;
+}
+
+std::mutex& resultMemoTrimMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::function<void()>& resultMemoTrimHook() {
+    static std::function<void()> hook;
+    return hook;
+}
+
+void trimResultMemo(std::uint64_t budget) {
+    std::lock_guard trim(resultMemoTrimMutex());
+    auto& counters = resultMemoCounters();
+    for (auto held = counters.heldBytes.load(std::memory_order_relaxed); held > budget; held = counters.heldBytes.load(std::memory_order_relaxed)) {
+        if (auto hook = std::exchange(resultMemoTrimHook(), nullptr)) hook();
+        std::vector<std::shared_ptr<SourceEntry>> sources;
+        {
+            auto& registry = resultMemoRegistry();
+            std::lock_guard lock(registry.mutex);
+            sources.reserve(registry.sources.size());
+            for (const auto& weak : registry.sources) {
+                if (auto source = weak.lock()) sources.push_back(std::move(source));
+            }
+        }
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> stamps;
+        for (const auto& source : sources) {
+            std::lock_guard lock(source->mutex);
+            for (const auto* table : {source->memo.get(), source->maskedMemo.get()}) {
+                if (table == nullptr) continue;
+                for (const auto& entry : *table) {
+                    if (entry.result != nullptr) stamps.emplace_back(entry.used, entry.bytes);
+                }
+            }
+        }
+        if (stamps.empty()) return;
+        std::sort(stamps.begin(), stamps.end());
+        const auto excess = held - budget / 4u * 3u;
+        std::uint64_t freed = 0;
+        std::uint64_t threshold = 0;
+        for (const auto& [used, bytes] : stamps) {
+            threshold = used;
+            freed += bytes;
+            if (freed >= excess) break;
+        }
+        std::uint64_t dropped = 0;
+        for (const auto& source : sources) {
+            std::lock_guard lock(source->mutex);
+            for (auto* table : {source->memo.get(), source->maskedMemo.get()}) {
+                if (table == nullptr) continue;
+                for (auto& entry : *table) {
+                    if (entry.result == nullptr || entry.used > threshold) continue;
+                    counters.heldBytes.fetch_sub(entry.bytes, std::memory_order_relaxed);
+                    counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
+                    counters.trimmed.fetch_add(1, std::memory_order_relaxed);
+                    entry = {};
+                    ++dropped;
+                }
+            }
+        }
+        if (dropped == 0) return;
+    }
+}
+
 void verifyPatchedResult(const RecompileResult& patched, const RecompileResult& full, std::uint64_t variantId) {
     const auto* difference = patchedResultDifference(patched, full);
     if (difference == nullptr) return;
@@ -1526,11 +1663,12 @@ void reportResultMemo() {
     const auto patched = counters.patched.exchange(0, std::memory_order_relaxed);
     const auto misses = counters.misses.exchange(0, std::memory_order_relaxed);
     const auto evictions = counters.evictions.exchange(0, std::memory_order_relaxed);
+    const auto trimmed = counters.trimmed.exchange(0, std::memory_order_relaxed);
     const auto populate = counters.populateNanoseconds.exchange(0, std::memory_order_relaxed);
     const auto patching = counters.patchNanoseconds.exchange(0, std::memory_order_relaxed);
     const auto mismatches = counters.mismatches.exchange(0, std::memory_order_relaxed);
     const auto total = static_cast<double>(hits + patched + misses);
-    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches));
+    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches, %llu trimmed; %llu results held, %.1f MiB\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches), static_cast<unsigned long long>(trimmed), static_cast<unsigned long long>(counters.heldEntries.load(std::memory_order_relaxed)), static_cast<double>(counters.heldBytes.load(std::memory_order_relaxed)) / 1048576.0);
 }
 
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
@@ -1644,7 +1782,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             for (std::size_t way = 0; way < ResultMemoWays; ++way) {
                 auto& entry = set[way];
                 if (entry.result == nullptr || entry.variantId != variantId || entry.hash != hash) continue;
-                entry.used = ++source.memoClock;
+                entry.used = nextMemoUse();
                 counters.hits.fetch_add(1, std::memory_order_relaxed);
                 if (memoHit != nullptr) *memoHit = true;
                 reportResultMemo();
@@ -1663,7 +1801,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             for (std::size_t way = 0; way < ResultMemoWays; ++way) {
                 auto& entry = set[way];
                 if (entry.result == nullptr || entry.variantId != variantId || entry.hash != maskedHash) continue;
-                entry.used = ++source.memoClock;
+                entry.used = nextMemoUse();
                 donor = entry.result;
                 donorPatch = entry.patch;
                 break;
@@ -1687,20 +1825,35 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     }
     result->cacheHit = cacheHit;
     std::shared_ptr<const RecompileResult> shared = std::move(result);
+    const auto bytes = resultBytes(*shared);
     const auto insert = [&](std::unique_ptr<ResultMemoTable>& table, std::uint64_t at, std::uint64_t key, std::shared_ptr<const MemoPatch> recipe, bool count) {
-        if (table == nullptr) table = std::make_unique<ResultMemoTable>();
+        if (table == nullptr) {
+            table = std::make_unique<ResultMemoTable>();
+            if (source.memo == nullptr || source.maskedMemo == nullptr) {
+                auto& registry = resultMemoRegistry();
+                std::lock_guard registryLock(registry.mutex);
+                registry.sources.push_back(source.weak_from_this());
+            }
+        }
         auto* set = memoSet(table, at);
         auto* victim = set;
         for (std::size_t way = 0; way < ResultMemoWays; ++way) {
             auto& entry = set[way];
             if (entry.result != nullptr && entry.variantId == variantId && entry.hash == key) {
-                entry.used = ++source.memoClock;
+                entry.used = nextMemoUse();
                 return entry.result;
             }
             if (entry.used < victim->used) victim = &entry;
         }
-        if (count && victim->result != nullptr) counters.evictions.fetch_add(1, std::memory_order_relaxed);
-        *victim = {variantId, key, shared, ++source.memoClock, std::move(recipe)};
+        if (victim->result != nullptr) {
+            if (count) counters.evictions.fetch_add(1, std::memory_order_relaxed);
+            counters.heldBytes.fetch_sub(victim->bytes, std::memory_order_relaxed);
+            counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
+        }
+        const auto held = bytes + (recipe != nullptr ? patchBytes(*recipe) : 0u);
+        *victim = {variantId, key, shared, nextMemoUse(), std::move(recipe), held};
+        counters.heldBytes.fetch_add(held, std::memory_order_relaxed);
+        counters.heldEntries.fetch_add(1, std::memory_order_relaxed);
         return shared;
     };
     {
@@ -1708,6 +1861,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
         shared = insert(source.memo, index, hash, nullptr, true);
         if (patch != nullptr && patch->valid) static_cast<void>(insert(source.maskedMemo, maskedIndex, maskedHash, patch, false));
     }
+    if (const auto budget = resultMemoBudget(); budget != 0 && counters.heldBytes.load(std::memory_order_relaxed) > budget) trimResultMemo(budget);
     reportResultMemo();
     return shared;
 }
@@ -1777,8 +1931,10 @@ void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
     traced.readTrace = &capture.readTrace;
     ResourceMaterializer{}.Materialize(plan, traced, capture.snapshot);
     auto& other = capture.readTrace.otherReads;
-    std::sort(other.begin(), other.end());
-    other.erase(std::unique(other.begin(), other.end()), other.end());
+    if (other.size() > 1) {
+        std::sort(other.begin(), other.end());
+        other.erase(std::unique(other.begin(), other.end()), other.end());
+    }
 }
 
 }
@@ -1938,6 +2094,20 @@ RecompileResult Recompile(const RecompileRequest& request) {
 std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
     if (memoHit != nullptr) *memoHit = false;
     return recompileReporting(request, [&] { return RecompileImpl(request, capture, memoHit); });
+}
+
+void SetResultMemoBudget(std::uint64_t bytes) {
+    resultMemoBudgetBytes().store(bytes, std::memory_order_relaxed);
+    if (bytes != 0 && resultMemoCounters().heldBytes.load(std::memory_order_relaxed) > bytes) trimResultMemo(bytes);
+}
+
+void SetResultMemoTrimHook(std::function<void()> hook) {
+    std::lock_guard lock(resultMemoTrimMutex());
+    resultMemoTrimHook() = std::move(hook);
+}
+
+std::uint64_t ResultMemoBytes() {
+    return resultMemoCounters().heldBytes.load(std::memory_order_relaxed);
 }
 
 }

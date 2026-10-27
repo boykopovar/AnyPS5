@@ -111,7 +111,9 @@ static void CheckThrowers() {
         {"_Throw_Cpp_error", AsThrower(_ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix), reinterpret_cast<const void*>(1), &systemError, &_ZTISt12system_error_nid_postfix, 2,
             "NSt8__sce_v212system_errorE|invalid argument: invalid argument"},
     };
+    inspectBytes = sizeof(void*);
     for (const auto& test : cases) Run(test);
+    inspectBytes = sizeof(LibcException::ExceptionObject);
 }
 
 static void CheckCopies() {

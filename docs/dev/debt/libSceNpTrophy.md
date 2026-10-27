@@ -3,6 +3,7 @@
 ### Unknown function info
 
 - [sceNpTrophyRegisterContext, sceNpTrophyGetTrophyUnlockState, sceNpTrophyUnlockTrophy](../../../core/libs/prx/libSceNpTrophy/Export.cpp) (libSceNpTrophy, PS4) - the trophy definitions in `TROPCONF.ESFM` are encrypted, so the trophy count is the number of consecutive `TROPnnn.PNG` icons in the title's `/app0/sce_sys/trophy/trophyNN.trp`. Unlocks are kept per user and service label in `_trophy/trophyNN.<user id>` under the working directory, no platinum trophy is reported (`platinumId` is -1), and a locked trophy's icon fails with `TROPHY_NOT_UNLOCKED`. None of it is checked on a console.
+- [sceNpTrophyAbortHandle](../../../core/libs/prx/libSceNpTrophy/Export.cpp) (libSceNpTrophy, PS4) - measured on a PS4 Pro (firmware 10.71): after an abort, `sceNpTrophyGetTrophyUnlockState` and `sceNpTrophyGetGameIcon` through that handle answer 0x80551607, before the not-registered check, and `sceNpTrophyRegisterContext` answers 0x80551607 before the missing trophy package (0x80551626 for a live handle); aborting again answers 0. The other calls that take the handle are assumed to answer 0x80551607 the same way, as `libSceNpTrophy.sprx` of firmware 10.71 maps the service's abort answer to it on the shared request path. On the console `sceNpTrophyRegisterContext` checks the process's NP title id before it reaches the service, so a title without one gets the NP title id error instead; AnyPS5 has no NP title id and does not model that step
 
 ### Functional
 

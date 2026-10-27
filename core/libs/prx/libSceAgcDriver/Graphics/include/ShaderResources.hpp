@@ -401,7 +401,7 @@ private:
         std::size_t mapAllocation = std::numeric_limits<std::size_t>::max();
         std::vector<std::uint32_t> map;
         std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
-        std::vector<std::string> messages;
+        std::vector<std::shared_ptr<const std::string>> messages;
         std::uint32_t elementBase = 0;
         std::uint32_t set = 0;
         std::size_t firstSampler = 0;
@@ -498,6 +498,7 @@ private:
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
     VkDescriptorBufferInfo descriptor(Allocation& allocation);
+    VkDescriptorBufferInfo wholeDwordRange(VkDescriptorBufferInfo info) const;
     void noteReusable();
     void reportDescriptorCaches() const;
     // What a sampled texture was proved current against when the build (or the last full Revalidate)

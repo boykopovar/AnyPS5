@@ -11,6 +11,8 @@
 namespace LibcException {
 struct TypeRecord { const void* const* vtable; const char* name; const TypeRecord* base; };
 
+struct ClassTypeRecord { const void* const* vtable; const char* name; };
+
 struct ExceptionVtable {
     std::ptrdiff_t offset;
     const TypeRecord* type;
@@ -18,6 +20,17 @@ struct ExceptionVtable {
     void (APS5_VABI *deleteObject)(ExceptionObject*);
     const char* (APS5_VABI *what)(const ExceptionObject*);
 };
+
+struct FutureErrorVtable {
+    std::ptrdiff_t offset;
+    const TypeRecord* type;
+    void (APS5_VABI *destroy)(FutureErrorObject*);
+    void (APS5_VABI *deleteObject)(FutureErrorObject*);
+    const char* (APS5_VABI *what)(const FutureErrorObject*);
+    void (APS5_VABI *doraise)(const FutureErrorObject*);
+};
+static_assert(sizeof(ClassTypeRecord) == 0x10);
+static_assert(sizeof(FutureErrorVtable) == 0x30);
 struct Message {
     std::size_t length;
     std::size_t capacity;
@@ -129,6 +142,7 @@ ExceptionObject* Assign(ExceptionObject* object, const ExceptionObject* source) 
 
 static_assert(sizeof(ErrorCode) == 16 && offsetof(ErrorCode, value) == 4 && offsetof(ErrorCode, category) == 8);
 static_assert(sizeof(SystemErrorObject) == 32 && offsetof(SystemErrorObject, code) == 16);
+static_assert(sizeof(FutureErrorObject) == 0x40 && offsetof(FutureErrorObject, message) == 0x8 && offsetof(FutureErrorObject, code) == 0x30);
 struct CppError { int value; const char* message; };
 
 static const char* GenericErrorMessage(int value) {
@@ -220,10 +234,8 @@ static void APS5_VABI CategoryDelete_nid_no_patch(CategoryObject*) {
 }
 static const char* APS5_VABI GenericCategoryName_nid_no_patch(const CategoryObject*) { return "generic"; }
 static const char* APS5_VABI SystemCategoryName_nid_no_patch(const CategoryObject*) { return "system"; }
-static GuestLocale::String* APS5_VABI CategoryMessage_nid_no_patch(GuestLocale::String* result, const CategoryObject*, int value) {
+static GuestLocale::String* FillMessage(GuestLocale::String* result, const char* message) {
     if (!result) throw std::invalid_argument("std::error_category::message: null result");
-    const char* message = GenericErrorMessage(value);
-    if (!message) message = "unknown error";
     const auto length = std::strlen(message);
     const auto capacity = length | std::size_t{15};
     char* storage = length <= 15 ? result->buffer : static_cast<char*>(_Znwm_nid_postfix(capacity + 1));
@@ -234,6 +246,23 @@ static GuestLocale::String* APS5_VABI CategoryMessage_nid_no_patch(GuestLocale::
     result->capacity = capacity;
     return result;
 }
+static const char* FutureErrorMessage(int value) {
+    static constexpr const char* messages[] {"broken promise", "future already retrieved", "promise already satisfied", "no state"};
+    if (value < 1 || value > 4) return nullptr;
+    return messages[value - 1];
+}
+static GuestLocale::String* APS5_VABI CategoryMessage_nid_no_patch(GuestLocale::String* result, const CategoryObject*, int value) {
+    const char* message = GenericErrorMessage(value);
+    if (!message) message = "unknown error";
+    return FillMessage(result, message);
+}
+static GuestLocale::String* APS5_VABI FutureCategoryMessage_nid_no_patch(GuestLocale::String* result, const CategoryObject*, int value) {
+    const char* message = FutureErrorMessage(value);
+    if (!message) message = GenericErrorMessage(value);
+    if (!message) message = "unknown error";
+    return FillMessage(result, message);
+}
+static const char* APS5_VABI FutureCategoryName_nid_no_patch(const CategoryObject*) { return "future"; }
 static ErrorCode APS5_VABI CategoryCondition_nid_no_patch(const CategoryObject* self, int value) { return {0, value, self}; }
 static bool APS5_VABI CategoryEquivalentCondition_nid_no_patch(const CategoryObject* self, int value, const ErrorCode* condition) {
     using Condition = ErrorCode (APS5_VABI *)(const CategoryObject*, int);
@@ -508,6 +537,10 @@ LibcException::TypeRecord _ZTISt14overflow_error_nid_postfix {LibcException::Sin
 LibcException::ExceptionVtable _ZTVSt14overflow_error_nid_postfix {0, &_ZTISt14overflow_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt14overflow_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
 
+LibcException::TypeRecord _ZTISt15underflow_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St15underflow_error", &_ZTISt13runtime_error_nid_postfix};
+LibcException::ExceptionVtable _ZTVSt15underflow_error_nid_postfix {0, &_ZTISt15underflow_error_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
+void APS5_VABI _ZNSt15underflow_errorD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
+
 LibcException::TypeRecord _ZTINSt8ios_base7failureE_nid_postfix {LibcException::SingleTypeVtable + 2, "NSt8ios_base7failureE", &_ZTISt12system_error_nid_postfix};
 LibcException::ExceptionVtable _ZTVNSt8ios_base7failureE_nid_postfix {0, &_ZTINSt8ios_base7failureE_nid_postfix, LibcException::GuestDestroyMessage_nid_no_patch, LibcException::GuestDeleteMessage_nid_no_patch, LibcException::GuestMessageWhat_nid_no_patch};
 void APS5_VABI _ZNSt8ios_base7failureD1Ev_nid_postfix(LibcException::ExceptionObject* self) { LibcException::DestroyMessage(self); }
@@ -633,4 +666,89 @@ const char* APS5_VABI _ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(int value) {
     const char* message = LibcException::GenericErrorMessage(value);
     return message ? message : "unknown error";
 }
+LibcException::ClassTypeRecord _ZTISt14error_category_nid_postfix {LibcException::ClassTypeVtable + 2, "St14error_category"};
+LibcException::TypeRecord _ZTISt22_Future_error_category_nid_postfix {LibcException::SingleTypeVtable + 2, "St22_Future_error_category", &LibcException::GenericCategoryType};
+static void APS5_VABI FutureCategoryDelete_nid_no_patch(LibcException::CategoryObject*) {
+    throw std::invalid_argument("std::error_category: the future category object is not heap allocated");
+}
+extern const void* const _ZTVSt22_Future_error_category_nid_postfix[] {
+    nullptr, &_ZTISt22_Future_error_category_nid_postfix,
+    reinterpret_cast<const void*>(LibcException::CategoryDestroy_nid_no_patch), reinterpret_cast<const void*>(FutureCategoryDelete_nid_no_patch),
+    reinterpret_cast<const void*>(LibcException::FutureCategoryName_nid_no_patch), reinterpret_cast<const void*>(LibcException::FutureCategoryMessage_nid_no_patch),
+    reinterpret_cast<const void*>(LibcException::CategoryCondition_nid_no_patch),
+    reinterpret_cast<const void*>(LibcException::CategoryEquivalentCondition_nid_no_patch),
+    reinterpret_cast<const void*>(LibcException::CategoryEquivalentCode_nid_no_patch)
+};
+static const LibcException::CategoryObject FutureCategory {_ZTVSt22_Future_error_category_nid_postfix + 2};
+const LibcException::CategoryObject* APS5_VABI _ZSt15future_categoryv_nid_postfix() {
+    return &FutureCategory;
+}
+LibcException::ErrorCode APS5_VABI _ZNKSt14error_category23default_error_conditionEi_nid_postfix(const LibcException::CategoryObject* self, int value) {
+    return LibcException::CategoryCondition_nid_no_patch(self, value);
+}
+bool APS5_VABI _ZNKSt14error_category10equivalentEiRKSt15error_condition_nid_postfix(const LibcException::CategoryObject* self, int value, const LibcException::ErrorCode* condition) {
+    return LibcException::CategoryEquivalentCondition_nid_no_patch(self, value, condition);
+}
+bool APS5_VABI _ZNKSt14error_category10equivalentERKSt10error_codei_nid_postfix(const LibcException::CategoryObject* self, const LibcException::ErrorCode* code, int value) {
+    return LibcException::CategoryEquivalentCode_nid_no_patch(self, code, value);
+}
+void APS5_VABI _ZNSt14error_categoryD2Ev_nid_postfix(LibcException::CategoryObject*) {}
+LibcException::TypeRecord _ZTISt12future_error_nid_postfix {LibcException::SingleTypeVtable + 2, "St12future_error", &_ZTISt11logic_error_nid_postfix};
+static void DestroyFutureErrorString(GuestLocale::String* message) {
+    if (message->capacity > 15) _ZdlPv_nid_postfix(message->pointer);
+    message->reserved = 0;
+    message->size = 0;
+    message->capacity = 15;
+    std::memset(message->buffer, 0, sizeof(message->buffer));
+}
+static void APS5_VABI DestroyFutureError_nid_no_patch(LibcException::FutureErrorObject* self) {
+    DestroyFutureErrorString(&self->message);
+}
+static void APS5_VABI DeleteFutureError_nid_no_patch(LibcException::FutureErrorObject* self) {
+    DestroyFutureErrorString(&self->message);
+    std::free(self);
+}
+static const char* APS5_VABI FutureErrorWhat_nid_no_patch(const LibcException::FutureErrorObject* self) {
+    return LibcException::FutureErrorMessage(self->code.value);
+}
+static void CopyFutureError(LibcException::FutureErrorObject* self, const LibcException::FutureErrorObject* source) {
+    *self = *source;
+    if (source->message.capacity > 15) {
+        const auto capacity = source->message.capacity;
+        auto* storage = static_cast<char*>(_Znwm_nid_postfix(capacity + 1));
+        std::memcpy(storage, source->message.pointer, source->message.size + 1);
+        self->message.pointer = storage;
+    }
+}
+[[noreturn]] static void APS5_VABI RaiseFutureError_nid_no_patch(const LibcException::FutureErrorObject* self) {
+    auto* object = static_cast<LibcException::FutureErrorObject*>(__cxa_allocate_exception_nid_postfix(sizeof(LibcException::FutureErrorObject)));
+    try {
+        CopyFutureError(object, self);
+    } catch (...) {
+        __cxa_free_exception_nid_postfix(object);
+        throw;
+    }
+    __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(&_ZTISt12future_error_nid_postfix),
+        reinterpret_cast<decltype(LibcException::Header::destructor)>(DestroyFutureError_nid_no_patch));
+}
+LibcException::FutureErrorVtable _ZTVSt12future_error_nid_postfix {
+    0, &_ZTISt12future_error_nid_postfix,
+    DestroyFutureError_nid_no_patch, DeleteFutureError_nid_no_patch, FutureErrorWhat_nid_no_patch, RaiseFutureError_nid_no_patch
+};
+[[noreturn]] void APS5_VABI _ZSt19_Throw_future_errorRKSt10error_code_nid_postfix(const LibcException::ErrorCode* code) {
+    auto* object = static_cast<LibcException::FutureErrorObject*>(__cxa_allocate_exception_nid_postfix(sizeof(LibcException::FutureErrorObject)));
+    object->vtable = &_ZTVSt12future_error_nid_postfix.destroy;
+    object->message = {};
+    object->message.capacity = 15;
+    object->code = *code;
+    __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(&_ZTISt12future_error_nid_postfix),
+        reinterpret_cast<decltype(LibcException::Header::destructor)>(DestroyFutureError_nid_no_patch));
+}
+[[noreturn]] void APS5_VABI _ZSt25_Rethrow_future_exceptionSt13exception_ptr_nid_postfix(GuestExceptionPointerArgument exception) {
+    _ZSt17rethrow_exceptionNSt15__exception_ptr13exception_ptrE_nid_postfix(exception);
+}
+void APS5_VABI _ZNSt12future_errorD1Ev_nid_postfix(LibcException::FutureErrorObject* self) {
+    DestroyFutureErrorString(&self->message);
+}
+
 }

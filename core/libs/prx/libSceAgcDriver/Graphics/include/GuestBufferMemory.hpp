@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -75,8 +76,8 @@ ImportProbe ProbeDmaBufImportWriteProtection(const Context& context);
 ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
 
-enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment };
-inline constexpr std::size_t ImportRequesterCount = 5;
+enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget };
+inline constexpr std::size_t ImportRequesterCount = 6;
 
 struct HostImportRequesterCounts {
     std::uint64_t made = 0;
@@ -135,6 +136,7 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
 // made outside the device lock (a sampled texture's path, a dispatch's pre-sync); the path taken
 // re-checks with HostImportFor when it binds the import.
 bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
+bool ComparedHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes);
 struct RegisteredPiece {
     std::uint64_t address;
     std::uint64_t bytes;
@@ -270,6 +272,24 @@ struct AddressCopy {
     bool overBudget = false;
 };
 std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t limit);
+
+class AddressCopyCounters {
+public:
+    struct Totals {
+        std::uint64_t bytes = 0;
+        std::uint64_t largest = 0;
+    };
+
+    static AddressCopyCounters& ThisThread();
+    static Totals Fold();
+    static std::uint64_t Limit();
+
+    void Count(std::uint64_t copied);
+
+private:
+    alignas(64) std::atomic<std::uint64_t> bytes{0};
+    std::atomic<std::uint64_t> largest{0};
+};
 
 class GuestBufferMemory {
 public:

@@ -570,6 +570,10 @@ int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second) {
     return ThreadForwards(__func__).equal(first, second);
 }
 
+int APS5_VABI _Thrd_lt_nid_postfix(void* first, void* second) {
+    return reinterpret_cast<std::uintptr_t>(first) < reinterpret_cast<std::uintptr_t>(second);
+}
+
 void* APS5_VABI _Thrd_current_nid_postfix(void) {
     return ThreadForwards(__func__).self();
 }
