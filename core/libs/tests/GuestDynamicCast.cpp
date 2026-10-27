@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <typeinfo>
+#include <utility>
 
 struct TypeRecord { const void* vtable; const char* name; const TypeRecord* base; };
 struct Vtable { std::intptr_t offsetToTop; const TypeRecord* type; const void* first; };
@@ -15,7 +16,7 @@ struct Side { virtual ~Side() = default; };
 struct Native : Side, Source {};
 struct PrivateNative : private Source { virtual ~PrivateNative() = default; };
 struct VirtualNative : virtual Source { virtual ~VirtualNative() = default; };
-struct BaseRecord { const TypeRecord* type; std::ptrdiff_t flags; };
+struct BaseRecord { const void* type; std::ptrdiff_t flags; };
 struct MultipleRecord { const void* vtable; const char* name; unsigned flags; unsigned count; BaseRecord bases[2]; };
 struct UpcastResult { const void* destination; int path; int sourceDetails; const TypeRecord* baseType; };
 struct DynamicCastResult { const void* destination; int wholeToDestination; int wholeToSource; int destinationToSource; int wholeDetails; };
@@ -39,6 +40,15 @@ const MultipleRecord AmbiguousType{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid
                                    {{&BaseType, (8 << 8) | 2}, {&BaseType, (16 << 8) | 2}}};
 const MultipleRecord CrossType{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "5Cross", 1, 2,
                                {{&BaseType, (8 << 8) | 2}, {&OtherType, (16 << 8) | 2}}};
+constexpr std::ptrdiff_t VirtualBaseSlot = -3 * static_cast<std::ptrdiff_t>(sizeof(void*)) * 256;
+const MultipleRecord PublicVirtualParent{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "1L", 2, 1, {{&BaseType, VirtualBaseSlot | 3}}};
+const MultipleRecord PrivateVirtualParent{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "1R", 2, 1, {{&BaseType, VirtualBaseSlot | 1}}};
+const MultipleRecord PublicFirstChild{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "1D", 2, 2, {{&PublicVirtualParent, 2}, {&PrivateVirtualParent, (8 << 8) | 2}}};
+const MultipleRecord PrivateFirstChild{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "1E", 2, 2, {{&PrivateVirtualParent, 2}, {&PublicVirtualParent, (8 << 8) | 2}}};
+const MultipleRecord PrivateOnlyChild{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "1F", 2, 1, {{&PrivateVirtualParent, 2}}};
+const MultipleRecord PublicFirstRoot{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "4RootD", 0, 1, {{&PublicFirstChild, 0}}};
+const MultipleRecord PrivateFirstRoot{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "4RootE", 0, 1, {{&PrivateFirstChild, 0}}};
+const MultipleRecord PrivateOnlyRoot{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "4RootF", 0, 1, {{&PrivateOnlyChild, 0}}};
 const Vtable BaseVtable{0, &BaseType, nullptr};
 const Vtable DerivedVtable{0, &DerivedType, nullptr};
 const MultipleRecord MultipleType{_ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix + 16, "8Multiple", 0, 1,
@@ -67,12 +77,12 @@ bool CallUpcast(const TypeRecord* type, const TypeRecord* destination, const voi
 
 template<class Result>
 bool CallDynamicCast(const TypeRecord* type, const TypeRecord* destination, const void* object,
-                     const TypeRecord* source, const void* sourceObject, Result& result) {
+                     const TypeRecord* source, const void* sourceObject, Result& result, std::ptrdiff_t hint = 0) {
     using Function = bool (APS5_VABI *)(const TypeRecord*, std::ptrdiff_t, int, const TypeRecord*, const void*,
                                         const TypeRecord*, const void*, Result&);
     Function function;
     std::memcpy(&function, static_cast<const unsigned char*>(type->vtable) + 7 * sizeof(void*), sizeof(function));
-    return function(type, 0, 6, destination, object, source, sourceObject, result);
+    return function(type, hint, 6, destination, object, source, sourceObject, result);
 }
 
 } // namespace
@@ -131,6 +141,25 @@ int main() {
                              reinterpret_cast<const TypeRecord*>(&PrivateType), instance, &BaseType,
                              instance + 16, dynamic));
     Require(dynamic.destination == nullptr);
+
+    const auto asType = [](const MultipleRecord& record) { return reinterpret_cast<const TypeRecord*>(&record); };
+    const auto publicToSource = [&](const MultipleRecord& root, const MultipleRecord& child, std::intptr_t leftOffset,
+                                    std::intptr_t rightOffset, std::ptrdiff_t leftSlot, std::ptrdiff_t rightSlot) {
+        alignas(std::intptr_t) unsigned char whole[32]{};
+        std::intptr_t leftTable[4]{leftOffset};
+        std::intptr_t rightTable[4]{rightOffset};
+        *reinterpret_cast<const std::intptr_t**>(whole + leftSlot) = leftTable + 3;
+        *reinterpret_cast<const std::intptr_t**>(whole + rightSlot) = rightTable + 3;
+        DynamicCastResult result{nullptr, 0, 0, 0, 0x10};
+        Require(!CallDynamicCast(asType(root), asType(child), whole, &BaseType, whole + 16, result, -1));
+        return std::pair<bool, bool>{result.destination == whole, (result.destinationToSource & 2) != 0};
+    };
+    const auto publicFirst = publicToSource(PublicFirstRoot, PublicFirstChild, 16, 8, 0, 8);
+    Require(publicFirst.first && publicFirst.second);
+    const auto privateFirst = publicToSource(PrivateFirstRoot, PrivateFirstChild, 8, 16, 8, 0);
+    Require(privateFirst.first && privateFirst.second);
+    const auto privateOnly = publicToSource(PrivateOnlyRoot, PrivateOnlyChild, 0, 16, 8, 0);
+    Require(!privateOnly.first && !privateOnly.second);
 
     void* object = __cxa_allocate_exception_nid_postfix(16);
     auto* type = reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(&DerivedType));
