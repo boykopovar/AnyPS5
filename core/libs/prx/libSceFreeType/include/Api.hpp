@@ -122,6 +122,7 @@ const char* APS5_VABI FT_Get_Font_Format_nid_postfix(FreeType::GuestFaceRec* fac
 std::uint8_t APS5_VABI FT_Face_CheckTrueTypePatents_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint8_t APS5_VABI FT_Face_SetUnpatentedHinting_nid_postfix(FreeType::GuestFaceRec* face, std::uint8_t value);
 int APS5_VABI FT_Get_Track_Kerning_nid_postfix(FreeType::GuestFaceRec* face, std::int64_t pointSize, std::int32_t degree, std::int64_t* kerning);
+int APS5_VABI FT_Open_Face_nid_postfix(FreeType::GuestLibrary* library, const FreeType::GuestOpenArgs* args, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
 
 int APS5_VABI FT_Outline_New_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t numPoints, std::int32_t numContours, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Outline_Done_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline);
