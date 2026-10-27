@@ -289,7 +289,9 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     if (node && hints && (hints->flags & 2)) {
         std::array<unsigned char, 4> v4{};
         std::array<unsigned char, 16> v6{};
-        if ((hints->flags & 4) || NumericAddress(node, v4) || inet_pton(AF_INET6, node, v6.data()) == 1) numericName = node;
+        const char* scope = std::strchr(node, '%');
+        const std::string address(node, scope ? static_cast<std::size_t>(scope - node) : std::strlen(node));
+        if ((hints->flags & 4) || NumericAddress(node, v4) || inet_pton(AF_INET6, address.c_str(), v6.data()) == 1) numericName = node;
     }
     GuestResolver::AddressInfo* first = nullptr;
     auto** tail = &first;
