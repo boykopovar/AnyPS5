@@ -6509,6 +6509,8 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     DeviceBuffer linear(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     DeviceBuffer tiled(context, original.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     Buffer host(context, original.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    std::unique_ptr<Buffer> drawBefore;
+    if (drawOriginal != nullptr) drawBefore = std::make_unique<Buffer>(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     if (profile) Profile().storageAlloc += timer.lap();
     // Start from the uploaded bytes so padding and untouched texels keep their guest values.
     std::memcpy(host.Bytes().data(), original.data(), original.size());
@@ -6516,6 +6518,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     detiler.BeginBatch();
     CommandBatch batch(context);
     const auto commands = batch.Handle();
+    if (drawBefore != nullptr) {
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        CopyBuffer(context, commands, drawOriginal->Handle(), sliceLinearBytes * arrayLayers, drawBefore->Handle(), 0, drawBefore->Bytes().size());
+    }
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
     CopyBuffer(context, commands, host.Handle(), 0, tiled.Handle(), 0, original.size());
     VkImageMemoryBarrier toSource{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -6577,6 +6583,18 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     }
     // Store only the kept ranges' blocks that changed, so concurrent CPU writes to untouched texels
     // survive; `original` follows for the stored layers (the others' guest bytes are unchanged).
+    if (drawBefore != nullptr) {
+        const auto before = drawBefore->Bytes();
+        for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+            for (std::uint32_t level = 0; level < mips.size(); ++level) {
+                if (!geometry.HasLayer(level, layer)) continue;
+                const auto& mip = mips[level];
+                for (const auto& [begin, end] : CoveredMipBytes(TextureTileMode::kLinear, elementBytes, mip)) {
+                    std::memcpy(original.data() + geometry.GuestLayerOffset(layer) + mip.tiledOffset + begin, before.data() + geometry.LinearLayerOffset(layer) + mip.linearOffset + begin, static_cast<std::size_t>(end - begin));
+                }
+            }
+        }
+    }
     const auto current = host.Bytes();
     for (const auto& [from, to] : stores) {
         const auto offset = static_cast<std::size_t>(from - descriptor.baseAddress);
