@@ -25,9 +25,14 @@ LOADED_NUMBERS = (
     ("padding-after-undecodable", UNDECODABLE + b"\xcc\xcc" + MOV_EAX_SYSCALL, 0x21D, 59),
     ("register-move", bytes.fromhex("b8 3b 00 00 00 48 89 df 0f 05 c3"), 0x218, 59),
     ("zeroed", bytes.fromhex("31 c0 0f 05 c3"), 0x212, 0),
+    ("rex-x-zeroed", bytes.fromhex("42 31 c0 0f 05 c3"), 0x213, 0),
+    ("prefixed-zeroed", bytes.fromhex("31 c0 f3 0f 05 c3"), 0x212, 0),
+    ("rex-r-load", bytes.fromhex("44 b8 3b 00 00 00 0f 05 c3"), 0x216, 59),
     ("mov-rax-imm64", bytes.fromhex("48 b8 3b 00 00 00 00 00 00 00 0f 05 c3"), 0x21A, 59),
+    ("prefixed-mov-rax-imm64", bytes.fromhex("48 b8 3b 00 00 00 00 00 00 00 f2 49 89 ca 0f 05 c3"), 0x21E, 59),
     ("low-byte-after-zeroing", bytes.fromhex("31 c0 b0 3b 0f 05 c3"), 0x214, 59),
     ("low-word-after-zeroing", bytes.fromhex("31 c0 66 b8 3b 01 0f 05 c3"), 0x216, 0x13B),
+    ("low-word-ending-in-move", bytes.fromhex("b8 3b 00 00 00 66 b8 89 c1 0f 05 c3"), 0x219, 0xC189),
     ("eight-register-moves", bytes.fromhex("b8 3b 00 00 00") + bytes.fromhex("89 db") * 8 + SYSCALL, 0x225, 59),
 )
 JUMP_TABLE_DISPATCH = bytes.fromhex("48 8d 0d 09 00 00 00 48 63 04 b9 48 01 c8 ff e0")

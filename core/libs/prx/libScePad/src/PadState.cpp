@@ -15,6 +15,7 @@
 namespace {
     struct Quat { float w = 1.0f, x = 0.0f, y = 0.0f, z = 0.0f; };
     constexpr std::uint64_t kLatchExpiry = 100000;
+    constexpr std::uint64_t kLatchExpiryLimit = 500000;
     std::uint64_t injectedTimestamp = 0;
 
     struct QueuedInput {
@@ -43,6 +44,8 @@ namespace {
         std::uint8_t pressedAnalogL2 = 0;
         std::uint8_t pressedAnalogR2 = 0;
         std::uint64_t pressedAt = 0;
+        std::uint64_t lastReadAt = 0;
+        std::uint64_t readInterval = 0;
         bool connected = false;
     };
 
@@ -140,6 +143,8 @@ void Pad::Initialize() {
             slots[i].lastFuseTime = now;
             slots[i].queue.clear();
             slots[i].pressedSinceRead = 0;
+            slots[i].lastReadAt = 0;
+            slots[i].readInterval = 0;
         }
     }
     initialized = true;
@@ -245,6 +250,10 @@ Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
     }
     return injected;
 }
+
+std::uint64_t LatchExpiry(const PadSlot& slot) {
+    return std::clamp(slot.readInterval + slot.readInterval / 2, kLatchExpiry, kLatchExpiryLimit);
+}
 }
 
 PadData Pad::ReadState(int port) {
@@ -256,12 +265,14 @@ PadData Pad::ReadState(int port) {
     const auto injected = port == 0 ? InjectedInput(now) : Pad::InputCommandFile::Input{};
     auto& slot = slots[port];
     PadData data = BuildData(slot, slot.state, slot.timestamp, now, injected, port);
-    if (slot.pressedSinceRead != 0 && now - slot.pressedAt <= kLatchExpiry) {
+    if (slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
         data.buttons |= slot.pressedSinceRead;
         if (slot.pressedSinceRead & 0x100u) data.analog_buttons_l2 = std::max(data.analog_buttons_l2, slot.pressedAnalogL2);
         if (slot.pressedSinceRead & 0x200u) data.analog_buttons_r2 = std::max(data.analog_buttons_r2, slot.pressedAnalogR2);
     }
     slot.pressedSinceRead = 0;
+    if (slot.lastReadAt != 0) slot.readInterval = now - slot.lastReadAt;
+    slot.lastReadAt = now;
     return data;
 }
 
@@ -464,7 +475,7 @@ extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState
     const std::uint32_t pressed = input.buttons & ~slot.state.buttons;
     slot.timestamp = sceKernelGetProcessTime();
     if (pressed != 0) {
-        if (slot.pressedSinceRead != 0 && slot.timestamp - slot.pressedAt > kLatchExpiry) slot.pressedSinceRead = 0;
+        if (slot.pressedSinceRead != 0 && slot.timestamp - slot.pressedAt > LatchExpiry(slot)) slot.pressedSinceRead = 0;
         slot.pressedSinceRead |= pressed;
         slot.pressedAt = slot.timestamp;
         if (pressed & 0x100u) slot.pressedAnalogL2 = input.analogButtonsL2;
