@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
@@ -11,6 +12,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -27,11 +29,6 @@ constexpr std::uint32_t eopSelfSignalFlipLimit = 4;
 bool orderedFills() {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_FILLS") == nullptr;
     return ordered;
-}
-
-bool pipelineDma() {
-    static const bool enabled = std::getenv("APS5_PIPELINE_DMA") != nullptr;
-    return enabled;
 }
 
 bool keepsDrawFinisher(std::uint32_t header, std::uint32_t opcode) {
@@ -65,7 +62,6 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
             if (packet.size() < 7) return false;
             const auto destination = Pm4::DmaDestination(packet);
             if (destination == Pm4::DmaDestinationNowhere) return true;
-            if (!pipelineDma()) return false;
             if (destination == Pm4::DmaSelectGds) return true;
             const auto bytes = Pm4::DmaBytes(packet);
             if (bytes == 0) return true;
@@ -76,8 +72,8 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
         }
         case 0x3c: case 0x93: {
             if (packet.size() < 5) return false;
-            const std::uint64_t awaited = packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u);
             const auto bytes = Pm4::WaitAwaitedBytes(packet);
+            const std::uint64_t awaited = (packet[2] & (bytes == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
             if (DrawPipeline::Queue0().Overlaps(awaited, bytes)) return false;
             GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), bytes, bytes);
             return Pm4::WaitSatisfiedUnchecked(packet);
@@ -400,6 +396,7 @@ void Driver::execute(const Submission& submission) {
                 GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
                 std::lock_guard gpuLock(GuestMemory::GpuMutex());
                 const auto localDevice = device.Load();
+                if (localDevice != nullptr) static_cast<void>(Graphics::StorageTexture::StoreDrawnLinear("flip"));
 
                 if (!recordLabelsForPacket(localDevice.get(), submission.queue) && localDevice != nullptr) localDevice->SubmitRecorded(submission.queue == 0);
                 if (localDevice != nullptr) {
@@ -412,6 +409,16 @@ void Driver::execute(const Submission& submission) {
             ++flipsCounted;
             if (batchesAtFlip != 0) flipSerial = batchesAtFlip;
             flipBatchesUnsignaled += unsignaledAtFlip;
+            if (Graphics::AbConfigured()) {
+                static const auto abClock = std::chrono::steady_clock::now();
+                std::vector<std::string> abLines;
+                {
+                    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
+                    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+                    abLines = Graphics::AbAtPresent(flipsCounted.load(), std::chrono::duration<double>(std::chrono::steady_clock::now() - abClock).count());
+                }
+                for (const auto& line : abLines) AgcDriver::ProfilePrint_nid_no_patch("%s", line.c_str());
+            }
 
             timing.Mark("flip_flush");
             timing.FinishPacket(submission.serial, cursor, 0xffffu, count);

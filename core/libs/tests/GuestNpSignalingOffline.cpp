@@ -61,6 +61,7 @@ int main() {
     Require(sceNpSignalingSetContextOption(1, 1, 1) == NotInitialized, "sceNpSignalingSetContextOption", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpSignalingActivateConnection(1, nullptr, nullptr) == NotInitialized, "sceNpSignalingActivateConnection", "a call before initialization did not return NOT_INITIALIZED first");
     Require(sceNpSignalingTerminateConnection(1, 1) == NotInitialized, "sceNpSignalingTerminateConnection", "a call before initialization did not return NOT_INITIALIZED");
+    Require(sceNpSignalingDeactivateConnection(1, 1) == NotInitialized, "sceNpSignalingDeactivateConnection", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetConnectionInfo(1, 1, 1, nullptr) == NotInitialized, "sceNpSignalingGetConnectionInfo", "a call before initialization did not return NOT_INITIALIZED first");
     Require(sceNpSignalingTerminate() == NotInitialized, "sceNpSignalingTerminate", "terminating before initialization did not return NOT_INITIALIZED");
 
@@ -104,6 +105,8 @@ int main() {
 
     Require(sceNpSignalingTerminateConnection(99, 1) == CtxNotFound, "sceNpSignalingTerminateConnection", "an unknown context was taken");
     Require(sceNpSignalingTerminateConnection(context, 1) == ConnNotFound, "sceNpSignalingTerminateConnection", "a connection that was never created was found");
+    Require(sceNpSignalingDeactivateConnection(99, 1) == CtxNotFound, "sceNpSignalingDeactivateConnection", "an unknown context was taken");
+    Require(sceNpSignalingDeactivateConnection(context, 1) == ConnNotFound, "sceNpSignalingDeactivateConnection", "a connection that was never created was found");
     Require(sceNpSignalingGetConnectionInfo(99, 1, 1, nullptr) == InvalidArgument, "sceNpSignalingGetConnectionInfo", "a null output was not refused before the context");
     Require(sceNpSignalingGetConnectionInfo(99, 1, 1, info) == CtxNotFound, "sceNpSignalingGetConnectionInfo", "an unknown context was taken");
     Require(sceNpSignalingGetConnectionInfo(context, 1, 1, info) == ConnNotFound, "sceNpSignalingGetConnectionInfo", "a connection that was never created was found");

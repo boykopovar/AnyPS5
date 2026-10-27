@@ -31,17 +31,6 @@ void Require(bool condition, const char* message) {
     }
 }
 
-template <typename TCall>
-void RequireNotImplemented(TCall call, const std::string& name) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        Require(std::string(error.what()) == name + " not implemented", "a declared function threw another error");
-        return;
-    }
-    Require(false, "a declared function returned");
-}
-
 void WriteBigEndian(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint64_t value, std::size_t width) {
     for (std::size_t index = 0; index < width; ++index) bytes[at + index] = static_cast<std::uint8_t>(value >> (8u * (width - 1u - index)));
 }
@@ -129,15 +118,10 @@ void CheckMatching2() {
     Require(sceNpMatching2Terminate() == 0, "NpMatching2 did not terminate after the SSL form");
 }
 
-void CheckSignaling() {
-    RequireNotImplemented([] { sceNpSignalingDeactivateConnection(); }, "sceNpSignalingDeactivateConnection");
-}
-
 }
 
 int main() {
     CheckTrophyInfo();
     CheckMatching2();
-    CheckSignaling();
     return 0;
 }

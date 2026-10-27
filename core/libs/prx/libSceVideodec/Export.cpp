@@ -1,4 +1,5 @@
 #include "prx/libSceVideodec2/include/Api.hpp"
+#include "prx/libSceVideodec2/include/PictureMetadata.hpp"
 #include "prx/libSceVideodec/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -28,12 +29,7 @@ constexpr int VideodecErrorDecodeAu = static_cast<int>(0x80C10011);
 constexpr std::uint32_t CodecAvc = 1;
 constexpr std::uint32_t PitchAlignment = 64;
 
-struct Decoder2Crop {
-    std::uint32_t left;
-    std::uint32_t right;
-    std::uint32_t top;
-    std::uint32_t bottom;
-};
+using Decoder2Crop = SceVideodec2::Internal::Crop;
 
 static_assert(sizeof(ConfigInfo) == 40 && sizeof(ResourceInfo) == 56 && sizeof(Ctrl) == 24);
 static_assert(offsetof(ConfigInfo, maxFrameWidth) == 20 && offsetof(ConfigInfo, videodecFlags) == 32);
@@ -61,15 +57,6 @@ Decoder* FindDecoder(const void* handle) {
 std::uint32_t AlignUp(std::uint32_t value, std::uint32_t alignment) {
     return (value + alignment - 1) / alignment * alignment;
 }
-
-}
-
-extern "C" {
-
-void Videodec2PictureCrop_nid_no_patch(std::uint64_t, const void*, Decoder2Crop*);
-}
-
-namespace {
 
 struct Geometry {
     std::uint32_t width = 0;
@@ -199,14 +186,12 @@ int APS5_VABI sceVideodecDecode(Ctrl* ctrl, const SceVideodec2::InputData* input
     } catch (const std::exception&) {
         return VideodecErrorDecodeAu;
     }
-    Decoder2Crop crop{};
-    if (output.isValid) Videodec2PictureCrop_nid_no_patch(decoder->handle, output.frameBuffer, &crop);
-    const auto geometry = Measure(output, crop);
-    SceVideodec2::AvcPictureInfo avc{sizeof(SceVideodec2::AvcPictureInfo)};
-    if (output.isValid) sceVideodec2GetAvcPictureInfo_nid_postfix(&output, &avc, nullptr);
+    SceVideodec2::Internal::PictureHeader header{};
+    if (output.isValid) Videodec2PictureHeader_nid_no_patch(decoder->handle, output.frameBuffer, &header);
+    const auto geometry = Measure(output, header.crop);
     FillPictureInfo(geometry, output, picture);
-    picture->ptsData = avc.ptsData;
-    picture->attachedData = avc.attachedData;
+    picture->ptsData = header.pts;
+    picture->attachedData = header.attached;
     if (!output.isValid) return 0;
     return CopyPicture(output, geometry, frameBuffer);
 }
@@ -253,14 +238,12 @@ int APS5_VABI sceVideodecFlush(Ctrl* ctrl, FrameBuffer* frameBuffer, PictureInfo
     } catch (const std::exception&) {
         return VideodecErrorDecodeAu;
     }
-    Decoder2Crop crop{};
-    if (output.isValid) Videodec2PictureCrop_nid_no_patch(decoder->handle, output.frameBuffer, &crop);
-    const auto geometry = Measure(output, crop);
-    SceVideodec2::AvcPictureInfo avc{sizeof(SceVideodec2::AvcPictureInfo)};
-    if (output.isValid) sceVideodec2GetAvcPictureInfo_nid_postfix(&output, &avc, nullptr);
+    SceVideodec2::Internal::PictureHeader header{};
+    if (output.isValid) Videodec2PictureHeader_nid_no_patch(decoder->handle, output.frameBuffer, &header);
+    const auto geometry = Measure(output, header.crop);
     FillPictureInfo(geometry, output, picture);
-    picture->ptsData = avc.ptsData;
-    picture->attachedData = avc.attachedData;
+    picture->ptsData = header.pts;
+    picture->attachedData = header.attached;
     if (!output.isValid) return 0;
     return CopyPicture(output, geometry, frameBuffer);
 }

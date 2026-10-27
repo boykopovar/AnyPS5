@@ -234,6 +234,9 @@ public:
 #ifdef _WIN32
         const bool endOfFile = std::feof(GetHandle()) != 0;
         const bool error = std::ferror(GetHandle()) != 0;
+#elif defined(__APPLE__)
+        const bool endOfFile = feof_unlocked(GetHandle()) != 0;
+        const bool error = ferror_unlocked(GetHandle()) != 0;
 #else
         const bool endOfFile = feof_unlocked(GetHandle()) != 0;
         const bool error = ferror_unlocked(GetHandle()) != 0;
@@ -273,6 +276,43 @@ public:
         const bool switched = ::_IO_switch_to_get_mode(native) == 0;
         SyncUnlockedStatus();
         return switched;
+#else
+        return true;
+#endif
+    }
+
+    bool SwitchToWriting() {
+#ifdef _WIN32
+        ::_lock_file(GetHandle());
+        const bool switched = SwitchToWritingUnlocked();
+        ::_unlock_file(GetHandle());
+        return switched;
+#else
+        return true;
+#endif
+    }
+
+    bool SwitchToWritingUnlocked() {
+#ifdef _WIN32
+        constexpr long UcrtReading = 0x0001;
+        constexpr long UcrtWriting = 0x0002;
+        constexpr long UcrtUpdate = 0x0004;
+        constexpr long UcrtEndOfFile = 0x0008;
+        if (randomDevice) return true;
+        auto* native = reinterpret_cast<UcrtStreamState*>(GetHandle());
+        std::atomic_ref<long> state(native->flags);
+        if ((state.load() & (UcrtWriting | UcrtUpdate)) == 0) {
+            errno = 9;
+            guestError = true;
+            SyncUnlockedStatus();
+            return false;
+        }
+        if ((state.load() & (UcrtReading | UcrtUpdate)) != (UcrtReading | UcrtUpdate)) return true;
+        native->count = 0;
+        native->pointer = native->base;
+        state.fetch_and(~(UcrtReading | UcrtEndOfFile));
+        SyncUnlockedStatus();
+        return true;
 #else
         return true;
 #endif

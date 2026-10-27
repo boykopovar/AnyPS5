@@ -1,5 +1,9 @@
 # libSceShare technical debt
 
+### Silent stubs
+
+- [sceShareFeaturePermit, sceShareFeatureProhibit, sceShareInitialize, sceShareRegisterContentEventCallback, sceShareSetCaptureSource, sceShareSetContentParam, sceShareSetScreenshotOverlayImage, sceShareTerminate and sceShareUnregisterContentEventCallback](../../../core/libs/prx/libSceShare/Export.cpp) return success without interacting with share or capture services.
+
 ### Unknown function info
 
 - [sceShareGetCurrentStatus](../../../core/libs/prx/libSceShare/Export.cpp) (libSceShare) - validation (feature flag non-zero, status non-null) and the all-zero 16-byte status taken from the [KytyPS5](https://github.com/KytyPS5/KytyPS5) reimplementation, not confirmed on a PS5 title; the meaning of the recording status values is unknown

@@ -23,8 +23,10 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceVrServiceDialogTerminate() == kErrNotInitialized);
+    Require(sceVrServiceDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceVrServiceDialogOpen(&param) == kErrNotInitialized);
     Require(sceVrServiceDialogClose() == kErrNotInitialized);
+    Require(sceVrServiceDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceVrServiceDialogGetResult(result) == kErrNotInitialized);
     Require(sceVrServiceDialogGetStatus() == kStatusNone);
     Require(sceVrServiceDialogUpdateStatus() == kStatusNone);
@@ -49,6 +51,8 @@ int main() {
     Require(sceVrServiceDialogClose() == 0);
     Require(sceVrServiceDialogTerminate() == 0);
     Require(sceVrServiceDialogTerminate() == kErrNotInitialized);
+    Require(sceVrServiceDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceVrServiceDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceVrServiceDialogGetStatus() == kStatusNone);
     Require(sceVrServiceDialogUpdateStatus() == kStatusNone);
 
@@ -60,4 +64,9 @@ int main() {
     Require(sceVrServiceDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(sceVrServiceDialogTerminate() == 0);
+    Require(sceVrServiceDialogTerminate() == kErrNotInitialized);
+    Require(sceVrServiceDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceVrServiceDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceVrServiceDialogGetStatus() == kStatusNone);
+    Require(sceVrServiceDialogUpdateStatus() == kStatusNone);
 }
