@@ -6095,6 +6095,7 @@ void StorageTexture::FinishLinearDraw() {
 }
 
 void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
+    const auto drawOriginal = linearDrawOriginal;
     CaptureTrace::Log("writeback image=%llx generation=%llu reason=%s units=%zu", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(generation), flushReason, static_cast<std::size_t>(std::count(layers.begin(), layers.end(), true)));
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
@@ -6167,6 +6168,13 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (!layers[layer]) continue;
         const auto begin = layerBegin(layer);
         const auto end = begin + layerBytes(layer);
+        if (drawOriginal != nullptr) {
+            for (auto at = begin & ~(block - 1); at < end; at += block) {
+                if (changedBlocks[static_cast<std::size_t>((at - spanBegin) / block)] == GuestMemory::BlockWritten) skippedLayer[layer] = true;
+            }
+            keep.emplace_back(begin, end);
+            continue;
+        }
         const bool unknown = tracked ? layerGeneration[layer] == 0 : !compared[layer];
         if (unknown && !drawn.rect) {
             unsavedOutsideWatch = unsavedOutsideWatch || !tracked;
