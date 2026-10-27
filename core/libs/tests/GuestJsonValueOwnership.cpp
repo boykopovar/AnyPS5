@@ -6,9 +6,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 using namespace SceJson2;
-
 
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 static void Require(bool valid, const char* message) {
@@ -102,6 +102,19 @@ int main() {
     const auto* member = _ZNK3sce4Json5ValueixEPKc(&cross, "a");
     Require(cross.type == TypeObject && member->payload == 7 && member->parent == &cross,
             "Object overload must retain descendant contents and bind their new owner");
+    for (bool nested : {false, true}) {
+        _ZN3sce4Json5Value5clearEv(&cross);
+        const char* document = nested ? "[{\"retained-key\":7}]" : "{\"retained-key\":7}";
+        Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&cross, document, std::strlen(document)) == 0, "Parse object-key ownership tree");
+        const auto* object = _ZNK3sce4Json5Value9getObjectEv(nested ? &Front(cross) : &cross);
+        ObjectIterator iterator{};
+        _ZNK3sce4Json6Object5beginEv(&iterator, object);
+        const auto* pair = _ZNK3sce4Json6Object8iteratordeEv(&iterator);
+        _ZN3sce4Json5Value3setERKNS0_6StringE(&cross, &pair->key);
+        Require(cross.type == TypeString && std::strcmp(_ZNK3sce4Json6String5c_strEv(_ZNK3sce4Json5Value9getStringEv(&cross)), "retained-key") == 0,
+                "String assignment from an owned object key must copy text before releasing its tree");
+        _ZN3sce4Json6Object8iteratorD1Ev(&iterator);
+    }
     _ZN3sce4Json5ValueD1Ev(&cross);
     _ZN3sce4Json5Value4swapERS1_(&root, &text);
     Require(root.type == 5 && text.type == 6, "Swap must exchange payloads");

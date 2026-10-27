@@ -1311,7 +1311,7 @@ bool OwnsPayload(const Node& owner, std::uintptr_t payload) {
             if (OwnsPayload(item, payload)) return true;
     } else if (owner.type == TypeObject && owner.object->items) {
         for (const auto& pair : *owner.object->items)
-            if (OwnsPayload(pair.value, payload)) return true;
+            if (reinterpret_cast<std::uintptr_t>(&pair.key) == payload || OwnsPayload(pair.value, payload)) return true;
     }
     return false;
 }
