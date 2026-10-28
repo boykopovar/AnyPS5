@@ -190,6 +190,7 @@ private:
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context);
 VkDeviceMemory AllocateImageMemory(const Context& context, const VkMemoryAllocateInfo& allocation, std::uint32_t mask, const char* operation, std::uint32_t* allocatedType = nullptr, bool newImage = false);
 void ReleaseImageMemory(const Context& context, VkDeviceMemory memory, VkDeviceSize bytes, std::uint32_t memoryType) noexcept;
+bool ReclaimHasHostFallback();
 
 }
 
