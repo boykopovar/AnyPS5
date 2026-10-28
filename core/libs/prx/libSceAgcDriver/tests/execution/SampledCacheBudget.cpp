@@ -1051,6 +1051,7 @@ void storageMemoryTests(Context context) {
     auto held = Sampled(context, block.Surface(0));
     const auto heap = LargestDeviceLocalHeap(context.memory);
     Require(heap.has_value(), "the device has no device-local heap");
+    context.memory.memoryHeaps[*heap].size = std::max<VkDeviceSize>(context.memory.memoryHeaps[*heap].size, ReportedBudget);
     const auto half = std::min<std::uint64_t>(context.memory.memoryHeaps[*heap].size / 2u, ReportedBudget / 2u);
     Require(ReadStorageBudget(context) == half, "52 GiB free of a 64 GiB budget does not leave the storage image cache half of the heap or of the budget");
     context.memoryProperties2 = &ReportPressure;

@@ -567,11 +567,11 @@ void TranslationContext::writeRawU32(const RdnaOperand& operand, IrU32 value) {
         case RdnaOperandKind::M0: ir.SetM0(value.Value()); break;
         case RdnaOperandKind::ExecLo:
             ir.SetExecLo(value.Value());
-            ir.SetExec(threadBit({value, IrU32(ir.GetExecHi())}).Value());
+            ir.SetExec(execLanes({value, IrU32(ir.GetExecHi())}).Value());
             break;
         case RdnaOperandKind::ExecHi:
             ir.SetExecHi(value.Value());
-            ir.SetExec(threadBit({IrU32(ir.GetExecLo()), value}).Value());
+            ir.SetExec(execLanes({IrU32(ir.GetExecLo()), value}).Value());
             break;
         case RdnaOperandKind::Scc:
             ir.SetScc(ir.INotEqual(value.Value(), ir.Constant(0u)));

@@ -511,7 +511,7 @@ std::optional<std::uint64_t> ScanDeadline(const KernelTimespec& timeout) {
 
 }
 
-bool IsKqueueDescriptor(int descriptor) {
+bool IsKqueueDescriptor_nid_no_patch(int descriptor) {
     return static_cast<bool>(FindKqueue(descriptor));
 }
 

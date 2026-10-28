@@ -1869,7 +1869,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
                 ++ready;
                 continue;
             }
-            if (IsKqueueDescriptor(entry.descriptor)) {
+            if (IsKqueueDescriptor_nid_no_patch(entry.descriptor)) {
                 kqueues.push_back(i);
                 continue;
             }

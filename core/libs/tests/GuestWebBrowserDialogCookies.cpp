@@ -120,6 +120,12 @@ int main() {
     CheckResetCookieParameters();
     CheckOpenDialog();
     Require(sceWebBrowserDialogTerminate() == 0, "final Terminate");
+    Require(sceWebBrowserDialogTerminate() == NOT_INITIALIZED, "Terminate when uninitialized");
+    Require(sceWebBrowserDialogSetCookie(&cookie) == NOT_INITIALIZED, "SetCookie after Terminate");
+    Require(sceWebBrowserDialogSetCookie(nullptr) == NOT_INITIALIZED, "SetCookie null after Terminate");
+    Require(sceWebBrowserDialogResetCookie(&reset) == NOT_INITIALIZED, "ResetCookie after Terminate");
+    Require(sceWebBrowserDialogResetCookie(nullptr) == NOT_INITIALIZED, "ResetCookie null after Terminate");
+    Require(sceWebBrowserDialogGetStatus() == 0, "GetStatus after Terminate");
     std::puts("guest web browser dialog cookies: PASS");
     return 0;
 }

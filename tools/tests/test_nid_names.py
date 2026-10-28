@@ -398,6 +398,27 @@ class NidArgumentTests(unittest.TestCase):
 
 
 class SourceCollectionTests(unittest.TestCase):
+    def test_trailing_return_definitions_are_collected_without_declarations_or_literals(self):
+        text = ('auto APS5_VABI sceTrailing() -> int { return 0; }\n'
+                'auto APS5_VABI sceNoThrow() noexcept(true) -> unsigned long { return 0; }\n'
+                'auto APS5_VABI pointer_nid_postfix() -> const char* { return nullptr; }\n'
+                'auto APS5_VABI sceDeclaration() -> int;\n'
+                'const char* example = "auto APS5_VABI sceQuoted() -> int { return 0; }";\n'
+                '/* auto APS5_VABI sceComment() -> int { return 0; } */\n')
+        self.write_source(text)
+        expected = {"sceTrailing", "sceNoThrow", "pointer", "pointer_nid_postfix"}
+        self.assertEqual(nid_names.collect_real_names(), expected)
+        matches = list(nid_names.source_definitions(text))
+        self.assertEqual([match.group(1) for match in matches], ["sceTrailing", "sceNoThrow", "pointer_nid_postfix"])
+        self.assertTrue(all(text[match.end() - 1] == "{" for match in matches))
+
+    def test_trailing_return_export_names_reach_the_overlap_consumer(self):
+        import pr_overlap
+
+        text = "auto APS5_VABI sceTrailing() noexcept(false) -> int { return 0; }\n"
+        exports = pr_overlap.source_exports(text, "core/libs/prx/libSceExample")
+        self.assertEqual(exports, {("core/libs/prx/libSceExample", nid_names.compute_nid("sceTrailing")): {"sceTrailing"}})
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

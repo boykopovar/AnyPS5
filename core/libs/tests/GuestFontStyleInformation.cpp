@@ -150,6 +150,17 @@ int main() {
     Require(sceFontGetFontStyleInformation(named, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontGetFontStyleInformation(nullptr, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
 
+    float w = 0.0f;
+    float h = 0.0f;
+    float slant = 0.0f;
+    std::uint32_t hdpi = 0;
+    std::uint32_t vdpi = 0;
+    Require(sceFontGetScalePixel(nullptr, &w, &h) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetScalePoint(nullptr, &w, &h) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetEffectSlant(nullptr, &slant) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetResolutionDpi(nullptr, &hdpi, &vdpi) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetResolutionDpi(named, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+
     for (FontHandle font : {named, os2, odd}) Require(sceFontCloseFont(font) == SCE_FONT_OK);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK);
