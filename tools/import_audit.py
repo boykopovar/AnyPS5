@@ -535,23 +535,39 @@ def branch_variants(body):
         raise AuditError("#if without a matching #endif")
     root.append(body[position:])
 
-    def expand(items):
-        variants = [""]
-        for item in items:
-            if isinstance(item, str):
-                variants = [variant + item for variant in variants]
-                continue
-            choices = [choice for alternative in item["alternatives"] for choice in expand(alternative)]
-            variants = [variant + choice for variant in variants for choice in choices]
-            if len(variants) > BRANCH_VARIANT_LIMIT:
-                raise AuditError(f"more than {BRANCH_VARIANT_LIMIT} preprocessor branch combinations in one function")
-        return variants
+    def choices(item):
+        if isinstance(item, str):
+            return iter((item,))
+        return (choice for alternative in item["alternatives"] for choice in expand(alternative))
 
-    return expand(root)
+    def expand(items):
+        iterators = [choices(item) for item in items]
+        values = [next(iterator) for iterator in iterators]
+        while True:
+            yield "".join(values)
+            index = len(items) - 1
+            while index >= 0:
+                try:
+                    values[index] = next(iterators[index])
+                    break
+                except StopIteration:
+                    iterators[index] = choices(items[index])
+                    values[index] = next(iterators[index])
+                    index -= 1
+            if index < 0:
+                return
+
+    def limited(variants):
+        for count, variant in enumerate(variants, 1):
+            if count > BRANCH_VARIANT_LIMIT:
+                raise AuditError(f"more than {BRANCH_VARIANT_LIMIT} preprocessor branch combinations in one function")
+            yield variant
+
+    return limited(expand(root))
 
 
 def variant_calls(body):
-    return [unconditional_calls(variant) for variant in branch_variants(body)]
+    return (unconditional_calls(variant) for variant in branch_variants(body))
 
 
 def unconditional_calls(body):
@@ -687,9 +703,8 @@ def module_stem(name, fold):
         name = name.lower()
     for suffix in MODULE_FILE_SUFFIXES:
         if len(name) > len(suffix) and name.endswith(suffix):
-            name = name[:-len(suffix)]
-            break
-    return name
+            return name[:-len(suffix)]
+    return None
 
 
 class ModuleNames(set):
@@ -699,10 +714,14 @@ class ModuleNames(set):
     def __init__(self, names=(), fold=False):
         super().__init__(names)
         self.fold = fold
-        self.stems = {module_stem(name, fold) for name in self}
+        self.files = {name.lower() if fold else name for name in self}
+        self.stems = {stem for name in self if (stem := module_stem(name, fold)) is not None}
 
     def __contains__(self, library):
-        return isinstance(library, str) and module_stem(library, self.fold) in self.stems
+        if not isinstance(library, str):
+            return False
+        filename = library.lower() if self.fold else library
+        return filename in self.files or module_stem(library, self.fold) in self.stems
 
 
 def classify(nid, library, providers, stubs, modules, partial=frozenset()):

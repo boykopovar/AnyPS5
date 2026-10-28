@@ -19,7 +19,7 @@ def symbol(name, value, section, kind, storage, aux=0):
     return struct.pack("<8sIhHBB", name, value, section, kind, storage, aux)
 
 
-def build_pe(path, with_symbols=True, with_exports=False, second_code=False):
+def build_pe(path, with_symbols=True, with_exports=False, second_code=False, timestamp=TIMESTAMP):
     image = bytearray(0xC00)
     image[0:2] = b"MZ"
     struct.pack_into("<I", image, 0x3C, 0x40)
@@ -37,7 +37,7 @@ def build_pe(path, with_symbols=True, with_exports=False, second_code=False):
             symbol(b"data_obj", 0x08, 2, 0, 2),
         ] + ([symbol(b"late_fn", 0x40, 3, 0x20, 2)] if second_code else []))
     symbol_count = len(symbols) // 18
-    struct.pack_into("<HHIIIHH", image, 0x44, 0x8664, 3 if second_code else 2, TIMESTAMP, 0x800 if with_symbols else 0, symbol_count, 240, 0x22)
+    struct.pack_into("<HHIIIHH", image, 0x44, 0x8664, 3 if second_code else 2, timestamp, 0x800 if with_symbols else 0, symbol_count, 240, 0x22)
     optional = 0x58
     struct.pack_into("<H", image, optional, 0x20B)
     struct.pack_into("<Q", image, optional + 24, 0x140000000)
@@ -337,6 +337,59 @@ class SymbolizeSamplesTests(unittest.TestCase):
             else:
                 blocked.chmod(0o600)
         self.assertEqual(blocked.read_bytes(), original)
+
+
+class CandidateModuleTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.old = self.root / "old"
+        self.current = self.root / "current"
+        self.old.mkdir()
+        self.current.mkdir()
+        build_pe(self.old / "example.prx", timestamp=TIMESTAMP + 1)
+        build_pe(self.current / "example.prx")
+        self.headers = {"example.prx": (SIZE_OF_IMAGE, TIMESTAMP)}
+        self.frame = "example.prx+0x1010"
+
+    def test_unique_matching_candidate_is_independent_of_directory_order(self):
+        for directories in ((self.old, self.current), (self.current, self.old)):
+            with self.subTest(directories=directories):
+                symbolizer = symbolize_samples.Symbolizer(directories, self.headers, warn=lambda message: None)
+                self.assertEqual(symbolizer.frame(self.frame), "example.prx!short")
+
+    def test_multiple_matching_candidates_stay_unsymbolized(self):
+        build_pe(self.old / "example.prx")
+        data = (self.old / "example.prx").read_bytes().replace(b"short\0", b"other\0")
+        (self.old / "example.prx").write_bytes(data)
+        warnings = []
+        symbolizer = symbolize_samples.Symbolizer([self.old, self.current], self.headers, warn=warnings.append)
+        self.assertEqual(symbolizer.frame(self.frame), self.frame)
+        self.assertIn("ambiguous", "\n".join(warnings))
+        count = len(warnings)
+        self.assertEqual(symbolizer.frame(self.frame), self.frame)
+        self.assertEqual(len(warnings), count)
+
+    def test_invalid_candidate_does_not_hide_the_matching_module(self):
+        (self.old / "example.prx").write_bytes(b"not a PE module")
+        symbolizer = symbolize_samples.Symbolizer([self.old, self.current], self.headers, warn=lambda message: None)
+        self.assertEqual(symbolizer.frame(self.frame), "example.prx!short")
+
+    def test_repeated_directory_does_not_create_ambiguity(self):
+        symbolizer = symbolize_samples.Symbolizer([self.current, self.current / "."], self.headers)
+        self.assertEqual(symbolizer.frame(self.frame), "example.prx!short")
+
+    def test_module_filename_lookup_remains_case_insensitive(self):
+        name = "EXAMPLE.PRX"
+        symbolizer = symbolize_samples.Symbolizer([self.old, self.current], {name: (SIZE_OF_IMAGE, TIMESTAMP)})
+        self.assertEqual(symbolizer.frame(name + "+0x1010"), name + "!short")
+
+    def test_missing_identity_does_not_choose_between_different_files(self):
+        for unverified in (False, True):
+            with self.subTest(unverified=unverified):
+                symbolizer = symbolize_samples.Symbolizer([self.old, self.current], {}, unverified=unverified, warn=lambda message: None)
+                self.assertEqual(symbolizer.frame(self.frame), self.frame)
 
 
 if __name__ == "__main__":

@@ -196,6 +196,8 @@ struct ShaderPixelStageInfo {
     bool linearCentroid;
     bool pixelKillEnable;
     bool depthExportEnable;
+    float depthExportMin = 0.0f;
+    float depthExportMax = 1.0f;
     bool sampleMaskExportEnable;
     bool earlyZ;
     bool executeOnNoop;
@@ -331,6 +333,7 @@ struct SpirvTarget {
     bool largePixelFunctionLdsBuffer = false;
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
+    bool fragmentBarycentricBuiltins = false;
 };
 
 struct BindingLayout {

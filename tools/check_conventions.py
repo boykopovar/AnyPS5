@@ -67,7 +67,7 @@ CONSTANT = re.compile(rf"\bconstexpr\b[^;=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s
 NAMESPACE = re.compile(r"\bnamespace\s+((?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*(?:inline\s+)?)*[A-Za-z_][A-Za-z0-9_]*)\s*$|\bnamespace\s*$")
 LINKAGE = re.compile(r'\bextern\s*""\s*$')
 ALIGNMENT_LIMIT = 8192
-LINK = re.compile(r"\[[^\]]+\]\(([^)\s]+)")
+LINK = re.compile(r"\[[^\]]+\]\((<[^<>\r\n]*>|(?!<)[^)\s]+)")
 FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
 INLINE = re.compile(r"`[^`\n]*`")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
@@ -438,7 +438,9 @@ def links(path, text):
     result = []
     text = INLINE.sub("code", FENCE.sub("", text))
     for target in LINK.findall(text):
-        if re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
+        if target.startswith("<"):
+            target = target[1:-1]
+        if not target or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
             continue
         target = target.split("#", 1)[0].split("?", 1)[0]
         decoded = unquote(target)

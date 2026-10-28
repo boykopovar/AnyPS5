@@ -4,6 +4,7 @@
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
+#include <cmath>
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include "PipelineSpecialization.hpp"
@@ -280,6 +281,16 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         const auto bits = state.module.AllocateId();
         state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeF32(state)), pointer, variable, ConstantU32(state, component + 1u));
         state.module.AddFunction(spv::OpLoad, TypeF32(state), value, pointer);
+        if (kind == StageInputKind::BaryCoordSmooth && state.program.Metadata().barycentricBuiltinsUnnormalized) {
+            const auto fragCoordW = state.module.AllocateId();
+            state.module.AddFunction(spv::OpBitcast, TypeF32(state), fragCoordW, EmitBuiltinU32(state, StageInputKind::FragCoord, 3u));
+            const auto rasterized = state.module.AllocateId();
+            state.module.AddFunction(spv::OpFOrdGreaterThan, TypeBool(state), rasterized, fragCoordW, ConstantF32Value(state, 0.0f));
+            const auto kept = state.module.AllocateId();
+            state.module.AddFunction(spv::OpSelect, TypeF32(state), kept, rasterized, value, ConstantF32Value(state, 0.0f));
+            state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, kept);
+            return bits;
+        }
         state.module.AddFunction(spv::OpBitcast, TypeU32(state), bits, value);
         return bits;
     }
@@ -2015,7 +2026,14 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 const auto raw = ExportRawComponent(ctx, data, 0);
                 const auto f32 = state.module.AllocateId();
                 state.module.AddFunction(spv::OpBitcast, TypeF32(state), f32, raw);
-                state.module.AddFunction(spv::OpStore, state.depthVariable, f32);
+                const auto& pixel = *state.inputInfo.pixel;
+                if (std::isinf(pixel.psDepthExportMin) && std::isinf(pixel.psDepthExportMax)) {
+                    state.module.AddFunction(spv::OpStore, state.depthVariable, f32);
+                } else {
+                    const auto clamped = state.module.AllocateId();
+                    state.module.AddFunction(spv::OpExtInst, TypeF32(state), clamped, GlslStd450(state), GLSLstd450NClamp, f32, ConstantF32Value(state, pixel.psDepthExportMin), ConstantF32Value(state, pixel.psDepthExportMax));
+                    state.module.AddFunction(spv::OpStore, state.depthVariable, clamped);
+                }
             }
             if ((exp.en & 2u) != 0u && state.stencilRefVariable != 0u) {
                 auto raw = ExportRawComponent(ctx, data, 1);
@@ -2065,7 +2083,7 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
             if (state.inputInfo.vertex->clipSpace.enabled) {
                 value = ConvertPositionToClipSpace(state, value);
             }
-            if (state.depthRangeRemap && state.program.Resources().stage == IrShaderStage::Vertex) {
+            if (state.depthRangeRemap && (state.program.Resources().stage == IrShaderStage::Vertex || state.program.Resources().stage == IrShaderStage::TessellationEvaluation)) {
                 value = RemapPositionDepth(state, value);
             }
         }

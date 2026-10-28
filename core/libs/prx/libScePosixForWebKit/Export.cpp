@@ -193,6 +193,16 @@ std::uint32_t APS5_VABI arc4random_nid_postfix() {
     return value;
 }
 
+std::uint32_t APS5_VABI arc4random_uniform_nid_postfix(std::uint32_t upper_bound) {
+    if (upper_bound < 2) return 0;
+    const std::uint32_t min = -upper_bound % upper_bound;
+    std::uint32_t value;
+    do {
+        value = arc4random_nid_postfix();
+    } while (value < min);
+    return value % upper_bound;
+}
+
 int APS5_VABI __wrap_access(const char* path, int mode) {
     return access_nid_postfix(path, mode);
 }

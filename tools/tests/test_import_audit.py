@@ -781,6 +781,31 @@ class ImportAuditTests(unittest.TestCase):
         record = next(record for record in data["imports"] if record["library"] == "shipping.debug_prx")
         self.assertEqual(record["class"], "module")
 
+    def test_module_suffix_aliases_require_suffixes_on_both_filenames(self):
+        work = self.work
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        cases = (("shipping.prx", "shipping"), ("shipping", "shipping.prx"),
+                 ("shipping.data", "shipping.data.prx"), (".prx", ".sprx"))
+        for windows in (False, True):
+            (work.libs / "libc.prx").write_bytes(build_pe([]) if windows else exporting())
+            for filename, alias in cases:
+                module = work.modules / filename
+                module.write_bytes(exporting("AAAAAAAAAAA"))
+                try:
+                    for needed in (filename, alias):
+                        with self.subTest(windows=windows, filename=filename, needed=needed):
+                            write_registry(registry, [("AAAAAAAAAAA", needed)])
+                            import_audit.needed_registry_path(registry).write_text(json.dumps([needed]), encoding="utf-8")
+                            code, _, err = work.run(registry, "--json", str(report))
+                            exact = needed == filename
+                            self.assertEqual((code, err), (0 if exact else 1, ""))
+                            data = json.loads(report.read_text(encoding="utf-8"))
+                            self.assertEqual(data["missing_libraries"], {} if exact else {needed: 1})
+                            self.assertEqual(data["imports"][0]["class"], "module" if exact else "absent")
+                            self.assertEqual(data["references"], 1)
+                finally:
+                    module.unlink()
+
     def test_module_names_ignore_case_for_windows_output_only(self):
         imports = [("AAAAAAAAAAA", "SDK-Shipping.debug_prx", False)]
         records, missing = import_audit.audit(imports, {}, {}, set(), import_audit.ModuleNames({"sdk-shipping.prx"}, fold=True))
@@ -1619,6 +1644,28 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(set(stubs), {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx") for name in names})
         self.assertEqual(partial, {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx")
                                    for name, kind in kinds.items() if kind == "partial"})
+
+    def test_many_host_branches_only_fail_when_every_combination_must_be_read(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(9))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     "void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI sceStub(int value) { NotImplemented_nid_no_patch(__func__); return 0; }\n"
+                     f"int APS5_VABI sceHosts(int value) {{\n{blocks}    return value;\n}}\n"
+                     f"int APS5_VABI sceLastHost(int value) {{\n{blocks}#ifdef HOST_LAST\n    Fail();\n#endif\n    return value;\n}}\n"
+                     f"int APS5_VABI sceNestedHosts(int value) {{\n#ifdef HOST_OUTER\n{blocks}#else\n    Fail();\n#endif\n    return value;\n}}\n")
+        stubs, partial = import_audit.source_stub_classes(source)
+        stub, hosts, last, nested = (("libHosts.prx", nid_names.compute_nid(name))
+                                     for name in ("sceStub", "sceHosts", "sceLastHost", "sceNestedHosts"))
+        self.assertEqual(set(stubs), {stub, last, nested})
+        self.assertEqual(partial, {last, nested})
+        for every in (f"{blocks}    Fail();\n", f"#ifdef HOST_OUTER\n{blocks}#endif\n    Fail();\n"):
+            with self.subTest(every=every):
+                write_source(source, "libHosts",
+                             "void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
+                             f"int APS5_VABI sceEveryHost(int value) {{\n{every}    return value;\n}}\n")
+                with self.assertRaisesRegex(import_audit.AuditError, "more than 256 preprocessor branch combinations"):
+                    import_audit.source_stub_classes(source)
 
     def test_partial_import_is_its_own_class(self):
         direct, guarded = nid_names.compute_nid("sceDirect"), nid_names.compute_nid("sceGuarded")

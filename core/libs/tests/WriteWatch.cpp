@@ -229,6 +229,18 @@ void CheckProtection() {
     region.base[2 * region.page] = 1;
     region.base[4 * region.page] = 1;
     Require(!GuestWriteWatchCovers_nid_postfix(region.Address(2), region.page), "an unregistered range is covered");
+
+    GuestWriteWatchRegister_nid_postfix(region.base, region.bytes);
+    static_cast<void>(region.Collect());
+    Require(GuestWriteWatchProtect_nid_postfix(region.base, region.page, PROT_READ) == 0, "cannot protect a watched page");
+    Require(KernelProtection(region.base) == PROT_READ, "a protect does not change the host protection");
+    Require(GuestWriteWatchProtection_nid_postfix(region.Address(0), region.Address(6), &runEnd) == PROT_READ && runEnd == region.Address(1), "a protect is not recorded");
+    Require(region.Collect() == std::set<std::size_t>({0}), "a protect is not reported as a write");
+    Require(GuestWriteWatchProtect_nid_postfix(region.base, region.page, PROT_READ | PROT_WRITE) == 0, "cannot restore a watched page");
+    static_cast<void>(region.Collect());
+    region.base[0] = 1;
+    Require(region.Collect() == std::set<std::size_t>({0}), "a write after a protect is not reported");
+    Require(GuestWriteWatchProtect_nid_postfix(region.base + 1, region.page, PROT_READ) == EINVAL, "a misaligned protect does not fail with EINVAL");
 }
 
 void CheckOverlaps() {

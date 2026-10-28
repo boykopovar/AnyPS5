@@ -79,8 +79,29 @@ static void CheckInputCommands() {
     Require(right.buttons == 0x4000 && !right.touchLeft && right.touchRight);
     write("10 8388608 300");
     Require(commands.Poll(3801000) == none);
+    write("10 0 5000 touch(1919,942,127,1)");
+    const auto contact = commands.Poll(3901000);
+    Require(contact.hasTouch && contact.touchActive && contact.touchX == 1919 && contact.touchY == 942 && contact.touchId == 127);
+    Require(contact.buttons == 0 && !contact.touchLeft && !contact.touchRight);
+    Require(commands.Poll(4001000) == contact);
+    write("11 0 5000 1 2 3 4 touch(0,0,127,1)");
+    const auto moved = commands.Poll(4101000);
+    Require(moved.hasTouch && moved.touchActive && moved.touchX == 0 && moved.touchY == 0 && moved.touchId == contact.touchId);
+    Require(moved.hasSticks && moved.sticks[3] == 4);
+    write("12 0 5000 touch(0,0,127,0)");
+    const auto lifted = commands.Poll(4201000);
+    Require(lifted.hasTouch && !lifted.touchActive && lifted.touchId == 127 && lifted.buttons == 0);
+    std::uint64_t poll = 4301000;
+    for (const char* invalid : {"touch(1920,0,0,1)", "touch(0,943,0,1)", "touch(0,0,128,1)",
+            "touch(0,0,0,2)", "touch(-1,0,0,1)", "touch(0,0,0)", "touch(0,0,0,1,1)",
+            "touch(0,,0,1)", "touch(0,0,0,1)x", "touch(0,0,0,1) trailing"}) {
+        std::ofstream(path) << "13 0 5000 " << invalid << '\n';
+        Require(commands.Poll(poll) == lifted);
+        poll += 100000;
+    }
+    Require(commands.Poll(9201000) == none);
     std::filesystem::remove(path);
-    Require(commands.Buttons(4201000) == 0);
+    Require(commands.Buttons(9301000) == 0);
     Pad::InputCommandFile disabled(std::filesystem::path{});
     Require(disabled.Buttons(0) == 0);
 }
@@ -632,6 +653,34 @@ static void CheckInjectedState(const std::filesystem::path& path) {
         const auto lifted = Pad::ReadState();
         Require(lifted.touch_data_touch_num == 0 && lifted.buttons == 0x2000);
     }
+    bool contactActive = false;
+    const auto touchCommand = [&](const char* command, int x, int y, int id, bool active) {
+        std::ofstream(path) << command << '\n';
+        PadData touched{};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        do {
+            touched = Pad::ReadState();
+            if (contactActive && active) Require(touched.touch_data_touch_num == 1 && touched.touch_data_touch0_id == id);
+            if (touched.touch_data_touch_num == (active ? 1 : 0) &&
+                (!active || (touched.touch_data_touch0_x == x && touched.touch_data_touch0_y == y && touched.touch_data_touch0_id == id))) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        } while (std::chrono::steady_clock::now() < deadline);
+        Require(touched.touch_data_touch_num == (active ? 1 : 0));
+        if (active) Require(touched.touch_data_touch0_x == x && touched.touch_data_touch0_y == y && touched.touch_data_touch0_id == id);
+        Require(touched.buttons == 0x2000);
+        contactActive = active;
+        return touched;
+    };
+    const auto start = touchCommand("5 0 5000 touch(1919,942,127,1)", 1919, 942, 127, true);
+    const auto turn = touchCommand("6 0 5000 touch(0,942,127,1)", 0, 942, 127, true);
+    Require(turn.timestamp > start.timestamp);
+    const auto end = touchCommand("7 0 5000 touch(0,0,127,1)", 0, 0, 127, true);
+    Require(end.timestamp > turn.timestamp);
+    const auto lifted = touchCommand("8 0 300 touch(0,0,127,0)", 0, 0, 127, false);
+    Require(lifted.timestamp > end.timestamp);
+    touchCommand("9 0 150 touch(960,471,0,1)", 960, 471, 0, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(160));
+    Require(Pad::ReadState().touch_data_touch_num == 0);
     PadPublishInput_nid_postfix(PadInputState{});
 }
 
@@ -642,7 +691,7 @@ static void CheckInjectedQueueTimes(const std::filesystem::path& path) {
     physical.buttons = 0x2000;
     PadPublishInput_nid_postfix(physical);
     const auto before = Pad::ReadState();
-    std::ofstream(path) << "5 16384 300\n";
+    std::ofstream(path) << "10 16384 300\n";
     PadData pressed{};
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     do {
