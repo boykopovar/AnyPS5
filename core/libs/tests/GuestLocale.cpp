@@ -557,6 +557,16 @@ static void CheckTimeGetWideVtableObject() {
     }
 }
 
+static void CheckMoneyGetVtableObject() {
+    Require(sizeof(_ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kMoneyGetCharVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 int main() {
     std::array<void*, 10> heapApi{};
     heapApi[0] = reinterpret_cast<void*>(&TestHeapAllocate);
@@ -587,6 +597,7 @@ int main() {
     CheckNumPutVtableObject();
     CheckCtypeVtableObject();
     CheckTimePutVtableObject();
+    CheckMoneyGetVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
