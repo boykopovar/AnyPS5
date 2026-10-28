@@ -301,6 +301,29 @@ int AddHeader(Settings& settings, const char* name, const char* value, std::uint
     return 0;
 }
 
+static const char* Reason(int status) {
+    switch (status) {
+        case 200: return "OK";
+        case 201: return "Created";
+        case 204: return "No Content";
+        case 301: return "Moved Permanently";
+        case 302: return "Found";
+        case 303: return "See Other";
+        case 304: return "Not Modified";
+        case 307: return "Temporary Redirect";
+        case 308: return "Permanent Redirect";
+        case 400: return "Bad Request";
+        case 401: return "Unauthorized";
+        case 403: return "Forbidden";
+        case 404: return "Not Found";
+        case 429: return "Too Many Requests";
+        case 500: return "Internal Server Error";
+        case 502: return "Bad Gateway";
+        case 503: return "Service Unavailable";
+        default: return "";
+    }
+}
+
 struct Request::State {
     const int id;
     const int version;
@@ -320,6 +343,8 @@ struct Request::State {
     int status = 0;
     std::string contentEncoding;
     bool inflatedGzip = false;
+    std::vector<std::pair<std::string, std::string>> blockHeaders;
+    std::string allHeaders;
     int blockStatus = 0;
     std::string location;
     bool hasLocation = false;
@@ -805,6 +830,7 @@ struct Request::State {
             if (frame->hd.stream_id == state.stream) {
                 Require(!state.ready, "sceHttp2: response trailers are not implemented");
                 state.blockStatus = 0;
+                state.blockHeaders.clear();
                 state.hasLength = false;
                 state.contentLength = 0;
                 state.location.clear();
@@ -835,6 +861,7 @@ struct Request::State {
             }
             if (key == "set-cookie" && state.settings.cookieBox != 0) Http2StoreResponseCookie(state.settings.cookieBox, state.Address(), text);
             if (key == "content-encoding") state.contentEncoding = Lower(std::string(text));
+            if (key != ":status") state.blockHeaders.emplace_back(std::string(key), std::string(text));
         });
     }
 
@@ -849,6 +876,9 @@ struct Request::State {
                 state.status = state.blockStatus;
                 Require(!state.settings.auth || (state.status != 401 && state.status != 407), "sceHttp2: authentication is not implemented");
                 state.ready = true;
+                state.allHeaders = "HTTP/1.1 " + std::to_string(state.status) + " " + Reason(state.status) + "\r\n";
+                for (const auto& [key, value] : state.blockHeaders) state.allHeaders += key + ": " + value + "\r\n";
+                state.allHeaders += "\r\n";
             }
             if ((frame->hd.type == NGHTTP2_HEADERS || frame->hd.type == NGHTTP2_DATA) &&
                 (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)) {
@@ -1132,9 +1162,13 @@ int Request::Headers(char** header, std::size_t* size) {
     auto lock = state->Lock();
     if (state->networkResult) return state->networkResult;
     Require(header && size && state->ready, "sceHttp2GetAllResponseHeaders: null output or response unavailable");
-    Require(state->version < 3, "sceHttp2GetAllResponseHeaders: HTTP2 header representation is unimplemented");
-    *header = state->rawHeaders.data();
-    *size = state->rawHeaders.size();
+    if (state->version < 3) {
+        *header = state->rawHeaders.data();
+        *size = state->rawHeaders.size();
+    } else {
+        *header = state->allHeaders.data();
+        *size = state->allHeaders.size();
+    }
     return 0;
 }
 
