@@ -279,6 +279,8 @@ void TestRegisterCallbacks() {
             "register a registered callback again did not throw");
     Require(sceUsbStorageUnregisterCallback(1, nullptr) == UsbStorage::InvalidArgument, "unregister a null callback");
     Require(sceUsbStorageUnregisterCallback(0, Callback()) == UsbStorage::InvalidArgument, "unregister callback of event type 0");
+    Require(sceUsbStorageUnregisterCallback(3, Callback()) == UsbStorage::InvalidArgument, "unregister callback of event type 3");
+    Require(sceUsbStorageUnregisterCallback(-1, Callback()) == UsbStorage::InvalidArgument, "unregister callback of a negative event type");
     Require(sceUsbStorageUnregisterCallback(1, Callback()) == 0, "unregister the mount callback");
     Require(sceUsbStorageUnregisterCallback(2, Callback()) == 0, "unregister the unmount callback");
     Require(ThrowsWith([] { sceUsbStorageUnregisterCallback(1, Callback()); }, "sceUsbStorageUnregisterCallback not implemented"),
@@ -309,6 +311,7 @@ void TestNoDevice() {
     Require(devices[0] == 0x5a5a5a5a && devices[3] == 0x5a5a5a5a, "the device list was written");
     Require(sceUsbStorageGetDeviceList(nullptr, &count) == UsbStorage::InvalidArgument, "get the device list without a device array");
     Require(sceUsbStorageGetDeviceList(devices, nullptr) == UsbStorage::InvalidArgument, "get the device list without a count");
+    Require(sceUsbStorageGetDeviceList(nullptr, nullptr) == UsbStorage::InvalidArgument, "get device list without buffers");
 
     UsbStorageDeviceInfo info;
     std::memset(&info, 0x5a, sizeof(info));
@@ -355,6 +358,7 @@ void TestGetdents() {
     Require(fd == -1 && bufferSize == 0x5a5a5a5a5a5a5a5aull, "the getdents open wrote its outputs");
     Require(sceUsbStorageGetdentsOpen(0, nullptr, &bufferSize) == UsbStorage::InvalidArgument, "open a getdents scan without a descriptor");
     Require(sceUsbStorageGetdentsOpen(0, &fd, nullptr) == UsbStorage::InvalidArgument, "open a getdents scan without a buffer size");
+    Require(sceUsbStorageGetdentsOpen(0, nullptr, nullptr) == UsbStorage::InvalidArgument, "open getdents scan without descriptor and buffer size");
 
     std::uint8_t buffer[64];
     std::uint64_t bytesRead = 0x5a5a5a5a5a5a5a5aull;
@@ -364,6 +368,7 @@ void TestGetdents() {
     Require(buffer[0] == 0x5a, "the getdents read wrote the buffer");
     Require(sceUsbStorageGetdentsRead(1, nullptr, sizeof(buffer), &bytesRead) == UsbStorage::InvalidArgument, "read a getdents scan without a buffer");
     Require(sceUsbStorageGetdentsRead(1, buffer, sizeof(buffer), nullptr) == UsbStorage::InvalidArgument, "read a getdents scan without a byte count");
+    Require(sceUsbStorageGetdentsRead(1, nullptr, sizeof(buffer), nullptr) == UsbStorage::InvalidArgument, "read getdents scan without buffer and byte count");
 
     Require(ThrowsWith([] { sceUsbStorageGetdentsClose(1); }, "sceUsbStorageGetdentsClose not implemented"),
             "close a getdents scan that was never opened did not throw its marker");

@@ -1412,6 +1412,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             return inputs;
         }
         const std::uint32_t corners = state.quadList ? 6u : 3u;
+        Require(primitives <= std::numeric_limits<std::uint32_t>::max() / corners, "expanded index count overflow");
         const std::uint32_t outputIndexCount = primitives * corners;
         const std::size_t expandedIndexBytes = static_cast<std::size_t>(outputIndexCount) * sizeof(std::uint32_t);
         auto indexCopy = std::make_shared<Buffer>(context, expandedIndexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
@@ -2515,6 +2516,7 @@ struct PreparedDraw {
     PreparedDraw& operator=(const PreparedDraw&) = delete;
     std::shared_ptr<const DrawRecipe>* recipeOut = nullptr;
     const DrawTraceContext* trace = nullptr;
+    std::uint64_t shape = 0;
     std::vector<std::uint32_t> stencilReferences;
     std::optional<PerformanceTimer> timing;
     DrawTimer timer;
@@ -2546,6 +2548,137 @@ struct PreparedDraw {
     SampleOrderPass reorderPass;
     std::optional<DepthSampleLocations> depthLocations;
 };
+
+bool ShapeMemoEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_SHAPE_MEMO") == nullptr;
+    return enabled;
+}
+
+bool VerifyShapeMemo() {
+    static const bool verify = std::getenv("APS5_VERIFY_SHAPE_MEMO") != nullptr;
+    return verify;
+}
+
+void noteShapeMemoVerified(bool pipeline) {
+    static std::atomic<std::uint64_t> targets{0};
+    static std::atomic<std::uint64_t> pipelines{0};
+    static std::atomic<std::int64_t> last{0};
+    (pipeline ? pipelines : targets).fetch_add(1, std::memory_order_relaxed);
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto previous = last.load(std::memory_order_relaxed);
+    if (now - previous < 10 || !last.compare_exchange_strong(previous, now)) return;
+    std::fprintf(stderr, "[shape-memo] verified %llu targets and %llu pipelines\n", static_cast<unsigned long long>(targets.load()), static_cast<unsigned long long>(pipelines.load()));
+}
+
+struct ShapeChoice {
+    VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    std::uint32_t fragmentOutputs = 0;
+    std::vector<std::uint64_t> stages;
+    std::vector<VkVertexInputBindingDescription> bindings;
+    std::vector<VkVertexInputAttributeDescription> attributes;
+    std::vector<std::uint32_t> mainKey;
+    std::vector<std::uint32_t> fragmentKey;
+    std::uint64_t hash = 0;
+    std::weak_ptr<Pipeline> pipeline;
+};
+
+struct ShapeEntry {
+    VkDevice device = VK_NULL_HANDLE;
+    std::vector<std::weak_ptr<StorageTexture>> targets;
+    std::vector<ShapeChoice> choices;
+};
+
+struct ShapeMemoStorage {};
+constexpr std::size_t ShapeMemoEntries = 4096;
+constexpr std::size_t ShapeMemoChoices = 4;
+
+std::unordered_map<std::uint64_t, ShapeEntry>& shapeMemo() {
+    return HostThreadLocal<std::unordered_map<std::uint64_t, ShapeEntry>, ShapeMemoStorage>();
+}
+
+const ShapeEntry* findShape(const Context& context, std::uint64_t shape) {
+    if (shape == 0 || !ShapeMemoEnabled()) return nullptr;
+    const auto& entries = shapeMemo();
+    const auto found = entries.find(shape);
+    return found == entries.end() || found->second.device != context.device ? nullptr : &found->second;
+}
+
+std::shared_ptr<StorageTexture> shapeTarget(const Context& context, std::uint64_t shape, std::size_t index) {
+    const auto* entry = findShape(context, shape);
+    return entry == nullptr || index >= entry->targets.size() ? nullptr : entry->targets[index].lock();
+}
+
+bool sameStages(std::span<const std::uint64_t> kept, std::span<const CompiledShader> shaders) {
+    if (kept.size() != shaders.size() * 4u + 1u) return false;
+    std::size_t at = 0;
+    for (const auto& shader : shaders) {
+        const auto identity = shader.program->Identity();
+        if (identity.Empty() || kept[at] != static_cast<std::uint64_t>(shader.stage) || kept[at + 1] != identity.low || kept[at + 2] != identity.high || kept[at + 3] != shader.pushConstantOffset) return false;
+        at += 4;
+    }
+    return kept[at] == PushConstantStages(shaders);
+}
+
+bool sameChoice(const ShapeChoice& choice, const VertexInputLayout& input, const PipelineSetLayouts& layouts, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint32_t fragmentOutputs) {
+    const auto sameBinding = [](const VkVertexInputBindingDescription& a, const VkVertexInputBindingDescription& b) { return a.binding == b.binding && a.stride == b.stride && a.inputRate == b.inputRate; };
+    const auto sameAttribute = [](const VkVertexInputAttributeDescription& a, const VkVertexInputAttributeDescription& b) { return a.location == b.location && a.binding == b.binding && a.format == b.format && a.offset == b.offset; };
+    return choice.attachmentLayout == attachmentLayout && choice.fragmentOutputs == fragmentOutputs && std::ranges::equal(choice.bindings, input.bindings, sameBinding) && std::ranges::equal(choice.attributes, input.attributes, sameAttribute) && std::ranges::equal(choice.mainKey, layouts.mainKey) && std::ranges::equal(choice.fragmentKey, layouts.fragmentKey) && sameStages(choice.stages, shaders);
+}
+
+std::shared_ptr<Pipeline> shapePipeline(const Context& context, std::uint64_t shape, const VertexInputLayout& input, const PipelineSetLayouts& layouts, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint32_t fragmentOutputs) {
+    const auto* entry = findShape(context, shape);
+    if (entry == nullptr) return nullptr;
+    for (const auto& choice : entry->choices) {
+        if (!sameChoice(choice, input, layouts, shaders, attachmentLayout, fragmentOutputs)) continue;
+        const auto hash = choice.hash;
+        const auto expected = choice.pipeline;
+        return TouchCachedPipeline(context, hash, expected);
+    }
+    return nullptr;
+}
+
+void rememberShape(const Context& context, std::uint64_t shape, std::span<const TargetBinding> targets, const std::shared_ptr<Pipeline>* pipeline, std::uint64_t hash, const VertexInputLayout& input, const PipelineSetLayouts& layouts, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint32_t fragmentOutputs) {
+    if (shape == 0 || !ShapeMemoEnabled()) return;
+    auto& entries = shapeMemo();
+    if (entries.size() >= ShapeMemoEntries && !entries.contains(shape)) entries.clear();
+    auto& entry = entries[shape];
+    if (entry.device != context.device) {
+        entry = {};
+        entry.device = context.device;
+    }
+    entry.targets.resize(targets.size());
+    for (std::size_t index = 0; index < targets.size(); ++index) {
+        const auto& resident = targets[index].resident;
+        if (resident == nullptr || targets[index].color.arrayLastSlice != 0) entry.targets[index].reset();
+        else if (entry.targets[index].owner_before(resident) || resident.owner_before(entry.targets[index])) entry.targets[index] = resident;
+    }
+    if (pipeline == nullptr || hash == 0) return;
+    auto& choices = entry.choices;
+    const auto kept = std::ranges::find_if(choices, [&](const ShapeChoice& choice) { return sameChoice(choice, input, layouts, shaders, attachmentLayout, fragmentOutputs); });
+    if (kept != choices.end()) {
+        kept->hash = hash;
+        kept->pipeline = *pipeline;
+        std::rotate(choices.begin(), kept, std::next(kept));
+        return;
+    }
+    ShapeChoice choice;
+    choice.attachmentLayout = attachmentLayout;
+    choice.fragmentOutputs = fragmentOutputs;
+    for (const auto& shader : shaders) {
+        const auto identity = shader.program->Identity();
+        if (identity.Empty()) return;
+        choice.stages.insert(choice.stages.end(), {static_cast<std::uint64_t>(shader.stage), identity.low, identity.high, shader.pushConstantOffset});
+    }
+    choice.stages.push_back(PushConstantStages(shaders));
+    choice.bindings = input.bindings;
+    choice.attributes = input.attributes;
+    choice.mainKey.assign(layouts.mainKey.begin(), layouts.mainKey.end());
+    choice.fragmentKey.assign(layouts.fragmentKey.begin(), layouts.fragmentKey.end());
+    choice.hash = hash;
+    choice.pipeline = *pipeline;
+    if (choices.size() >= ShapeMemoChoices) choices.pop_back();
+    choices.insert(choices.begin(), std::move(choice));
+}
 
 bool prepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, PreparedDraw& prepared) {
     auto*& recipeOut = prepared.recipeOut;
@@ -2650,7 +2783,13 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                     Require(resident->Attachable(), "storage format cannot be a color attachment");
                     return resident;
                 }
-                auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
+                const auto surface = SurfaceForTarget(color);
+                auto resident = RepeatStorageSurface(context, surface, shapeTarget(context, prepared.shape, index));
+                if (resident != nullptr && VerifyShapeMemo()) {
+                    Require(CachedStorageSurface(context, surface) == resident, "APS5_VERIFY_SHAPE_MEMO: the shape memo's resident target differs from the storage cache's");
+                    noteShapeMemoVerified(false);
+                }
+                if (resident == nullptr) resident = CachedStorageSurface(context, surface);
                 Require(resident->Attachable(), "storage format cannot be a color attachment");
                 Require(color.mipCount > 1 || color.depth > 1 || resident->GuestBytes() == colorLayout.Bytes(), "resident image layout differs from the color layout");
                 return resident;
@@ -2910,7 +3049,22 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         stencilReplay.emplace_back(reference, std::move(selectedPipeline));
     }
     auto& pipeline = prepared.pipeline;
-    pipeline = stencilReplay.empty() ? CachedPipeline(context, pipelineState, inputs.VertexLayout(), *resources, shaders, lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) : stencilReplay.front().second;
+    const auto attachmentLayout = lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    if (!stencilReplay.empty()) {
+        pipeline = stencilReplay.front().second;
+    } else {
+        const bool memoized = stencilReferences.empty() && std::none_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied || binding.multisampled; });
+        const auto layouts = resources->SetLayouts();
+        std::uint64_t storeHash = 0;
+        if (memoized) pipeline = shapePipeline(context, prepared.shape, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
+        if (pipeline != nullptr && VerifyShapeMemo()) {
+            Require(CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout) == pipeline, "APS5_VERIFY_SHAPE_MEMO: the shape memo's pipeline differs from the pipeline store's");
+            noteShapeMemoVerified(true);
+        }
+        const bool repeated = pipeline != nullptr;
+        if (!repeated) pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, nullptr, &storeHash);
+        if (memoized) rememberShape(context, prepared.shape, targets, repeated ? nullptr : &pipeline, storeHash, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
+    }
     // Resident targets' views are stable while their storage image lives, so the framebuffer is
     // reused with the pipeline; a per-draw RenderTarget gets a framebuffer of its own.
     auto& owners = prepared.owners;
@@ -3374,7 +3528,7 @@ void drawTessellationGeometry(const Context& context, const State& state, const 
     Draw(context, meshed, captured, second, snapshots, nullptr, trace);
 }
 
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace) {
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
     if (state.stages.tessellationGeometry) {
         drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
@@ -3384,6 +3538,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     PreparedDraw prepared(profile);
     prepared.recipeOut = recipeOut;
     prepared.trace = trace;
+    prepared.shape = shape;
     if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
 }
 

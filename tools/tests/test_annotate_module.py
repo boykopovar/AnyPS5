@@ -121,7 +121,8 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
 
 class AnnotateModuleTests(unittest.TestCase):
     def setUp(self):
-        self.assertIsNotNone(annotate_module.gnu_objdump(), "GNU binutils objdump (objdump or gobjdump) is required to run these tests")
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU binutils objdump (objdump or gobjdump) is required to run these tests")
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)

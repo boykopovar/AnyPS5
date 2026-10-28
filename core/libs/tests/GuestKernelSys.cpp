@@ -41,6 +41,7 @@
 #ifndef _WIN32
 #include <cerrno>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -74,6 +75,14 @@ bool ThrowsNaming(Call call, const char* text) {
     }
     return false;
 }
+
+#ifndef _WIN32
+nlink_t LinkCount(const std::string& path) {
+    struct stat status {};
+    Require(::lstat(path.c_str(), &status) == 0);
+    return status.st_nlink;
+}
+#endif
 
 void OwnershipAndLinkTests(const std::filesystem::path& root) {
     constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
@@ -143,7 +152,29 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
         Require(lchown_nid_postfix(dangling.c_str(), 0, 0) == 0);
         Require(fchownat_nid_postfix(-100, dangling.c_str(), 0, 0, 0) == -1 && Error() == 2);
         Require(fchownat_nid_postfix(-100, dangling.c_str(), 0, 0, 0x200) == 0);
-        Require(ThrowsNaming([&] { linkat_nid_postfix(-100, symbolic.c_str(), -100, other.c_str(), 0); }, "symbolic link itself"));
+#ifndef _WIN32
+        const auto symbolicCopy = (root / "copy.link").string();
+        const auto danglingCopy = (root / "dangling.copy").string();
+        Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, symbolicCopy.c_str(), 0) == 0);
+        Require(std::filesystem::read_symlink(symbolicCopy) == "owned.txt" && LinkCount(symbolic) == 2);
+        Require(std::filesystem::hard_link_count(file) == 2);
+        Require(linkat_nid_postfix(directory, "dangling.link", directory, "dangling.copy", 0) == 0);
+        Require(std::filesystem::read_symlink(danglingCopy) == "missing.txt" && LinkCount(dangling) == 2);
+        Require(linkat_nid_postfix(-100, dangling.c_str(), -100, other.c_str(), 0x400) == -1 && Error() == 2);
+        Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, linked.c_str(), 0) == -1 && Error() == 17);
+        Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, (missing + "/inner").c_str(), 0) == -1 && Error() == 2);
+        Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, (throughFile + "/inner").c_str(), 0) == -1 && Error() == 20);
+        Require(LinkCount(symbolic) == 2 && !std::filesystem::exists(std::filesystem::symlink_status(other)));
+        const auto folder = root / "folder";
+        const auto folderLink = (root / "folder.link").string();
+        const auto folderCopy = (root / "folder.copy").string();
+        Require(std::filesystem::create_directory(folder) && symlink_nid_postfix("folder", folderLink.c_str()) == 0);
+        Require(linkat_nid_postfix(-100, folderLink.c_str(), -100, other.c_str(), 0x400) == -1 && Error() == 1);
+        Require(linkat_nid_postfix(-100, folderLink.c_str(), -100, folderCopy.c_str(), 0) == 0);
+        Require(std::filesystem::read_symlink(folderCopy) == "folder" && LinkCount(folderLink) == 2);
+        Require(std::filesystem::remove(symbolicCopy) && std::filesystem::remove(danglingCopy) && std::filesystem::remove(folderCopy));
+        Require(std::filesystem::remove(folderLink) && std::filesystem::remove(folder));
+#endif
         Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, other.c_str(), 0x400) == 0);
 #ifdef _WIN32
         Require((GetFileAttributesW(std::filesystem::path(other).c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) == 0);
@@ -151,7 +182,7 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
         Require(!std::filesystem::is_symlink(std::filesystem::symlink_status(other)));
 #endif
         Require(std::filesystem::hard_link_count(file) == 3);
-        Require(std::filesystem::remove(other) && std::filesystem::remove(symbolic) && std::filesystem::remove(dangling));
+        Require(std::filesystem::remove(other) && unlink_nid_postfix(symbolic.c_str()) == 0 && unlink_nid_postfix(dangling.c_str()) == 0);
     }
     Require(sceKernelClose(directory) == 0);
     Require(std::filesystem::remove(linked) && std::filesystem::remove(file));
@@ -861,6 +892,13 @@ void CheckKernelEnvironment() {
     Require(Kenv(dump, nullptr, nullptr, 0) == 0);
 }
 
+template <typename F>
+void CheckUnsupportedPathconf(F fn, int descriptor) {
+    Require(fn(descriptor, 53) == 200112);
+    for (const int name : {0, 1, 4, 5, 6, 7, 8, 12, 18, 54, 55, 61, -1})
+        Require(fn(descriptor, name) == -1 && Error() == 45);
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -910,6 +948,19 @@ int main() {
     CheckDescriptorPathconf(_fpathconf_nid_postfix, descriptor);
     CheckPipePathconf(fpathconf_nid_postfix);
     CheckPipePathconf(_fpathconf_nid_postfix);
+    const int kqueueDescriptor = kqueue_nid_postfix();
+    Require(kqueueDescriptor >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, kqueueDescriptor);
+    Require(close_nid_postfix(kqueueDescriptor) == 0);
+    const std::string namedSharedMemory = "/anyps5-kernel-sys-pathconf-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int sharedMemoryDescriptor = shm_open_nid_postfix(namedSharedMemory.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0600);
+    Require(sharedMemoryDescriptor >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, sharedMemoryDescriptor);
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, sharedMemoryDescriptor);
+    Require(close_nid_postfix(sharedMemoryDescriptor) == 0);
+    Require(shm_unlink_nid_postfix(namedSharedMemory.c_str()) == 0);
     Require(close_nid_postfix(descriptor) == 0);
     Require(fstatfs_nid_postfix(-1, reinterpret_cast<KernelStatfs*>(viaPublic)) == -1 && Error() == 9);
     Require(fstat_nid_postfix(descriptor, &viaFstat) == -1 && Error() == 9);

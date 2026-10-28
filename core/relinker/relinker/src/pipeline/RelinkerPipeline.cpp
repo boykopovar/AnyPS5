@@ -70,9 +70,11 @@ RelinkResult RelinkerPipeline::Relink() {
         throw RelinkerException("ET_NONE inputs do not specify an ELF object type");
     if (inputType == kEtCore)
         throw RelinkerException("ET_CORE core dumps are not executable images");
-    if (inputType != ET_EXEC && inputType != ET_DYN && inputType != kEtSceDynExec && inputType != kEtSceDynamic) {
+    if (inputType == ET_EXEC)
+        throw RelinkerException("ET_EXEC inputs are linked at fixed addresses; conversion requires a position-independent image", 0x10);
+    if (inputType != ET_DYN && inputType != kEtSceDynExec && inputType != kEtSceDynamic) {
         std::ostringstream message;
-        message << "Unsupported ELF object type 0x" << std::hex << inputType << ": expected ET_EXEC, ET_DYN, 0xfe10 or 0xfe18";
+        message << "Unsupported ELF object type 0x" << std::hex << inputType << ": expected ET_DYN, 0xfe10 or 0xfe18";
         throw RelinkerException(message.str(), 0x10);
     }
 
@@ -403,11 +405,17 @@ RelinkResult RelinkerPipeline::Relink() {
                 continue;
 
             const FileByteOffset symOff = symbolEntryPos(symIdx);
+            if (!isTlsRelocation(relType) && (raw[symOff + 4] & 15) == STT_TLS)
+                throw RelinkerException("Non-TLS relocation names an STT_TLS symbol", pos);
 
             std::uint32_t nameOff = 0;
             std::memcpy(&nameOff, raw.data() + symOff, 4);
 
             const auto name = readCStr(nameOff);
+            std::uint16_t section = 0;
+            std::memcpy(&section, raw.data() + symOff + 6, sizeof(section));
+            if (section == SHN_UNDEF && (raw[symOff + 4] >> 4) != STB_WEAK && (raw[symOff + 5] & 3) != 0)
+                throw RelinkerException("Undefined non-weak symbol has non-default visibility: " + name, symOff);
             if (name.empty() && (raw.size() - symOff < symEntSize
                                  || std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                                 [](const std::uint8_t byte) { return byte != 0; })))

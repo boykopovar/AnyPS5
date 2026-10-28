@@ -42,8 +42,8 @@ short TestExtended(const ExtendedBits& bits) {
     const int exponent = bits.signExponent & 0x7fff;
     const std::uint64_t fraction = bits.mantissa & 0x7fffffffffffffffull;
     if (exponent == 0x7fff) return fraction != 0 ? NotANumber : Infinite;
-    if (exponent != 0 || (bits.mantissa >> 63) != 0) return Finite;
-    return bits.mantissa != 0 ? Denormal : Zero;
+    if ((bits.mantissa >> 63) != 0) return Finite;
+    return exponent != 0 || bits.mantissa != 0 ? Denormal : Zero;
 }
 
 template<typename TFloat>
@@ -242,8 +242,9 @@ int APS5_VABI finitef_nid_postfix(float x) { return std::isfinite(x) ? 1 : 0; }
 
 int APS5_VABI __fpclassifyl_nid_postfix(long double x) {
     const ExtendedBits bits = Bits(x);
-    if ((bits.signExponent & 0x7fff) != 0 || bits.mantissa == 0) return TestExtended(bits);
-    return Denormal;
+    const int exponent = bits.signExponent & 0x7fff;
+    if (exponent == 0) return bits.mantissa != 0 ? Denormal : Zero;
+    return exponent != 0x7fff ? Finite : TestExtended(bits);
 }
 int APS5_VABI __isinfl_nid_postfix(long double x) { return TestExtended(Bits(x)) == Infinite ? 1 : 0; }
 int APS5_VABI __isnanl_nid_postfix(long double x) { return TestExtended(Bits(x)) == NotANumber ? 1 : 0; }

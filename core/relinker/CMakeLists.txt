@@ -131,6 +131,16 @@ if(BUILD_TESTING)
     set_tests_properties(call_registry_writer PROPERTIES TIMEOUT 20)
 endif()
 
+if(ANYPS5_BUILD_FUZZERS)
+    add_test_executable(relinker_conversion_fuzzer ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/ConversionFuzzer.cpp)
+    target_link_libraries(relinker_conversion_fuzzer PRIVATE relinker_core)
+    target_link_options(relinker_conversion_fuzzer PRIVATE -fsanitize=fuzzer)
+    if(BUILD_TESTING)
+        add_test(NAME relinker_conversion_fuzzer COMMAND relinker_conversion_fuzzer -runs=20000 -seed=1)
+        set_tests_properties(relinker_conversion_fuzzer PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
 if(ANYPS5_BUILD_WASM)
     target_compile_options(relinker_core PRIVATE -fexceptions)
     add_subdirectory(wasm)
@@ -708,6 +718,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executables.py $<TARGET_FILE:relinker>)
         add_test(NAME game_patches COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_game_patches.py $<TARGET_FILE:relinker>)
+        add_test(NAME annotate_guest_module COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_annotate_guest_module.py $<TARGET_FILE:relinker>)
         if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
             add_test(NAME patch_advisor_unit COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/tools/tests/test_suggest_patches.py)
@@ -860,6 +872,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_file.py $<TARGET_FILE:relinker>)
         add_test(NAME null_symbol_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_null_symbol_relocations.py $<TARGET_FILE:relinker>)
+        foreach(symbolInput IN ITEMS executable guest)
+            add_test(NAME restricted_undefined_symbols_${symbolInput} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_restricted_undefined_symbols.py $<TARGET_FILE:relinker> ${symbolInput})
+            set_tests_properties(restricted_undefined_symbols_${symbolInput} PROPERTIES TIMEOUT 20)
+        endforeach()
         add_test(NAME input_nonascii COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_nonascii.py $<TARGET_FILE:relinker>)
         add_test(NAME long_paths COMMAND ${Python3_EXECUTABLE}

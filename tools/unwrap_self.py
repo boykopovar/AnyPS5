@@ -46,6 +46,8 @@ RECORD_HAS_SEGMENT = 0x800
 RECORD_SEGMENT_SHIFT = 20
 FIRST_REGION = 0x400
 MAX_ALIGNMENT_PADDING = 64 * 1024 * 1024
+MAX_OUTPUT_FACTOR = 4
+MIN_OUTPUT_LIMIT = 256 * 1024 * 1024
 PT_LOAD = 1
 PT_NOTE = 4
 ENTROPY_LIMIT = 7.5
@@ -67,6 +69,8 @@ PHDR_NAMES = {
     0x6FFFFF00: "PT_OS_0x6fffff00",
     0x6FFFFF01: "PT_OS_0x6fffff01",
 }
+
+PT_TLS = 7
 
 
 class Refused(Exception):
@@ -129,13 +133,18 @@ def parse_elf(data):
         offset = inner + program_offset + index * 56
         kind, flags, file_offset, vaddr, _, file_size, memory_size, alignment = struct.unpack_from(
             "<IIQQQQQQ", data, offset)
-        if kind == PT_LOAD:
+        if kind in (PT_LOAD, PT_TLS):
             if file_size > memory_size:
                 raise Refused("segment %d file size exceeds memory size" % index)
             if alignment and alignment & (alignment - 1):
                 raise Refused("segment %d alignment is not a power of two" % index)
-            if memory_size > (1 << 64) - vaddr:
-                raise Refused("segment %d memory range exceeds ELF64" % index)
+        if kind == PT_TLS:
+            if alignment > 8192:
+                raise Refused("segment %d TLS alignment exceeds 8192" % index)
+            if memory_size > 0x7FFF0000:
+                raise Refused("segment %d TLS memory size exceeds 0x7fff0000" % index)
+        if kind == PT_LOAD and memory_size > (1 << 64) - vaddr:
+            raise Refused("segment %d memory range exceeds ELF64" % index)
         headers.append({
             "index": index, "type": kind, "flags": flags, "offset": file_offset,
             "vaddr": vaddr, "size": file_size, "memory": memory_size,
@@ -330,6 +339,10 @@ def unwrap(path, output, verbose=False):
     if padding > MAX_ALIGNMENT_PADDING:
         raise Refused("segment alignment requires more than %d bytes of output padding" % MAX_ALIGNMENT_PADDING)
     cursor = empty_end
+    output_limit = max(MAX_OUTPUT_FACTOR * len(data), MIN_OUTPUT_LIMIT)
+    if cursor > output_limit:
+        raise Refused("the load segments need %d bytes of output, more than the %d allowed for a %d byte container"
+                      % (cursor, output_limit, len(data)))
 
     result = bytearray(cursor)
     for region in regions:

@@ -3,6 +3,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -580,6 +581,38 @@ static void CheckVibrationForce(int user, int handle) {
     Require(scePadSetVibrationForce(handle, &off) == PAD_OK && VibrationIs(0, 0, 0));
 }
 
+static bool TriggerIs(int trigger, bool valid, std::uint32_t mode, const std::array<std::uint8_t, 11>& effect, std::uint8_t fallback) {
+    const PadOutputState output = OutputOf(0);
+    const PadTriggerRequest& request = output.trigger[trigger];
+    return request.valid == valid && request.mode == mode && std::memcmp(request.effect, effect.data(), effect.size()) == 0 && request.fallback == fallback;
+}
+
+static void CheckTriggerEffect(int user, int handle) {
+    std::array<std::uint8_t, 120> param{};
+    const auto command = [&](int trigger, std::uint32_t mode, const std::array<std::uint8_t, 3>& data) {
+        std::memcpy(param.data() + 8 + 56 * trigger, &mode, sizeof(mode));
+        std::copy(data.begin(), data.end(), param.begin() + 16 + 56 * trigger);
+    };
+    const std::array<std::uint8_t, 11> weapon{0x25, 0x24, 0x00, 0x07};
+    const std::array<std::uint8_t, 11> feedback{0x21, 0x80, 0x03, 0x00, 0x00, 0x40, 0x12};
+    const std::array<std::uint8_t, 11> off{0x05};
+    command(0, 2, {2, 5, 8});
+    command(1, 1, {7, 3, 0});
+    param[0] = 0x1;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 2, weapon, 255) && TriggerIs(1, false, 0, {}, 0));
+    command(0, 0, {0, 0, 0});
+    param[0] = 0x2;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, true, 2, weapon, 255) && TriggerIs(1, true, 1, feedback, 96));
+    command(1, 0, {0, 0, 0});
+    param[0] = 0x3;
+    Require(scePadSetTriggerEffect(handle, param.data()) == PAD_OK && TriggerIs(0, false, 0, off, 0) && TriggerIs(1, false, 0, off, 0));
+    const int special = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+    Require(special >= PAD_SPECIAL_HANDLE);
+    command(0, 2, {2, 5, 8});
+    Require(scePadSetTriggerEffect(special, param.data()) == PAD_OK && TriggerIs(0, false, 0, off, 0));
+    Require(scePadClose_nid_postfix(special) == PAD_OK);
+}
+
 static void CheckAccessibilityControllerState(int handle) {
     std::uint32_t state = 7;
     Require(scePadGetAccessibilityControllerState(handle + 1, nullptr) == PAD_ERROR_INVALID_ARG);
@@ -832,6 +865,7 @@ int main() {
     CheckIsValidHandle(user, handle);
     CheckLightBarResets(user, handle);
     CheckVibrationForce(user, handle);
+    CheckTriggerEffect(user, handle);
     CheckControllerType(handle);
     CheckInjectedState(commandPath);
     CheckInjectedQueueTimes(commandPath);
@@ -894,6 +928,14 @@ int main() {
     std::int32_t p2Type = -1;
     Require(scePadGetControllerType(handle2, &p2Type) == PAD_OK);
     Require(p2Type == PAD_CONTROLLER_TYPE_DUAL_SENSE);
+    Require(scePadDisableVibration(handle2, true) == PAD_OK);
+    Require(scePadDisableVibration(handle2 + 99, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDisableTriggerEffect(handle2, true) == PAD_OK);
+    Require(scePadDisableTriggerEffect(handle2 + 99, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadIsLightBarBaseBrightnessControllable(handle2) == 1);
+    Require(scePadIsLightBarBaseBrightnessControllable(handle2 + 99) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBarBaseBrightness(handle2, 1) == PAD_OK);
+    Require(scePadSetLightBarBaseBrightness(handle2 + 99, 1) == PAD_ERROR_INVALID_HANDLE);
 
     PadSetPortConnected_nid_postfix(1, true);
     Require(scePadGetInfo_nid_postfix(&info) == PAD_OK);

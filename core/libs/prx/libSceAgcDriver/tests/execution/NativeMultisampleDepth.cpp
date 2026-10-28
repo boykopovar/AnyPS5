@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -58,7 +59,7 @@ using namespace AgcDriver::Graphics;
 
 class Device {
 public:
-    Device() {
+    explicit Device(bool importHost = false) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
 #elif defined(__APPLE__)
@@ -108,11 +109,39 @@ public:
             queue.queueFamilyIndex = family;
             queue.queueCount = 1u;
             queue.pQueuePriorities = &priority;
-            VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+            std::vector<VkExtensionProperties> extensions;
+            if (importHost) {
+                const auto enumerateExtensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
+                Check(enumerateExtensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
+                extensions.resize(count);
+                Check(enumerateExtensions(context.physical, nullptr, &count, extensions.data()), "vkEnumerateDeviceExtensionProperties");
+            }
+            const auto supported = [&](const char* name) { return std::any_of(extensions.begin(), extensions.end(), [&](const auto& item) { return std::strcmp(item.extensionName, name) == 0; }); };
+            const bool externalHostExtensions = supported(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) && supported(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+            const std::array<const char*, 2> externalHostNames{VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME};
+            VkPhysicalDeviceBufferDeviceAddressFeatures address{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
+            if (externalHostExtensions) {
+                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &address};
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
+            }
+            const bool externalHost = externalHostExtensions && address.bufferDeviceAddress == VK_TRUE;
+            address.pNext = nullptr;
+            address.bufferDeviceAddressCaptureReplay = VK_FALSE;
+            address.bufferDeviceAddressMultiDevice = VK_FALSE;
+            VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, externalHost ? &address : nullptr};
             device.queueCreateInfoCount = 1u;
             device.pQueueCreateInfos = &queue;
             device.pEnabledFeatures = &enabled;
+            device.enabledExtensionCount = externalHost ? static_cast<std::uint32_t>(externalHostNames.size()) : 0u;
+            device.ppEnabledExtensionNames = externalHost ? externalHostNames.data() : nullptr;
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
+            if (externalHost) {
+                VkPhysicalDeviceExternalMemoryHostPropertiesEXT host{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
+                VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &host};
+                function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &properties);
+                context.hostImportAlignment = host.minImportedHostPointerAlignment;
+                context.bufferDeviceAddress = true;
+            }
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.imageFormatProperties = function<PFN_vkGetPhysicalDeviceImageFormatProperties>("vkGetPhysicalDeviceImageFormatProperties");
@@ -1145,6 +1174,53 @@ void CheckUnwrittenGuestAccess(Context context, VkFormat format, std::uint32_t f
     std::printf("Native depth format=%u samples=%u: guest access retired the unwritten surface and refused the written one\n", static_cast<std::uint32_t>(format), fragments);
 }
 
+enum class BufferWrite { DepthPlane, Htile };
+
+void CheckBufferWrite(Context context, VkFormat format, std::uint32_t fragments, BufferWrite write) {
+    const VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, format == VK_FORMAT_D16_UNORM ? 2u : 4u, fragments));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(bytes, true), metadata(65536u, true), unrelated(65536u, true);
+    const auto guestByte = [](std::size_t offset) { return static_cast<std::byte>(offset * 5u + 1u); };
+    for (std::size_t offset = 0u; offset < bytes; ++offset) memory.Data()[offset] = guestByte(offset);
+    std::memset(metadata.Data(), 0, metadataBytes);
+    DepthTarget target{memory.Address(), 0u, extent, format, 0.0f, 0u, metadata.Address(), false, fragments};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto resident = [&] { return HasResidentDepthGuards_nid_no_patch() && DepthSurfaceAt(target.address); };
+    const auto upload = [&](std::uint64_t address, std::size_t length) {
+        GuestBufferMemory buffer(context);
+        buffer.AddWritable(address, length);
+        buffer.Upload(false);
+        Require(HostImportCovers(context, address, length), "the native depth buffer-write fixture was not bound as a host import");
+        buffer.WriteBack();
+    };
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE && resident(), "native depth buffer-write fixture has no resident owner");
+    upload(unrelated.Address(), 256u);
+    Require(resident(), "an unrelated buffer write retired a native depth surface");
+    if (write == BufferWrite::DepthPlane) upload(target.address + bytes - 256u, 256u);
+    else upload(target.htileAddress, metadataBytes);
+    Require(!resident(), "a buffer the GPU may write left an unwritten native depth surface resident over it");
+    for (std::size_t offset = 0u; offset < bytes; ++offset) Require(memory.Data()[offset] == guestByte(offset), "releasing an unwritten native depth surface for a buffer write changed its guest bytes");
+    Require(std::all_of(metadata.Data(), metadata.Data() + metadataBytes, [](std::byte value) { return value == std::byte{0}; }), "releasing an unwritten native depth surface for a buffer write changed its HTILE");
+}
+
+void CheckBufferWrites(Context context, VkFormat format, std::uint32_t fragments) {
+    if (context.hostImportAlignment == 0u) {
+        std::printf("skipped native depth buffer writes: the device lacks VK_EXT_external_memory_host, VK_KHR_buffer_device_address or the bufferDeviceAddress feature\n");
+        return;
+    }
+    for (const auto write : {BufferWrite::DepthPlane, BufferWrite::Htile}) CheckBufferWrite(context, format, fragments, write);
+    std::printf("Native depth format=%u samples=%u: a GPU buffer write over the depth or HTILE released the unwritten surface\n", static_cast<std::uint32_t>(format), fragments);
+}
+
 void CheckHtileRouting(Context context, VkFormat format, std::uint32_t fragments) {
     const VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, format == VK_FORMAT_D16_UNORM ? 2u : 4u, fragments));
@@ -1495,6 +1571,15 @@ int main(int argc, char** argv) {
                 }
                 CheckHtileRouting(context, format, samples);
                 CheckUnwrittenGuestAccess(context, format, samples);
+            }
+        }
+        {
+            const Device importing(true);
+            const auto importContext = importing.GetContext();
+            for (const auto format : {VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT}) {
+                for (const auto samples : {2u, 4u, 8u}) {
+                    if (DepthSupported(importContext, format, samples)) CheckBufferWrites(importContext, format, samples);
+                }
             }
         }
         CheckEligibility(context);

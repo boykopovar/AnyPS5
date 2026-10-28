@@ -27,7 +27,10 @@ def prepare_notes(source, body, full):
         for second in paths[index + 1:]:
             if first.resolve() == second.resolve() or (first.exists() and second.exists() and first.samefile(second)):
                 raise ValueError("Release note input and outputs must be distinct files")
-    payload = json.loads(source.read_text(encoding="utf-8-sig"))
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8-sig"))
+    except RecursionError as error:
+        raise ValueError("Generated release notes response is too deeply nested") from error
     if not isinstance(payload, dict) or "body" not in payload:
         raise ValueError("Generated release notes response must be a JSON object with a body field")
     notes = payload["body"]

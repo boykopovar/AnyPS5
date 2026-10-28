@@ -705,7 +705,25 @@ class CheckCompileResponseTests(CheckCompileFixture):
                 response.write_bytes(content.encode("utf-8"))
                 self.assertEqual(check_compile.expand_response_files(["@flags.rsp"], self.build), expected)
 
-    def test_response_options_compile_without_changing_build_outputs(self):
+    def test_empty_response_options_compile_without_changing_build_outputs(self):
+        self.check_response_option_outputs((
+            ("", "int x;\n"),
+            (" \t\r\n", "int x;\n"),
+        ))
+
+    def test_response_definitions_compile_without_changing_build_outputs(self):
+        self.check_response_option_outputs((
+            ("  -DA=7 -DB=11", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
+            ("-DA=7\n-DB=11\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
+        ))
+
+    def test_crlf_and_quoted_response_definitions_compile_without_changing_build_outputs(self):
+        self.check_response_option_outputs((
+            ("-DA=7\r\n-DB=11\r\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
+            (r'-DNAME=\"hello\" -DB=11', '_Static_assert(sizeof(NAME) == 6 && B == 11, "quoted definition");\n'),
+        ))
+
+    def check_response_option_outputs(self, cases):
         compiler = shutil.which("clang") or shutil.which("gcc")
         if compiler is None:
             self.skipTest("needs a GNU-compatible C compiler")
@@ -717,14 +735,6 @@ class CheckCompileResponseTests(CheckCompileFixture):
                                           ("-c", source.as_posix(), "-MMD", "-MF",
                                            outputs[1].as_posix(), "-o", outputs[0].as_posix())), encoding="utf-8")
         arguments = [compiler, "@" + str(response), "@" + str(output_options)]
-        cases = (
-            ("", "int x;\n"),
-            (" \t\r\n", "int x;\n"),
-            ("  -DA=7 -DB=11", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
-            ("-DA=7\n-DB=11\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
-            ("-DA=7\r\n-DB=11\r\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
-            (r'-DNAME=\"hello\" -DB=11', '_Static_assert(sizeof(NAME) == 6 && B == 11, "quoted definition");\n'),
-        )
         for content, text in cases:
             source.write_text(text, encoding="utf-8")
             response.write_bytes(content.encode("utf-8"))
@@ -861,6 +871,73 @@ class CheckCompileResponseTests(CheckCompileFixture):
         result = self.tool("unit.c")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+    def check_response_options(self, cases):
+        compiler = shutil.which("clang") or shutil.which("gcc")
+        if compiler is None:
+            self.skipTest("needs a GNU-compatible C compiler")
+        source = self.source("unit.c")
+        response = self.build / "flags.rsp"
+        output_options = self.build / "output flags.rsp"
+        outputs = [self.build / name for name in ("unit.o", "unit.d")]
+        output_options.write_text(" ".join('"' + value + '"' for value in
+                                          ("-c", source.as_posix(), "-MMD", "-MF",
+                                           outputs[1].as_posix(), "-o", outputs[0].as_posix())), encoding="utf-8")
+        arguments = [compiler, "@" + str(response), "@" + str(output_options)]
+        for content, text in cases:
+            source.write_text(text, encoding="utf-8")
+            response.write_bytes(content.encode("utf-8"))
+            original = subprocess.run(arguments, cwd=self.build, capture_output=True, text=True, check=False)
+            self.assertEqual(original.returncode, 0, original.stderr)
+            preserved = {path: path.read_bytes() for path in (source, response, output_options, *outputs)}
+            for field in ("arguments", "command"):
+                for jobs in ("1", "2"):
+                    with self.subTest(content=content, field=field, jobs=jobs):
+                        command = (subprocess.list2cmdline(arguments) if os.name == "nt" else
+                                   " ".join(shlex.quote(argument) for argument in arguments))
+                        self.manifest([{"directory": str(self.build), "file": str(source),
+                                        field: arguments if field == "arguments" else command}])
+                        result = self.tool("--jobs", jobs, "unit.c")
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertIn("1 translation units compile", result.stdout)
+                        for path, data in preserved.items():
+                            self.assertEqual(path.read_bytes(), data, path.name)
+
+
+    def test_response_macro_options_preserve_build_outputs(self):
+        self.check_response_options((('  -DA=7 -DB=11', '_Static_assert(A == 7 && B == 11, "definitions");\n'), ('-DA=7\n-DB=11\n', '_Static_assert(A == 7 && B == 11, "definitions");\n')))
+
+    def test_response_crlf_and_quoted_options_preserve_build_outputs(self):
+        self.check_response_options((('-DA=7\r\n-DB=11\r\n', '_Static_assert(A == 7 && B == 11, "definitions");\n'), ('-DNAME=\\"hello\\" -DB=11', '_Static_assert(sizeof(NAME) == 6 && B == 11, "quoted definition");\n')))
+
+    def test_unexpanded_response_files_cannot_rewrite_build_outputs(self):
+        compiler = shutil.which("clang")
+        if compiler is None:
+            self.skipTest("Clang is required to check compilation-fragment side effects")
+        source = self.source("unit.c")
+        outputs = [self.build / name for name in ("unit.o", "unit.d", "fragment.json")]
+        response = self.build / "unit flags.rsp"
+        response.write_text(" ".join('"' + argument + '"' for argument in
+                                    ("-c", source.as_posix(), "-MMD", "-MF", outputs[1].as_posix(),
+                                     "-MJ", outputs[2].as_posix(), "-o", outputs[0].as_posix())), encoding="utf-8")
+        arguments = [compiler, "@" + str(response)]
+        original = subprocess.run(arguments, cwd=self.build, capture_output=True, text=True)
+        self.assertEqual(original.returncode, 0, original.stderr)
+        preserved = {path: path.read_bytes() for path in [source, response, *outputs]}
+        for field in ("arguments", "command"):
+            for jobs in ("1", "2"):
+                with self.subTest(field=field, jobs=jobs):
+                    command = (subprocess.list2cmdline(arguments) if os.name == "nt" else
+                               " ".join(shlex.quote(argument) for argument in arguments))
+                    self.manifest([{"directory": str(self.build), "file": str(source),
+                                    field: arguments if field == "arguments" else command}])
+                    result = self.tool("--jobs", jobs, "unit.c")
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("1 translation units compile", result.stdout)
+                    self.assertNotIn("Traceback", result.stderr)
+                    for path, content in preserved.items():
+                        self.assertEqual(path.read_bytes(), content)
+
 
 
 if __name__ == "__main__":

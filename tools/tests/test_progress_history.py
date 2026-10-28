@@ -207,6 +207,28 @@ class ProgressHistoryTests(unittest.TestCase):
             data = json.loads((output / "history.json").read_text(encoding="utf-8"))
             self.assertEqual(data, [point])
 
+    def test_main_rejects_aliased_output_reports(self):
+        point = {"date": "2026-01-01", "commit": "abc1234",
+                 "libraries": {"done": 1, "total": 2, "percent": 50.0},
+                 "shaders": {"done": 3, "total": 4, "percent": 75.0}}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir(parents=True)
+            report = output / "history.json"
+            alias = output / "history.html"
+            report.write_text("existing json", encoding="utf-8")
+            try:
+                os.link(report, alias)
+            except OSError:
+                self.skipTest("hard links unavailable")
+            errors = io.StringIO()
+            with patch.object(progress_history, "collect", return_value=[point]):
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                    progress_history.main([str(output)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertEqual(report.read_text(encoding="utf-8"), "existing json")
+            self.assertEqual(alias.read_text(encoding="utf-8"), "existing json")
+
 
 
 if __name__ == "__main__":

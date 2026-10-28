@@ -107,6 +107,15 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertEqual(summary.read_text(encoding="utf-8"), "existing\n" + stdout)
         self.assertTrue(stdout.startswith("### Nightly\n"))
 
+    def test_summary_write_failure_is_reported_without_a_successful_report(self):
+        summary = Path(self.directory.name) / "missing" / "summary.md"
+        code, stdout, stderr = self.run_main(self.write(suite(case("passes"))), "--summary", summary)
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn(summary.name, stderr)
+        self.assertTrue(stderr.startswith("sanitizer_report: "))
+        self.assertNotIn("Traceback", stderr)
+
     def write_known(self, *lines):
         return self.write("\n".join(lines) + "\n", "known.txt")
 

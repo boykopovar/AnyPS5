@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <set>
@@ -15,6 +16,7 @@
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #if !defined(__APPLE__)
@@ -292,11 +294,26 @@ void CheckThreads() {
     Require(region.Collect().empty(), "writes are reported after the writers stopped");
 }
 
+void CheckRaisedSignals() {
+    Require(GuestWriteWatchAvailable_nid_postfix(), "write watch is unavailable");
+    for (const int signal : {SIGBUS, SIGSEGV}) {
+        const pid_t child = ::fork();
+        Require(child >= 0, "cannot fork");
+        if (child == 0) {
+            ::raise(signal);
+            ::_exit(0);
+        }
+        int status = 0;
+        Require(::waitpid(child, &status, 0) == child, "cannot wait for the child");
+        Require(WIFSIGNALED(status) && WTERMSIG(status) == signal, "a raised fault signal does not terminate the process");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected collect, fresh, armed, register, mapped, host, empty, protection, overlaps or threads");
+        Require(argc == 2, "expected collect, fresh, armed, register, mapped, host, empty, protection, overlaps, threads or raised");
         const std::string_view mode(argv[1]);
         if (mode == "collect") CheckCollect();
         else if (mode == "fresh") CheckFresh();
@@ -308,6 +325,7 @@ int main(int argc, char** argv) {
         else if (mode == "protection") CheckProtection();
         else if (mode == "overlaps") CheckOverlaps();
         else if (mode == "threads") CheckThreads();
+        else if (mode == "raised") CheckRaisedSignals();
         else throw std::runtime_error("unknown write watch test");
         std::printf("write watch %s passed\n", argv[1]);
         return 0;

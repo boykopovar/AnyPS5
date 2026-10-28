@@ -255,6 +255,7 @@ int main() {
         FileStat linkStatus{};
         Require(lstat_nid_postfix(linkPath.c_str(), &linkStatus) == 0 && Same(linkStatus.st_mtim, first[1]), "symlink mtime updated");
 #endif
+        Require(unlink_nid_postfix(linkPath.c_str()) == 0, "remove the symlink");
     }
     int pipe[2];
     Require(pipe_nid_postfix(pipe) == 0, "create pipe");
@@ -303,6 +304,9 @@ int main() {
         Require(RemoveDirectoryW(std::filesystem::path(directoryLink).c_str()) && DeleteFileW(std::filesystem::path(fileLink).c_str()) &&
             DeleteFileW(std::filesystem::path(danglingLink).c_str()), "remove the link fixtures");
     }
+#endif
+#ifdef _WIN32
+    DeleteFileW(std::filesystem::path(linkPath).c_str());
 #endif
     std::filesystem::remove_all(root);
 }
