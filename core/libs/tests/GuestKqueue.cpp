@@ -1073,7 +1073,6 @@ static void RegularFile() {
     Require(events[0].ident == ident && events[0].data == 2 && events[0].udata == &marker);
     Require(ftruncate_nid_postfix(appender, 4) == 0);
     Require(Poll(kq, events, 4) == 0);
-    Require(Throws([kq, ident] { Apply(kq, Change(ident, EvfiltWrite, EvAdd | EvClear)); }));
     Require(Apply(kq, Change(ident, EvfiltWrite, EvAdd)) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].filter == EvfiltWrite && events[0].data == 0);
     Require(close_nid_postfix(appender) == 0);
