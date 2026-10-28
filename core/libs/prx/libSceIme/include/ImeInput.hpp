@@ -26,6 +26,7 @@ struct ImeHostInput {
 };
 
 extern "C" void ImePublishInput_nid_postfix(const ImeHostInput& input);
+extern "C" void ImePublishPaste_nid_postfix(const char* utf8, std::size_t size);
 extern "C" bool ImeCapturesKeyboard_nid_postfix();
 
 using ImeHostTextSink = void (*)(ImeHostInputKind kind, const char16_t* text, std::size_t length);

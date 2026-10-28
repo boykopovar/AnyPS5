@@ -342,8 +342,9 @@ std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pendin
         case ImeHostInputKind::Escape:
             QueueText(session, EventPressClose, session.caret, 0);
             return std::nullopt;
-        case ImeHostInputKind::Preedit:
         case ImeHostInputKind::Paste:
+            return Insert(session, pending.paste);
+        case ImeHostInputKind::Preedit:
             return std::nullopt;
     }
     throw std::invalid_argument("IME host input: unknown input kind");
@@ -402,6 +403,26 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
         units = DecodeUtf8(input.text, size);
     }
     sink(input.kind, units.data(), units.size());
+}
+
+void ImePublishPaste_nid_postfix(const char* text, std::size_t size) {
+    if (text == nullptr) return;
+    {
+        std::lock_guard lock(g_imeMutex);
+        if (g_session) {
+            std::u16string units = ImeHostText::ClipboardUnits(text, size, (g_session->param.option & OptionMultiline) != 0);
+            if (units.empty()) return;
+            ImeHostInput input;
+            input.kind = ImeHostInputKind::Paste;
+            g_session->hostInputs.push_back({input, std::move(units)});
+            return;
+        }
+    }
+    const ImeHostTextSink sink = g_textSink.load();
+    if (sink == nullptr) return;
+    const std::u16string units = ImeHostText::ClipboardUnits(text, size, false);
+    if (units.empty()) return;
+    sink(ImeHostInputKind::Paste, units.data(), units.size());
 }
 
 bool ImeCapturesKeyboard_nid_postfix() {
