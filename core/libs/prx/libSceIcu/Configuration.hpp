@@ -17,4 +17,5 @@ const char* APS5_VABI u_getDataDirectory_nid_postfix();
 void APS5_VABI u_setDataDirectory_nid_postfix(const char*);
 const char* APS5_VABI u_getTimeZoneFilesDirectory_nid_postfix(std::int32_t*);
 void APS5_VABI u_setTimeZoneFilesDirectory_nid_postfix(const char*, std::int32_t*);
+void APS5_VABI u_cleanup_nid_postfix();
 }

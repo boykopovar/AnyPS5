@@ -74,4 +74,15 @@ void APS5_VABI u_setTimeZoneFilesDirectory_nid_postfix(const char* path, std::in
     TimeZoneDirectory = path;
 }
 
+
+void APS5_VABI u_cleanup_nid_postfix() {
+    {
+        const std::lock_guard lock(MemoryLock);
+        Memory = {};
+    }
+    const std::lock_guard lock(DirectoryLock);
+    DataDirectory.clear();
+    TimeZoneDirectory.clear();
+}
+
 }
