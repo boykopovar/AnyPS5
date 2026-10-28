@@ -353,11 +353,6 @@ int APS5_VABI u_strCaseCompare_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuUnknown_pgvyZZ_d1ck_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("pgvyZZ+d1ck", sceIcuUnknown_pgvyZZ_d1ck_nid_no_patch);
-
 int APS5_VABI u_strFoldCase_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
