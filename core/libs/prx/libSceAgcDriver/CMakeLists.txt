@@ -2247,6 +2247,21 @@ target_include_directories(agc_driver_bda_device_tests PRIVATE
 target_link_libraries(agc_driver_bda_device_tests PRIVATE libSceAgcDriver SDL2-static libc)
 set_target_properties(agc_driver_bda_device_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_bda_device_tests)
+set_property(SOURCE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/BdaDevice.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/PerformanceOverlay.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/PresentationPass.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/Recorder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/DepthPlaneGuestLayers.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/DepthStorage.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/DepthSurfaceLastWriter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/NativeMultisampleDepth.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/OversizedDescriptorSets.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/PartiallyResidentSnapshot.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/PooledBufferRange.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/SampledCacheBudget.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/execution/SparseBufferHoles.cpp
+        APPEND PROPERTY COMPILE_DEFINITIONS VK_ENABLE_BETA_EXTENSIONS)
 if(BUILD_TESTING)
     add_test(NAME agc_driver_host_import_failure_handles COMMAND agc_driver_bda_device_tests --host-import-failures)
     set_tests_properties(agc_driver_host_import_failure_handles PROPERTIES
