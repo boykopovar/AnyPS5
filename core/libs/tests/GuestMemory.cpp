@@ -98,6 +98,27 @@ static void CheckReleaseFlexibleMemory() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(again), length) == 0);
 }
 
+static void CheckPrtApertures() {
+    void* address = reinterpret_cast<void*>(0x5a5a);
+    std::size_t length = 0x5a5a;
+    for (const int index : {-1, 3}) {
+        Require(sceKernelSetPrtAperture(index, reinterpret_cast<void*>(0x1000000000), 0x10000) == SCE_KERNEL_ERROR_EINVAL);
+        Require(sceKernelGetPrtAperture(index, &address, &length) == SCE_KERNEL_ERROR_EINVAL);
+    }
+    Require(address == reinterpret_cast<void*>(0x5a5a) && length == 0x5a5a);
+    Require(sceKernelGetPrtAperture(0, nullptr, &length) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelGetPrtAperture(0, &address, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    for (int index = 0; index < 3; ++index) {
+        void* const base = reinterpret_cast<void*>(0x1000000000 + 0x100000000 * index);
+        const std::size_t size = 0x10000 << index;
+        Require(sceKernelSetPrtAperture(index, base, size) == 0);
+        Require(sceKernelGetPrtAperture(index, &address, &length) == 0 && address == base && length == size);
+    }
+    Require(sceKernelSetPrtAperture(1, nullptr, 0) == 0);
+    Require(sceKernelGetPrtAperture(1, &address, &length) == 0 && address == nullptr && length == 0);
+    Require(sceKernelGetPrtAperture(0, &address, &length) == 0 && address == reinterpret_cast<void*>(0x1000000000) && length == 0x10000);
+}
+
 static void CheckFlexibleMappingIgnoresFlag8000() {
     constexpr std::size_t length = 0x10000;
     std::size_t before = 0;
@@ -3184,6 +3205,84 @@ static void CheckRegularFileMapping() {
 #endif
     Require(std::filesystem::remove(path));
 }
+
+static void CheckExecutableSharedMappings() {
+    constexpr std::size_t page = 0x4000;
+    const auto failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    const auto code = [](std::uint32_t value) {
+        std::array<unsigned char, 6> bytes{0xb8, 0, 0, 0, 0, 0xc3};
+        std::memcpy(bytes.data() + 1, &value, sizeof(value));
+        return bytes;
+    };
+    const auto call = [](const volatile unsigned char* at) {
+        int (*function)();
+        const void* address = const_cast<const unsigned char*>(at);
+        std::memcpy(&function, &address, sizeof(function));
+        return static_cast<std::uint32_t>(function());
+    };
+    const auto check = [&](int writer, int fd, int access) {
+        for (int protection = 0; protection <= 7; ++protection) {
+            const auto stored = code(0x100 + protection);
+            Require(sceKernelPwrite(writer, stored.data(), stored.size(), page) == static_cast<std::int64_t>(stored.size()));
+            int refusal = 0;
+            if ((access == 0 && (protection & 2) != 0) || (access == 1 && (protection & 1) != 0)) refusal = 13;
+#ifdef _WIN32
+            else if (access == 1) refusal = 45;
+#else
+            else if (access == 1) refusal = 13;
+#endif
+            *__error_nid_postfix() = 0;
+            auto* mapped = static_cast<volatile unsigned char*>(mmap_nid_postfix(nullptr, page * 2, protection, 0x1, fd, 0));
+            if (refusal != 0) {
+                Require(mapped == failed && *__error_nid_postfix() == refusal);
+                continue;
+            }
+            Require(mapped != failed);
+            if ((protection & 4) != 0) Require(call(mapped + page) == 0x100u + protection);
+            else if ((protection & 3) != 0) Require(std::memcmp(const_cast<unsigned char*>(mapped) + page, stored.data(), stored.size()) == 0);
+            if ((protection & 2) != 0) {
+                const auto written = code(0x200 + protection);
+                std::memcpy(const_cast<unsigned char*>(mapped), written.data(), written.size());
+                std::array<unsigned char, 6> back{};
+                Require(sceKernelPread(writer, back.data(), back.size(), 0) == static_cast<std::int64_t>(back.size()) && back == written);
+                if ((protection & 4) != 0) Require(call(mapped) == 0x200u + protection);
+            }
+            Require(munmap_nid_postfix(const_cast<unsigned char*>(mapped), page * 2) == 0);
+        }
+    };
+    const auto stamp = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto path = std::filesystem::path("anyps5-executable-mapping-" + stamp + ".bin");
+    {
+        std::ofstream stream(path, std::ios::binary);
+        const std::vector<char> seed(page + 0x100, 0);
+        stream.write(seed.data(), static_cast<std::streamsize>(seed.size()));
+    }
+    const int file = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDWR, 0);
+    const int fileReader = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_RDONLY, 0);
+    const int fileWriter = sceKernelOpen(path.string().c_str(), SCE_KERNEL_O_WRONLY, 0);
+    Require(file >= 0 && fileReader >= 0 && fileWriter >= 0);
+    check(file, file, 2);
+    check(file, fileReader, 0);
+    check(file, fileWriter, 1);
+    Require(sceKernelClose(fileWriter) == 0 && sceKernelClose(fileReader) == 0 && sceKernelClose(file) == 0);
+    Require(std::filesystem::remove(path));
+    const int anonymous = shm_open_nid_postfix(reinterpret_cast<const char*>(1), SCE_KERNEL_O_RDWR, 0600);
+    Require(anonymous >= 0 && ftruncate_nid_postfix(anonymous, page * 2) == 0);
+    check(anonymous, anonymous, 2);
+    Require(close_nid_postfix(anonymous) == 0);
+    const auto name = "/anyps5-executable-mapping-" + stamp;
+    const int named = shm_open_nid_postfix(name.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL, 0600);
+    Require(named >= 0 && ftruncate_nid_postfix(named, page * 2) == 0);
+    const int namedReader = shm_open_nid_postfix(name.c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Require(namedReader >= 0);
+    check(named, named, 2);
+    check(named, namedReader, 0);
+    Require(close_nid_postfix(namedReader) == 0 && close_nid_postfix(named) == 0 && shm_unlink_nid_postfix(name.c_str()) == 0);
+    int jit = -1;
+    Require(sceKernelJitCreateSharedMemory(nullptr, page * 2, 7, &jit) == 0 && jit >= 0);
+    check(jit, jit, 2);
+    Require(close_nid_postfix(jit) == 0);
+}
 #endif
 
 static void CheckMappedLeasesPreserveReadableRuns() {
@@ -3589,6 +3688,12 @@ int main(int argc, char** argv) {
 #endif
         return 0;
     }
+#if defined(__linux__) || defined(_WIN32)
+    if (argc == 2 && std::strcmp(argv[1], "executable-mappings") == 0) {
+        CheckExecutableSharedMappings();
+        return 0;
+    }
+#endif
     Require(argc == 1);
     CheckResidentMappingBookkeepingStaysSmall();
     CheckAvailableDirectMemoryIsLargestFreeBlock();
@@ -3598,6 +3703,7 @@ int main(int argc, char** argv) {
     CheckMemoryPoolBlockStats();
     CheckReleaseFlexibleMemory();
     CheckFlexibleMappingIgnoresFlag8000();
+    CheckPrtApertures();
     CheckSceKernelMmap();
     CheckInternalMemoryAvailableSize();
     CheckVirtualQueryPartialMunmap();

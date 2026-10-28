@@ -38,7 +38,6 @@ int main() {
     view[0x2000] = 'm';
     Require(pread_nid_postfix(first, &last, 1, 0x2000) == 1 && last == 'm');
     Require(munmap_nid_postfix(const_cast<char*>(view), 0x4000) == 0);
-#ifndef _WIN32
     const unsigned char code[] = {0xb8, 0x2a, 0, 0, 0, 0xc3};
     Require(pwrite_nid_disambig1_nid_postfix(first, code, sizeof(code), 0) == static_cast<std::int64_t>(sizeof(code)));
     void* executable = mmap_nid_postfix(nullptr, 0x4000, 5, 0x1, first, 0);
@@ -47,6 +46,7 @@ int main() {
     std::memcpy(&function, &executable, sizeof(function));
     Require(function() == 42);
     Require(munmap_nid_postfix(executable, 0x4000) == 0);
+#ifndef _WIN32
     Require(pwrite_nid_disambig1_nid_postfix(third, text, sizeof(text), 0) == 0);
 #endif
     Require(ftruncate_nid_postfix(third, 0x4000) == 0);

@@ -283,7 +283,7 @@ void EnsurePrivateWindowsDirectory(const std::filesystem::path& path, bool objec
 
 DWORD SetWindowsNamedPermissions(HANDLE handle, int mode) {
     std::wstring policy = L"D:P(A;OICI;FA;;;SY)(A;;WD;;;OW)";
-    if ((mode & 0400) != 0) policy += L"(A;;GRWD;;;OW)";
+    if ((mode & 0400) != 0) policy += L"(A;;GRGXWD;;;OW)";
     if ((mode & 0200) != 0) policy += L"(A;;GWSDWD;;;OW)";
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     if (!::ConvertStringSecurityDescriptorToSecurityDescriptorW(policy.c_str(), SDDL_REVISION_1, &descriptor, nullptr))
