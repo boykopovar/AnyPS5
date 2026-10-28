@@ -1098,13 +1098,16 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
     for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
         const auto& instruction = program.instructions[index];
         const std::uint32_t nextProgramCounter = instructionEndProgramCounter(instruction);
+        const std::uint32_t followingProgramCounter = index + 1u < program.instructions.size() ? program.instructions[index + 1u].programCounter : endProgramCounter;
 
         if (IsDirectBranchOpcode(instruction.op)) {
             if (!isValidTarget(instruction.branchTarget, instructionProgramCounters, firstProgramCounter, endProgramCounter)) {
                 throw std::invalid_argument("branch at program counter " + toHexString(instruction.programCounter) + " targets invalid program counter " + toHexString(instruction.branchTarget));
             }
             labels.insert(instruction.branchTarget);
-            if (nextProgramCounter <= endProgramCounter) {
+            if (instruction.op == RdnaOpcode::SBranch) {
+                labels.insert(followingProgramCounter);
+            } else if (nextProgramCounter <= endProgramCounter) {
                 labels.insert(nextProgramCounter);
             }
         } else if (instruction.op == RdnaOpcode::SSetpcB64) {
@@ -1136,8 +1139,8 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
                     labels.insert(nextProgramCounter);
                 }
             }
-        } else if (instruction.op == RdnaOpcode::SEndpgm) {
-            labels.insert(nextProgramCounter);
+        } else if (instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) {
+            labels.insert(followingProgramCounter);
         }
     }
 
@@ -1182,7 +1185,7 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
         const auto& last = program.instructions[block.instructionEnd - 1u];
         const std::uint32_t nextProgramCounter = instructionEndProgramCounter(last);
 
-        if (last.op == RdnaOpcode::SEndpgm) {
+        if (last.op == RdnaOpcode::SEndpgm || last.op == RdnaOpcode::SCodeEnd) {
             block.terminator.kind = TerminatorKind::Return;
         } else if (last.op == RdnaOpcode::SSetpcB64) {
             std::uint32_t target = 0;

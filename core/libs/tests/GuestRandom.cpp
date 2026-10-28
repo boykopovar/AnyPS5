@@ -10,6 +10,8 @@ int main() {
     unsigned char buffer[80];
     Require(sceRandomGetRandomNumber(nullptr, 16) == invalid);
     Require(sceRandomGetRandomNumber(nullptr, 0) == invalid);
+    Require(sceRandomGetRandomNumber(nullptr, 64) == invalid);
+    Require(sceRandomGetRandomNumber(nullptr, 65) == invalid);
     std::memset(buffer, 0xAA, sizeof(buffer));
     Require(sceRandomGetRandomNumber(buffer, 65) == invalid);
     Require(buffer[0] == 0xAA);

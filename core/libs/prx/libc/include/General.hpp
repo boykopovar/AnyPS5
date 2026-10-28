@@ -13,6 +13,7 @@
 #include "general/ExportMacros.hpp"
 
 extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName);
+extern "C" std::uint64_t NotImplementedCalls_nid_no_patch();
 extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
 extern "C" bool StopAtPrefixLetter_nid_no_patch(const char* str, char** endptr, int base);
 extern "C" bool RejectIntegerBase_nid_no_patch(const char* str, char** endptr, int base, bool setError);
@@ -32,6 +33,7 @@ extern "C" int CopyGuestPath_nid_no_patch(const char* source, std::string& desti
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
 extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
+extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 extern "C" std::filesystem::path ResolvePathOrRelinkedModule_nid_no_patch(const char* path);
 extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* path, bool module = false);
 extern "C" std::filesystem::path ResolveDiskPath_nid_no_patch(const char* path);

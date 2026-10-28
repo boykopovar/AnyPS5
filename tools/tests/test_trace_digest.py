@@ -1,4 +1,5 @@
 import contextlib
+from functools import lru_cache
 import gzip
 import io
 import json
@@ -45,6 +46,71 @@ SUMMARY = {"commit": "abc", "dirty": False, "env": {"APS5_TRACE_FRAMES": "600:3"
 
 STACKS = "# samples=5 depth=64 truncated=1\n# module a.prx 0x1000 0x1\nntdll.dll+0x1;a.prx+0x10;a.prx+0x20 3\nntdll.dll+0x1;a.prx+0x10;a.prx+0x30 1\n[truncated];a.prx+0x40;a.prx+0x30 1\n"
 
+
+@lru_cache(maxsize=2)
+def excessive_trace_json(opening, closing):
+    depth = sys.getrecursionlimit() + 64
+    for _ in range(8):
+        value = opening * depth + "0" + closing * depth
+        try:
+            json.loads(value)
+        except RecursionError:
+            return opening * (depth + 128) + "0" + closing * (depth + 128)
+        depth *= 2
+    raise AssertionError("JSON decoder accepted every bounded nesting probe")
+
+
+class TraceJsonNestingTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.trace = Path(self.directory.name) / "baseline.json"
+        self.trace.write_text(json.dumps({"traceEvents": EVENTS}), encoding="utf-8")
+
+    def test_excessive_trace_json_nesting_has_a_path_qualified_error(self):
+        for opening, closing in (("[", "]"), ('{"nested":', "}")):
+            data = ('{"traceEvents": [], "extra": ' + excessive_trace_json(opening, closing) + "}").encode("utf-8")
+            for compressed in (False, True):
+                with self.subTest(opening=opening, compressed=compressed):
+                    path = Path(self.directory.name) / ("deep-\u00e9.json.gz" if compressed else "deep-\u00e9.json")
+                    original = gzip.compress(data) if compressed else data
+                    path.write_bytes(original)
+                    with self.assertRaisesRegex(ValueError, "trace JSON nesting is too deep") as error:
+                        trace_digest.load_trace(path)
+                    self.assertIn(str(path), str(error.exception))
+                    self.assertIsInstance(error.exception.__cause__, RecursionError)
+                    self.assertEqual(path.read_bytes(), original)
+
+    def test_excessive_trace_json_nesting_produces_only_a_cli_error(self):
+        for opening, closing, compressed, args in (("[", "]", False, ()), ('{"nested":', "}", True, ("--json",)),
+                                                   ("[", "]", True, ()), ('{"nested":', "}", False, ("--json",))):
+            with self.subTest(opening=opening, compressed=compressed, args=args):
+                path = Path(self.directory.name) / ("deep-\u00e9.json.gz" if compressed else "deep-\u00e9.json")
+                data = ('{"traceEvents": [], "extra": ' + excessive_trace_json(opening, closing) + "}").encode("utf-8")
+                original = gzip.compress(data) if compressed else data
+                path.write_bytes(original)
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(path), *args],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(f"FAIL: {path}: trace JSON nesting is too deep", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(path.read_bytes(), original)
+
+    def test_supported_nested_trace_metadata_preserves_the_digest(self):
+        expected = trace_digest.digest(trace_digest.load_trace(self.trace), SUMMARY, None, 5, 10)
+        metadata = {"value": 7}
+        for _ in range(16):
+            metadata = {"nested": [metadata]}
+        data = json.dumps({"traceEvents": EVENTS, "extra": metadata}).encode("utf-8")
+        for compressed in (False, True):
+            with self.subTest(compressed=compressed):
+                path = Path(self.directory.name) / ("nested.json.gz" if compressed else "nested.json")
+                original = gzip.compress(data) if compressed else data
+                path.write_bytes(original)
+                trace = trace_digest.load_trace(path)
+                self.assertEqual(trace_digest.digest(trace, SUMMARY, None, 5, 10), expected)
+                self.assertEqual(path.read_bytes(), original)
 
 class TraceDigestTests(unittest.TestCase):
     def test_summary_jsonl_record_shapes_are_validated(self):
@@ -138,6 +204,54 @@ class TraceDigestTests(unittest.TestCase):
                 with self.subTest(document=document, compressed=compressed):
                     path = Path(self.directory.name) / ("invalid.json.gz" if compressed else "invalid.json")
                     data = json.dumps(document).encode("utf-8")
+                    path.write_bytes(gzip.compress(data) if compressed else data)
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), "--json"],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("FAIL: " + message, result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(result.stdout, "")
+
+    def test_cli_rejects_invalid_event_fields_without_partial_output(self):
+        slice_event = complete(1, "Driver.Packet", 0, 10)
+        cases = [
+            (dict(slice_event, tid=None), "trace event 0: tid must be an integer"),
+            (dict(slice_event, tid="1"), "trace event 0: tid must be an integer"),
+            (dict(slice_event, tid=True), "trace event 0: tid must be an integer"),
+            ({key: value for key, value in slice_event.items() if key != "tid"}, "trace event 0: tid must be an integer"),
+            ({key: value for key, value in slice_event.items() if key != "dur"}, "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur=None), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur="slow"), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur="10"), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur=True), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur=[1]), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, ts={}), "trace event 0: ts must be a finite number"),
+            (dict(slice_event, ts="0"), "trace event 0: ts must be a finite number"),
+            (dict(slice_event, ts=float("nan")), "trace event 0: ts must be a finite number"),
+            (dict(slice_event, ts=float("inf")), "trace event 0: ts must be a finite number"),
+            (dict(slice_event, ts=1e308), "trace event 0: ts must be a finite number"),
+            (dict(slice_event, name=7), "trace event 0: name must be a string"),
+            ({key: value for key, value in slice_event.items() if key != "name"}, "trace event 0: name must be a string"),
+            (dict(slice_event, args=[]), "trace event 0: args must be an object"),
+            (dict(slice_event, args={"batch": [1]}), "trace event 0: args.batch must be an integer or a string"),
+            (dict(slice_event, args={"batch": []}), "trace event 0: args.batch must be an integer or a string"),
+            (dict(slice_event, args={"batch": None}), "trace event 0: args.batch must be an integer or a string"),
+            ({"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": 1}, "trace event 0: args.name must be a string"),
+            ({"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": 1, "args": {}}, "trace event 0: args.name must be a string"),
+            ({"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": [1], "args": {"name": "a"}}, "trace event 0: tid must be an integer"),
+            ({"name": "present", "ph": "i", "ts": None, "pid": 7, "tid": 2, "s": "g"}, "trace event 0: ts must be a finite number"),
+            ({"name": "present", "ph": "i", "pid": 7, "tid": 2, "s": "g"}, "trace event 0: ts must be a finite number"),
+            ({"name": "present", "ph": "i", "ts": 0, "pid": 7, "tid": 2, "s": "g", "args": 5}, "trace event 0: args must be an object"),
+            ({"name": "folded", "ph": "C", "ts": 0, "pid": 7, "args": {"ms": 1.5}}, "trace event 0: tid must be an integer"),
+            ({"name": "folded", "ph": "C", "ts": 0, "pid": 7, "tid": 1, "args": []}, "trace event 0: args must be an object"),
+            ({"name": "folded", "ph": "C", "ts": 0, "pid": 7, "tid": 1, "args": {"ms": "x"}}, "trace event 0: args value must be a finite number"),
+            ({"name": "folded", "ph": "C", "ts": 0, "pid": 7, "tid": 1, "args": {"ms": True}}, "trace event 0: args value must be a finite number"),
+        ]
+        for event, message in cases:
+            for compressed in (False, True):
+                with self.subTest(event=event, compressed=compressed):
+                    path = Path(self.directory.name) / ("fields.json.gz" if compressed else "fields.json")
+                    data = json.dumps({"traceEvents": [event]}).encode("utf-8")
                     path.write_bytes(gzip.compress(data) if compressed else data)
                     result = subprocess.run([sys.executable, trace_digest.__file__, str(path), "--json"],
                                             capture_output=True, text=True, encoding="utf-8", timeout=20)

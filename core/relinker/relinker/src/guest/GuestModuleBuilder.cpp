@@ -489,4 +489,33 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     return artifacts;
 }
 
+
+std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules) {
+    std::map<std::size_t, std::string> sonames;
+    const auto soname = [&](std::size_t index) -> const std::string& {
+        const auto [found, inserted] = sonames.try_emplace(index);
+        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true).Soname;
+        return found->second;
+    };
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> skipped;
+    std::vector<bool> copies(modules.size());
+    for (std::size_t copy = 0; copy < modules.size(); ++copy) {
+        const auto& path = modules[copy].Path;
+        const auto name = Io::Utf8Path(path.filename());
+        for (std::size_t original = 0; original < modules.size(); ++original) {
+            const auto& kept = modules[original].Path;
+            const auto prefix = Io::Utf8Path(kept.filename());
+            if (kept.parent_path() != path.parent_path() || prefix.size() >= name.size() || !name.starts_with(prefix)) continue;
+            if (soname(copy).empty() || soname(copy) != soname(original)) continue;
+            copies[copy] = true;
+            skipped.emplace_back(path, kept);
+            break;
+        }
+    }
+    std::vector<GuestModuleInput> remaining;
+    for (std::size_t index = 0; index < modules.size(); ++index)
+        if (!copies[index]) remaining.push_back(std::move(modules[index]));
+    modules = std::move(remaining);
+    return skipped;
+}
 }

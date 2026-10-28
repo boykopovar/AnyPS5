@@ -246,9 +246,6 @@ constexpr int guestRlimitFsize = 1;
 constexpr int guestPriorityProcess = 0;
 constexpr int guestPriorityGroup = 1;
 constexpr int guestPriorityUser = 2;
-std::atomic<int> guestNice{0};
-constexpr int guestNiceMin = -20;
-constexpr int guestNiceMax = 20;
 constexpr int guestRlimitData = 2;
 constexpr int guestRlimitStack = 3;
 constexpr int guestRlimitCore = 4;
@@ -1183,7 +1180,7 @@ int APS5_VABI getpriority_nid_postfix(int which, int who) {
         *__error_nid_postfix() = guestNoProcess;
         return -1;
     }
-    return guestNice.load(std::memory_order_relaxed);
+    return 0;
 }
 
 int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
@@ -1197,8 +1194,11 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
         *__error_nid_postfix() = guestNoProcess;
         return -1;
     }
-    const int clamped = niceval < guestNiceMin ? guestNiceMin : (niceval > guestNiceMax ? guestNiceMax : niceval);
-    guestNice.store(clamped, std::memory_order_relaxed);
+    if (which != guestPriorityProcess) {
+        throw std::runtime_error(std::string("setpriority: setting the nice value of ") +
+                                 (which == guestPriorityGroup ? "PRIO_PGRP" : "PRIO_USER") + " to " + std::to_string(niceval) +
+                                 " is not verified on the console");
+    }
     return 0;
 }
 

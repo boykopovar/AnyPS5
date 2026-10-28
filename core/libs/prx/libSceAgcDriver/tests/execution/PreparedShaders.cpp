@@ -1485,6 +1485,11 @@ void DispatchAheadPrewarm() {
 
 int main(int argc, char** argv) {
     try {
+#ifdef _WIN32
+        HANDLE diagnosticError = nullptr;
+        Require(DuplicateHandle(GetCurrentProcess(), GetStdHandle(STD_ERROR_HANDLE), GetCurrentProcess(), &diagnosticError, 0, FALSE, DUPLICATE_SAME_ACCESS) != 0, "cannot retain the native stderr handle");
+        Require(SetStdHandle(STD_ERROR_HANDLE, diagnosticError) != 0, "cannot retain native diagnostics during stderr capture");
+#endif
         const std::string_view abiMode = argc == 2 ? argv[1] : "";
         const bool abiDeferred = abiMode == "--abi-deferred-compute" || abiMode == "--abi-deferred-concurrent" || abiMode == "--abi-deferred-pixel" || abiMode == "--abi-deferred-stages" || abiMode == "--abi-deferred-rectangle" || abiMode == "--abi-deferred-undecodable-state" || abiMode == "--abi-deferred-registration-failure" || abiMode == "--abi-deferred-vertex-inputs" || abiMode == "--abi-deferred-rectangle-pairs";
         Require(argc == 1 || abiDeferred || (argc == 2 && (std::string_view(argv[1]) == "--indirect" || std::string_view(argv[1]) == "--fail-before-registration" || std::string_view(argv[1]) == "--deferred" || std::string_view(argv[1]) == "--deferred-undecodable" || std::string_view(argv[1]) == "--registered-workgroup" || std::string_view(argv[1]) == "--dispatch-ahead-prewarm" || std::string_view(argv[1]) == "--lazy")), "invalid test arguments");

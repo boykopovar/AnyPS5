@@ -199,6 +199,14 @@ void windowsGuiRequiresWindows() {
     require(ok.windowsGui && ok.toWindows, "--windows-gui with --windows was rejected");
 }
 
+void frameRedZoneRequiresWindows() {
+    const std::string message = "--frame-red-zone requires --windows";
+    expectThrows({"--frame-red-zone", "input.elf", "output.elf"}, message);
+    expectThrows({"--macos", "--frame-red-zone", "input.elf", "output.elf"}, message);
+    const auto ok = parse({"--windows", "--frame-red-zone", "input.elf", "output.elf"});
+    require(ok.frameRedZone && ok.toWindows, "--frame-red-zone with --windows was rejected");
+}
+
 void missingPositionals() {
     expectUsage({});
     expectUsage({"input.elf"});
@@ -361,6 +369,7 @@ int main() {
         tooManyPositionals();
         windowsDiagnosticsRequiresWindows();
         windowsGuiRequiresWindows();
+        frameRedZoneRequiresWindows();
         missingPositionals();
         windowsFixedBase();
         linuxFixedBase();

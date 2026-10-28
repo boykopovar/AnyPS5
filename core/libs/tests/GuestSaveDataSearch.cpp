@@ -280,6 +280,10 @@ static void CheckNullArguments() {
     Require(sceSaveDataDirNameSearch2(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearch2");
     cond.order = 2;
     Require(sceSaveDataDirNameSearch2(&cond, &result) == SaveDataErrorParameter, "invalid order must be rejected in sceSaveDataDirNameSearch2");
+    Require(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress returns PARAMETER in sceSaveDataGetConvertProgress");
+    float progress = 0.0f;
+    Require(sceSaveDataGetConvertProgress(&progress) == -2137063423, "uninitialized convert progress returns NOT_INITIALIZED");
+    Require(sceSaveDataCheckIpmiIfSize() == 0, "sceSaveDataCheckIpmiIfSize succeeds");
 }
 
 static void BlockSize() {

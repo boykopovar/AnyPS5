@@ -64,3 +64,6 @@
 [submodule "3rdparty/vorbis"]
 	path = 3rdparty/vorbis
 	url = https://github.com/xiph/vorbis.git
+[submodule "3rdparty/nghttp2"]
+	path = 3rdparty/nghttp2
+	url = https://github.com/nghttp2/nghttp2.git

@@ -32,6 +32,10 @@ static void SendEvent(Ngs2Voice& voice, std::uint32_t eventId) {
 }
 
 void Ngs2Voice::SetEvent(std::uint32_t eventId) {
+    if (state != Ngs2PlayState::Empty &&
+        (eventId == SCE_NGS2_VOICE_EVENT_STOP || eventId == SCE_NGS2_VOICE_EVENT_STOP_IMM || eventId == SCE_NGS2_VOICE_EVENT_KILL)) {
+        for (auto& gain : customGain) if (gain.configured) gain.lifecycleUnknown = true;
+    }
     switch (eventId) {
         case SCE_NGS2_VOICE_EVENT_PLAY:
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
@@ -59,6 +63,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
 }
 
 void Ngs2Voice::ResetSetup() {
+    for (auto& gain : customGain) if (gain.configured) gain.lifecycleUnknown = true;
     ++waveformRevision;
     SetEvent(SCE_NGS2_VOICE_EVENT_STOP_IMM);
     std::fill(ports.begin(), ports.end(), Ngs2Port{});
@@ -130,13 +135,15 @@ static void SetPortMatrix(Ngs2Voice& voice, std::uint32_t port, std::int32_t mat
 
 static void Patch(Ngs2Voice& voice, const Ngs2VoicePatchParam& patch) {
     auto& port = PortAt(voice, patch.port);
-    if (patch.dest_input_id != 0) throw std::runtime_error("NGS2: voice input " + std::to_string(patch.dest_input_id) + " is not implemented");
     if (patch.dest_handle == 0) {
+        if (patch.dest_input_id != 0) throw std::runtime_error("NGS2: a disconnected port with a nonzero input id is not implemented");
         port.dest = nullptr;
+        port.destInput = 0;
         return;
     }
     auto* dest = Ngs2FindVoice(patch.dest_handle);
     if (dest == nullptr) {
+        if (patch.dest_input_id != 0) throw std::runtime_error("NGS2: a rack destination with a nonzero input id is not implemented");
         auto* rack = Ngs2FindRack(patch.dest_handle);
         if (rack != nullptr && !rack->voices.empty()) dest = &rack->voices.front();
     }
@@ -144,7 +151,12 @@ static void Patch(Ngs2Voice& voice, const Ngs2VoicePatchParam& patch) {
         dest->rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
         APS5_INVALID_ARG_EX;
     }
+    if (patch.dest_input_id != 0 &&
+        (dest->rack->rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || patch.dest_input_id >= dest->rack->maxInputs)) {
+        throw std::runtime_error("NGS2: voice input " + std::to_string(patch.dest_input_id) + " is not implemented for this rack");
+    }
     port.dest = dest;
+    port.destInput = patch.dest_input_id;
 }
 
 static void ApplyCommonParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
@@ -421,7 +433,12 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
     auto& voice = *found;
     try {
         for (const auto* param = param_list;; param = reinterpret_cast<const Ngs2VoiceParamHeader*>(reinterpret_cast<const std::uint8_t*>(param) + param->next)) {
-            ApplyParam(voice, *param);
+            if ((param->id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN) {
+                const auto result = Ngs2ApplyCustomGainParam(voice, *param);
+                if (result != SCE_NGS2_OK) return result;
+            } else {
+                ApplyParam(voice, *param);
+            }
             if (param->next == 0) break;
         }
     } catch (const Ngs2ReturnCode& result) {
@@ -521,6 +538,7 @@ int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t voice_handle, uint32_t port, Ngs
     info->matrix_id = source.matrix;
     info->volume = source.volume;
     info->dest_handle = reinterpret_cast<Ngs2Handle>(source.dest);
+    info->dest_input_id = source.destInput;
     return SCE_NGS2_OK;
 }
 

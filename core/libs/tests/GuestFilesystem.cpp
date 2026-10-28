@@ -484,6 +484,8 @@ int main() {
             for (int whence = 0; whence < 3; ++whence) {
                 Require(lseek_nid_postfix(end, 0, whence) == -1 && *__error_nid_postfix() == 29);
                 Require(sceKernelLseek(end, 1, whence) == static_cast<int>(0x8002001du));
+                Require(lseek_nid_postfix(end, -1, whence) == -1 && *__error_nid_postfix() == 29);
+                Require(sceKernelLseek(end, -100, whence) == static_cast<int>(0x8002001du));
             }
         }
         char piped[8]{};
@@ -576,6 +578,15 @@ int main() {
     {
         const auto listed = root / "listed.txt";
         std::ofstream(listed, std::ios::binary) << "listed";
+        Require(fopen_nid_postfix(listed.string().c_str(), "wx") == nullptr && *__error_nid_postfix() == 17);
+        for (const char* invalidMode : {"z", "", "q"}) {
+            *__error_nid_postfix() = 0;
+            Require(fopen_nid_postfix(listed.string().c_str(), invalidMode) == nullptr && *__error_nid_postfix() == 22);
+        }
+        auto* readWrite = fopen_nid_postfix(listed.string().c_str(), "rw");
+        char word[8] = {};
+        Require(readWrite != nullptr && fread_nid_postfix(word, 1, 6, readWrite) == 6 && std::string(word) == "listed");
+        Require(fclose_nid_postfix(readWrite) == 0);
         for (const char* openMode : {"r", "rb", "re"}) {
             auto* directoryStream = fopen_nid_postfix(root.string().c_str(), openMode);
             Require(directoryStream != nullptr);
@@ -1194,6 +1205,22 @@ int main() {
             nullptr, 0, &returned, nullptr) != 0);
         Require(CloseHandle(taggedCleanup) != 0 && std::filesystem::remove(tagged));
     }
+
+    const auto fullTarget = root / "junction-full-target";
+    const auto fullJunction = root / "junction-full";
+    Require(std::filesystem::create_directory(fullTarget));
+    FILE* const inside = std::fopen((fullTarget / "inside.txt").string().c_str(), "wb");
+    Require(inside != nullptr);
+    std::fclose(inside);
+    const auto fullCommand = L"cmd /c mklink /J \"" + fullJunction.wstring() + L"\" \"" + fullTarget.wstring() + L"\"";
+    Require(_wsystem(fullCommand.c_str()) == 0);
+    Require(rmdir_nid_postfix(fullJunction.string().c_str()) == -1 && *__error_nid_postfix() == 20);
+    Require(sceKernelRmdir(fullJunction.string().c_str()) == static_cast<int>(0x80020014u));
+    Require(std::filesystem::is_regular_file(fullTarget / "inside.txt"));
+    Require(sceKernelUnlink(fullJunction.string().c_str()) == 0);
+    Require(!std::filesystem::exists(std::filesystem::symlink_status(fullJunction)));
+    Require(std::filesystem::is_regular_file(fullTarget / "inside.txt"));
+    Require(std::filesystem::remove(fullTarget / "inside.txt") && std::filesystem::remove(fullTarget));
 #endif
     FileStat identity{};
     FileStat byDescriptor{};

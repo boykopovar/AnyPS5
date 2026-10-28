@@ -40,6 +40,24 @@ class TimelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pad_timeline.compile_timeline(self.document, 1)
 
+    def test_duplicate_buttons_are_rejected(self):
+        document = {
+            "version": 1,
+            "events": [
+                {"at_ms": 0, "hold_ms": 100, "buttons": ["cross", "cross"]}
+            ],
+        }
+
+        for buttons in (
+            ["cross", "cross"],
+            ["l1", "r1", "l1"],
+            ["release", "release"],
+        ):
+            with self.subTest(buttons=buttons):
+                document["events"][0]["buttons"] = buttons
+                with self.assertRaisesRegex(ValueError, "duplicate button names"):
+                    pad_timeline.compile_timeline(document, sequence=1)
+
     def test_unknown_buttons(self):
         for buttons in [["typo"], "cross", [True]]:
             with self.subTest(buttons=buttons):
@@ -154,6 +172,21 @@ class TimelineTests(unittest.TestCase):
             os.link(timeline, linked)
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
+
+    def test_output_directory_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline = root / "sequence.json"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            target_dir = root / "output_dir"
+            target_dir.mkdir()
+            result = self.run_cli(timeline, target_dir)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(f"{target_dir} is a directory", result.stderr)
+            nonexistent_parent = root / "missing" / "command"
+            result = self.run_cli(timeline, nonexistent_parent)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(f"directory does not exist: {nonexistent_parent.parent}", result.stderr)
 
     def test_sequence_advances_past_existing_command_after_clock_reset(self):
         with tempfile.TemporaryDirectory() as directory:

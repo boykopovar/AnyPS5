@@ -51,6 +51,13 @@ int main() {
     Audio3dInternal::MixFrame(loud_sources, 2, 1, loud_out);
     Require(loud_out.size() == 2 && loud_out[0] == 32767 && loud_out[1] == 32767, "sums above full scale clamp");
 
+    std::int16_t loud_neg[1] = {-32768};
+    Audio3dInternal::Source loud_neg_source{loud_neg, 1, 1, false, 1.0f, 0.0f};
+    Audio3dInternal::Source loud_neg_sources[2] = {loud_neg_source, loud_neg_source};
+    std::vector<std::int16_t> loud_neg_out;
+    Audio3dInternal::MixFrame(loud_neg_sources, 2, 1, loud_neg_out);
+    Require(loud_neg_out.size() == 2 && loud_neg_out[0] == -32767 && loud_neg_out[1] == -32767, "sums below negative full scale clamp");
+
     Audio3dInternal::Source out_of_range{panned, 1, 2, false, 1.0f, 2.0f};
     std::vector<std::int16_t> out_of_range_out;
     Audio3dInternal::MixFrame(&out_of_range, 1, 1, out_of_range_out);

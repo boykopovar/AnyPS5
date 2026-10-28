@@ -9,11 +9,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -21,7 +23,7 @@
 extern "C" int kill(int, int);
 #endif
 
-#if defined(__linux__)
+#ifndef _WIN32
 extern char** environ;
 #endif
 
@@ -229,12 +231,21 @@ static std::int32_t SpawnChild(const char* role) {
     char* arguments[] = {program, nullptr};
     std::vector<std::string> entries;
 #ifdef _WIN32
-    char** const parentEnvironment = _environ;
+    const LPWCH block = GetEnvironmentStringsW();
+    Check(block != nullptr);
+    for (const wchar_t* entry = block; *entry != L'\0'; entry += std::wcslen(entry) + 1) {
+        const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, entry, -1, nullptr, 0, nullptr, nullptr);
+        Check(size > 0);
+        std::string narrow(static_cast<std::size_t>(size), '\0');
+        Check(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, entry, -1, narrow.data(), size, nullptr, nullptr) == size);
+        narrow.pop_back();
+        entries.push_back(std::move(narrow));
+    }
+    FreeEnvironmentStringsW(block);
 #else
-    char** const parentEnvironment = environ;
-#endif
-    for (char** entry = parentEnvironment; entry != nullptr && *entry != nullptr; ++entry)
+    for (char** entry = environ; entry != nullptr && *entry != nullptr; ++entry)
         entries.push_back(*entry);
+#endif
     entries.push_back(std::string("ANYPS5_POSIX_SPAWN_ROLE=") + role);
     std::vector<char*> environment;
     for (auto& entry : entries)
@@ -335,6 +346,7 @@ int main() {
 #ifndef _WIN32
         if (std::strcmp(role, "child-stop") == 0) {
             std::raise(SIGSTOP);
+            std::this_thread::sleep_for(std::chrono::seconds(2));
             std::_Exit(44);
         }
         if (std::strcmp(role, "child-kill-bus") == 0) std::raise(SIGBUS);

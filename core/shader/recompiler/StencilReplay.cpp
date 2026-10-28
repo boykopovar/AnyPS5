@@ -497,6 +497,7 @@ private:
         if (depth > 32u) return false;
         value = value->Resolve();
         if (sameValue(value, other)) return true;
+        if (value->Type() == IrType::Bool && other->Resolve() == predicate->Resolve() && GuardImplies(program, value, predicate)) return true;
         if ((value->Opcode() == IrOpcode::SelectU32 || value->Opcode() == IrOpcode::SelectF32 || value->Opcode() == IrOpcode::SelectU1) && value->ArgumentCount() == 3u && (value->Argument(0)->Resolve() == predicate->Resolve() || GuardImplies(program, value->Argument(0), predicate))) return inactiveEquals(value->Argument(2), other, predicate, region, depth + 1u);
         if (value->IsPhi() && region.contains(value->Parent()) && value->ArgumentCount() != 0u && value->ArgumentCount() == value->PhiBlockCount()) {
             return std::all_of(value->Arguments().begin(), value->Arguments().end(), [&](const IrValue* argument) { return inactiveEquals(argument, other, predicate, region, depth + 1u); });
@@ -567,6 +568,7 @@ private:
             for (const auto& info : program.Metadata().blockInfo) if (info.condition && info.condition->Resolve() == current && !controlProven(info)) return true;
             for (const auto& use : current->OperandUses()) {
                 const auto opcode = use.user->Opcode();
+                if (opcode == IrOpcode::Ballot && restricted.contains(use.user) && use.user->ArgumentCount() == 1u && onHelper(use.user->Argument(0), 0u) == std::optional<std::uint32_t>{0u}) continue;
                 if (opcode == IrOpcode::Ballot) {
                     std::vector<const IrValue*> terminals;
                     if (ownBitBallot(use.user, terminals)) {
