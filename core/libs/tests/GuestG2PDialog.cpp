@@ -70,6 +70,10 @@ int main() {
     Require(sceG2PDialogGetStatus() == kStatusFinished);
     Require(sceG2PDialogUpdateStatus() == kStatusFinished);
 
+    Require(sceG2PDialogOpen(nullptr) == kErrArgNull);
+    Require(sceG2PDialogOpen(&param) == 0);
+    Require(sceG2PDialogGetStatus() == kStatusFinished);
+
     Require(sceG2PDialogGetResult(nullptr) == kErrArgNull);
     Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == 0);
     Require(result[0] == -1 && result[1] == -1 && result[3] == -1);

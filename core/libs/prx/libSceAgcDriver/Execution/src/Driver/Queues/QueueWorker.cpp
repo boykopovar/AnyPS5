@@ -243,15 +243,29 @@ void Driver::run(std::uint32_t id) noexcept {
                 pending.pop_front();
                 if (APS5_ENABLE_TIMING_LOG) submission.dequeuedAt = std::chrono::steady_clock::now();
                 if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
+                struct OrderHold {
+                    std::atomic<std::uint32_t>& holders;
+                    explicit OrderHold(std::atomic<std::uint32_t>& holders) : holders(holders) { holders.fetch_add(1, std::memory_order_acq_rel); }
+                    ~OrderHold() { holders.fetch_sub(1, std::memory_order_acq_rel); }
+                    OrderHold(const OrderHold&) = delete;
+                    OrderHold& operator=(const OrderHold&) = delete;
+                };
+                if (id == 0 && !submission.suspend) {
+                    {
+                        OrderHold hold{orderHolders};
+                        const auto released = [&] { return failure || stopping || !waitFreeBefore(submission.received); };
+                        StallWatch stall(id);
+                        while (!released() && !poll(released)) stall.Check("order behind other queues for event", submission.received);
+                    }
+                    rethrowFailure();
+                }
+                if (id != 0) {
+                    worker.executingWaitFree = submission.waitFree ? submission.received : 0;
+                    worker.executingWaits = !submission.waitFree && !submission.suspend;
+                }
                 if (submission.waitFree) {
                     {
-                        struct OrderHold {
-                            std::atomic<std::uint32_t>& holders;
-                            explicit OrderHold(std::atomic<std::uint32_t>& holders) : holders(holders) { holders.fetch_add(1, std::memory_order_acq_rel); }
-                            ~OrderHold() { holders.fetch_sub(1, std::memory_order_acq_rel); }
-                            OrderHold(const OrderHold&) = delete;
-                            OrderHold& operator=(const OrderHold&) = delete;
-                        } hold{orderHolders};
+                        OrderHold hold{orderHolders};
                         const auto released = [&] { return failure || stopping || orderReleased(id, submission.received); };
                         StallWatch stall(id);
                         while (!released() && !poll(released)) stall.Check("order behind queue 0 for event", submission.received);
@@ -279,6 +293,10 @@ void Driver::run(std::uint32_t id) noexcept {
                     forgetUnfinishedWrites(workers.at(id), submission);
                 }
                 if (id == 0) queue0Executing = 0;
+                if (id != 0) {
+                    workers.at(id).executingWaitFree = 0;
+                    workers.at(id).executingWaits = false;
+                }
 
                 notify = idleWaiters != 0 || orderHolders.load(std::memory_order_acquire) != 0;
             }

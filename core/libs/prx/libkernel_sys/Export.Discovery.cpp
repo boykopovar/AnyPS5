@@ -110,22 +110,12 @@ int APS5_VABI is_in_sandbox_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI kenv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI kldload_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI kldstat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldsym_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -211,11 +201,6 @@ int APS5_VABI ksem_wait_nid_postfix(void) {
 }
 
 int APS5_VABI ktrace_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI lchflags_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -796,11 +781,6 @@ int APS5_VABI sceKernelGetCpuUsageProc2(void) {
 }
 
 int APS5_VABI sceKernelGetCpuUsageThread(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetCpumodeGame(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1691,11 +1671,6 @@ int APS5_VABI sceKernelSetCompressionAttribute(void) {
 }
 
 int APS5_VABI sceKernelSetCoredumpAppInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelSetCpumodeGame(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

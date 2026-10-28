@@ -383,6 +383,44 @@ class PerformanceCompareTests(unittest.TestCase):
                 self.write(self.after, candidate)
                 self.assertEqual(self.run_cli("--require-matching-context").returncode, 2)
 
+    def test_timed_windows_allow_different_first_present_counters(self):
+        for summary in (self.baseline, self.candidate):
+            summary["env"] = {"APS5_TRACE_SECONDS": "270:20"}
+            summary["window"].update(spec="seconds 270:20", ms=20000.0)
+        self.baseline["window"]["first_present"] = 1010
+        self.candidate["window"]["first_present"] = 700
+        self.baseline["presents"] = 20
+        self.candidate["presents"] = 40
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli("--require-matching-context", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["configuration_differences"], {})
+        self.assertEqual(report["baseline"], self.baseline)
+        self.assertEqual(report["candidate"], self.candidate)
+        self.assertEqual(report["metrics_ms"]["mean_frame_ms"]["change_pct"], -50.0)
+
+    def test_timed_windows_still_require_matching_requested_windows(self):
+        for summary in (self.baseline, self.candidate):
+            summary["env"] = {"APS5_TRACE_SECONDS": "270:20"}
+            summary["window"]["spec"] = "seconds 270:20"
+        self.candidate["window"].update(spec="seconds 280:20", first_present=700)
+        report = performance_compare.compare(self.baseline, self.candidate)
+        self.assertEqual(set(report["configuration_differences"]), {"window.spec"})
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli("--require-matching-context")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("window.spec", result.stderr)
+
+    def test_unknown_window_syntax_keeps_first_present_check(self):
+        for summary in (self.baseline, self.candidate):
+            summary["window"]["spec"] = "seconds unknown"
+        self.candidate["window"]["first_present"] = 700
+        report = performance_compare.compare(self.baseline, self.candidate)
+        self.assertEqual(set(report["configuration_differences"]), {"window.first_present"})
+
 
 
     def test_main_reconfigures_streams(self):

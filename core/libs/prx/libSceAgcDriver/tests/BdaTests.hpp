@@ -25,6 +25,7 @@ void RunAddressCopyCapTests(const AgcDriver::Graphics::Context& context, const B
 void RunGuestAllocationTests();
 void RunGuestLeaseWaitTests();
 void RunUnmappedGapTests();
+void RunVanishedPageReadTests();
 void RunColorTargetLayoutTests();
 void RunLiveStackAccessTests();
 

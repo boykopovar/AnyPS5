@@ -80,9 +80,10 @@ void ShiftNanWords(std::uint32_t* words, int from, int to, int digits) {
     } while (++index < to);
 }
 
+template<int Words>
 std::uint64_t HexNanPayload(const char* open, const char*& end) {
-    std::uint32_t words[2] = {};
-    constexpr int high = 1;
+    std::uint32_t words[Words] = {};
+    constexpr int high = Words - 1;
     int top = high;
     int group = high;
     int digits = 0;
@@ -143,10 +144,15 @@ std::uint64_t HexNanPayload(const char* open, const char*& end) {
         do words[to++] = 0;
         while (to <= high);
     } else {
-        words[high] &= 0xffffffffu >> 12;
+        words[high] &= 0xffffffffu >> (Words == 2 ? 12 : 8);
     }
-    if (words[0] == 0 && words[1] == 0) words[0] = 1;
-    return (static_cast<std::uint64_t>(words[1]) << 32) | words[0];
+    if constexpr (Words == 2) {
+        if (words[0] == 0 && words[1] == 0) words[0] = 1;
+        return (static_cast<std::uint64_t>(words[1]) << 32) | words[0];
+    } else {
+        if (words[0] == 0) words[0] = 1;
+        return words[0];
+    }
 }
 
 const char* NanSequenceEnd(const char* tail) {
@@ -160,11 +166,12 @@ template<typename TFloat>
 TFloat NanValue(const NanSubject& subject, const char*& end) {
     if constexpr (std::is_same_v<TFloat, double>) {
         end = subject.tail;
-        const std::uint64_t payload = *subject.tail == '(' ? HexNanPayload(subject.tail, end) : 0;
+        const std::uint64_t payload = *subject.tail == '(' ? HexNanPayload<2>(subject.tail, end) : 0;
         return std::bit_cast<double>((subject.negative ? 0x8000000000000000ull : 0) | 0x7ff8000000000000ull | payload);
     } else if constexpr (std::is_same_v<TFloat, float>) {
-        end = NanSequenceEnd(subject.tail);
-        return std::bit_cast<float>((subject.negative ? 0x80000000u : 0) | 0x7fc00000u);
+        end = subject.tail;
+        const auto payload = static_cast<std::uint32_t>(*subject.tail == '(' ? HexNanPayload<1>(subject.tail, end) : 0);
+        return std::bit_cast<float>((subject.negative ? 0x80000000u : 0) | 0x7fc00000u | payload);
     } else {
         end = NanSequenceEnd(subject.tail);
         TFloat value{};
@@ -423,6 +430,10 @@ long long APS5_VABI strtoll_nid_postfix(const char* str, char** endptr, int base
 unsigned long long APS5_VABI strtoull_nid_postfix(const char* str, char** endptr, int base) {
     if (RejectIntegerBase_nid_no_patch(str, endptr, base, true) || StopAtPrefixLetter_nid_no_patch(str, endptr, base)) return 0;
     return ParseInteger<unsigned long long>(str, endptr, base, std::strtoull);
+}
+
+long long APS5_VABI strtoq_nid_postfix(const char* str, char** endptr, int base) {
+    return strtoll_nid_postfix(str, endptr, base);
 }
 
 unsigned long long APS5_VABI strtouq_nid_postfix(const char* str, char** endptr, int base) {
@@ -830,16 +841,14 @@ int APS5_VABI wcscoll_nid_postfix(const char16_t* first, const char16_t* second)
 
 size_t APS5_VABI wcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, size_t count) {
     const size_t length = Length(source);
-    if (count != 0) {
-        const size_t copied = length < count ? length : count - 1;
-        std::memcpy(destination, source, copied * sizeof(char16_t));
-        destination[copied] = 0;
-    }
+    if (count != 0) std::memcpy(destination, source, (length < count ? length + 1 : count) * sizeof(char16_t));
     return length;
 }
 
 size_t APS5_VABI strxfrm_nid_postfix(char* destination, const char* source, size_t count) {
-    return strlcpy_nid_postfix(destination, source, count);
+    const size_t length = std::strlen(source);
+    if (count != 0) std::memcpy(destination, source, length < count ? length + 1 : count);
+    return length;
 }
 
 char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** context) {
@@ -952,6 +961,25 @@ int APS5_VABI wcsncat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_
 
 int APS5_VABI wcscat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src) {
     return wcsncat_s_nid_postfix(dest, destsz, src, static_cast<size_t>(-1));
+}
+
+int APS5_VABI timingsafe_memcmp_nid_postfix(const void* b1, const void* b2, size_t len) {
+    const auto* p1 = static_cast<const unsigned char*>(b1);
+    const auto* p2 = static_cast<const unsigned char*>(b2);
+    int result = 0;
+    std::uint32_t done = 0;
+    for (size_t i = 0; i < len; ++i) {
+        const std::uint32_t a = p1[i];
+        const std::uint32_t b = p2[i];
+        const std::uint32_t lt = (a - b) >> 31;
+        const std::uint32_t gt = (b - a) >> 31;
+        const int cmp = static_cast<int>(gt) - static_cast<int>(lt);
+        const std::uint32_t d = a ^ b;
+        const std::uint32_t diffMask = static_cast<std::uint32_t>(-static_cast<std::int32_t>((d | -d) >> 31));
+        result |= cmp & static_cast<int>(~done);
+        done |= diffMask;
+    }
+    return result;
 }
 
 }

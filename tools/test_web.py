@@ -44,8 +44,9 @@ def main(argv=None):
             environment = dict(os.environ, ANYPS5_TEST_ZIP_URL=url, ANYPS5_TEST_ZIP_PATH=library.as_uri())
             subprocess.run(["node", str(ROOT / "demo/web/tests/archive-root.test.mjs"), str(args.build.resolve() / "web")], env=environment, check=True)
             subprocess.run(["node", str(ROOT / "demo/web/tests/archive-windows.test.mjs"), str(args.build.resolve() / "web")], env=environment, check=True)
+            subprocess.run(["node", str(ROOT / "demo/web/tests/archive-reserved.test.mjs"), str(args.build.resolve() / "web")], env=environment, check=True)
             subprocess.run(["node", str(ROOT / "demo/web/tests/archive.test.mjs"), str(args.build.resolve() / "web"), str(fixture)], env=environment, check=True)
-    except (subprocess.CalledProcessError, urllib.error.URLError, OSError) as error:
+    except (subprocess.CalledProcessError, urllib.error.URLError, OSError, UnicodeDecodeError) as error:
         parser.error(str(error))
     return 0
 

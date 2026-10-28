@@ -490,7 +490,7 @@ static bool IsSeekableDescriptor(int descriptor) {
 }
 
 static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, std::int64_t offset) {
-    if (IsKqueueDescriptor(descriptor)) return GUEST_ESPIPE;
+    if (IsKqueueDescriptor_nid_no_patch(descriptor)) return GUEST_ESPIPE;
     if (!nullBuffer && offset >= 0) return 0;
     if (!GuestSockets::IsOpen(descriptor) && !DescriptorIsOpen_nid_no_patch(descriptor)) return GUEST_EBADF;
     if (!IsSeekableDescriptor(descriptor)) return GUEST_ESPIPE;
@@ -753,20 +753,26 @@ int ChmodNative_nid_no_patch(const std::filesystem::path& native, int mode) {
     return NativeChmod(native, mode);
 }
 
-int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags) {
+int ChangeFileFlags_nid_no_patch(const char* function, const char* path, std::uint64_t flags, bool follow) {
     std::string copy;
     if (const int error = PathError(path, copy)) return PosixFailure(error);
     path = copy.c_str();
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
-    if (const int error = LookupError(native)) return PosixFailure(error);
-    if (const int error = SetFileFlags("chflags", path, flags)) return PosixFailure(error);
+    FileStat linkStatus{};
+    const bool link = !follow && native.has_filename() && File::FillLinkStat(native, &linkStatus) && (linkStatus.st_mode & 0170000) == 0120000;
+    if (const int error = link ? 0 : LookupError(native)) return PosixFailure(error);
+    if (const int error = SetFileFlags(function, path, flags)) return PosixFailure(error);
     return 0;
+}
+
+int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags) {
+    return ChangeFileFlags_nid_no_patch("chflags", path, flags, true);
 }
 
 int APS5_VABI fchflags_nid_postfix(int d, std::uint64_t flags) {
     if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor(d) || File::IsSharedMemoryDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d) || File::IsSharedMemoryDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchflags");
     if (!File::IsVnode(d)) {
         if (!DescriptorIsOpen_nid_no_patch(d)) return PosixFailure(GUEST_EBADF);
@@ -842,7 +848,7 @@ extern "C" {
 int APS5_VABI dup_nid_postfix(int d) {
     if (GuestSockets::IsOpen(d)) return GuestSockets::Duplicate(d);
     if (d < 0) return PosixFailure(GUEST_EBADF);
-    if (IsKqueueDescriptor(d)) throw std::runtime_error(std::string(__func__) + ": duplicating a kqueue descriptor is not supported");
+    if (IsKqueueDescriptor_nid_no_patch(d)) throw std::runtime_error(std::string(__func__) + ": duplicating a kqueue descriptor is not supported");
 #ifdef _WIN32
     const int duplicate = WithoutParameterHandler([d] { return ::_dup(d); });
     if (duplicate >= 0) File::DuplicateSharedMemoryDescriptor_nid_no_patch(d, duplicate);
@@ -873,7 +879,7 @@ int APS5_VABI dup2_nid_postfix(int from, int to) {
         return to;
     }
     const bool sourceIsRandom = File::IsRandomDevice(from);
-    if (from != to && IsKqueueDescriptor(from)) throw std::runtime_error(std::string(__func__) + ": duplicating a kqueue descriptor is not supported");
+    if (from != to && IsKqueueDescriptor_nid_no_patch(from)) throw std::runtime_error(std::string(__func__) + ": duplicating a kqueue descriptor is not supported");
 #ifdef _WIN32
     if (WithoutParameterHandler([from] { return ::_get_osfhandle(from) == -1 ? -1 : 0; }) != 0) return PosixFailure(GUEST_EBADF);
     if (from == to) return to;
@@ -953,7 +959,7 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
 
 int APS5_VABI _fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     if (File::IsVirtualDirectoryDescriptor(d)) return PosixFailure(GUEST_EOPNOTSUPP);
-    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor(d)) return PosixFailure(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return PosixFailure(GUEST_EINVAL);
     if (d < 0) return PosixFailure(GUEST_EBADF);
     File::RefuseArchivedFile(d, "fstatfs");
     KernelStatfs result{};
@@ -1639,8 +1645,10 @@ int APS5_VABI sceKernelRmdir(const char* path) {
     if (const int dot = RenameDotError_nid_no_patch(path)) return SceKernelError(dot);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
+    FileStat linkStatus{};
+    if (native.has_filename() && File::FillLinkStat(native, &linkStatus) && (linkStatus.st_mode & 0170000) == 0120000) return SceErrorFromErrno(GUEST_ENOTDIR);
     std::error_code error;
-    if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GUEST_ENOTDIR);
+    const auto status = std::filesystem::status(native, error);
     if (const int failure = PathLookupFailure(error)) return failure;
 #ifdef _WIN32
     const DWORD attributes = GetFileAttributesW(native.c_str());
@@ -1649,7 +1657,7 @@ int APS5_VABI sceKernelRmdir(const char* path) {
         if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "rmdir")) return SceErrorFromErrno(GUEST_ENOTDIR);
     }
 #endif
-    if (!std::filesystem::is_directory(native, error)) {
+    if (!std::filesystem::is_directory(status)) {
 #ifdef _WIN32
         if (File::WindowsSymbolicLinkLoop(WithoutTrailingSeparator(native).parent_path())) return SceKernelError(GUEST_ELOOP);
 #endif
@@ -1716,7 +1724,12 @@ int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t lengt
     std::error_code error;
     const auto status = std::filesystem::status(native, error);
     if (const int failure = PathLookupFailure(error)) return failure;
-    if (!std::filesystem::exists(status)) return SceErrorFromErrno(NotFoundError_nid_no_patch(native));
+    if (!std::filesystem::exists(status)) {
+#ifdef _WIN32
+        if (File::WindowsSymbolicLinkLoop(native)) return SceKernelError(GUEST_ELOOP);
+#endif
+        return SceErrorFromErrno(NotFoundError_nid_no_patch(native));
+    }
     if (std::filesystem::is_directory(status)) return SceErrorFromErrno(GUEST_EISDIR);
     if (const int failure = NativeTruncate(native, length)) {
 #ifdef _WIN32

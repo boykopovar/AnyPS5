@@ -476,6 +476,18 @@ class TestWebRunnerTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             self.assertIn("zip library URL not found", err.getvalue())
 
+    def test_main_rejects_invalid_utf8_archive_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build"
+            (build / "web").mkdir(parents=True)
+            (build / "web/archive.mjs").write_bytes(b"\xff\xfe\x80")
+            with patch("subprocess.run"):
+                with self.assertRaises(SystemExit) as error, contextlib.redirect_stderr(io.StringIO()) as err:
+                    test_web.main(["--build", str(build)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("can't decode byte", err.getvalue())
+            self.assertNotIn("Traceback", err.getvalue())
+
     def test_main_decodes_archive_with_utf8_bom(self):
         with tempfile.TemporaryDirectory() as tmp:
             build = Path(tmp) / "build"

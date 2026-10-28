@@ -29,6 +29,7 @@ PAGE = 0x1000
 IMAGE_BASE = 0x140000000
 META_VERSION = 2
 PROT_EXEC = 4
+CODE_SIGNATURE_RESERVE = 0x400
 FS_LOAD = bytes.fromhex("64488b0425" "00000000")
 GS_LOAD = bytes.fromhex("65488b04c5" "00000000")
 
@@ -108,6 +109,7 @@ def check_structure(name, data):
     linkedit = macho.segment("__LINKEDIT")
     check(linkedit["initprot"] == 1 and linkedit["fileoff"] + linkedit["filesize"] == len(data), f"{name}: __LINKEDIT does not end the file")
     check(macho.entryoff is not None and any(lo <= macho.entryoff < hi for lo, hi in macho.executable_ranges()), f"{name}: entry point is outside the executable segments")
+    check(macho.entryoff >= macho.end + CODE_SIGNATURE_RESERVE, f"{name}: entry stub at {macho.entryoff:#x} leaves under {CODE_SIGNATURE_RESERVE:#x} bytes after the load commands for codesign")
     check("@rpath/libkernel.prx" in macho.dylibs and "/usr/lib/libSystem.B.dylib" in macho.dylibs, f"{name}: dependencies {macho.dylibs}")
     check(macho.rpaths == ["@executable_path/libs"], f"{name}: run paths {macho.rpaths}")
     check(macho.dyld_info is not None, f"{name}: no binding information")
@@ -141,6 +143,18 @@ def check_imports(data):
         check(("_" + nid(symbol)).encode() in binds, f"import: {symbol} is not bound by its NID")
     code = b"".join(data[lo:hi] for lo, hi in macho.executable_ranges())
     check(bytes.fromhex("4883ec08") in code, "import: the guest code is missing from the image")
+
+
+def check_signed_entry(directory, data):
+    if sys.platform != "darwin":
+        return
+    signed = Path(directory) / "import-signed"
+    signed.write_bytes(data)
+    result = subprocess.run(["codesign", "-s", "-", "-f", str(signed)], capture_output=True, text=True, timeout=60)
+    check(result.returncode == 0, f"codesign failed: {result.stdout}{result.stderr}")
+    entryoff = MachO(data).entryoff
+    after = signed.read_bytes()
+    check(after[entryoff:entryoff + 64] == data[entryoff:entryoff + 64], "codesign overwrote the entry stub")
 
 
 def check_runtime_dependencies(relinker, directory):
@@ -276,7 +290,9 @@ def check_fixup_protection(relinker, directory):
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-macos-output-") as directory:
-        check_imports(relink(relinker, directory, "import", import_fixture()))
+        imported = relink(relinker, directory, "import", import_fixture())
+        check_imports(imported)
+        check_signed_entry(directory, imported)
         check_runtime_dependencies(relinker, directory)
         check_tls(relink(relinker, directory, "tls", tls_fixture()))
         check_options(relinker, directory)

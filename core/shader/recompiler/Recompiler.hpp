@@ -196,6 +196,8 @@ struct ShaderPixelStageInfo {
     bool linearCentroid;
     bool pixelKillEnable;
     bool depthExportEnable;
+    float depthExportMin = 0.0f;
+    float depthExportMax = 1.0f;
     bool sampleMaskExportEnable;
     bool earlyZ;
     bool executeOnNoop;
@@ -331,6 +333,7 @@ struct SpirvTarget {
     bool largePixelFunctionLdsBuffer = false;
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
+    bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
 };
 
@@ -458,7 +461,7 @@ struct RecompileRequest {
 };
 
 inline std::uint32_t TessellationInstancePatches(const RecompileRequest& request) {
-    if (!request.graphics || !request.graphics->tessellation || request.graphics->draw.instanceCount <= 1u || request.graphics->tessellation->breakAtInstance) return 0u;
+    if (!request.graphics || !request.graphics->tessellation || request.graphics->draw.instanceCount <= 1u || request.graphics->tessellation->breakAtInstance || request.graphics->tessellation->inputControlPoints == 0u) return 0u;
     return request.graphics->draw.indexCount / request.graphics->tessellation->inputControlPoints;
 }
 

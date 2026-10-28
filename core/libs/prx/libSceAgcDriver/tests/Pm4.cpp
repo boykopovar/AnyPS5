@@ -109,6 +109,19 @@ void testNopPad() {
     AgcDriver::Pm4::Validate(largest, 0);
 }
 
+void testWorkloadNopPayloadsIgnored() {
+    AgcDriver::QueueState state;
+    for (const auto& packet : {
+        makePacket(0x10, {1, 0x18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}),
+        makePacket(0x10, {1, 33, 0xffffffffu, 0xfffffffdu, 0, 0, 0, 0, 0, 0, 0}),
+        makePacket(0x10, {1, 0, 0, 0, 0, 0, 0, 0}),
+    }) execute(state, packet);
+    check(state.markers.empty() && state.indexBase == 0 && !state.indexBufferSize && state.indexType == 0 &&
+        state.instanceCount == 1 && state.predication.operation == 0 && state.predication.address == 0 &&
+        state.shader.begin() == state.shader.end() && !state.savedContext && state.constantRam.empty(),
+        "a workload NOP payload reached queue state");
+}
+
 void testRegisters() {
     AgcDriver::QueueState state;
     execute(state, makePacket(0x79, {0x242, 4}));
@@ -2095,6 +2108,7 @@ int main(int argc, char** argv) {
         }
         testCatalog();
         testNopPad();
+        testWorkloadNopPayloadsIgnored();
         testRewindPayloadBits();
         testWriteChangedKeepsUntouchedBytes();
         testWriteChangedStoresExactlyTheChangedRuns();

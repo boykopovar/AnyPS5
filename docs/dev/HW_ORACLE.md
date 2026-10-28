@@ -24,7 +24,7 @@ from the GPU (`HW_ORACLE_TARGET` overrides it).
 
 ### Windows
 
-- AMD's Windows driver, which installs the HIP runtime (`amdhip64_6.dll`) and the code object manager (`amd_comgr_2.dll`)
+- AMD's Windows driver, which installs the HIP runtime (`amdhip64_7.dll`, `amdhip64_6.dll` or `amdhip64.dll`) and the code object manager (`amd_comgr_3.dll`, `amd_comgr_2.dll` or `amd_comgr.dll`)
   in `System32`. ROCm, a C compiler, `clang` and `ld.lld` are not needed.
 - Python 3 from python.org or the Microsoft Store.
 

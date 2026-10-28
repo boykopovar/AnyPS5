@@ -260,6 +260,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
     translateOptions.floatMode = request.context.floatMode;
     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
+    translateOptions.float32FlushDeclared = supports(spv::CapabilityDenormFlushToZero);
     translateOptions.inputInfo = inputInfo;
     translateOptions.float32DenormPreserve = request.target.float32DenormPreserve;
 
@@ -675,6 +676,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
     targetOptions.waveLdsMemoryBarriers = request.target.waveLdsMemoryBarriers;
     targetOptions.deviceScopeLdsMemoryBarriers = request.target.deviceScopeLdsMemoryBarriers;
+    targetOptions.ldsLockFences = request.target.ldsLockFences;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
@@ -1151,10 +1153,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         if (variant.info.info.rasterPrimitive) moduleKey.push_back(static_cast<std::uint32_t>(request.context.pixel->rasterPrimitive));
         if (variant.info.info.layerExported) moduleKey.push_back(request.context.pixel->layerExported ? 1u : 0u);
     }
-    const bool depthRemap = request.target.depthRangeRemap && request.shader.stage == ShaderStage::Vertex && request.context.vertex.has_value();
+    const bool depthRemap = request.target.depthRangeRemap && (request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::TessellationEvaluation) && request.context.vertex.has_value();
     if (depthRemap) {
         if (request.context.vertex->depthRemapMode != 0u && request.layout.pushConstantOffsetBytes % (RuntimeAbi::PushConstantDwords * 4u) + request.layout.pushConstantSizeBytes > DepthRemapPushOffsetBytes) {
-            throw std::runtime_error("a remapped vertex shader's push data must end before the depth remap words");
+            throw std::runtime_error("a remapped raster shader's push data must end before the depth remap words");
         }
         moduleKey.push_back(request.context.vertex->depthRemapMode);
     }

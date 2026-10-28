@@ -892,7 +892,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
 
     std::vector<std::uint8_t> file;
     constexpr std::size_t HeaderSize = 32;
-    const auto stubOffset = AlignUp(HeaderSize + commands.size(), 16);
+    constexpr std::size_t LoadCommandReserve = 0x400;
+    const auto stubOffset = AlignUp(HeaderSize + commands.size() + LoadCommandReserve, 16);
     const auto traceJump = input.Executable && input.TraceImports;
     const auto entryOffset = stubOffset + (traceJump ? 5 : 0);
     if (entryOffset + (input.Executable ? sizeof(EntryStub) : 0) > LoadRva)

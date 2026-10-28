@@ -210,6 +210,10 @@ private:
         append(key, value.linearCentroid);
         append(key, value.pixelKillEnable);
         append(key, value.depthExportEnable);
+        if (value.depthExportEnable) {
+            append(key, std::bit_cast<std::uint32_t>(value.depthExportMin));
+            append(key, std::bit_cast<std::uint32_t>(value.depthExportMax));
+        }
         append(key, value.sampleMaskExportEnable);
         append(key, value.earlyZ);
         append(key, value.executeOnNoop);
@@ -338,6 +342,7 @@ private:
         append(key, value.largePixelFunctionLdsBuffer);
         append(key, value.pixelFunctionStorageDwords);
         append(key, value.deviceScopeLdsMemoryBarriers);
+        append(key, value.ldsLockFences);
     }
 };
 

@@ -405,6 +405,7 @@ struct VulkanDevice::State {
     bool exactRobustLoads = false;
     bool subgroupControlBarriers = true;
     bool workgroupScopeFences = true;
+    bool ldsLockFences = false;
     // VK_EXT_descriptor_indexing with non-uniform image array indexing (bindless image tables in
     // graphics stages, and compute workgroups wider than a wave).
     bool descriptorIndexing = false;
@@ -1110,6 +1111,7 @@ ComputePipelineReplayResult VulkanDevice::ReplayComputePipeline(const ComputePip
     phase = std::chrono::steady_clock::now();
     CreateComputePipeline(state->device, state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines"), replay.cache, objects.module, objects.layout, capture.flags, capture.stageFlags, specialization.Info(), capture.requiredSubgroupSize, &objects.pipeline);
     result.pipelineMilliseconds = elapsed(phase);
+    if ((capture.flags & VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR) != 0) Graphics::LogPipelineStatistics_nid_no_patch(graphicsContext(), objects.pipeline);
     phase = std::chrono::steady_clock::now();
     const auto getCache = state->DeviceFunction<PFN_vkGetPipelineCacheData>("vkGetPipelineCacheData");
     std::size_t cacheBytes = 0;
@@ -1305,6 +1307,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->tessellationPipelineCache = TessellationPipelineCacheUsable(driver.driverID);
         state->subgroupControlBarriers = SubgroupControlBarrierUsable(driver.driverID);
         state->workgroupScopeFences = WorkgroupScopeFenceUsable(driver.driverID);
+        state->ldsLockFences = LdsLockFencesRequired(driver.driverID);
     }
     if (driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && hasExtension(VK_NV_SHADER_SM_BUILTINS_EXTENSION_NAME)) {
         VkPhysicalDeviceShaderSMBuiltinsPropertiesNV smBuiltins{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SM_BUILTINS_PROPERTIES_NV};
@@ -1813,8 +1816,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     // Recompiled storage-image access declares no format (the guest descriptor decides it).
     enabled.shaderStorageImageMultisample = available.shaderStorageImageMultisample;
     state->storageImageMultisample = enabled.shaderStorageImageMultisample == VK_TRUE;
-    if (enabled.shaderStorageImageMultisample) state->capabilities.push_back(spv::CapabilityStorageImageMultisample);
-    state->capabilities.push_back(spv::CapabilityImageMSArray);
+    if (enabled.shaderStorageImageMultisample) {
+        state->capabilities.push_back(spv::CapabilityStorageImageMultisample);
+        state->capabilities.push_back(spv::CapabilityImageMSArray);
+    }
     enabled.shaderStorageImageWriteWithoutFormat = available.shaderStorageImageWriteWithoutFormat;
     state->storageImageWriteWithoutFormat = enabled.shaderStorageImageWriteWithoutFormat == VK_TRUE;
     enabled.shaderStorageImageReadWithoutFormat = available.shaderStorageImageReadWithoutFormat;
@@ -4058,6 +4063,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.largePixelFunctionLdsBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
     target.pixelFunctionStorageDwords = state->pixelFunctionStorageDwords;
     target.deviceScopeLdsMemoryBarriers = !state->workgroupScopeFences;
+    target.ldsLockFences = state->ldsLockFences;
     target.srgbDecodeFormats = state->srgbDecodeFormats & ~state->srgbCopyFormats;
     target.vertexSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_VERTEX_BIT) != 0;
     if (state->meshShader) {
@@ -4279,7 +4285,7 @@ bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stage
     return Graphics::Pipeline::Prebuild(context, state, Graphics::VertexInputLayout{}, layouts.View(), group);
 }
 
-void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const DrawTraceContext* trace) {
+void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const DrawTraceContext* trace, std::uint64_t shape) {
     startJournalReplay();
     for (const auto& shader : shaders) {
         require(shader.program != nullptr, "missing compiled shader");
@@ -4290,7 +4296,7 @@ void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParamete
     static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
     if (traceDraws) APS5_LOG_OUT("VulkanDevice::Draw indices=%u instances=%u indexSize=%u address=0x%llx shaders=%zu colorTarget=%u", draw.indexCount, draw.instanceCount, draw.indexSize, static_cast<unsigned long long>(draw.indexAddress), shaders.size(), static_cast<unsigned>(graphics.hasColorTarget));
     const auto context = graphicsContext();
-    Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe, trace);
+    Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe, trace, shape);
     if (traceDraws) APS5_LOG_CHARS_OUT("VulkanDevice::Draw complete");
 }
 

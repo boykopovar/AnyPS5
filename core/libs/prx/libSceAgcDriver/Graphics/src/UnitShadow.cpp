@@ -378,12 +378,14 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
         std::lock_guard lock(registry.mutex);
         std::vector<std::uint8_t> changed, cpu;
         changedUnits(*shadow, first, last, changed, cpu);
+        std::uint32_t ended = 0;
         for (auto unit = first; unit <= last; ++unit) {
             const auto k = static_cast<std::size_t>(unit - first);
             if (!selected[k] || !shadow->Live(unit)) continue;
             if (changed[k] == GuestMemory::BlockWritten) {
                 // Newer bytes reached the import since the retile: the slab's are dead.
                 shadow->generation[unit] = 0;
+                ++ended;
                 (cpu[k] != 0 ? Stats().staleDroppedCpu : Stats().staleDroppedDriver).fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
@@ -391,6 +393,7 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
             const auto& slab = shadow->slabs[slabIndex];
             if (slab == nullptr) {
                 shadow->generation[unit] = 0;
+                ++ended;
                 continue;
             }
             const auto [begin, end] = shadow->UnitRange(unit);
@@ -405,11 +408,12 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
                 ranges.emplace_back(begin, end);
             }
             shadow->published[unit] = 1;
+            ++ended;
             slab->lastUse = Recorder::Presents();
             bytes += end - begin;
             ++units;
         }
-        shadow->Recount();
+        shadow->liveUnits -= ended;
     }
     if (units == 0) return 0;
     Stats().published[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
@@ -800,12 +804,12 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
                     ++lost;
                     continue;
                 }
+                if (!shadow->Live(unit)) ++shadow->liveUnits;
                 shadow->generation[unit] = generation;
                 shadow->published[unit] = 0;
                 current->lastUse = present;
             }
         }
-        shadow->Recount();
     }
     if (lost != 0) {
         Stats().slabLost.fetch_add(lost, std::memory_order_relaxed);
