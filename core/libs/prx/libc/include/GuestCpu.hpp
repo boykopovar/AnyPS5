@@ -3,8 +3,63 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 
-#if defined(__x86_64__)
+#ifdef ANYPS5_GUEST_LIFTED
+
+extern "C" {
+std::uint32_t GuestCpuMxcsr_nid_no_patch(void);
+void GuestCpuSetMxcsr_nid_no_patch(std::uint32_t value);
+std::uint16_t GuestCpuX87Control_nid_no_patch(void);
+void GuestCpuSetX87Control_nid_no_patch(std::uint16_t value);
+std::uint16_t GuestCpuX87Status_nid_no_patch(void);
+void GuestCpuSetX87Status_nid_no_patch(std::uint16_t value);
+void GuestCpuX87Wait_nid_no_patch(void);
+std::uint32_t GuestCpuMxcsrMask_nid_no_patch(void);
+std::uint64_t GuestCpuReadTsc_nid_no_patch(void);
+void GuestCpuCpuid_nid_no_patch(std::uint32_t leaf, std::uint32_t subleaf, std::uint32_t* registers);
+std::uint64_t GuestCpuXgetbv_nid_no_patch(std::uint32_t index);
+}
+
+namespace GuestCpu {
+
+inline std::uint32_t Mxcsr() { return GuestCpuMxcsr_nid_no_patch(); }
+inline void SetMxcsr(const std::uint32_t value) { GuestCpuSetMxcsr_nid_no_patch(value); }
+inline std::uint16_t X87Control() { return GuestCpuX87Control_nid_no_patch(); }
+inline void SetX87Control(const std::uint16_t value) { GuestCpuSetX87Control_nid_no_patch(value); }
+inline std::uint16_t X87Status() { return GuestCpuX87Status_nid_no_patch(); }
+inline void SetX87Status(const std::uint16_t value) { GuestCpuSetX87Status_nid_no_patch(value); }
+inline void X87ClearExceptions() { SetX87Status(static_cast<std::uint16_t>(X87Status() & 0x7f00)); }
+inline void X87Wait() { GuestCpuX87Wait_nid_no_patch(); }
+inline std::uint32_t MxcsrMask() { return GuestCpuMxcsrMask_nid_no_patch(); }
+inline std::uint64_t ReadTsc() { return GuestCpuReadTsc_nid_no_patch(); }
+
+inline std::array<std::uint32_t, 4> Cpuid(const std::uint32_t leaf, const std::uint32_t subleaf) {
+    std::array<std::uint32_t, 4> registers;
+    GuestCpuCpuid_nid_no_patch(leaf, subleaf, registers.data());
+    return registers;
+}
+
+inline std::uint64_t Xgetbv(const std::uint32_t index) { return GuestCpuXgetbv_nid_no_patch(index); }
+
+inline std::array<std::uint32_t, 7> X87Environment() {
+    return {0xffff0000u | X87Control(), 0xffff0000u | X87Status(), 0xffffffffu, 0, 0, 0, 0xffff0000u};
+}
+
+inline void SetX87Environment(const std::array<std::uint32_t, 7>& environment) {
+    SetX87Control(static_cast<std::uint16_t>(environment[0]));
+    SetX87Status(static_cast<std::uint16_t>(environment[1]));
+}
+
+inline void RaiseInvalidForSignalingNan(const float value) {
+    std::uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    if ((bits & 0x7fffffffu) > 0x7f800000u && (bits & 0x400000u) == 0) SetMxcsr(Mxcsr() | 1u);
+}
+
+}
+
+#elif defined(__x86_64__)
 
 #include <x86intrin.h>
 #include <xmmintrin.h>
@@ -82,7 +137,7 @@ inline void RaiseInvalidForSignalingNan(const float value) {
 }
 
 #else
-#error "GuestCpu.hpp supports only x86-64 targets"
+#error "GuestCpu.hpp needs an x86-64 target or ANYPS5_GUEST_LIFTED"
 #endif
 
 #endif
