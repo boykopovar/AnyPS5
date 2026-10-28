@@ -13,4 +13,6 @@ extern "C" {
 void APS5_VABI u_setMutexFunctions_nid_postfix(const void*, const void*, const void*, const void*, const void*, std::int32_t*);
 void APS5_VABI u_setAtomicIncDecFunctions_nid_postfix(const void*, const void*, const void*, std::int32_t*);
 void APS5_VABI u_setMemoryFunctions_nid_postfix(const void*, Icu::MemoryAllocate, Icu::MemoryReallocate, Icu::MemoryFree, std::int32_t*);
+const char* APS5_VABI u_getDataDirectory_nid_postfix();
+void APS5_VABI u_setDataDirectory_nid_postfix(const char*);
 }

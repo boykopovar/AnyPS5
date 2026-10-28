@@ -155,11 +155,6 @@ int APS5_VABI u_getCombiningClass_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuUnknown_UmNS0P0_ovs_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("UmNS0P0-ovs", sceIcuUnknown_UmNS0P0_ovs_nid_no_patch);
-
 int APS5_VABI u_getDefaultConverter_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -308,11 +303,6 @@ int APS5_VABI u_memcasecmp_nid_postfix() {
 int APS5_VABI u_releaseDefaultConverter_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI sceIcuUnknown_FNfP9dKTd5Q_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("FNfP9dKTd5Q", sceIcuUnknown_FNfP9dKTd5Q_nid_no_patch);
 
 int APS5_VABI sceIcuUnknown_xAo5lvA_W3o_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
