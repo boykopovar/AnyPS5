@@ -14,7 +14,6 @@
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
-#include "prx/libc/include/GuestCpu.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <algorithm>
@@ -880,7 +879,7 @@ extern "C" void* APS5_VABI Aps5CallGuestEntry_nid_no_patch(PthreadEntry entry, v
 
 #ifdef ANYPS5_GUEST_LIFTED
 extern "C" void* APS5_VABI Aps5CallGuestEntry_nid_no_patch(PthreadEntry entry, void* arg) {
-    return reinterpret_cast<void*>(GuestCpuCall_nid_no_patch(reinterpret_cast<std::uint64_t>(entry), reinterpret_cast<std::uint64_t>(arg), 0));
+    return entry(arg);
 }
 #else
 asm(".text\n"
