@@ -613,7 +613,8 @@ if(BUILD_TESTING)
         add_test(NAME title_run COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run.py)
         set_tests_properties(title_run PROPERTIES TIMEOUT 60)
-    endif()
+        add_test(NAME relinker_fuzz_seeds COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_seeds.py)
 endif()
 
 if(ANYPS5_RELINKER_ONLY)
