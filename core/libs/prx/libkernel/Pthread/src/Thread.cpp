@@ -14,6 +14,7 @@
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
+#include "prx/libc/include/GuestCpu.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <algorithm>
@@ -134,7 +135,9 @@ static void UnregisterGuestStackMapping(void* mapping) {
     guestStackMappings.erase(reinterpret_cast<std::uintptr_t>(mapping));
 }
 
+#ifndef ANYPS5_GUEST_LIFTED
 static constexpr std::uintptr_t GUEST_MAIN_STACK_TOP = 0x7eeffc000;
+#endif
 static constexpr int GUEST_MAP_FIXED = 0x10;
 static std::atomic<std::uintptr_t> guestMainStackLow{0};
 static std::atomic<std::uintptr_t> guestMainStackHigh{0};
@@ -228,6 +231,7 @@ static void ReleaseSpareStacks() {
     for (const auto& stack : release) ReleaseFinishedStack(stack);
 }
 
+#ifndef ANYPS5_GUEST_LIFTED
 static std::size_t GuestMainStackBytes() {
     constexpr std::size_t fallback = std::size_t{8} << 20;
     constexpr std::size_t largest = std::size_t{1} << 30;
@@ -236,9 +240,14 @@ static std::size_t GuestMainStackBytes() {
     const auto bytes = static_cast<std::size_t>(std::min<rlim_t>(stack.rlim_cur, largest));
     return (bytes + PS5_PAGE_SIZE - 1) / PS5_PAGE_SIZE * PS5_PAGE_SIZE;
 }
+#endif
 
 extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* arguments, void (APS5_VABI* entry)(void*)) {
     if (entry == nullptr) throw std::invalid_argument("EnterGuestMainStack: null entry point");
+#ifdef ANYPS5_GUEST_LIFTED
+    entry(arguments);
+    throw std::runtime_error("EnterGuestMainStack: the guest entry returned");
+#else
     if (guestMainStackLow.load(std::memory_order_acquire) != 0) throw std::runtime_error("EnterGuestMainStack: the guest main stack was already entered");
     std::uintptr_t arenaBase = 0;
     std::size_t arenaBytes = 0;
@@ -277,6 +286,7 @@ extern "C" [[noreturn]] void APS5_VABI EnterGuestMainStack_nid_no_patch(void* ar
         : "r"(top), "D"(arguments), "a"(entry)
         : "memory");
     __builtin_unreachable();
+#endif
 }
 
 static void AllocateGuestStack(PthreadPrivate* thread, std::size_t usableBytes) {
@@ -868,6 +878,11 @@ void ThreadCancel::EndWait() {
 
 extern "C" void* APS5_VABI Aps5CallGuestEntry_nid_no_patch(PthreadEntry entry, void* arg);
 
+#ifdef ANYPS5_GUEST_LIFTED
+extern "C" void* APS5_VABI Aps5CallGuestEntry_nid_no_patch(PthreadEntry entry, void* arg) {
+    return reinterpret_cast<void*>(GuestCpuCall_nid_no_patch(reinterpret_cast<std::uint64_t>(entry), reinterpret_cast<std::uint64_t>(arg), 0));
+}
+#else
 asm(".text\n"
     APS5_ASM_FUNCTION("Aps5CallGuestEntry_nid_no_patch") R"(
     .cfi_startproc
@@ -890,6 +905,7 @@ asm(".text\n"
     ret
     .cfi_endproc
 )" APS5_ASM_FUNCTION_END("Aps5CallGuestEntry_nid_no_patch"));
+#endif
 
 static void RunThread(std::unique_ptr<ThreadArgs> args) {
     APS5_LOG_OUT("RunThread entry=0x%llx arg=%p self=%p", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(args->entry)), args->arg, static_cast<void*>(args->self));

@@ -22,6 +22,9 @@ const char* GuestCpuImportName_nid_no_patch(std::uint64_t address);
 std::uint64_t GuestCpuReadTsc_nid_no_patch(void);
 void GuestCpuCpuid_nid_no_patch(std::uint32_t leaf, std::uint32_t subleaf, std::uint32_t* registers);
 std::uint64_t GuestCpuXgetbv_nid_no_patch(std::uint32_t index);
+std::uint64_t GuestCpuCall_nid_no_patch(std::uint64_t target, std::uint64_t first, std::uint64_t second);
+void GuestCpuCallInterrupted_nid_no_patch(std::uint64_t target, std::uint64_t first, std::uint64_t second);
+void GuestCpuInterruptedContext_nid_no_patch(std::uint64_t* registers, std::uint64_t* flags);
 }
 
 namespace GuestCpu {

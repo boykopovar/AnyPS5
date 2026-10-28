@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestCpu.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/HostFault.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -236,7 +237,11 @@ void CallHandler(GuestExceptionHandler handler, int signum, GuestUcontext& ucont
     m.err = trap.error;
     const std::uint32_t mxcsrMask = FpWord(m, MxcsrMaskOffset);
     LogGuestExceptionContext(signum, m);
+#ifdef ANYPS5_GUEST_LIFTED
+    GuestCpuCallInterrupted_nid_no_patch(reinterpret_cast<std::uint64_t>(handler), static_cast<std::uint64_t>(signum), reinterpret_cast<std::uint64_t>(&ucontext));
+#else
     handler(signum, &ucontext);
+#endif
     SetFpWord(m, MxcsrOffset, FpWord(m, MxcsrOffset) & (mxcsrMask != 0 ? mxcsrMask : DefaultMxcsrMask));
     SetFpWord(m, MxcsrMaskOffset, mxcsrMask);
 }
@@ -1095,6 +1100,32 @@ void InstallFaultDelivery() {
 constexpr int HostSignal = SIGUSR1;
 constexpr std::size_t FxsaveRegisterBytes = 416;
 
+#ifdef ANYPS5_GUEST_LIFTED
+void FromGuest(GuestMcontext& m) {
+    std::uint64_t registers[17];
+    std::uint64_t flags = 0;
+    GuestCpuInterruptedContext_nid_no_patch(registers, &flags);
+    m.rax = registers[0];
+    m.rdx = registers[1];
+    m.rcx = registers[2];
+    m.rbx = registers[3];
+    m.rsi = registers[4];
+    m.rdi = registers[5];
+    m.rbp = registers[6];
+    m.rsp = registers[7];
+    m.r8 = registers[8];
+    m.r9 = registers[9];
+    m.r10 = registers[10];
+    m.r11 = registers[11];
+    m.r12 = registers[12];
+    m.r13 = registers[13];
+    m.r14 = registers[14];
+    m.r15 = registers[15];
+    m.rip = registers[16];
+    m.rflags = flags;
+    m.len = sizeof(GuestMcontext);
+}
+#else
 void FromHost(const mcontext_t& host, GuestMcontext& m) {
     const auto* g = host.gregs;
     m.rdi = g[REG_RDI];
@@ -1144,6 +1175,7 @@ void ToHost(const GuestMcontext& m, mcontext_t& host) {
     g[REG_EFL] = static_cast<greg_t>(m.rflags);
     if (host.fpregs != nullptr) std::memcpy(host.fpregs, m.fpstate, FxsaveRegisterBytes);
 }
+#endif
 
 void Deliver(int signum, siginfo_t*, void* context) {
     if (TimedWait::DeferDelivery(signum)) return;
@@ -1154,14 +1186,20 @@ void Deliver(int signum, siginfo_t*, void* context) {
         (void)written;
         std::abort();
     }
-    auto& host = static_cast<ucontext_t*>(context)->uc_mcontext;
     GuestUcontext ucontext{};
+#ifdef ANYPS5_GUEST_LIFTED
+    static_cast<void>(context);
+    FromGuest(ucontext.mcontext);
+    CallHandler(handler, RaisedSignal, ucontext);
+#else
+    auto& host = static_cast<ucontext_t*>(context)->uc_mcontext;
     FromHost(host, ucontext.mcontext);
     CallHandler(handler, RaisedSignal, ucontext);
     ToHost(ucontext.mcontext, host);
+#endif
 }
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(ANYPS5_GUEST_LIFTED)
 constexpr std::array<int, 4> FaultSignals{SIGSEGV, SIGBUS, SIGILL, SIGFPE};
 constexpr greg_t VectorDivide = 0;
 constexpr greg_t VectorInvalidOpcode = 6;
@@ -1431,7 +1469,7 @@ int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler) {
  if (!Allowed(signum) || handler == nullptr) return SCE_KERNEL_ERROR_EINVAL;
  void* expected = nullptr;
  if (!handlers[signum].compare_exchange_strong(expected, handler, std::memory_order_acq_rel)) return SCE_KERNEL_ERROR_EAGAIN;
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || (defined(__linux__) && !defined(ANYPS5_GUEST_LIFTED))
  if (FaultSignal(signum)) InstallFaultDelivery();
 #endif
  return 0;
