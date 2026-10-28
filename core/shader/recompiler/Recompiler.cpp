@@ -42,6 +42,7 @@
 #include "Optimization/include/Optimization/ResourceTracker.hpp"
 #include "Optimization/include/Optimization/VectorWindowStoreEliminator.hpp"
 #include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
+#include "Optimization/include/Optimization/SingleLaneAnalysis.hpp"
 #include "Optimization/include/Optimization/SrtWalker.hpp"
 #include "Optimization/include/Optimization/SsaBuilder.hpp"
 #include "Optimization/include/Optimization/TessellationLowering.hpp"
@@ -106,6 +107,15 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
         if (list.find(address) != std::string::npos) return 64u;
     }
     return request.target.subgroupSize;
+}
+
+bool SingleLaneCandidate(const RecompileRequest& request) {
+    static const bool enabled = std::getenv("APS5_NO_SINGLE_LANE_RULE") == nullptr;
+    return enabled && request.shader.stage == ShaderStage::Compute && request.context.waveSize == 64u && HostSubgroupSize(request) == 32u;
+}
+
+std::uint32_t CacheLayout(const RecompileRequest& request) {
+    return HostSubgroupSize(request) | (SingleLaneCandidate(request) ? 0x100u : 0u);
 }
 
 bool CapturesGeometryInput(const RecompileRequest& request) {
@@ -308,6 +318,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
             deadCodeEliminator.Eliminate(program);
         }
 
+        if (SingleLaneCandidate(request)) RecordSkippedRegions(program);
         if (vectorWindowStoreEliminator.Eliminate(program).removedStores != 0u) {
             deadCodeEliminator.Eliminate(program);
         }
@@ -597,11 +608,9 @@ void prepareInterface(const RecompileRequest& request, IrProgram& program) {
     resourceMaterializer.ApplyStaticInterface(program, nativeSampleOffsets);
 
     constexpr ConstantFolder constantFolder;
-    if (request.shader.stage == ShaderStage::Vertex && constantFolder.FoldVertexLaneBounds(program, HostSubgroupSize(request), request.target.spirvVersion)) {
-        constantFolder.Fold(program);
-        ResolveControlFlowIdentities(program);
-    }
+    if (request.shader.stage == ShaderStage::Vertex && constantFolder.FoldVertexLaneBounds(program, HostSubgroupSize(request), request.target.spirvVersion)) constantFolder.Fold(program);
 
+    ResolveControlFlowIdentities(program);
     deadCodeEliminator.RemoveIdentities(program);
     constexpr RedundantValueEliminator redundantValueEliminator;
     static_cast<void>(redundantValueEliminator.Eliminate(program));
@@ -618,6 +627,25 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     program.Metadata().bindingLayoutComplete = false;
     const bool stencilReplay = request.shader.stage == ShaderStage::Fragment && std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::StencilRef; }) && std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == request.target.supportedCapabilities.end();
     auto bindings = bindingAllocator.Allocate(program, request.layout, registration, stencilReplay);
+
+    auto emitInfo = inputInfo;
+    ShaderComputeInputInfo singleLane;
+    auto hostSubgroupSize = HostSubgroupSize(request);
+    if (SingleLaneCandidate(request) && inputInfo.compute != nullptr) {
+        const auto verdict = AnalyzeSingleLane(program, *inputInfo.compute);
+        static const bool trace = std::getenv("APS5_TRACE_SINGLE_LANE") != nullptr;
+        if (trace) {
+            const auto& threads = inputInfo.compute->threadsNum;
+            const std::string at = verdict.at == nullptr ? std::string() : " at " + DescribeValue(verdict.at, 3);
+            std::fprintf(stderr, "[single-lane] program 0x%llx (%ux%ux%u threads): %s%s%s\n", static_cast<unsigned long long>(request.shader.codeAddress), threads[0], threads[1], threads[2], verdict.eligible ? "one lane per invocation" : "two lanes per invocation: ", verdict.eligible ? "" : verdict.reason, at.c_str());
+        }
+        if (verdict.eligible) {
+            singleLane = *inputInfo.compute;
+            singleLane.hostSubgroupSize = 64u;
+            emitInfo.compute = &singleLane;
+            hostSubgroupSize = 64u;
+        }
+    }
 
     SpirvTargetOptions targetOptions {};
     targetOptions.vulkanVersion = request.target.vulkanVersion;
@@ -683,18 +711,18 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.variantId = nextVariantId();
     SpirvEmitInfo emitted;
     try {
-        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
+        result.spirv = spirvEmitter.Emit(program, emitInfo, bindings, targetOptions, &emitted);
     } catch (const SpannedWaveUnsupported& error) {
         std::fprintf(stderr, "[spanned-wave] 0x%llx falls back to two lanes per invocation: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what());
         targetOptions.spannedWaves = false;
-        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
+        result.spirv = spirvEmitter.Emit(program, emitInfo, bindings, targetOptions, &emitted);
     }
     if (registration && result.spirv.size() > request.target.registrationWordLimit) {
         registration = false;
         program.Metadata().bindingLayoutComplete = false;
         bindings = bindingAllocator.Allocate(program, request.layout, false, stencilReplay);
         targetOptions.registrationModules = false;
-        result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
+        result.spirv = spirvEmitter.Emit(program, emitInfo, bindings, targetOptions, &emitted);
     }
     result.registrationModule = registration;
     if (request.shader.stage == ShaderStage::Mesh && request.graphics) result.meshBarycentrics = request.graphics->meshBarycentrics;
@@ -713,7 +741,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
-    result.hostSubgroupSize = HostSubgroupSize(request);
+    result.hostSubgroupSize = hostSubgroupSize;
     result.fullSubgroups = emitted.fullSubgroups;
     result.functionLdsBuffer = emitted.functionLdsBuffer;
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
@@ -1381,7 +1409,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
     std::vector<std::byte> diskKey;
     std::shared_ptr<const CompiledVariant> variant;
     if (disk) {
-        ShaderDiskCache::BuildKey(request, HostSubgroupSize(request), diskKey);
+        ShaderDiskCache::BuildKey(request, CacheLayout(request), diskKey);
         CompiledVariant loaded;
         if (ShaderDiskCache::Load(diskKey, loaded)) {
             loaded.layout = request.layout;

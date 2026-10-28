@@ -214,6 +214,11 @@ void TranslationContext::AddBranchCondition(const BasicBlock& source, BlockInfo&
     }
     info.condition = &condition.Value();
     (void)ir.Emit(IrOpcode::Reference, IrType::Void, {info.condition});
+    const auto kind = source.terminator.condition;
+    if (kind == BranchCondition::VccZero || kind == BranchCondition::VccNonZero || kind == BranchCondition::ExecZero || kind == BranchCondition::ExecNonZero) {
+        info.exec = &ir.GetExec();
+        (void)ir.Emit(IrOpcode::Reference, IrType::Void, {info.exec});
+    }
 }
 
 }
