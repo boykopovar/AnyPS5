@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceRemoteplayGetConnectionStatus, sceRemoteplayInitialize, sceRemoteplayTerminate](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - `sceRemoteplayGetConnectionStatus` reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID; `sceRemoteplayInitialize` and `sceRemoteplayTerminate` perform no remote play session setup or teardown
+- [sceRemoteplayGetConnectionStatus, sceRemoteplayInitialize, sceRemoteplayTerminate](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - `sceRemoteplayGetConnectionStatus` reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID; `sceRemoteplayInitialize` accepts a null heap only when its size is also zero (PPSA02195 passes both) and, with `sceRemoteplayTerminate`, performs no remote play session setup or teardown; whether a console accepts the null pair is unverified
 
 ### Unknown function info
 
