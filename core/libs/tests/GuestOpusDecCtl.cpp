@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -87,7 +88,7 @@ void RequireRequests(const Api& api) {
     std::int32_t value = 0;
     Require(api.ctl(nullptr, OPUS_GET_GAIN_REQUEST, &value) == api.error(0));
     Require(api.ctl(unknown.data(), OPUS_GET_GAIN_REQUEST, &value) == api.error(1));
-    for (int request : {0, 4011, 4027, 4030, 4032, 4048, 4052, 4100, -2})
+    for (int request : {-2, 0, 4000, 4011, 4014, 4027, 4030, 4032, 4033, 4035, 4044, 4048, 4049, 4052, 4100, 5000, std::numeric_limits<int>::min()})
         Require(api.ctl(state.data(), request, &value) == api.error(14));
     for (int request : {0, 4100, -2}) Require(api.ctl(state.data(), request) == api.error(14));
     if (api.celt)
@@ -101,27 +102,32 @@ void RequireRequests(const Api& api) {
     std::int32_t first = 0, second = 0;
     Require(api.ctl(state.data(), -1, &first, static_cast<std::int32_t*>(nullptr)) == api.error(13));
     Require(api.ctl(state.data(), -1, static_cast<std::int32_t*>(nullptr), &second) == api.error(13));
+    first = second = 0x5A5A5A5A;
+    Require(api.ctl(state.data(), -1, &first, &second) == 0 && first == 0 && second == 0);
 
     Require(Get(api, state.data(), OPUS_GET_SAMPLE_RATE_REQUEST) == 24000);
     Require(Get(api, state.data(), OPUS_GET_FINAL_RANGE_REQUEST) == 0);
     Require(Get(api, state.data(), OPUS_GET_GAIN_REQUEST) == 0);
-    for (int gain : {32768, -32769, 0x10000})
+    for (int gain : {32768, -32769, 0x10000, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()})
         Require(api.ctl(state.data(), OPUS_SET_GAIN_REQUEST, gain) == api.error(12));
     for (int gain : {-32768, 32767, -300})
         Require(api.ctl(state.data(), OPUS_SET_GAIN_REQUEST, gain) == 0 && Get(api, state.data(), OPUS_GET_GAIN_REQUEST) == gain);
-    for (int flag : {2, -1})
+    for (int flag : {2, -1, std::numeric_limits<int>::max()})
         Require(api.ctl(state.data(), OPUS_SET_PHASE_INVERSION_DISABLED_REQUEST, flag) == api.error(api.celt ? 17 : 27));
     Require(api.ctl(state.data(), OPUS_SET_PHASE_INVERSION_DISABLED_REQUEST, 1) == 0);
     Require(Get(api, state.data(), OPUS_GET_PHASE_INVERSION_DISABLED_REQUEST) == 1);
     if (!api.celt) {
         Require(api.ctl(state.data(), OPUS_SET_INBAND_FEC_REQUEST, 2) == api.error(16));
         Require(api.ctl(state.data(), OPUS_SET_INBAND_FEC_REQUEST, 1) == 0 && Get(api, state.data(), OPUS_GET_INBAND_FEC_REQUEST) == 1);
-        Require(api.ctl(state.data(), 4050, 2) == api.error(17));
+        for (int flag : {2, -1})
+            Require(api.ctl(state.data(), 4050, flag) == api.error(17));
         Require(api.ctl(state.data(), 4050, 0) == 0 && Get(api, state.data(), 4051) == 0);
+        Require(api.ctl(state.data(), 4050, 1) == 0 && Get(api, state.data(), 4051) == 1);
     }
     Require(api.ctl(state.data(), OPUS_RESET_STATE) == 0);
     Require(Get(api, state.data(), OPUS_GET_GAIN_REQUEST) == 0 && Get(api, state.data(), OPUS_GET_PHASE_INVERSION_DISABLED_REQUEST) == 0);
-    if (!api.celt) Require(Get(api, state.data(), OPUS_GET_INBAND_FEC_REQUEST) == 0);
+    Require(Get(api, state.data(), OPUS_GET_SAMPLE_RATE_REQUEST) == 24000);
+    if (!api.celt) Require(Get(api, state.data(), OPUS_GET_INBAND_FEC_REQUEST) == 0 && Get(api, state.data(), 4051) == 1);
     Require(api.destroy(state.data()) == 0);
     Require(api.terminate(&context) == 0);
 }

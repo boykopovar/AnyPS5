@@ -78,6 +78,7 @@ public:
         if (found == decoders.end()) return error(1);
         if (bytes == 0) fail("packet loss concealment is not implemented");
         auto& decoder = *found->second;
+        if (decoder.unknownFlag != 0) fail("decoding with request 4050 set is not implemented");
         if (celtOnly && (data[0] >> 3) < 16) fail("SILK and hybrid packets are not implemented");
         const int samples = opus_packet_get_nb_samples(data, bytes, decoder.sampleRate);
         if (samples <= 0) fail("invalid packet duration");
@@ -90,6 +91,7 @@ public:
         opus_uint32 range = 0;
         if (opus_decoder_ctl(decoder.codec.get(), OPUS_GET_FINAL_RANGE(&range)) != OPUS_OK) fail("libopus did not report the final range");
         decoder.finalRange = range;
+        decoder.decoded = true;
         std::memcpy(pcm, decoded.data(), static_cast<std::size_t>(outputBytes));
         return outputBytes;
     }
@@ -97,7 +99,7 @@ public:
     struct CtlArguments {
         std::int32_t value = 0;
         std::int32_t* output = nullptr;
-        const std::int32_t* second = nullptr;
+        std::int32_t* second = nullptr;
     };
 
     template <typename TReadValue, typename TReadPointer>
@@ -139,7 +141,6 @@ public:
         case OPUS_RESET_STATE:
             decoder.inbandFec = 0;
             decoder.gain = 0;
-            decoder.unknownFlag = 0;
             decoder.phaseInversionDisabled = 0;
             if (opus_decoder_ctl(decoder.codec.get(), OPUS_RESET_STATE) != OPUS_OK) fail("libopus did not reset");
             apply(decoder);
@@ -159,9 +160,12 @@ public:
             return 0;
         case OPUS_GET_PHASE_INVERSION_DISABLED_REQUEST: return get(decoder.phaseInversionDisabled);
         case -1: {
-            const auto* second = arguments.second;
+            auto* second = arguments.second;
             if (!output || !second) return error(13);
-            fail("the AJM result words of the last batch are not modelled");
+            if (decoder.decoded) fail("the AJM result words of the last batch are not modelled");
+            *output = 0;
+            *second = 0;
+            return 0;
         }
         }
         if (!celtOnly) {
@@ -173,7 +177,6 @@ public:
             case OPUS_GET_INBAND_FEC_REQUEST: return get(decoder.inbandFec);
             case unknownFlagSet:
                 if (static_cast<std::uint32_t>(value) > 1) return error(17);
-                if (value != 0) fail("the effect of request 4050 is unknown");
                 decoder.unknownFlag = value;
                 return 0;
             case unknownFlagGet: return get(decoder.unknownFlag);
@@ -196,6 +199,7 @@ private:
         int sampleRate;
         std::unique_ptr<OpusDecoder, void (*)(OpusDecoder*)> codec{nullptr, opus_decoder_destroy};
         std::uint32_t finalRange = 0;
+        bool decoded = false;
         std::int32_t inbandFec = 0;
         std::int32_t gain = 0;
         std::int32_t unknownFlag = 0;
