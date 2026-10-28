@@ -3654,11 +3654,6 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_1
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-// --------------------------------------------------------------------------
-// UserProfile2V1 singular public profile request and the Common instantiations
-// around it, next to the plural getPublicProfiles ones.
-// --------------------------------------------------------------------------
-
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi27ParameterToGetPublicProfileC1Ev() {
     return 0;
 }
