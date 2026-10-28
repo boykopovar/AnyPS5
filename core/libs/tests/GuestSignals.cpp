@@ -104,6 +104,10 @@ static void CheckSignalPointerFaults() {
     Require(fails(sigpending_nid_postfix(static_cast<GuestSignalSet*>(unreadable))));
     Require(fails(sigpending_nid_postfix(static_cast<GuestSignalSet*>(readOnly))));
     Require(fails(sigpending_nid_postfix(nullptr)));
+    Require(fails(sigsuspend_nid_postfix(static_cast<const GuestSignalSet*>(unreadable))));
+    Require(fails(sigsuspend_nid_postfix(nullptr)));
+    Require(fails(_sigsuspend_nid_postfix(static_cast<const GuestSignalSet*>(unreadable))));
+    Require(fails(_sigsuspend_nid_postfix(nullptr)));
 }
 
 int main() {
@@ -255,9 +259,8 @@ int main() {
     Require(sigprocmask_nid_postfix(2, &urgMask, nullptr) == 0);
 
     *__error_nid_postfix() = 0;
-    bool nullRejected = false;
-    try { sigsuspend_nid_postfix(nullptr); } catch (const std::invalid_argument&) { nullRejected = true; }
-    Require(nullRejected);
+    Require(sigsuspend_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(_sigsuspend_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(signal_nid_postfix(30, Callback) != invalid);
     const GuestSignalSet user{{1u << 29, 0, 0, 0}};
     const GuestSignalSet empty{{0, 0, 0, 0}};
