@@ -10,6 +10,7 @@ int APS5_VABI fnmatch_nid_postfix(const char* pattern, const char* string, int f
 char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle);
 void APS5_VABI arc4random_buf_nid_postfix(void* buffer, std::size_t size);
 std::uint32_t APS5_VABI arc4random_nid_postfix();
+std::uint32_t APS5_VABI arc4random_uniform_nid_postfix(std::uint32_t upper_bound);
 int APS5_VABI __wrap_access(const char* path, int mode);
 int APS5_VABI __wrap_clock_gettime(int clockId, KernelTimespec* tp);
 int APS5_VABI __wrap_fchown(int descriptor, std::uint32_t owner, std::uint32_t group);

@@ -279,8 +279,10 @@ int APS5_VABI scePthreadMutexGetyieldloops(PthreadMutex* mutex, int* count) {
 }
 
 int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count) {
-    if (auto* current = resolveMutex(mutex, true))
-        current->_yieldloops = count;
+    auto* current = resolveMutex(mutex, true);
+    if (!current)
+        return SCE_KERNEL_ERROR_EINVAL;
+    current->_yieldloops = count;
     return 0;
 }
 

@@ -4,6 +4,7 @@ import collections
 import gzip
 import html
 import json
+import math
 import sys
 import zlib
 from pathlib import Path
@@ -26,6 +27,36 @@ def is_wait(name):
     return "wait" in name.lower()
 
 
+def _event_value(value, label, index):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"trace event {index}: {label} must be a finite number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"trace event {index}: {label} must be a finite number") from None
+    if not math.isfinite(number) or abs(number) >= 1e300:
+        raise ValueError(f"trace event {index}: {label} must be a finite number")
+    return number
+
+
+def _event_number(event, key, index):
+    return _event_value(event.get(key), key, index)
+
+
+def _event_tid(event, index):
+    tid = event.get("tid")
+    if isinstance(tid, bool) or not isinstance(tid, int):
+        raise ValueError(f"trace event {index}: tid must be an integer")
+    return tid
+
+
+def _event_args(event, index):
+    args = event.get("args", {})
+    if not isinstance(args, dict):
+        raise ValueError(f"trace event {index}: args must be an object")
+    return args
+
+
 class Trace:
     def __init__(self, document):
         self.threads = {}
@@ -43,16 +74,30 @@ class Trace:
                 raise ValueError(f"trace event {index} must be an object")
             phase = event.get("ph")
             if phase == "M" and event.get("name") == "thread_name":
-                self.threads[event["tid"]] = event["args"]["name"]
+                tid = _event_tid(event, index)
+                name = _event_args(event, index).get("name")
+                if not isinstance(name, str):
+                    raise ValueError(f"trace event {index}: args.name must be a string")
+                self.threads[tid] = name
             elif phase == "X":
-                self.slices[event["tid"]].append([float(event["ts"]), float(event["dur"]), event["name"], 0, False])
-                batch = event.get("args", {}).get("batch")
-                if batch:
-                    self.batched.append((event["tid"], float(event["ts"]), float(event["dur"]), event["name"], batch))
+                tid = _event_tid(event, index)
+                name = event.get("name")
+                if not isinstance(name, str):
+                    raise ValueError(f"trace event {index}: name must be a string")
+                ts = _event_number(event, "ts", index)
+                dur = _event_number(event, "dur", index)
+                self.slices[tid].append([ts, dur, name, 0, False])
+                args = _event_args(event, index)
+                if "batch" in args:
+                    batch = args["batch"]
+                    if isinstance(batch, bool) or not isinstance(batch, (int, str)):
+                        raise ValueError(f"trace event {index}: args.batch must be an integer or a string")
+                    self.batched.append((tid, ts, dur, name, batch))
             elif phase == "i" and event.get("name") == "present":
-                self.presents.append((float(event["ts"]), event.get("args", {}).get("present")))
+                self.presents.append((_event_number(event, "ts", index), _event_args(event, index).get("present")))
             elif phase == "C":
-                self.folded[event["tid"]] += sum(float(value) for value in event.get("args", {}).values())
+                tid = _event_tid(event, index)
+                self.folded[tid] += sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())
         self.presents.sort()
         for slices in self.slices.values():
             slices.sort(key=lambda entry: (entry[0], -entry[1]))

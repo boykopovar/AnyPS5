@@ -343,7 +343,7 @@ int main() {
     require(wcstold_nid_postfix(half, &end) == -1.5L && end == half + 4);
     const char16_t* wideNan = u" -nan(0x123)é";
     require(std::bit_cast<std::uint64_t>(wcstod_nid_postfix(wideNan, &end)) == 0xfff8000000000123u && end == wideNan + 12);
-    require(std::bit_cast<std::uint32_t>(wcstof_nid_postfix(wideNan, &end)) == 0xffc00000u && end == wideNan + 12);
+    require(std::bit_cast<std::uint32_t>(wcstof_nid_postfix(wideNan, &end)) == 0xffc00123u && end == wideNan + 12);
     const long double wideExtended = wcstold_nid_postfix(wideNan, &end);
     std::uint64_t significand;
     std::memcpy(&significand, &wideExtended, sizeof(significand));
@@ -397,6 +397,10 @@ int main() {
         char* narrowEnd = nullptr;
         const char text[] = "0x1ffffffffffffffffg";
         require(strtouq_nid_postfix(text, &narrowEnd, 16) == UINT64_MAX && narrowEnd == text + 19);
+        const char signedText[] = "  -0x7fffffffffffffff9";
+        require(strtoq_nid_postfix(signedText, &narrowEnd, 0) == INT64_MIN && narrowEnd == signedText + 22);
+        const char positiveText[] = "+42z";
+        require(strtoq_nid_postfix(positiveText, &narrowEnd, 10) == 42 && narrowEnd == positiveText + 3);
         const char path[] = "a/b/c";
         require(rindex_nid_postfix(path, '/') == path + 3 && rindex_nid_postfix(path, 'x') == nullptr);
         require(rindex_nid_postfix(path, 0) == path + 5);

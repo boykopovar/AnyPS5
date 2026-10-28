@@ -513,6 +513,7 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
     program.SetWaveSize(options.waveSize);
     std::uint32_t windowBase = NumVectorRegs;
     bool indexedWrites = false;
+    bool wholeQuad = false;
     for (const auto& cfgBlock : cfg.blocks) {
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
             const auto& instruction = decoded.instructions[index];
@@ -530,6 +531,10 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
                 case RdnaOpcode::VSwaprelB32:
                     windowBase = std::min({windowBase, instruction.source0.reg, instruction.destination.reg});
                     indexedWrites = true;
+                    break;
+                case RdnaOpcode::SWqmB32:
+                case RdnaOpcode::SWqmB64:
+                    wholeQuad = wholeQuad || instruction.destination.kind == RdnaOperandKind::ExecLo || instruction.destination.kind == RdnaOperandKind::ExecHi;
                     break;
                 default:
                     break;
@@ -619,8 +624,10 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
         context.SetPixelInput(options.inputInfo.pixel, options.fragmentShaderBarycentricEnabled);
         context.SetFloatMode(options.floatMode);
         context.SetNativeFloat16(options.nativeFloat16);
+        context.SetWholeQuad(wholeQuad);
         context.SetFloat32DenormPreserve(options.float32DenormPreserve);
         context.SetFloat32FlushToZero(options.float32FlushToZero);
+        context.SetFloat32FlushDeclared(options.float32FlushDeclared);
         context.SetEntryRounding(entryRounding.at(cfgBlock.id));
         for (std::uint32_t index = cfgBlock.instructionBegin; index < cfgBlock.instructionEnd; index++) {
             const auto& instruction = decoded.instructions[index];

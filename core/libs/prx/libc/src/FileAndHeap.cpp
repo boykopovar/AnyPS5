@@ -376,6 +376,7 @@ static FileStream* OpenDirectoryStream(const std::filesystem::path& path) {
 
 FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode, FileStream* stream) {
     if (!stream || !mode) { errno = 22; return nullptr; }
+    if (!filename && !stream->IsOpen()) { errno = 9; return nullptr; }
     if (!filename) { errno = 45; return nullptr; } // Mode-only reopening is not supported.
     const auto parsed = ParseFileMode(mode);
     if (!parsed) { errno = 22; return nullptr; }
@@ -383,7 +384,7 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
         std::filesystem::path path;
         if (const int error = *filename ? ResolvePathError_nid_no_patch(filename, path) : 2) {
             if (stream->IsHostStandard()) stream->Detach();
-            else stream->Close();
+            else if (stream->IsOpen()) stream->Close();
             if (stream->IsDynamic()) delete stream;
             errno = error;
             return nullptr;
@@ -647,6 +648,14 @@ void* APS5_VABI reallocf_nid_postfix(void* ptr, size_t newSize) {
     void* result = realloc_nid_postfix(ptr, newSize);
     if (result == nullptr && ptr != nullptr && newSize != 0) ApplicationHeapFree_nid_no_patch(ptr);
     return result;
+}
+
+void* APS5_VABI reallocarray_nid_postfix(void* ptr, size_t nmemb, size_t size) {
+    if (size != 0 && nmemb > std::numeric_limits<size_t>::max() / size) {
+        errno = 12;
+        return nullptr;
+    }
+    return realloc_nid_postfix(ptr, nmemb * size);
 }
 
 void* APS5_VABI memalign_nid_postfix(size_t alignment, size_t size) {

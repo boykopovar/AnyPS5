@@ -474,7 +474,107 @@ void testInternedSpirvReleasesUnusedWords() {
     check(std::ranges::equal(again.Words(), words) && released.Lock().empty(), "SPIR-V interned again after its release changed its words");
 }
 
+std::vector<std::uint32_t> foldedBitcasts(bool separateBlocks, bool differentInput, bool differentType, std::uint32_t nanOpcode, std::uint32_t decorationMask = 0u) {
+    SpirvModule module;
+    module.EmitCapability(spv::CapabilityShader);
+    module.AddMemoryModel(spv::AddressingModelLogical, spv::MemoryModelGLSL450);
+    const auto voidType = module.Type(spv::OpTypeVoid);
+    const auto boolType = module.Type(spv::OpTypeBool);
+    const auto wordType = module.Type(spv::OpTypeInt, 32u, 0u);
+    const auto floatType = module.Type(spv::OpTypeFloat, 32u);
+    const auto otherType = differentType ? module.Type(spv::OpTypeInt, 32u, 1u) : floatType;
+    const auto vectorType = module.Type(spv::OpTypeVector, wordType, 3u);
+    const auto input = module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassInput, vectorType), spv::StorageClassInput);
+    module.AddAnnotation(spv::OpDecorate, input, spv::DecorationBuiltIn, spv::BuiltInGlobalInvocationId);
+    const auto firstOutputType = nanOpcode != 0u ? boolType : floatType;
+    const auto secondOutputType = nanOpcode != 0u ? boolType : otherType;
+    const std::array outputs{
+        module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassPrivate, firstOutputType), spv::StorageClassPrivate),
+        module.DefineGlobalVariable(module.Type(spv::OpTypePointer, spv::StorageClassPrivate, secondOutputType), spv::StorageClassPrivate)};
+    const auto mainId = module.AllocateId();
+    const auto functionType = module.Type(spv::OpTypeFunction, voidType);
+    const auto zero = module.Constant(spv::OpConstant, wordType, 0u);
+    const auto trueValue = module.Constant(spv::OpConstantTrue, boolType);
+    module.EmitEntryPoint(spv::ExecutionModelGLCompute, mainId, "main", {input});
+    module.AddExecutionMode(mainId, spv::ExecutionModeLocalSize, 1u, 1u, 1u);
+    module.AddFunction(spv::OpFunction, voidType, mainId, spv::FunctionControlMaskNone, functionType);
+    module.AddFunction(spv::OpLabel, module.AllocateId());
+    const auto loaded = module.AllocateId();
+    const auto first = module.AllocateId();
+    const auto second = module.AllocateId();
+    const auto alias = module.AllocateId();
+    module.AddFunction(spv::OpLoad, vectorType, loaded, input);
+    module.AddFunction(spv::OpCompositeExtract, wordType, first, loaded, 0u);
+    module.AddFunction(spv::OpCompositeExtract, wordType, second, loaded, 1u);
+    module.AddFunction(spv::OpSelect, wordType, alias, trueValue, first, second);
+    const auto emit = [&](bool other) {
+        const auto cast = module.AllocateId();
+        module.AddFunction(spv::OpBitcast, other ? otherType : floatType, cast, other ? (differentInput ? second : alias) : first);
+        if ((decorationMask & (other ? 2u : 1u)) != 0u) module.AddAnnotation(spv::OpDecorate, cast, spv::DecorationRelaxedPrecision);
+        if ((decorationMask & (other ? 8u : 4u)) != 0u) {
+            const auto group = module.AllocateId();
+            module.AddAnnotation(spv::OpDecorationGroup, group);
+            module.AddAnnotation(spv::OpDecorate, group, spv::DecorationRelaxedPrecision);
+            module.AddAnnotation(spv::OpGroupDecorate, group, cast);
+        }
+        auto result = cast;
+        if (nanOpcode != 0u) {
+            result = module.AllocateId();
+            if (nanOpcode == spv::OpIsNan) module.AddFunction(nanOpcode, boolType, result, cast);
+            else module.AddFunction(nanOpcode, boolType, result, cast, cast);
+        }
+        module.AddFunction(spv::OpStore, outputs[other ? 1u : 0u], result);
+    };
+    if (separateBlocks) {
+        const auto condition = module.AllocateId();
+        const auto left = module.AllocateId();
+        const auto right = module.AllocateId();
+        const auto merge = module.AllocateId();
+        module.AddFunction(spv::OpINotEqual, boolType, condition, first, zero);
+        module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
+        module.AddFunction(spv::OpBranchConditional, condition, left, right);
+        module.AddFunction(spv::OpLabel, left);
+        emit(false);
+        module.AddFunction(spv::OpBranch, merge);
+        module.AddFunction(spv::OpLabel, right);
+        emit(true);
+        module.AddFunction(spv::OpBranch, merge);
+        module.AddFunction(spv::OpLabel, merge);
+    } else {
+        emit(false);
+        emit(true);
+    }
+    module.AddFunction(spv::OpReturn);
+    module.AddFunction(spv::OpFunctionEnd);
+    return SpecializeSpirv(module.Finalize());
+}
+
+void testFoldedBitcastsAndNanTests() {
+    for (const auto nanOpcode : std::array<std::uint32_t, 3>{0u, spv::OpIsNan, spv::OpFUnordNotEqual}) {
+        const auto same = opcodeCounts(foldedBitcasts(false, false, false, nanOpcode));
+        const auto other = opcodeCounts(foldedBitcasts(false, true, false, nanOpcode));
+        const auto branches = opcodeCounts(foldedBitcasts(true, false, false, nanOpcode));
+        const auto count = [](const auto& counts, std::uint32_t op) {
+            const auto found = counts.find(op);
+            return found == counts.end() ? 0u : found->second;
+        };
+        check(count(same, spv::OpBitcast) == 1u, "folding a select left repeated bitcasts of one value in a block");
+        check(count(other, spv::OpBitcast) == 2u, "folding merged bitcasts of different input values");
+        check(count(branches, spv::OpBitcast) == 2u, "folding reused a bitcast from a sibling branch");
+        if (nanOpcode != 0u) {
+            check(count(same, nanOpcode) == 1u, "folding left repeated NaN tests of one value in a block");
+            check(count(other, nanOpcode) == 2u, "folding merged NaN tests of different input values");
+            check(count(branches, nanOpcode) == 2u, "folding reused a NaN test from a sibling branch");
+        }
+    }
+    check(opcodeCounts(foldedBitcasts(false, false, true, 0u))[spv::OpBitcast] == 2u, "folding merged bitcasts to different result types");
+    for (const auto decorations : {1u, 2u, 3u, 4u, 8u}) {
+        check(opcodeCounts(foldedBitcasts(false, false, false, 0u, decorations))[spv::OpBitcast] == 2u, "folding merged a decorated bitcast with another value");
+    }
+}
+
 int main() {
+    testFoldedBitcastsAndNanTests();
     testFoldingLeavesNoDeadBlocksOrConstants();
     testIdsBeyondTheBoundAreRejected();
     testStructExtractsAreNotShuffled();

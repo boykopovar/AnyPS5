@@ -13,13 +13,6 @@
 #include <string>
 #include <vector>
 
-extern "C" {
-
-#ifndef SAVEDATA_NATIVE_BACKEND
-
-#endif
-}
-
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "Save-data replacement check failed at line %d\n", line);
@@ -37,12 +30,7 @@ int main() {
     std::filesystem::current_path(root);
 
     constexpr std::int32_t userId = 7531;
-#ifdef SAVEDATA_NATIVE_BACKEND
     const auto savePath = std::filesystem::path("_sd_mem") / ("u" + std::to_string(userId)) / "slot0.bin";
-#else
-    const auto savePath = std::filesystem::path("_sd") / "sce_sdmemory" /
-        std::to_string(userId) / "memory.dat";
-#endif
     std::filesystem::create_directories(savePath.parent_path());
     const std::vector<char> oldData{'o', 'l', 'd'};
     {
@@ -57,18 +45,7 @@ int main() {
     setup.user_id = userId;
     setup.memory_size = oldData.size() + 3;
     SaveDataMemorySetupResult result{};
-    int status = sceSaveDataSetupSaveDataMemory2(&setup, &result);
-
-#ifndef SAVEDATA_NATIVE_BACKEND
-    struct MemorySyncParam {
-        std::int32_t user_id;
-        std::uint32_t slot_id;
-        std::uint32_t option;
-    } sync{userId, 0, 0};
-    if (status == 0) {
-        status = sceSaveDataSyncSaveDataMemory(&sync);
-    }
-#endif
+    const int status = sceSaveDataSetupSaveDataMemory2(&setup, &result);
 
     Require(result.existed_memory_size == oldData.size());
     Require(status == 0);
@@ -82,9 +59,7 @@ int main() {
     Require(std::all_of(savedData.begin() + static_cast<std::ptrdiff_t>(oldData.size()),
                         savedData.end(), [](char byte) { return byte == 0; }));
 
-#ifdef SAVEDATA_NATIVE_BACKEND
     Require(sceSaveDataTerminate() == 0);
-#endif
     std::filesystem::current_path(originalDirectory);
     std::filesystem::remove_all(root);
 }

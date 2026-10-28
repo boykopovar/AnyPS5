@@ -1010,10 +1010,60 @@ static void CheckUnknownRootsAndTopLevelNames() {
     *__error_nid_postfix() = 13;
     Require(sysctlbyname_nid_postfix(tooLong.c_str(), &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
 }
+static void CheckSysctlPointerFaults() {
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page, 3, 0) == 0 && memory != nullptr);
+    auto* readOnlyLength = static_cast<std::size_t*>(memory);
+    *readOnlyLength = sizeof(int);
+    Require(sceKernelMprotect(memory, page, 1) == 0);
+    const auto fails = [](int result) { return result == -1 && *__error_nid_postfix() == 14; };
+    auto* guard = static_cast<char*>(nullptr);
+    void* pages = nullptr;
+    Require(sceKernelMapFlexibleMemory(&pages, page * 2, 3, 0) == 0 && pages != nullptr);
+    guard = static_cast<char*>(pages) + page;
+    Require(sceKernelMprotect(guard, page, 0) == 0);
+    char* crossing = guard - 4;
+    std::memcpy(crossing, "kern", 4);
+    std::size_t nameLength = sizeof(int);
+    int nameValue = 0;
+    Require(fails(sysctlbyname_nid_postfix(reinterpret_cast<const char*>(0x10), &nameValue, &nameLength, nullptr, 0)));
+    Require(fails(sysctlbyname_nid_postfix(nullptr, &nameValue, &nameLength, nullptr, 0)));
+    Require(fails(sysctlbyname_nid_postfix(crossing, &nameValue, &nameLength, nullptr, 0)));
+    Require(sysctlbyname_nid_postfix("hw.ncpu", &nameValue, &nameLength, nullptr, 0) == 0 && nameValue > 0);
+    Require(fails(sysctlbyname_nid_postfix("hw.ncpu", &nameValue, reinterpret_cast<std::size_t*>(0x10), nullptr, 0)));
+    Require(fails(sysctlbyname_nid_postfix("hw.ncpu", reinterpret_cast<void*>(0x10), &nameLength, nullptr, 0)));
+    const int mib[] = {6, 3};
+    const int absent[] = {1, 6};
+    const auto unreadable = reinterpret_cast<const int*>(0x10);
+    const auto badLength = reinterpret_cast<std::size_t*>(0x10);
+    int value = 0;
+    std::size_t length = sizeof(value);
+    Require(fails(sysctl_nid_postfix(unreadable, 2, &value, &length, nullptr, 0)));
+    Require(fails(sysctl_nid_postfix(nullptr, 2, &value, &length, nullptr, 0)));
+    Require(fails(sysctl_nid_postfix(mib, 2, &value, badLength, nullptr, 0)));
+    Require(fails(sysctl_nid_postfix(absent, 2, &value, badLength, nullptr, 0)));
+    Require(fails(sysctl_nid_postfix(mib, 2, reinterpret_cast<void*>(0x10), &length, nullptr, 0)) && length == sizeof(value));
+    Require(fails(sysctl_nid_postfix(mib, 2, nullptr, badLength, nullptr, 0)));
+    Require(fails(sysctl_nid_postfix(mib, 2, &value, readOnlyLength, nullptr, 0)) && value != 0);
+    Require(fails(sysctl_nid_postfix(mib, 2, nullptr, readOnlyLength, nullptr, 0)));
+    length = 0;
+    Require(sysctl_nid_postfix(mib, 2, reinterpret_cast<void*>(0x10), &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12 && length == 0);
+    Require(sysctl_nid_postfix(unreadable, 1, &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(sysctl_nid_postfix(unreadable, 25, &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+    Require(sysctl_nid_postfix(absent, 2, &value, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 2);
+    const int arandom[] = {1, 37};
+    std::uint8_t bytes[8] = {};
+    length = sizeof(bytes);
+    Require(fails(sysctl_nid_postfix(arandom, 2, reinterpret_cast<void*>(0x10), &length, nullptr, 0)) && length == sizeof(bytes));
+    Require(fails(sysctl_nid_postfix(arandom, 2, bytes, badLength, nullptr, 0)));
+    Require(sysctl_nid_postfix(arandom, 2, bytes, &length, nullptr, 0) == 0 && length == sizeof(bytes));
+}
 
 int main() {
     CheckUnknownRootsAndTopLevelNames();
     CheckProcessorCountSysctl();
+    CheckSysctlPointerFaults();
     CheckPageSizeSysctl();
     CheckPhysicalMemorySysctl(5, "hw.physmem");
     CheckPhysicalMemorySysctl(12, "hw.realmem");
