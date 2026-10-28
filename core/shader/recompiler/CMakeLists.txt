@@ -40,6 +40,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ShaderCachePack.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/RectListShaders.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/BarycentricGeometryShader.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/TessellationCaptureShader.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaOpcode.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaProgram.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaInstructionDecoder.cpp
@@ -244,6 +245,7 @@ function(add_shader_recompiler target runtimeTarget)
             BuildBarycentricTessellationShaders
             BuildPreparedShaderKey
             BuildRectListShaders
+            BuildTessellationCaptureGeometryShader
             CaptureResources
             DebugProbeActive
             DepthBitsTextureWidth

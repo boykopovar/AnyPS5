@@ -11,7 +11,7 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_APR` | APR file reads, including path, offset, size and destination. |
 | `APS5_TRACE_AUDIOOUT` | Audio output port parameters when a port is opened. |
 | `APS5_TRACE_AUDIOOUT2` | AudioOut2 context and port parameters, attributes, pushes, queue polls and periodic queue summaries. |
-| `APS5_TRACE_CALLS` | On Windows and Linux, records calls to the imports selected by this comma-separated library list (or `all`); crash and abort reports (abort only on Linux) include the last 64 calls and most-called imports. The executable must be converted with `--trace-imports`; see [Usage](../user/USAGE.md#tracing-system-library-calls). |
+| `APS5_TRACE_CALLS` | On Windows, Linux and macOS, records calls to the imports selected by this comma-separated library list (or `all`); crash and abort reports (abort only on Linux and macOS) include the last 64 calls and most-called imports. The executable must be converted with `--trace-imports`; see [Usage](../user/USAGE.md#tracing-system-library-calls). |
 | `APS5_TRACE_CALLS_FILE` | With `APS5_TRACE_CALLS`, a file rewritten every 10 seconds with every traced import called so far, most called first: number of calls, library and import name. |
 | `APS5_TRACE_EXIT` | Guest `exit` and `_Exit` calls and process-exit backtraces. |
 | `APS5_TRACE_FIBER` | Fiber initialization, switches and returns. |
@@ -69,6 +69,7 @@ See [Build](BUILD.md#performance-trace) for the trace format, summary fields and
 | `APS5_TRACE_SUMMARY_EVERY=<seconds>` | Writes periodic summary lines without recording trace events. Can be combined with either window switch. |
 | `APS5_TRACE_EVENTS=<count>` | Sets the per-thread event-buffer capacity for a frame or seconds window (1–4,194,304; default 262,144). |
 | `APS5_TRACE_DIR=<path>` | Writes performance capture and summary files to this directory instead of the working directory. |
+| `APS5_AB=<seconds>:<switch>[+<switch>...]` | Alternates phase A (the environment's settings) and phase B (the listed switches toggled) at flip packets within one run, each phase at least `<seconds>` long. Every phase change prints `[ab] phase A\|B <k> begins at present <n> (t <s> s)` and, `APS5_AB_SETTLE` seconds (default 2) later, `[ab] phase A\|B <k> settled at present <n> (t <s> s)`; `t` counts from the first flip. `APS5_AB_START=<n>` starts at flip `<n>`, `APS5_AB_START=<n>s` `<n>` seconds after the first flip. Only `APS5_NO_BARRIER_BATCH` can be listed; any other name fails the first flip. `python tools/ab_split.py <log>` prints the mean of each periodic report (`[present]`, `[gputime]`, `[draw] pipelined`, `[syncwait]`) per phase, counting only reports that lie wholly inside a settled phase, and each B phase against its neighbouring A phases. |
 | `APS5_VIDEOOUT_TELEMETRY_DIR=<path>` | Writes the presents and the pad changes of a run to `<path>/videoout.jsonl`; see [Usage](../user/USAGE.md#video-out-and-pad-telemetry). |
 
 ## Shader registers

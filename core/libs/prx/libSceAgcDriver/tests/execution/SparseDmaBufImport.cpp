@@ -22,6 +22,7 @@
 #include <iostream>
 #include <mutex>
 #include <span>
+#include <string>
 
 #ifdef _WIN32
 int main() {
@@ -78,20 +79,28 @@ bool DmaBufImport(const AgcDriver::VulkanDevice& device, std::uint64_t address, 
 
 }
 
-int main() {
+static int SkipCode(bool required) {
+    if (required) std::printf("required lane: the skip above is a failure, the nonzero-lead CPU publish was not exercised\n");
+    return required ? 1 : VulkanTestSkipped;
+}
+
+int main(int argc, char** argv) {
     try {
+        const bool required = argc > 1 && std::string(argv[1]) == "--require-cpu-lead";
+        bool cpuLeadChecked = false;
+        std::string cpuLeadSkip = "the unit shadow is not enabled";
         const int udmabuf = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
         if (udmabuf < 0) {
             std::printf("skipped, host imports are unavailable: /dev/udmabuf is not accessible\n");
-            return VulkanTestSkipped;
+            return SkipCode(required);
         }
         close(udmabuf);
         if (UdmabufLimitBytes() > LargestTestedLimit) {
             std::printf("skipped, udmabuf size_limit_mb is above %llu: a range above it is too large to map\n", static_cast<unsigned long long>(LargestTestedLimit >> 20u));
-            return VulkanTestSkipped;
+            return SkipCode(required);
         }
         auto device = OpenVulkanTestDevice();
-        if (!device) return VulkanTestSkipped;
+        if (!device) return SkipCode(required);
 
         constexpr std::size_t ProbeBytes = 65536;
         auto* probe = static_cast<std::uint8_t*>(std::aligned_alloc(ProbeBytes, ProbeBytes));
@@ -106,7 +115,7 @@ int main() {
         }
         if (!adopted) {
             std::printf("skipped, the device does not import guest memory\n");
-            return VulkanTestSkipped;
+            return SkipCode(required);
         }
 
         const auto bytes = (UdmabufLimitBytes() / ChunkBytes + 2) * ChunkBytes;
@@ -140,7 +149,7 @@ int main() {
         GuestAllocations::Mutation().Remove(small);
         if (!smallImported) {
             std::printf("skipped, the device does not import dma-buf memory\n");
-            return VulkanTestSkipped;
+            return SkipCode(required);
         }
         if (!settles) std::printf("note: the device has no settle queue, so dma-buf imports are not settled\n");
         else if (!settlesShared) std::printf("note: the device imports shared memory through host pointers, which are not settled\n");
@@ -196,47 +205,66 @@ int main() {
         if (AgcDriver::Graphics::UnitShadowEnabled()) {
             using namespace AgcDriver::Graphics;
             constexpr std::uint64_t Unit = 65536;
-            const auto unitBegin = ((unalignedAddress + Unit - 1) & ~(Unit - 1)) + Unit;
-            auto* const unitBytes = reinterpret_cast<std::uint8_t*>(unitBegin);
-            std::memset(unitBytes - Lead, 0x33, Unit + 2 * Lead);
             GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapping, static_cast<std::size_t>(mappingBytes));
-            std::size_t published = 0;
-            {
-                std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-                const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
-                const auto* import = HostImportFor(context, unalignedAddress, static_cast<std::size_t>(unalignedBytes));
-                Require(import != nullptr, "sparse import: the unaligned range has no import");
-                if (!import->dmaBuf) std::printf("note: the device imported the unaligned range through a host pointer, which has no lead\n");
-                Require(import->lead == (import->dmaBuf ? Lead : 0), "sparse import: the unaligned import does not start its buffer at the block below it");
-                auto* recorder = Recorder::Active();
-                if (recorder != nullptr && AgcDriver::GuestMemory::Watched(unitBegin, Unit)) {
-                    AgcDriver::GuestMemory::CollectWritesUncached(unitBegin, Unit);
-                    const auto destination = ShadowDestinationFor(context, *import, unitBegin, unitBegin + Unit);
-                    Require(destination.has_value(), "sparse import: no unit shadow for a whole unit of the unaligned import");
-                    const auto commands = recorder->Commands();
-                    recorder->Keep(destination->slab);
-                    context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, destination->buffer, destination->offset, Unit, 0x5AD0BEEFu);
-                    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-                    recorder->MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-                    const ShadowedRange range{unitBegin, unitBegin + Unit, destination->slab};
-                    MarkShadowed(*import, std::span(&range, 1), AgcDriver::GuestMemory::TrackerGeneration());
-                    published = PublishShadow(unitBegin, Unit, PublishScope::Whole, PublishReason::Hook);
-                    recorder->Sync();
+            for (const bool onCpu : {false, true}) {
+                const std::string how = onCpu ? "published on the CPU" : "published by the GPU";
+                const auto unitBegin = ((unalignedAddress + Unit - 1) & ~(Unit - 1)) + (onCpu ? 3 : 1) * Unit;
+                auto* const unitBytes = reinterpret_cast<std::uint8_t*>(unitBegin);
+                std::memset(unitBytes - Lead, 0x33, Unit + 2 * Lead);
+                std::size_t published = 0;
+                bool dmaBufImport = false;
+                {
+                    std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+                    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+                    const auto* import = HostImportFor(context, unalignedAddress, static_cast<std::size_t>(unalignedBytes));
+                    Require(import != nullptr, "sparse import: the unaligned range has no import");
+                    if (!import->dmaBuf) std::printf("note: the device imported the unaligned range through a host pointer, which has no lead\n");
+                    dmaBufImport = import->dmaBuf;
+                    Require(import->lead == (import->dmaBuf ? Lead : 0), "sparse import: the unaligned import does not start its buffer at the block below it");
+                    auto* recorder = Recorder::Active();
+                    if (recorder != nullptr && AgcDriver::GuestMemory::Watched(unitBegin, Unit)) {
+                        AgcDriver::GuestMemory::CollectWritesUncached(unitBegin, Unit);
+                        const auto destination = ShadowDestinationFor(context, *import, unitBegin, unitBegin + Unit);
+                        Require(destination.has_value(), "sparse import: no unit shadow for a whole unit of the unaligned import");
+                        const auto commands = recorder->Commands();
+                        recorder->Keep(destination->slab);
+                        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, destination->buffer, destination->offset, Unit, 0x5AD0BEEFu);
+                        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                        recorder->MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                        const ShadowedRange range{unitBegin, unitBegin + Unit, destination->slab};
+                        MarkShadowed(*import, std::span(&range, 1), AgcDriver::GuestMemory::TrackerGeneration());
+                        if (onCpu) {
+                            PublishOnCpuScope cpu;
+                            published = PublishShadow(unitBegin, Unit, PublishScope::Whole, PublishReason::Hook);
+                        } else {
+                            published = PublishShadow(unitBegin, Unit, PublishScope::Whole, PublishReason::Hook);
+                        }
+                        recorder->Sync();
+                    }
                 }
-            }
-            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapping, static_cast<std::size_t>(mappingBytes));
-            if (published == 0) {
-                std::printf("note: the unaligned import's unit was not shadowed (no recorder or not watched); the publish was not checked\n");
-            } else {
+                if (onCpu) cpuLeadSkip = !dmaBufImport ? "the device imported the unaligned range through a host pointer, which has no lead" : "the unit was not shadowed (no recorder or not watched)";
+                if (published == 0) {
+                    std::printf("note: the unaligned import's unit was not shadowed (no recorder or not watched); the publish %s was not checked\n", how.c_str());
+                    continue;
+                }
                 for (std::uint64_t offset = 0; offset < Unit; offset += 4) {
                     std::uint32_t value = 0;
                     std::memcpy(&value, unitBytes + offset, sizeof(value));
-                    Require(value == 0x5AD0BEEFu, "sparse import: a unit shadow of the unaligned import was not published at its guest address");
+                    Require(value == 0x5AD0BEEFu, "sparse import: a unit shadow of the unaligned import " + how + " did not reach its guest address");
                 }
-                for (std::uint64_t offset = 0; offset < Lead; ++offset) Require((unitBytes - Lead)[offset] == 0x33 && unitBytes[Unit + offset] == 0x33, "sparse import: a unit shadow of the unaligned import was published outside its unit");
+                for (std::uint64_t offset = 0; offset < Lead; ++offset) Require((unitBytes - Lead)[offset] == 0x33 && unitBytes[Unit + offset] == 0x33, "sparse import: a unit shadow of the unaligned import " + how + " was stored outside its unit");
+                if (onCpu && dmaBufImport) {
+                    cpuLeadChecked = true;
+                    std::printf("coverage: path=cpu dmaBuf=1 lead=%llu published=%zu checked=1\n", static_cast<unsigned long long>(Lead), published);
+                }
             }
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapping, static_cast<std::size_t>(mappingBytes));
         }
         GuestAllocations::Mutation().Remove(unaligned);
+        if (!cpuLeadChecked) {
+            std::printf("SKIPPED nonzero-lead CPU publish: %s\n", cpuLeadSkip.c_str());
+            if (required) return SkipCode(required);
+        }
 
         GuestAllocations::Mutation().Remove(probe);
         std::free(probe);

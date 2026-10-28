@@ -17,6 +17,9 @@
 #include <mach/mach_vm.h>
 #endif
 #endif
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #if defined(__linux__) && defined(__x86_64__)
 #include <asm/prctl.h>
 #include <sys/syscall.h>
@@ -28,6 +31,7 @@
 #include <sys/wait.h>
 #endif
 #include "SceTypes.hpp"
+#include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
@@ -45,11 +49,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -58,6 +64,7 @@
 #include <sys/resource.h>
 #endif
 
+extern char** environ;
 namespace {
 
 constexpr int sceInvalidArgument = static_cast<int>(0x80020016u);
@@ -66,10 +73,19 @@ constexpr int errnoNoSuchProcess = 3;
 constexpr int errnoNoChild = 10;
 constexpr int errnoBadAddress = 14;
 constexpr int errnoInvalidArgument = 22;
+constexpr int errnoTooBig = 7;
+constexpr int errnoNoExec = 8;
+constexpr int errnoNoEnt = 2;
+constexpr int errnoAccess = 13;
+constexpr int errnoBadFile = 9;
 constexpr int freebsdGroupsMax = 1023;
 std::mutex supplementaryGroupsMutex;
 std::vector<std::uint32_t> supplementaryGroups{0};
 constexpr unsigned freebsdWaitOptions = 0x8000003Fu;
+constexpr std::size_t ExecArgumentBytesLimit = 262144;
+constexpr std::string_view ExecDefaultSearchPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
+constexpr std::string_view ExecApplicationRoot = "/app0/";
+constexpr std::string_view ExecMainExecutable = "/app0/eboot.bin";
 
 bool StoreGuestId(std::uint32_t* output) {
     if (output == nullptr) return true;
@@ -230,9 +246,6 @@ constexpr int guestRlimitFsize = 1;
 constexpr int guestPriorityProcess = 0;
 constexpr int guestPriorityGroup = 1;
 constexpr int guestPriorityUser = 2;
-std::atomic<int> guestNice{0};
-constexpr int guestNiceMin = -20;
-constexpr int guestNiceMax = 20;
 constexpr int guestRlimitData = 2;
 constexpr int guestRlimitStack = 3;
 constexpr int guestRlimitCore = 4;
@@ -281,6 +294,281 @@ std::mutex openFileLimitMutex;
 std::optional<GuestResourceLimit> guestOpenFileLimit;
 std::mutex processLimitMutex;
 GuestResourceLimit guestProcessResourceLimit{guestProcessLimit, guestProcessLimit};
+}
+
+namespace {
+
+bool ExecProgramFound(std::string_view name, bool search, int& error, std::string& found) {
+    const auto executable = [&error, &found](const std::string& candidate) {
+        found = candidate;
+        std::filesystem::path native;
+        std::error_code probe;
+        const int resolved = ResolvePathError_nid_no_patch(candidate.c_str(), native);
+        if (resolved != 0 || !std::filesystem::exists(native, probe)) {
+            error = resolved == 0 ? NotFoundError_nid_no_patch(native) : resolved;
+            return false;
+        }
+        if (!std::filesystem::is_regular_file(native, probe) || !ExecutePermission_nid_no_patch(native)) {
+            error = errnoAccess;
+            return false;
+        }
+        return true;
+    };
+    if (name.empty()) {
+        error = errnoNoEnt;
+        return false;
+    }
+    if (!search || name.find('/') != std::string_view::npos) return executable(std::string(name));
+    bool inaccessible = false;
+    const char* variable = getenv_nid_postfix("PATH");
+    std::string_view directories = variable != nullptr ? std::string_view(variable) : ExecDefaultSearchPath;
+    while (true) {
+        const auto separator = directories.find(':');
+        const auto directory = directories.substr(0, separator);
+        const std::string candidate = (directory.empty() ? std::string(".") : std::string(directory)) + '/' + std::string(name);
+        found = candidate;
+        std::filesystem::path native;
+        std::error_code probe;
+        if (ResolvePathError_nid_no_patch(candidate.c_str(), native) == 0 && std::filesystem::exists(native, probe)) {
+            if (std::filesystem::is_regular_file(native, probe) && ExecutePermission_nid_no_patch(native)) return true;
+            inaccessible = true;
+        }
+        if (separator == std::string_view::npos) {
+            error = inaccessible ? errnoAccess : errnoNoEnt;
+            return false;
+        }
+        directories.remove_prefix(separator + 1);
+    }
+}
+
+std::string ExecFlattenedName(const std::string& guest) {
+    std::string_view relative(guest);
+    if (!relative.starts_with(ExecApplicationRoot))
+        NotImplemented_nid_no_patch((std::string("exec: executables outside /app0 (") + guest + ")").c_str());
+    relative.remove_prefix(ExecApplicationRoot.size());
+    std::string name;
+    while (true) {
+        const std::size_t separator = relative.find('/');
+        const std::string_view component = relative.substr(0, separator);
+        if (component.empty() || component == "." || component == "..")
+            NotImplemented_nid_no_patch((std::string("exec: a path with an empty, . or .. component (") + guest + ")").c_str());
+        name += (name.empty() ? "" : ".") + std::string(component);
+        if (separator == std::string_view::npos) return name;
+        relative.remove_prefix(separator + 1);
+    }
+}
+
+std::filesystem::path ExecOwnExecutable() {
+#if defined(_WIN32)
+    std::wstring own(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
+    if (length == 0 || length >= own.size())
+        throw std::system_error(GetLastError(), std::system_category(), "exec: GetModuleFileNameW");
+    own.resize(length);
+    return std::filesystem::path(own);
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> executable(size);
+    std::error_code error;
+    if (_NSGetExecutablePath(executable.data(), &size) == 0) return std::filesystem::canonical(executable.data(), error);
+    throw std::runtime_error("exec: cannot locate the executable");
+#else
+    std::error_code error;
+    const auto own = std::filesystem::read_symlink("/proc/self/exe", error);
+    if (error) throw std::system_error(error, "exec: cannot read /proc/self/exe");
+    return own;
+#endif
+}
+
+std::filesystem::path ExecConvertedTarget(const std::string& guest) {
+    const auto own = ExecOwnExecutable();
+    if (guest == ExecMainExecutable) return own;
+    std::error_code error;
+    const auto name = std::filesystem::path(reinterpret_cast<const char8_t*>((ExecFlattenedName(guest) + own.extension().string()).c_str()));
+    const auto target = own.parent_path() / name;
+    if (!std::filesystem::is_regular_file(target, error))
+        NotImplemented_nid_no_patch((std::string("exec: ") + guest + " without its converted executable; relink with --executable " +
+                                     std::string(guest.substr(ExecApplicationRoot.size())))
+                                        .c_str());
+    return target;
+}
+
+std::size_t ExecEntriesBytes(char* const* entries) {
+    std::size_t bytes = 0;
+    for (std::size_t index = 0; entries[index] != nullptr; ++index)
+        bytes += std::strlen(entries[index]) + 1;
+    return bytes;
+}
+
+std::vector<std::string> ExecArgumentVector(char* const* arguments) {
+    std::vector<std::string> values;
+    for (std::size_t index = 0; arguments[index] != nullptr; ++index) values.emplace_back(arguments[index]);
+    return values;
+}
+
+#ifdef _WIN32
+std::wstring ExecWide(const std::string& text) {
+    if (text.empty()) return {};
+    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (size <= 0) throw std::runtime_error("exec: argument is not valid UTF-8");
+    std::wstring wide(static_cast<std::size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), wide.data(), size);
+    return wide;
+}
+
+std::wstring ExecQuoted(const std::wstring& argument) {
+    if (!argument.empty() && argument.find_first_of(L" \t\n\v\"") == std::wstring::npos) return argument;
+    std::wstring quoted = L"\"";
+    for (std::size_t index = 0;; ++index) {
+        std::size_t backslashes = 0;
+        while (index < argument.size() && argument[index] == L'\\') {
+            ++backslashes;
+            ++index;
+        }
+        if (index == argument.size()) {
+            quoted.append(backslashes * 2, L'\\');
+            break;
+        }
+        quoted.append(argument[index] == L'"' ? backslashes * 2 + 1 : backslashes, L'\\');
+        quoted.push_back(argument[index]);
+    }
+    quoted.push_back(L'"');
+    return quoted;
+}
+
+void ExecDuplicate(HANDLE source, DWORD access, HANDLE* target) {
+    if (!DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(), target, access, TRUE, access ? 0 : DUPLICATE_SAME_ACCESS))
+        throw std::system_error(GetLastError(), std::system_category(), "exec: duplicating a handle");
+}
+
+void ExecCloseHandle(HANDLE value) { CloseHandle(value); }
+
+bool ExecWindowsImage(const std::filesystem::path& target) {
+    std::ifstream image(target, std::ios::binary);
+    std::array<char, 64> dos{};
+    if (!image.read(dos.data(), dos.size()) || dos[0] != 'M' || dos[1] != 'Z') return false;
+    const auto header = static_cast<std::size_t>(static_cast<unsigned char>(dos[63])) << 24 |
+                        static_cast<std::size_t>(static_cast<unsigned char>(dos[62])) << 16 |
+                        static_cast<std::size_t>(static_cast<unsigned char>(dos[61])) << 8 |
+                        static_cast<std::size_t>(static_cast<unsigned char>(dos[60]));
+    if (header < dos.size()) return false;
+    image.seekg(static_cast<std::streamoff>(header));
+    std::array<char, 6> coff{};
+    if (!image.read(coff.data(), coff.size())) return false;
+    return coff[0] == 'P' && coff[1] == 'E' && coff[2] == '\0' && coff[3] == '\0' &&
+           static_cast<unsigned char>(coff[4]) == 0x64 && static_cast<unsigned char>(coff[5]) == 0x86;
+}
+
+[[noreturn]] void ExecReplaceWindows(const std::filesystem::path& target, const std::vector<std::string>& arguments, bool implicitEnvironment,
+                                     char* const* environment) {
+    constexpr wchar_t ParentVariable[] = L"ANYPS5_LOADEXEC_PARENT=";
+    constexpr wchar_t SkipVariable[] = L"ANYPS5_LOADEXEC_ARGV_SKIP=";
+    const wchar_t* parentPrefix = ParentVariable;
+    const wchar_t* skipPrefix = SkipVariable;
+    const std::size_t parentPrefixLength = std::size(ParentVariable) - 1;
+    const std::size_t skipPrefixLength = std::size(SkipVariable) - 1;
+    std::wstring command = ExecQuoted(target.wstring());
+    for (const auto& argument : arguments) {
+        if (!command.empty()) command += L' ';
+        command += ExecQuoted(ExecWide(argument));
+    }
+    if (command.size() >= 32767) throw std::runtime_error("exec: command line is too long");
+    std::vector<std::wstring> entries;
+    const std::unique_ptr<wchar_t, decltype(&FreeEnvironmentStringsW)> inherited(GetEnvironmentStringsW(), FreeEnvironmentStringsW);
+    if (!inherited) throw std::runtime_error("exec: cannot read the process environment");
+    for (const wchar_t* at = inherited.get(); *at;) {
+        const std::wstring entry(at);
+        at += entry.size() + 1;
+        entries.push_back(std::move(entry));
+    }
+    if (!implicitEnvironment) {
+        const auto name = [](const std::wstring& entry) {
+            const std::size_t separator = entry.find(L'=');
+            return separator == std::wstring::npos ? entry : entry.substr(0, separator);
+        };
+        for (std::size_t index = 0; environment[index] != nullptr; ++index) {
+            std::wstring replaced = ExecWide(environment[index]);
+            const std::wstring replacedName = name(replaced);
+            for (std::size_t existing = 0; existing < entries.size();) {
+                if (name(entries[existing]) == replacedName) {
+                    entries.erase(entries.begin() + existing);
+                    continue;
+                }
+                ++existing;
+            }
+            entries.push_back(std::move(replaced));
+        }
+    }
+    entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                 [parentPrefix, parentPrefixLength, skipPrefix, skipPrefixLength](const std::wstring& entry) {
+                                     return _wcsnicmp(entry.c_str(), parentPrefix, parentPrefixLength) == 0 ||
+                                            _wcsnicmp(entry.c_str(), skipPrefix, skipPrefixLength) == 0;
+                                 }),
+                  entries.end());
+    std::unique_ptr<void, void (*)(HANDLE)> parent(nullptr, ExecCloseHandle);
+    {
+        HANDLE shared = nullptr;
+        ExecDuplicate(GetCurrentProcess(), SYNCHRONIZE, &shared);
+        parent.reset(shared);
+    }
+    std::vector<HANDLE> inheritedHandles{parent.get()};
+    std::vector<std::unique_ptr<void, void (*)(HANDLE)>> standard;
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    HANDLE* outputs[] = {&startup.StartupInfo.hStdInput, &startup.StartupInfo.hStdOutput, &startup.StartupInfo.hStdError};
+    const DWORD identifiers[] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    for (std::size_t index = 0; index < 3; ++index) {
+        const HANDLE source = GetStdHandle(identifiers[index]);
+        if (source && source != INVALID_HANDLE_VALUE) {
+            HANDLE handle = nullptr;
+            ExecDuplicate(source, 0, &handle);
+            standard.emplace_back(handle, ExecCloseHandle);
+            inheritedHandles.push_back(handle);
+            *outputs[index] = handle;
+        }
+    }
+    SIZE_T bytes = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+    std::vector<std::max_align_t> storage((bytes + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
+    auto* attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
+    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &bytes))
+        throw std::system_error(GetLastError(), std::system_category(), "exec: creating process attributes");
+    const std::unique_ptr<_PROC_THREAD_ATTRIBUTE_LIST, void (*)(LPPROC_THREAD_ATTRIBUTE_LIST)> cleanup(attributes, DeleteProcThreadAttributeList);
+    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inheritedHandles.data(),
+                                   inheritedHandles.size() * sizeof(HANDLE), nullptr, nullptr))
+        throw std::system_error(GetLastError(), std::system_category(), "exec: selecting inherited handles");
+    startup.lpAttributeList = attributes;
+    std::wostringstream value;
+    value << ParentVariable << std::hex << reinterpret_cast<std::uintptr_t>(parent.get());
+    entries.push_back(value.str());
+    entries.push_back(std::wstring(SkipVariable) + L"1");
+    std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) { return _wcsicmp(left.c_str(), right.c_str()) < 0; });
+    std::vector<wchar_t> block;
+    for (const auto& entry : entries) {
+        block.insert(block.end(), entry.begin(), entry.end());
+        block.push_back(0);
+    }
+    block.push_back(0);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(target.c_str(), command.data(), nullptr, nullptr, TRUE,
+                        CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT, block.data(), nullptr,
+                        &startup.StartupInfo, &process))
+        throw std::system_error(GetLastError(), std::system_category(), "exec: creating the converted executable");
+    const std::unique_ptr<void, void (*)(HANDLE)> child(process.hProcess, ExecCloseHandle);
+    const std::unique_ptr<void, void (*)(HANDLE)> thread(process.hThread, ExecCloseHandle);
+    try {
+        if (ResumeThread(process.hThread) == static_cast<DWORD>(-1))
+            throw std::system_error(GetLastError(), std::system_category(), "exec: starting the converted executable");
+        TerminateProcess(GetCurrentProcess(), 0);
+    } catch (...) {
+        TerminateProcess(process.hProcess, 1);
+        throw;
+    }
+    std::abort();
+}
+#endif
 }
 
 extern "C" {
@@ -527,26 +815,77 @@ int APS5_VABI wait_nid_postfix(int* status) {
     return waitpid_nid_postfix(-1, status, 0);
 }
 
-int APS5_VABI execvp_nid_postfix(const char* file, char* const* arguments) {
-    (void)file;
-    (void)arguments;
-    NotImplemented_nid_no_patch("execvp: executable replacement");
+int ExecProgram(const char* file, char* const* arguments, char* const* environment, bool search, bool implicitEnvironment) {
+    const auto fail = [](int error) { *__error_nid_postfix() = error; return -1; };
+    if (file == nullptr) return fail(errnoBadFile);
+    if (arguments == nullptr) return fail(errnoBadAddress);
+    if (file[0] == '\0') return fail(errnoNoEnt);
+    static char* const noEnvironment[] = {nullptr};
+    char* const* entries = implicitEnvironment ? static_cast<char* const*>(environ) : (environment != nullptr ? environment : noEnvironment);
+    if (ExecEntriesBytes(arguments) + ExecEntriesBytes(entries) > ExecArgumentBytesLimit) return fail(errnoTooBig);
+    int error = errnoNoEnt;
+    std::string program;
+    if (!ExecProgramFound(file, search, error, program)) return fail(error);
+    const auto target = ExecConvertedTarget(program);
+#ifdef _WIN32
+    if (!ExecWindowsImage(target)) return fail(errnoNoExec);
+    ExecReplaceWindows(target, ExecArgumentVector(arguments), implicitEnvironment, entries);
+#elif defined(__linux__)
+    const int descriptor = ::open(target.c_str(), O_RDONLY | O_CLOEXEC);
+    if (descriptor < 0) throw std::system_error(errno, std::generic_category(), "exec: opening the converted executable");
+    std::array<unsigned char, 20> header{};
+    if (::pread(descriptor, header.data(), header.size(), 0) != static_cast<ssize_t>(header.size()) || header[0] != 0x7f ||
+        header[1] != 'E' || header[2] != 'L' || header[3] != 'F' || header[4] != 2 || header[5] != 1 ||
+        (header[7] != 0 && header[7] != 3) || header[17] != 0 || (header[16] != 2 && header[16] != 3) || header[18] != 62 ||
+        header[19] != 0) {
+        ::close(descriptor);
+        return fail(errnoNoExec);
+    }
+    if (::access(target.c_str(), X_OK) != 0) {
+        ::close(descriptor);
+        return fail(errnoAccess);
+    }
+    std::vector<std::string> merged;
+    if (!implicitEnvironment)
+        for (std::size_t index = 0; entries[index] != nullptr; ++index) merged.emplace_back(entries[index]);
+    for (std::size_t index = 0; environ[index] != nullptr; ++index) {
+        const std::string_view entry = environ[index];
+        const std::size_t separator = entry.find('=');
+        const std::string_view name = separator == std::string_view::npos ? entry : entry.substr(0, separator);
+        bool overridden = false;
+        for (const auto& guest : merged) {
+            const std::size_t guestSeparator = guest.find('=');
+            if ((guestSeparator == std::string::npos ? std::string_view(guest) : std::string_view(guest).substr(0, guestSeparator)) == name) {
+                overridden = true;
+                break;
+            }
+        }
+        if (!overridden) merged.emplace_back(environ[index]);
+    }
+    std::vector<char*> replacement;
+    for (auto& entry : merged) replacement.push_back(entry.data());
+    replacement.push_back(nullptr);
+    fexecve(descriptor, arguments, replacement.data());
+    const int replaced = errno;
+    ::close(descriptor);
+    throw std::system_error(replaced, std::generic_category(), "exec: replacing the executable");
+#else
+    static_cast<void>(target);
+    NotImplemented_nid_no_patch("exec: process replacement on this host");
     return -1;
+#endif
+}
+
+int APS5_VABI execvp_nid_postfix(const char* file, char* const* arguments) {
+    return ExecProgram(file, arguments, nullptr, true, true);
 }
 
 int APS5_VABI execv_nid_postfix(const char* path, char* const* arguments) {
-    (void)path;
-    (void)arguments;
-    NotImplemented_nid_no_patch("execv: executable replacement");
-    return -1;
+    return ExecProgram(path, arguments, nullptr, false, true);
 }
 
 int APS5_VABI execve_nid_postfix(const char* path, char* const* arguments, char* const* environment) {
-    (void)path;
-    (void)arguments;
-    (void)environment;
-    NotImplemented_nid_no_patch("execve: executable replacement");
-    return -1;
+    return ExecProgram(path, arguments, environment, false, false);
 }
 
 int APS5_VABI sceKernelGetCurrentCpu(void) {
@@ -841,7 +1180,7 @@ int APS5_VABI getpriority_nid_postfix(int which, int who) {
         *__error_nid_postfix() = guestNoProcess;
         return -1;
     }
-    return guestNice.load(std::memory_order_relaxed);
+    return 0;
 }
 
 int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
@@ -855,8 +1194,11 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
         *__error_nid_postfix() = guestNoProcess;
         return -1;
     }
-    const int clamped = niceval < guestNiceMin ? guestNiceMin : (niceval > guestNiceMax ? guestNiceMax : niceval);
-    guestNice.store(clamped, std::memory_order_relaxed);
+    if (which != guestPriorityProcess) {
+        throw std::runtime_error(std::string("setpriority: setting the nice value of ") +
+                                 (which == guestPriorityGroup ? "PRIO_PGRP" : "PRIO_USER") + " to " + std::to_string(niceval) +
+                                 " is not verified on the console");
+    }
     return 0;
 }
 

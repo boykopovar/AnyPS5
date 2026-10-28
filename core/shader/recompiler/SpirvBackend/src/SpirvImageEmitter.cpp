@@ -813,6 +813,9 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto sint = SintStorageFormat(access.image);
+    const auto storageFormat = GetFormatInfo(access.image.conversionFormat);
+    const auto float16 = access.image.resourceClass == ImageResourceClass::Storage && access.image.numericClass == IrTextureNumericClass::Uint &&
+        (access.image.conversionFormat == IrBufferFormat::Format16Float || access.image.conversionFormat == IrBufferFormat::Format16_16Float || access.image.conversionFormat == IrBufferFormat::Format16_16_16_16Float);
     std::uint32_t values[4] = {};
     const auto dmask = EffectiveDmask(mem);
     for (std::uint32_t component = 0; component < 4u; component++) {
@@ -834,13 +837,17 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
             raw = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzle(state, mem.resource, source), ConstantU32(state, component + 4u)), candidate, raw);
         }
         values[component] = integer ? raw : mem.dataBits == 16u ? EmitF16BitsToF32(state, raw) : Unary(state, spv::OpBitcast, TypeF32(state), raw);
+        if (float16 && component < storageFormat.componentCount) {
+            values[component] = EmitFormatStoreComponent(state, storageFormat, component, values[component]);
+        }
         if (component < sint.componentCount) {
             values[component] = mem.dataBits == 16u ? EmitD16StoreComponent(state, sint, component, values[component]) : EmitFormatStoreComponent(state, sint, component, values[component]);
         }
     }
     const auto texel = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeConstruct, integer ? TypeU32Vector(state, 4) : TypeF32Vector(state, 4), texel, values[0], values[1], values[2], values[3]);
-    return sint.format != IrBufferFormat::Invalid ? texel : PackImageTexel(ctx, access, texel);
+    const bool rawUintStorage = sint.format != IrBufferFormat::Invalid || float16;
+    state.module.AddFunction(spv::OpCompositeConstruct, integer || rawUintStorage ? TypeU32Vector(state, 4) : TypeF32Vector(state, 4), texel, values[0], values[1], values[2], values[3]);
+    return rawUintStorage ? texel : PackImageTexel(ctx, access, texel);
 }
 
 std::uint32_t PackedStoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t data) {
@@ -1133,6 +1140,9 @@ void EmitWriteOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     auto& state = ctx.state;
     const bool uintImage = access.image.numericClass == IrTextureNumericClass::Uint;
     auto condition = ctx.Arg(access.inst, 3);
+    if (access.mem.imageDimension == RdnaImageDimension::Dim2DArray && access.image.dimension == RdnaImageDimension::Dim1D) {
+        condition = Binary(state, spv::OpLogicalAnd, TypeBool(state), condition, Binary(state, spv::OpIEqual, TypeBool(state), AddressU32(ctx, access, 2u), ConstantU32(state, 0u)));
+    }
     if (VolumeSliceAddress(access) || ArraySliceAddress(access)) {
         if (access.image.mipMode == ImageMipMode::DynamicStorage) ctx.Fail(access.inst, "stores a 2D-array address to a 3D image or a 3D address to a 2D-array image with dynamic mips, which is not implemented");
         const auto image = state.module.AllocateId();

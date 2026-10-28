@@ -5,7 +5,14 @@ const files = new Set(['index.html', 'styles.css', 'app.js', 'mapping.js', 'keys
 const mime = {html: 'text/html', css: 'text/css', js: 'text/javascript'};
 const port = Number(process.env.PORT || 4173);
 const server = createServer(async (request, response) => {
-    const path = new URL(request.url, 'http://127.0.0.1').pathname;
+    let path;
+    try {
+        path = new URL(request.url, 'http://127.0.0.1').pathname;
+    } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+        response.writeHead(400).end('Bad request');
+        return;
+    }
     const file = path === '/' ? 'index.html' : path.slice(1);
     if (!['GET', 'HEAD'].includes(request.method)) {
         response.writeHead(405, {Allow: 'GET, HEAD'}).end();

@@ -67,7 +67,7 @@ CONSTANT = re.compile(rf"\bconstexpr\b[^;=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s
 NAMESPACE = re.compile(r"\bnamespace\s+((?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*(?:inline\s+)?)*[A-Za-z_][A-Za-z0-9_]*)\s*$|\bnamespace\s*$")
 LINKAGE = re.compile(r'\bextern\s*""\s*$')
 ALIGNMENT_LIMIT = 8192
-LINK = re.compile(r"\[[^\]]+\]\(([^)\s]+)")
+LINK = re.compile(r"\[[^\]]+\]\((<[^<>\r\n]*>|(?!<)[^)\s]+)")
 FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
 INLINE = re.compile(r"`[^`\n]*`")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
@@ -316,10 +316,12 @@ class Check:
             if status == "R" and not path.startswith("3rdparty/") and PurePosixPath(path).suffix == ".md":
                 files[path] = list(enumerate(self.show(path).split("\n"), 1))
         for path, lines in files.items():
-            fenced = fenced_lines(self.show(path))
+            source = self.show(path)
+            fenced = fenced_lines(source)
+            entries = debt_entries(source) if is_debt(path) else {}
             for number, text in lines:
                 if is_debt(path) and text.startswith("- "):
-                    name = debt_name(text)
+                    name = debt_name(entries.get(number, text))
                     expected = f"{DEBT_DIR}{name}.md" if name else DEBT
                     if path != expected:
                         self.report("debt-file", path, number, expected)
@@ -401,8 +403,12 @@ class Check:
         body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
         sections = dict(zip(SECTION.findall(body), SECTION.split(body)[2::2]))
         for name in ("What", "Tested", "Checklist"):
-            if not sections.get(name, "").strip():
-                self.report("pr-template", "", 0, f"section '{name}' is missing or empty")
+            if name not in sections:
+                found = re.search(rf"^[ \t]*#+[ \t]*{name}[ \t]*$", body, re.M | re.I)
+                hint = f"; found '{found.group(0).strip()}'" if found else ""
+                self.report("pr-template", "", 0, f"add the '### {name}' heading of the template{hint}")
+            elif not sections[name].strip():
+                self.report("pr-template", "", 0, f"fill the '### {name}' section")
         checklist = sections.get("Checklist", "")
         for item in re.findall(r"^\s*[-*+]\s*\[ \]\s*(.+)$", checklist, re.M):
             self.report("pr-template", "", 0, f"unchecked: {item.strip()}")
@@ -432,7 +438,9 @@ def links(path, text):
     result = []
     text = INLINE.sub("code", FENCE.sub("", text))
     for target in LINK.findall(text):
-        if re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
+        if target.startswith("<"):
+            target = target[1:-1]
+        if not target or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
             continue
         target = target.split("#", 1)[0].split("?", 1)[0]
         decoded = unquote(target)
@@ -446,6 +454,25 @@ def is_debt(path):
 
 def long_debt_entry(text):
     return text.startswith("- ") and len(text) > DEBT_ENTRY_LIMIT
+
+
+def debt_entries(text):
+    entries = {}
+    start = None
+    blanks = []
+    for number, line in enumerate(text.split("\n"), 1):
+        if line.startswith("- "):
+            start = number
+            entries[start] = [line]
+            blanks = []
+        elif start is not None and line.startswith((" ", "\t")):
+            entries[start] += blanks + [line]
+            blanks = []
+        elif line.strip():
+            start = None
+        else:
+            blanks.append(line)
+    return {number: "\n".join(lines) for number, lines in entries.items()}
 
 
 def debt_name(text):

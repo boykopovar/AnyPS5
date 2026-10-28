@@ -27,6 +27,8 @@ int main() {
     Require(sceSharePlayTerminate() == notInitialized);
     Require(sceSharePlayGetCurrentConnectionInfoA(nullptr) == notInitialized);
     Require(sceSharePlayGetCurrentConnectionInfo(nullptr) == notInitialized);
+    Require(sceSharePlayProhibitController(0) == notInitialized);
+    Require(sceSharePlayProhibitController(1) == notInitialized);
     Require(sceSharePlayProhibitController(2) == notInitialized);
     Require(sceSharePlayInitialize(nullptr, sizeof(heap)) == 0);
     Require(sceSharePlayInitialize(heap, 0) == alreadyInitialized);

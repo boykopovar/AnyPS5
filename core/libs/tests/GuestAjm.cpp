@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1445,7 +1446,7 @@ void TestM4aacInitialize(std::uint32_t context) {
     Require(Refused(context, info));
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 
-    Require(sceAjmInstanceCreate(context, CODEC_M4AAC, 3ull << 3, &instance) == 0);
+    Require(sceAjmInstanceCreate(context, CODEC_M4AAC, 7ull << 3, &instance) == 0);
     const AacInitialize raw{2, 3};
     std::int32_t rawResult[2] = {-1, -1};
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
@@ -1556,6 +1557,48 @@ ResampleInfo GetResampleInfo(std::uint32_t context, std::uint32_t instance) {
     return resample;
 }
 
+void TestBuildersWithoutBuffers(std::uint32_t context) {
+    const auto instance = CreateOpus(context);
+    const std::uint32_t parameters[3] = {2, 48000, 0};
+    const GaplessDecode gapless{2000, 100, 0};
+    std::int64_t results[5] = {-1, -1, -1, -1, -1};
+    ResampleInfo resample;
+    std::memset(&resample, 0xAA, sizeof(resample));
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    std::size_t offset = 0;
+    const auto built = [&](int status) {
+        const bool grew = status == 0 && info.offset > offset;
+        offset = info.offset;
+        return grew;
+    };
+    Require(built(sceAjmBatchJobInitialize(&info, instance, parameters, sizeof(parameters), &results[0])));
+    Require(built(sceAjmBatchJobClearContext(&info, instance, &results[1])));
+    Require(built(sceAjmBatchJobSetGaplessDecode(&info, instance, &gapless, 1, &results[2])));
+    Require(built(sceAjmBatchJobSetResampleParameters(&info, instance, 1.0f, 1, &results[3])));
+    Require(built(sceAjmBatchJobSetResampleParametersEx(&info, instance, 1.0f, 0.0f, 1, &results[4])));
+    Require(built(sceAjmBatchJobGetResampleInfo(&info, instance, &resample)));
+    Submit(context, info);
+    Require(std::all_of(std::begin(results), std::end(results), [](std::int64_t result) { return result == 0; }));
+    Require(resample.result == 0 && resample.internalResult == 0 && resample.ratio == 1.0f && resample.samples == 0);
+
+    const auto nullListThrows = [&](std::size_t inputs, std::size_t outputs) {
+        const auto before = info.offset;
+        try {
+            sceAjmBatchJobRunSplit(&info, instance, 0, nullptr, inputs, nullptr, outputs, nullptr, 0);
+        } catch (const std::runtime_error&) {
+            return info.offset == before;
+        }
+        return false;
+    };
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(nullListThrows(1, 0) && nullListThrows(0, 1) && nullListThrows(2, 3));
+    offset = 0;
+    Require(built(sceAjmBatchJobRunSplit(&info, instance, 0, nullptr, 0, nullptr, 0, nullptr, 0)));
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
 struct ResampledStream {
     std::vector<std::int16_t> pcm;
     std::size_t jobs = 0;
@@ -1629,6 +1672,15 @@ void TestResampleOpus(std::uint32_t context) {
     RequireDecimated(reference.pcm, decimated.pcm, 2, 2);
     Require(decimated.afterFirstJob.ratio == 2.0f && decimated.afterFirstJob.samples == 2);
     Require(decimated.atEnd.result == 0 && decimated.atEnd.samples >= 0 && decimated.atEnd.samples <= 2);
+
+    for (const float ratio : {0x1p32f, 0x1p63f, std::nextafter(0x1p64f, 0.0f), 0x1p64f, std::numeric_limits<float>::max()}) {
+        const std::uint32_t extreme = CreateOpus(context);
+        const auto skipped = Stream(context, extreme, OPUS_STEREO, sizeof(OPUS_STEREO), 2, 512, ratio);
+        Require(skipped.pcm.size() == 2);
+        Require(skipped.pcm[0] == reference.pcm[0] && skipped.pcm[1] == reference.pcm[1]);
+        Require(skipped.atEnd.result == 0 && skipped.atEnd.samples == 0);
+        Require(sceAjmInstanceDestroy(context, extreme) == 0);
+    }
 
     const std::uint32_t slower = CreateOpus(context);
     const auto interpolated = Stream(context, slower, OPUS_STEREO, sizeof(OPUS_STEREO), 2, 512, 0.5f);
@@ -2396,6 +2448,7 @@ int main() {
     TestResampleOpus(context);
     TestResampleMp3(context);
     TestResampleParametersEx(context);
+    TestBuildersWithoutBuffers(context);
     TestResampleAt9(context);
     TestAt9GaplessSegments(context);
     TestAt9RunDecodesWholeInput(context);
@@ -2407,5 +2460,6 @@ int main() {
     TestConsoleEmptyBatch(context);
     TestConsoleSingleFrameRun(context);
     TestConsoleStaleHeaderBits(context);
+    Require(sceAjmDecWVorbisCreateHeaderPacket(nullptr) == static_cast<int>(0x8A6E0001));
     Require(sceAjmFinalize(context) == 0);
 }

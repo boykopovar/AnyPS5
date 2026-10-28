@@ -10,7 +10,7 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-static long double Extended(std::uint16_t signExponent, std::uint64_t mantissa) {
+[[gnu::noinline]] static long double Extended(std::uint16_t signExponent, std::uint64_t mantissa) {
     long double value = 0;
     unsigned char bytes[sizeof(long double)] = {};
     std::memcpy(bytes, &mantissa, sizeof(mantissa));

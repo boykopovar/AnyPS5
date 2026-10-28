@@ -46,17 +46,19 @@ def parse_nids(path):
 def parse_db(path):
     mapping = {}
     with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
-        for line in f:
+        for number, line in enumerate(f, 1):
             s = line.lstrip("\ufeff").strip()
             if not s or s.startswith("#"):
                 continue
             parts = s.split()
             if len(parts) < 2:
-                continue
+                raise ValueError(f"{path}:{number}: expected a NID and a symbol name, got {s!r}")
             nid = parts[0].split("#", 1)[0].strip().lstrip("\ufeff")
             name = parts[1].split("#", 1)[0].strip().lstrip("\ufeff")
             if not nid or not name:
-                continue
+                raise ValueError(f"{path}:{number}: expected a NID and a symbol name, got {s!r}")
+            if re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) is None:
+                raise ValueError(f"{path}:{number}: invalid NID {nid!r}")
             if nid not in mapping:
                 mapping[nid] = name
     return mapping
@@ -116,32 +118,34 @@ def td_target(module, td_path, td_lib):
 
 
 def generate(module, nids, db, td_path=None, td_lib=None):
+    nids = tuple(nids)
     module = re.sub(r"\.prx$", "", module, flags=re.IGNORECASE)
     prefix = module_prefix(module)
     path, lib = td_target(module, td_path, td_lib)
+    known = {}
+    for nid in nids:
+        real = db.get(nid)
+        if real is not None and is_valid_ident(real) and compute_nid(real) == nid:
+            candidate = real + "_nid_postfix" if is_runtime_name(real) else real
+            known[nid] = (real, candidate)
+    reserved = {candidate for _, candidate in known.values()}
     used = set()
     unknown_counter = 0
     chunks = []
     td = []
     for nid in nids:
-        real = db.get(nid)
         func = None
         display = None
-        if real is not None:
-            if is_valid_ident(real):
-                if compute_nid(real) == nid:
-                    if is_runtime_name(real):
-                        candidate = real + "_nid_postfix"
-                    else:
-                        candidate = real
-                    if candidate not in used:
-                        func = candidate
-                        display = real
+        if nid in known:
+            real, candidate = known[nid]
+            if candidate not in used:
+                func = candidate
+                display = real
         if func is None:
             while True:
                 func = "%sUnknown%02d" % (prefix, unknown_counter)
                 unknown_counter += 1
-                if func not in used:
+                if func not in used and func not in reserved:
                     break
             display = None
         used.add(func)
@@ -187,7 +191,7 @@ def write_outputs(outputs):
             path = Path(filename).resolve()
             if path.is_dir():
                 raise IsADirectoryError(str(path))
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as handle:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=path.parent, prefix=".stubgen-", suffix=".tmp", delete=False) as handle:
                 temporary = Path(handle.name)
                 staged.append((temporary, path))
                 handle.write(content)

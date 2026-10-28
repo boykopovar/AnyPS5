@@ -106,7 +106,16 @@ def parse_elf(data):
     header = bytearray(data[inner:inner + 0x40])
     if header[4] != 2 or header[5] != 1:
         raise Refused("inner ELF is not 64-bit little-endian")
+    version = struct.unpack_from("<I", header, 0x14)[0]
+    if header[6] != 1 or version != 1:
+        raise Refused("unsupported inner ELF version (identification %d, object %d)" % (header[6], version))
     program_offset = struct.unpack_from("<Q", header, 0x20)[0]
+    machine = struct.unpack_from("<H", header, 0x12)[0]
+    if machine != 62:
+        raise Refused("unsupported inner ELF machine %d (expected 62)" % machine)
+    header_size = struct.unpack_from("<H", header, 0x34)[0]
+    if header_size != 64:
+        raise Refused("invalid inner ELF header size %d (expected 64)" % header_size)
     entry_size = struct.unpack_from("<H", header, 0x36)[0]
     count = struct.unpack_from("<H", header, 0x38)[0]
     if entry_size != 56 or count == 0:
@@ -186,6 +195,12 @@ def place_segments(data, headers, records):
         if header["type"] == PT_LOAD:
             continue
         if header["index"] in placed:
+            host = load_for(header["vaddr"], header["size"])
+            if host is not None:
+                offset = header["vaddr"] - host["vaddr"]
+                if (host["size"] and offset <= host["size"] and header["size"] <= host["size"] - offset
+                        and header["source"] == host["source"] + offset):
+                    header["host"] = host
             if header["size"] and (tail is None or header["offset"] > tail[0]):
                 tail = (header["offset"], header["source"] - header["offset"])
             continue
@@ -275,6 +290,28 @@ def unwrap(path, output, verbose=False):
                             "vaddr": header["vaddr"], "align": header["align"]})
 
     regions.sort(key=lambda region: region["old"])
+
+    def output_region(header):
+        host = header if header["type"] == PT_LOAD else header["host"]
+        region = load_regions.get(host["index"]) if host is not None else None
+        return region if region is not None else region_for(header["source"], header["size"])
+
+    for header in headers:
+        if header["size"] == 0 and (header["type"] == PT_LOAD or header["source"] == 0):
+            continue
+        region = output_region(header)
+        alignment = header["align"]
+        if region is None or alignment <= 1 or alignment & (alignment - 1):
+            continue
+        current = region["align"]
+        current = current if current and (current & (current - 1)) == 0 else 1
+        address = header["vaddr"] - (header["source"] - region["old"])
+        if (address - region["vaddr"]) % min(current, alignment):
+            raise Refused("segment %d has incompatible alignment within its output region" % header["index"])
+        if alignment > current:
+            region["align"] = alignment
+            region["vaddr"] = address
+
     program_offset = struct.unpack_from("<Q", elf_header, 0x20)[0]
     cursor = max(FIRST_REGION, program_offset + len(headers) * 56)
     padding = 0
@@ -302,10 +339,7 @@ def unwrap(path, output, verbose=False):
         if header["size"] == 0 and (header["type"] == PT_LOAD or header["source"] == 0):
             header["new"] = header["vaddr"] % max(header["align"], 1) if header["type"] == PT_LOAD else 0
             continue
-        host = header if header["type"] == PT_LOAD else header["host"]
-        region = load_regions.get(host["index"]) if host is not None else None
-        if region is None:
-            region = region_for(header["source"], header["size"])
+        region = output_region(header)
         header["new"] = header["source"] if region is None else region["new"] + (header["source"] - region["old"])
         if header["new"] + header["size"] > len(result):
             raise Refused("segment %d escaped the output" % header["index"])

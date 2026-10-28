@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 
 namespace {
@@ -35,6 +36,7 @@ int main() {
     Require(sceBluetoothHidInit() == 0, "initialization failed");
     Require(sceBluetoothHidInit() == 0, "repeated initialization failed");
     Require(sceBluetoothHidRegisterDevice(1, 2) == noCallback, "registration without callback");
+    Require(sceBluetoothHidUnregisterDevice(1, 2) == 0, "device unregistration does not need a registered callback");
     Require(sceBluetoothHidUnregisterCallback() == noCallback, "removing absent callback");
     BluetoothHidParam param{};
     Require(sceBluetoothHidRegisterCallback(&Callback, &callbackCalls, &param) == 0, "callback registration failed");
@@ -93,6 +95,22 @@ int main() {
     Require(threw, "set feature report did not throw");
     Require(sceBluetoothHidUnregisterDevice(0x44f, 0x1000) == 0, "device unregistration failed");
     Require(sceBluetoothHidUnregisterCallback() == 0, "callback unregistration failed");
+    BluetoothHidThreadParam thread{};
+    BluetoothHidParam filled;
+    std::memset(&filled, 0xa5, sizeof(filled));
+    Require(sceBluetoothHidParamInitialize(&filled, &thread) == 0, "parameter initialization did not return 0");
+    unsigned char bytes[sizeof(BluetoothHidParam)];
+    std::memcpy(bytes, &filled, sizeof(bytes));
+    const BluetoothHidThreadParam* stored = nullptr;
+    std::memcpy(&stored, bytes, sizeof(stored));
+    std::uint32_t cleared = 1;
+    std::memcpy(&cleared, bytes + 8, sizeof(cleared));
+    Require(stored == &thread, "the thread parameter was not stored at offset 0");
+    Require(cleared == 0, "the word at offset 8 was not cleared");
+    Require(bytes[12] == 0xa5 && bytes[13] == 0xa5 && bytes[14] == 0xa5 && bytes[15] == 0xa5, "bytes 12 to 15 of the parameter block changed");
+    std::memset(&filled, 0x5a, sizeof(filled));
+    Require(sceBluetoothHidParamInitialize(&filled, nullptr) == 0 && filled.threadParam == nullptr && filled.reserved == 0 && filled.padding == 0x5a5a5a5au, "a null thread parameter was not stored as given");
+    Require(sceBluetoothHidParamInitialize(nullptr, &thread) == invalidArgument, "a null parameter block was not refused");
     std::puts("BluetoothHid tests passed");
     return 0;
 }

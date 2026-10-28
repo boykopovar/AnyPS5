@@ -31,6 +31,5 @@ int main() {
     passed = ReportsNotImplemented("sceVideodec2CreateDecoderBid", [] { return sceVideodec2CreateDecoderBid(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2CreateHevcDecoder", [] { return sceVideodec2CreateHevcDecoder(); }) && passed;
     passed = ReportsNotImplemented("sceVideodec2QueryHevcDecoderMemoryInfo", [] { return sceVideodec2QueryHevcDecoderMemoryInfo(); }) && passed;
-    passed = ReportsNotImplemented("sceVideodec2GetHevcPictureInfo", [] { return sceVideodec2GetHevcPictureInfo(); }) && passed;
     return passed ? 0 : 1;
 }

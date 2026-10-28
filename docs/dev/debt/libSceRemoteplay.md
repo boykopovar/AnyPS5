@@ -1,5 +1,9 @@
 # libSceRemoteplay technical debt
 
+### Silent stubs
+
+- [sceRemoteplayGetConnectionStatus, sceRemoteplayInitialize, sceRemoteplayTerminate](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - `sceRemoteplayGetConnectionStatus` reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID; `sceRemoteplayInitialize` and `sceRemoteplayTerminate` perform no remote play session setup or teardown
+
 ### Unknown function info
 
 - [sceRemoteplayApprove](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - declared without parameters, signature unknown; name from the PS5 3.20 export inventory (DNNDHH/PS5-3.20_Libs)

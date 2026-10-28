@@ -64,6 +64,7 @@ struct FontWritingData {
     float penY = 0.0f;
     bool hasAggregateMetrics = false;
     bool hasCurrentStep = false;
+    bool hasCurrentCharacter = false;
     bool maskFormatCharacters = true;
     bool ownsStorage = false;
     bool hasRawGlyphMetrics = false;
@@ -282,7 +283,8 @@ int APS5_VABI sceFontTextSourceInit(FontTextSource* textSource, const void* text
 }
 
 int APS5_VABI sceFontTextSourceRewind(FontTextSource* textSource) {
-    if (!textSource || TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!textSource) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
     textSource->start = textSource->systemUse[0];
     textSource->end = textSource->systemUse[1];
     textSource->current = textSource->systemUse[0];
@@ -293,14 +295,16 @@ int APS5_VABI sceFontTextSourceRewind(FontTextSource* textSource) {
 }
 
 int APS5_VABI sceFontTextSourceSetDefaultFont(FontTextSource* textSource, FontHandle defaultFont) {
-    if (!textSource || TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!textSource) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
     textSource->defaultFont = defaultFont;
     textSource->systemUse[4] = defaultFont;
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontTextSourceSetWritingForm(FontTextSource* textSource, std::int32_t writingForm) {
-    if (!textSource || TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (!textSource) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
     if (writingForm < static_cast<std::int32_t>(WRITING_FORM_HORIZONTAL) || writingForm > static_cast<std::int32_t>(WRITING_FORM_HORIZONTAL_LTR)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     textSource->systemUse0 = (textSource->systemUse0 & 0xFFFFFFFFull) | (static_cast<std::uint64_t>(writingForm) << 32);
     return SCE_FONT_OK;
@@ -684,6 +688,7 @@ const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting* fon
     if (!PopulateWritingStep(*writing, writing->nextIndex)) return nullptr;
     writing->currentIndex = writing->nextIndex;
     writing->hasCurrentStep = true;
+    writing->hasCurrentCharacter = true;
     AccumulateWritingMetrics(*writing);
     ++writing->nextIndex;
     return &writing->step;
@@ -692,7 +697,8 @@ const FontWritingStep* APS5_VABI sceFontWritingRefersRenderStep(FontWriting* fon
 FontTextCharacter* APS5_VABI sceFontWritingRefersRenderStepCharacter(FontWriting* fontWriting, const FontWritingLetterStep** pLetterStep) {
     if (pLetterStep) *pLetterStep = nullptr;
     auto* writing = GetWritingData(fontWriting);
-    if (!writing || !writing->hasCurrentStep || !writing->storage || writing->currentIndex >= writing->storage->characters.size()) return nullptr;
+    if (!writing || !writing->hasCurrentStep || !writing->hasCurrentCharacter || !writing->storage || writing->currentIndex >= writing->storage->characters.size()) return nullptr;
+    writing->hasCurrentCharacter = false;
     auto& letterStep = writing->letterStep;
     letterStep = {};
     letterStep.x = writing->step.x;

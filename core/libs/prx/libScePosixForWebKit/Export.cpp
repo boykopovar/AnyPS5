@@ -193,6 +193,16 @@ std::uint32_t APS5_VABI arc4random_nid_postfix() {
     return value;
 }
 
+std::uint32_t APS5_VABI arc4random_uniform_nid_postfix(std::uint32_t upper_bound) {
+    if (upper_bound < 2) return 0;
+    const std::uint32_t min = -upper_bound % upper_bound;
+    std::uint32_t value;
+    do {
+        value = arc4random_nid_postfix();
+    } while (value < min);
+    return value % upper_bound;
+}
+
 int APS5_VABI __wrap_access(const char* path, int mode) {
     return access_nid_postfix(path, mode);
 }
@@ -201,10 +211,6 @@ int APS5_VABI __wrap_clock_gettime(int clockId, KernelTimespec* tp) {
     return clock_gettime_nid_postfix(clockId, tp);
 }
 
-int APS5_VABI __wrap_fchown() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 char* APS5_VABI __wrap_getcwd(char* buffer, std::size_t size) {
     return getcwd_nid_postfix(buffer, size);
@@ -214,10 +220,6 @@ char* APS5_VABI __wrap_getenv(const char* name) {
     return getenv_nid_postfix(name);
 }
 
-int APS5_VABI __wrap_link() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI __wrap_lstat(const char* path, FileStat* sb) {
     return lstat_nid_postfix(path, sb);
@@ -227,20 +229,8 @@ void* APS5_VABI __wrap_mmap(void* address, std::size_t length, int protection, i
     return mmap_nid_postfix(address, length, protection, flags, descriptor, offset);
 }
 
-int APS5_VABI __wrap_readlink() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
-int APS5_VABI __wrap_statvfs() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
-int APS5_VABI __wrap_symlink() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI clock_gettime_np() {
     NotImplemented_nid_no_patch(__func__);

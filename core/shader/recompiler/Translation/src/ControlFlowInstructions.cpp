@@ -45,7 +45,7 @@ void TranslationContext::sSubvectorLoop(const RdnaInstruction& inst, bool begin)
     writeRawU32(inst.destination, newCounter);
     ir.SetExecLo(newExecLo.Value());
     ir.SetExecHi(newExecHi.Value());
-    ir.SetExec(threadBit({newExecLo, newExecHi}).Value());
+    ir.SetExec(execLanes({newExecLo, newExecHi}).Value());
 }
 
 // s_*_saveexec reads its source before it writes the old exec into the destination, so
@@ -84,7 +84,7 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
         if (writeResult) writeU32Pair(inst.destination, {hostExecWord(0u), hostExecWord(1u)});
         const IrU1 nonZero(ir.LogicalOr(ir.INotEqual(newExecLo.Value(), ir.Constant(0u)), ir.INotEqual(newExecHi.Value(), ir.Constant(0u))));
         ir.SetScc(nonZero.Value());
-        ir.SetExec(threadBit({newExecLo, newExecHi}).Value());
+        ir.SetExec(execLanes({newExecLo, newExecHi}).Value());
         return;
     }
     const IrU32 oldExec(ir.GetExecLo());
@@ -116,7 +116,7 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
         IrValue& combinedLane = ir.Emit(laneOperation, IrType::U1, {&execLane, &sourceLaneOperand});
         newLane = IrU1(negateResult ? ir.LogicalNot(combinedLane) : combinedLane);
     } else {
-        newLane = threadBit({newExec, IrU32(ir.GetExecHi())});
+        newLane = execLanes({newExec, IrU32(ir.GetExecHi())});
     }
     if (writeResult) writeSaved(hostExecWord(0u), newLane);
     const IrU1 nonZero(ir.INotEqual(newExec.Value(), ir.Constant(0u)));

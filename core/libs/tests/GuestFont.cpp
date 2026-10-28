@@ -87,6 +87,18 @@ static std::int32_t APS5_VABI ParseText(FontTextSource* source, void** order, Fo
     return 1;
 }
 
+static std::int32_t APS5_VABI ParseLine(FontTextSource* source, void** order, FontTextParseResult* result) {
+    auto* parsed = static_cast<ParsedText*>(source->textObject);
+    *order = const_cast<char*>(parsed->text + parsed->at);
+    if (parsed->text[parsed->at] == '\n') {
+        result->Terminate.terminateCode = '\n';
+        return 0;
+    }
+    result->FontCode.font = parsed->font;
+    result->FontCode.code = static_cast<unsigned char>(parsed->text[parsed->at++]);
+    return 1;
+}
+
 struct ParsedCodes {
     const std::uint32_t* codes;
     std::size_t count;
@@ -116,6 +128,16 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     FontTextCharacter* characters = sceFontStringRefersTextCharacters(string, &count);
     Require(characters != nullptr && count == 3);
     Require(sceFontStringGetWritingForm(string) == 0x12);
+    Require(sceFontStringGetTerminateCode(string) == 0 && sceFontStringGetTerminateOrder(string) == parsed.text + 3);
+    ParsedText line{"AV\nA", 0, font};
+    FontTextSource lineSource{};
+    Require(sceFontTextSourceInit(&lineSource, line.text, 4, ParseLine, &line) == SCE_FONT_OK);
+    FontString lineString = nullptr;
+    Require(sceFontCreateString(memory, &lineSource, nullptr, &lineString) == SCE_FONT_OK && lineString != nullptr);
+    std::uint32_t lineCount = 0;
+    Require(sceFontStringRefersTextCharacters(lineString, &lineCount) != nullptr && lineCount == 2);
+    Require(sceFontStringGetTerminateCode(lineString) == '\n' && sceFontStringGetTerminateOrder(lineString) == line.text + 2);
+    Require(sceFontDestroyString(&lineString) == SCE_FONT_OK);
     FontString rtlString = nullptr;
     Require(sceFontTextSourceSetWritingForm(&source, 0x11) == SCE_FONT_OK && sceFontCreateString(memory, &source, nullptr, &rtlString) == SCE_FONT_OK);
     Require(sceFontStringGetWritingForm(rtlString) == 0x11);
@@ -230,6 +252,31 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
 
 static bool KerningIs(const FontKerning& kerning, float offsetX) {
     return kerning.offsetX == offsetX && kerning.offsetY == 0.0f && kerning.positionX == 0.0f && kerning.positionY == 0.0f;
+}
+
+static void CheckRenderEffects(FontHandle font, FontRenderer renderer) {
+    const auto near = [](float value, float expected) { return std::fabs(value - expected) < 1e-6f; };
+    float slant = 1.0f;
+    float weightX = 0.0f;
+    float weightY = 0.0f;
+    std::uint32_t mode = 7;
+    Require(sceFontSetupRenderEffectSlant(font, 0.25f) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
+    Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 0) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
+    Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_ERROR_NOT_BOUND_RENDERER && slant == 0.0f);
+    Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
+    Require(sceFontSetupRenderEffectSlant(font, 0.25f) == SCE_FONT_OK);
+    Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_OK && slant == 0.25f);
+    Require(sceFontSetupRenderEffectSlant(font, 2.0f) == SCE_FONT_OK);
+    Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_OK && slant == 1.0f);
+    Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 1) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 0) == SCE_FONT_OK);
+    Require(sceFontGetRenderEffectWeight(font, &weightX, &weightY, &mode) == SCE_FONT_OK && near(weightX, 1.02f) && near(weightY, 0.98f) && mode == 0);
+    Require(sceFontSetupRenderEffectWeight(font, 1.5f, 0.5f, 0) == SCE_FONT_OK);
+    Require(sceFontGetRenderEffectWeight(font, &weightX, &weightY, nullptr) == SCE_FONT_OK && near(weightX, 1.04f) && near(weightY, 0.96f));
+    Require(sceFontSetupRenderEffectSlant(nullptr, 0.0f) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontSetupRenderEffectWeight(nullptr, 1.0f, 1.0f, 0) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontSetupRenderEffectSlant(font, 0.0f) == SCE_FONT_OK && sceFontSetupRenderEffectWeight(font, 1.0f, 1.0f, 0) == SCE_FONT_OK);
+    Require(sceFontUnbindRenderer(font) == SCE_FONT_OK);
 }
 
 static void CheckGlyphScale(FontHandle font, const FontMemory* memory, float expectedW, float expectedH) {
@@ -650,6 +697,7 @@ int main() {
     Require(sceFontGetRenderScaledKerning(font, 'A', 'V', &kerning) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
 
     CheckPointAndDpiScale(font, library, &memory, renderer);
+    CheckRenderEffects(font, renderer);
 
     ParsedText parsed{"AV", 0, font};
     FontTextSource source{};
@@ -671,11 +719,31 @@ int main() {
     Require(step != nullptr);
     Require(sceFontWritingRefersRenderStepCharacter(&writing, &out.letter) == characters && out.letter != nullptr && out.guard == guard);
     Require(out.letter->x == step->x && out.letter->advanceX == step->advanceX && out.letter->Components.textsIndex == 0 && out.letter->Components.characterTextCount == 1);
+    const FontWritingLetterStep* retainedLetter = out.letter;
+    const FontWritingLetterStep retainedValue = *retainedLetter;
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, &out.letter) == nullptr && out.letter == nullptr && out.guard == guard);
+    Require(std::memcmp(retainedLetter, &retainedValue, sizeof(retainedValue)) == 0);
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, nullptr) == nullptr);
     step = sceFontWritingRefersRenderStep(&writing);
     Require(step != nullptr);
     Require(sceFontWritingRefersRenderStepCharacter(&writing, &out.letter) == characters + 1 && out.guard == guard);
     Require(out.letter->x == step->x && out.letter->Components.textsIndex == 1 && out.letter->Components.glyphsIndex == 1);
-    Require(sceFontWritingRefersRenderStepCharacter(&writing, nullptr) == characters + 1);
+    Require(out.letter == retainedLetter);
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, nullptr) == nullptr);
+    out.letter = retainedLetter;
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, &out.letter) == nullptr && out.letter == nullptr && out.guard == guard);
+    Require(sceFontWritingRefersRenderStep(&writing) == nullptr);
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, &out.letter) == nullptr && out.letter == nullptr);
+    Require(sceFontWritingInit(&writing, string, characters) == SCE_FONT_OK);
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, &out.letter) == nullptr && out.letter == nullptr);
+    Require(sceFontWritingRefersRenderStep(&writing) != nullptr);
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, nullptr) == characters);
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, &out.letter) == nullptr && out.letter == nullptr);
+    Require(sceFontWritingInit(&writing, string, characters) == SCE_FONT_OK);
+    Require(sceFontWritingRefersRenderStep(&writing) != nullptr);
+    Require(sceFontWritingRefersRenderStep(&writing) != nullptr);
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, &out.letter) == characters + 1 && out.letter == retainedLetter && out.guard == guard);
+    Require(sceFontWritingRefersRenderStepCharacter(&writing, &out.letter) == nullptr && out.letter == nullptr);
     Require(sceFontDestroyString(&string) == SCE_FONT_OK);
     CheckTextCodes(&memory, font);
     Require(sceFontCloseFont(font) == SCE_FONT_OK);

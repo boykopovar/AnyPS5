@@ -23,8 +23,10 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceHmdSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceHmdSetupDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceHmdSetupDialogOpen(&param) == kErrNotInitialized);
     Require(sceHmdSetupDialogClose() == kErrNotInitialized);
+    Require(sceHmdSetupDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceHmdSetupDialogGetResult(result) == kErrNotInitialized);
     Require(sceHmdSetupDialogGetStatus() == kStatusNone);
     Require(sceHmdSetupDialogUpdateStatus() == kStatusNone);
@@ -49,6 +51,8 @@ int main() {
     Require(sceHmdSetupDialogClose() == 0);
     Require(sceHmdSetupDialogTerminate() == 0);
     Require(sceHmdSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceHmdSetupDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceHmdSetupDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceHmdSetupDialogGetStatus() == kStatusNone);
     Require(sceHmdSetupDialogUpdateStatus() == kStatusNone);
 

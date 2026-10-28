@@ -1,8 +1,11 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/KeyboardOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ToneMapLuminance.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libc/include/General.hpp"
 #include <SDL_loadso.h>
 #include <algorithm>
 #include <array>
@@ -16,8 +19,10 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -331,6 +336,42 @@ std::vector<std::uint32_t> clearAndOverlay(const Context& context, PerformanceOv
     return wordsOf(readback, extent);
 }
 
+ImeKeyboardView sampleKeyboard() {
+    ImeKeyboardView view;
+    view.text = u"Caf\u00E9 \u65E5";
+    view.caret = 4;
+    view.rows = 6;
+    view.columns = 10;
+    for (std::uint8_t row = 0; row < 4; ++row) {
+        for (std::uint8_t column = 0; column < 10; ++column) view.keys.push_back({row, column, 1, 1, std::u16string(1, static_cast<char16_t>(u'a' + (row * 10 + column) % 26)), ImeKeySymbol::None, u"", row == 1 && column == 4});
+    }
+    view.keys.push_back({4, 0, 1, 1, u"", ImeKeySymbol::ShiftOutline, u"L2", false});
+    view.keys.push_back({4, 3, 4, 1, u"Space", ImeKeySymbol::None, u"\u25B3", false});
+    view.keys.push_back({4, 8, 2, 1, u"", ImeKeySymbol::Backspace, u"\u25A1", false});
+    view.keys.push_back({5, 8, 2, 1, u"Done", ImeKeySymbol::None, u"R2", false});
+    return view;
+}
+
+std::vector<std::uint32_t> clearAndKeyboard(const Context& context, PerformanceOverlay* keyboard, PerformanceOverlay* overlay, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, const VkClearColorValue& clear, const ImeKeyboardView& view, OverlayRect* keyboardBounds, OverlayRect* overlayBounds) {
+    Image destination(context, format, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    Buffer readback(context, static_cast<std::size_t>(extent.width) * extent.height * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    {
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, destination.Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
+        if (keyboard != nullptr) *keyboardBounds = keyboard->RecordRects(commands, 0, destination.Handle(), format, colorSpace, extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, AgcDriver::LayOutKeyboard(view, extent));
+        if (overlay != nullptr) *overlayBounds = overlay->Record(commands, 0, destination.Handle(), format, colorSpace, extent, keyboard != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sixtyFps(), OverlayCorner::BottomLeft);
+        if (keyboard == nullptr && overlay == nullptr) transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        readImage(context, commands, destination, readback);
+        batch.SubmitAndWait();
+    }
+    if (keyboard != nullptr) keyboard->Release(0);
+    if (overlay != nullptr) overlay->Release(0);
+    return wordsOf(readback, extent);
+}
+
 void onlyInside(const std::vector<std::uint32_t>& reference, const std::vector<std::uint32_t>& drawn, VkExtent2D extent, const OverlayRect& bounds, const std::string& what, bool everyPixel = true) {
     std::size_t changed = 0;
     for (std::int32_t y = 0; y < static_cast<std::int32_t>(extent.height); ++y) {
@@ -533,6 +574,308 @@ void fullPanelTest(const Device& device, PerformanceOverlay& overlay) {
     for (const auto& line : content.below) std::printf("  %s\n", line.c_str());
 }
 
+AgcDriver::OverlayDetailSample pageTwoSample() {
+    AgcDriver::OverlayDetailSample sample;
+    sample.fps = 59.94;
+    sample.frameMs = 16.7;
+    sample.busy = {{"Q0", 63}, {"Q20", 4}, {"COMMIT", 12}, {"FINISH", 3}, {"PRESENT", 6}};
+    sample.phases = {{"Driver.Packet", 3.2}, {"Vulkan.GraphicsPipeline.pipeline_create", 1.5}, {"Recorder.Sync", 0.4}};
+    sample.queueWaits = AgcDriver::OverlayQueueWaits{0.4, 0.2, 1.3};
+    sample.renderPassesPerFrame = 12;
+    sample.pipelinesCompiling = 3;
+    sample.pipelinesPerSecond = 12;
+    sample.drawCacheHitPercent = 97.1;
+    sample.pipelineCacheHitPercent = 99.9;
+    sample.flipsPerSecond = 60;
+    sample.presentsPerSecond = 59.94;
+    sample.droppedFrames = 0;
+    sample.repeatedPresents = 0;
+    sample.commit = AgcDriver::OverlayMemory{12ull << 30u, 31ull << 30u};
+    sample.pageFaultsPerSecond = 1234;
+    sample.hostImports = 123;
+    sample.hostImportBytes = AgcDriver::OverlayMemory{1ull << 30u, 6ull << 30u};
+    sample.cpuCopyMegabytesPerSecond = 12.3;
+    sample.addressCopyCapPercent = 3;
+    sample.unimplementedPerSecond = 0;
+    sample.unimplementedTotal = 4;
+    sample.refusedShaders = 2;
+    sample.title = "PPSA01234";
+    sample.presentMode = "fifo";
+    return sample;
+}
+
+void pageTwoTest(const Context& context, PerformanceOverlay& overlay) {
+    const VkExtent2D extent{1280, 720};
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.25f;
+    clear.float32[1] = 0.5f;
+    clear.float32[2] = 0.75f;
+    clear.float32[3] = 1.0f;
+    const auto content = AgcDriver::ComposeOverlayDetails(pageTwoSample());
+    OverlayRect bounds{};
+    const auto reference = clearAndOverlay(context, nullptr, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, content, OverlayCorner::TopRight, nullptr);
+    const auto drawn = clearAndOverlay(context, &overlay, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, content, OverlayCorner::TopRight, &bounds);
+    const auto layout = AgcDriver::LayOutOverlay(content, extent, OverlayCorner::TopRight);
+    Require(bounds.x == layout.bounds.x && bounds.y == layout.bounds.y && bounds.width == layout.bounds.width && bounds.height == layout.bounds.height, "page 2 is not drawn where its layout puts it");
+    onlyInside(reference, drawn, extent, bounds, "page 2 at 1280x720");
+    std::int32_t row = OverlayMetrics::Padding;
+    for (const auto& line : content.below) {
+        requireTextDrawn(drawn, extent, bounds, layout.scale, reference.front(), line, row);
+        row += OverlayMetrics::LinePitch;
+    }
+    std::printf("page 2 at 1280x720: %dx%d at %d,%d (scale %d), every line drawn bit for bit, nothing changed outside it:\n", bounds.width, bounds.height, bounds.x, bounds.y, layout.scale);
+    for (const auto& line : content.below) std::printf("  |%-46s|\n", line.c_str());
+}
+
+void pageCycleTest(const Device& device) {
+    const auto& context = device.GetContext();
+    const VkExtent2D extent{1280, 720};
+    Require(PerformanceOverlay::Page() == 0 && !PerformanceOverlay::Visible(), "the performance overlay does not start hidden without ANYPS5_OVERLAY");
+    PerformanceOverlay overlay(context, 1);
+    const auto start = AgcDriver::OverlayStatistics::Clock::now();
+    const auto present = [&](int frame) { overlay.NotePresent(start + std::chrono::milliseconds(16) * frame, VkExtent2D{640, 360}); };
+    const auto record = [&] {
+        Image destination(context, VK_FORMAT_B8G8R8A8_UNORM, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+        OverlayRect bounds{};
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+        bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        batch.SubmitAndWait();
+        overlay.Release(0);
+        return bounds;
+    };
+    PerformanceOverlay::Toggle();
+    Require(PerformanceOverlay::Page() == 1 && PerformanceOverlay::Visible(), "the first F10 does not show page 1");
+    for (int frame = 0; frame < 5; ++frame) present(frame);
+    Require(overlay.ShownPage() == 1 && overlay.Statistics().FrameTimes().size() == 4, "page 1 did not keep its frames");
+    const auto pageOne = record();
+    PerformanceOverlay::Toggle();
+    Require(PerformanceOverlay::Page() == 2 && PerformanceOverlay::Visible(), "the second F10 does not show page 2");
+    present(5);
+    Require(overlay.ShownPage() == 2 && overlay.Statistics().FrameTimes().empty(), "changing to page 2 kept page 1's statistics");
+    for (int frame = 6; frame < 10; ++frame) present(frame);
+    const auto& sample = overlay.DetailSample();
+    Require(std::abs(sample.frameMs - 16.0) < 1e-6 && sample.presentsPerSecond.has_value() && sample.pipelinesPerSecond.has_value(), "page 2 did not sample its frames");
+    const auto pageTwo = record();
+    const auto expected = AgcDriver::LayOutOverlay(AgcDriver::ComposeOverlayDetails(sample), extent, PerformanceOverlay::Corner()).bounds;
+    Require(pageTwo.width == expected.width && pageTwo.height == expected.height && pageTwo.width > pageOne.width, "page 2 is not drawn from its own composer: " + std::to_string(pageTwo.width) + "x" + std::to_string(pageTwo.height));
+    PerformanceOverlay::Toggle();
+    Require(PerformanceOverlay::Page() == 0 && !PerformanceOverlay::Visible(), "the third F10 does not hide the overlay");
+    present(10);
+    Require(overlay.ShownPage() == 0 && overlay.Statistics().FrameTimes().empty() && overlay.DetailSample().fps == 0, "hiding the overlay kept page 2's state");
+    std::printf("F10 cycle: off, page 1 (%dx%d), page 2 (%dx%d), off; each change of page resets the statistics\n", pageOne.width, pageOne.height, pageTwo.width, pageTwo.height);
+}
+
+AgcDriver::OverlayDriverCounters fakeDriverCounters() {
+    static std::uint64_t calls = 0;
+    ++calls;
+    return AgcDriver::OverlayDriverCounters{calls * 66, AgcDriver::OverlayHits{calls * 1000, calls * 900}};
+}
+
+void pageTwoSamplerTest(const Device& device) {
+    using AgcDriver::PerformanceTrace;
+    using namespace std::chrono_literals;
+    const auto& context = device.GetContext();
+    const VkExtent2D extent{1280, 720};
+    Require(PerformanceOverlay::Page() == 0 && !PerformanceTrace::Recording(), "the trace records before page 2 is shown");
+    PerformanceOverlay overlay(context, 1);
+    PerformanceOverlay::SetDriverCounters(&fakeDriverCounters);
+    PerformanceOverlay::Toggle();
+    Require(!PerformanceTrace::Recording(), "page 1 turns the trace on");
+    PerformanceOverlay::Toggle();
+    Require(PerformanceOverlay::Page() == 2 && PerformanceTrace::Recording() && PerformanceTrace::OverlayTotals(), "page 2 does not turn the trace totals on");
+    const auto start = AgcDriver::OverlayStatistics::Clock::now();
+    const auto present = [&](std::chrono::milliseconds at, std::uint64_t address, std::uint64_t drops) { overlay.NotePresent(start + at, VkExtent2D{640, 360}, AgcDriver::OverlayPresentInfo{address, VK_PRESENT_MODE_FIFO_KHR, drops}); };
+    present(0ms, 0x1000, 7);
+    const auto& sample = overlay.DetailSample();
+    Require(sample.commit.has_value() && sample.unimplementedTotal.has_value() && sample.presentMode == "fifo" && sample.pipelinesCompiling == std::optional<std::uint64_t>{0}, "page 2's first sample does not read the commit charge, the unimplemented calls, the compile backlog and the present mode");
+    Require(!sample.flipsPerSecond && !sample.pageFaultsPerSecond && !sample.cpuCopyMegabytesPerSecond && sample.busy.empty() && sample.phases.empty(), "page 2's first sample shows rates before a second has passed");
+    Require(sample.hostImports.has_value() == (context.hostImportAlignment != 0), "the host import line does not follow the device's host import support");
+    std::thread([] {
+        PerformanceTrace::BindThread("queue worker 0x0");
+        if (auto* trace = PerformanceTrace::Thread()) {
+            const auto begin = std::chrono::steady_clock::now();
+            trace->Add("Driver.Packet", nullptr, begin, begin + 110ms);
+        }
+        for (int pass = 0; pass < 6; ++pass) PerformanceTrace::Count(PerformanceTrace::RenderPassScope);
+        AgcDriver::Graphics::AddressCopyCounters::ThisThread().Count(std::uint64_t{11} << 20u);
+    }).join();
+    try {
+        NotImplemented_nid_no_patch("page 2 sampler test");
+    } catch (const std::runtime_error&) {
+    }
+    present(16ms, 0x1000, 7);
+    present(33ms, 0x2000, 8);
+    present(1100ms, 0x2000, 9);
+    const auto near = [](const std::optional<double>& value, double expected) { return value.has_value() && std::abs(*value - expected) < 1e-6; };
+    Require(near(sample.flipsPerSecond, 60) && near(sample.drawCacheHitPercent, 90), "66 flips and 900 of 1000 draw-cache lookups over 1.1 s are not 60 flips/s and 90 %");
+    Require(sample.droppedFrames == std::optional<std::uint64_t>{2} && sample.repeatedPresents == std::optional<std::uint64_t>{2}, "2 dropped and 2 repeated presents over 1.1 s are not shown as 2/s each");
+    Require(sample.pageFaultsPerSecond.has_value() && near(sample.unimplementedPerSecond, 1 / 1.1), "the page faults or the unimplemented calls per second are missing");
+    Require(near(sample.cpuCopyMegabytesPerSecond, 10), "11 MiB of address copies over 1.1 s are not 10 MB/s");
+    if (std::getenv("APS5_ADDRESS_COPY_MAX_MIB") == nullptr) Require(near(sample.addressCopyCapPercent, 100.0 * 11 / 64), "an 11 MiB build is not 17.2 % of the 64 MiB cap");
+    Require(near(sample.renderPassesPerFrame, 2), "6 render passes over 3 frames are not 2 per frame");
+    const auto queue = std::find_if(sample.busy.begin(), sample.busy.end(), [](const AgcDriver::OverlayThreadBusy& busy) { return busy.name == "Q0"; });
+    Require(queue != sample.busy.end() && std::abs(queue->percent - 10) < 1e-6 && sample.queueWaits.has_value(), "110 ms of packets over 1.1 s do not make queue 0 10 % busy");
+    Require(!sample.phases.empty() && sample.phases.front().name == "Driver.Packet" && std::abs(sample.phases.front().msPerFrame - 110.0 / 3) < 1e-6, "the top phase is not 110 ms of packets over 3 frames");
+    Image destination(context, VK_FORMAT_B8G8R8A8_UNORM, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    CommandBatch batch(context);
+    const auto commands = batch.Handle();
+    transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+    const auto bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    batch.SubmitAndWait();
+    overlay.Release(0);
+    const auto content = AgcDriver::ComposeOverlayDetails(sample);
+    const auto expected = AgcDriver::LayOutOverlay(content, extent, PerformanceOverlay::Corner()).bounds;
+    Require(bounds.width == expected.width && bounds.height == expected.height, "page 2 is not drawn from its sample");
+    std::printf("page 2 from its sampler (fake driver counters, a 'queue worker 0x0' thread, this process's OS counters):\n");
+    for (const auto& line : content.below) std::printf("  |%-46s|\n", line.c_str());
+    PerformanceOverlay::Toggle();
+    Require(PerformanceOverlay::Page() == 0 && !PerformanceTrace::Recording() && !PerformanceTrace::OverlayTotals(), "hiding the overlay leaves the trace totals on");
+    present(1200ms, 0x3000, 9);
+    Require(overlay.ShownPage() == 0 && overlay.DetailSample().fps == 0 && overlay.DetailSample().busy.empty() && !overlay.DetailSample().commit, "hiding the overlay kept page 2's sample");
+    PerformanceOverlay::SetDriverCounters(nullptr);
+}
+
+void presentCostReport(const Device& device) {
+    using AgcDriver::PerformanceCounters;
+    using AgcDriver::PerformanceTrace;
+    using Clock = AgcDriver::OverlayStatistics::Clock;
+    const auto& context = device.GetContext();
+    const VkExtent2D extent{1920, 1080};
+    Require(PerformanceOverlay::Page() == 0, "the cost report does not start hidden");
+    PerformanceOverlay overlay(context, 1);
+    const auto start = Clock::now();
+    const auto perCall = [](int calls, auto&& body) {
+        const auto began = std::chrono::steady_clock::now();
+        for (int call = 0; call < calls; ++call) body(call);
+        return std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - began).count() / calls;
+    };
+    volatile bool shown = false;
+    const auto hiddenNs = perCall(10'000'000, [&](int) { shown = PerformanceOverlay::Visible(); });
+    const auto passNs = perCall(10'000'000, [](int) { PerformanceTrace::Count(PerformanceTrace::RenderPassScope); });
+    auto& copies = AgcDriver::Graphics::AddressCopyCounters::ThisThread();
+    const auto copyNs = perCall(10'000'000, [&](int) { copies.Count(4096); });
+    PerformanceOverlay::Toggle();
+    const auto pageOneNs = perCall(20'000, [&](int frame) {
+        overlay.NotePresent(start + std::chrono::microseconds(16667) * frame, extent);
+        static_cast<void>(AgcDriver::LayOutOverlay(AgcDriver::ComposeOverlay(overlay.Statistics(), PerformanceCounters::GpuEnabled(), PerformanceCounters::DriverEnabled(), overlay.Details()), extent, PerformanceOverlay::Corner()));
+    });
+    PerformanceOverlay::Toggle();
+    const auto later = start + std::chrono::hours(1);
+    const auto pageTwoNs = perCall(20'000, [&](int frame) {
+        overlay.NotePresent(later + std::chrono::microseconds(16667) * frame, extent, AgcDriver::OverlayPresentInfo{0x1000u + static_cast<std::uint64_t>(frame % 2), VK_PRESENT_MODE_FIFO_KHR, 0});
+        static_cast<void>(AgcDriver::LayOutOverlay(AgcDriver::ComposeOverlayDetails(overlay.DetailSample()), extent, PerformanceOverlay::Corner()));
+    });
+    const auto sampled = later + std::chrono::hours(1);
+    const auto sampleNs = perCall(200, [&](int second) { overlay.NotePresent(sampled + std::chrono::seconds(second), extent, AgcDriver::OverlayPresentInfo{0x1000, VK_PRESENT_MODE_FIFO_KHR, 0}); });
+    PerformanceOverlay::Toggle();
+    Require(!PerformanceOverlay::Visible() && !PerformanceTrace::Recording(), "the cost report does not end hidden");
+    std::printf("present cost on this host: hidden %.1f ns per present (Visible), %.1f ns per render pass begun (the trace check), %.1f ns per address-copying build (the per-thread counter); page 1 %.2f us per present (NotePresent, compose, layout); page 2 %.2f us per present at 60 fps (NotePresent with its once-a-second sample, compose, layout), %.1f us per present that samples\n", hiddenNs, passNs, copyNs, pageOneNs / 1000, pageTwoNs / 1000, sampleNs / 1000);
+}
+
+OverlayRect selectedKey(const AgcDriver::OverlayLayout& layout, const ImeKeyboardView& view) {
+    for (const auto& key : view.keys) {
+        if (!key.selected) continue;
+        const auto x = AgcDriver::KeyboardMetrics::Padding + key.column * (AgcDriver::KeyboardMetrics::KeyWidth + AgcDriver::KeyboardMetrics::Gap);
+        const auto y = 2 * AgcDriver::KeyboardMetrics::Padding + AgcDriver::KeyboardMetrics::FieldHeight + key.row * (AgcDriver::KeyboardMetrics::KeyHeight + AgcDriver::KeyboardMetrics::Gap);
+        return {layout.bounds.x + x * layout.scale, layout.bounds.y + y * layout.scale, AgcDriver::KeyboardMetrics::KeyWidth * layout.scale, AgcDriver::KeyboardMetrics::KeyHeight * layout.scale, 0};
+    }
+    throw std::runtime_error("the sample keyboard has no selected key");
+}
+
+void keyboardTest(const Context& context, PerformanceOverlay& keyboard) {
+    const VkExtent2D extent{1280, 720};
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.75f;
+    clear.float32[1] = 0.5f;
+    clear.float32[2] = 0.25f;
+    clear.float32[3] = 1.0f;
+    const auto view = sampleKeyboard();
+    OverlayRect bounds{};
+    const auto reference = clearAndKeyboard(context, nullptr, nullptr, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, view, nullptr, nullptr);
+    const auto drawn = clearAndKeyboard(context, &keyboard, nullptr, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, view, &bounds, nullptr);
+    const auto layout = AgcDriver::LayOutKeyboard(view, extent);
+    Require(bounds.x == layout.bounds.x && bounds.y == layout.bounds.y && bounds.width == layout.bounds.width && bounds.height == layout.bounds.height, "the keyboard drew another panel than its layout");
+    onlyInside(reference, drawn, extent, bounds, "keyboard SDR 1280x720");
+    const auto pixel = [&](std::int32_t x, std::int32_t y) { return drawn[static_cast<std::size_t>(y) * extent.width + static_cast<std::size_t>(x)]; };
+    const auto rgb = [&](std::uint32_t word, int red, int green, int blue) { return std::abs(channel(word, 16) - red) <= 1 && std::abs(channel(word, 8) - green) <= 1 && std::abs(channel(word, 0) - blue) <= 1; };
+    const auto key = selectedKey(layout, view);
+    const auto border = AgcDriver::KeyboardMetrics::Border * layout.scale;
+    for (std::int32_t offset = 0; offset < border; ++offset) {
+        Require(rgb(pixel(key.x + offset, key.y + key.height / 2), 255, 199, 51) && rgb(pixel(key.x + key.width - 1 - offset, key.y + key.height / 2), 255, 199, 51), "the selected key's border is not the accent colour");
+        Require(rgb(pixel(key.x + key.width / 2, key.y + offset), 255, 199, 51) && rgb(pixel(key.x + key.width / 2, key.y + key.height - 1 - offset), 255, 199, 51), "the selected key's border is not the accent colour on top and bottom");
+    }
+    Require(rgb(pixel(key.x + border, key.y + border), 56, 61, 74), "the selected key's face is not the key colour inside its border");
+    std::size_t white = 0;
+    for (std::int32_t y = key.y; y < key.y + key.height; ++y) {
+        for (std::int32_t x = key.x; x < key.x + key.width; ++x) white += rgb(pixel(x, y), 255, 255, 255) ? 1 : 0;
+    }
+    Require(white != 0, "the selected key's label is not drawn in white");
+    std::printf("keyboard SDR: panel %dx%d at %d,%d (scale %d), accent border %d px, nothing changed outside the panel\n", bounds.width, bounds.height, bounds.x, bounds.y, layout.scale, border);
+}
+
+void keyboardHdrTest(const Context& context, PerformanceOverlay& keyboard) {
+    const auto format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+    VkFormatProperties properties{};
+    context.formatProperties(context.physical, format, &properties);
+    if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT) == 0) {
+        std::printf("A2B10G10R10 cannot be blended into here; HDR10 keyboard not exercised\n");
+        return;
+    }
+    const VkExtent2D extent{1920, 1080};
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.4f;
+    clear.float32[1] = 0.5f;
+    clear.float32[2] = 0.6f;
+    clear.float32[3] = 1.0f;
+    const auto view = sampleKeyboard();
+    OverlayRect bounds{};
+    const auto reference = clearAndKeyboard(context, nullptr, nullptr, format, VK_COLOR_SPACE_HDR10_ST2084_EXT, extent, clear, view, nullptr, nullptr);
+    const auto drawn = clearAndKeyboard(context, &keyboard, nullptr, format, VK_COLOR_SPACE_HDR10_ST2084_EXT, extent, clear, view, &bounds, nullptr);
+    onlyInside(reference, drawn, extent, bounds, "keyboard HDR10 1920x1080");
+    const auto layout = AgcDriver::LayOutKeyboard(view, extent);
+    const auto key = selectedKey(layout, view);
+    const auto palette = AgcDriver::OverlayPalette(format, VK_COLOR_SPACE_HDR10_ST2084_EXT);
+    const auto& accent = palette[static_cast<std::size_t>(AgcDriver::OverlayColor::Accent)];
+    const auto word = drawn[static_cast<std::size_t>(key.y + key.height / 2) * extent.width + static_cast<std::size_t>(key.x)];
+    for (std::size_t index = 0; index < 3; ++index) {
+        const int code = static_cast<int>((word >> (10u * index)) & 0x3ffu);
+        const int expected = static_cast<int>(std::lround(accent[index] * 1023.0f));
+        Require(std::abs(code - expected) <= 1, "the HDR10 accent border is PQ code " + std::to_string(code) + ", not " + std::to_string(expected));
+    }
+    std::printf("keyboard HDR10: accent border at PQ codes %d/%d/%d, nothing changed outside the %dx%d panel\n", static_cast<int>(word & 0x3ffu), static_cast<int>((word >> 10u) & 0x3ffu), static_cast<int>((word >> 20u) & 0x3ffu), bounds.width, bounds.height);
+}
+
+void keyboardUnderOverlayTest(const Context& context, PerformanceOverlay& keyboard, PerformanceOverlay& overlay) {
+    const VkExtent2D extent{400, 300};
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.2f;
+    clear.float32[1] = 0.6f;
+    clear.float32[2] = 0.9f;
+    clear.float32[3] = 1.0f;
+    const auto view = sampleKeyboard();
+    OverlayRect keyboardBounds{};
+    OverlayRect overlayBounds{};
+    const auto alone = clearAndKeyboard(context, &keyboard, nullptr, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, view, &keyboardBounds, nullptr);
+    const auto both = clearAndKeyboard(context, &keyboard, &overlay, VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, clear, view, &keyboardBounds, &overlayBounds);
+    const auto left = std::max(keyboardBounds.x, overlayBounds.x);
+    const auto right = std::min(keyboardBounds.x + keyboardBounds.width, overlayBounds.x + overlayBounds.width);
+    const auto top = std::max(keyboardBounds.y, overlayBounds.y);
+    const auto bottom = std::min(keyboardBounds.y + keyboardBounds.height, overlayBounds.y + overlayBounds.height);
+    Require(left < right && top < bottom, "the performance overlay and the keyboard do not overlap at 400x300");
+    onlyInside(alone, both, extent, overlayBounds, "performance overlay over the keyboard", false);
+    std::size_t changed = 0;
+    for (std::int32_t y = top; y < bottom; ++y) {
+        for (std::int32_t x = left; x < right; ++x) {
+            const auto index = static_cast<std::size_t>(y) * extent.width + static_cast<std::size_t>(x);
+            changed += both[index] != alone[index] ? 1 : 0;
+        }
+    }
+    Require(changed != 0, "the performance overlay is not drawn over the keyboard where they overlap");
+    std::printf("keyboard under the performance overlay: %zu of %d overlapping pixels redrawn by the overlay, the keyboard unchanged elsewhere\n", changed, (right - left) * (bottom - top));
+}
+
 void notePresentTest(const Device& device) {
     const auto& context = device.GetContext();
     const VkExtent2D extent{1280, 720};
@@ -561,7 +904,7 @@ void notePresentTest(const Device& device) {
 
 class Presenter {
 public:
-    explicit Presenter(const Context& context) : context(context), pass(context, 1), overlay(context, 1), source(context, VK_FORMAT_B8G8R8A8_UNORM, {256, 144}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT) {
+    explicit Presenter(const Context& context) : context(context), pass(context, 1), overlay(context, 1), keyboard(context, 1), source(context, VK_FORMAT_B8G8R8A8_UNORM, {256, 144}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT) {
         Buffer upload(context, static_cast<std::size_t>(256) * 144 * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         std::uint32_t seed = 0x2545f491u;
         for (auto& byte : upload.Bytes()) {
@@ -579,7 +922,7 @@ public:
         batch.SubmitAndWait();
     }
 
-    std::vector<std::uint32_t> Drawn(OverlayRect* bounds) {
+    std::vector<std::uint32_t> Drawn(OverlayRect* bounds, const ImeKeyboardView* shown = nullptr, OverlayRect* keyboardBounds = nullptr) {
         Image destination(context, VK_FORMAT_B8G8R8A8_UNORM, Extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
         Buffer readback(context, static_cast<std::size_t>(Extent.width) * Extent.height * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         const bool visible = PerformanceOverlay::Visible();
@@ -587,13 +930,15 @@ public:
         {
             CommandBatch batch(context);
             const auto commands = batch.Handle();
-            pass.RecordPresent(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, visible ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            pass.RecordPresent(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, visible || shown != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            if (shown != nullptr) *keyboardBounds = keyboard.RecordRects(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, visible ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, AgcDriver::LayOutKeyboard(*shown, Extent));
             if (visible) *bounds = overlay.Record(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, Extent, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, fullPanel(fixedDetails({256, 144}, Extent)), OverlayCorner::TopLeft);
             readImage(context, commands, destination, readback);
             batch.SubmitAndWait();
         }
         pass.Release(0);
         overlay.Release(0);
+        keyboard.Release(0);
         return wordsOf(readback, Extent);
     }
 
@@ -631,6 +976,7 @@ private:
     const Context& context;
     PresentationPass pass;
     PerformanceOverlay overlay;
+    PerformanceOverlay keyboard;
     Image source;
 };
 
@@ -646,10 +992,45 @@ void disabledIsUnchangedTest(const Context& context) {
     onlyInside(drawnBefore, presenter.Drawn(&bounds), Presenter::Extent, bounds, "presentation pass with the overlay", false);
     onlyInside(blittedBefore, presenter.Blitted(&bounds), Presenter::Extent, bounds, "blit with the overlay", false);
     PerformanceOverlay::Toggle();
-    Require(!PerformanceOverlay::Visible(), "F10 does not hide the performance overlay again");
+    Require(PerformanceOverlay::Visible() && PerformanceOverlay::Page() == 2, "a second F10 does not show page 2");
+    onlyInside(drawnBefore, presenter.Drawn(&bounds), Presenter::Extent, bounds, "presentation pass with page 2", false);
+    PerformanceOverlay::Toggle();
+    Require(!PerformanceOverlay::Visible(), "a third F10 does not hide the performance overlay again");
     Require(presenter.Drawn(&unused) == drawnBefore, "the presentation pass output differs after the overlay was hidden");
     Require(presenter.Blitted(&unused) == blittedBefore, "the blit output differs after the overlay was hidden");
     std::printf("overlay hidden: presentation pass and blit output bit-identical before and after showing it\n");
+}
+
+void keyboardPresentTest(const Context& context) {
+    Require(!PerformanceOverlay::Visible(), "the performance overlay is shown before the keyboard presentation test");
+    Presenter presenter(context);
+    const auto view = sampleKeyboard();
+    OverlayRect unused{};
+    const auto before = presenter.Drawn(&unused);
+    OverlayRect keyboardBounds{};
+    const auto withKeyboard = presenter.Drawn(&unused, &view, &keyboardBounds);
+    onlyInside(before, withKeyboard, Presenter::Extent, keyboardBounds, "presentation pass with the keyboard", false);
+    PerformanceOverlay::Toggle();
+    OverlayRect overlayBounds{};
+    const auto withOverlay = presenter.Drawn(&overlayBounds);
+    const auto withBoth = presenter.Drawn(&overlayBounds, &view, &keyboardBounds);
+    PerformanceOverlay::Toggle();
+    PerformanceOverlay::Toggle();
+    Require(!PerformanceOverlay::Visible(), "the performance overlay did not hide again after the keyboard presentation test");
+    std::size_t overlayPixels = 0;
+    for (std::int32_t y = 0; y < static_cast<std::int32_t>(Presenter::Extent.height); ++y) {
+        for (std::int32_t x = 0; x < static_cast<std::int32_t>(Presenter::Extent.width); ++x) {
+            const auto index = static_cast<std::size_t>(y) * Presenter::Extent.width + static_cast<std::size_t>(x);
+            if (!inside(overlayBounds, x, y)) {
+                Require(withBoth[index] == withKeyboard[index], "the performance overlay changed a keyboard pixel outside its own panel");
+            } else if (!inside(keyboardBounds, x, y)) {
+                Require(withBoth[index] == withOverlay[index], "the keyboard changed a performance overlay pixel outside its own panel");
+                ++overlayPixels;
+            }
+        }
+    }
+    Require(overlayPixels != 0, "the performance overlay panel lies inside the keyboard");
+    std::printf("keyboard in the presentation pass: drawn inside its panel only, the performance overlay recorded after it bit-identical to the overlay alone\n");
 }
 
 void costReport(const Device& device, PerformanceOverlay& overlay) {
@@ -720,15 +1101,27 @@ int main(int argc, char** argv) {
         if (mode == "device-selection") return 0;
         const auto& context = device->GetContext();
         {
+            PerformanceOverlay keyboard(context, 1);
+            PerformanceOverlay overlay(context, 1);
+            keyboardTest(context, keyboard);
+            keyboardHdrTest(context, keyboard);
+            keyboardUnderOverlayTest(context, keyboard, overlay);
+        }
+        {
             PerformanceOverlay overlay(context, 1);
             sdrOverlayTest(context, overlay);
             hdrOverlayTest(context, overlay);
             cornerTest(context, overlay);
             fullPanelTest(*device, overlay);
+            pageTwoTest(context, overlay);
             costReport(*device, overlay);
         }
         notePresentTest(*device);
+        pageCycleTest(*device);
+        pageTwoSamplerTest(*device);
+        presentCostReport(*device);
         disabledIsUnchangedTest(context);
+        keyboardPresentTest(context);
         std::cout << "performance overlay tests passed\n";
         return 0;
     } catch (const std::exception& error) {

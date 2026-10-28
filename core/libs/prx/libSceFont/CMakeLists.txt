@@ -74,4 +74,13 @@ if(BUILD_TESTING)
         set_tests_properties(font_face_lifetime font_face_lifetime_replace font_face_lifetime_churn PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_font_words_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontWords.cpp)
+    target_include_directories(guest_font_words_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_font_words_tests PRIVATE libSceFont libc)
+    configure_windows_unwind(guest_font_words_tests)
+    add_test(NAME guest_font_words COMMAND guest_font_words_tests)
+    if(WIN32)
+        set_tests_properties(guest_font_words PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFont>")
+    endif()
 endif()

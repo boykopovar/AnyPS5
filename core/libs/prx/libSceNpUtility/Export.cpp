@@ -295,10 +295,9 @@ int APS5_VABI sceNpAppLaunchLinkIntInitialize() {
     return 0;
 }
 int APS5_VABI sceNpBandwidthTestShutdownWithDetailedInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_NP_ERROR_INVALID_ARGUMENT;
 }
-int APS5_VABI sceNpLookupCreateTitleCtxA() {
+int APS5_VABI sceNpLookupCreateTitleCtxA(int userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -458,7 +457,7 @@ int APS5_VABI sceNpUtilityTerm() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpWordFilterCreateTitleCtxA() {
+int APS5_VABI sceNpWordFilterCreateTitleCtxA(int userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -467,8 +466,7 @@ int APS5_VABI sceNpWordFilterCreateTitleCtxA() {
 extern "C" {
 
 int APS5_VABI sceNpBandwidthTestInitStart() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SCE_NP_ERROR_SIGNED_OUT;
 }
 
 int APS5_VABI sceNpLookupAbortRequest(int reqId) {

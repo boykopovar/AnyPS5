@@ -228,24 +228,34 @@ int APS5_VABI sceAppContentGetAddcontDownloadProgress(uint32_t service_label, co
     if (!validEntitlementLabel(*entitlement_label, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
-int APS5_VABI sceAppContentAddcontEnqueueDownloadByEntitlemetId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentAddcontEnqueueDownloadByEntitlemetId(const char* entitlementId) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!entitlementId) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
-int APS5_VABI sceAppContentAddcontEnqueueDownloadSp(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentAddcontEnqueueDownloadSp(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0)) throw std::runtime_error("sceAppContentAddcontEnqueueDownloadSp: padded entitlement label before SDK 0x03500000");
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
-int APS5_VABI sceAppContentAddcontMountByEntitlemetId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentAddcontMountByEntitlemetId(const char* entitlementId, AppContentMountPoint* mountPoint) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!entitlementId || !mountPoint) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
-int APS5_VABI sceAppContentAddcontShrink(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentAddcontShrink(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x03500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0)) throw std::runtime_error("sceAppContentAddcontShrink: padded entitlement label before SDK 0x03500000");
+    return SCE_APP_CONTENT_ERROR_NOT_FOUND;
 }
 
 int APS5_VABI sceAppContentAppParamGetString(void) {
@@ -273,13 +283,17 @@ int APS5_VABI sceAppContentDownload1Shrink(void) {
     return 0;
 }
 
-int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(const char* entitlementId, AppContentAddcontInfo* info) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!entitlementId || !info) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
 }
 
-int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppContentAddcontInfo* list, uint32_t listNum, uint32_t* hitNum) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)iroTag;
+    if ((!list || listNum == 0) && !hitNum) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (hitNum) *hitNum = 0;
     return 0;
 }
 
@@ -296,8 +310,10 @@ int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnif
     return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
 }
 
-int APS5_VABI sceAppContentGetPftFlag(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    if (!pftFlag) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    *pftFlag = 0;
     return 0;
 }
 

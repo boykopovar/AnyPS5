@@ -14,6 +14,7 @@ namespace {
 
 constexpr int InvalidArgument = static_cast<int>(0x80551604u);
 constexpr int InsufficientBuffer = static_cast<int>(0x80551605u);
+constexpr int Abort = static_cast<int>(0x80551607u);
 constexpr int InvalidHandle = static_cast<int>(0x80551608u);
 constexpr int InvalidContext = static_cast<int>(0x80551609u);
 constexpr int InvalidTrophyId = static_cast<int>(0x8055160au);
@@ -105,7 +106,20 @@ int main() {
     Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
     Require(sceNpTrophyDestroyHandle(-1) == InvalidHandle, "invalid handle destruction");
     Require(sceNpTrophyDestroyContext(missing) == 0, "destroy the second context");
+    int live = 0;
+    Require(sceNpTrophyCreateHandle(&live) == 0, "second handle");
+    Require(sceNpTrophyAbortHandle(handle) == 0, "abort a live handle");
+    size = sizeof(icon);
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == Abort, "unlock state through an aborted handle");
+    Require(sceNpTrophyGetGameIcon(context, handle, icon, &size) == Abort, "game icon through an aborted handle");
+    Require(sceNpTrophyUnlockTrophy(context, handle, 0, &platinum) == Abort, "unlock through an aborted handle");
+    Require(sceNpTrophyRegisterContext(context, handle, 0) == Abort, "register through an aborted handle");
+    Require(sceNpTrophyAbortHandle(handle) == 0, "abort the handle again");
+    Require(sceNpTrophyGetTrophyUnlockState(context, live, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0, "the other handle still works");
+    Require(sceNpTrophyDestroyHandle(live) == 0, "destroy the second handle");
+    Require(sceNpTrophyAbortHandle(999) == InvalidHandle && sceNpTrophyAbortHandle(-1) == InvalidHandle, "abort an unknown handle");
     Require(sceNpTrophyDestroyHandle(handle) == 0 && sceNpTrophyDestroyContext(context) == 0, "destroy the handle and context");
+    Require(sceNpTrophyAbortHandle(handle) == InvalidHandle, "abort a destroyed handle");
     Require(sceNpTrophyDestroyContext(context) == InvalidContext, "destroy the context twice");
 
     std::filesystem::current_path(root.parent_path());

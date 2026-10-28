@@ -28,6 +28,7 @@ static void CheckClosed() {
     KeyboardInfo info;
     std::memset(&info, 0xa5, sizeof(info));
     Require(sceImeKeyboardGetInfo(0, nullptr) == InvalidAddress, "null info");
+    Require(sceImeKeyboardOpen(1, nullptr) == InvalidAddress, "null param");
     Require(sceImeKeyboardGetInfo(0, &info) == NotOpened, "info without an open keyboard");
     RequireUntouched(info);
     Require(sceImeKeyboardClose(1) == NotOpened, "close without an open keyboard");

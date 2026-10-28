@@ -113,6 +113,7 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
     }
     constexpr auto dispositionInfoEx = static_cast<FILE_INFO_BY_HANDLE_CLASS>(21);
     constexpr DWORD deleteFile = 0x00000001, posixSemantics = 0x00000002;
+    bool pendingDeletes = false;
     for (const auto& file : files) {
         const auto handle = CreateFileW(file.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -120,11 +121,26 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
         require(!error, "cannot open " + file.string() + " for deletion: " + error.message());
         struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{handle};
         DWORD flags = deleteFile | posixSemantics;
-        if (!SetFileInformationByHandle(handle, dispositionInfoEx, &flags, sizeof(flags))) error.assign(static_cast<int>(GetLastError()), std::system_category());
+        if (!SetFileInformationByHandle(handle, dispositionInfoEx, &flags, sizeof(flags))) {
+            const DWORD failure = GetLastError();
+            FILE_DISPOSITION_INFO disposition{TRUE};
+            if (failure == ERROR_INVALID_PARAMETER) {
+                SetFileInformationByHandle(handle, FileDispositionInfo, &disposition, sizeof(disposition));
+                pendingDeletes = true;
+            } else {
+                error.assign(static_cast<int>(failure), std::system_category());
+            }
+        }
         require(!error, "cannot delete " + file.string() + ": " + error.message());
     }
-#endif
     std::filesystem::remove_all(directory, error);
+    if (error && pendingDeletes) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX delete (ERROR_INVALID_PARAMETER); entries the cache still maps cannot be deleted there, so the directory was left behind\n", directory.string().c_str());
+        return;
+    }
+#else
+    std::filesystem::remove_all(directory, error);
+#endif
     require(!error, "cannot remove the shader cache test directory: " + error.message());
 }
 
@@ -144,6 +160,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     const std::string prefix = std::string(what) + ": ";
     require(left.spirv == right.spirv, prefix + "SPIR-V differs");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
+    require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
     require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
     require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
     require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
@@ -247,6 +264,7 @@ RecompileResult sampleResult() {
     result.pushConstants = {std::byte{1}, std::byte{0xff}, std::byte{0}, std::byte{0x80}, std::byte{7}};
     result.readsDepthRemapPush = true;
     result.bdaAbiVersion = 3;
+    result.descriptorFaults = 2;
     result.memoryOffsetDword = 7;
     result.hostSubgroupSize = 32;
     result.fullSubgroups = true;
@@ -335,6 +353,7 @@ CompiledVariant sampleVariant() {
     image.dimensionQueryOnly = false;
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
+    image.optionalDescriptor = true;
     image.byElements = 4;
     image.byComponents = 1;
     image.emulatedCompare = 0x1a07u;
@@ -758,6 +777,7 @@ void verifyKeySensitivity() {
     changes("f32 denormal preservation", [](SampleRequest& sample) { sample.request.target.float32DenormPreserve = true; });
     changes("spanned waves", [](SampleRequest& sample) { sample.request.target.spannedWaves = true; });
     changes("robust buffer access 2", [](SampleRequest& sample) { sample.request.target.robustBufferAccess2 = true; });
+    changes("exact robust loads", [](SampleRequest& sample) { sample.request.target.exactRobustLoads = true; });
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
     changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
@@ -994,6 +1014,13 @@ void verifyAtomicReplacement(const std::filesystem::path& directory) {
         std::vector<std::byte> bytes;
         require(ReadWholeFile(path, bytes) && bytes == original, "cache reader failed while the published entry retained its rename handle");
     }
+    if (PosixReplaceUnsupported(root)) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so an entry another reader holds open cannot be replaced there; skipping that case\n", root.string().c_str());
+        require(std::filesystem::remove(path), "cannot remove the cache entry");
+        require(std::filesystem::is_empty(root), "atomic replacement left a temporary file behind");
+        require(std::filesystem::remove(root), "cannot remove the empty replacement directory");
+        return;
+    }
 #endif
     {
         Reader old(path);
@@ -1031,6 +1058,12 @@ void verifyStore() {
 
     std::vector<std::byte> file;
     require(ReadWholeFile(path, file), "cannot read the entry back");
+#ifdef _WIN32
+    if (PosixReplaceUnsupported(path.parent_path())) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so the entry the cache has mapped cannot be replaced there; skipping the damaged-entry checks\n", path.parent_path().string().c_str());
+        return;
+    }
+#endif
     require(WriteFileAtomically(path, std::span(file).first(file.size() / 2)), "cannot truncate the entry");
     require(!ShaderDiskCache::Load(key, loaded), "a truncated entry loads");
     auto corrupt = file;
@@ -1066,6 +1099,12 @@ void verifyPersist() {
     auto detached = persisted->artifact.spirv;
     detached[0] ^= 1u;
     require(detached[0] != persisted->artifact.spirv[0], "changing a copied mapped module changed its owner");
+#ifdef _WIN32
+    if (PosixReplaceUnsupported(path.parent_path())) {
+        std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so a mapped persisted entry cannot be replaced there; skipping that check\n", path.parent_path().string().c_str());
+        return;
+    }
+#endif
     require(WriteFileAtomically(path, std::vector<std::byte>(64, std::byte{0x5a})), "cannot replace the persisted entry");
     std::error_code error;
     std::filesystem::remove(path, error);

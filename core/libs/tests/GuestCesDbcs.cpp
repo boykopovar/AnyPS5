@@ -322,8 +322,8 @@ int main() {
 
     Require(sceCesMbcsUcsContextInit(context, big5) == 0);
     RequireString(context, "\xA4\xA4\xA4\xE5", "\xE4\xB8\xAD\xE6\x96\x87");
-    RequireString(context, "\xF9\xF9\xA2\x7E\xA4\x51\xA4\xCA", "\xE2\x95\x90\xE2\x95\xAD\xE5\x8D\x81\xE5\x8D\x85");
-    RequireString(context, "\xF9\xE9\xF9\xEB\xF9\xEA\xA2\xA1\xA2\xA3\xA2\xA2", "\xE2\x95\x9E\xE2\x95\xA1\xE2\x95\xAA\xE2\x95\xAE\xE2\x95\xAF\xE2\x95\xB0");
+    RequireString(context, "\xA2\xA4\xA2\x7E\xA4\x51\xA4\xCA", "\xE2\x95\x90\xE2\x95\xAD\xE5\x8D\x81\xE5\x8D\x85");
+    RequireString(context, "\xA2\xA5\xA2\xA7\xA2\xA6\xA2\xA1\xA2\xA3\xA2\xA2", "\xE2\x95\x9E\xE2\x95\xA1\xE2\x95\xAA\xE2\x95\xAE\xE2\x95\xAF\xE2\x95\xB0");
     Require(Utf8ToMbcs(context, "\xEA\xB0\x80") == unassignedCode);
     Require(RoundTripMismatches(context) == 10);
 
@@ -366,7 +366,10 @@ int main() {
     RequireEncode(eucKrEncoders, eucKr, 0x20AC, 0, Bytes("\xA2\xE6"), 2);
     RequireEncode(eucKrEncoders, eucKr, 0xB620, unassignedCode, nullptr, 0);
     RequireEncode(uhcEncoders, uhc, 0xB620, 0, Bytes("\x8C\x63"), 2);
-    RequireEncode(big5Encoders, big5, 0x2550, 0, Bytes("\xF9\xF9"), 2);
+    RequireEncode(big5Encoders, big5, 0x2550, 0, Bytes("\xA2\xA4"), 2);
+    RequireEncode(big5Encoders, big5, 0x255E, 0, Bytes("\xA2\xA5"), 2);
+    RequireEncode(big5Encoders, big5, 0x2561, 0, Bytes("\xA2\xA7"), 2);
+    RequireEncode(big5Encoders, big5, 0x256A, 0, Bytes("\xA2\xA6"), 2);
     RequireEncode(big5Encoders, big5, 0x5341, 0, Bytes("\xA4\x51"), 2);
     RequireEncode(big5Encoders, big5, 0xAC00, unassignedCode, nullptr, 0);
     RequireEncode(eucKrEncoders, uhc, 0xAC00, invalidParameter, nullptr, 0);

@@ -100,6 +100,7 @@ struct ImageResource {
     bool foldTexelOffsetsOnly = false;
     bool convertedSamples = false;
     bool remappedDepth1D = false;
+    bool optionalDescriptor = false;
     std::uint32_t byElements = 0;
     std::uint32_t byComponents = 0;
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;

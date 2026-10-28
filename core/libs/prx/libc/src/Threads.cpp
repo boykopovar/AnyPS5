@@ -204,6 +204,10 @@ int APS5_VABI _Mtx_init_with_name_nid_postfix(void** handle, int type, const cha
     return _Mtx_init_nid_postfix(handle, type);
 }
 
+int APS5_VABI _Mtx_init_with_default_name_override_nid_postfix(void** handle, int type, const char* name) {
+    return _Mtx_init_with_name_nid_postfix(handle, type, name);
+}
+
 void APS5_VABI _Mtx_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Mtx_destroy: null mutex handle pointer");
@@ -568,6 +572,10 @@ int APS5_VABI _Tss_set_nid_postfix(int key, void* value) {
 
 int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second) {
     return ThreadForwards(__func__).equal(first, second);
+}
+
+int APS5_VABI _Thrd_lt_nid_postfix(void* first, void* second) {
+    return reinterpret_cast<std::uintptr_t>(first) < reinterpret_cast<std::uintptr_t>(second);
 }
 
 void* APS5_VABI _Thrd_current_nid_postfix(void) {
