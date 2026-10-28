@@ -8,6 +8,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIme/include/ImeComposition.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
 
@@ -43,6 +44,7 @@ struct Dialog {
     std::u16string text;
     std::size_t caret = 0;
     ImeDialog::PadKeyboardState keyboard;
+    ImeComposition composition;
 };
 
 std::mutex g_mutex;
@@ -63,6 +65,7 @@ std::size_t UnitsAfter(const Dialog& dialog) {
 
 void ReleaseInput() {
     ImeSetHostTextSink_nid_no_patch(nullptr);
+    ImeSetHostPreeditSink_nid_no_patch(nullptr);
     ImeSetHostPadSink_nid_no_patch(nullptr);
     ImeSetKeyboardViewProvider_nid_no_patch(nullptr);
 }
@@ -70,6 +73,7 @@ void ReleaseInput() {
 void Finish(std::uint32_t endStatus) {
     g_dialog.endStatus = endStatus;
     g_dialog.status = StatusFinished;
+    g_dialog.composition.Clear();
     ReleaseInput();
 }
 
@@ -128,7 +132,14 @@ void Apply(Dialog& dialog, ImeHostInputKind kind, const char16_t* units, std::si
 void Receive(ImeHostInputKind kind, const char16_t* units, std::size_t length) {
     std::lock_guard lock(g_mutex);
     if (g_dialog.status != StatusRunning) return;
+    if (ImeRouteWhileComposing(g_dialog.composition, kind) == ImeCompositionRoute::Swallow) return;
     Apply(g_dialog, kind, units, length);
+}
+
+void ReceivePreedit(const char16_t* units, std::size_t length, std::int32_t start, std::int32_t selected) {
+    std::lock_guard lock(g_mutex);
+    if (g_dialog.status != StatusRunning) return;
+    g_dialog.composition.Set(std::u16string(units, length), start, selected);
 }
 
 void ReceivePad(const ImeHostPad& pad) {
@@ -186,6 +197,9 @@ bool ProvideView(ImeKeyboardView& view) {
     if (dialog.status != StatusRunning) return false;
     view.text = dialog.text;
     view.caret = dialog.caret;
+    view.preedit = dialog.composition.text;
+    view.preeditCursor = dialog.composition.cursor;
+    view.preeditSelection = dialog.composition.selection;
     view.rows = ImeDialog::PadKeyboardRows(dialog.keyboard);
     view.columns = ImeDialog::PadKeyboardColumns();
     view.keys.clear();
@@ -269,6 +283,7 @@ int APS5_VABI sceImeDialogInit(const Param* param, const ExtendedParam* extended
     g_dialog.keyboard = ImeDialog::PadKeyboardOpen(KeyboardOptions(*param, extended));
     g_dialog.status = StatusRunning;
     ImeSetHostTextSink_nid_no_patch(&Receive);
+    ImeSetHostPreeditSink_nid_no_patch(&ReceivePreedit);
     ImeSetHostPadSink_nid_no_patch(&ReceivePad);
     ImeSetKeyboardViewProvider_nid_no_patch(&ProvideView);
     return 0;
