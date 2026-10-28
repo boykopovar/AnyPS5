@@ -97,6 +97,7 @@ std::set<int32_t> g_openKeyboards;
 std::mutex g_imeMutex;
 std::optional<Session> g_session;
 std::atomic<ImeHostTextSink> g_textSink{nullptr};
+std::atomic<ImeHostPreeditSink> g_preeditSink{nullptr};
 std::atomic<ImeHostPadSink> g_padSink{nullptr};
 std::atomic<ImeKeyboardViewProvider> g_viewProvider{nullptr};
 std::uint64_t g_nextSessionId = 0;
@@ -393,7 +394,15 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
             return;
         }
     }
-    if (input.kind == ImeHostInputKind::Preedit) return;
+    if (input.kind == ImeHostInputKind::Preedit) {
+        const ImeHostPreeditSink preeditSink = g_preeditSink.load();
+        if (preeditSink == nullptr) return;
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        const std::u16string units = ImeHostText::PreeditUnits(input.text, size);
+        preeditSink(units.data(), units.size(), input.start, input.length);
+        return;
+    }
     const ImeHostTextSink sink = g_textSink.load();
     if (sink == nullptr) return;
     std::u16string units;
@@ -432,6 +441,10 @@ bool ImeCapturesKeyboard_nid_postfix() {
 
 void ImeSetHostTextSink_nid_no_patch(ImeHostTextSink sink) {
     g_textSink = sink;
+}
+
+void ImeSetHostPreeditSink_nid_no_patch(ImeHostPreeditSink sink) {
+    g_preeditSink = sink;
 }
 
 bool ImeCapturesPad_nid_postfix() {

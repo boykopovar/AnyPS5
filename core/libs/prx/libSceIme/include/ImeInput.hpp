@@ -33,6 +33,10 @@ using ImeHostTextSink = void (*)(ImeHostInputKind kind, const char16_t* text, st
 
 extern "C" void ImeSetHostTextSink_nid_no_patch(ImeHostTextSink sink);
 
+using ImeHostPreeditSink = void (*)(const char16_t* text, std::size_t size, std::int32_t start, std::int32_t selected);
+
+extern "C" void ImeSetHostPreeditSink_nid_no_patch(ImeHostPreeditSink sink);
+
 struct ImeHostPad {
     std::uint32_t buttons = 0;
     std::uint8_t leftX = 128;
