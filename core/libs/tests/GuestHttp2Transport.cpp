@@ -9,6 +9,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "prx/libSceHttp2/Transport.hpp"
 #include "prx/libSceNet/include/Net.hpp"
@@ -27,6 +28,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -415,6 +417,20 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     const std::string blob(rawHeaders, rawSize);
     Require(blob.starts_with("HTTP/1.1 ") && blob.ends_with("\r\n\r\n") && blob.find("x-loopback: yes\r\n") != std::string::npos,
         "response header block");
+    const std::size_t statusEnd = blob.find("\r\n");
+    Require(statusEnd != std::string::npos, "response status line terminator");
+    std::int32_t major = 0;
+    std::int32_t minor = 0;
+    std::int32_t code = 0;
+    const char* phrase = nullptr;
+    std::size_t phraseLength = 0;
+    Require(sceHttpParseStatusLine(blob.data(), statusEnd + 2, &major, &minor, &code, &phrase, &phraseLength) ==
+        static_cast<int>(statusEnd + 2), "response status line parses");
+    Require(major == 1 && minor == 1 && code == expected, "response status line values");
+    const char* value = nullptr;
+    std::size_t valueLength = 0;
+    Require(sceHttpParseResponseHeader(blob.data(), blob.size(), "x-loopback", &value, &valueLength) > 0 &&
+        std::string(value, valueLength) == "yes", "response header parses");
     Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "unsupported reuse throws");
 }
 
