@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <limits>
 #include <source_location>
 
@@ -45,10 +46,46 @@ void ForDigit() {
     Require(u_forDigit_nid_postfix(std::numeric_limits<std::int32_t>::max(), 36) == 0);
 }
 
+void IsoComment() {
+    constexpr std::int32_t Illegal = 1;
+    constexpr std::int32_t NotTerminated = -124;
+    for (std::int32_t character : {0, 0x41, 0xa0, 0x10ffff, -1}) {
+        char buffer[4] = {'x', 'y', 'z', 'w'};
+        std::int32_t status = 0;
+        Require(u_getISOComment_nid_postfix(character, buffer, 4, &status) == 0);
+        Require(status == 0 && buffer[0] == 0 && buffer[1] == 'y' && buffer[3] == 'w');
+    }
+    char buffer[2] = {'x', 'y'};
+    std::int32_t status = 0;
+    Require(u_getISOComment_nid_postfix(0x41, buffer, 1, &status) == 0 && status == 0 && buffer[0] == 0 && buffer[1] == 'y');
+    buffer[0] = 'x';
+    status = 0;
+    Require(u_getISOComment_nid_postfix(0x41, buffer, 0, &status) == 0 && status == NotTerminated && buffer[0] == 'x');
+    status = 0;
+    Require(u_getISOComment_nid_postfix(0x41, nullptr, 0, &status) == 0 && status == NotTerminated);
+    status = NotTerminated;
+    Require(u_getISOComment_nid_postfix(0x41, buffer, 2, &status) == 0 && status == 0 && buffer[0] == 0);
+    status = -5;
+    buffer[0] = 'x';
+    Require(u_getISOComment_nid_postfix(0x41, buffer, 2, &status) == 0 && status == -5 && buffer[0] == 0);
+    status = 0;
+    buffer[0] = 'x';
+    Require(u_getISOComment_nid_postfix(0x41, buffer, -1, &status) == 0 && status == Illegal && buffer[0] == 'x');
+    status = 0;
+    Require(u_getISOComment_nid_postfix(0x41, nullptr, 1, &status) == 0 && status == Illegal);
+    for (std::int32_t incoming : {Illegal, 7, 15}) {
+        status = incoming;
+        buffer[0] = 'x';
+        Require(u_getISOComment_nid_postfix(0x41, buffer, 2, &status) == 0 && status == incoming && buffer[0] == 'x');
+    }
+    Require(u_getISOComment_nid_postfix(0x41, buffer, 2, nullptr) == 0 && buffer[0] == 'x');
+}
+
 }
 
 int main() {
     IsoControl();
     ForDigit();
+    IsoComment();
     std::puts("ICU character tests passed");
 }
