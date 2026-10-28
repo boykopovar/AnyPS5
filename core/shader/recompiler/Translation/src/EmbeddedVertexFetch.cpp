@@ -450,7 +450,7 @@ bool hasInitialEmbeddedIndices(const RdnaProgram& program, const EmbeddedFetchPl
         if (inst.programCounter > lastLoad) break;
         if (leavesStraightLine(inst)) return false;
         if (writesExec(inst) && !setsExecAllOnes(inst)) return false;
-        if (inst.family == RdnaInstructionFamily::MIMG && (inst.rawWords[0] & 0x00010000u) != 0u) return false;
+        if (inst.family == RdnaInstructionFamily::MIMG && (inst.rawWords[0] & 0x00030000u) != 0u) return false;
         if ((inst.family == RdnaInstructionFamily::MUBUF || inst.family == RdnaInstructionFamily::MTBUF) && (inst.rawWords[1] & 0x00800000u) != 0u) return false;
         const auto load = std::find_if(plan.loads.begin(), plan.loads.end(), [&](const auto& item) { return item.programCounter == inst.programCounter; });
         if (load != plan.loads.end()) {
