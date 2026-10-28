@@ -43,7 +43,7 @@ public:
 
 }
 
-std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress, std::set<Domain::VirtualAddress>* entryRoots, const std::function<void(std::string_view)>& message) const {
+std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers, const std::function<void(std::uint64_t, std::uint64_t)>& progress, std::set<Domain::VirtualAddress>* entryRoots, const std::function<void(std::string_view)>& message) const {
     std::uint64_t lastProgress = 0;
     const auto report = [&](std::uint64_t completed) {
         if (completed <= lastProgress) return;
@@ -548,8 +548,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     report(8500);
     std::sort(instructionList.begin(), instructionList.end());
     instructionList.erase(std::unique(instructionList.begin(), instructionList.end()), instructionList.end());
-    std::set<std::uint64_t> instructions(instructionList.begin(), instructionList.end());
-    instructionList = {};
+    const auto& instructions = instructionList;
     std::uint64_t checked = 0;
     std::uint64_t previousEnd = 0;
     const Domain::ProgramHeader* cachedHeader = nullptr;
@@ -589,7 +588,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
                 }
             }
             if (!spanHasFsPrefix) {
-                const auto previous = instructions.lower_bound(address);
+                const auto previous = std::lower_bound(instructions.begin(), instructions.end(), address);
                 if (previous != instructions.begin()) {
                     const auto previousStart = *std::prev(previous);
                     if (const auto* header = findCodeHeader(previousStart)) {
@@ -618,7 +617,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         *entryRoots = std::move(roots);
         entryRoots->insert(dataTargets.begin(), dataTargets.end());
     }
-    return instructions;
+    return std::move(instructionList);
 }
 
 }
