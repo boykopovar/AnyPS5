@@ -170,7 +170,7 @@ std::uint64_t OpenSerial() {
     return recorder->OpenSerial();
 }
 
-void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, std::size_t images) {
+void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, std::size_t images, bool unrelated) {
     const auto first = guest.Address() + offset;
     const auto target = device.Target();
     std::vector<ShaderRecompiler::RecompileResult> stores, restores;
@@ -179,15 +179,21 @@ void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, st
         restores.push_back(Compile(RestoreImageCode, ImageUserData(first + index * ImageBytes), target));
     }
     for (const auto& store : stores) device.Dispatch(store, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
-    const std::string subject = "storage flush ordering, " + std::to_string(images) + (images == 1 ? " image" : " images");
+    const std::string subject = "storage flush ordering, " + std::to_string(images) + (images == 1 ? " image" : " images") + (unrelated ? " under another stamped write" : "");
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes * images, nullptr, "test"), subject + " stored again in the open batch: the first store left no results pending");
     const bool imported = AgcDriver::Graphics::ExistingHostImportFor(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), first, ImageBytes * images) != nullptr;
-    const bool skips = images == 1 && imported;
+    const bool skips = images == 1 && imported && !unrelated;
     const std::string what = subject + (imported ? "" : " without a host import") + " stored again in the open batch: ";
     for (const auto& restore : restores) device.Dispatch(restore, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(RestoreImageCode.data()));
+    if (unrelated) {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const std::array stamped{std::pair{first, first + ImageBytes}};
+        AgcDriver::Graphics::Recorder::Active()->NoteStampedWrites(stamped);
+    }
     const auto open = OpenSerial();
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes * images, nullptr, "test"), what + "the second store left no results pending");
     if (skips) Require(OpenSerial() == open, what + "the second store waited for the GPU to finish the image's own earlier store");
+    else if (unrelated) Require(OpenSerial() != open, what + "the second store did not wait for a stamped write that is not the image's own");
     else Require(OpenSerial() != open, what + "the second store did not wait for the earlier store, which only a single image with a host import may skip");
     device.WaitIdle();
     for (std::size_t index = 0; index < images; ++index) {
@@ -205,8 +211,9 @@ int main(int argc, char** argv) {
         const bool watched = AgcDriver::GuestMemory::WriteWatched();
         GuestBlock guest(watched);
         if (argc > 1 && std::string(argv[1]) == "--stored-again") {
-            RunStoredAgain(*device, guest, BlockBytes / 4u, 1);
-            RunStoredAgain(*device, guest, BlockBytes / 8u * 5u, 2);
+            RunStoredAgain(*device, guest, BlockBytes / 4u, 1, false);
+            RunStoredAgain(*device, guest, BlockBytes / 8u * 5u, 2, false);
+            RunStoredAgain(*device, guest, BlockBytes / 8u * 3u, 1, true);
             std::puts("storage flush ordering stored-again tests passed");
             return 0;
         }
@@ -214,8 +221,9 @@ int main(int argc, char** argv) {
         else if (!device->CanWaitUnlocked()) std::puts("the recorder cannot wait for the GPU without running completions: the writer-in-flight case is skipped");
         else Run(*device, guest, 0, true, "writer in flight");
         Run(*device, guest, BlockBytes / 2u, false, "writer in the open batch");
-        RunStoredAgain(*device, guest, BlockBytes / 4u, 1);
-        RunStoredAgain(*device, guest, BlockBytes / 8u * 5u, 2);
+        RunStoredAgain(*device, guest, BlockBytes / 4u, 1, false);
+        RunStoredAgain(*device, guest, BlockBytes / 8u * 5u, 2, false);
+        RunStoredAgain(*device, guest, BlockBytes / 8u * 3u, 1, true);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {

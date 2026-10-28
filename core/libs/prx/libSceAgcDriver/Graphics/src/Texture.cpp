@@ -4294,6 +4294,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         if (!flush.empty()) BumpPendingSerial();
         for (const auto& texture : flush) {
             if (texture->drawnListed) ownNotes.insert(ownNotes.end(), texture->storeNotes.begin(), texture->storeNotes.end());
+            ownNotes.insert(ownNotes.end(), texture->flushNotes.begin(), texture->flushNotes.end());
         }
     }
     if (flush.empty()) {
@@ -4321,13 +4322,11 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         for (const auto& texture : flush) std::fprintf(stderr, "[flush] image 0x%llx+0x%llx for %s 0x%llx+0x%zx\n", static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), reason, static_cast<unsigned long long>(address), bytes);
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
-    const bool ownStoresSkipped = flush.size() == 1 && ExistingHostImportFor(flush.front()->context, flush.front()->descriptor.baseAddress, static_cast<std::size_t>(flush.front()->guestBytes)) != nullptr;
-    if (!ownStoresSkipped) ownNotes.clear();
-    const auto pendingWriter = [&](const Recorder& active) { return ownStoresSkipped ? active.PendingUnstampedWriterSerial(address, bytes, ownNotes) : active.PendingWriterSerial(address, bytes, ownNotes); };
-    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion() && pendingWriter(*recorder) != 0) {
+    if (!ownNotes.empty() && (flush.size() != 1 || std::any_of(flush.begin(), flush.end(), [](const std::shared_ptr<StorageTexture>& texture) { return ExistingHostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) == nullptr; }))) ownNotes.clear();
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion() && recorder->PendingWriterSerial(address, bytes, ownNotes) != 0) {
         try {
             recorder->Reap();
-            if (const auto writer = pendingWriter(*recorder); writer == recorder->OpenSerial()) {
+            if (const auto writer = recorder->PendingWriterSerial(address, bytes, ownNotes); writer == recorder->OpenSerial()) {
                 Recorder::CountSync(recorder->OpenWriteOverlaps(address, bytes) ? 1 : 3);
                 recorder->Sync();
             } else if (writer != 0) {
@@ -4338,6 +4337,8 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             throw;
         }
     }
+    const auto* noting = Recorder::Active();
+    const auto firstNote = noting != nullptr ? noting->WriteNoteCount() : 0;
     std::exception_ptr failure;
     const auto previousReason = std::exchange(flushReason, reason);
     for (const auto& texture : flush) {
@@ -4357,6 +4358,16 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         const auto units = PublishShadow(address, bytes, scope, PublishReasonFor(reason), waited);
         if (units != 0) waitForIdlePublish(reason);
         if (published != nullptr) *published = units != 0;
+    }
+    if (noting != nullptr && noting == Recorder::Active()) {
+        if (const auto notes = noting->StampedNotesSince(firstNote); !notes.empty()) {
+            auto& pending = Pending();
+            std::lock_guard lock(pending.mutex);
+            for (const auto& texture : flush) {
+                texture->flushNotes.insert(texture->flushNotes.end(), notes.begin(), notes.end());
+                if (texture->flushNotes.size() > 32) texture->flushNotes.erase(texture->flushNotes.begin(), texture->flushNotes.end() - 32);
+            }
+        }
     }
     return true;
 }
