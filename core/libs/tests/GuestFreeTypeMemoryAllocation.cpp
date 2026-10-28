@@ -15,10 +15,13 @@ namespace {
 
 constexpr int kOutOfMemory = 64;
 constexpr int kInvalidArgument = 6;
+constexpr int kArrayTooLarge = 10;
 
 int g_frees = 0;
 int g_allocations = 0;
+int g_reallocations = 0;
 bool g_failAllocation = false;
+bool g_failReallocation = false;
 
 void* APS5_VABI TestAlloc(FreeType::GuestMemoryRec* memory, std::int64_t size) {
     ++g_allocations;
@@ -34,7 +37,12 @@ void APS5_VABI TestFree(FreeType::GuestMemoryRec* memory, void* block) {
 }
 
 void* APS5_VABI TestRealloc(FreeType::GuestMemoryRec* memory, std::int64_t current, std::int64_t size, void* block) {
-    return std::realloc(block, static_cast<std::size_t>(size));
+    ++g_reallocations;
+    if (g_failReallocation) return nullptr;
+    void* const grown = std::realloc(block, static_cast<std::size_t>(size));
+    if (grown && size > current)
+        std::memset(static_cast<unsigned char*>(grown) + current, 0xa5, static_cast<std::size_t>(size - current));
+    return grown;
 }
 
 }
@@ -53,12 +61,16 @@ int main(int count, char** arguments) {
     Check(patched || std::strcmp(arguments[2], "unpatched") == 0);
     const char* const allocSymbol = patched ? "Uw+BZJpflxk" : "FT_Alloc_nid_postfix";
     const char* const qAllocSymbol = patched ? "hz-J3hohXW8" : "FT_QAlloc_nid_postfix";
+    const char* const reallocSymbol = patched ? "HVSaZbxYi2s" : "FT_Realloc_nid_postfix";
+    const char* const qReallocSymbol = patched ? "KVbmKCGGowg" : "FT_QRealloc_nid_postfix";
     const char* const freeSymbol = patched ? "fHMsRluEMfI" : "FT_Free_nid_postfix";
 #ifdef _WIN32
     const auto module = LoadLibraryW(std::filesystem::path(arguments[1]).c_str());
     Check(module != nullptr);
     const auto allocAddress = GetProcAddress(module, allocSymbol);
     const auto qAllocAddress = GetProcAddress(module, qAllocSymbol);
+    const auto reallocAddress = GetProcAddress(module, reallocSymbol);
+    const auto qReallocAddress = GetProcAddress(module, qReallocSymbol);
     const auto freeAddress = GetProcAddress(module, freeSymbol);
 #else
     const auto module = dlopen(arguments[1], RTLD_NOW | RTLD_LOCAL);
@@ -66,13 +78,19 @@ int main(int count, char** arguments) {
     Check(module != nullptr);
     const auto allocAddress = dlsym(module, allocSymbol);
     const auto qAllocAddress = dlsym(module, qAllocSymbol);
+    const auto reallocAddress = dlsym(module, reallocSymbol);
+    const auto qReallocAddress = dlsym(module, qReallocSymbol);
     const auto freeAddress = dlsym(module, freeSymbol);
 #endif
     Check(allocAddress != nullptr);
     Check(qAllocAddress != nullptr);
+    Check(reallocAddress != nullptr);
+    Check(qReallocAddress != nullptr);
     Check(freeAddress != nullptr);
     const auto alloc = std::bit_cast<decltype(&FT_Alloc_nid_postfix)>(allocAddress);
     const auto qAlloc = std::bit_cast<decltype(&FT_QAlloc_nid_postfix)>(qAllocAddress);
+    const auto resize = std::bit_cast<decltype(&FT_Realloc_nid_postfix)>(reallocAddress);
+    const auto qResize = std::bit_cast<decltype(&FT_QRealloc_nid_postfix)>(qReallocAddress);
     const auto release = std::bit_cast<decltype(&FT_Free_nid_postfix)>(freeAddress);
 
     FreeType::GuestMemoryRec memory{nullptr, TestAlloc, TestFree, TestRealloc};
@@ -116,6 +134,78 @@ int main(int count, char** arguments) {
     Check(qAlloc(&memory, 32, &block) == kOutOfMemory && block == nullptr);
     g_failAllocation = false;
     Check(g_frees == 2);
+
+    for (const auto reallocate : {resize, qResize}) {
+        const bool zeroing = reallocate == resize;
+        block = reinterpret_cast<void*>(0x12345678);
+        Check(reallocate(&memory, 0, 64, &block) == 0);
+        Check(block != nullptr);
+        for (int index = 0; index < 64; ++index)
+            Check(static_cast<unsigned char*>(block)[index] == 0);
+
+        for (int index = 0; index < 64; ++index)
+            static_cast<unsigned char*>(block)[index] = static_cast<unsigned char>(index * 7 + 1);
+        Check(reallocate(&memory, 64, 128, &block) == 0);
+        Check(block != nullptr);
+        for (int index = 0; index < 64; ++index)
+            Check(static_cast<unsigned char*>(block)[index] == static_cast<unsigned char>(index * 7 + 1));
+        for (int index = 64; index < 128; ++index)
+            Check(static_cast<unsigned char*>(block)[index] == (zeroing ? 0 : 0xa5));
+        release(&memory, &block);
+        Check(block == nullptr);
+    }
+
+    {
+        void* const sentinel = reinterpret_cast<void*>(0x12345678);
+        const int allocations = g_allocations;
+        const int reallocations = g_reallocations;
+        const int frees = g_frees;
+        for (const auto reallocate : {resize, qResize}) {
+            block = sentinel;
+            Check(reallocate(&memory, -1, 64, &block) == kInvalidArgument && block == sentinel);
+            block = sentinel;
+            Check(reallocate(&memory, 64, -1, &block) == kInvalidArgument && block == sentinel);
+            block = sentinel;
+            Check(reallocate(&memory, std::numeric_limits<std::int64_t>::min(), 64, &block) == kInvalidArgument && block == sentinel);
+            block = sentinel;
+            Check(reallocate(&memory, 64, 2147483648ll, &block) == kArrayTooLarge && block == sentinel);
+        }
+        Check(g_allocations == allocations && g_reallocations == reallocations && g_frees == frees);
+    }
+
+    for (const auto reallocate : {resize, qResize}) {
+        block = reinterpret_cast<void*>(0x12345678);
+        Check(qAlloc(&memory, 32, &block) == 0 && block != nullptr);
+        const int frees = g_frees;
+        Check(reallocate(&memory, 32, 0, &block) == 0 && block == nullptr);
+        Check(g_frees == frees + 1);
+        block = nullptr;
+        Check(reallocate(&memory, 0, 0, &block) == 0 && block == nullptr);
+        Check(g_frees == frees + 1);
+    }
+
+    g_failReallocation = true;
+    block = reinterpret_cast<void*>(0x12345678);
+    Check(qAlloc(&memory, 64, &block) == 0 && block != nullptr);
+    {
+        void* const original = block;
+        const int frees = g_frees;
+        const int reallocations = g_reallocations;
+        Check(resize(&memory, 64, 128, &block) == kOutOfMemory && block == original);
+        Check(qResize(&memory, 64, 128, &block) == kOutOfMemory && block == original);
+        Check(g_reallocations == reallocations + 2);
+        Check(g_frees == frees);
+        release(&memory, &block);
+        Check(block == nullptr);
+        Check(g_frees == frees + 1);
+    }
+    g_failReallocation = false;
+
+    g_failAllocation = true;
+    block = reinterpret_cast<void*>(0x12345678);
+    Check(resize(&memory, 0, 32, &block) == kOutOfMemory && block == nullptr);
+    Check(qResize(&memory, 0, 32, &block) == kOutOfMemory && block == nullptr);
+    g_failAllocation = false;
 
 #ifdef _WIN32
     Check(FreeLibrary(module) != 0);
