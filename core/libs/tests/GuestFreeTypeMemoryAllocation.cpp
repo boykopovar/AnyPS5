@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -13,11 +14,14 @@
 namespace {
 
 constexpr int kOutOfMemory = 64;
+constexpr int kInvalidArgument = 6;
 
 int g_frees = 0;
+int g_allocations = 0;
 bool g_failAllocation = false;
 
 void* APS5_VABI TestAlloc(FreeType::GuestMemoryRec* memory, std::int64_t size) {
+    ++g_allocations;
     if (g_failAllocation) return nullptr;
     void* const block = std::malloc(static_cast<std::size_t>(size));
     if (block) std::memset(block, 0xa5, static_cast<std::size_t>(size));
@@ -95,10 +99,16 @@ int main(int count, char** arguments) {
     release(&memory, &block);
     Check(g_frees == 2);
 
-    Check(alloc(&memory, 0, &block) == 0 && block == nullptr);
-    Check(alloc(&memory, -8, &block) == 0 && block == nullptr);
-    Check(qAlloc(&memory, 0, &block) == 0 && block == nullptr);
-    Check(qAlloc(&memory, -8, &block) == 0 && block == nullptr);
+    for (const auto allocate : {alloc, qAlloc}) {
+        const int allocations = g_allocations;
+        block = reinterpret_cast<void*>(0x12345678);
+        Check(allocate(&memory, 0, &block) == 0 && block == nullptr);
+        for (const auto size : {std::int64_t{-1}, std::int64_t{-8}, std::numeric_limits<std::int64_t>::min()}) {
+            block = reinterpret_cast<void*>(0x12345678);
+            Check(allocate(&memory, size, &block) == kInvalidArgument && block == nullptr);
+        }
+        Check(g_allocations == allocations);
+    }
     Check(g_frees == 2);
 
     g_failAllocation = true;

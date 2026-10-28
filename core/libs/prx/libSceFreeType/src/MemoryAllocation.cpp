@@ -14,6 +14,8 @@ extern "C" std::int32_t APS5_VABI FT_Alloc_nid_postfix(FreeType::GuestMemoryRec*
         allocated = memory->alloc(memory, size);
         if (allocated) std::memset(allocated, 0, static_cast<std::size_t>(size));
         else error = FT_Err_Out_Of_Memory;
+    } else if (size < 0) {
+        error = FT_Err_Invalid_Argument;
     }
     *block = allocated;
     return error;
@@ -26,6 +28,8 @@ extern "C" std::int32_t APS5_VABI FT_QAlloc_nid_postfix(FreeType::GuestMemoryRec
     if (size > 0) {
         allocated = memory->alloc(memory, size);
         if (!allocated) error = FT_Err_Out_Of_Memory;
+    } else if (size < 0) {
+        error = FT_Err_Invalid_Argument;
     }
     *block = allocated;
     return error;

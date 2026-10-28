@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
+#include "prx/libSceFreeTypeOl/libSceFreeTypeOl.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -425,10 +426,10 @@ int APS5_VABI sceFreeTypeOlUnknown_LonHHN98tMI_nid_no_patch() {
 }
 APS5_EXPORT("LonHHN98tMI", sceFreeTypeOlUnknown_LonHHN98tMI_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOlUnknown_Uw_BZJpflxk_nid_no_patch() {
+int APS5_VABI sceFreeTypeOlAlloc_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Uw+BZJpflxk", sceFreeTypeOlUnknown_Uw_BZJpflxk_nid_no_patch);
+APS5_EXPORT("Uw+BZJpflxk", sceFreeTypeOlAlloc_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOlUnknown_ZqvTX8u1bEc_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -455,10 +456,10 @@ int APS5_VABI sceFreeTypeOlUnknown_UTumVjeIQtg_nid_no_patch() {
 }
 APS5_EXPORT("UTumVjeIQtg", sceFreeTypeOlUnknown_UTumVjeIQtg_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOlUnknown_fHMsRluEMfI_nid_no_patch() {
+int APS5_VABI sceFreeTypeOlFree_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("fHMsRluEMfI", sceFreeTypeOlUnknown_fHMsRluEMfI_nid_no_patch);
+APS5_EXPORT("fHMsRluEMfI", sceFreeTypeOlFree_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOlUnknown_5NYsP564wwY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
