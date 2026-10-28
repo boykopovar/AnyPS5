@@ -210,25 +210,10 @@ int APS5_VABI FT_Outline_CheckForward_nid_no_patch(FreeType::GuestOutline* outli
 }
 APS5_EXPORT("C4a3dGgs+Cc", FT_Outline_CheckForward_nid_no_patch);
 
-int APS5_VABI FT_Outline_CopyForward_nid_no_patch(const FreeType::GuestOutline* source, FreeType::GuestOutline* target) {
-    return FT_Outline_Copy_nid_postfix(source, target);
-}
-APS5_EXPORT("Bhm8Injl0KA", FT_Outline_CopyForward_nid_no_patch);
-
-int APS5_VABI FT_Outline_DecomposeForward_nid_no_patch(FreeType::GuestOutline* outline, const FreeType::GuestOutlineFuncs* functions, void* user) {
-    return FT_Outline_Decompose_nid_postfix(outline, functions, user);
-}
-APS5_EXPORT("++lgV9pRsO4", FT_Outline_DecomposeForward_nid_no_patch);
-
 void APS5_VABI FT_Outline_Get_CBoxForward_nid_no_patch(const FreeType::GuestOutline* outline, FreeType::GuestBBox* box) {
     return FT_Outline_Get_CBox_nid_postfix(outline, box);
 }
 APS5_EXPORT("8ZxmGwESvSQ", FT_Outline_Get_CBoxForward_nid_no_patch);
-
-int APS5_VABI FT_Outline_Get_OrientationForward_nid_no_patch(FreeType::GuestOutline* outline) {
-    return FT_Outline_Get_Orientation_nid_postfix(outline);
-}
-APS5_EXPORT("weVsBCT+TTQ", FT_Outline_Get_OrientationForward_nid_no_patch);
 
 void APS5_VABI FT_Outline_ReverseForward_nid_no_patch(FreeType::GuestOutline* outline) {
     return FT_Outline_Reverse_nid_postfix(outline);
@@ -289,21 +274,6 @@ int APS5_VABI FT_Sfnt_Table_InfoForward_nid_no_patch(FreeType::GuestFaceRec* fac
     return FT_Sfnt_Table_Info_nid_postfix(face, tableIndex, tag, length);
 }
 APS5_EXPORT("oiRP-fp3SN4", FT_Sfnt_Table_InfoForward_nid_no_patch);
-
-std::int64_t APS5_VABI FT_SinForward_nid_no_patch(std::int64_t angle) {
-    return FT_Sin_nid_postfix(angle);
-}
-APS5_EXPORT("L1uHkWTazkI", FT_SinForward_nid_no_patch);
-
-std::int64_t APS5_VABI FT_TanForward_nid_no_patch(std::int64_t angle) {
-    return FT_Tan_nid_postfix(angle);
-}
-APS5_EXPORT("dojyaLKzKN0", FT_TanForward_nid_no_patch);
-
-void APS5_VABI FT_Vector_UnitForward_nid_no_patch(FreeType::GuestVector* vector, std::int64_t angle) {
-    return FT_Vector_Unit_nid_postfix(vector, angle);
-}
-APS5_EXPORT("3WpTQrvGUcU", FT_Vector_UnitForward_nid_no_patch);
 
 int APS5_VABI FT_Outline_Get_BBoxForward_nid_no_patch(FreeType::GuestOutline* outline, FreeType::GuestBBox* boundingBox) {
     return FT_Outline_Get_BBox_nid_postfix(outline, boundingBox);
