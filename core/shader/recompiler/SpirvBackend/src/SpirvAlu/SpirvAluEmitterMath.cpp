@@ -1007,13 +1007,15 @@ std::uint32_t Log2SeriesNearOne(SpirvEmitterState& state, std::uint32_t differen
 std::uint32_t EmitFPLog2(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto value = EmitExt(state, TypeF32(state), GLSLstd450Log2, {arg0});
     const auto difference = ExactSub(state, arg0, ConstantF32(state, 0x3f800000u));
-    const auto series = Log2SeriesNearOne(state, difference);
-    const auto valueBits = Unary(state, spv::OpBitcast, TypeU32(state), value);
-    const auto seriesBits = Unary(state, spv::OpBitcast, TypeU32(state), series);
-    const auto distance = EmitExt(state, TypeU32(state), GLSLstd450UMin, {Binary(state, spv::OpISub, TypeU32(state), valueBits, seriesBits), Binary(state, spv::OpISub, TypeU32(state), seriesBits, valueBits)});
     const auto near = Binary(state, spv::OpFOrdLessThanEqual, TypeBool(state), EmitExt(state, TypeF32(state), GLSLstd450FAbs, {difference}), ConstantF32(state, 0x3e000000u));
-    const auto far = Binary(state, spv::OpUGreaterThan, TypeBool(state), distance, ConstantU32(state, 4u));
-    return Select(state, TypeF32(state), Binary(state, spv::OpLogicalAnd, TypeBool(state), near, far), series, value);
+    return EmitValueOrDefaultIfCondition(state, near, TypeF32(state), value, [&] {
+        const auto series = Log2SeriesNearOne(state, difference);
+        const auto valueBits = Unary(state, spv::OpBitcast, TypeU32(state), value);
+        const auto seriesBits = Unary(state, spv::OpBitcast, TypeU32(state), series);
+        const auto distance = EmitExt(state, TypeU32(state), GLSLstd450UMin, {Binary(state, spv::OpISub, TypeU32(state), valueBits, seriesBits), Binary(state, spv::OpISub, TypeU32(state), seriesBits, valueBits)});
+        const auto far = Binary(state, spv::OpUGreaterThan, TypeBool(state), distance, ConstantU32(state, 4u));
+        return Select(state, TypeF32(state), far, series, value);
+    });
 }
 
 std::uint32_t SinTurnSeries(SpirvEmitterState& state, std::uint32_t turns) {

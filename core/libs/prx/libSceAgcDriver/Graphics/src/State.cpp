@@ -437,8 +437,8 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
 DepthTarget decodeDepthPlane(const Registers& cx) {
     const auto viewRegister = find(cx, 0x002);
     const auto view = viewRegister == cx.end() ? 0u : viewRegister->second;
-    const auto viewMip = (view >> 26u) & 0xfu;
     const auto maxMip = (read(cx, 0x010) >> 16u) & 0xfu;
+    const auto viewMip = maxMip == 0 ? 0u : (view >> 26u) & 0xfu;
     const auto zFormat = read(cx, 0x010) & 3u;
     const auto stencilRegister = find(cx, 0x011);
     const auto stencilInfo = stencilRegister == cx.end() ? 0u : stencilRegister->second;
@@ -466,7 +466,6 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     }
     const auto size = read(cx, 0x007);
     depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
-    if (maxMip == 0 && viewMip != 0) Require(false, "depth view mip " + std::to_string(viewMip) + " on a surface without mips");
     if (maxMip != 0) {
         char message[320];
         std::snprintf(message, sizeof(message), "depth view mip %u of %u at %ux%u (DB_Z_INFO 0x%08x, DB_DEPTH_VIEW 0x%08x)", viewMip, maxMip + 1u, depth.extent.width, depth.extent.height, read(cx, 0x010), view);

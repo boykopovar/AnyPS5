@@ -2218,6 +2218,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
                     surface->ClearStale();
                     continue;
                 }
+                GuestMemory::CollectWritesUncached(plane, static_cast<std::size_t>(planeBytes));
                 surface->SyncFromMemory(resource);
                 auto units = scope == DepthPlaneScope::Whole ? surface->staleUnits : surface->StaleUnitsIn(planeBytes, address, end);
                 if (anyUnit(units)) {

@@ -263,6 +263,9 @@ int main() {
 #ifdef _WIN32
     Require(futimes_nid_postfix(pipe[0], first) == -1 && *__error_nid_postfix() == 22, "pipe timestamp update fails");
 #endif
+    const KernelTimeval invalidUsec[2] = {{first[0].tv_sec, -1}, {first[1].tv_sec, 0}};
+    Require(futimes_nid_postfix(pipe[0], invalidUsec) == -1 && *__error_nid_postfix() == 22, "negative usec rejected in futimes");
+    Require(futimes_nid_postfix(-1, first) == -1 && *__error_nid_postfix() == 9, "bad file descriptor in futimes");
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0, "close pipe");
     const auto throughFile = (root / "file.txt" / "child").string();
     for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix}) {

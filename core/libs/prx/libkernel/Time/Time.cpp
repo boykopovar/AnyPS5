@@ -19,6 +19,7 @@
 #include <cstring>
 #include <ctime>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -335,36 +336,56 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
 
 static void CancellableSleep(std::uint64_t nanos) {
     ThreadCancel::Check();
+    if (nanos <= SleepWake::MAX_WAKEABLE_NANOS) {
+        SleepWake::Sleep(nanos);
+    } else {
+        const auto now = TimedWait::NowNanos();
+        const auto deadline = now + std::min(nanos, std::numeric_limits<std::uint64_t>::max() - now);
+        std::mutex mutex;
+        TimedWait::Condition condition;
+        std::unique_lock lock(mutex);
+        while (!ThreadCancel::Requested() && TimedWait::NowNanos() < deadline) {
+            ThreadCancel::Wait(condition, lock, deadline);
+        }
+    }
+    ThreadCancel::Check();
+}
+
+static void SleepUntilComplete(std::uint64_t nanos) {
+    ThreadCancel::Check();
     SleepWake::Sleep(nanos);
     ThreadCancel::Check();
 }
 
 int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds) {
     TraceSleep(__builtin_return_address(0), microseconds);
-    CancellableSleep(static_cast<std::uint64_t>(microseconds) * 1000ULL);
+    SleepUntilComplete(static_cast<std::uint64_t>(microseconds) * 1000ULL);
     return 0;
 }
 
-static int SleepForRequest(const KernelTimespec* rqtp) {
+static int SleepForRequest(const KernelTimespec* rqtp, bool cancellable) {
     constexpr int guestFault = 14;
     constexpr int guestInvalid = 22;
     if (rqtp == nullptr) return guestFault;
     if (rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000LL) return guestInvalid;
     constexpr std::int64_t longestSleepSeconds = INT32_MAX / 2;
     if (rqtp->tv_sec >= 0) {
-        CancellableSleep(static_cast<std::uint64_t>(std::min(static_cast<std::int64_t>(rqtp->tv_sec), longestSleepSeconds)) * 1000000000ULL +
-                         static_cast<std::uint64_t>(rqtp->tv_nsec));
+        const auto nanos = static_cast<std::uint64_t>(
+                               std::min(static_cast<std::int64_t>(rqtp->tv_sec), longestSleepSeconds)) *
+                           1000000000ULL + static_cast<std::uint64_t>(rqtp->tv_nsec);
+        if (cancellable) CancellableSleep(nanos);
+        else SleepUntilComplete(nanos);
     }
     return 0;
 }
 
 int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
-    const int error = SleepForRequest(rqtp);
+    const int error = SleepForRequest(rqtp, false);
     return error == 0 ? 0 : SceKernelError(error);
 }
 
 int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
-    const int error = SleepForRequest(rqtp);
+    const int error = SleepForRequest(rqtp, true);
     if (error == 0) return 0;
     *__error_nid_postfix() = error;
     return -1;
@@ -849,7 +870,7 @@ std::int64_t APS5_VABI sceKernelGetCpuFrequency(void) {
 }
 
 unsigned int APS5_VABI sceKernelSleep(unsigned int seconds) {
-    CancellableSleep(static_cast<std::uint64_t>(seconds) * 1000000000ULL);
+    SleepUntilComplete(static_cast<std::uint64_t>(seconds) * 1000000000ULL);
     return 0;
 }
 

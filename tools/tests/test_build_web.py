@@ -233,5 +233,52 @@ class BuildWebCliTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class ReleaseMetadataTests(unittest.TestCase):
+    def test_malformed_api_responses_are_cli_errors_without_site_changes(self):
+        documents = ({}, [], None, {"tag_name": 1}, {"tag_name": "v1", "html_url": "url", "assets": None},
+                     {"tag_name": "v1", "html_url": "url", "assets": [None]},
+                     {"tag_name": "v1", "html_url": "url", "assets": [{"name": 1}]})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            web = root / "web"
+            web.mkdir()
+            preserved = web / "keep.txt"
+            preserved.write_bytes(b"previous site")
+            for document in documents:
+                with self.subTest(document=document):
+                    errors, output = io.StringIO(), io.StringIO()
+                    with patch.object(build_web, "request", return_value=io.BytesIO(json.dumps(document).encode())), contextlib.redirect_stderr(errors), contextlib.redirect_stdout(output):
+                        with self.assertRaises(SystemExit) as raised:
+                            build_web.main(["--build", str(root), "--release"])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertNotIn("Traceback", errors.getvalue())
+                    self.assertIn("release", errors.getvalue().lower())
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertEqual(preserved.read_bytes(), b"previous site")
+                    self.assertEqual(list(root.iterdir()), [web])
+                    self.assertEqual(list(web.iterdir()), [preserved])
+
+    def test_selected_asset_metadata_is_checked_before_any_download(self):
+        def asset(platform):
+            return {"name": f"prx-{platform}-v1.zip", "size": 10, "browser_download_url": "https://example.invalid/asset", "digest": None}
+        changes = [("size", x) for x in (True, 0, -1, 1.5, "10", 512*1024*1024+1)]
+        changes += [("browser_download_url", x) for x in (None, "", 1)]
+        changes += [("digest", x) for x in (False, 1, [])]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = root / "release.json"
+            existing.write_bytes(b"previous manifest")
+            for field, value in changes:
+                with self.subTest(field=field, value=value):
+                    windows, linux = asset("windows"), asset("linux")
+                    linux[field] = value
+                    release = {"tag_name": "v1", "html_url": "https://example.invalid/v1", "assets": [windows, linux]}
+                    with patch.object(build_web, "request", side_effect=AssertionError("download occurred before preflight")):
+                        with self.assertRaisesRegex(ValueError, "release asset"):
+                            build_web.publish_libraries(root, release)
+                    self.assertEqual(existing.read_bytes(), b"previous manifest")
+                    self.assertEqual(list(root.iterdir()), [existing])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1645,6 +1645,28 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(partial, {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx")
                                    for name, kind in kinds.items() if kind == "partial"})
 
+    def test_many_host_branches_only_fail_when_every_combination_must_be_read(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(9))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     "void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI sceStub(int value) { NotImplemented_nid_no_patch(__func__); return 0; }\n"
+                     f"int APS5_VABI sceHosts(int value) {{\n{blocks}    return value;\n}}\n"
+                     f"int APS5_VABI sceLastHost(int value) {{\n{blocks}#ifdef HOST_LAST\n    Fail();\n#endif\n    return value;\n}}\n"
+                     f"int APS5_VABI sceNestedHosts(int value) {{\n#ifdef HOST_OUTER\n{blocks}#else\n    Fail();\n#endif\n    return value;\n}}\n")
+        stubs, partial = import_audit.source_stub_classes(source)
+        stub, hosts, last, nested = (("libHosts.prx", nid_names.compute_nid(name))
+                                     for name in ("sceStub", "sceHosts", "sceLastHost", "sceNestedHosts"))
+        self.assertEqual(set(stubs), {stub, last, nested})
+        self.assertEqual(partial, {last, nested})
+        for every in (f"{blocks}    Fail();\n", f"#ifdef HOST_OUTER\n{blocks}#endif\n    Fail();\n"):
+            with self.subTest(every=every):
+                write_source(source, "libHosts",
+                             "void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
+                             f"int APS5_VABI sceEveryHost(int value) {{\n{every}    return value;\n}}\n")
+                with self.assertRaisesRegex(import_audit.AuditError, "more than 256 preprocessor branch combinations"):
+                    import_audit.source_stub_classes(source)
+
     def test_partial_import_is_its_own_class(self):
         direct, guarded = nid_names.compute_nid("sceDirect"), nid_names.compute_nid("sceGuarded")
         stubs = {("libA.prx", direct): "sceDirect", ("libA.prx", guarded): "sceGuarded", ("libB.prx", guarded): "sceGuarded"}

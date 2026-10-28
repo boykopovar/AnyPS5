@@ -1234,6 +1234,475 @@ void verifyTypeZeroImageMaterialization() {
                           atomic ? "TYPE=0 or 1 atomic image descriptor was accepted without hardware evidence" : "TYPE=0 or 1 writable image descriptor was accepted without hardware evidence");
         }
     }
+
+    std::vector<std::uint32_t> code{0xf40c0200u, 0xfa000000u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf4000400u, 0xfa000050u, 0xf4080a00u, 0xfa000080u, 0xbf8cc07fu, 0xf42c0814u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850008u};
+    for (std::uint32_t dword = 0; dword < 8u; dword++) {
+        code.push_back(0xbe800300u | ((8u + dword) << 16u) | (32u + dword));
+    }
+    code.insert(code.end(), {0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u});
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
+    static Texture textures[2];
+    const auto makeImage = [&](const Texture& texture, std::uint32_t extent) {
+        const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+        return std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (extent << 30u), extent << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+    };
+    const auto oldT = makeImage(textures[0], 3u);
+    const auto newT = makeImage(textures[1], 7u);
+    std::array<std::uint32_t, 4> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    alignas(4096) static std::array<std::uint32_t, 1024> srt{};
+    static const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x23001u, code, 0, {}};
+    request.context.waveSize = 32u;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+
+    static std::uint64_t syncBegin = 0;
+    static std::uint64_t syncEnd = 0;
+    static std::uint64_t scalarSyncWord = 0;
+    static std::uint64_t waits = 0;
+    static std::uint64_t rawFirstWords = 0;
+    static std::uint64_t scalarSyncHits = 0;
+    static bool spanAwareSync = true;
+    static bool flushed = false;
+    static std::array<std::uint32_t, 8> replacementT{};
+
+    struct FlushReset {
+        ~FlushReset() { AgcDriver::GuestMemory::SetFlushHook(nullptr); }
+    } flushReset;
+
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t address, std::size_t bytes) {
+        if (!flushed && address < syncEnd && syncBegin < address + bytes) {
+            flushed = true;
+            ++waits;
+            std::memcpy(srt.data(), replacementT.data(), sizeof(replacementT));
+        }
+    });
+
+    const auto pending = +[](std::uint64_t address, std::size_t bytes, std::span<std::byte>) -> AgcDriver::ShaderMemory::PendingWrite {
+        using Pending = AgcDriver::ShaderMemory::PendingWrite;
+        if (bytes >= 4096u) {
+            return address <= srtAddress && srtAddress < address + bytes ? Pending::Sync : Pending::None;
+        }
+        if (scalarSyncWord != 0u && address < scalarSyncWord + sizeof(std::uint32_t) && scalarSyncWord < address + bytes) {
+            ++scalarSyncHits;
+            return Pending::Sync;
+        }
+        if (flushed) return Pending::None;
+        if (spanAwareSync) {
+            if (address < syncEnd && syncBegin < address + bytes) return Pending::Sync;
+        } else {
+            if (address >= syncBegin && address < syncEnd) return Pending::Sync;
+        }
+        if (address >= srtAddress && address + bytes <= srtAddress + 32u) {
+            if (bytes == sizeof(std::uint32_t) && address < syncBegin) ++rawFirstWords;
+            return Pending::Raw;
+        }
+        return Pending::None;
+    };
+    const auto hookWaits = +[]() -> std::uint64_t { return waits; };
+
+    for (const int mode : {0, 1, 2}) {
+        const bool allRaw = mode == 0;
+        const bool primaryBarrier = mode == 1;
+        srt.fill(0u);
+        std::copy(oldT.begin(), oldT.end(), srt.begin());
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+        srt[20] = 1u;
+        syncBegin = allRaw ? srtAddress + 32u : srtAddress + 12u;
+        syncEnd = srtAddress + 32u;
+        scalarSyncWord = srtAddress + 84u;
+        waits = 0u;
+        rawFirstWords = 0u;
+        scalarSyncHits = 0u;
+        spanAwareSync = primaryBarrier;
+        flushed = false;
+        replacementT = newT;
+
+        AgcDriver::ShaderMemory memory({}, pending, nullptr, hookWaits);
+        const auto capture = memory.Capture(request);
+        require(scalarSyncHits == 0u, "descriptor pendingWrite barrier: a 4-byte scalar read widened its pendingWrite query into a neighbouring dword");
+        const bool holdsNew = std::ranges::any_of(capture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(newT.begin(), newT.end(), value.dwords.begin());
+        });
+        const bool holdsOld = std::ranges::any_of(capture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
+        });
+        if (allRaw) {
+            require(!flushed && waits == 0u && rawFirstWords == 8u && holdsOld && !holdsNew,
+                    "descriptor pendingWrite barrier: an all-Raw T# did not return the complete pre-sync T#");
+        } else {
+            require(flushed && waits == 1u, "descriptor pendingWrite barrier: the pending GPU write on the second half of T# was not flushed");
+            if (primaryBarrier) {
+                require(rawFirstWords == 0u, "descriptor pendingWrite primary barrier: leading T# dwords took PendingWrite::Raw despite a pending Sync in the 32-byte descriptor span");
+            } else {
+                require(rawFirstWords > 0u, "descriptor pendingWrite secondary barrier test setup did not exercise initial Raw dword reads before the GPU wait");
+            }
+            require(holdsNew && !holdsOld,
+                    primaryBarrier ? "descriptor pendingWrite primary barrier: capture returned a torn or stale T# instead of the complete post-sync T#"
+                                   : "descriptor pendingWrite secondary barrier: cached Raw dwords were not invalidated and re-read after the GPU wait");
+        }
+    }
+
+    static Texture extraTexture;
+    const auto thirdT = makeImage(extraTexture, 11u);
+    const auto makeTableV = [](const void* data, std::uint32_t stride, std::uint32_t numRecords) {
+        const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
+        return std::array<std::uint32_t, 4>{
+            static_cast<std::uint32_t>(base),
+            static_cast<std::uint32_t>((base >> 32u) & 0xffffu) | (stride << 16u),
+            numRecords,
+            stride == 0u ? 0x31016facu : 0x01016facu,
+        };
+    };
+    const std::vector<std::uint32_t> wholeTableCode{
+        0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u,
+        0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u,
+        0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u,
+    };
+    auto wideTableCode = wholeTableCode;
+    std::replace(wideTableCode.begin(), wideTableCode.end(), 0x8f108510u, 0x9310b010u);
+    const std::vector<std::uint32_t> indirectTableCode{
+        0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u,
+        0xf4080100u, 0xfa000030u, 0x7e200500u, 0x8f108210u, 0xf4200444u, 0x20000000u,
+        0x8711ff11u, 0x000000ffu, 0x8f128411u, 0xf4240b02u, 0x24000008u, 0xf4040b96u,
+        0xfa000010u, 0xf40c0917u, 0xfa000020u, 0xf09c0f08u, 0x01090000u, 0xe0700000u,
+        0x80070000u, 0xbf810000u,
+    };
+    alignas(4096) static std::array<std::uint32_t, 20> tableSrt{};
+    static std::array<std::array<std::uint32_t, 4>, 3> tableMaterials{};
+    static std::array<std::uint32_t, 4> tableOutput{};
+    const auto tableSrtAddr = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(tableSrt.data()));
+    const std::array<std::uint32_t, 2> tableUserData{static_cast<std::uint32_t>(tableSrtAddr), static_cast<std::uint32_t>(tableSrtAddr >> 32u)};
+    const auto inPageSrtAddr = srtAddress + 512u * sizeof(std::uint32_t);
+    const std::array<std::uint32_t, 2> inPageUserData{static_cast<std::uint32_t>(inPageSrtAddr), static_cast<std::uint32_t>(inPageSrtAddr >> 32u)};
+    const auto fillWholeSrt = [&](std::uint32_t* dst, const void* heap, std::uint32_t stride, std::uint32_t numRecords) {
+        const auto heapV = makeTableV(heap, stride, numRecords);
+        const auto matV = makeTableV(tableMaterials.data(), 16u, 3u);
+        const auto outV = makeTableV(tableOutput.data(), 0u, 16u);
+        std::fill_n(dst, 20u, 0u);
+        std::copy(heapV.begin(), heapV.end(), dst);
+        std::copy(matV.begin(), matV.end(), dst + 8u);
+        std::copy(outV.begin(), outV.end(), dst + 12u);
+    };
+    RecompileRequest tableReq = request;
+    tableReq.shader = {ShaderStage::Compute, 0x23010u, wholeTableCode, 0, {}};
+    tableReq.context.waveSize = 64u;
+    tableReq.context.userData = tableUserData;
+    tableReq.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    RecompileRequest wideTableReq = tableReq;
+    wideTableReq.shader = {ShaderStage::Compute, 0x23018u, wideTableCode, 0, {}};
+    wideTableReq.context.userData = inPageUserData;
+
+    static std::uint32_t phase = 0;
+    static std::array<std::uint32_t, 8> pendingT0{};
+    static std::array<std::uint32_t, 8> pendingT1{};
+    static std::array<std::uint32_t, 8> pendingT2{};
+    static std::uint64_t record0Addr = 0;
+    static std::uint64_t record1Addr = 0;
+    static std::uint64_t record2Addr = 0;
+
+    static std::uint32_t forcedHookCalls = 0;
+    static std::uint32_t srtRootReads = 0;
+    static std::uint64_t lastPendingAddr = 0;
+    static bool gateSecondWaitOnSrtRoot = false;
+
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t address, std::size_t bytes) {
+        if (phase == 1u && !flushed && address < syncEnd && syncBegin < address + bytes) {
+            flushed = true;
+            ++waits;
+            std::memcpy(reinterpret_cast<void*>(record0Addr), pendingT0.data(), sizeof(pendingT0));
+            if (record1Addr != 0u) std::memcpy(reinterpret_cast<void*>(record1Addr), pendingT1.data(), sizeof(pendingT1));
+        } else if (phase == 2u || phase == 3u) {
+            if (waits == 0u && address < record1Addr + 32u && record1Addr + 12u < address + bytes) {
+                ++waits;
+                std::memcpy(reinterpret_cast<void*>(record1Addr), pendingT1.data(), sizeof(pendingT1));
+            } else if ((waits == 1u || (phase == 3u && waits >= 1u)) && address < record2Addr + 32u && record2Addr + 12u < address + bytes) {
+                ++waits;
+                std::memcpy(reinterpret_cast<void*>(record0Addr), pendingT0.data(), sizeof(pendingT0));
+                std::memcpy(reinterpret_cast<void*>(record2Addr), pendingT2.data(), sizeof(pendingT2));
+            } else if (phase == 2u && waits == 2u && address < record0Addr + 32u && record0Addr < address + bytes) {
+                ++forcedHookCalls;
+            }
+        } else if (phase == 5u) {
+            ++waits;
+        }
+    });
+
+    const auto multiPending = +[](std::uint64_t address, std::size_t bytes, std::span<std::byte> known) -> AgcDriver::ShaderMemory::PendingWrite {
+        using Pending = AgcDriver::ShaderMemory::PendingWrite;
+        if (bytes >= 4096u) {
+            return address <= srtAddress && srtAddress < address + bytes ? Pending::Sync : Pending::None;
+        }
+        if (address != lastPendingAddr) {
+            lastPendingAddr = address;
+            if (address == srtAddress + 512u * sizeof(std::uint32_t) + 48u) {
+                ++srtRootReads;
+            }
+        }
+        if (phase == 0u || phase == 5u) return Pending::Raw;
+        if (phase == 4u) {
+            if (address >= record0Addr && address + bytes <= record0Addr + 32u) {
+                if (known.size() == bytes) {
+                    std::memcpy(known.data(), reinterpret_cast<const std::byte*>(pendingT0.data()) + (address - record0Addr), bytes);
+                }
+                return Pending::KnownValue;
+            }
+            return Pending::Raw;
+        }
+        if (phase == 1u) {
+            if (flushed) return Pending::None;
+            if (spanAwareSync) {
+                if (address < syncEnd && syncBegin < address + bytes) return Pending::Sync;
+            } else {
+                if (address >= syncBegin && address < syncEnd) return Pending::Sync;
+            }
+            return Pending::Raw;
+        }
+        if (waits == 0u) {
+            if (address >= record1Addr + 12u && address < record1Addr + 32u && bytes == sizeof(std::uint32_t)) return Pending::Sync;
+            return Pending::Raw;
+        }
+        if (waits == 1u || (phase == 3u && waits >= 1u)) {
+            if (address >= record1Addr && address + bytes <= record1Addr + 32u) return Pending::None;
+            if ((!gateSecondWaitOnSrtRoot || srtRootReads >= 2u) && address >= record2Addr + 12u && address < record2Addr + 32u && bytes == sizeof(std::uint32_t)) return Pending::Sync;
+            return Pending::Raw;
+        }
+        if (phase == 2u && waits == 2u) {
+            if (gateSecondWaitOnSrtRoot &&
+                ((srtRootReads == 3u && address == srtAddress + 512u * sizeof(std::uint32_t) + 56u) ||
+                 (srtRootReads == 4u && address == srtAddress + 512u * sizeof(std::uint32_t) + 60u))) {
+                return Pending::Sync;
+            }
+            if ((gateSecondWaitOnSrtRoot && address >= srtAddress + 512u * sizeof(std::uint32_t) + 48u && address < srtAddress + 512u * sizeof(std::uint32_t) + 64u) ||
+                (address < record0Addr + 32u && record0Addr < address + bytes)) {
+                return Pending::Raw;
+            }
+        }
+        return Pending::None;
+    };
+
+    srt.fill(0u);
+    std::copy(oldT.begin(), oldT.end(), srt.begin());
+    std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+    srt[20] = 1u;
+    phase = 0u;
+    waits = 0u;
+    flushed = false;
+    record0Addr = srtAddress;
+    record1Addr = 0u;
+    pendingT0 = thirdT;
+    {
+        AgcDriver::ShaderMemory knownTransitionMemory({}, multiPending, nullptr, hookWaits);
+        const auto rawCapture = knownTransitionMemory.Capture(request);
+        require(!flushed && waits == 0u && std::ranges::any_of(rawCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
+        }), "raw-to-known descriptor transition: initial Raw capture did not cache oldT");
+        phase = 4u;
+        const auto knownCapture = knownTransitionMemory.Capture(request);
+        require(!flushed && waits == 0u && std::ranges::any_of(knownCapture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(thirdT.begin(), thirdT.end(), value.dwords.begin());
+        }), "raw-to-known descriptor transition: cached Raw descriptor was not invalidated and replaced by KnownValue");
+    }
+
+    for (std::uint32_t record = 0; record < 128u; ++record) {
+        std::copy(oldT.begin(), oldT.end(), srt.begin() + record * 8u);
+    }
+    fillWholeSrt(tableSrt.data(), srt.data(), 32u, 128u);
+    phase = 0u;
+    waits = 0u;
+    flushed = false;
+    record0Addr = srtAddress;
+    record1Addr = 0u;
+    pendingT0 = thirdT;
+    {
+        AgcDriver::ShaderMemory fullPageMemory({}, multiPending, nullptr, hookWaits);
+        const auto initialCapture = fullPageMemory.Capture(tableReq);
+        const auto& initialCol = initialCapture->snapshot.tables.tables.at(0);
+        require(initialCol.keys == 128u && initialCol.words.at(initialCol.codes.at(0)).dwords == oldT,
+                "full raw page readWords test: initial raw capture did not populate the table with oldT");
+        phase = 4u;
+        const auto knownCapture = fullPageMemory.Capture(tableReq);
+        const auto& knownCol = knownCapture->snapshot.tables.tables.at(0);
+        require(!flushed && waits == 0u && knownCol.words.at(knownCol.codes.at(0)).dwords == thirdT,
+                "full raw page readWords: cached Raw descriptor words did not consume KnownValue replacement");
+        phase = 1u;
+        pendingT0 = newT;
+        spanAwareSync = true;
+        syncBegin = srtAddress + 12u;
+        syncEnd = srtAddress + 32u;
+        const auto updatedCapture = fullPageMemory.Capture(tableReq);
+        const auto& updatedCol = updatedCapture->snapshot.tables.tables.at(0);
+        require(flushed && waits == 1u && updatedCol.words.at(updatedCol.codes.at(0)).dwords == newT,
+                "full raw page readWords: readWords() bypassed pendingWrite policy on a fully cached wordwise page");
+    }
+
+    for (const bool spanSync : {false, true}) {
+        std::fill(srt.begin(), srt.end(), 0u);
+        std::copy(oldT.begin(), oldT.end(), srt.begin());
+        std::copy(oldT.begin(), oldT.end(), srt.begin() + 12u);
+        fillWholeSrt(srt.data() + 512u, srt.data(), 48u, 2u);
+        phase = 1u;
+        waits = 0u;
+        flushed = false;
+        spanAwareSync = spanSync;
+        record0Addr = srtAddress;
+        record1Addr = srtAddress + 48u;
+        syncBegin = record1Addr + 12u;
+        syncEnd = record1Addr + 32u;
+        pendingT0 = newT;
+        pendingT1 = thirdT;
+        AgcDriver::ShaderMemory multiRunMemory({}, multiPending, nullptr, hookWaits);
+        const auto multiRunCapture = multiRunMemory.Capture(wideTableReq);
+        const auto& col = multiRunCapture->snapshot.tables.tables.at(0);
+        require(flushed && waits == 1u && col.keys == 2u, "multi-run table wait: second run did not flush");
+        require(col.words.at(col.codes.at(0)).dwords == newT && col.words.at(col.codes.at(1)).dwords == thirdT,
+                "multi-run table wait: a GPU wait on a later run did not rebuild descriptors from an earlier run");
+    }
+
+    {
+        alignas(4096) static std::array<std::uint32_t, 16> indRoot{};
+        alignas(4096) static std::array<std::uint32_t, 8> indRecords{};
+        alignas(4096) static std::array<std::array<std::uint32_t, 8>, 2> indLinks{};
+        static std::array<std::uint32_t, 8> indKeys{};
+        const auto ptrAddr = [](const void* p) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(p)); };
+        const auto storePtr = [](std::uint32_t* at, std::uint64_t pointer) {
+            at[0] = static_cast<std::uint32_t>(pointer);
+            at[1] = static_cast<std::uint32_t>(pointer >> 32u);
+        };
+        std::fill(srt.begin(), srt.end(), 0u);
+        std::copy(oldT.begin(), oldT.end(), srt.begin() + 8u);
+        std::copy(oldT.begin(), oldT.end(), srt.begin() + 24u);
+        storePtr(indRecords.data() + 2u, ptrAddr(indLinks[0].data()));
+        storePtr(indRecords.data() + 6u, ptrAddr(indLinks[1].data()));
+        storePtr(indLinks[0].data() + 4u, srtAddress);
+        storePtr(indLinks[1].data() + 4u, srtAddress + 64u);
+        const auto keysV = makeTableV(indKeys.data(), 0u, static_cast<std::uint32_t>(sizeof(indKeys)));
+        const auto outV = makeTableV(tableOutput.data(), 0u, static_cast<std::uint32_t>(sizeof(tableOutput)));
+        const auto recsV = makeTableV(indRecords.data(), 0u, static_cast<std::uint32_t>(sizeof(indRecords)));
+        indRoot.fill(0u);
+        std::copy(keysV.begin(), keysV.end(), indRoot.begin());
+        std::copy(outV.begin(), outV.end(), indRoot.begin() + 4u);
+        std::copy(recsV.begin(), recsV.end(), indRoot.begin() + 12u);
+        const std::array<std::uint32_t, 2> indUserData{static_cast<std::uint32_t>(ptrAddr(indRoot.data())), static_cast<std::uint32_t>(ptrAddr(indRoot.data()) >> 32u)};
+        RecompileRequest indReq = tableReq;
+        indReq.shader = {ShaderStage::Compute, 0x23020u, indirectTableCode, 0, {}};
+        indReq.context.userData = indUserData;
+        phase = 1u;
+        waits = 0u;
+        flushed = false;
+        spanAwareSync = false;
+        record0Addr = srtAddress + 32u;
+        record1Addr = srtAddress + 96u;
+        syncBegin = record1Addr + 12u;
+        syncEnd = record1Addr + 32u;
+        pendingT0 = newT;
+        pendingT1 = thirdT;
+        AgcDriver::ShaderMemory indirectMemory({}, multiPending, nullptr, hookWaits);
+        const auto indCapture = indirectMemory.Capture(indReq);
+        const auto& col = indCapture->snapshot.tables.tables.at(0);
+        require(flushed && waits == 1u && col.keys == 2u, "indirect table wait: second record did not flush");
+        require(col.words.at(col.codes.at(0)).dwords == newT && col.words.at(col.codes.at(1)).dwords == thirdT,
+                "indirect table wait: a GPU wait on a later indirect record did not rebuild an earlier record");
+    }
+
+    const auto postForcedSrtAddr = srtAddress + 256u * sizeof(std::uint32_t);
+    const std::array<std::uint32_t, 2> postForcedUserData{static_cast<std::uint32_t>(postForcedSrtAddr), static_cast<std::uint32_t>(postForcedSrtAddr >> 32u)};
+    RecompileRequest postForcedReq = request;
+    postForcedReq.context.userData = postForcedUserData;
+
+    for (const int mode : {0, 1, 2}) {
+        const bool stridedRuns = mode != 0;
+        gateSecondWaitOnSrtRoot = mode == 2;
+        const std::uint32_t stride = stridedRuns ? 48u : 32u;
+        const std::size_t stepWords = stride / sizeof(std::uint32_t);
+        std::fill(srt.begin(), srt.end(), 0u);
+        std::copy(oldT.begin(), oldT.end(), srt.begin());
+        std::copy(oldT.begin(), oldT.end(), srt.begin() + stepWords);
+        std::copy(oldT.begin(), oldT.end(), srt.begin() + 2u * stepWords);
+        std::copy(oldT.begin(), oldT.end(), srt.begin() + 256u);
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 256u + 16u);
+        srt[256u + 20u] = 1u;
+        fillWholeSrt(srt.data() + 512u, srt.data(), stride, 3u);
+        RecompileRequest twoWaitReq = stridedRuns ? wideTableReq : tableReq;
+        twoWaitReq.context.userData = inPageUserData;
+        phase = 2u;
+        waits = 0u;
+        forcedHookCalls = 0u;
+        srtRootReads = 0u;
+        lastPendingAddr = 0u;
+        flushed = false;
+        record0Addr = srtAddress;
+        record1Addr = srtAddress + stride;
+        record2Addr = srtAddress + 2u * stride;
+        pendingT0 = newT;
+        pendingT1 = thirdT;
+        pendingT2 = newT;
+        AgcDriver::ShaderMemory twoWaitMemory({}, multiPending, nullptr, hookWaits);
+        const auto twoWaitCapture = twoWaitMemory.Capture(twoWaitReq);
+        const auto& col = twoWaitCapture->snapshot.tables.tables.at(0);
+        require(waits == 2u && forcedHookCalls == 15u && (!gateSecondWaitOnSrtRoot || srtRootReads == 5u) && col.keys == 3u,
+                "multi-wait readWords: forced third attempt did not execute or nested forceSync scope was not preserved");
+        require(col.words.at(col.codes.at(0)).dwords == newT && col.words.at(col.codes.at(1)).dwords == thirdT && col.words.at(col.codes.at(2)).dwords == newT,
+                "multi-wait readWords: retry pass accepted an unstable epoch after a second invalidation");
+        phase = 5u;
+        waits = 0u;
+        forcedHookCalls = 0u;
+        const auto normalAfterForced = twoWaitMemory.Capture(postForcedReq);
+        const auto cachedAfterForced = twoWaitMemory.Capture(postForcedReq);
+        require(waits == 0u && forcedHookCalls == 0u && std::ranges::any_of(normalAfterForced->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
+        }) && std::ranges::any_of(cachedAfterForced->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
+        }), "forced pass scope: a normal pass over Raw words after a forced third attempt waited on the hook or bumped rawInvalidations");
+
+        std::fill(srt.begin(), srt.end(), 0u);
+        std::copy(oldT.begin(), oldT.end(), srt.begin());
+        std::copy(oldT.begin(), oldT.end(), srt.begin() + stepWords);
+        std::copy(oldT.begin(), oldT.end(), srt.begin() + 2u * stepWords);
+        std::copy(oldT.begin(), oldT.end(), srt.begin() + 256u);
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 256u + 16u);
+        srt[256u + 20u] = 1u;
+        fillWholeSrt(srt.data() + 512u, srt.data(), stride, 3u);
+        phase = 3u;
+        waits = 0u;
+        forcedHookCalls = 0u;
+        srtRootReads = 0u;
+        lastPendingAddr = 0u;
+        flushed = false;
+        AgcDriver::ShaderMemory unstableMemory({}, multiPending, nullptr, hookWaits);
+        bool refused = false;
+        try {
+            static_cast<void>(unstableMemory.Capture(twoWaitReq));
+        } catch (const std::runtime_error&) {
+            refused = true;
+        }
+        require(refused && waits >= 3u, "unstable epoch refusal: capture succeeded despite invalidation on every retry attempt");
+        phase = 5u;
+        waits = 0u;
+        forcedHookCalls = 0u;
+        const auto normalAfterUnstable = unstableMemory.Capture(postForcedReq);
+        require(waits == 0u && forcedHookCalls == 0u && std::ranges::any_of(normalAfterUnstable->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(oldT.begin(), oldT.end(), value.dwords.begin());
+        }), "forced pass exception scope: a normal pass over Raw words after a throwing forced attempt waited on the hook or bumped rawInvalidations");
+    }
+    gateSecondWaitOnSrtRoot = false;
 }
 
 void verifyOutOfRangeConstantReads() {

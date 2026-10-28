@@ -226,6 +226,12 @@ int APS5_VABI __popcountti2_nid_postfix(Uint128 value) {
     return std::popcount(High(value)) + std::popcount(Low(value));
 }
 
+std::uint32_t APS5_VABI stdc_count_ones_uc_nid_postfix(std::uint8_t value) { return std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_ones_us_nid_postfix(std::uint16_t value) { return std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_ones_ui_nid_postfix(std::uint32_t value) { return std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_ones_ul_nid_postfix(std::uint64_t value) { return std::popcount(value); }
+std::uint32_t APS5_VABI stdc_count_ones_ull_nid_postfix(std::uint64_t value) { return std::popcount(value); }
+
 int APS5_VABI __cmpdi2_nid_postfix(std::int64_t a, std::int64_t b) { return Compare(a, b); }
 int APS5_VABI __cmpti2_nid_postfix(Int128 a, Int128 b) { return Compare(a, b); }
 int APS5_VABI __ucmpdi2_nid_postfix(std::uint64_t a, std::uint64_t b) { return Compare(a, b); }

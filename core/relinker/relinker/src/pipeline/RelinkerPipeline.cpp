@@ -5,6 +5,7 @@
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <algorithm>
+#include <iterator>
 #include <sstream>
 
 #include <cstring>
@@ -12,6 +13,7 @@
 #include <tuple>
 #include <utility>
 #include <domain/ImportModule.hpp>
+#include <relinker/parsing/RelrRelocations.hpp>
 
 namespace Relinker {
 
@@ -232,8 +234,6 @@ RelinkResult RelinkerPipeline::Relink() {
 
     if (hasTag(DT_REL) || hasTag(DT_RELSZ) || hasTag(DT_RELENT))
         throw RelinkerException("DT_REL relocations are not supported");
-    if (hasTag(DT_RELR) || hasTag(DT_RELRSZ) || hasTag(DT_RELRENT))
-        throw RelinkerException("DT_RELR relocations are not supported");
 
     const bool hasRelaTable = hasTag(DT_OS_RELA) || hasTag(DT_RELA)
         || hasTag(DT_OS_RELASZ) || hasTag(DT_RELASZ);
@@ -261,6 +261,7 @@ RelinkResult RelinkerPipeline::Relink() {
     std::vector<std::string> neededLibraries;
 
     const std::vector<std::uint8_t>& raw = elfReader->GetRawBytes();
+    const auto relrRelocations = ReadRelrRelocations(raw, programHeaders, dynTags);
     const std::optional<ByteCount> dynSymTabSize = hasTag(DT_OS_SYMTABSZ)
         ? std::optional<ByteCount>(getTagValue(DT_OS_SYMTABSZ)) : std::nullopt;
 
@@ -373,6 +374,13 @@ RelinkResult RelinkerPipeline::Relink() {
 
             const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
             const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
+
+            if (relType != R_X86_64_NONE && !relrRelocations.empty()) {
+                const auto nextRelr = relrRelocations.lower_bound(rOffset);
+                if ((nextRelr != relrRelocations.end() && nextRelr->first - rOffset < 8)
+                    || (nextRelr != relrRelocations.begin() && rOffset - std::prev(nextRelr)->first < 8))
+                    throw RelinkerException("RELR target overlaps RELA relocation", rOffset);
+            }
 
             validationPolicy->ValidateRelocationTypeSupported(relType, pos);
 
@@ -617,6 +625,8 @@ RelinkResult RelinkerPipeline::Relink() {
 
     extractLocal(dynRelaOffset, dynRelaSize, false);
     extractLocal(dynJmpRelOffset, dynJmpRelSize, true);
+    for (const auto& [target, addend] : relrRelocations)
+        appendRela(dynSection.RelaData, target, R_X86_64_RELATIVE, static_cast<std::int64_t>(addend));
 
     std::vector<CallRegistryEntry> entries;
     entries.reserve(nidRefs.size());

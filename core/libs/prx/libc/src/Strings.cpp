@@ -425,6 +425,10 @@ unsigned long long APS5_VABI strtoull_nid_postfix(const char* str, char** endptr
     return ParseInteger<unsigned long long>(str, endptr, base, std::strtoull);
 }
 
+long long APS5_VABI strtoq_nid_postfix(const char* str, char** endptr, int base) {
+    return strtoll_nid_postfix(str, endptr, base);
+}
+
 unsigned long long APS5_VABI strtouq_nid_postfix(const char* str, char** endptr, int base) {
     return strtoull_nid_postfix(str, endptr, base);
 }

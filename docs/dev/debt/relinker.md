@@ -2,6 +2,8 @@
 
 ### Functional
 
+- [Packed relative relocations](../../../core/relinker/relinker/src/parsing/RelrRelocations.cpp) require the table to fit in one file-backed PT_LOAD segment and each 8-byte storage unit to fit in one load segment. Units spanning load segments, overlapping RELR units and overlaps with RELA relocations are rejected; relocation composition is not implemented.
+
 - The [syscall scanner](../../../core/relinker/relinker/src/analysis/SyscallScanner.cpp) decodes executable ranges linearly without code/data boundaries. Embedded data between routines can fail decoding or be reported as a forbidden syscall ([#7547](https://github.com/boykopovar/AnyPS5/issues/7547)). Unwind ranges alone omit real code. The [synthetic fixture](../../../core/relinker/relinker/tests/CodeDataScanningTests.cpp) characterizes these rejections and checks a reachable routine beyond the gap; it does not resolve the boundary problem.
 
 - [Executable guest imports](../../../core/relinker/relinker/src/guest/GuestModuleBuilder.cpp) - on Linux and macOS, a relocated executable import resolved to one guest provider requires that module and its dependencies at startup, even when it was discovered through `--module-dir` without a DT_NEEDED entry. Unreferenced symbols and no-op relocations do not require an otherwise deferred module. Console module-start ordering is unmeasured.

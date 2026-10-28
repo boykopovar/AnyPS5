@@ -24,9 +24,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -139,6 +141,27 @@ int main(int argc, char** argv) {
         const Surface depth{base, 0, 0, false, VK_FORMAT_D32_SFLOAT, 0, 0, swizzle};
         const auto draw = [&](const Surface& surface, const DrawOptions& options) { return Draw(*device, shaders, surface, options, PlaneExtent, Colors); };
         const DrawOptions writeHalf{.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS};
+
+        if (argc == 2 && std::string_view(argv[1]) == "--cpu-write-after-memo") {
+            if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(base, PlaneBytes)) return VulkanTestSkipped;
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the memo regression depth draw did not cover the plane");
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            AgcDriver::GuestMemory::CollectWrites(base, PlaneBytes);
+            const auto vertexAddress = base + 2u * Block + 256u;
+            const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(vertexAddress), static_cast<std::uint32_t>((vertexAddress >> 32u) & 0xffffu) | (32u << 16u), 4u, 0x0004dfacu};
+            auto* table = reinterpret_cast<std::byte*>(plane) + 4u * Block + 4096u;
+            std::memcpy(table, descriptor.data(), sizeof(descriptor));
+            const auto stores = AgcDriver::Graphics::FlushDepthPlanes(base + 4u * Block + 128u, 192u);
+            device->WaitIdle();
+            Require(std::memcmp(table, descriptor.data(), sizeof(descriptor)) == 0, "a depth flush overwrote CPU descriptors written after a memoized collect");
+            Require(stores.empty(), "a depth flush stored the unit repurposed by the CPU");
+            Require(!ReadStart(*device, base).empty(), "preserving the CPU descriptors dropped an untouched depth unit");
+            RequireUnit(plane, 0, 0.5f, UnitTexels, "the untouched unit retains its GPU depth results");
+            Require(std::memcmp(table, descriptor.data(), sizeof(descriptor)) == 0, "storing an untouched depth unit changed the CPU descriptors");
+            std::puts("depth plane CPU descriptors after memoized collect tests passed");
+            return 0;
+        }
 
         Fill(plane, 1.0f);
         Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 did not cover the plane");

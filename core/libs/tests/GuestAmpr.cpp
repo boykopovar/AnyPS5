@@ -235,6 +235,7 @@ void TestKernelEventQueue() {
     Require(sceKernelAddAmprEvent(eq, 7, &userData) == 0);
     Recorder recorder;
     Require(sceAmprCommandBufferWriteKernelEventQueue_04_00(&recorder.buffer, static_cast<std::uint64_t>(eq), 7, 0x1234, 0) == 0);
+    RequireAppended(recorder, 0, 0, Apr::Opcode::WriteKernelEventQueue, sceAmprMeasureCommandSizeWriteKernelEventQueue_04_00(static_cast<std::uint64_t>(eq), 7, 0x1234));
     Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
     KernelEvent event{};
     int count = 0;
@@ -1374,6 +1375,26 @@ void TestAmmPrt() {
     Require(sceAmprAmmMeasureAmmCommandSizeAllocatePaForPrt(prt + 8, page, 0, cpuReadWrite) == ammRejected);
 }
 
+void TestWriteAddressCommand() {
+    Recorder recorder;
+    alignas(8) std::uint64_t target = 0;
+    const auto offset = recorder.Offset();
+    const auto commands = recorder.Commands();
+    Require(sceAmprCommandBufferWriteAddress_04_00(&recorder.buffer, &target, 0x1122334455667788ull, 0) == 0);
+    RequireAppended(recorder, offset, commands, Apr::Opcode::WriteAddress, sceAmprMeasureCommandSizeWriteAddress_04_00());
+    Apr::WriteAddressCommand command{};
+    std::memcpy(&command, recorder.memory.data() + offset, sizeof(command));
+    Require(command.address == reinterpret_cast<std::uint64_t>(&target) && command.value == 0x1122334455667788ull && command.flags == 0);
+    Require(sceAmprMeasureCommandSizeWriteAddress_04_00() == sizeof(Apr::WriteAddressCommand));
+    Require(sceAmprMeasureCommandSizeWriteKernelEventQueue_04_00(0, 0, 0) == sizeof(Apr::WriteKernelEventQueueCommand));
+    Require(sceAmprCommandBufferGetType(&recorder.buffer) == static_cast<std::uint32_t>(Apr::BufferType::Apr));
+    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
+    Require(target == 0x1122334455667788ull);
+    Apr::CommandBufferObject generic{};
+    Require(sceAmprCommandBufferConstructor(&generic) == 0);
+    Require(sceAmprCommandBufferGetType(&generic) == static_cast<std::uint32_t>(Apr::BufferType::Generic));
+}
+
 void TestKernelWriteCommands() {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
@@ -1467,6 +1488,7 @@ int main() {
     TestFullBuffer();
     TestOffsetPastBuffer();
     TestSubmission();
+    TestWriteAddressCommand();
     TestKernelEventQueue();
     TestWaits();
     TestWaitSatisfiedAfterSubmission();

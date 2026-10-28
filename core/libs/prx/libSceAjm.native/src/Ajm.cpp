@@ -633,6 +633,7 @@ std::size_t ResamplerHeld(const Instance& instance, std::size_t channels) {
     const auto& resampler = instance.resampler;
     if (resampler.frames.empty() || channels == 0) return 0;
     const std::size_t frames = resampler.frames.size() / channels;
+    if (resampler.position >= static_cast<double>(frames)) return 0;
     const auto next = static_cast<std::size_t>(resampler.position);
     return frames > next ? frames - next : 0;
 }
@@ -655,8 +656,8 @@ void ResamplerProduce(Instance& instance, PcmOutputs& outputs, std::size_t chann
     const std::size_t available = resampler.frames.size() / channels;
     std::vector<std::uint8_t> frame(frameBytes);
     while (outputs.Room() >= frameBytes) {
+        if (available <= 2 || resampler.position >= static_cast<double>(available - 2)) break;
         const auto index = static_cast<std::size_t>(resampler.position);
-        if (index + 2 >= available) break;
         const double t = resampler.position - static_cast<double>(index);
         for (std::size_t channel = 0; channel < channels; ++channel) {
             const double p0 = resampler.frames[(index - 1) * channels + channel];
@@ -671,7 +672,7 @@ void ResamplerProduce(Instance& instance, PcmOutputs& outputs, std::size_t chann
             resampler.ratio = std::max(0.0f, resampler.ratio + resampler.change);
         }
     }
-    const auto index = std::min(static_cast<std::size_t>(resampler.position), available);
+    const auto index = resampler.position >= static_cast<double>(available) ? available : static_cast<std::size_t>(resampler.position);
     if (index > 1) {
         resampler.frames.erase(resampler.frames.begin(), resampler.frames.begin() + static_cast<std::ptrdiff_t>((index - 1) * channels));
         resampler.position -= static_cast<double>(index - 1);

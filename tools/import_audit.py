@@ -535,23 +535,39 @@ def branch_variants(body):
         raise AuditError("#if without a matching #endif")
     root.append(body[position:])
 
-    def expand(items):
-        variants = [""]
-        for item in items:
-            if isinstance(item, str):
-                variants = [variant + item for variant in variants]
-                continue
-            choices = [choice for alternative in item["alternatives"] for choice in expand(alternative)]
-            variants = [variant + choice for variant in variants for choice in choices]
-            if len(variants) > BRANCH_VARIANT_LIMIT:
-                raise AuditError(f"more than {BRANCH_VARIANT_LIMIT} preprocessor branch combinations in one function")
-        return variants
+    def choices(item):
+        if isinstance(item, str):
+            return iter((item,))
+        return (choice for alternative in item["alternatives"] for choice in expand(alternative))
 
-    return expand(root)
+    def expand(items):
+        iterators = [choices(item) for item in items]
+        values = [next(iterator) for iterator in iterators]
+        while True:
+            yield "".join(values)
+            index = len(items) - 1
+            while index >= 0:
+                try:
+                    values[index] = next(iterators[index])
+                    break
+                except StopIteration:
+                    iterators[index] = choices(items[index])
+                    values[index] = next(iterators[index])
+                    index -= 1
+            if index < 0:
+                return
+
+    def limited(variants):
+        for count, variant in enumerate(variants, 1):
+            if count > BRANCH_VARIANT_LIMIT:
+                raise AuditError(f"more than {BRANCH_VARIANT_LIMIT} preprocessor branch combinations in one function")
+            yield variant
+
+    return limited(expand(root))
 
 
 def variant_calls(body):
-    return [unconditional_calls(variant) for variant in branch_variants(body)]
+    return (unconditional_calls(variant) for variant in branch_variants(body))
 
 
 def unconditional_calls(body):

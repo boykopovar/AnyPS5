@@ -56,6 +56,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MaskedStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AndnLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CallSiteResolver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CodeInstructionCollector.cpp
@@ -250,6 +251,11 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include)
     add_test(NAME elf_reader_bounds COMMAND elf_reader_bounds_tests)
     set_tests_properties(elf_reader_bounds PROPERTIES TIMEOUT 20)
+
+    add_test_executable(relr_relocations_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/RelrRelocationTests.cpp)
+    target_link_libraries(relr_relocations_tests PRIVATE relinker_core)
+    add_test(NAME relr_relocations COMMAND relr_relocations_tests)
+    set_tests_properties(relr_relocations PROPERTIES TIMEOUT 20)
 
     add_test_executable(call_site_index_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/CallSiteIndexTests.cpp
@@ -584,6 +590,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_optional_plt.py $<TARGET_FILE:relinker>)
         add_test(NAME optional_rela COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_optional_rela.py $<TARGET_FILE:relinker>)
+        add_test(NAME relr_conversion COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_relr_relocations.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_relr_conversion COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_relr_relocations.py $<TARGET_FILE:relinker> guest)
+        set_tests_properties(relr_conversion guest_relr_conversion PROPERTIES TIMEOUT 20)
         add_test(NAME empty_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_empty_tls.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_tls_zero_fill COMMAND ${Python3_EXECUTABLE}
@@ -955,6 +966,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
     )
     target_sources(strict_nid_filter_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/ControlFlowGraph.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EntryPointCollector.cpp

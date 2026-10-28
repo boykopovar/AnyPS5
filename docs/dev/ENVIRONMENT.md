@@ -149,6 +149,8 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_DUMP_SCALE` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 4 | keeps every n-th pixel in each direction of a dumped frame (1 to 16384; any other value fails) |
 | `APS5_DUMP_SHADERS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | writes each prepared shader's request to shader_<address>.req |
 | `APS5_DUMP_STORAGE` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | selects storage textures to dump by hex address or WxHxL[:format] extent as storage_<address>_<n>.raw |
+| `APS5_DUMP_STORAGE_GATE` | path | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` | | with `APS5_DUMP_STORAGE`, waits for this path to exist and reads matching live images directly without guest writeback; at most eight addresses, 8 MiB linear storage per image; writes `storage_direct_<address>_<n>.raw` with the existing pitch, height and VkFormat header and first-mip pixels |
+| `APS5_TEST_DIRECT_READBACK` | set | `core/libs/prx/libSceAgcDriver/tests/execution/LayeredVolumeDraw.cpp` | | runs the clean-volume gated live-image readback regression in the layered volume execution test |
 | `APS5_DUMP_SUBMITS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/SubmissionCapture.cpp` |  | directory in which every submission is captured for replay |
 | `APS5_DUMP_TARGETS` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` | 0 | dumps the first n renders of each non-resident color target as target_<address>_<n>.raw in the working directory; a non-zero value also runs every draw synchronously, and in practice it needs APS5_NO_RESIDENT_TARGETS=1 |
 | `APS5_DUMP_TEXTURE` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | hex addresses or WxH extents whose sampled textures are dumped on each of their first 8 uploads as texture_<address>_<n>.raw |
@@ -556,6 +558,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_DISPLAY_INDEX` | integer | `core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp` | 0 | SDL display index used for the initial window size and centered position; invalid or unavailable indices fail window creation; selection does not guarantee the window will not activate |
 | `ANYPS5_FULLSCREEN` | presence | `core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp` |  | opens the display window fullscreen at the desktop resolution when set to a non-empty value other than 0; F11 still switches back |
 | `ANYPS5_INPUT_CONFIG` | string | `core/libs/prx/libSceVideoOut/src/InputMapping.cpp` |  | path of the input mapping file that binds host keys and mouse to guest pad actions |
 | `ANYPS5_REQUIRE_DISPLAY` | presence | `core/libs/prx/libSceVideoOut/tests/Flip.cpp` |  | makes video-out tests fail instead of skipping when no display or Vulkan device is available |
