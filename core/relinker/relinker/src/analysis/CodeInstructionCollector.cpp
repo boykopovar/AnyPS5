@@ -617,7 +617,7 @@ std::vector<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std:
         *entryRoots = std::move(roots);
         entryRoots->insert(dataTargets.begin(), dataTargets.end());
     }
-    return std::move(instructionList);
+    return instructionList;
 }
 
 }
