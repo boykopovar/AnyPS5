@@ -13,8 +13,52 @@
 namespace Cli {
 
 const char* Usage() {
-    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--trace-imports] [--windows-fixed-base <address>] [--linux-fixed-base <address>] [--macos-fixed-base <address>] [--skip-syscall-check | --trap-sdk-syscall-stubs] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... [--to-intel] [--to-rosetta] [--frame-red-zone] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] [--patches <file> | --no-patches] <input.elf> <output.elf>\n"
-           "       relinker --verify-patches <file> [--verify-output] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... <path>\n"
+    return "Usage: relinker [options] <input.elf> <output>\n"
+           "       relinker --verify-patches <file> [--verify-output] [options] <path>\n"
+           "\n"
+           "Output:\n"
+           "  --windows                      Produce a Windows PE executable.\n"
+           "  --macos                        Produce an x86-64 Mach-O executable; bundled modules become Mach-O libraries.\n"
+           "  --windows-diagnostics          Include startup dependency diagnostics. Requires --windows.\n"
+           "  --windows-gui                  Select the Windows GUI subsystem. Requires --windows.\n"
+           "  --to-intel                     Convert supported AMD-only instructions for Intel CPUs.\n"
+           "  --to-rosetta                   Convert as --to-intel and lower what Rosetta lacks too. Implies --to-intel.\n"
+           "  --frame-red-zone               Windows: give leaf functions a frame so an exception on a guest thread can unwind.\n"
+           "  --rpath <path>                 System library search path. Default: $ORIGIN/libs.\n"
+           "  --registry                     Write <output-stem>.registry.json beside the output.\n"
+           "  --autorun                      Run the output after conversion and print its exit code.\n"
+           "\n"
+           "Layout:\n"
+           "  --sce-module-path <path>       Parent of the module directories. Default: the input file's directory.\n"
+           "  --module-dir <dir>             Also relink the modules of this directory. Repeatable.\n"
+           "  --executable <path>            Also convert another executable of the title. Repeatable.\n"
+           "  --windows-fixed-base <address> Map the lowest load page at a fixed Windows address instead of 0x400000.\n"
+           "  --linux-fixed-base <address>   Load the Linux executable at a fixed address instead of 0x400000.\n"
+           "  --macos-fixed-base <address>   Map the lowest load page of the macOS executable at a fixed address.\n"
+           "\n"
+           "Patches:\n"
+           "  --patches <file>               Apply the byte patches of this file.\n"
+           "  --no-patches                   Do not apply patches or discover relinker-patches.toml.\n"
+           "  --verify-patches <file>        Check a patch file against <path> without writing anything.\n"
+           "  --verify-output                With --verify-patches, treat <path> as converted output.\n"
+           "\n"
+           "Imports:\n"
+           "  --trace-imports                Pass each function import through the libc.prx call tracer.\n"
+           "  unused-filter=0                Keep all imported NID references (default).\n"
+           "  unused-filter=1                Filter unused non-PLT imports; preserve PLT imports.\n"
+           "  unused-filter=2                Strict unused-import analysis; unsupported cases are an error.\n"
+           "\n"
+           "Deprecated:\n"
+           "  --skip-sce-module              Disable bundled module processing.\n"
+           "  --exclude-sce-module <file>    Exclude a bundled module by filename. Repeatable.\n"
+           "  --skip-syscall-check           Disable syscall scanning.\n"
+           "  --trap-sdk-syscall-stubs       Replace recognized SDK syscall stubs with a trap. For debugging only.\n"
+           "  --lazy-binding                 Deprecated. Enable lazy symbol binding instead of eager binding.\n"
+           "\n"
+           "Other:\n"
+           "  --help                         Print this help and exit with code 0.\n"
+           "  --version                      Print the build revision and exit with code 0.\n"
+           "  Exit codes: 0 success, help or version, 1 invalid arguments or a patch mismatch, 2 conversion failed.\n"
            "Example: relinker input.elf output.elf";
 }
 
@@ -60,6 +104,8 @@ Args ParseArgs(int argc, char* argv[]) {
         else if (arg.rfind("unused-filter=", 0) == 0) givenOptions.push_back("unused-filter=");
         if (arg == "--help") {
             args.showHelp = true;
+        } else if (arg == "--version") {
+            args.showVersion = true;
         } else if (arg == "--windows-fixed-base") {
             if (args.windowsFixedBase) throw std::runtime_error("--windows-fixed-base cannot be repeated");
             if (i + 1 >= argc || std::string(argv[i + 1]).empty() || std::string(argv[i + 1]).starts_with("--"))
@@ -213,7 +259,7 @@ Args ParseArgs(int argc, char* argv[]) {
     if (args.macosFixedBase && !args.toMacos)
         throw std::runtime_error("--macos-fixed-base requires --macos");
 
-    if (!args.showHelp && (args.inputPath.empty() || (!verifying && args.outputPath.empty())))
+    if (!args.showHelp && !args.showVersion && (args.inputPath.empty() || (!verifying && args.outputPath.empty())))
         throw std::runtime_error(Usage());
 
 

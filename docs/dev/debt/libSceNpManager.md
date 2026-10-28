@@ -3,6 +3,9 @@
 ### Silent stubs
 
 - [sceNpUnregisterPlusEventCallback](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - returns 0 whether or not a callback was registered, as `sceNpUnregisterPremiumEventCallback` does: `sceNpRegisterPlusEventCallback` keeps no callback, and a signed-out user gets no plus events
+- [sceNpNotifyPremiumFeature](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - returns 0 without reading its parameter block. Borderlands 4 (PPSA01494), Ghost of Tsushima (PPSA02225), MXGP 26 (PPSA30839) and Super Meat Boy 3D (PPSA31162) call it, and Metal Gear Solid 4 (PPSA18194) imports it
+- [sceNpSetNpTitleId](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - returns 0 and keeps neither its title ID nor the 128-byte block passed with it. Forspoken (PPSA03984) and Crimson Desert (PPSA25286) call it once each
+- [sceNpRegisterPremiumEventCallback, sceNpUnregisterPremiumEventCallback](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - registration returns `SCE_NP_ERROR_INVALID_ARGUMENT` for a null callback and otherwise returns 0 without keeping the callback or its user data, so it is never called. Unregistration returns 0. Metal Gear Solid 4 (PPSA18194) imports both
 
 ### Unknown function info
 

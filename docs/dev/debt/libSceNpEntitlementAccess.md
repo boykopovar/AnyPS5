@@ -1,5 +1,9 @@
 # libSceNpEntitlementAccess technical debt
 
+### Silent stubs
+
+- [sceNpEntitlementAccessInitialize](../../../core/libs/prx/libSceNpEntitlementAccess/Export.cpp) (libSceNpEntitlementAccess) - returns 0 without reading the init parameter or writing the boot parameter, so the boot parameter keeps what the caller put there. Both are 32 reserved bytes here, and PPSA01494 (at both of its calls), PPSA02225, PPSA03984, PPSA30839, PPSA31162 and PPSA34502 zero exactly 32 bytes of each right before the call. PPSA03984 and PPSA31162 test the result for a negative value. What the console writes into the boot parameter is unknown
+
 ### Unknown function info
 
 - [sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual, sceNpEntitlementAccessPollConsumableEntitlementInfo, sceNpEntitlementAccessRequestConsumableEntitlementInfo, sceNpEntitlementAccessRequestConsumeEntitlement](../../../core/libs/prx/libSceNpEntitlementAccess/Export.cpp) (libSceNpEntitlementAccess) - their names and NIDs are in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpEntitlementAccess.c), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim

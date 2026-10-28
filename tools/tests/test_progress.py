@@ -677,6 +677,31 @@ class ProgressTests(unittest.TestCase):
             self.assertIn(str(blocked), stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
 
+    def test_aliased_reports_are_refused_and_left_unchanged(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir()
+            first, second = output / "progress.json", output / "progress.html"
+            first.write_text("json report", encoding="utf-8")
+            try:
+                second.hardlink_to(first)
+            except OSError:
+                self.skipTest("hard links are not available")
+            others = {name: output / name for name in ("badge-libraries.svg", "badge-shaders.svg", "progress.svg")}
+            for name, path in others.items():
+                path.write_text(name, encoding="utf-8")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_main([str(output)], libraries, shaders)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("progress.json and progress.html", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertEqual(first.read_text(encoding="utf-8"), "json report")
+            self.assertEqual(second.read_text(encoding="utf-8"), "json report")
+            for name, path in others.items():
+                self.assertEqual(path.read_text(encoding="utf-8"), name)
+
     def test_root_must_be_a_source_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             empty = Path(directory) / "empty tree"

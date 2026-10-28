@@ -253,6 +253,10 @@ void TestDoubleHelpers() {
     CheckExp(0.0, 1.0, 2000, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_Exp scaled overflow");
     CheckExp(1842.0, 1.0, 0, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_Exp inside the positive cutoff overflows");
     CheckExp(-1842.0, 1.0, 0, 0.0, Zero, ERANGE, FE_UNDERFLOW | FE_INEXACT, "_Exp inside the negative cutoff underflows");
+    CheckExp(-0x1.a3ae147ae147bp+3, 1.0, 3, 0x1.0e6b5a0a65117p-16, Finite, 0, FE_INEXACT, "_Exp rounds a negative exponent as titles do");
+    CheckExp(-0x1.e1fae147ae148p+6, 2.0, 3, 0x1.1e838b63af9c1p-170, Finite, 0, FE_INEXACT, "_Exp rounds a scaled small result as titles do");
+    CheckExp(0x1.b073b645a1cacp+7, -1.0, -1, -0x1.edef67d6786cep+310, Finite, 0, FE_INEXACT, "_Exp rounds a large negative product as titles do");
+    CheckExp(0x1.5c523eb57b55fp-53, 2.0, 0, 0x1.0000000000001p+1, Finite, 0, FE_INEXACT, "_Exp evaluates arguments above half an epsilon");
 
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
@@ -340,6 +344,10 @@ void TestDoubleHelpers() {
     CheckFExp(0.0f, 1.0f, 200, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_FExp scaled overflow");
     CheckFExp(229.0f, 1.0f, 0, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_FExp inside the positive cutoff overflows");
     CheckFExp(-229.0f, 1.0f, 0, 0.0f, Zero, ERANGE, FE_UNDERFLOW | FE_INEXACT, "_FExp inside the negative cutoff underflows");
+    CheckFExp(-0x1.4fbe76p+0f, 1.0f, 3, 0x1.13e1bp+1f, Finite, 0, FE_INEXACT, "_FExp rounds a negative exponent as titles do");
+    CheckFExp(-0x1.fd4b92p+5f, 1.0f, -3, 0x1.1d1806p-95f, Finite, 0, FE_INEXACT, "_FExp rounds a scaled small result as titles do");
+    CheckFExp(0x1.5e147ap+4f, 2.0f, 3, 0x1.7b078cp+35f, Finite, 0, FE_INEXACT, "_FExp rounds a large product as titles do");
+    CheckFExp(0x1.0644b8p-24f, 0.25f, 2, 0x1.000002p+0f, Finite, 0, FE_INEXACT, "_FExp evaluates arguments above half an epsilon");
 
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);

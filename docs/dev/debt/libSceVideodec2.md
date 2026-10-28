@@ -2,6 +2,14 @@
 
 ### Unknown function info
 
+- [libSceVideodec2 additional exports](../../../core/libs/prx/libSceVideodec2/InventoryExports.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `sceVideodec2DecodeFirstSlice` | `4auo78aivlc` |
+| `sceVideodec2DecodeNextSlice` | `bGyBk6V09oM` |
+| `sceVideodec2SyncAllSlice` | `JjvhoNUnZT8` |
+
 - [sceVideodec2InitLibrary](../../../core/libs/prx/libSceVideodec2/Unimplemented.cpp) (libSceVideodec2) throws: the FFmpeg decoders this module creates need no library-level initialisation, and neither SharpProspero nor EVO-PLAYER-PS5 declares this call, so its arguments and result are unknown. A title imports it from this module
 - [sceVideodec2TermLibrary and eleven other exports](../../../core/libs/prx/libSceVideodec2/Unimplemented.cpp) (libSceVideodec2) - report that they are not implemented; what they do on the console is not known. The others are `QueryLibraryInfo`, `QueryDecoderInfo`, `MapMemory`, `MapDirectMemory`, `PresetDecoderConfigInfo` (plain, `Avc`, `Hevc`, `Vp9`), `CreateDecoderBid`, `CreateHevcDecoder` and `QueryHevcDecoderMemoryInfo`. They are exported so that a title which imports them with `sceVideodec2InitLibrary` and calls none of them directly loads. Only `sceVideodec2MapDirectMemory` has a known parameter list, `(decoder, memory)`, from [EVO-PLAYER-PS5's `sce_videodec2.h`](https://github.com/sainsaji/EVO-PLAYER-PS5/blob/9715f6ee9bf9b53461d6fdf9a2e11b4c48357783/projects/evoplayer/media/include/sce/sce_videodec2.h#L173); the others take none here
 

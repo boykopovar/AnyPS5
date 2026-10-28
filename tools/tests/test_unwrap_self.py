@@ -192,6 +192,19 @@ class UnwrapTest(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertFalse(output.exists())
 
+    def test_many_load_segments_over_one_range_are_refused_instead_of_exhausting_memory(self):
+        segments = [(PT_LOAD, 5, 0x100000, 0x400000 + index * 0x400000, 0x200000, 1) for index in range(200)]
+        container = build_container(segments, [], {0x100000: bytes(0x200000)})
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("bytes of output", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(output.exists())
+
     def test_write_failure_preserves_output_and_removes_temporary_files(self):
         directory = Path(self.directory)
         source = directory / "input.self"

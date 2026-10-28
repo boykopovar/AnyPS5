@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -547,30 +548,30 @@ int APS5_VABI sceFreeTypeOtUnknown_Az4H9FlfxCA_nid_no_patch() {
 }
 APS5_EXPORT("Az4H9FlfxCA", sceFreeTypeOtUnknown_Az4H9FlfxCA_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_xj3tNJptfLI_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerBeginSubPath_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("xj3tNJptfLI", sceFreeTypeOtUnknown_xj3tNJptfLI_nid_no_patch);
+APS5_EXPORT("xj3tNJptfLI", sceFreeTypeOtStrokerBeginSubPath_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_TPKhRt1QIeE_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerConicTo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("TPKhRt1QIeE", sceFreeTypeOtUnknown_TPKhRt1QIeE_nid_no_patch);
+APS5_EXPORT("TPKhRt1QIeE", sceFreeTypeOtStrokerConicTo_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_6_yXRlVrjbc_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerCubicTo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("6+yXRlVrjbc", sceFreeTypeOtUnknown_6_yXRlVrjbc_nid_no_patch);
+APS5_EXPORT("6+yXRlVrjbc", sceFreeTypeOtStrokerCubicTo_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown__RLa_6fbshA_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerDone_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("+RLa-6fbshA", sceFreeTypeOtUnknown__RLa_6fbshA_nid_no_patch);
+APS5_EXPORT("+RLa-6fbshA", sceFreeTypeOtStrokerDone_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_pBqh_Uh_gns_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerEndSubPath_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("pBqh-Uh-gns", sceFreeTypeOtUnknown_pBqh_Uh_gns_nid_no_patch);
+APS5_EXPORT("pBqh-Uh-gns", sceFreeTypeOtStrokerEndSubPath_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_2rcvKZfm5rI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -582,40 +583,40 @@ int APS5_VABI sceFreeTypeOtUnknown_7cIS2cFG3PE_nid_no_patch() {
 }
 APS5_EXPORT("7cIS2cFG3PE", sceFreeTypeOtUnknown_7cIS2cFG3PE_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_LfyUi_LkdCk_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerGetBorderCounts_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("LfyUi-LkdCk", sceFreeTypeOtUnknown_LfyUi_LkdCk_nid_no_patch);
+APS5_EXPORT("LfyUi-LkdCk", sceFreeTypeOtStrokerGetBorderCounts_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_rzIWh7FJnmU_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerGetCounts_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("rzIWh7FJnmU", sceFreeTypeOtUnknown_rzIWh7FJnmU_nid_no_patch);
+APS5_EXPORT("rzIWh7FJnmU", sceFreeTypeOtStrokerGetCounts_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_cKndiZnt0EA_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerLineTo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("cKndiZnt0EA", sceFreeTypeOtUnknown_cKndiZnt0EA_nid_no_patch);
+APS5_EXPORT("cKndiZnt0EA", sceFreeTypeOtStrokerLineTo_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_eqGCaeizvWM_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerNew_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("eqGCaeizvWM", sceFreeTypeOtUnknown_eqGCaeizvWM_nid_no_patch);
+APS5_EXPORT("eqGCaeizvWM", sceFreeTypeOtStrokerNew_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_RvFx7dv9ThU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("RvFx7dv9ThU", sceFreeTypeOtUnknown_RvFx7dv9ThU_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_Po8kyd3DlIw_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerRewind_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Po8kyd3DlIw", sceFreeTypeOtUnknown_Po8kyd3DlIw_nid_no_patch);
+APS5_EXPORT("Po8kyd3DlIw", sceFreeTypeOtStrokerRewind_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_B3uU5aDZn94_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtStrokerSet_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("B3uU5aDZn94", sceFreeTypeOtUnknown_B3uU5aDZn94_nid_no_patch);
+APS5_EXPORT("B3uU5aDZn94", sceFreeTypeOtStrokerSet_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtTan_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -672,15 +673,31 @@ int APS5_VABI sceFreeTypeOtVectorUnit_nid_no_patch() {
 }
 APS5_EXPORT("3WpTQrvGUcU", sceFreeTypeOtVectorUnit_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_P6WOAeb0lJ8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI ft_corner_is_flat_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y) {
+    const __int128 ax = static_cast<__int128>(in_x) + static_cast<__int128>(out_x);
+    const __int128 ay = static_cast<__int128>(in_y) + static_cast<__int128>(out_y);
+    const auto hypot = [](__int128 x, __int128 y) -> unsigned __int128 {
+        const auto ux = static_cast<unsigned __int128>(x < 0 ? -x : x);
+        const auto uy = static_cast<unsigned __int128>(y < 0 ? -y : y);
+        return ux > uy ? ux + ((3 * uy) >> 3) : uy + ((3 * ux) >> 3);
+    };
+    const auto inDist = hypot(in_x, in_y);
+    const auto outDist = hypot(out_x, out_y);
+    const auto hypotDist = hypot(ax, ay);
+    const auto sumDist = inDist + outDist;
+    if (sumDist < hypotDist) {
+        return 1;
+    }
+    return (sumDist - hypotDist) < (hypotDist >> 4) ? 1 : 0;
 }
-APS5_EXPORT("P6WOAeb0lJ8", sceFreeTypeOtUnknown_P6WOAeb0lJ8_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_XGVABnpNksQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y) {
+    const auto delta = static_cast<std::int64_t>(
+        static_cast<std::uint64_t>(in_x) * static_cast<std::uint64_t>(out_y) -
+        static_cast<std::uint64_t>(in_y) * static_cast<std::uint64_t>(out_x)
+    );
+    return (delta > 0) - (delta < 0);
 }
-APS5_EXPORT("XGVABnpNksQ", sceFreeTypeOtUnknown_XGVABnpNksQ_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_Ln9I6YfmYJU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

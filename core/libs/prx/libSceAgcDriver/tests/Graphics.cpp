@@ -31,6 +31,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include <limits>
 #include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #include <windows.h>
@@ -103,6 +104,7 @@ AgcDriver::QueueState makeState() {
     queue.context[0x114] = 0;
     queue.context[0xb4] = 0;
     queue.context[0xb5] = std::bit_cast<std::uint32_t>(1.0f);
+    queue.context[0x3] = 0;
     queue.shader[0x008] = 0x100;
     queue.shader[0x009] = 0;
     return queue;
@@ -313,6 +315,9 @@ void retainedPixelStageTests() {
         Require(!PixelProgramSkipped(queue), "an enabled high render target lost its pixel program");
         queue.context[0x8e] = queue.context[0x8f] = 0;
     }
+    queue.context[0x3] = 0;
+    queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.0f);
+    queue.context[0xb5] = std::bit_cast<std::uint32_t>(1.0f);
     queue.context[0x1b3] = queue.context[0x1b4] = 2;
     for (const auto [format, control] : {std::pair{1u, 1u}, std::pair{2u, 2u}, std::pair{9u, 0x100u}, std::pair{9u, 0x103u}}) {
         queue.context[0x1c4] = format;
@@ -322,6 +327,25 @@ void retainedPixelStageTests() {
         const auto pixel = DecodePixelStageInfo(queue.context, ExportMappings(state), PixelProgramSkipped(queue));
         Require(pixel.depthExportEnable == ((control & 1u) != 0) && pixel.stencilRefExportEnable == ((control & 2u) != 0) && pixel.sampleMaskExportEnable == ((control & 0x100u) != 0), "decoding lost an enabled pixel export");
     }
+    queue.context[0x1c4] = 1;
+    queue.context[0x203] = 1;
+    queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.25f);
+    queue.context[0xb5] = std::bit_cast<std::uint32_t>(0.75f);
+    const auto clampState = DecodeState(queue);
+    const auto clamped = DecodePixelStageInfo(queue.context, ExportMappings(clampState));
+    Require(clamped.depthExportEnable && clamped.depthExportMin == 0.25f && clamped.depthExportMax == 0.75f, "PA_SC_VPORT_ZMIN_0/ZMAX_0 did not become the exported depth clamp");
+    queue.context[0x3] = 0x10000;
+    const auto unclamped = DecodePixelStageInfo(queue.context, ExportMappings(clampState));
+    Require(unclamped.depthExportEnable && unclamped.depthExportMin == -std::numeric_limits<float>::infinity() && unclamped.depthExportMax == std::numeric_limits<float>::infinity(), "DB_RENDER_OVERRIDE.DISABLE_VIEWPORT_CLAMP did not leave the exported depth unclamped");
+    queue.context[0x3] = 0;
+    queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.9f);
+    expectFailure([&] { static_cast<void>(DecodePixelStageInfo(queue.context, ExportMappings(clampState))); }, "invalid viewport depth clamp bounds");
+    queue.context[0xb4] = std::bit_cast<std::uint32_t>(std::numeric_limits<float>::quiet_NaN());
+    expectFailure([&] { static_cast<void>(DecodePixelStageInfo(queue.context, ExportMappings(clampState))); }, "invalid viewport depth clamp bounds");
+    queue.context[0x1c4] = 0;
+    queue.context[0x203] = 0x10;
+    const auto notExporting = DecodePixelStageInfo(queue.context, ExportMappings(clampState));
+    Require(!notExporting.depthExportEnable && notExporting.depthExportMin == 0.0f && notExporting.depthExportMax == 1.0f, "a draw without depth export took the viewport depth clamp");
     queue.context[0x203] = 0;
     for (const auto alpha : {0xaa00u, 0xaa01u}) {
         queue.context[0x2dc] = alpha;
@@ -1898,7 +1922,8 @@ void DisabledColorTests() {
     const auto thirdSlice = AgcDriver::Graphics::DecodeState(queue);
     Require(thirdSlice.depth && thirdSlice.depth->firstSlice == 3 && thirdSlice.depth->address == depthOnly.depth->address + 3u * AgcDriver::Graphics::DepthSliceBytes(depthOnly.depth->extent, 4u), "a depth view of slice 3 lost its slice or its Z offset");
     queue.context[0x002] = 1u << 26u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "on a surface without mips");
+    const auto singleLevelMip = AgcDriver::Graphics::DecodeState(queue);
+    Require(singleLevelMip.depth && singleLevelMip.depth->address == depthOnly.depth->address && singleLevelMip.depth->extent.width == depthOnly.depth->extent.width && singleLevelMip.depth->extent.height == depthOnly.depth->extent.height, "a depth view mip on a single-level surface did not select its first level");
     queue.context[0x002] = 0;
     {
         using AgcDriver::Graphics::ComputeElementMipLayout;
@@ -4339,6 +4364,31 @@ void multisampleDccStateTests() {
         target.cmaskFastClear = true;
         expectFailure([&] { static_cast<void>(AgcDriver::Graphics::MultisampledDccClear(target, dcc, cmask)); }, "multisampled DCC CMASK compression or register clear");
     }
+    for (const auto samples : {2u, 4u, 8u}) {
+        for (const auto format : {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB}) {
+            for (const auto key : {0x00u, 0x40u, 0x80u, 0xc0u}) {
+                for (const auto alphaOnMsb : {false, true}) {
+                    AgcDriver::Graphics::ColorTarget target{};
+                    target.extent = {64, 64};
+                    target.format = format;
+                    target.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
+                    target.elementBytes = 4;
+                    target.samples = samples;
+                    target.dccAddress = 0x200000u;
+                    target.dccPipeAligned = true;
+                    target.dccAlphaOnMsb = alphaOnMsb;
+                    const std::vector<std::byte> dcc(AgcDriver::Graphics::MultisampledDccBytes(target), static_cast<std::byte>(key));
+                    const auto clear = AgcDriver::Graphics::MultisampledDccClear(target, dcc, {});
+                    const auto alpha = alphaOnMsb ? 3u : format == VK_FORMAT_B8G8R8A8_SRGB ? 2u : 0u;
+                    for (std::uint32_t channel = 0; channel < 4; ++channel) {
+                        const bool one = channel == alpha ? key == 0x40u || key == 0xc0u : key == 0x80u || key == 0xc0u;
+                        Require(clear.float32[channel] == static_cast<float>(one), "an sRGB multisampled DCC endpoint did not produce its exact linear clear value");
+                    }
+                }
+            }
+        }
+    }
+
 }
 
 void multisampledDepthTests() {
@@ -4727,6 +4777,17 @@ void DepthRemapTests() {
     floating.depthWrite = true;
     AgcDriver::Graphics::ApplyDepthRemap(remapping, floating);
     Require(floating.depthRemap.mode == 1 && floating.viewport.minDepth == 0 && floating.viewport.maxDepth == 1 && floating.depthClamp, "a written float depth target refused clipped clamp bounds");
+    auto tessellated = AgcDriver::Graphics::DecodeState(queue);
+    tessellated.stages.path = AgcDriver::Graphics::ShaderPath::Tessellation;
+    tessellated.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3u, 3u, 1u, 2u, 2u};
+    auto nativeTessellation = tessellated;
+    AgcDriver::Graphics::ApplyDepthRemap(unrestricted, nativeTessellation);
+    Require(nativeTessellation.depthRemap.mode == 0 && nativeTessellation.viewport.minDepth == -0.5f && nativeTessellation.viewport.maxDepth == 1.5f, "an unrestricted tessellation draw was remapped");
+    AgcDriver::Graphics::ApplyDepthRemap(remapping, tessellated);
+    Require(tessellated.depthRemap.mode == 1 && tessellated.depthRemap.scale == 2.0f && tessellated.depthRemap.offset == -0.5f && tessellated.depthClamp, "a tessellation draw did not remap its depth range");
+    auto combined = nativeTessellation;
+    combined.stages.mesh = ShaderRecompiler::MeshConfiguration{};
+    expectFailure([&] { AgcDriver::Graphics::ApplyDepthRemap(remapping, combined); }, "vertex and tessellation paths only");
 }
 
 void DepthBoundsEmulationTests() {
@@ -8456,7 +8517,7 @@ void barycentricEmulationTests() {
     for (std::uint32_t location = 0; location < 11u; ++location) crowded.push_back({location, location, false, true});
     expectFailure([&] { static_cast<void>(LayoutBarycentricEmulation(crowded, {true, false, false})); }, "exceed 32 locations");
 
-    const auto compile = [&](std::span<const std::uint32_t> code, bool barycentric, std::uint32_t secondInput = 0xffffffffu) {
+    const auto compile = [&](std::span<const std::uint32_t> code, bool barycentric, std::uint32_t secondInput = 0xffffffffu, bool builtins = false) {
         auto queue = makeState();
         queue.context[0x1b3] = 0x2u;
         queue.context[0x1b4] = 0x2u;
@@ -8471,6 +8532,7 @@ void barycentricEmulationTests() {
         request.target.spirvVersion = 0x00010300u;
         request.target.subgroupSize = 64;
         request.target.fragmentShaderBarycentricEnabled = barycentric;
+        request.target.fragmentBarycentricBuiltins = builtins;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
         return Recompile(request);
@@ -8518,6 +8580,15 @@ void barycentricEmulationTests() {
     static constexpr std::array<std::uint32_t, 6> sharedSlot{0xc8080000u, 0xc8090001u, 0xc80e0402u, 0xf800180fu, 0x03030202u, 0xbf810000u};
     const auto shared = compile(sharedSlot, false, 0x400u);
     Require(shared.barycentricEmulation.active && !barycentricCapability(shared), "inputs sharing a slot with different interpolation did not emulate per-vertex parameters");
+    static constexpr std::array<std::uint32_t, 5> interpolatesAndReadsIj{0xc8080000u, 0xc8090001u, 0xf800180fu, 0x02020100u, 0xbf810000u};
+    for (const auto& code : {std::span<const std::uint32_t>(readsIj), std::span<const std::uint32_t>(interpolatesAndReadsIj)}) {
+        const auto builtin = compile(code, false, 0xffffffffu, true);
+        const auto builtinDecorations = decorations(builtin, spv::DecorationBuiltIn);
+        Require(!builtin.barycentricEmulation.active && barycentricCapability(builtin) && std::find(builtinDecorations.begin(), builtinDecorations.end(), static_cast<std::uint32_t>(spv::BuiltInBaryCoordKHR)) != builtinDecorations.end() && decorations(builtin, spv::DecorationPerVertexKHR).empty(), "reading the I/J VGPRs with barycentric built-ins did not use BaryCoordKHR");
+        Require(std::ranges::none_of(builtin.fragmentParameters, [](const FragmentParameter& parameter) { return parameter.perVertex; }), "barycentric built-ins made a parameter per-vertex");
+    }
+    Require(compile(interpolatesAndReadsIj, false).barycentricEmulation.active, "reading the I/J VGPRs next to v_interp_p1/p2 without the extension did not emulate barycentrics");
+    Require(compile(readsVertex, false, 0xffffffffu, true).barycentricEmulation.active, "v_interp_mov of P10 with only barycentric built-ins did not emulate per-vertex parameters");
     fragment = compile(readsVertex, false);
     Require(fragment.barycentricEmulation.active && !fragment.barycentricEmulation.smooth && fragment.fragmentParameters.size() == 1u && fragment.fragmentParameters[0].perVertex, "v_interp_mov of P10 did not emulate per-vertex parameters");
     Require(decorations(fragment, spv::DecorationLocation) == std::vector<std::uint32_t>{0u} && decorations(fragment, spv::DecorationPerVertexKHR).empty() && !decorations(fragment, spv::DecorationFlat).empty() && !barycentricCapability(fragment), "the emulated per-vertex parameter was not a flat array at the first free location");
@@ -11881,6 +11952,57 @@ void pipelineStoreGrowthTests(bool fixed) {
     Require(mock.live == 0, "pipeline store growth tests leaked Vulkan objects");
 }
 
+void pipelineStoreTouchTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 401;
+    fragment.variantId = 402;
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    std::array<std::uint32_t, 1> mainKey{51}, fragmentKey{52};
+    const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), makeHandle<VkDescriptorSetLayout>(), true, mainKey, fragmentKey};
+    const auto layout = [](std::uint32_t configuration) {
+        VertexInputLayout input;
+        input.bindings.push_back({0, 4u * (configuration + 1u), VK_VERTEX_INPUT_RATE_VERTEX});
+        return input;
+    };
+    std::uint64_t hash = 0;
+    std::weak_ptr<Pipeline> touched;
+    std::weak_ptr<Pipeline> other;
+    {
+        auto first = CachedPipeline(context, State{}, layout(0), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr, &hash);
+        Require(hash != 0, "a stored pipeline reported no store hash");
+        std::uint64_t secondHash = 0;
+        auto second = CachedPipeline(context, State{}, layout(1), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr, &secondHash);
+        Require(secondHash != 0 && secondHash != hash, "two configurations reported the same store hash");
+        touched = first;
+        other = second;
+        const auto hits = PipelineStoreTotals().hits;
+        Require(TouchCachedPipeline(context, hash, touched) == first && PipelineStoreTotals().hits == hits + 1, "touching a stored pipeline did not return it as a hit");
+        Require(TouchCachedPipeline(context, hash, other) == nullptr, "touching a hash with another pipeline returned the stored one");
+        Require(TouchCachedPipeline(context, hash, std::weak_ptr<Pipeline>{}) == nullptr, "touching a hash without a pipeline returned the stored one");
+    }
+    for (std::uint32_t configuration = 2; configuration < PipelineStoreTotals().bound; ++configuration) static_cast<void>(CachedPipeline(context, State{}, layout(configuration), resources, shaders));
+    Require(TouchCachedPipeline(context, hash, touched) != nullptr, "the first pipeline left a store that was not yet full");
+    bool created = false;
+    static_cast<void>(CachedPipeline(context, State{}, layout(PipelineStoreTotals().bound), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &created));
+    Require(created, "the configuration that fills the store was already stored");
+    static_cast<void>(CachedPipeline(context, State{}, layout(0), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &created));
+    Require(!created, "a touched pipeline was evicted as the least recently used one");
+    static_cast<void>(CachedPipeline(context, State{}, layout(1), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &created));
+    Require(created, "the least recently used pipeline stayed while a touched one was older");
+    ClearCachedPipelines(context.device);
+    Require(TouchCachedPipeline(context, hash, touched) == nullptr, "touching a pipeline of a cleared store returned it");
+    Require(mock.live == 0, "pipeline store touch tests leaked Vulkan objects");
+}
+
 // A journal longer than the store's starting bound: 1032 recorded pipelines replayed into an empty
 // store all stay resident (the replay grows the bound instead of dropping what does not fit).
 void pipelineStoreReplayGrowthTests() {
@@ -12396,6 +12518,11 @@ int main(int argc, char** argv) {
             std::cout << "pipeline store bound follows the evicted pipelines that come back\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-touch") {
+            pipelineStoreTouchTests();
+            std::cout << "a touched pipeline is returned as a hit and stays recently used\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-lazy-buffer-pool") {
             pipelineStoreLazyBufferPoolTests();
             std::cout << "cached pipelines survive lazy buffer pool creation\n";
@@ -12510,7 +12637,7 @@ int main(int argc, char** argv) {
 #else
             setenv("APS5_ADDRESS_COPY_MAX_MIB", "1", 1);
 #endif
-            {
+            for (const int frames : {0, 1, 2}) {
                 mock = MockVulkan{};
                 auto context = mockContext();
                 context.bufferDeviceAddress = true;
@@ -12525,9 +12652,9 @@ int main(int argc, char** argv) {
                     },
                     {},
                     {}
-                }, std::string_view(argv[1]) == "--address-copy-cap-remembered");
+                }, std::string_view(argv[1]) == "--address-copy-cap-remembered", frames);
+                Require(mock.live == 0, "the address copy cap test leaked Vulkan objects");
             }
-            Require(mock.live == 0, "the address copy cap test leaked Vulkan objects");
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--address-space-teardown") {
@@ -12807,6 +12934,7 @@ int main(int argc, char** argv) {
         Require(mock.live == 0, "BDA resources leaked Vulkan objects");
         RunGuestAllocationTests();
         RunUnmappedGapTests();
+        RunVanishedPageReadTests();
         RunColorTargetLayoutTests();
         RunLiveStackAccessTests();
         RunTextureFormatTests();

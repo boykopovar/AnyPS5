@@ -24,7 +24,7 @@ CPP_TOKEN = re.compile(
     r'|(?P<string>(?:u8|u|U|L)?"(?:\\[\s\S]|[^"\\])*")'
     r"|(?P<char>(?:u8|u|U|L)?'(?:\\[\s\S]|[^'\\])*')"
     r"|(?P<code>(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|[A-Za-z_][A-Za-z0-9_]*|\S)")
-DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:->\s*[^;{]+)?(?:try\s*)?\{")
 NID_POSTFIX = "_nid_postfix"
 ASM_FUNCTION_MACROS = {"APS5_ASM_FUNCTION", "APS5_SIGNAL_ASM_FUNCTION"}
 
@@ -252,7 +252,7 @@ def main(argv=None):
                 status = "MISMATCH"
                 failures += 1
             elif suggestion in real_names:
-                status = "already-implemented"
+                status = "name-in-use"
             else:
                 status = "rename-ready"
         rows.append({"nid": nid, "stub": unknowns[nid],
@@ -265,9 +265,9 @@ def main(argv=None):
         for row in rows:
             print("%-12s %-40s %-12s %s" % (
                 row["nid"], row["stub"][:40], row["status"], row["suggestion"]))
-        print("%d unknowns, %d suggestions (%d already implemented)" % (
+        print("%d unknowns, %d suggestions (%d names already in use)" % (
             len(rows), sum(1 for r in rows if r["suggestion"]),
-            sum(1 for r in rows if r["status"] == "already-implemented")))
+            sum(1 for r in rows if r["status"] == "name-in-use")))
     return 1 if failures else 0
 
 

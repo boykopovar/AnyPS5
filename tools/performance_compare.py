@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -113,7 +114,9 @@ def compare(baseline, candidate):
     for summary in (baseline, candidate):
         context = {key: summary[key] for key in CONTEXT}
         context.update({key: summary[key] for key in (*OPTIONAL_STRINGS, *OPTIONAL_INTEGERS) if key in summary})
-        context.update({f"window.{key}": summary["window"][key] for key in ("spec", "first_present")})
+        context["window.spec"] = summary["window"]["spec"]
+        if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
+            context["window.first_present"] = summary["window"]["first_present"]
         context.update({f"env.{key}": value for key, value in summary["env"].items()})
         contexts.append(context)
     differences = {key: {"baseline": contexts[0].get(key), "candidate": contexts[1].get(key)}

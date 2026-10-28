@@ -897,9 +897,29 @@ public:
     std::vector<bool> WrittenUnits(const GuestTextureResource& resource, std::uint64_t& generation) {
         const auto bytes = static_cast<std::size_t>(DescribeSurface(resource).guestBytes);
         SizeUnits(bytes);
-        GuestMemory::CollectWrites(resource.baseAddress, bytes);
+        const auto collected = GuestMemory::CollectWrites(resource.baseAddress, bytes);
         generation = GuestMemory::TrackerGeneration();
         std::vector<bool> changed(unitGeneration.size(), false);
+        if (collected == 0u) {
+            for (std::size_t unit = 0; unit < unitGeneration.size(); ++unit) {
+                const auto offset = unit * unitBytes;
+                const auto address = resource.baseAddress + offset;
+                const auto length = static_cast<std::size_t>(std::min<std::uint64_t>(unitBytes, bytes - offset));
+                if (GuestMemory::CollectWritesUncached(address, length) != 0u) {
+                    changed[unit] = unitGeneration[unit] != 0u && GuestMemory::WrittenSince(address, length, unitGeneration[unit]);
+                    continue;
+                }
+                constexpr std::uint64_t pageBytes = 4096u;
+                for (std::size_t page = 0; page < length;) {
+                    const auto pageAddress = address + page;
+                    const auto pageLength = static_cast<std::size_t>(std::min<std::uint64_t>(length - page, pageBytes - pageAddress % pageBytes));
+                    if (GuestMemory::CollectWritesUncached(pageAddress, pageLength) != 0u && unitGeneration[unit] != 0u && GuestMemory::WrittenSince(pageAddress, pageLength, unitGeneration[unit])) changed[unit] = true;
+                    page += pageLength;
+                }
+            }
+            generation = GuestMemory::TrackerGeneration();
+            return changed;
+        }
         if (unitGeneration.size() == 1u) {
             changed[0] = GuestMemory::WrittenSince(resource.baseAddress, bytes, unitGeneration[0]);
             return changed;
@@ -1353,6 +1373,7 @@ public:
     const std::uint32_t layers;
     VkDeviceSize imageBytes = 0;
     std::uint64_t lastUse = 0;
+    std::uint64_t lastPresent = 0;
     VkDeviceSize HeldBytes() const { return imageBytes + (staging != nullptr ? staging->Size() : 0u); }
 
 private:
@@ -1478,10 +1499,13 @@ void evictPlaneCopies(const std::tuple<VkDevice, std::uint64_t, std::uint32_t, s
     auto& copies = planeCopies();
     VkDeviceSize total = 0;
     for (const auto& entry : copies) total += entry.second->HeldBytes();
+    const auto present = Recorder::Presents();
+    const auto ceiling = budget + std::min(budget, std::numeric_limits<VkDeviceSize>::max() - budget);
     while (total > budget) {
+        const bool over = total > ceiling;
         auto oldest = copies.end();
         for (auto it = copies.begin(); it != copies.end(); ++it) {
-            if (it->first == keep) continue;
+            if (it->first == keep || (!over && it->second->lastPresent + 1u >= present)) continue;
             if (oldest == copies.end() || it->second->lastUse < oldest->second->lastUse) oldest = it;
         }
         if (oldest == copies.end()) break;
@@ -2218,6 +2242,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> FlushDepthPlanes(std::uint6
                     surface->ClearStale();
                     continue;
                 }
+                GuestMemory::CollectWritesUncached(plane, static_cast<std::size_t>(planeBytes));
                 surface->SyncFromMemory(resource);
                 auto units = scope == DepthPlaneScope::Whole ? surface->staleUnits : surface->StaleUnitsIn(planeBytes, address, end);
                 if (anyUnit(units)) {
@@ -2435,6 +2460,12 @@ std::size_t DepthPlaneCopyCount() {
     return planeCopies().size();
 }
 
+VkDeviceSize DepthPlaneCopyBytes() {
+    VkDeviceSize total = 0;
+    for (const auto& entry : planeCopies()) total += entry.second->HeldBytes();
+    return total;
+}
+
 namespace {
 
 thread_local bool depthCopySourceActive = false;
@@ -2512,6 +2543,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     auto& copy = copies[copyKey];
     if (copy == nullptr || copy->layers < layers) copy = std::make_unique<DepthPlaneCopy>(context, base.extent, imageFormat, layers);
     copy->lastUse = ++planeCopyClock();
+    copy->lastPresent = Recorder::Presents();
     auto texture = copy->Refresh(slices, resource, components, cube || resource.dimension == TextureDimension::k2DArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, layered && !cube ? resource.baseArray : 0u);
     evictPlaneCopies(copyKey);
     return texture;

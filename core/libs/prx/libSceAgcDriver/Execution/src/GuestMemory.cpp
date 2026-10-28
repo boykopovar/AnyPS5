@@ -8,6 +8,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include <mutex>
 #include <array>
@@ -2677,13 +2678,74 @@ void CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
 
 namespace {
 
+#ifdef _WIN32
+bool readPages(std::byte* destination, std::uint64_t source, std::size_t bytes) {
+    SIZE_T copied = 0;
+    if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(source), destination, bytes, &copied) != 0) {
+        require(copied == bytes, "short committed guest memory read");
+        return true;
+    }
+    const auto error = GetLastError();
+    require(error == ERROR_PARTIAL_COPY || error == ERROR_NOACCESS || error == ERROR_INVALID_ADDRESS, "cannot read committed guest memory");
+    return false;
+}
+
+template <class Visit>
+void visitReadablePages(std::byte* destination, std::uint64_t source, std::size_t bytes, Visit&& visit) {
+    if (readPages(destination, source, bytes)) {
+        visit(std::size_t{0}, bytes, true);
+        return;
+    }
+    ForgetPages(static_cast<std::uintptr_t>(source), bytes);
+    for (std::size_t offset = 0; offset < bytes;) {
+        const auto cursor = source + offset;
+        const auto chunk = std::min<std::size_t>(bytes - offset, PageBytes - static_cast<std::size_t>(cursor % PageBytes));
+        MEMORY_BASIC_INFORMATION memory{};
+        require(VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) == sizeof(memory), "cannot query guest memory after a failed committed read");
+        const bool readable = memory.State == MEM_COMMIT && (memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0 && readableProtection(memory.Protect & 0xffu);
+        visit(offset, chunk, readable && readPages(destination + offset, cursor, chunk));
+        offset += chunk;
+    }
+}
+#endif
+
+void copyCommittedBytes(std::byte* destination, std::uint64_t source, std::size_t bytes) {
+#ifdef _WIN32
+    visitReadablePages(destination, source, bytes, [&](std::size_t offset, std::size_t count, bool read) {
+        if (!read) std::memset(destination + offset, 0, count);
+    });
+#else
+    std::memcpy(destination, reinterpret_cast<const void*>(source), bytes);
+#endif
+}
+
+bool equalsCommittedBytes(std::uint64_t address, const std::byte* expected, std::size_t bytes) {
+#ifdef _WIN32
+    constexpr std::size_t ChunkBytes = 64 * PageBytes;
+    struct CompareChunkStorage {};
+    auto& current = HostThreadLocal<std::vector<std::byte>, CompareChunkStorage>();
+    if (current.size() < ChunkBytes) current.resize(ChunkBytes);
+    for (std::size_t done = 0; done < bytes; done += ChunkBytes) {
+        const auto count = std::min(ChunkBytes, bytes - done);
+        bool equal = true;
+        visitReadablePages(current.data(), address + done, count, [&](std::size_t offset, std::size_t length, bool read) {
+            if (read && equal && std::memcmp(current.data() + offset, expected + done + offset, length) != 0) equal = false;
+        });
+        if (!equal) return false;
+    }
+    return true;
+#else
+    return std::memcmp(reinterpret_cast<const void*>(address), expected, bytes) == 0;
+#endif
+}
+
 void copyCommitted(std::uint64_t address, std::span<std::byte> destination) {
     if (Accessible(reinterpret_cast<const void*>(address), destination.size())) {
-        std::memcpy(destination.data(), reinterpret_cast<const void*>(address), destination.size());
+        copyCommittedBytes(destination.data(), address, destination.size());
         return;
     }
     std::memset(destination.data(), 0, destination.size());
-    for (const auto& [begin, end] : CommittedRanges(address, destination.size())) std::memcpy(destination.data() + (begin - address), reinterpret_cast<const void*>(begin), static_cast<std::size_t>(end - begin));
+    for (const auto& [begin, end] : CommittedRanges(address, destination.size())) copyCommittedBytes(destination.data() + (begin - address), begin, static_cast<std::size_t>(end - begin));
 }
 
 }
@@ -2714,9 +2776,9 @@ bool EqualsCommitted(std::uint64_t address, std::span<const std::byte> bytes) {
 bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> bytes) {
     if (bytes.empty()) return true;
     const TimedAccess timed(CounterCompare, bytes.size());
-    if (Accessible(reinterpret_cast<const void*>(address), bytes.size())) return std::memcmp(reinterpret_cast<const void*>(address), bytes.data(), bytes.size()) == 0;
+    if (Accessible(reinterpret_cast<const void*>(address), bytes.size())) return equalsCommittedBytes(address, bytes.data(), bytes.size());
     for (const auto& [begin, end] : CommittedRanges(address, bytes.size())) {
-        if (std::memcmp(reinterpret_cast<const void*>(begin), bytes.data() + (begin - address), static_cast<std::size_t>(end - begin)) != 0) return false;
+        if (!equalsCommittedBytes(begin, bytes.data() + (begin - address), static_cast<std::size_t>(end - begin))) return false;
     }
     return true;
 }
