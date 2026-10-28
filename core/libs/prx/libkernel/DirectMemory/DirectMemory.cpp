@@ -1327,10 +1327,13 @@ int DoMprotect(const void* addr, size_t len, int prot) {
     constexpr auto pageMask = static_cast<std::uintptr_t>(PS5_PAGE_SIZE - 1);
     const auto limit = std::numeric_limits<std::uintptr_t>::max();
     if (address == 0 || len == 0 || len > limit - address || address + len > limit - pageMask) throw std::invalid_argument("Invalid guest memory protection range");
-    const auto first = address & ~pageMask;
-    const auto end = (address + len + pageMask) & ~pageMask;
-    const auto bytes = static_cast<std::size_t>(end - first);
-    const auto* pointer = reinterpret_cast<const void*>(first);
+    auto first = address & ~pageMask;
+    auto end = (address + len + pageMask) & ~pageMask;
+#ifdef __APPLE__
+    GuestAllocations::GuestAllocationsGuestPages_nid_postfix(address, len, PS5_PAGE_SIZE, &first, &end);
+#endif
+    auto bytes = static_cast<std::size_t>(end - first);
+    const void* pointer = reinterpret_cast<const void*>(first);
     const auto nativeProtection = LinuxProtFromSce(prot);
     if (GuestThreadStackHostRangeOverlaps(address, address + len))
         throw std::system_error(EACCES, std::generic_category(), "mprotect overlaps host-only guest thread stack pages");
@@ -1359,6 +1362,10 @@ int DoMprotect(const void* addr, size_t len, int prot) {
 #ifdef _WIN32
         if (nativeProtection != PROT_NONE && hostStack) CommitReservedPages(insidePointer, insideBytes);
         const bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
+#elif defined(__APPLE__)
+        const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(insidePointer, insideBytes, nativeProtection);
+        if (error != 0) errno = error;
+        const bool protectedPages = error == 0;
 #else
         bool protectedPages = mprotect(insidePointer, insideBytes, nativeProtection) == 0;
         if (!protectedPages && errno == ENOMEM) {
@@ -1397,14 +1404,20 @@ int DoMprotect(const void* addr, size_t len, int prot) {
         if (!image.guestModule) throw std::invalid_argument("Memory protection of a foreign image is not supported");
         mutation.RegisterImage(reinterpret_cast<const void*>(image.base));
     }
+    mutation.TrimToRegistered(PS5_PAGE_SIZE, pointer, bytes);
 #endif
     std::vector<std::pair<const void*, std::size_t>> spans;
     mutation.ForRegistered(pointer, bytes, [&](const void* span, std::size_t spanBytes) { spans.emplace_back(span, spanBytes); });
-    if (spans.empty() || reinterpret_cast<std::uintptr_t>(spans.front().first) != first) return SCE_KERNEL_ERROR_EINVAL;
+    if (spans.empty() || spans.front().first != pointer) return SCE_KERNEL_ERROR_EINVAL;
     for (const auto& [span, spanBytes] : spans) mutation.RequireUnpinned(span, spanBytes);
     for (const auto& [span, spanBytes] : spans) {
         mutation.Protect(span, spanBytes, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, [&] {
+#ifdef __APPLE__
+            if (const int error = GuestWriteWatch::GuestWriteWatchProtect_nid_postfix(const_cast<void*>(span), spanBytes, nativeProtection); error != 0)
+                throw std::system_error(error, std::generic_category(), "mprotect failed");
+#else
             if (mprotect(const_cast<void*>(span), spanBytes, nativeProtection) != 0) throw std::system_error(errno, std::generic_category(), "mprotect failed");
+#endif
         });
         RecordProtection(span, spanBytes, prot);
     }

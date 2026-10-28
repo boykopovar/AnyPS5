@@ -1,5 +1,6 @@
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/parsing/ElfReader.hpp>
+#include <relinker/parsing/RelrRelocations.hpp>
 #include <io/BufferUtils.hpp>
 #include <io/NativePath.hpp>
 #include <algorithm>
@@ -83,7 +84,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         }
     }
     if (!terminated) fail("Unterminated dynamic segment");
-    for (const auto unsupported : {15u, 16u, 17u, 18u, 19u, 22u, 35u, 36u, 37u}) {
+    for (const auto unsupported : {15u, 16u, 17u, 18u, 19u, 22u}) {
         if (tags.contains(unsupported)) fail("Unsupported dynamic tag " + std::to_string(unsupported));
     }
     if (tags.contains(30) && (tags.at(30) & ~(2ull | 8ull)) != 0) fail("Unsupported guest dynamic flags");
@@ -233,6 +234,17 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         && relaOffset % 24 != pltOffset % 24)
         fail("Unaligned overlapping relocation tables");
     std::map<std::uint64_t, std::uint64_t> relocationTargets;
+    std::vector<Domain::DynamicTag> relrTags;
+    for (const auto& [tag, value] : tags)
+        if (tag >= 35 && tag <= 37) relrTags.push_back({static_cast<std::int64_t>(tag), value});
+    for (const auto& [target, addend] : ReadRelrRelocations(bytes, image.Headers, relrTags)) {
+        mapped(target, 8, 2);
+        mapped(addend, 0, 0);
+        relocationTargets.emplace(target, target + 8);
+        Io::AppendU64(image.Dynamic.RelaData, target);
+        Io::AppendU64(image.Dynamic.RelaData, 8);
+        Io::AppendU64(image.Dynamic.RelaData, addend);
+    }
     const auto copyRelocations = [&](std::uint64_t offset, std::uint64_t size, std::vector<std::uint8_t>& output, bool plt) {
         output.reserve(size);
         for (std::uint64_t index = 0; index < size; index += 24) {

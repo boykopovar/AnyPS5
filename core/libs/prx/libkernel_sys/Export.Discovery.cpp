@@ -110,22 +110,12 @@ int APS5_VABI is_in_sandbox_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI kenv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI kldload_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI kldstat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldsym_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -211,11 +201,6 @@ int APS5_VABI ksem_wait_nid_postfix(void) {
 }
 
 int APS5_VABI ktrace_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI lchflags_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2165,8 +2150,17 @@ int APS5_VABI scePthreadTimedjoin(void) {
     return 0;
 }
 
-int APS5_VABI sched_setscheduler_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sched_setscheduler_nid_postfix(int pid, int policy, const KernelSchedParam* param) {
+    const auto fail = [](int error) {
+        *__error_nid_postfix() = error;
+        return -1;
+    };
+    if (param == nullptr) return fail(14);
+    if (pid != 0 && pid == getpid_nid_postfix()) NotImplemented_nid_no_patch("sched_setscheduler: the first thread of the process, which its own pid selects, is not tracked");
+    if (pid != 0) return fail(3);
+    if (policy != 1 && policy != 2 && policy != 3) return fail(22);
+    if (scePthreadSetschedparam(scePthreadSelf(), policy, param) != 0)
+        NotImplemented_nid_no_patch("sched_setscheduler: a policy and priority scePthreadSetschedparam does not accept, where FreeBSD answers EPERM or EINVAL and the console's answer is unverified");
     return 0;
 }
 
@@ -2185,9 +2179,8 @@ int APS5_VABI sigqueue_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI sigreturn_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sigreturn_nid_postfix(const UserUcontext* context) {
+    return SigreturnContext_nid_no_patch(context);
 }
 
 int APS5_VABI statfs_nid_postfix(void) {

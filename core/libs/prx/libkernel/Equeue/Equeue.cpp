@@ -167,9 +167,28 @@ void KernelEqueuePrivate::MeasureFiles(std::unique_lock<std::mutex>& lock) {
     if (files.empty()) {
         return;
     }
-    lock.unlock();
     std::vector<UnreadFile> measured;
     measured.reserve(files.size());
+    m_measuring.reserve(m_measuring.size() + files.size());
+    struct Measuring {
+        KernelEqueuePrivate& queue;
+        std::unique_lock<std::mutex>& lock;
+        const std::vector<std::pair<int, std::shared_ptr<void>>>& files;
+        ~Measuring() {
+            if (!lock.owns_lock()) {
+                lock.lock();
+            }
+            for (const auto& [file, owner] : files) {
+                queue.m_measuring.erase(std::find(queue.m_measuring.begin(), queue.m_measuring.end(), file));
+            }
+            queue.m_measured.notify_all();
+        }
+    };
+    for (const auto& [file, owner] : files) {
+        m_measuring.push_back(file);
+    }
+    const Measuring measuring{*this, lock, files};
+    lock.unlock();
     for (const auto& [file, owner] : files) {
         measured.push_back(UnreadFileBytes(file));
     }
@@ -582,6 +601,7 @@ void KernelEqueuePrivate::RemoveDescriptorEvents(uintptr_t ident) {
     if (removed) {
         WakePollers();
     }
+    m_measured.wait(lock, [&] { return std::find(m_measuring.begin(), m_measuring.end(), static_cast<int>(ident)) == m_measuring.end(); });
 }
 
 void KernelEqueuePrivate::WakeReadWaiters(uintptr_t ident) {

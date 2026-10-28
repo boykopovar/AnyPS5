@@ -100,6 +100,13 @@ namespace ShaderRecompiler
             state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4u), result, own, zero, zero, zero);
             return;
         }
+        if (state.program.Resources().stage == IrShaderStage::Pixel) {
+            if (const auto helperVariable = InputVariableForKind(state, StageInputKind::HelperInvocation); helperVariable != 0u) {
+                const auto helper = state.module.AllocateId();
+                state.module.AddFunction(spv::OpLoad, TypeBool(state), helper, helperVariable);
+                predicate = Binary(state, spv::OpLogicalAnd, TypeBool(state), predicate, Unary(state, spv::OpLogicalNot, TypeBool(state), helper));
+            }
+        }
         state.module.AddSubgroupBallot(TypeU32Vector(state, 4u), result, ConstantU32(state, spv::ScopeSubgroup), predicate);
     }
 

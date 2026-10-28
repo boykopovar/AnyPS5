@@ -50,18 +50,52 @@ std::uint32_t nonzero(SpirvEmitterState& state, std::uint32_t value) {
     return Binary(state, spv::OpINotEqual, TypeBool(state), value, ConstantU32(state, 0u));
 }
 
+std::uint32_t gcnBufferFormat(SpirvEmitterState& state, std::uint32_t index) {
+    const auto u32 = TypeU32(state);
+    if (state.gcnBufferFormatFunction == 0u) {
+        const auto id = state.module.AllocateId();
+        struct Restore {
+            SpirvEmitterState& state;
+            std::uint32_t label;
+            ~Restore() {
+                state.module.EndHelperFunction();
+                state.currentLabel = label;
+            }
+        };
+        state.module.BeginHelperFunction();
+        const Restore restore{state, state.currentLabel};
+        state.module.AddName(id, "gcn_buffer_format");
+        state.module.AddFunction(spv::OpFunction, u32, id, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, u32, u32));
+        const auto parameter = state.module.AllocateId();
+        state.module.AddFunction(spv::OpFunctionParameter, u32, parameter);
+        EmitLabel(state, state.module.AllocateId());
+        const auto& formats = GcnBufferFormats();
+        std::vector<std::uint32_t> words;
+        for (std::size_t entry = 0; entry < formats.size(); entry += 4u) {
+            std::uint32_t packed = 0;
+            for (std::uint32_t byte = 0; byte < 4u; ++byte) packed |= static_cast<std::uint32_t>(formats[entry + byte]) << (byte * 8u);
+            words.push_back(ConstantU32(state, packed));
+        }
+        const auto word = Binary(state, spv::OpShiftRightLogical, u32, parameter, ConstantU32(state, 2u));
+        for (std::uint32_t bit = 0; words.size() > 1u; ++bit) {
+            const auto odd = nonzero(state, Binary(state, spv::OpBitwiseAnd, u32, word, ConstantU32(state, 1u << bit)));
+            std::vector<std::uint32_t> halves;
+            for (std::size_t pair = 0; pair < words.size(); pair += 2u) halves.push_back(words[pair] == words[pair + 1u] ? words[pair] : Select(state, u32, odd, words[pair + 1u], words[pair]));
+            words = std::move(halves);
+        }
+        const auto shift = Binary(state, spv::OpShiftLeftLogical, u32, Binary(state, spv::OpBitwiseAnd, u32, parameter, ConstantU32(state, 3u)), ConstantU32(state, 3u));
+        state.module.AddFunction(spv::OpReturnValue, EmitBitFieldUExtract(state, words.front(), shift, ConstantU32(state, 8u)));
+        state.module.AddFunction(spv::OpFunctionEnd);
+        state.gcnBufferFormatFunction = id;
+    }
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpFunctionCall, u32, result, state.gcnBufferFormatFunction, index);
+    return result;
+}
+
 std::uint32_t gcnWord3(SpirvEmitterState& state, std::uint32_t word1, std::uint32_t word3) {
     const auto u32 = TypeU32(state);
-    const auto& formats = GcnBufferFormats();
-    std::array<std::uint32_t, 128> words{};
-    for (std::size_t index = 0; index < words.size(); ++index) words[index] = ConstantU32(state, formats[index]);
-    const auto arrayType = state.module.Type(spv::OpTypeArray, u32, ConstantU32(state, static_cast<std::uint32_t>(words.size())));
-    if (state.gcnBufferFormatVariable == 0) state.gcnBufferFormatVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, arrayType), spv::StorageClassPrivate);
-    state.module.AddFunction(spv::OpStore, state.gcnBufferFormatVariable, state.module.Constant(spv::OpConstantComposite, arrayType, std::span<const std::uint32_t>(words)));
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassPrivate, u32), pointer, state.gcnBufferFormatVariable, field(state, word3, 12u, 7u));
-    const auto format = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, u32, format, pointer);
+    const auto format = gcnBufferFormat(state, field(state, word3, 12u, 7u));
     const auto outOfBounds = Select(state, u32, nonzero(state, field(state, word1, 16u, 14u)), ConstantU32(state, 1u << 28u), ConstantU32(state, 3u << 28u));
     const auto kept = Binary(state, spv::OpBitwiseAnd, u32, word3, ConstantU32(state, 0xc0e00fffu));
     return Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpBitwiseOr, u32, kept, Binary(state, spv::OpShiftLeftLogical, u32, format, ConstantU32(state, 12u))), outOfBounds);
@@ -92,7 +126,7 @@ RuntimeDescriptor descriptor(SpirvValueEmitContext& context, const IrValue& inst
         const auto high = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, field(state, GcnGuestShaders() ? Binary(state, spv::OpBitwiseAnd, u32, context.Arg(*handle, 1u), ConstantU32(state, GcnBufferWord1Mask)) : context.Arg(*handle, 1u), 0u, 16u)), BdaConstant(state, 32u));
         base = Binary(state, spv::OpBitwiseOr, u64, Unary(state, spv::OpUConvert, u64, context.Arg(*handle, 0u)), high);
     }
-    auto invalid = nonzero(state, field(state, word3, 30u, 2u));
+    auto invalid = memory.kind == ResourceKind::ScalarBuffer ? ConstantBool(state, false) : nonzero(state, field(state, word3, 30u, 2u));
     auto index = ConstantU32(state, 0u);
     if (context.Memory(instruction).kind == ResourceKind::Buffer) {
         index = context.Arg(instruction, 1u);
@@ -863,14 +897,21 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
     if (std::ranges::find(state.supportedCapabilities, spv::CapabilityInt64) == state.supportedCapabilities.end()) context.Fail(instruction, "scalar buffer bounds require shaderInt64");
     state.module.EmitCapability(spv::CapabilityInt64);
     const auto resource = descriptor(context, instruction);
-    const auto u64 = TypeScalarU64(state);
-    const auto size = Select(state, u64, equal(state, resource.stride, ConstantU32(state, 0u)), Unary(state, spv::OpUConvert, u64, resource.records), Binary(state, spv::OpIMul, u64, Unary(state, spv::OpUConvert, u64, resource.stride), Unary(state, spv::OpUConvert, u64, resource.records)));
+    const auto u32 = TypeU32(state);
+    const auto stride = Select(state, u32, equal(state, resource.stride, ConstantU32(state, 0u)), ConstantU32(state, 1u), resource.stride);
+    const auto size = state.module.AllocateId();
+    const auto low = state.module.AllocateId();
+    const auto high = state.module.AllocateId();
+    state.module.AddFunction(spv::OpUMulExtended, state.module.Type(spv::OpTypeStruct, u32, u32), size, stride, resource.records);
+    state.module.AddFunction(spv::OpCompositeExtract, u32, low, size, 0u);
+    state.module.AddFunction(spv::OpCompositeExtract, u32, high, size, 1u);
     const auto address = EmitAddU32(state, context.Arg(instruction, 1u), ConstantU32(state, context.Memory(instruction).offset));
     const auto noCarry = Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), address, context.Arg(instruction, 1u));
     const auto byte = EmitAndConstant(state, address, ~3u);
-    const auto offset = Unary(state, spv::OpUConvert, u64, byte);
-    const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThanEqual, TypeBool(state), Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, 4u)), size)));
+    const auto fits = Binary(state, spv::OpLogicalOr, TypeBool(state), nonzero(state, high), Binary(state, spv::OpULessThan, TypeBool(state), byte, EmitAndConstant(state, low, ~3u)));
+    const auto inBounds = both(state, noCarry, both(state, resource.valid, fits));
     if (!context.Memory(instruction).gpuDescriptor) return readBuffer(context, instruction, byte, 32u, inBounds);
+    const auto offset = Unary(state, spv::OpUConvert, TypeScalarU64(state), byte);
     return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, AddBdaAddress(context, instruction, resource.base, offset, false), 32u); });
 }
 

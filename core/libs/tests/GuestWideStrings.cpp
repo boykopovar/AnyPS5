@@ -343,7 +343,7 @@ int main() {
     require(wcstold_nid_postfix(half, &end) == -1.5L && end == half + 4);
     const char16_t* wideNan = u" -nan(0x123)é";
     require(std::bit_cast<std::uint64_t>(wcstod_nid_postfix(wideNan, &end)) == 0xfff8000000000123u && end == wideNan + 12);
-    require(std::bit_cast<std::uint32_t>(wcstof_nid_postfix(wideNan, &end)) == 0xffc00000u && end == wideNan + 12);
+    require(std::bit_cast<std::uint32_t>(wcstof_nid_postfix(wideNan, &end)) == 0xffc00123u && end == wideNan + 12);
     const long double wideExtended = wcstold_nid_postfix(wideNan, &end);
     std::uint64_t significand;
     std::memcpy(&significand, &wideExtended, sizeof(significand));
@@ -360,8 +360,8 @@ int main() {
     wmemset_nid_postfix(transformed, 0xaaaa, 8);
 
     require(wcsxfrm_nid_postfix(transformed, u"much too long", 4) == 13);
-    if (!same(transformed, u"muc", 4)) std::fputs("wcsxfrm did not copy and terminate its truncated result\n", stderr);
-    require(same(transformed, u"muc", 4) && transformed[4] == 0xaaaa);
+    if (!same(transformed, u"much", 4)) std::fputs("wcsxfrm did not copy the first count units of its truncated result\n", stderr);
+    require(same(transformed, u"much", 4) && transformed[4] == 0xaaaa);
     require(wcsxfrm_nid_postfix(nullptr, u"abc", 0) == 3);
     struct TransformCase {
         const char16_t* source;
@@ -372,13 +372,13 @@ int main() {
     };
     for (const TransformCase test : {
         TransformCase{u"wide", 0, 4, u"", 0},
-        TransformCase{u"wide", 1, 4, u"", 1},
-        TransformCase{u"wide", 4, 4, u"wid", 4},
+        TransformCase{u"wide", 1, 4, u"w", 1},
+        TransformCase{u"wide", 4, 4, u"wide", 4},
         TransformCase{u"wide", 5, 4, u"wide", 5},
         TransformCase{u"", 0, 0, u"", 0},
         TransformCase{u"", 1, 0, u"", 1},
         TransformCase{u"", 8, 0, u"", 1},
-        TransformCase{u"\x7fff\x8000\xffff\xd83d\xde00", 4, 5, u"\x7fff\x8000\xffff", 4},
+        TransformCase{u"\x7fff\x8000\xffff\xd83d\xde00", 4, 5, u"\x7fff\x8000\xffff\xd83d", 4},
         TransformCase{u"\x7fff\x8000\xffff\xd83d\xde00", 6, 5, u"\x7fff\x8000\xffff\xd83d\xde00", 6}
     }) {
         wmemset_nid_postfix(transformed, 0xaaaa, 8);
@@ -397,6 +397,10 @@ int main() {
         char* narrowEnd = nullptr;
         const char text[] = "0x1ffffffffffffffffg";
         require(strtouq_nid_postfix(text, &narrowEnd, 16) == UINT64_MAX && narrowEnd == text + 19);
+        const char signedText[] = "  -0x7fffffffffffffff9";
+        require(strtoq_nid_postfix(signedText, &narrowEnd, 0) == INT64_MIN && narrowEnd == signedText + 22);
+        const char positiveText[] = "+42z";
+        require(strtoq_nid_postfix(positiveText, &narrowEnd, 10) == 42 && narrowEnd == positiveText + 3);
         const char path[] = "a/b/c";
         require(rindex_nid_postfix(path, '/') == path + 3 && rindex_nid_postfix(path, 'x') == nullptr);
         require(rindex_nid_postfix(path, 0) == path + 5);
