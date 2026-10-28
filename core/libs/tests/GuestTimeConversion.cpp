@@ -58,6 +58,15 @@ static void CheckNullArguments() {
         g_constraintCalls = 0;
         Require(convert(&timer, &result) == &result && g_constraintCalls == 0, "valid conversion reported a violation");
     }
+    g_constraintCalls = 0;
+    for (const auto convert : {libc_gmtime_nid_postfix, gmtime_nid_postfix, libc_localtime_nid_postfix, localtime_nid_postfix}) {
+        Require(convert(nullptr) == nullptr, "null timer was accepted");
+    }
+    for (const auto convert : {gmtime_r_nid_postfix, localtime_r_nid_postfix}) {
+        Require(convert(nullptr, &result) == nullptr && convert(&timer, nullptr) == nullptr && convert(nullptr, nullptr) == nullptr,
+            "null argument was accepted");
+    }
+    Require(g_constraintCalls == 0, "non-_s conversion reported a violation");
     set_constraint_handler_s_nid_postfix(previous);
 }
 
