@@ -326,6 +326,9 @@ std::optional<DeferredFilter> Apply(Session& session, const ImeHostInput& input)
         case ImeHostInputKind::Escape:
             QueueText(session, EventPressClose, session.caret, 0);
             return std::nullopt;
+        case ImeHostInputKind::Preedit:
+        case ImeHostInputKind::Paste:
+            return std::nullopt;
     }
     throw std::invalid_argument("IME host input: unknown input kind");
 }

@@ -14,11 +14,15 @@ enum class ImeHostInputKind : std::uint32_t {
     End,
     Enter,
     Escape,
+    Preedit,
+    Paste,
 };
 
 struct ImeHostInput {
     ImeHostInputKind kind = ImeHostInputKind::Text;
     char text[32] = {};
+    std::int32_t start = 0;
+    std::int32_t length = 0;
 };
 
 extern "C" void ImePublishInput_nid_postfix(const ImeHostInput& input);

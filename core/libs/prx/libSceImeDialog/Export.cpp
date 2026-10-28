@@ -119,6 +119,9 @@ void Apply(Dialog& dialog, ImeHostInputKind kind, const char16_t* units, std::si
         case ImeHostInputKind::Escape:
             Finish(EndStatusUserCanceled);
             return;
+        case ImeHostInputKind::Preedit:
+        case ImeHostInputKind::Paste:
+            return;
     }
 }
 
