@@ -351,6 +351,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_VALIDATE_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | validates every draw instead of serving the validation memo |
 | `APS5_NO_VALIDATE_SKIP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | syncs every pending write instead of skipping validation on written-element evidence |
 | `APS5_NO_VOUCHED_VALIDATION` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/VariantValidation.cpp` |  | validates a cached draw or dispatch through its per-run checks instead of its table block's vouch |
+| `APS5_NO_VRAM_BUDGET` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/VramBudget.cpp` |  | keeps released device buffers in the device buffer pool while the device-local heap is over its reported budget |
 | `APS5_NO_WAIT_OVERLAP_SUBMIT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | disables the unlocked wait that submits recorded work while overlapping writes are open |
 | `APS5_NO_WORDWISE_CAPTURE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/ShaderMemory.cpp` |  | fetches every captured page whole instead of reading pending pages word by word |
 | `APS5_NO_WORKER_AFFINITY` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/WorkerAffinity.cpp` |  | leaves the queue workers and presenter unpinned (affinity mask 0) |
@@ -474,6 +475,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_VERIFY_RECIPE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | makes the ordinary prepare path beside a recipe hit and compares the answers |
 | `APS5_VERIFY_REGISTER_KEYS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawRegisterKey.cpp` |  | checks the incremental register fingerprint against the full state |
 | `APS5_VERIFY_SET_LAYOUTS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | checks the draw's set layouts against those described from the shaders |
+| `APS5_VRAM_BUDGET_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/VramBudget.cpp` |  | caps in MiB the device-local heap budget the device buffer pool keeps its released memory under (0 keeps the reported budget) |
 | `APS5_WAIT_LOCK` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | always takes the GPU mutex on a wait (no unlocked label lookup) |
 | `APS5_WAIT_LOCK_ENTRY` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | takes the GPU mutex blocking on the entry instead of trying it |
 | `APS5_WATCH_MEMORY` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | watches named guest ranges (`<hex address>:<hex bytes>[,...]`) across dispatches; needs `APS5_SYNC_DISPATCH=1` |
