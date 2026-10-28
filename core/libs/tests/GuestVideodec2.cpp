@@ -1039,6 +1039,36 @@ void testConcurrentOwnership() {
     check(sceVideodec2DeleteDecoder_nid_postfix(keeper) == 0, "delete failed");
 }
 
+void testParameterSetsBound() {
+    constexpr std::uint8_t Parameters[] = {
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x0a, 0xac, 0xd9,
+        0x44, 0x7f, 0x97, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00, 0x10,
+        0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x22, 0x59, 0x60, 0x00,
+        0x00, 0x00, 0x01, 0x68, 0xeb, 0xe3, 0xcb, 0x22, 0xc0,
+    };
+    std::vector<std::uint8_t> buffer(frameBufferBytes());
+    const auto handle = createDecoder(CodecAvc, 1);
+    const InputData input{sizeof(InputData), Parameters, sizeof(Parameters), 1000, 0, 0};
+    FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+    OutputInfo output{sizeof(OutputInfo)};
+    check(sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output) == 0, "first parameter unit failed");
+    check(!output.isValid && !frame.isAccepted, "parameter unit produced picture");
+    std::vector<std::uint8_t> largeParameters(2u * 1024u * 1024u + 1u);
+    for (std::size_t offset = 0; offset + sizeof(Parameters) <= largeParameters.size(); offset += sizeof(Parameters)) {
+        std::memcpy(largeParameters.data() + offset, Parameters, sizeof(Parameters));
+    }
+    const InputData largeInput{sizeof(InputData), largeParameters.data(), largeParameters.size(), 1001, 0, 0};
+    bool threw = false;
+    try {
+        sceVideodec2Decode_nid_postfix(handle, &largeInput, &frame, &output);
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()) == "Videodec2: invalid access unit";
+    }
+    check(threw, "oversized parameter unit did not throw");
+    check(sceVideodec2Reset_nid_postfix(handle) == 0, "reset failed");
+    check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
+}
+
 }
 
 void testComputeQueues() {
@@ -1097,6 +1127,7 @@ int main() {
         testFlushAfterEveryUnit();
         testPictureOwnership();
         testConcurrentOwnership();
+        testParameterSetsBound();
         std::puts("Videodec2 tests passed");
         return 0;
     } catch (const std::exception& error) {
