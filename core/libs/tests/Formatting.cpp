@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/ScanQuadLength.hpp"
+#include <bit>
 #include <algorithm>
 #include <array>
 #include <utility>
@@ -521,6 +522,19 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         int first = 0;
         Require(ScanListS("5 0x", "%d %x", &first, &hex) == 1 && first == 5);
         Require(ScanListS("0x 7", "%*x %d", &first) == 0);
+        for (const char* input : {"nan", "-nan", "-NaN", "-nan(0x5)", "+nan"}) {
+            float single = 0;
+            double wide = 0;
+            unsigned char extended[16];
+            Require(ScanListS(input, "%f", &single) == 1 && std::bit_cast<std::uint32_t>(single) == 0x7fc00000u);
+            Require(ScanListS(input, "%lf", &wide) == 1 && std::bit_cast<std::uint64_t>(wide) == 0x7ff8000000000000ull);
+            Require(ScanListS(input, "%Lf", extended) == 1);
+            std::uint64_t mantissa = 0;
+            std::uint16_t exponent = 0;
+            std::memcpy(&mantissa, extended, 8);
+            std::memcpy(&exponent, extended + 8, 2);
+            Require(mantissa == 0xc000000000000000ull && exponent == 0x7fff);
+        }
         const struct {
             const char* input;
             const char* format;
