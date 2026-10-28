@@ -205,7 +205,9 @@ class CheckCompileModeTests(unittest.TestCase):
         self.check_modes(((),), configure=configure)
 
     def test_library_directory_values_can_look_like_modes(self):
-        self.check_modes((("-L", "-E"),))
+        def configure(root, build, source):
+            return ["-L", "-E"], "", ""
+        self.check_modes(((),), configure=configure)
 
     def test_forced_include_values_can_look_like_modes(self):
         def configure(root, build, source):

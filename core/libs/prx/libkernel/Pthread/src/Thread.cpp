@@ -751,9 +751,11 @@ void ThreadCancel::CleanupRestore(void* mark) {
 }
 
 void ThreadCancel::BeginWait(TimedWait::Condition* condition) {
-    if (!CurrentGuestState().current) return;
-    std::lock_guard lock(CurrentGuestState().current->cancelLock);
-    CurrentGuestState().current->cancelWait = condition;
+    auto& state = CurrentGuestState();
+    if (!state.current) return;
+    std::lock_guard lock(state.current->cancelLock);
+    state.current->cancelWait = condition;
+    state.current->cancelWaitExiting = condition && state.exiting;
 }
 
 void ThreadCancel::EndWait() {
@@ -1227,7 +1229,7 @@ int APS5_VABI scePthreadCancel(Pthread thread) {
     for (;;) {
         {
             std::lock_guard lock(thread->cancelLock);
-            if (!thread->cancelWait) return SCE_OK;
+            if (!thread->cancelWait || thread->cancelWaitExiting) return SCE_OK;
             thread->cancelWait->NotifyAll();
         }
         scePthreadYield();

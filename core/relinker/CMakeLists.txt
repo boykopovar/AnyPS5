@@ -56,6 +56,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MaskedStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AndnLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CallSiteResolver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CodeInstructionCollector.cpp
@@ -130,6 +131,16 @@ if(BUILD_TESTING)
     set_tests_properties(call_registry_writer PROPERTIES TIMEOUT 20)
 endif()
 
+if(ANYPS5_BUILD_FUZZERS)
+    add_test_executable(relinker_conversion_fuzzer ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/ConversionFuzzer.cpp)
+    target_link_libraries(relinker_conversion_fuzzer PRIVATE relinker_core)
+    target_link_options(relinker_conversion_fuzzer PRIVATE -fsanitize=fuzzer)
+    if(BUILD_TESTING)
+        add_test(NAME relinker_conversion_fuzzer COMMAND relinker_conversion_fuzzer -runs=20000 -seed=1)
+        set_tests_properties(relinker_conversion_fuzzer PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
 if(ANYPS5_BUILD_WASM)
     target_compile_options(relinker_core PRIVATE -fexceptions)
     add_subdirectory(wasm)
@@ -151,6 +162,15 @@ add_executable(relinker
 target_link_libraries(relinker PRIVATE relinker_core)
 target_include_directories(relinker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cli/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
 set_target_properties(relinker PROPERTIES CXX_EXTENSIONS OFF)
+
+find_package(Git QUIET)
+set(relinkerRevisionHeader ${CMAKE_CURRENT_BINARY_DIR}/RelinkerRevision.hpp)
+add_custom_target(relinker_revision
+    COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${relinkerRevisionHeader} -P ${CMAKE_CURRENT_SOURCE_DIR}/revision.cmake
+    BYPRODUCTS ${relinkerRevisionHeader}
+    VERBATIM)
+add_dependencies(relinker relinker_revision)
+target_include_directories(relinker PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 if(BUILD_TESTING AND WIN32)
     add_test_executable(windows_guest_export_alias_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/WindowsExportAliasTests.cpp)
@@ -241,6 +261,11 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include)
     add_test(NAME elf_reader_bounds COMMAND elf_reader_bounds_tests)
     set_tests_properties(elf_reader_bounds PROPERTIES TIMEOUT 20)
+
+    add_test_executable(relr_relocations_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/RelrRelocationTests.cpp)
+    target_link_libraries(relr_relocations_tests PRIVATE relinker_core)
+    add_test(NAME relr_relocations COMMAND relr_relocations_tests)
+    set_tests_properties(relr_relocations PROPERTIES TIMEOUT 20)
 
     add_test_executable(call_site_index_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/CallSiteIndexTests.cpp
@@ -382,6 +407,21 @@ if(BUILD_TESTING)
     target_include_directories(param_json_utf8_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
     add_test(NAME param_json_utf8 COMMAND param_json_utf8_tests)
     set_tests_properties(param_json_utf8 PROPERTIES TIMEOUT 20)
+
+    if(WIN32)
+        add_test_executable(windows_file_writer_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/WindowsFileWriterTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+        )
+        target_include_directories(windows_file_writer_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        )
+        add_test(NAME windows_file_writer_binary COMMAND windows_file_writer_tests binary)
+        add_test(NAME windows_file_writer_text COMMAND windows_file_writer_tests text)
+        set_tests_properties(windows_file_writer_binary windows_file_writer_text PROPERTIES TIMEOUT 20)
+    endif()
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test_executable(file_writer_tests
@@ -560,6 +600,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_optional_plt.py $<TARGET_FILE:relinker>)
         add_test(NAME optional_rela COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_optional_rela.py $<TARGET_FILE:relinker>)
+        add_test(NAME relr_conversion COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_relr_relocations.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_relr_conversion COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_relr_relocations.py $<TARGET_FILE:relinker> guest)
+        set_tests_properties(relr_conversion guest_relr_conversion PROPERTIES TIMEOUT 20)
         add_test(NAME empty_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_empty_tls.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_tls_zero_fill COMMAND ${Python3_EXECUTABLE}
@@ -611,6 +656,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_tls_relocations.py $<TARGET_FILE:relinker>)
         add_test(NAME executable_export_bounds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_export_bounds.py $<TARGET_FILE:relinker>)
+        add_test(NAME executable_export_attributes COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_export_attributes.py $<TARGET_FILE:relinker>)
         add_test(NAME macos_empty_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_empty_tls.py $<TARGET_FILE:relinker>)
         set_tests_properties(macos_empty_tls PROPERTIES TIMEOUT 60)
@@ -671,6 +718,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executables.py $<TARGET_FILE:relinker>)
         add_test(NAME game_patches COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_game_patches.py $<TARGET_FILE:relinker>)
+        add_test(NAME annotate_guest_module COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_annotate_guest_module.py $<TARGET_FILE:relinker>)
         if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
             add_test(NAME patch_advisor_unit COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/tools/tests/test_suggest_patches.py)
@@ -823,6 +872,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_file.py $<TARGET_FILE:relinker>)
         add_test(NAME null_symbol_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_null_symbol_relocations.py $<TARGET_FILE:relinker>)
+        foreach(symbolInput IN ITEMS executable guest)
+            add_test(NAME restricted_undefined_symbols_${symbolInput} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_restricted_undefined_symbols.py $<TARGET_FILE:relinker> ${symbolInput})
+            set_tests_properties(restricted_undefined_symbols_${symbolInput} PROPERTIES TIMEOUT 20)
+        endforeach()
         add_test(NAME input_nonascii COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_nonascii.py $<TARGET_FILE:relinker>)
         add_test(NAME long_paths COMMAND ${Python3_EXECUTABLE}
@@ -931,6 +985,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
     )
     target_sources(strict_nid_filter_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/ControlFlowGraph.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EntryPointCollector.cpp

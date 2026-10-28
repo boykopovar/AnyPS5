@@ -210,7 +210,7 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
             kernel.entries.push_back({descriptor, events, 0});
             kernel.slots.push_back(requested.size());
             requested.push_back({descriptor, events, 0});
-        } else if (IsKqueueDescriptor(descriptor)) {
+        } else if (IsKqueueDescriptor_nid_no_patch(descriptor)) {
             kqueues.entries.push_back({descriptor, events, 0});
             kqueues.slots.push_back(requested.size());
             requested.push_back({descriptor, events, 0});

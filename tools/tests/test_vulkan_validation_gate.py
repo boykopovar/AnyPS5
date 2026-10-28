@@ -16,6 +16,16 @@ import vulkan_validation_gate as gate
 
 
 class ReportTests(unittest.TestCase):
+    def test_effective_timeouts_cannot_override_the_requested_limit(self):
+        for value in (0, 2, -1, float("inf"), float("nan"), "1", True):
+            with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
+                gate.check_timeouts([{"name": "probe", "properties": [{"name": "TIMEOUT", "value": value}]}], 1)
+        for value in (.05, 1):
+            gate.check_timeouts([{"name": "probe", "properties": [{"name": "TIMEOUT", "value": value}]}], 1)
+        gate.check_timeouts([{"name": "default", "properties": []}], 1)
+        with self.assertRaisesRegex(gate.GateError, "TIMEOUT_AFTER_MATCH"):
+            gate.check_timeouts([{"name": "probe", "properties": [{"name": "TIMEOUT_AFTER_MATCH", "value": ["1", "ready"]}]}], 1)
+
     def report(self, text):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "junit.xml"
@@ -142,6 +152,39 @@ class FixtureTests(unittest.TestCase):
 
 
 class IntegrationTests(FixtureTests):
+    def test_timeout_reset_property_is_refused_before_running_tests(self):
+        baseline = self.source("base-reset")
+        candidate = self.source("head-reset", property_text='TIMEOUT_AFTER_MATCH "1;ready"')
+        code, report = self.execute(baseline, candidate, "--repeat", "1", "--test-timeout", "1")
+        self.assertEqual(code, 2, report)
+        self.assertIn("TIMEOUT_AFTER_MATCH", report["error"])
+        self.assertEqual(report["iterations"], [])
+
+    def test_a_shorter_ctest_property_remains_usable(self):
+        baseline = self.source("base-short", property_text="TIMEOUT 0.5")
+        candidate = self.source("head-short", property_text="TIMEOUT 0.5")
+        code, report = self.execute(baseline, candidate, "--repeat", "1", "--test-timeout", "1")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["status"], "complete")
+
+    def test_request_above_thirty_seconds_is_refused_before_output_creation(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.execute(self.source("base-limit"), self.source("head-limit"), "--test-timeout", "31")
+        self.assertEqual(raised.exception.code, 2)
+        self.assertFalse((self.root / "evidence").exists())
+
+    def test_ctest_timeout_property_is_checked_before_running_tests(self):
+        for value in ("0", "2"):
+            with self.subTest(value=value):
+                baseline = self.source("base-" + value)
+                candidate = self.source("head-" + value, property_text="TIMEOUT " + value)
+                code, report = self.execute(baseline, candidate, "--repeat", "1", "--test-timeout", ".05")
+                self.assertEqual(code, 2, report)
+                self.assertIn("probe: TIMEOUT", report["error"])
+                self.assertEqual(report["iterations"], [])
+                self.assertEqual(report["status"], "incomplete")
+                (self.root / "evidence").rename(self.root / ("evidence-" + value))
+
     def test_pass_builds_both_targets_and_alternates_with_attribution(self):
         code, report = self.execute(self.source("base"), self.source("head"))
         self.assertEqual(code, 0, report)

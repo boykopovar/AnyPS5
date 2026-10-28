@@ -62,6 +62,25 @@ def log():
 
 
 class AbSplitTests(unittest.TestCase):
+    def test_settled_phase_requires_matching_kind_and_index(self):
+        lines = [
+            "[ab] phase A 0 begins at present 100 (t 10.000 s)\n",
+            "[ab] phase B 0 settled at present 102 (t 12.000 s)\n",
+        ]
+
+        _, phases = ab_split.read_log(lines)
+
+        self.assertEqual(len(phases), 1)
+        self.assertEqual(phases[0]["kind"], "A")
+        self.assertIsNone(phases[0]["settled"])
+
+        lines.append(
+            "[ab] phase A 0 settled at present 103 (t 13.000 s)\n"
+        )
+
+        _, phases = ab_split.read_log(lines)
+        self.assertEqual(phases[0]["settled"], (103, 13.0))
+
     def test_phases_count_only_reports_inside_a_settled_phase(self):
         result = ab_split.split(log(), ["0x1000"], ["staging-in"])
         self.assertTrue(result["config"].startswith("[ab] in-run A/B: phases of 30.0 s"))

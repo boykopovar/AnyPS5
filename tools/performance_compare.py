@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -73,7 +74,7 @@ def load_summary(path, trace=None):
                 record = json.loads(line)
                 if not isinstance(record, dict):
                     raise ValueError("summary must be an object")
-            except ValueError as error:
+            except (ValueError, RecursionError) as error:
                 raise ValueError(f"{path}:{line_number}: {error}") from error
             if trace is None or record.get("trace") == trace:
                 records.append((line_number, record))
@@ -113,7 +114,9 @@ def compare(baseline, candidate):
     for summary in (baseline, candidate):
         context = {key: summary[key] for key in CONTEXT}
         context.update({key: summary[key] for key in (*OPTIONAL_STRINGS, *OPTIONAL_INTEGERS) if key in summary})
-        context.update({f"window.{key}": summary["window"][key] for key in ("spec", "first_present")})
+        context["window.spec"] = summary["window"]["spec"]
+        if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
+            context["window.first_present"] = summary["window"]["first_present"]
         context.update({f"env.{key}": value for key, value in summary["env"].items()})
         contexts.append(context)
     differences = {key: {"baseline": contexts[0].get(key), "candidate": contexts[1].get(key)}
@@ -181,8 +184,14 @@ def main(argv=None):
         report = compare(load_summary(args.baseline, args.baseline_trace), load_summary(args.candidate, args.candidate_trace))
         if args.require_matching_context and report["configuration_differences"]:
             raise ValueError("recorded configuration differs: " + ", ".join(report["configuration_differences"]))
-        output = json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n" if args.json else markdown(report)
-    except (OSError, ValueError, OverflowError) as error:
+        if args.json:
+            try:
+                output = json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+            except RecursionError as error:
+                raise ValueError(f"JSON report: {error}") from error
+        else:
+            output = markdown(report)
+    except (OSError, ValueError, OverflowError, RecursionError) as error:
         parser.exit(2, f"{parser.prog}: {error}\n")
     sys.stdout.write(output)
 
