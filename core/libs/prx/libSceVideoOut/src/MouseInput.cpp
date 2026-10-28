@@ -1,6 +1,8 @@
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
 
+#include "prx/libc/include/general/VabiMacros.hpp"
+
 #include "SDL_mouse.h"
 #include "SDL_video.h"
 #include <cmath>
@@ -102,4 +104,8 @@ void MouseInput::UpdateCapture(bool allowed) {
     remainderX = 0.0;
     remainderY = 0.0;
     captured = wanted;
+}
+
+extern "C" bool APS5_VABI MouseIsOpen() {
+    return MouseIsOpen_nid_no_patch();
 }
