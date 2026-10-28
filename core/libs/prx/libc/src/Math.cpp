@@ -2686,9 +2686,9 @@ float APS5_VABI asinhf_nid_postfix(float x) {
     const float absolute = std::fabs(x);
     float result;
     if (magnitude > 0x4d800000u) {
-        result = std::log(absolute) + ln2;
+        result = logf_nid_postfix(absolute) + ln2;
     } else if (magnitude > 0x40000000u) {
-        result = std::log(2.0f * absolute + 1.0f / (std::sqrt(x * x + 1.0f) + absolute));
+        result = logf_nid_postfix(2.0f * absolute + 1.0f / (std::sqrt(x * x + 1.0f) + absolute));
     } else {
         const float square = x * x;
         result = AtanhfLog1p(absolute + square / (1.0f + std::sqrt(1.0f + square)));
