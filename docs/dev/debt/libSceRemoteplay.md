@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceRemoteplayGetConnectionStatus, sceRemoteplayInitialize, sceRemoteplayTerminate](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - `sceRemoteplayGetConnectionStatus` reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID; `sceRemoteplayInitialize` accepts a null heap only when its size is also zero (PPSA02195 passes both) and, with `sceRemoteplayTerminate`, performs no remote play session setup or teardown; whether a console accepts the null pair is unverified
+- [sceRemoteplayGetConnectionStatus, sceRemoteplayInitialize, sceRemoteplayTerminate](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - `sceRemoteplayGetConnectionStatus` reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID; `sceRemoteplayInitialize` accepts a null heap only when its size is also zero (PPSA02195 passes both), and [KytyPS5](https://github.com/KytyPS5/KytyPS5/blob/6c0140186250a9ac7ed50786b2426271750a7a20/src/libs/libNet.cpp#L2637-L2645) and [fpPS4](https://github.com/red-prig/fpPS4/blob/04cefd43e6fddd1ab033e7980cd356d14c964905/src/ps4_libsceremoteplay.pas#L17-L22) take the pair and return 0 without checking it, while [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/ebdbc85570f6837936e6baa614fbe3ad08c8debd/src/core/libraries/remote_play/remoteplay.cpp#L128-L131) stubs the call with a zero result; with `sceRemoteplayTerminate` it performs no remote play session setup or teardown. The console's null-pair handling is unverified
 
 ### Unknown function info
 
