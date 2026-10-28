@@ -296,13 +296,13 @@ int AddHeader(Settings& settings, const char* name, const char* value, std::uint
 
 struct Request::State {
     const int id;
+    Url url;
     const int version;
     int sslContext;
     const std::shared_ptr<Capacity> capacity;
     bool acquired = false;
     Settings settings;
     std::string method;
-    Url url;
     std::mutex mutex;
     std::atomic<bool> cancelled{false};
     bool started = false;
@@ -343,10 +343,10 @@ struct Request::State {
     Clock::time_point totalDeadline;
 
     State(int id, int version, int context, std::shared_ptr<Capacity> capacity, Settings options, std::string verb, std::string target)
-        : id(id), version(version), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)), url(Parse(target)) {
+        : id(id), url(Parse(target)), version(version == 3 && !url.secure ? 2 : version), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)) {
         Require(!method.empty() && nghttp2_check_method(reinterpret_cast<const std::uint8_t*>(method.data()), method.size()),
             "sceHttp2CreateRequestWithURL: invalid method");
-        Require(version >= 1 && version <= 3 && (version != 3 || url.secure), "sceHttp2: unsupported version or cleartext HTTP/2");
+        Require(version >= 1 && version <= 3, "sceHttp2: unsupported version");
         Require(method != "CONNECT", "sceHttp2: CONNECT is not implemented");
         Require(nghttp2_check_header_value_rfc9113(reinterpret_cast<const std::uint8_t*>(settings.userAgent.data()), settings.userAgent.size()),
             "sceHttp2: invalid user agent");
