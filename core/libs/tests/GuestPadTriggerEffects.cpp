@@ -1,7 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadTriggerEffect.hpp"
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libScePad/libScePad.hpp"
 
 #include <array>
 #include <cstdint>
@@ -9,14 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI scePadInit_nid_postfix(void);
-int APS5_VABI scePadOpen_nid_postfix(int, int, int, const void*);
-int APS5_VABI scePadSetTriggerEffect(int, const void*);
-int APS5_VABI scePadGetTriggerEffectState(int, PadTriggerEffectStateInformation*);
-int APS5_VABI scePadDisableTriggerEffect(int, bool);
-}
 
 namespace {
 
