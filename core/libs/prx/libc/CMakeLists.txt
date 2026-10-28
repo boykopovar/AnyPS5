@@ -69,6 +69,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Random.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatBuiltins.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPrefix.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostEntropy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DinkumwareAtomics.cpp
@@ -131,6 +132,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if(BUILD_TESTING AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND NOT MSVC)
         add_test(NAME libc_floating_point_contraction
                 COMMAND ${CMAKE_COMMAND} -DCOMPILER=${CMAKE_CXX_COMPILER}
+                    "-DARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}"
                     "-DOPTIONS=$<JOIN:$<TARGET_PROPERTY:libc,COMPILE_OPTIONS>, >"
                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}/libc_floating_point_contraction
                     -P ${LIBS_INCLUDE_DIR}/tests/LibcFloatingPointContraction.cmake)
@@ -146,7 +148,7 @@ if(BUILD_TESTING)
     foreach(bit RANGE 0 5)
         foreach(source RANGE 0 2)
             add_test(NAME guest_update_env_pending_${bit}_${source} COMMAND guest_update_env_tests $<TARGET_FILE:libc> ${bit} ${source})
-            set_tests_properties(guest_update_env_pending_${bit}_${source} PROPERTIES TIMEOUT 10)
+            set_tests_properties(guest_update_env_pending_${bit}_${source} PROPERTIES TIMEOUT 10 SKIP_RETURN_CODE 77)
             if(WIN32)
                 set_tests_properties(guest_update_env_pending_${bit}_${source} PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
@@ -467,6 +469,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_random_device_seed PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_count_ones_tests ${LIBS_INCLUDE_DIR}/tests/GuestCountOnes.cpp)
+    target_include_directories(guest_count_ones_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_count_ones_tests PRIVATE libc)
+    configure_windows_unwind(guest_count_ones_tests)
+    foreach(width uc us ui ul ull)
+        add_test(NAME guest_count_ones_${width} COMMAND guest_count_ones_tests ${width})
+        set_tests_properties(guest_count_ones_${width} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_count_ones_${width} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     add_test_executable(guest_integer_builtins_tests ${LIBS_INCLUDE_DIR}/tests/GuestIntegerBuiltins.cpp)
     target_include_directories(guest_integer_builtins_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_integer_builtins_tests PRIVATE libc)
@@ -789,8 +803,9 @@ if(BUILD_TESTING)
     add_test(NAME guest_standard_streams COMMAND guest_standard_stream_tests)
     add_test(NAME guest_standard_streams_closed_stdout COMMAND guest_standard_stream_tests --closed-stdout)
     add_test(NAME guest_standard_streams_exclusive_stdout COMMAND guest_standard_stream_tests --exclusive-stdout)
+    add_test(NAME guest_standard_streams_reopen_closed_stdout COMMAND guest_standard_stream_tests --reopen-closed-stdout)
     if(WIN32)
-        set_tests_properties(guest_standard_streams guest_standard_streams_closed_stdout guest_standard_streams_exclusive_stdout PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_standard_streams guest_standard_streams_closed_stdout guest_standard_streams_exclusive_stdout guest_standard_streams_reopen_closed_stdout PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME guest_standard_streams_update_stdout COMMAND guest_standard_stream_tests --update-stdout)
@@ -806,6 +821,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_gets PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(guest_gets PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(file_stream_status_tests ${LIBS_INCLUDE_DIR}/tests/FileStreamStatus.cpp)
+    target_include_directories(file_stream_status_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(file_stream_status_tests PRIVATE libc)
+    configure_windows_unwind(file_stream_status_tests)
+    add_test(NAME file_stream_status COMMAND file_stream_status_tests)
+    set_tests_properties(file_stream_status PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(file_stream_status PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(file_streams_tests ${LIBS_INCLUDE_DIR}/tests/FileStreams.cpp)
@@ -1173,6 +1198,18 @@ if(WIN32)
         add_test(NAME guest_heap_rounding_overflow COMMAND guest_heap_rounding_tests)
         set_tests_properties(guest_heap_rounding_overflow PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(NOT WIN32)
+    add_test_executable(guest_allocations_oom_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestAllocationsOom.cpp)
+    target_include_directories(guest_allocations_oom_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    set_target_properties(guest_allocations_oom_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_link_libraries(guest_allocations_oom_tests PRIVATE libc)
+    if(BUILD_TESTING)
+        set_target_properties(guest_allocations_oom_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+        add_test(NAME guest_allocations_oom COMMAND guest_allocations_oom_tests)
+        set_tests_properties(guest_allocations_oom PROPERTIES TIMEOUT 60)
     endif()
 endif()
 

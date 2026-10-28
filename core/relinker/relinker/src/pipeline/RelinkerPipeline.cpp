@@ -5,13 +5,16 @@
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <algorithm>
+#include <iterator>
 #include <sstream>
 
 #include <cstring>
 #include <limits>
+#include <map>
 #include <tuple>
 #include <utility>
 #include <domain/ImportModule.hpp>
+#include <relinker/parsing/RelrRelocations.hpp>
 
 namespace Relinker {
 
@@ -44,6 +47,7 @@ RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::s
 std::string RelinkerPipeline::relocationTypeName(std::uint32_t type) {
     switch (type) {
         case 1: return "R_X86_64_64";
+        case 2: return "R_X86_64_PC32";
         case 6: return "R_X86_64_GLOB_DAT";
         case 7: return "R_X86_64_JUMP_SLOT";
         case 10: return "R_X86_64_32";
@@ -231,8 +235,6 @@ RelinkResult RelinkerPipeline::Relink() {
 
     if (hasTag(DT_REL) || hasTag(DT_RELSZ) || hasTag(DT_RELENT))
         throw RelinkerException("DT_REL relocations are not supported");
-    if (hasTag(DT_RELR) || hasTag(DT_RELRSZ) || hasTag(DT_RELRENT))
-        throw RelinkerException("DT_RELR relocations are not supported");
 
     const bool hasRelaTable = hasTag(DT_OS_RELA) || hasTag(DT_RELA)
         || hasTag(DT_OS_RELASZ) || hasTag(DT_RELASZ);
@@ -260,6 +262,7 @@ RelinkResult RelinkerPipeline::Relink() {
     std::vector<std::string> neededLibraries;
 
     const std::vector<std::uint8_t>& raw = elfReader->GetRawBytes();
+    const auto relrRelocations = ReadRelrRelocations(raw, programHeaders, dynTags);
     const std::optional<ByteCount> dynSymTabSize = hasTag(DT_OS_SYMTABSZ)
         ? std::optional<ByteCount>(getTagValue(DT_OS_SYMTABSZ)) : std::nullopt;
 
@@ -280,6 +283,8 @@ RelinkResult RelinkerPipeline::Relink() {
     auto readCStr = [&](FileByteOffset strOff) -> std::string {
         if (strOff >= dynStrTabSize)
             throw RelinkerException("Dynamic string offset is outside DT_STRSZ", strOff);
+        if (strOff == 0 && raw[dynStrTabOffset] != 0)
+            throw RelinkerException("Dynamic string table does not begin with a NUL byte", dynStrTabOffset);
         std::string result;
         FileByteOffset pos = dynStrTabOffset + strOff;
         const FileByteOffset end = dynStrTabOffset + dynStrTabSize;
@@ -373,6 +378,13 @@ RelinkResult RelinkerPipeline::Relink() {
             const std::uint32_t symIdx = static_cast<std::uint32_t>(rInfo >> 32);
             const std::uint32_t relType = static_cast<std::uint32_t>(rInfo & 0xffffffff);
 
+            if (relType != R_X86_64_NONE && !relrRelocations.empty()) {
+                const auto nextRelr = relrRelocations.lower_bound(rOffset);
+                if ((nextRelr != relrRelocations.end() && nextRelr->first - rOffset < 8)
+                    || (nextRelr != relrRelocations.begin() && rOffset - std::prev(nextRelr)->first < 8))
+                    throw RelinkerException("RELR target overlaps RELA relocation", rOffset);
+            }
+
             validationPolicy->ValidateRelocationTypeSupported(relType, pos);
 
             if (relType == R_X86_64_NONE)
@@ -456,6 +468,7 @@ RelinkResult RelinkerPipeline::Relink() {
         const auto symbolBytes = getTagValue(DT_OS_SYMTABSZ);
         if (symbolBytes % symEntSize != 0 || dynSymTabOffset > raw.size() || symbolBytes > raw.size() - dynSymTabOffset)
             throw RelinkerException("Invalid executable dynamic symbol table size");
+        std::map<std::string, const std::uint8_t*> exportEntries;
         for (ByteCount off = symEntSize; off < symbolBytes; off += symEntSize) {
             const auto* symbol = raw.data() + dynSymTabOffset + off;
             std::uint16_t section = 0;
@@ -467,6 +480,12 @@ RelinkResult RelinkerPipeline::Relink() {
             name.resize(name.find('#') == std::string::npos ? name.size() : name.find('#'));
             const FileByteOffset entryOffset = dynSymTabOffset + off;
             const auto type = symbol[4] & 15;
+            if (name.empty())
+                throw RelinkerException("Empty executable export name", entryOffset);
+            if ((symbol[4] >> 4) > STB_WEAK || (symbol[5] & ~3) != 0 || (type != STT_NOTYPE && type != STT_OBJECT && type != STT_FUNC && type != STT_TLS))
+                throw RelinkerException("Unsupported executable export attributes: " + name, entryOffset);
+            if (const auto [previous, inserted] = exportEntries.emplace(name, symbol); !inserted && std::memcmp(previous->second + 4, symbol + 4, symEntSize - 4) != 0)
+                throw RelinkerException("Conflicting executable exports after stripping #: " + name, entryOffset);
             std::uint64_t value = 0;
             std::uint64_t size = 0;
             std::memcpy(&value, symbol + 8, sizeof(value));
@@ -616,6 +635,8 @@ RelinkResult RelinkerPipeline::Relink() {
 
     extractLocal(dynRelaOffset, dynRelaSize, false);
     extractLocal(dynJmpRelOffset, dynJmpRelSize, true);
+    for (const auto& [target, addend] : relrRelocations)
+        appendRela(dynSection.RelaData, target, R_X86_64_RELATIVE, static_cast<std::int64_t>(addend));
 
     std::vector<CallRegistryEntry> entries;
     entries.reserve(nidRefs.size());

@@ -16,13 +16,17 @@ struct Settings {
     std::uint64_t contentLength = 0;
     bool noContentLength = false;
     bool auth = true;
-    bool redirect = true;
+    int redirect = 1;
     std::uint32_t verifyFlags = 0x3d;
     std::uint32_t timeout = 120000000;
     std::uint32_t connectTimeout = 30000000;
     std::uint32_t sendTimeout = 120000000;
     std::uint32_t recvTimeout = 120000000;
     std::uint32_t resolveTimeout = 30000000;
+    void* authInfoCallback = nullptr;
+    void* authInfoArgument = nullptr;
+    void* preSendCallback = nullptr;
+    void* preSendArgument = nullptr;
 };
 
 struct Capacity {
@@ -48,7 +52,7 @@ private:
     std::unique_ptr<State> state;
 };
 
-void AddHeader(Settings& settings, const char* name, const char* value, std::uint32_t mode);
+int AddHeader(Settings& settings, const char* name, const char* value, std::uint32_t mode);
 std::shared_ptr<Capacity> CreateCapacity_nid_no_patch(int maximum);
 std::shared_ptr<Request> CreateRequest_nid_no_patch(int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
 

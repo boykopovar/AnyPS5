@@ -128,7 +128,7 @@ class Symbolizer:
         for directory in libs:
             for path in Path(directory).iterdir():
                 if path.is_file():
-                    self.files.setdefault(path.name.lower(), path)
+                    self.files.setdefault(path.name.lower(), {}).setdefault(path.resolve(), path)
         self.headers = headers
         self.modules = {}
         self.demangle = demangle and shutil.which("c++filt") is not None
@@ -136,11 +136,36 @@ class Symbolizer:
         self.warn = warn
         self.unverified = unverified
 
+    def candidate_path(self, name):
+        paths = list(self.files.get(name.lower(), {}).values())
+        if len(paths) <= 1:
+            return paths[0] if paths else None
+        identity = self.headers.get(name)
+        if identity is None and not self.unverified:
+            self.warn(f"{name}: the samples have no '# module' record; multiple candidates stay unsymbolized")
+            return None
+        matches = []
+        for path in paths:
+            try:
+                candidate = PeModule(path)
+            except (OSError, ValueError, struct.error) as error:
+                self.warn(f"{name}: {path}: {error}")
+                continue
+            if identity is None or identity == (candidate.size, candidate.timestamp):
+                matches.append(path)
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            self.warn(f"{name}: ambiguous module candidates; matching size and timestamp do not identify one file, so frames stay unsymbolized")
+        else:
+            self.warn(f"{name}: no module candidate matches the sampled size and timestamp; frames stay unsymbolized")
+        return None
+
     def module(self, name):
         if name in self.modules:
             return self.modules[name]
         module = None
-        path = self.files.get(name.lower())
+        path = self.candidate_path(name)
         if path is not None:
             try:
                 module = PeModule(path)

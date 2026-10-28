@@ -212,6 +212,54 @@ class TraceDigestTests(unittest.TestCase):
                     self.assertNotIn("Traceback", result.stderr)
                     self.assertEqual(result.stdout, "")
 
+    def test_cli_rejects_invalid_event_fields_without_partial_output(self):
+        slice_event = complete(1, "Driver.Packet", 0, 10)
+        cases = [
+            (dict(slice_event, tid=None), "trace event 0: tid must be an integer"),
+            (dict(slice_event, tid="1"), "trace event 0: tid must be an integer"),
+            (dict(slice_event, tid=True), "trace event 0: tid must be an integer"),
+            ({key: value for key, value in slice_event.items() if key != "tid"}, "trace event 0: tid must be an integer"),
+            ({key: value for key, value in slice_event.items() if key != "dur"}, "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur=None), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur="slow"), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur="10"), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur=True), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur=[1]), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, ts={}), "trace event 0: ts must be a finite number"),
+            (dict(slice_event, ts="0"), "trace event 0: ts must be a finite number"),
+            (dict(slice_event, ts=float("nan")), "trace event 0: ts must be a finite number"),
+            (dict(slice_event, ts=float("inf")), "trace event 0: ts must be a finite number"),
+            (dict(slice_event, ts=1e308), "trace event 0: ts must be a finite number"),
+            (dict(slice_event, name=7), "trace event 0: name must be a string"),
+            ({key: value for key, value in slice_event.items() if key != "name"}, "trace event 0: name must be a string"),
+            (dict(slice_event, args=[]), "trace event 0: args must be an object"),
+            (dict(slice_event, args={"batch": [1]}), "trace event 0: args.batch must be an integer or a string"),
+            (dict(slice_event, args={"batch": []}), "trace event 0: args.batch must be an integer or a string"),
+            (dict(slice_event, args={"batch": None}), "trace event 0: args.batch must be an integer or a string"),
+            ({"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": 1}, "trace event 0: args.name must be a string"),
+            ({"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": 1, "args": {}}, "trace event 0: args.name must be a string"),
+            ({"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": [1], "args": {"name": "a"}}, "trace event 0: tid must be an integer"),
+            ({"name": "present", "ph": "i", "ts": None, "pid": 7, "tid": 2, "s": "g"}, "trace event 0: ts must be a finite number"),
+            ({"name": "present", "ph": "i", "pid": 7, "tid": 2, "s": "g"}, "trace event 0: ts must be a finite number"),
+            ({"name": "present", "ph": "i", "ts": 0, "pid": 7, "tid": 2, "s": "g", "args": 5}, "trace event 0: args must be an object"),
+            ({"name": "folded", "ph": "C", "ts": 0, "pid": 7, "args": {"ms": 1.5}}, "trace event 0: tid must be an integer"),
+            ({"name": "folded", "ph": "C", "ts": 0, "pid": 7, "tid": 1, "args": []}, "trace event 0: args must be an object"),
+            ({"name": "folded", "ph": "C", "ts": 0, "pid": 7, "tid": 1, "args": {"ms": "x"}}, "trace event 0: args value must be a finite number"),
+            ({"name": "folded", "ph": "C", "ts": 0, "pid": 7, "tid": 1, "args": {"ms": True}}, "trace event 0: args value must be a finite number"),
+        ]
+        for event, message in cases:
+            for compressed in (False, True):
+                with self.subTest(event=event, compressed=compressed):
+                    path = Path(self.directory.name) / ("fields.json.gz" if compressed else "fields.json")
+                    data = json.dumps({"traceEvents": [event]}).encode("utf-8")
+                    path.write_bytes(gzip.compress(data) if compressed else data)
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), "--json"],
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("FAIL: " + message, result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(result.stdout, "")
+
     def test_cli_reports_unreadable_inputs_without_partial_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

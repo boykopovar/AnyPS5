@@ -91,6 +91,8 @@ The documentation runs the Python tools as `python3`. With the python.org instal
 
 If `gen-describe.ps1` fails while generating libusb's `version_describe.h`, check the Bash path printed in the build output. A WindowsApps or System32 `bash.exe` can launch WSL and fail with `WSL_E_DEFAULT_DISTRO_NOT_FOUND` when no distribution is installed. Install Git for Windows with Bash, or use Portable Git, and put its `cmd` and `usr\bin` directories on `PATH` before retrying the build. Use Bash and `cygpath.exe` from the same Git installation.
 
+If the build stops with `fatal error: opening dependency file ...\*.cpp.obj.d: No such file or directory` for a few sources with long names, the path of an object or dependency file under `build` is at or near the 260-character Windows limit. A checkout whose path was 92 characters failed this way with `LongPathsEnabled` set to 1 in the registry; the same tree at `C:\a5` built. Clone the repository to a short path such as `C:\a5` and configure in a new build directory: a CMake build tree stores absolute paths, so moving an existing `build` directory does not help.
+
 After `cmake --build build --target libs --parallel` succeeds, copy the toolchain's runtime DLLs beside the patched libraries:
 
 ```powershell
@@ -121,6 +123,8 @@ Project switches accept `ON` or `OFF`:
 | `-DAGC_BUILD_VISUAL_TEST=ON`     | `OFF`   | Build the standalone AGC SPIR-V visual test.     |
 
 GCC and Clang compile libc with `-ffp-contract=off` whatever the target CPU. Toolchains that default to x86-64-v3, such as GCC 15 on Ubuntu 26.04, would otherwise fuse `a * b + c` into FMA instructions, which changes the last bit of math results that must match the console.
+
+The [Sanitizers workflow](../../.github/workflows/sanitizers.yml) builds the full runtime on Ubuntu with `-DANYPS5_ENABLE_ASAN=ON` and UBSan (`-fsanitize=undefined -fno-sanitize=vptr`) nightly at 03:41 UTC, runs every test and can be started manually with `workflow_dispatch`. It builds only the `F16ToF32Unpack`, `F64FmaSubnormals` and `RegistrationPrepareShutdown` AGC execution tests, like the Windows MSYS2 workflow. A test that fails because of the sanitizers themselves, or because of a bug whose fix is still open, is listed with the reason in [sanitizer-known-failures.txt](../../.github/sanitizer-known-failures.txt), one test per line with its sanitizers and the reason,. The job summary, written by `tools/sanitizer_report.py`, separates unexpected failures from known ones and names listed tests that passed or did not run, so their entries can be removed. To repeat a run locally, set `ASAN_OPTIONS=detect_leaks=0` and `UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1`, so that undefined behavior fails the test.
 
 Build configuration parameters:
 
