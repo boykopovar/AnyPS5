@@ -347,6 +347,13 @@ class AuditDumpTests(unittest.TestCase):
         self.assert_report_rejected(directory, "JSON output is a directory")
         missing_parent = self.root / "no-such-parent" / "report.json"
         self.assert_report_rejected(missing_parent, "no such directory")
+        dangling_link = self.root / "dangling-report.json"
+        try:
+            os.symlink(self.root / "missing-parent-dir" / "report.json", dangling_link)
+        except OSError:
+            pass
+        else:
+            self.assert_report_rejected(dangling_link, "no such directory")
 
     def test_json_output_symlink_aliases_of_the_dump_are_rejected(self):
         for name, target, directory in (("file", self.dump / "eboot.bin", False), ("directory", self.dump, True), ("missing", self.dump / "not-created.json", False)):
