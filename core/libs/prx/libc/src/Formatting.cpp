@@ -39,6 +39,10 @@ namespace {
 
 #ifndef _WIN32
 bool RequiresGuestFormatting(const char* format) {
+#ifdef ANYPS5_GUEST_LIFTED
+    static_cast<void>(format);
+    return true;
+#else
     if (format == nullptr) return false;
     while ((format = std::strchr(format, '%')) != nullptr) {
         ++format;
@@ -55,6 +59,7 @@ bool RequiresGuestFormatting(const char* format) {
         if (*format) ++format;
     }
     return false;
+#endif
 }
 
 std::size_t HostFormatSize(std::size_t size) {
@@ -123,7 +128,19 @@ bool ScansInProcess(const char* format) {
         LibcDetail::RequireNoPositionalWideScan(format);
         return true;
     }
+#ifdef ANYPS5_GUEST_LIFTED
+    return true;
+#else
     return HasNarrowCharacterScan(format);
+#endif
+}
+
+bool ScansStreamInProcess(const char* format) {
+#ifdef ANYPS5_GUEST_LIFTED
+    return ScansInProcess(format);
+#else
+    return ScansWideInProcess(format);
+#endif
 }
 
 const char* CutAtQuadScanDirective(const char* format, std::string& head) {
@@ -585,7 +602,7 @@ int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaLi
     *destination = nullptr;
     if (!format || !args) { errno = 22; return -1; }
     try {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(ANYPS5_GUEST_LIFTED)
         std::string text;
         const int count = LibcDetail::FormatWindows(nullptr, 0, format, args, &text);
         const char* source = text.c_str();
@@ -643,22 +660,20 @@ int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaLis
 }
 
 int APS5_VABI fprintf_nid_postfix(FileStream* stream, const char* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-#else
-    std::va_list args;
-    va_start(args, format);
-#endif
+    APS5_VA_BEGIN(format);
     const int result = vfprintf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
-#ifdef _WIN32
-    __builtin_sysv_va_end(args);
-#else
-    va_end(args);
-#endif
+    APS5_VA_END();
     return result;
 }
 
+#ifdef ANYPS5_GUEST_LIFTED
+int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vfscanf_nid_postfix(stream, format, args);
+    APS5_VA_END();
+    return result;
+}
+#else
 int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
 #ifndef _WIN32
     if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
@@ -690,8 +705,39 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
     stream->KeepDirectoryReadError(result == -1);
     return result;
 }
+#endif
 
-#ifdef _WIN32
+#if defined(ANYPS5_GUEST_LIFTED)
+
+int APS5_VABI printf_nid_postfix(const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vprintf_nid_postfix(format, args);
+    APS5_VA_END();
+    return result;
+}
+
+int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vprintf_nid_postfix(format, args);
+    APS5_VA_END();
+    return result;
+}
+
+int APS5_VABI snprintf_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vsnprintf_nid_postfix(buffer, size, format, args);
+    APS5_VA_END();
+    return result;
+}
+
+int APS5_VABI sprintf_nid_postfix(char* buffer, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vsprintf_nid_postfix(buffer, format, args);
+    APS5_VA_END();
+    return result;
+}
+
+#elif defined(_WIN32)
 
 int APS5_VABI printf_nid_postfix(const char* format, ...) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
@@ -787,12 +833,11 @@ int APS5_VABI vsscanf_nid_postfix(const char* input, const char* format, VaList*
 #endif
 }
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(ANYPS5_GUEST_LIFTED)
 int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    APS5_VA_BEGIN(format);
     const int result = vsscanf_nid_postfix(input, format, reinterpret_cast<VaList*>(args));
-    __builtin_sysv_va_end(args);
+    APS5_VA_END();
     return result;
 }
 #else
@@ -808,7 +853,16 @@ int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
 }
 #endif
 
-#ifdef _WIN32
+#if defined(ANYPS5_GUEST_LIFTED)
+
+int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vsscanf_s_nid_postfix(buffer, format, args);
+    APS5_VA_END();
+    return result;
+}
+
+#elif defined(_WIN32)
 
 int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) {
     __builtin_sysv_va_list args;
@@ -916,19 +970,9 @@ int APS5_VABI vprintf_s_nid_postfix(const char* format, VaList* args) {
 }
 
 int APS5_VABI fprintf_s_nid_postfix(FileStream* stream, const char* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-#else
-    std::va_list args;
-    va_start(args, format);
-#endif
+    APS5_VA_BEGIN(format);
     const int result = vfprintf_s_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
-#ifdef _WIN32
-    __builtin_sysv_va_end(args);
-#else
-    va_end(args);
-#endif
+    APS5_VA_END();
     return result;
 }
 
@@ -973,6 +1017,33 @@ int APS5_VABI vsprintf_s_nid_postfix(char* buffer, size_t size, const char* form
     return result;
 }
 
+#ifdef ANYPS5_GUEST_LIFTED
+
+int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = vsprintf_s_nid_postfix(buffer, size, format, args);
+    APS5_VA_END();
+    return result;
+}
+
+int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    APS5_VA_BEGIN(format);
+    const int result = FormatSecure(buffer, size, format, args);
+    APS5_VA_END();
+    return result;
+}
+
+int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
+    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
+    APS5_VA_BEGIN(format);
+    _Stdout_nid_postfix.Orientation(-1);
+    const int result = LibcDetail::PrintWindows(format, args);
+    APS5_VA_END();
+    return result;
+}
+
+#else
+
 int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
@@ -1001,6 +1072,8 @@ int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
 
 #endif
 
+#endif
+
 int APS5_VABI puts_nid_postfix(const char* s) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(&_Stdout_nid_postfix);
@@ -1024,7 +1097,7 @@ int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList
     stream->Orientation(-1);
     if (!stream->SwitchToReading()) return EOF;
     int result = 0;
-    if (ScansWideInProcess(format)) {
+    if (ScansStreamInProcess(format)) {
         LibcDetail::FormatArguments arguments(args);
         result = ScanSource(StreamSource(native), format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
     } else {
@@ -1047,19 +1120,9 @@ int APS5_VABI vscanf_nid_postfix(const char* format, VaList* args) {
 }
 
 int APS5_VABI scanf_nid_postfix(const char* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-#else
-    std::va_list args;
-    va_start(args, format);
-#endif
+    APS5_VA_BEGIN(format);
     const int result = vfscanf_nid_postfix(__stdinp_nid_postfix, format, reinterpret_cast<VaList*>(args));
-#ifdef _WIN32
-    __builtin_sysv_va_end(args);
-#else
-    va_end(args);
-#endif
+    APS5_VA_END();
     return result;
 }
 
@@ -1073,36 +1136,16 @@ int APS5_VABI vscanf_s_nid_postfix(const char* format, VaList* args) {
 }
 
 int APS5_VABI fscanf_s_nid_postfix(FileStream* stream, const char* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-#else
-    std::va_list args;
-    va_start(args, format);
-#endif
+    APS5_VA_BEGIN(format);
     const int result = vfscanf_s_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
-#ifdef _WIN32
-    __builtin_sysv_va_end(args);
-#else
-    va_end(args);
-#endif
+    APS5_VA_END();
     return result;
 }
 
 int APS5_VABI scanf_s_nid_postfix(const char* format, ...) {
-#ifdef _WIN32
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-#else
-    std::va_list args;
-    va_start(args, format);
-#endif
+    APS5_VA_BEGIN(format);
     const int result = vfscanf_s_nid_postfix(__stdinp_nid_postfix, format, reinterpret_cast<VaList*>(args));
-#ifdef _WIN32
-    __builtin_sysv_va_end(args);
-#else
-    va_end(args);
-#endif
+    APS5_VA_END();
     return result;
 }
 

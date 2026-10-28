@@ -1,3 +1,4 @@
+#include "prx/libc/include/GuestVaList.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -18,55 +19,45 @@
 #include <cstdio>
 #include <cstdarg>
 
-#if defined(__clang__) && !defined(_WIN32)
-#define __builtin_sysv_va_list va_list
-#define __builtin_sysv_va_start va_start
-#define __builtin_sysv_va_end va_end
-#endif
-
 static void Require(bool condition) {
     if (!condition) throw std::runtime_error("Formatting check failed");
 }
 
 static int APS5_VABI FormatList(char* buffer, size_t size, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    APS5_VA_BEGIN(format);
     VaList list;
     std::memcpy(&list, args, sizeof(list));
     const VaList original = list;
     const int result = vsnprintf_nid_postfix(buffer, size, format, &list);
     Require(std::memcmp(&list, &original, sizeof(list)) == 0);
-    __builtin_sysv_va_end(args);
+    APS5_VA_END();
     return result;
 }
 
 static int APS5_VABI FormatListS(char* buffer, size_t size, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    APS5_VA_BEGIN(format);
     VaList list;
     std::memcpy(&list, args, sizeof(list));
     const int result = vsnprintf_s_nid_postfix(buffer, size, format, &list);
-    __builtin_sysv_va_end(args);
+    APS5_VA_END();
     return result;
 }
 
 static int APS5_VABI ScanList(const char* buffer, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    APS5_VA_BEGIN(format);
     VaList list;
     std::memcpy(&list, args, sizeof(list));
     const int result = vsscanf_nid_postfix(buffer, format, &list);
-    __builtin_sysv_va_end(args);
+    APS5_VA_END();
     return result;
 }
 
 static int APS5_VABI ScanListS(const char* buffer, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    APS5_VA_BEGIN(format);
     VaList list;
     std::memcpy(&list, args, sizeof(list));
     const int result = vsscanf_s_nid_postfix(buffer, format, &list);
-    __builtin_sysv_va_end(args);
+    APS5_VA_END();
     return result;
 }
 
@@ -106,12 +97,11 @@ static void CheckCharacterScanLengths() {
 }
 
 static int APS5_VABI PrintList(const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
+    APS5_VA_BEGIN(format);
     VaList list;
     std::memcpy(&list, args, sizeof(list));
     const int result = vprintf_nid_postfix(format, &list);
-    __builtin_sysv_va_end(args);
+    APS5_VA_END();
     return result;
 }
 
@@ -688,6 +678,12 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
 #ifndef _WIN32
     char narrow[8] = {};
     Require(sscanf_nid_postfix("ab%", "%7[^%ls]", narrow) == 1 && std::strcmp(narrow, "ab") == 0);
+#endif
+#ifdef ANYPS5_GUEST_LIFTED
+    {
+        int untouched = 7;
+        Require(sscanf_nid_postfix("5", "%1$d", &untouched) == 0 && untouched == 7);
+    }
 #endif
 #ifdef _WIN32
     char freebsd[64];
