@@ -2,7 +2,9 @@
 
 ### Unknown function info
 
-- [libSceHttpCache additional exports](../../../core/libs/prx/libSceHttpCache/Export.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+- [libSceHttpCache additional exports](../../../core/libs/prx/libSceHttpCache/Export.cpp) - these name/NID pairs are present in the inspected export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+The inventory label is not authenticated retail-firmware provenance. The inspected image contains raw module-parameter words `0x13590001` at +0x10 and `0x13600007` at +0x14. Using the [published static ELF membership procedure](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298), its 34 unique function NIDs have sorted-LF SHA-256 `7a05b0dd86d73e5eade84050580639fb242533a7f114ef96ffde7d259bde84e0`; all 2 entries below are present. This digest identifies the function-NID set, not the whole binary or its ABI. An independent review on [this PR](https://github.com/boykopovar/AnyPS5/pull/11934#pullrequestreview) corroborated these identities using a separately reported 13.42 reference; that does not establish matching binaries, prototypes or behavior.
 
 | Name | NID |
 | --- | --- |
