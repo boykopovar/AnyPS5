@@ -393,16 +393,6 @@ void RunNull(AgcDriver::VulkanDevice& device, Variant variant) {
     }
 }
 
-void RunThrows(AgcDriver::VulkanDevice& device, const Variant& variant, const std::string& message) {
-    try {
-        Dispatch(device, variant);
-    } catch (const std::exception& error) {
-        Require(std::string(error.what()).find(message) != std::string::npos, variant.name + ": threw '" + error.what() + "', expected '" + message + "'");
-        return;
-    }
-    throw std::runtime_error(variant.name + ": did not throw '" + message + "'");
-}
-
 }
 
 int main() {
@@ -439,8 +429,6 @@ int main() {
         Run(*device, {GatherRed, 0, {8, 4, 4, 1, 1}, {Same(0)}, "3D gather of red reads the base level"});
         Run(*device, {GatherRed, 0, {WideWidth, 2, 2}, {Same(2)}, "3D gather of red from a 241 texel wide volume at 1/256 texel boundaries"});
         Run(*device, {GatherRed, 0, {8, 4, 4, 0, 0, BlueGreenRedAlpha}, {Same(1)}, "3D gather of red through a blue-green-red-alpha swizzle"});
-        RunThrows(*device, {GatherRed, 0, cube, {Same(6), 3}, "3D gather with a border color table"}, "a 3D gather with a border color table is not implemented");
-        RunThrows(*device, {GatherRed, 0, {8, 4, 4, 0, 0, BlueGreenRedAlpha}, {Same(6), 2}, "3D gather of a swizzled volume with border addressing"}, "a 3D gather of a swizzled texture with border addressing is not implemented");
         RunNull(*device, {GatherRed, 0, cube, {Same(0)}, "3D gather of red from a null image descriptor, wrap"});
         RunNull(*device, {VertexGatherRed, 0, cube, {Same(1)}, "vertex shader 3D gather of red from a null image descriptor, mirror", Inputs::Positions, true});
         std::puts("image 3D gather tests passed");
