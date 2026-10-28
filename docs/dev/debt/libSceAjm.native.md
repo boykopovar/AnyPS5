@@ -1,5 +1,11 @@
 # libSceAjm.native technical debt
 
+### Silent stubs
+
+- [sceAjmModuleRegister, sceAjmModuleUnregister](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - return 0 without recording the codec, so instances are created the same whether or not their codec's module was registered. Borderlands 4 (PPSA01494), Ghost of Tsushima (PPSA02225), Forspoken (PPSA03984), Metal Gear Solid 4 (PPSA18194), Crimson Desert (PPSA25286), MXGP 26 (PPSA30839) and Super Meat Boy 3D (PPSA31162) call both; Call of Duty: Black Ops II (PPSA34502) calls `sceAjmModuleRegister` once
+- [sceAjmFinalize](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - returns 0 without releasing anything for the context, and the next `sceAjmInitialize` hands out a new context number. The seven titles above that unregister modules also call it
+- [sceAjmBatchErrorDump](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native) - ignores the batch information and returns 0 with the error record zeroed when one is passed. Borderlands 4, Forspoken, Metal Gear Solid 4, MXGP 26 and Super Meat Boy 3D call it
+
 ### Unknown function info
 
 - [sceAjmBatchGetLog, sceAjmInstanceAvailable](../../../core/libs/prx/libSceAjm.native/Export.cpp) (libSceAjm.native) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAjm.c), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim.

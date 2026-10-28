@@ -525,8 +525,9 @@ static void CheckHypotSpecialValue() {
 static void CheckAsinfErrno() {
     for (const float input : {2.0f, -2.0f, std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
         errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
         (void)asinf_nid_postfix(input);
-        Require(errno == EDOM);
+        Require(errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
     }
     for (const float input : {1.0f, -1.0f, 0.5f, 0.0f}) {
         errno = 1234;
@@ -595,13 +596,20 @@ struct RestoreFloatingPointState {
 };
 
 static void CheckAcosfErrno() {
+    constexpr std::uint32_t domain[][2] = {
+        {0x40000000u, 0xffc00000u}, {0xc0000000u, 0xffc00000u}, {0x7f800000u, 0xffc00000u}, {0xff800000u, 0xffc00000u},
+        {0x3f800001u, 0xffc00000u}, {0x7fc00000u, 0x7fc00000u}, {0xffc00000u, 0xffc00000u},
+    };
+    for (const auto& [input, expected] : domain) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(std::bit_cast<float>(input))) == expected);
+        Require(errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
     errno = 0;
-    Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(2.0f)) == 0xffc00000u);
-    Require(errno == 0);
-    Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(-2.0f)) == 0xffc00000u);
-    Require(errno == 0);
+    std::feclearexcept(FE_ALL_EXCEPT);
     Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(0.5f)) == 0x3f860a92u);
-    Require(errno == 0);
+    Require(errno == 0 && std::fetestexcept(FE_INVALID) == 0);
 }
 
 static void CheckFmodfErrno() {

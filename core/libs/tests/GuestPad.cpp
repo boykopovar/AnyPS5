@@ -894,6 +894,14 @@ int main() {
     std::int32_t p2Type = -1;
     Require(scePadGetControllerType(handle2, &p2Type) == PAD_OK);
     Require(p2Type == PAD_CONTROLLER_TYPE_DUAL_SENSE);
+    Require(scePadDisableVibration(handle2, true) == PAD_OK);
+    Require(scePadDisableVibration(handle2 + 99, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDisableTriggerEffect(handle2, true) == PAD_OK);
+    Require(scePadDisableTriggerEffect(handle2 + 99, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadIsLightBarBaseBrightnessControllable(handle2) == 1);
+    Require(scePadIsLightBarBaseBrightnessControllable(handle2 + 99) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBarBaseBrightness(handle2, 1) == PAD_OK);
+    Require(scePadSetLightBarBaseBrightness(handle2 + 99, 1) == PAD_ERROR_INVALID_HANDLE);
 
     PadSetPortConnected_nid_postfix(1, true);
     Require(scePadGetInfo_nid_postfix(&info) == PAD_OK);

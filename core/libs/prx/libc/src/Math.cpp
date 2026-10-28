@@ -326,7 +326,7 @@ float APS5_VABI asinf_nid_postfix(float x) {
         if (ix == 0x3f800000) {
             return static_cast<float>(x * pio2);
         }
-        errno = EDOM;
+        _Feraise_nid_postfix(0x01);
         return (x - x) / (x - x);
     }
     if (ix < 0x3f000000) {
@@ -342,9 +342,11 @@ float APS5_VABI asinf_nid_postfix(float x) {
 }
 float APS5_VABI acosf_nid_postfix(float x) {
     if (std::isnan(x)) {
+        _Feraise_nid_postfix(0x01);
         return std::bit_cast<float>(std::bit_cast<std::uint32_t>(x) | 0x00400000u);
     }
     if (std::fabs(x) > 1.0f) {
+        _Feraise_nid_postfix(0x01);
         return std::bit_cast<float>(0xffc00000u);
     }
     constexpr float Pi = 3.1415925026e+00f, Pio2High = 1.5707962513e+00f;

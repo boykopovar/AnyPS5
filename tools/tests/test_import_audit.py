@@ -242,6 +242,18 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
 
 
+    def test_deeply_nested_registries_are_audit_errors(self):
+        registry = self.work.root / "game.registry.json"
+        registry.write_text("[" * 200000, encoding="utf-8")
+        code, out, err = self.work.run(registry)
+        self.assertEqual(code, 2, err)
+        self.assertIn("cannot read registry", err)
+        registry.write_text("[]", encoding="utf-8")
+        registry.with_name("game.needed.json").write_text("[" * 200000, encoding="utf-8")
+        code, out, err = self.work.run(registry)
+        self.assertEqual(code, 2, err)
+        self.assertIn("cannot read needed libraries", err)
+
     def test_windows_guest_dependencies_use_host_prx_suffixes(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_pe(["AAAAAAAAAAA"]))
@@ -2335,6 +2347,23 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual((code, out), (2, ""))
         self.assertIn("input", err)
         self.assertEqual(registry.read_bytes(), before)
+
+    def test_symbolic_link_loops_are_reported_as_failures(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry = work.root / "game.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceA.prx")])
+        loop = work.root / "loop.json"
+        try:
+            loop.symlink_to(loop.name)
+        except (OSError, NotImplementedError):
+            self.skipTest("symbolic links are unavailable")
+        for arguments in ((registry, "--json", str(loop)), (loop, "--json", str(work.root / "audit.json"))):
+            with self.subTest(arguments=arguments):
+                code, out, err = work.run(*arguments)
+                self.assertEqual((code, out), (2, ""))
+                self.assertTrue(err.startswith("FAIL: "), err)
+                self.assertFalse((work.root / "audit.json").exists())
 
     def test_json_output_preserves_shared_source_cmake_inputs(self):
         work = self.work

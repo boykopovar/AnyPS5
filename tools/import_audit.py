@@ -656,7 +656,7 @@ def source_stub_classes(source):
 def read_registry(path):
     try:
         entries = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
         raise AuditError(f"{path}: cannot read registry: {error}") from error
     if not isinstance(entries, list):
         raise AuditError(f"{path}: a registry is a JSON list, got {type(entries).__name__}")
@@ -681,7 +681,7 @@ def needed_registry_path(path):
 def read_needed_registry(path):
     try:
         libraries = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
         raise AuditError(f"{path}: cannot read needed libraries: {error}") from error
     if not isinstance(libraries, list) or any(not isinstance(library, str) or not library for library in libraries):
         raise AuditError(f"{path}: needed libraries must be a JSON list of nonempty strings")
@@ -835,7 +835,9 @@ def attach_names(records, names):
 def write_json(path, result):
     if path.is_dir():
         raise AuditError(f"{path}: JSON output is a directory")
-    destination = path.resolve()
+    destination = Path(os.path.realpath(path))
+    if destination.is_symlink():
+        raise AuditError(f"{path}: JSON output is a symbolic link loop")
     with tempfile.TemporaryDirectory(dir=destination.parent, prefix=destination.name + ".", suffix=".tmp") as directory:
         temporary = Path(directory) / destination.name
         try:
@@ -974,8 +976,8 @@ def main(argv=None):
             inputs += [file for directory in args.modules for file in directory_files(directory, "*")]
             inputs += list(Path(args.source).rglob("*.cpp"))
             inputs += [file for file in Path(args.source).glob("*/CMakeLists.txt") if file.is_file()]
-            output = args.json.resolve()
-            if any(output == path.resolve() or (args.json.exists() and args.json.samefile(path)) for path in inputs):
+            output = Path(os.path.realpath(args.json))
+            if any(output == Path(os.path.realpath(path)) or (args.json.exists() and args.json.samefile(path)) for path in inputs):
                 raise AuditError(f"{args.json}: JSON output would overwrite an input file")
         registries = [(registry, read_registry(registry)) for registry in args.registries]
         imports = [entry for _, entries in registries for entry in entries]

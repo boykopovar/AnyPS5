@@ -1645,8 +1645,10 @@ int APS5_VABI sceKernelRmdir(const char* path) {
     if (const int dot = RenameDotError_nid_no_patch(path)) return SceKernelError(dot);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
+    FileStat linkStatus{};
+    if (native.has_filename() && File::FillLinkStat(native, &linkStatus) && (linkStatus.st_mode & 0170000) == 0120000) return SceErrorFromErrno(GUEST_ENOTDIR);
     std::error_code error;
-    if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GUEST_ENOTDIR);
+    const auto status = std::filesystem::status(native, error);
     if (const int failure = PathLookupFailure(error)) return failure;
 #ifdef _WIN32
     const DWORD attributes = GetFileAttributesW(native.c_str());
@@ -1655,7 +1657,7 @@ int APS5_VABI sceKernelRmdir(const char* path) {
         if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "rmdir")) return SceErrorFromErrno(GUEST_ENOTDIR);
     }
 #endif
-    if (!std::filesystem::is_directory(native, error)) {
+    if (!std::filesystem::is_directory(status)) {
 #ifdef _WIN32
         if (File::WindowsSymbolicLinkLoop(WithoutTrailingSeparator(native).parent_path())) return SceKernelError(GUEST_ELOOP);
 #endif
