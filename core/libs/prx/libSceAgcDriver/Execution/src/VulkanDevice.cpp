@@ -2509,8 +2509,23 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     if (recorder.Idle()) return 1;
     static const bool drain = std::getenv("APS5_DRAIN_COMPLETION_LABELS") != nullptr;
     const auto context = graphicsContext();
+    const bool syncUnimported = queue == 0 && !recorder.SubmitHeld();
+    const auto behindCompletions = [&] {
+        const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
+        if (drain) return listed ? 2 : 0;
+        const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0;
+        if (bytes.size() <= 8 ? !(listed || storesPending) : !(storesPending && recorder.CompletionLabelIn(address, bytes.size()))) return 0;
+        recorder.AfterCompletions(address, bytes, stamp, queue, false);
+        return 5;
+    };
+    const auto unimported = [&] {
+        if (const int reason = behindCompletions()) return reason;
+        recorder.Sync();
+        return 7;
+    };
+    if (syncUnimported && !Graphics::HostImportCovers(context, address, bytes.size())) return unimported();
     const auto* import = Graphics::HostImportFor(context, address, bytes.size());
-    if (import == nullptr) return 3;
+    if (import == nullptr) return syncUnimported ? unimported() : 3;
     // A unit shadow's results in the label's unit reach the import before the store lands over
     // part of it (the store's stamp then makes the unit stale); the deferred label paths call no
     // FlushPending of their own.
@@ -2541,13 +2556,7 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // range stored this way sync through its batch first (the label is a pending write of its batch
     // and counted in PendingCompletionLabels). Debug aid: APS5_DRAIN_COMPLETION_LABELS=1 drains
     // (reason 2) instead and stores the label on the CPU.
-    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
-    if (drain) {
-        if (listed) return 2;
-    } else if (const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0; bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
-        recorder.AfterCompletions(address, bytes, stamp, queue, false);
-        return 5;
-    }
+    if (const int reason = behindCompletions()) return reason;
     // A larger store over a listed copied writer's range (as FillBuffer tests it) goes behind the
     // completions too, below; any other one stores on the GPU. Debug aid: APS5_LABEL_GATE_ALL=1
     // gates on any completion, as before (a completion label there registered its own completion,

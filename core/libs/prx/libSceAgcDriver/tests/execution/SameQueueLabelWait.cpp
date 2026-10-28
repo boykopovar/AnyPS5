@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libkernel/Time/include/SleepWake.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -11,6 +12,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -19,6 +21,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -131,15 +134,54 @@ std::uint64_t Run(Slot& slot, std::uint32_t value, bool wait) {
     return AgcDriver::GuestMemory::CollectEpochBumps() - before;
 }
 
+void CpuLabelWake(Slot& slot) {
+    const auto submit = [&](std::uint32_t value) {
+        std::vector<std::uint32_t> words;
+        WriteData(words, &slot.done, value);
+        Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+        return sceAgcDriverSubmitAcb(0x20, &packet);
+    };
+    Require(submit(1) == 0, "CPU label wake warmup submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    bool woke = false;
+    for (std::uint32_t attempt = 0; attempt < 20 && !woke; ++attempt) {
+        const auto value = 1000 + attempt;
+        std::atomic<bool> ready{false};
+        int result = -1;
+        std::jthread worker([&] {
+            while (!ready.load(std::memory_order_acquire)) std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            result = submit(value);
+        });
+        KernelNoteGpuSubmit_nid_no_patch();
+        const auto began = std::chrono::steady_clock::now();
+        ready.store(true, std::memory_order_release);
+        SleepWake::Sleep(1000000);
+        const auto elapsed = std::chrono::steady_clock::now() - began;
+        const bool landed = slot.done == value;
+        worker.join();
+        AgcDriverWaitIdle_nid_postfix();
+        Require(result == 0 && slot.done == value, "the CPU label did not reach guest memory");
+        woke = landed && elapsed < std::chrono::microseconds(900);
+    }
+    Require(woke, "a completed CPU label did not wake the guest short sleep");
+    std::cout << "CPU label wakes the guest only after its bytes landed\n";
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         device.reset();
         GuestBlock block;
         auto& slot = block.Data();
+        if (argc == 2 && std::string_view(argv[1]) == "--cpu-label-wake-only") {
+            CpuLabelWake(slot);
+            AgcDriverShutdown_nid_postfix();
+            return 0;
+        }
         Run(slot, 1, false);
         std::uint64_t extra = ~std::uint64_t{0};
         for (std::uint32_t attempt = 0; attempt < 3; ++attempt) {
