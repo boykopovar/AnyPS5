@@ -352,7 +352,7 @@ RelinkResult RelinkerPipeline::Relink() {
             throw RelinkerException("TLS relocation names an undefined symbol that is not STT_TLS", pos);
         if (section == SHN_UNDEF)
             return std::nullopt;
-        if ((raw[symOff + 4] & 15) != STT_TLS)
+        if (type != STT_TLS)
             throw RelinkerException("TLS relocation names a defined symbol that is not STT_TLS", pos);
         if (section >= SHN_LORESERVE)
             throw RelinkerException("Unsupported executable TLS symbol section", pos);

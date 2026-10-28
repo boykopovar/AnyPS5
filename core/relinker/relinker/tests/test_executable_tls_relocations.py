@@ -232,7 +232,7 @@ def main():
 
         undefined = "FAIL: TLS relocation names an undefined symbol that is not STT_TLS (offset 0x4700)"
         for kind in (DTPMOD64, DTPOFF64, TPOFF64):
-            for info, symbol_name in ((0x10, IMPORT_NAME), (0x11, IMPORT_NAME), (0x12, IMPORT_NAME), (0x13, IMPORT_NAME), (0x03, 0)):
+            for info, symbol_name in ((0x10, IMPORT_NAME), (0x11, IMPORT_NAME), (0x12, IMPORT_NAME), (0x13, IMPORT_NAME), (0x1a, IMPORT_NAME), (0x1e, IMPORT_NAME), (0x03, 0)):
                 for flags, target in TARGETS.items():
                     name = f"{target}-undefined-{kind}-{info:x}"
                     data = image([(0x1000, kind, IMPORTED, 0)])
