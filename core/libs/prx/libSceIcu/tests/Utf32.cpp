@@ -181,6 +181,153 @@ void Status() {
     RequireThrows([&] { u_strFromUTF32WithSub_nid_postfix(buffer.data(), 4, &length, text.data(), 1, -1, nullptr, nullptr); });
 }
 
+struct ToResult {
+    std::vector<std::int32_t> values;
+    std::int32_t length = -77;
+    std::int32_t substitutions = -77;
+    std::int32_t status = 0;
+    bool null = false;
+    std::int32_t after = 0;
+};
+
+constexpr std::int32_t Fill32 = 0x5a5aa5a5;
+
+ToResult To(const std::u16string& source, std::int32_t sourceLength, std::int32_t capacity,
+            std::int32_t substitution, std::int32_t status = 0, bool withSub = true) {
+    std::array<std::int32_t, 16> buffer;
+    buffer.fill(Fill32);
+    ToResult result;
+    result.status = status;
+    std::int32_t* returned = withSub
+        ? u_strToUTF32WithSub_nid_postfix(buffer.data(), capacity, &result.length, source.data(), sourceLength, substitution, &result.substitutions, &result.status)
+        : u_strToUTF32_nid_postfix(buffer.data(), capacity, &result.length, source.data(), sourceLength, &result.status);
+    result.null = returned == nullptr;
+    if (returned) Require(returned == buffer.data());
+    const auto size = capacity < 0 ? 0 : std::min<std::size_t>(capacity, buffer.size());
+    result.values.assign(buffer.begin(), buffer.begin() + size);
+    result.after = size < buffer.size() ? buffer[size] : Fill32;
+    return result;
+}
+
+using Values = std::vector<std::int32_t>;
+
+void ToValid() {
+    const std::u16string mixed{0x41, 0xd83d, 0xde00, 0xe000};
+    auto result = To(mixed, 4, 8, -1);
+    Require(!result.null && result.status == 0 && result.length == 3 && result.substitutions == 0);
+    Require(Values(result.values.begin(), result.values.begin() + 4) == Values({0x41, 0x1f600, 0xe000, 0}));
+    Require(result.values[4] == Fill32);
+
+    result = To(std::u16string({0x41, 0xd83d, 0xde00, 0, 0x42}), -1, 8, -1);
+    Require(result.status == 0 && result.length == 2 && result.values[2] == 0 && result.values[3] == Fill32);
+
+    result = To(std::u16string({0x41, 0, 0x42}), 3, 8, -1);
+    Require(result.status == 0 && result.length == 3 && result.values[1] == 0 && result.values[2] == 0x42 && result.values[3] == 0);
+
+    result = To(std::u16string({0xd800, 0xdc00, 0xdbff, 0xdfff, 0xffff}), 5, 8, -1);
+    Require(result.length == 3 && Values(result.values.begin(), result.values.begin() + 4) == Values({0x10000, 0x10ffff, 0xffff, 0}));
+
+    result = To({}, 0, 4, -1);
+    Require(!result.null && result.status == 0 && result.length == 0 && result.values[0] == 0 && result.values[1] == Fill32);
+    result = To(mixed, 4, 8, -1, 0, false);
+    Require(result.status == 0 && result.length == 3 && result.substitutions == -77);
+}
+
+void ToCapacity() {
+    const std::u16string mixed{0x41, 0xd83d, 0xde00, 0xe000};
+    auto result = To(mixed, 4, 3, -1);
+    Require(result.status == NotTerminated && result.length == 3 && result.after == Fill32);
+    Require(result.values == Values({0x41, 0x1f600, 0xe000}));
+
+    result = To(mixed, 4, 2, -1);
+    Require(result.status == Overflow && result.length == 3 && result.values == Values({0x41, 0x1f600}));
+
+    result = To(mixed, 4, 0, -1);
+    Require(result.status == Overflow && result.length == 3 && result.after == Fill32);
+
+    result = To(std::u16string({0x41, 0}), -1, 1, -1);
+    Require(result.status == NotTerminated && result.length == 1 && result.values == Values({0x41}));
+
+    std::int32_t length = -77;
+    std::int32_t status = 0;
+    Require(u_strToUTF32_nid_postfix(nullptr, 0, &length, mixed.data(), 4, &status) == nullptr);
+    Require(status == Overflow && length == 3);
+    status = 0;
+    Require(u_strToUTF32_nid_postfix(nullptr, 0, nullptr, nullptr, 0, &status) == nullptr);
+    Require(status == NotTerminated);
+}
+
+void ToSubstitution() {
+    auto result = To(std::u16string({0x41, 0xd800}), 2, 8, 0xfffd);
+    Require(result.status == 0 && result.length == 2 && result.substitutions == 1);
+    Require(Values(result.values.begin(), result.values.begin() + 3) == Values({0x41, 0xfffd, 0}));
+
+    result = To(std::u16string({0xd800, 0x41, 0xdc00}), 3, 8, 0xfffd);
+    Require(result.length == 3 && result.substitutions == 2 && Values(result.values.begin(), result.values.begin() + 4) == Values({0xfffd, 0x41, 0xfffd, 0}));
+
+    result = To(std::u16string({0xd800, 0xd800, 0xdc00}), 3, 8, 0x3f);
+    Require(result.length == 2 && result.substitutions == 1 && Values(result.values.begin(), result.values.begin() + 3) == Values({0x3f, 0x10000, 0}));
+
+    result = To(std::u16string({0xdc00, 0xd800}), 2, 8, 0x1f600);
+    Require(result.length == 2 && result.substitutions == 2 && Values(result.values.begin(), result.values.begin() + 3) == Values({0x1f600, 0x1f600, 0}));
+
+    result = To(std::u16string({0xdc00, 0xdc00}), 2, 8, 0x3f);
+    Require(result.length == 2 && result.substitutions == 2 && Values(result.values.begin(), result.values.begin() + 3) == Values({0x3f, 0x3f, 0}));
+
+    result = To(std::u16string({0xd800, 0}), -1, 8, 0x3f);
+    Require(result.length == 1 && result.substitutions == 1 && result.values[0] == 0x3f && result.values[1] == 0);
+
+    result = To(std::u16string({0xd800, 0xdc00}), 1, 1, 0x3f);
+    Require(result.status == NotTerminated && result.length == 1 && result.substitutions == 1 && result.values == Values({0x3f}));
+
+    result = To(std::u16string({0x41, 0xdc00, 0x42}), 3, 8, -1);
+    Require(result.null && result.status == Invalid && result.length == -77 && result.substitutions == 0);
+    Require(result.values[0] == 0x41 && result.values[1] == Fill32);
+
+    result = To(std::u16string({0xd800}), 1, 8, -1, 0, false);
+    Require(result.null && result.status == Invalid);
+    result = To(std::u16string({0xd800}), -1, 8, -1, 0, false);
+    Require(result.null && result.status == Invalid);
+}
+
+void ToArguments() {
+    const std::u16string text{0x41};
+    for (auto substitution : {0x110000, 0xd800, 0xdfff, 0x7fffffff}) {
+        const auto result = To(text, 1, 8, substitution);
+        Require(result.null && result.status == Illegal && result.length == -77 && result.substitutions == -77 && result.values[0] == Fill32);
+    }
+    for (auto length : {-2, std::numeric_limits<std::int32_t>::min()}) {
+        const auto result = To(text, length, 8, -1);
+        Require(result.null && result.status == Illegal && result.length == -77);
+    }
+    Require(To(text, 1, -1, -1).status == Illegal);
+    std::int32_t status = 0;
+    std::int32_t length = -77;
+    std::array<std::int32_t, 4> buffer{};
+    Require(!u_strToUTF32_nid_postfix(buffer.data(), 4, &length, nullptr, 1, &status) && status == Illegal);
+    status = 0;
+    Require(!u_strToUTF32_nid_postfix(buffer.data(), 4, &length, nullptr, -1, &status) && status == Illegal);
+    status = 0;
+    Require(!u_strToUTF32_nid_postfix(nullptr, 1, &length, text.data(), 1, &status) && status == Illegal);
+    Require(length == -77);
+}
+
+void ToStatus() {
+    auto result = To(u"A", 1, 4, -1, Illegal);
+    Require(result.null && result.status == Illegal && result.values[0] == Fill32 && result.length == -77);
+    result = To(u"A", 1, 4, -1, NotTerminated);
+    Require(!result.null && result.status == 0 && result.values[0] == 0x41 && result.values[1] == 0);
+    result = To(u"A", 1, 1, -1, NotTerminated);
+    Require(result.status == NotTerminated && result.length == 1);
+    result = To(u"AB", 2, 1, -1, NotTerminated);
+    Require(result.status == Overflow);
+
+    std::array<std::int32_t, 4> buffer{};
+    std::int32_t length = 0;
+    RequireThrows([&] { u_strToUTF32_nid_postfix(buffer.data(), 4, &length, u"A", 1, nullptr); });
+    RequireThrows([&] { u_strToUTF32WithSub_nid_postfix(buffer.data(), 4, &length, u"A", 1, -1, nullptr, nullptr); });
+}
+
 }
 
 int main() {
@@ -189,5 +336,10 @@ int main() {
     Substitution();
     Arguments();
     Status();
+    ToValid();
+    ToCapacity();
+    ToSubstitution();
+    ToArguments();
+    ToStatus();
     std::puts("ICU UTF-32 conversion tests passed");
 }
