@@ -86,7 +86,7 @@ private:
 #ifdef ANYPS5_GUEST_LIFTED
     template<class T> T FetchHost() {
         if constexpr (std::is_same_v<T, long double>) {
-            return va_arg(host, long double);
+            return LibcDetail::GuestLongDoubleRound(va_arg(host, long double));
         } else if constexpr (std::is_floating_point_v<T>) {
             return static_cast<T>(va_arg(host, double));
         } else if constexpr (std::is_integral_v<T> && sizeof(T) < sizeof(int)) {

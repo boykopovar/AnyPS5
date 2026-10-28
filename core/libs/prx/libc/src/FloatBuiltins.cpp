@@ -7,6 +7,7 @@
 #include <type_traits>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 
 namespace {
 
@@ -55,12 +56,11 @@ struct ExtendedBits {
 };
 
 ExtendedBits DecomposeExtended(long double value) {
-    unsigned char bytes[sizeof(long double)];
-    std::memcpy(bytes, &value, sizeof(bytes));
+    const auto bytes = LibcDetail::GuestLongDoubleImage(value);
     std::uint64_t mantissa;
     std::uint16_t signExponent;
-    std::memcpy(&mantissa, bytes, sizeof(mantissa));
-    std::memcpy(&signExponent, bytes + 8, sizeof(signExponent));
+    std::memcpy(&mantissa, bytes.data(), sizeof(mantissa));
+    std::memcpy(&signExponent, bytes.data() + 8, sizeof(signExponent));
     return {mantissa, (signExponent & 0x8000u) != 0, static_cast<int>(signExponent & 0x7fffu) - 16383};
 }
 
@@ -69,9 +69,7 @@ long double ComposeExtended(bool negative, int biased, std::uint64_t mantissa) {
     const std::uint16_t signExponent = static_cast<std::uint16_t>((negative ? 0x8000u : 0u) | static_cast<unsigned>(biased));
     std::memcpy(bytes, &mantissa, sizeof(mantissa));
     std::memcpy(bytes + 8, &signExponent, sizeof(signExponent));
-    long double value;
-    std::memcpy(&value, bytes, sizeof(value));
-    return value;
+    return LibcDetail::GuestLongDoubleLoad(bytes);
 }
 
 template<typename TShift>

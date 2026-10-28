@@ -1,5 +1,7 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cctype>
 #include <cerrno>
@@ -41,8 +43,11 @@ int HexadecimalDigit(char value) {
 }
 
 template<typename TFloat>
+constexpr unsigned GuestDigits = sizeof(TFloat) <= 8 ? std::numeric_limits<TFloat>::digits : 64;
+
+template<typename TFloat>
 TFloat ScaleHexadecimal(TFloat value, std::int64_t power) {
-    constexpr unsigned Precision = std::numeric_limits<TFloat>::digits;
+    constexpr unsigned Precision = GuestDigits<TFloat>;
     static_assert(Precision == 24 || Precision == 53 || Precision == 64);
     constexpr auto Hidden = std::uint64_t{1} << (Precision - 1);
     constexpr int MaximumExponent = 2 * std::numeric_limits<TFloat>::max_exponent - 1;
@@ -57,10 +62,11 @@ TFloat ScaleHexadecimal(TFloat value, std::int64_t power) {
         mantissa = (bits & (Hidden - 1)) | Hidden;
         exponent = (bits >> (Precision - 1)) & MaximumExponent;
     } else {
-        static_assert(Precision == 64 && sizeof(TFloat) >= 10 && std::endian::native == std::endian::little);
+        static_assert(sizeof(TFloat) == sizeof(long double) && std::endian::native == std::endian::little);
+        const auto image = LibcDetail::GuestLongDoubleImage(value);
         std::uint16_t encoded;
-        std::memcpy(&mantissa, &value, sizeof(mantissa));
-        std::memcpy(&encoded, reinterpret_cast<const unsigned char*>(&value) + 8, sizeof(encoded));
+        std::memcpy(&mantissa, image.data(), sizeof(mantissa));
+        std::memcpy(&encoded, image.data() + 8, sizeof(encoded));
         exponent = encoded & MaximumExponent;
     }
     auto adjusted = exponent + power;
@@ -84,10 +90,11 @@ TFloat ScaleHexadecimal(TFloat value, std::int64_t power) {
     } else if constexpr (sizeof(TFloat) == 8) {
         return std::bit_cast<TFloat>((static_cast<std::uint64_t>(adjusted) << (Precision - 1)) | (mantissa & (Hidden - 1)));
     } else {
+        std::array<unsigned char, LibcDetail::GuestLongDoubleBytes> image{};
         const auto encoded = static_cast<std::uint16_t>(adjusted);
-        std::memcpy(&value, &mantissa, sizeof(mantissa));
-        std::memcpy(reinterpret_cast<unsigned char*>(&value) + 8, &encoded, sizeof(encoded));
-        return value;
+        std::memcpy(image.data(), &mantissa, sizeof(mantissa));
+        std::memcpy(image.data() + 8, &encoded, sizeof(encoded));
+        return LibcDetail::GuestLongDoubleLoad(image.data());
     }
 }
 
@@ -98,7 +105,7 @@ std::optional<TFloat> UnscaledHexadecimal(const char* text, char** end) {
     const bool negative = *cursor == '-';
     if (*cursor == '+' || *cursor == '-') ++cursor;
     cursor += 2;
-    constexpr std::size_t Capacity = 7 * ((std::numeric_limits<TFloat>::digits + 27) / 28);
+    constexpr std::size_t Capacity = 7 * ((GuestDigits<TFloat> + 27) / 28);
     static_assert(Capacity * 4 < std::numeric_limits<TFloat>::max_exponent);
     constexpr auto CountLimit = std::numeric_limits<std::int64_t>::max() / 16;
     std::string digits;
@@ -708,11 +715,11 @@ float APS5_VABI _FLog_nid_postfix(float x, int base) {
 }
 
 long double APS5_VABI _LLog_nid_postfix(long double x, int base) {
-    static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64);
+    const auto image = LibcDetail::GuestLongDoubleImage(x);
     std::uint64_t mantissa;
     std::uint16_t signExponent;
-    std::memcpy(&mantissa, &x, sizeof(mantissa));
-    std::memcpy(&signExponent, reinterpret_cast<const unsigned char*>(&x) + sizeof(mantissa), sizeof(signExponent));
+    std::memcpy(&mantissa, image.data(), sizeof(mantissa));
+    std::memcpy(&signExponent, image.data() + sizeof(mantissa), sizeof(signExponent));
     const int exponent = signExponent & 0x7fff;
     const bool negative = (signExponent & 0x8000) != 0;
     if (exponent == 0x7fff) {
@@ -731,9 +738,10 @@ long double APS5_VABI _LLog_nid_postfix(long double x, int base) {
     int scale = std::max(exponent, 1) - shift - 0x3ffe;
     const std::uint64_t normalized = mantissa << shift;
     const std::uint16_t halfExponent = 0x3ffe;
-    long double fraction = 0;
-    std::memcpy(&fraction, &normalized, sizeof(normalized));
-    std::memcpy(reinterpret_cast<unsigned char*>(&fraction) + sizeof(normalized), &halfExponent, sizeof(halfExponent));
+    std::array<unsigned char, LibcDetail::GuestLongDoubleBytes> fractionImage{};
+    std::memcpy(fractionImage.data(), &normalized, sizeof(normalized));
+    std::memcpy(fractionImage.data() + sizeof(normalized), &halfExponent, sizeof(halfExponent));
+    long double fraction = LibcDetail::GuestLongDoubleLoad(fractionImage.data());
     if (fraction < 0xb504f333f9de6484p-64L) {
         fraction = fraction + fraction;
         --scale;

@@ -13,6 +13,7 @@
 #include <stdexcept>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 
 namespace {
 
@@ -32,13 +33,15 @@ struct ExtendedBits {
     std::uint16_t signExponent;
 };
 
-ExtendedBits Bits(const long double& value) {
+ExtendedBits Bits(const void* bytes) {
     ExtendedBits bits;
-    unsigned char bytes[sizeof(long double)];
-    std::memcpy(bytes, &value, sizeof(bytes));
     std::memcpy(&bits.mantissa, bytes, sizeof(bits.mantissa));
-    std::memcpy(&bits.signExponent, bytes + 8, sizeof(bits.signExponent));
+    std::memcpy(&bits.signExponent, static_cast<const unsigned char*>(bytes) + 8, sizeof(bits.signExponent));
     return bits;
+}
+
+ExtendedBits Bits(const long double& value) {
+    return Bits(LibcDetail::GuestLongDoubleImage(value).data());
 }
 
 constexpr short Denormal = -2, Finite = -1, Zero = 0, Infinite = 1, NotANumber = 2;
@@ -451,10 +454,13 @@ long double APS5_VABI sqrtl_nid_postfix(long double x) {
 
 long double APS5_VABI modfl_nid_postfix(long double x, long double* integral) {
     if (std::isnan(x)) {
-        *integral = x;
+        LibcDetail::GuestLongDoubleStore(integral, x);
         return x;
     }
-    return std::modf(x, integral);
+    long double whole;
+    const long double fraction = std::modf(x, &whole);
+    LibcDetail::GuestLongDoubleStore(integral, whole);
+    return fraction;
 }
 long double APS5_VABI nanl_nid_postfix(const char*) { return std::numeric_limits<long double>::quiet_NaN(); }
 
@@ -557,7 +563,7 @@ int APS5_VABI __isnormall_nid_postfix(long double x) {
     return exponent != 0 && exponent != 0x7fff ? 1 : 0;
 }
 
-short APS5_VABI _LDtest_nid_postfix(const long double* value) { return TestExtended(Bits(*value)); }
+short APS5_VABI _LDtest_nid_postfix(const long double* value) { return TestExtended(Bits(static_cast<const void*>(value))); }
 int APS5_VABI _Dclass_nid_postfix(double x) { return TestFloat(x); }
 int APS5_VABI _FDclass_nid_postfix(float x) { return TestFloat(x); }
 int APS5_VABI _LDclass_nid_postfix(long double x) { return TestExtended(Bits(x)); }

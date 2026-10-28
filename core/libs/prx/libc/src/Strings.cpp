@@ -16,6 +16,7 @@
 #include <type_traits>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 
 namespace {
@@ -657,7 +658,7 @@ float APS5_VABI strtof_nid_postfix(const char* str, char** endptr) {
 }
 long double APS5_VABI strtold_nid_postfix(const char* str, char** endptr) {
     static_assert(sizeof(long double) == 16, "Guest long double requires x87 extended precision storage");
-    return ParseFloat<long double>(str, endptr, std::strtold);
+    return ParseFloat<long double>(str, endptr, LibcDetail::GuestLongDoubleParse);
 }
 
 int APS5_VABI atoi_nid_postfix(const char* str) {
@@ -949,9 +950,8 @@ float APS5_VABI wcstof_nid_postfix(const char16_t* str, char16_t** endptr) {
 long double APS5_VABI wcstold_nid_postfix(const char16_t* str, char16_t** endptr) {
 #ifndef __EMSCRIPTEN__
     static_assert(sizeof(long double) == 16);
-    static_assert(std::numeric_limits<long double>::digits == 64);
 #endif
-    return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return ParseFloat<long double>(text, end, std::strtold); });
+    return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return ParseFloat<long double>(text, end, LibcDetail::GuestLongDoubleParse); });
 }
 
 unsigned long long APS5_VABI wcstoul_nid_postfix(const char16_t* str, char16_t** endptr, int base) {

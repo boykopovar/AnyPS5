@@ -1,9 +1,19 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_GUESTLONGDOUBLE_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_GUESTLONGDOUBLE_HPP
 
+#include <array>
+#include <cerrno>
+#include <cfenv>
+#include <cfloat>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+
+#if defined(ANYPS5_GUEST_LIFTED) && LDBL_MANT_DIG != 64
+extern "C" void GuestCpuStoreExtended_nid_no_patch(const long double* host, void* guest);
+#endif
 
 namespace LibcDetail {
 
@@ -34,6 +44,9 @@ inline void GuestLongDoubleStore(void* target, long double value) {
     if constexpr (std::numeric_limits<long double>::digits == 64) {
         std::memcpy(target, &value, sizeof(value));
     } else {
+#ifdef ANYPS5_GUEST_LIFTED
+        GuestCpuStoreExtended_nid_no_patch(&value, target);
+#else
         std::uint64_t low;
         std::uint64_t high;
         std::memcpy(&low, &value, sizeof(low));
@@ -46,7 +59,18 @@ inline void GuestLongDoubleStore(void* target, long double value) {
         std::memcpy(bytes, &mantissa, sizeof(mantissa));
         std::memcpy(bytes + 8, &signExponent, sizeof(signExponent));
         std::memcpy(target, bytes, sizeof(bytes));
+#endif
     }
+}
+
+inline std::array<unsigned char, GuestLongDoubleBytes> GuestLongDoubleImage(const long double value) {
+    std::array<unsigned char, GuestLongDoubleBytes> bytes{};
+    GuestLongDoubleStore(bytes.data(), value);
+    return bytes;
+}
+
+inline long double GuestLongDoubleParse(const char* text, char** end) {
+    return std::strtold(text, end);
 }
 
 }

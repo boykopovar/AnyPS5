@@ -369,7 +369,7 @@ private:
         if (target != nullptr) {
             const int savedError = errno;
             if (directive.length == "L") {
-                LibcDetail::GuestLongDoubleStore(target, std::strtold(field.c_str(), nullptr));
+                LibcDetail::GuestLongDoubleStore(target, LibcDetail::GuestLongDoubleParse(field.c_str(), nullptr));
             } else if (directive.length == "l") {
                 const double value = std::strtod(field.c_str(), nullptr);
                 std::memcpy(target, &value, sizeof(value));

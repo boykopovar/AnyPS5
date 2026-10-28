@@ -177,6 +177,7 @@
 #include <utility>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 #include "prx/libc/include/GuestCpu.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 
@@ -302,7 +303,7 @@ float AtanhfLog1p(float x) {
     return kFloat * Ln2High - ((halfSquare - (s * (halfSquare + r) + (kFloat * Ln2Low + c))) - f);
 }
 
-static_assert(std::numeric_limits<long double>::digits == 64, "guest long double is the x87 80-bit format");
+static_assert(std::numeric_limits<long double>::digits >= 64, "host long double holds the guest x87 80-bit format");
 
 struct ExtendedParts {
     std::uint64_t mantissa;
@@ -327,11 +328,10 @@ TValue Hypot3(TValue x, TValue y, TValue z, THypot hypot) {
 }
 
 ExtendedParts SplitExtended(long double value) {
-    unsigned char bytes[sizeof(long double)];
-    std::memcpy(bytes, &value, sizeof(value));
+    const auto bytes = LibcDetail::GuestLongDoubleImage(value);
     ExtendedParts parts;
-    std::memcpy(&parts.mantissa, bytes, sizeof(parts.mantissa));
-    std::memcpy(&parts.signExponent, bytes + sizeof(parts.mantissa), sizeof(parts.signExponent));
+    std::memcpy(&parts.mantissa, bytes.data(), sizeof(parts.mantissa));
+    std::memcpy(&parts.signExponent, bytes.data() + sizeof(parts.mantissa), sizeof(parts.signExponent));
     return parts;
 }
 
@@ -345,11 +345,9 @@ long double JoinExtended(std::uint64_t mantissa, std::uint16_t signExponent) {
 }
 
 long double ClearLowMantissaWord(long double value) {
-    unsigned char bytes[sizeof(long double)];
-    std::memcpy(bytes, &value, sizeof(value));
-    std::memset(bytes, 0, sizeof(std::uint32_t));
-    std::memcpy(&value, bytes, sizeof(value));
-    return value;
+    auto bytes = LibcDetail::GuestLongDoubleImage(value);
+    std::memset(bytes.data(), 0, sizeof(std::uint32_t));
+    return LibcDetail::GuestLongDoubleLoad(bytes.data());
 }
 
 long double SumAtCallerPrecision(long double high, long double low) {
@@ -391,11 +389,11 @@ bool NanWithoutException(T value) {
         std::memcpy(&bits, &value, sizeof(bits));
         return (bits & UINT64_C(0x7fffffffffffffff)) > UINT64_C(0x7ff0000000000000);
     } else {
-        static_assert(std::numeric_limits<T>::digits == 64);
+        const auto bytes = LibcDetail::GuestLongDoubleImage(value);
         std::uint64_t significand;
         std::uint16_t signAndExponent;
-        std::memcpy(&significand, &value, sizeof(significand));
-        std::memcpy(&signAndExponent, reinterpret_cast<const unsigned char*>(&value) + sizeof(significand), sizeof(signAndExponent));
+        std::memcpy(&significand, bytes.data(), sizeof(significand));
+        std::memcpy(&signAndExponent, bytes.data() + sizeof(significand), sizeof(signAndExponent));
         return (signAndExponent & 0x7fff) == 0x7fff && (significand & UINT64_C(0x7fffffffffffffff)) != 0;
     }
 }
@@ -3935,9 +3933,9 @@ int APS5_VABI __signbitl_nid_postfix(long double x) {
 }
 
 int APS5_VABI __isfinitel_nid_postfix(long double x) {
-    static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64 && std::numeric_limits<long double>::max_exponent == 16384 && std::endian::native == std::endian::little, "guest long double requires little-endian x87 extended precision storage");
+    static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::max_exponent == 16384 && std::endian::native == std::endian::little, "guest long double requires little-endian storage with the x87 exponent range");
     std::uint16_t exponent;
-    std::memcpy(&exponent, reinterpret_cast<const std::uint8_t*>(&x) + 8, sizeof(exponent));
+    std::memcpy(&exponent, LibcDetail::GuestLongDoubleImage(x).data() + 8, sizeof(exponent));
     return (exponent & 0x7fffu) != 0x7fffu;
 }
 
