@@ -96,7 +96,7 @@ std::uint8_t DirectoryEntryType(const std::filesystem::file_status& status) {
 }
 #else
 bool InsideApp0(const std::filesystem::path& directory) {
-    const auto root = ResolveDiskPath_nid_no_patch("/app0");
+    const auto root = File::WindowsExtendedPath(ResolveDiskPath_nid_no_patch("/app0"));
     const auto handle = CreateFileW(root.c_str(), FILE_READ_ATTRIBUTES,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS, nullptr);
@@ -124,7 +124,8 @@ bool InsideApp0(const std::filesystem::path& directory) {
 std::vector<std::filesystem::path> ListDirectoryEntries(const std::filesystem::path& directory) {
     std::vector<std::filesystem::path> entries;
     WIN32_FIND_DATAW data{};
-    const HANDLE find = FindFirstFileExW((directory / L"*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+    const auto pattern = File::WindowsExtendedPath(directory / L"*");
+    const HANDLE find = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
     if (find == INVALID_HANDLE_VALUE) {
         const DWORD code = GetLastError();
         if (code == ERROR_FILE_NOT_FOUND) return entries;
@@ -134,7 +135,7 @@ std::vector<std::filesystem::path> ListDirectoryEntries(const std::filesystem::p
         do {
             const std::wstring_view name(data.cFileName);
             if (name == L"." || name == L"..") continue;
-            entries.push_back(directory / data.cFileName);
+            entries.push_back(File::WindowsExtendedPath(directory / data.cFileName));
         } while (FindNextFileW(find, &data));
         const DWORD code = GetLastError();
         if (code != ERROR_NO_MORE_FILES) throw std::system_error(static_cast<int>(code), std::system_category(), "read directory descriptor");
