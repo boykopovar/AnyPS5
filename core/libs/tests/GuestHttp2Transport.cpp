@@ -409,10 +409,12 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     Require(headers.count("content-length") == (mode == Mode::NoLength ? 0u : 1u), "request length policy");
     Require(headers.count("x-duplicate") == 2, "duplicate count");
     Require(headers.find("x-duplicate")->second == "last", "duplicate overwrite");
-    char* rawHeaders = reinterpret_cast<char*>(std::uintptr_t{1});
-    std::size_t rawSize = 987;
-    Require(Throws([&] { sceHttp2GetAllResponseHeaders(client.request, &rawHeaders, &rawSize); }) &&
-        rawHeaders == reinterpret_cast<char*>(std::uintptr_t{1}) && rawSize == 987, "unknown header serialization leaves outputs untouched");
+    char* rawHeaders = nullptr;
+    std::size_t rawSize = 0;
+    Require(sceHttp2GetAllResponseHeaders(client.request, &rawHeaders, &rawSize) == 0, "response header serialization");
+    const std::string blob(rawHeaders, rawSize);
+    Require(blob.starts_with("HTTP/1.1 ") && blob.ends_with("\r\n\r\n") && blob.find("x-loopback: yes\r\n") != std::string::npos,
+        "response header block");
     Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "unsupported reuse throws");
 }
 
