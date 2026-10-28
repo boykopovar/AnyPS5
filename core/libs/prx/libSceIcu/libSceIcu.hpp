@@ -24,3 +24,4 @@
 #include "JavaUtf8.hpp"
 #include "Compare.hpp"
 #include "Search.hpp"
+#include "Character.hpp"

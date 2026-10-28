@@ -143,11 +143,6 @@ int APS5_VABI u_foldCase_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuUnknown_hI8JVrcGWhc_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("hI8JVrcGWhc", sceIcuUnknown_hI8JVrcGWhc_nid_no_patch);
-
 int APS5_VABI u_getBidiPairedBracket_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -234,11 +229,6 @@ int APS5_VABI u_isIDPart_nid_postfix() {
 int APS5_VABI u_isIDStart_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI sceIcuUnknown_dzbKmf3Ycog_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("dzbKmf3Ycog", sceIcuUnknown_dzbKmf3Ycog_nid_no_patch);
 
 int APS5_VABI u_isJavaIDPart_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
