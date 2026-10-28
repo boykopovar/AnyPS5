@@ -465,6 +465,12 @@ void TestMp3ParseOfl() {
     Require(ParsesTo(stereo.data(), 417, 417, 2, 1152, 128000, 44100));
     Require(OflParsesTo(stereo, 48, 10, 0, 0, 0));
     Require(OflParsesTo(stereo, 46, 0, 0, 0, 0));
+    auto fewFrames = stereo;
+    fewFrames[47] = 1;
+    Require(OflParsesTo(fewFrames, 417, 1, 1152 + 576 + 529, 0, 1));
+    auto manyFrames = stereo;
+    manyFrames[44] = manyFrames[45] = manyFrames[46] = manyFrames[47] = 0xFF;
+    Require(OflParsesTo(manyFrames, 417, 0xFFFFFFFFu, 1152 + 576 + 529, 0xFFFFFFFFu, 1));
     const auto mono = Mp3Frame(LAME_MPEG1_MONO_CBR, sizeof(LAME_MPEG1_MONO_CBR), 576);
     Require(OflParsesTo(mono, 576, 10, 1152 + 576 + 529, 10000, 1));
     const auto mpeg2 = Mp3Frame(LAME_MPEG2_MONO_CBR, sizeof(LAME_MPEG2_MONO_CBR), 208);

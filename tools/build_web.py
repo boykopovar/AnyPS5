@@ -224,6 +224,8 @@ def main(argv=None):
         for name in ("relinker_wasm.mjs", "relinker_wasm.wasm"):
             if not (output / "native" / name).is_file():
                 parser.error(f"Build relinker_wasm first: missing {name}")
+            if (output / "native" / name).stat().st_size == 0:
+                parser.error(f"Build relinker_wasm first: empty {name}")
         copy_sources(output)
         print(output)
         return 0

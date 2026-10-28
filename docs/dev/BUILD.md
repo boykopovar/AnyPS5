@@ -134,10 +134,11 @@ Project switches accept `ON` or `OFF`:
 | `-DAPS5_ENABLE_TRACY=ON`         | `OFF`   | Build the [Tracy](#tracy) profiler client into the agc driver. |
 | `-DAPS5_AGC_CREATE_LOG=OFF`      | `ON`    | No effect: `sceAgcCreateShader` logs nothing on success. |
 | `-DAGC_BUILD_VISUAL_TEST=ON`     | `OFF`   | Build the standalone AGC SPIR-V visual test.     |
+| `-DANYPS5_REQUIRE_CPU_LEAD_TEST=ON` | `OFF` | With `BUILD_TESTING=ON`, also register `agc_driver_sparse_dma_buf_cpu_lead`, which runs `agc_driver_sparse_dma_buf_import_tests --require-cpu-lead` and fails instead of skipping when the nonzero-lead dma-buf CPU publish is not exercised, such as on Windows or without an accessible `/dev/udmabuf`. |
 
 GCC and Clang compile libc with `-ffp-contract=off` whatever the target CPU. Toolchains that default to x86-64-v3, such as GCC 15 on Ubuntu 26.04, would otherwise fuse `a * b + c` into FMA instructions, which changes the last bit of math results that must match the console.
 
-The [Sanitizers workflow](../../.github/workflows/sanitizers.yml) builds the full runtime on Ubuntu with `-DANYPS5_ENABLE_ASAN=ON` and UBSan (`-fsanitize=undefined -fno-sanitize=vptr`) nightly at 03:41 UTC, runs every test and can be started manually with `workflow_dispatch`. It builds only the `F16ToF32Unpack`, `F64FmaSubnormals` and `RegistrationPrepareShutdown` AGC execution tests, like the Windows MSYS2 workflow. A test that fails because of the sanitizers themselves, or because of a bug whose fix is still open, is listed with the reason in [sanitizer-known-failures.txt](../../.github/sanitizer-known-failures.txt), one test per line with its sanitizers and the reason,. The job summary, written by `tools/sanitizer_report.py`, separates unexpected failures from known ones and names listed tests that passed or did not run, so their entries can be removed. To repeat a run locally, set `ASAN_OPTIONS=detect_leaks=0` and `UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1`, so that undefined behavior fails the test.
+The [Sanitizers workflow](../../.github/workflows/sanitizers.yml) builds the full runtime on Ubuntu with `-DANYPS5_ENABLE_ASAN=ON` and UBSan (`-fsanitize=undefined -fno-sanitize=vptr`) nightly at 03:41 UTC, runs every test and can be started manually with `workflow_dispatch`. It builds only the `F16ToF32Unpack`, `F64FmaSubnormals` and `RegistrationPrepareShutdown` AGC execution tests, like the Windows MSYS2 workflow. A test that fails because of the sanitizers themselves, or because of a bug whose fix is still open, is listed with the reason in [sanitizer-known-failures.txt](../../.github/sanitizer-known-failures.txt), one test per line with its sanitizers and the reason. The job summary, written by `tools/sanitizer_report.py`, separates unexpected failures from known ones and names listed tests that passed or did not run, so their entries can be removed. To repeat a run locally, set `ASAN_OPTIONS=detect_leaks=0` and `UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1`, so that undefined behavior fails the test.
 
 Build configuration parameters:
 
@@ -149,6 +150,7 @@ Build configuration parameters:
 | `-DCMAKE_C_COMPILER_LAUNCHER=ccache`   | Optional C compiler cache; requires `ccache`.                      |
 | `-DCMAKE_CXX_COMPILER_LAUNCHER=ccache` | Optional C++ compiler cache; requires `ccache`.                    |
 | `-DFFMPEG_PREBUILT_DIR=<path>`         | Unpacked FFmpeg package for the target platform; empty by default. |
+| `-DANYPS5_AGC_EXECUTION_TESTS=<names>` | Semicolon-separated file names, without `.cpp`, of the `core/libs/prx/libSceAgcDriver/tests/execution` tests to build. Every other execution test is built from a stub that prints `skipped, this build leaves the test out with ANYPS5_AGC_EXECUTION_TESTS` and exits 77. A name with no source there fails the configure. Empty by default, which builds them all. |
 
 SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridden with `-D`.
 

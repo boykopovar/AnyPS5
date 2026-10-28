@@ -2538,7 +2538,9 @@ int APS5_VABI sceNetClearDnsCache(int flags) {
 }
 
 int APS5_VABI sceNetGetStatisticsInfo(NetStatisticsInfo* info, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
+    if (info == nullptr) return fail(NET_EFAULT);
+    constexpr std::int32_t FREE_BYTES = 16 * 1024 * 1024;
+    *info = {FREE_BYTES, FREE_BYTES, 0, 0, FREE_BYTES, FREE_BYTES};
     return 0;
 }
 
@@ -2560,7 +2562,8 @@ int APS5_VABI sceNetSetDnsInfo(const NetDnsInfo* info, std::uint32_t flags) {
 }
 
 int APS5_VABI sceNetShowIfconfigWithMemory(std::int32_t poolId) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lk(g_mutex);
+    if (g_pools.find(poolId) == g_pools.end()) return fail(NET_EBADF);
     return 0;
 }
 
@@ -2569,7 +2572,8 @@ int APS5_VABI sceNetShowPolicy(void) {
 }
 
 int APS5_VABI sceNetShowPolicyWithMemory(std::int32_t poolId) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lk(g_mutex);
+    if (g_pools.find(poolId) == g_pools.end()) return fail(NET_EBADF);
     return 0;
 }
 
@@ -2619,7 +2623,8 @@ int APS5_VABI sceNetShowRoute6(void) {
 }
 
 int APS5_VABI sceNetShowRoute6WithMemory(std::int32_t poolId) {
-    NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lk(g_mutex);
+    if (g_pools.find(poolId) == g_pools.end()) return fail(NET_EBADF);
     return 0;
 }
 

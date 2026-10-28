@@ -17,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -50,6 +51,11 @@ struct DeviceQueuePlan {
 };
 
 DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents);
+
+class VulkanUnavailable final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 class VulkanDevice {
 public:

@@ -945,7 +945,12 @@ void ParseMp3Ofl(const std::uint8_t* stream, std::uint32_t streamSize, std::uint
         if (field + 0x18 <= end && std::memcmp(stream + field, "LAME", 4) == 0) {
             const std::uint32_t delay = (std::uint32_t{stream[field + 0x15]} << 4u) | (stream[field + 0x16] >> 4u);
             const std::uint32_t padding = ((std::uint32_t{stream[field + 0x16]} & 0x0Fu) << 8u) | stream[field + 0x17];
-            if ((flags & 0x01u) && frames > 0) frame->total_samples = frames * frame->samples_per_channel - (delay + padding);
+            if ((flags & 0x01u) && frames > 0) {
+                const std::uint64_t samples = std::uint64_t{frames} * frame->samples_per_channel;
+                const std::uint64_t trimmed = std::uint64_t{delay} + padding;
+                const std::uint64_t total = samples > trimmed ? samples - trimmed : 0;
+                frame->total_samples = static_cast<std::uint32_t>(std::min<std::uint64_t>(total, UINT32_MAX));
+            }
             frame->encoder_delay = frame->samples_per_channel + delay + 529;
             frame->ofl_type = MP3_OFL_LAME;
         }

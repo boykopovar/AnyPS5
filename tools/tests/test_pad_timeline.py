@@ -173,6 +173,24 @@ class TimelineTests(unittest.TestCase):
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
 
+    def test_symbolic_link_loops_are_usage_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline = root / "sequence.json"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            loop = root / "loop"
+            try:
+                loop.symlink_to(loop.name)
+            except (OSError, NotImplementedError):
+                self.skipTest("symbolic links are unavailable")
+            for arguments in ((timeline, loop), (loop, root / "command")):
+                with self.subTest(arguments=arguments):
+                    result = self.run_cli(*arguments)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertTrue(result.stderr.startswith("pad_timeline: "), result.stderr)
+                    self.assertTrue(loop.is_symlink())
+                    self.assertFalse((root / "command").exists())
+
     def test_output_directory_validation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

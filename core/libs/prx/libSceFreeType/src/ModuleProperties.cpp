@@ -32,6 +32,10 @@ PropertyType TypeOf(const char* moduleName, const char* propertyName) {
         if (std::strcmp(propertyName, "no-stem-darkening") == 0) return PropertyType::Boolean;
         if (std::strcmp(propertyName, "darkening-parameters") == 0) return PropertyType::Darkening;
     }
+    if (autoHinter && (std::strcmp(propertyName, "fallback-script") == 0 ||
+        std::strcmp(propertyName, "default-script") == 0)) {
+        return PropertyType::Unsigned;
+    }
     return PropertyType::Unsupported;
 }
 

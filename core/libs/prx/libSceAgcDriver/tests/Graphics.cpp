@@ -11627,6 +11627,20 @@ void highestDrawIndexTests() {
     Require(HighestDrawIndex(std::span<const std::byte>(shifted).subspan(1, 2 * 1000 + 1), 2, false) == 0x8001u, "an unaligned 16-bit range with a trailing byte");
 }
 
+void compactListRestartTests() {
+    using AgcDriver::Graphics::CompactListRestart;
+    std::array<std::uint16_t, 9> triangles{0, 1, 2, 3, 4, 0xffff, 5, 6, 7};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(triangles)), 2, 3) == 6 && triangles[0] == 0 && triangles[2] == 2 && triangles[3] == 5 && triangles[5] == 7, "a restart did not drop the incomplete triangle before it");
+    std::array<std::uint32_t, 7> lines{0, 1, 0xffffffffu, 2, 0xffffffffu, 3, 4};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(lines)), 4, 2) == 4 && lines[2] == 3 && lines[3] == 4, "a restart between whole lines changed them");
+    std::array<std::uint16_t, 4> points{0xffff, 6, 0xffff, 9};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(points)), 2, 1) == 2 && points[0] == 6 && points[1] == 9, "restart indices were drawn as points");
+    std::array<std::uint16_t, 5> tail{0, 1, 2, 3, 4};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(tail)), 2, 3) == 3, "the incomplete last triangle was kept");
+    std::array<std::uint16_t, 2> restartOnly{0xffff, 0xffff};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(restartOnly)), 2, 3) == 0, "a draw of only restart indices kept an index");
+}
+
 void storeAtFlipTests() {
     using AgcDriver::Graphics::StorageTexture;
     Require(!StorageTexture::StoreAtFlipRequested(nullptr), "an unset APS5_STORE_AT_FLIP stored at each flip");
@@ -12894,6 +12908,7 @@ int main(int argc, char** argv) {
         validationTests();
         vertexCopyTests();
         highestDrawIndexTests();
+        compactListRestartTests();
         storeAtFlipTests();
         storeAtLabelTests();
         nullVertexDescriptorTests();

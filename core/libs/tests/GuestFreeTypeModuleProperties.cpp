@@ -4,6 +4,7 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MODULE_H
+#include FT_DRIVER_H
 
 #include <algorithm>
 #include <array>
@@ -108,6 +109,19 @@ static void Run(const Api& api) {
         }
         for (const auto value : {std::numeric_limits<std::int32_t>::min(), -1, 0, 1, std::numeric_limits<std::int32_t>::max()}) {
             Change(api, library, native, other, nativeOther, module, "random-seed", value);
+        }
+    }
+    for (const auto* property : {"fallback-script", "default-script"}) {
+        Query<std::uint32_t>(api, library, native, "autofitter", property);
+        for (const auto script : {
+            static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_NONE),
+            static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_LATIN),
+            static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_CJK),
+            static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_INDIC),
+            999u,
+            0xFFFFFFFFu
+        }) {
+            Change(api, library, native, other, nativeOther, "autofitter", property, script);
         }
     }
     std::array<unsigned char, 64> output{};

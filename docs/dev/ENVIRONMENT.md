@@ -24,6 +24,8 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 ### core/shader
 
+`APS5_LOOP_GUARD=<exits>` limits evaluated loop exits per shader invocation (`core/shader/recompiler/SpirvBackend/src/SpirvEmitter.cpp`); `0` or an unset variable disables that limit. Its presence separately enables the AGC fault buffer, as listed under `libSceAgcDriver`.
+
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
 | `ANYPS5_NO_SHADER_CACHE` | string | `core/shader/recompiler/ShaderDiskCache.cpp` |  | disables the on-disk shader cache when set to a non-empty value other than 0 |

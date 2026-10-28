@@ -2027,6 +2027,19 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("padded.prx"), image),
                          ({"alpha": False}, set(), {"libc.prx"}))
 
+    def test_sectionless_dynamic_segment_size_is_bounded_by_dt_null_not_by_16(self):
+        original = build_sectionless_elf([("alpha", 0, GLOBAL_FUNCTION)], ["libc.prx"])
+        _, size_field = elf_dynamic_range_fields(original)
+        size = struct.unpack_from("<Q", original, size_field)[0]
+        extended = bytearray(original + bytes(8))
+        struct.pack_into("<QQ", extended, size_field, size + 8, size + 8)
+        self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("extended.prx"), extended),
+                         ({"alpha": False}, set(), {"libc.prx"}))
+        cut = bytearray(original)
+        struct.pack_into("<QQ", cut, size_field, size - 8, size - 8)
+        with self.assertRaisesRegex(import_audit.AuditError, "not terminated by DT_NULL"):
+            import_audit.elf_program_dynamic_symbols(Path("cut.prx"), cut)
+
     def test_module_dependencies_stop_at_dynamic_terminator(self):
         work = self.work
         (work.libs / "libc.prx").write_bytes(exporting())
