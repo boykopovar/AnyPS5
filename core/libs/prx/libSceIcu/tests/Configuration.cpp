@@ -192,6 +192,48 @@ void TimeZoneDirectory() {
     RequireThrows([&] { u_setTimeZoneFilesDirectory_nid_postfix("/x", nullptr); });
 }
 
+void Cleanup() {
+    std::int32_t status = 0;
+    u_cleanup_nid_postfix();
+    Require(std::string(u_getDataDirectory_nid_postfix()) == "");
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "" && status == 0);
+
+    u_setDataDirectory_nid_postfix("/app0/icu");
+    u_setTimeZoneFilesDirectory_nid_postfix("/app0/tz", &status);
+    int marker = 0;
+    u_setMemoryFunctions_nid_postfix(&marker, Allocate_nid_no_patch, Reallocate_nid_no_patch, Release_nid_no_patch, &status);
+    Require(status == 0 && std::string(u_getDataDirectory_nid_postfix()) == "/app0/icu");
+    u_cleanup_nid_postfix();
+    Require(std::string(u_getDataDirectory_nid_postfix()) == "");
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "" && status == 0);
+    u_cleanup_nid_postfix();
+    u_cleanup_nid_postfix();
+    Require(std::string(u_getDataDirectory_nid_postfix()) == "");
+
+    u_setDataDirectory_nid_postfix("/again");
+    u_setTimeZoneFilesDirectory_nid_postfix("/again/tz", &status);
+    u_setMemoryFunctions_nid_postfix(nullptr, Allocate_nid_no_patch, Reallocate_nid_no_patch, Release_nid_no_patch, &status);
+    Require(status == 0);
+    Require(std::string(u_getDataDirectory_nid_postfix()) == "/again");
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "/again/tz");
+    u_cleanup_nid_postfix();
+
+    std::vector<std::thread> threads;
+    for (int index = 0; index < 4; ++index) {
+        threads.emplace_back([index] {
+            std::int32_t local = 0;
+            for (int round = 0; round < 300; ++round) {
+                if (index % 2) u_cleanup_nid_postfix();
+                else u_setDataDirectory_nid_postfix("/busy");
+            }
+            u_getTimeZoneFilesDirectory_nid_postfix(&local);
+        });
+    }
+    for (auto& thread : threads) thread.join();
+    u_cleanup_nid_postfix();
+    Require(std::string(u_getDataDirectory_nid_postfix()) == "");
+}
+
 }
 
 int main() {
@@ -199,5 +241,6 @@ int main() {
     Memory();
     DataDirectory();
     TimeZoneDirectory();
+    Cleanup();
     std::puts("ICU configuration tests passed");
 }
