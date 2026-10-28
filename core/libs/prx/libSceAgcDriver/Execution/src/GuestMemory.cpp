@@ -52,14 +52,14 @@
 #include <cstdint>
 #include <fcntl.h>
 #include <fstream>
-#ifndef __APPLE__
-#include <link.h>
-#endif
 #include <pthread.h>
 #include <sstream>
 #include <sys/ioctl.h>
 #include <sys/uio.h>
 #include <unistd.h>
+#ifndef __APPLE__
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#endif
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #ifdef __APPLE__
 #include <mach/mach.h>
