@@ -355,10 +355,6 @@ int APS5_VABI FT_Done_GlyphSlot_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FT_Done_Memory_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FT_Get_Module_Interface_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

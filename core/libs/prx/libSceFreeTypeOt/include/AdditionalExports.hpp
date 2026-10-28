@@ -92,7 +92,6 @@ int APS5_VABI FT_Attach_Stream_nid_postfix();
 int APS5_VABI FT_CMap_Done_nid_postfix();
 int APS5_VABI FT_CMap_New_nid_postfix();
 int APS5_VABI FT_Done_GlyphSlot_nid_postfix();
-int APS5_VABI FT_Done_Memory_nid_postfix();
 int APS5_VABI FT_Get_Module_Interface_nid_postfix();
 int APS5_VABI ft_service_list_lookup_nid_postfix();
 int APS5_VABI ft_stub_set_char_sizes_nid_postfix();

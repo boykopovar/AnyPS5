@@ -320,6 +320,71 @@ int APS5_VABI FT_Outline_Get_BBoxForward_nid_no_patch(FreeType::GuestOutline* ou
 }
 APS5_EXPORT("0Aal-TIC4so", FT_Outline_Get_BBoxForward_nid_no_patch);
 
+int APS5_VABI FT_Get_AdvanceForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t glyphIndex, std::int32_t flags, std::int64_t* advance) {
+    return FT_Get_Advance_nid_postfix(face, glyphIndex, flags, advance);
+}
+APS5_EXPORT("dMSDtQsYuJM", FT_Get_AdvanceForward_nid_no_patch);
+
+int APS5_VABI FT_Get_AdvancesForward_nid_no_patch(FreeType::GuestFaceRec* face, std::uint32_t start, std::uint32_t count, std::int32_t flags, std::int64_t* advances) {
+    return FT_Get_Advances_nid_postfix(face, start, count, flags, advances);
+}
+APS5_EXPORT("l55oKq6zmrA", FT_Get_AdvancesForward_nid_no_patch);
+
+int APS5_VABI FT_Stroker_NewForward_nid_no_patch(FreeType::GuestLibrary* library, void** stroker) {
+    return FT_Stroker_New_nid_postfix(library, stroker);
+}
+APS5_EXPORT("eqGCaeizvWM", FT_Stroker_NewForward_nid_no_patch);
+
+void APS5_VABI FT_Stroker_DoneForward_nid_no_patch(void* stroker) {
+    return FT_Stroker_Done_nid_postfix(stroker);
+}
+APS5_EXPORT("+RLa-6fbshA", FT_Stroker_DoneForward_nid_no_patch);
+
+int APS5_VABI FT_Stroker_GetCountsForward_nid_no_patch(void* stroker, std::uint32_t* points, std::uint32_t* contours) {
+    return FT_Stroker_GetCounts_nid_postfix(stroker, points, contours);
+}
+APS5_EXPORT("rzIWh7FJnmU", FT_Stroker_GetCountsForward_nid_no_patch);
+
+int APS5_VABI FT_Stroker_BeginSubPathForward_nid_no_patch(void* stroker, const FreeType::GuestVector* to, std::uint8_t open) {
+    return FT_Stroker_BeginSubPath_nid_postfix(stroker, to, open);
+}
+APS5_EXPORT("xj3tNJptfLI", FT_Stroker_BeginSubPathForward_nid_no_patch);
+
+int APS5_VABI FT_Stroker_LineToForward_nid_no_patch(void* stroker, const FreeType::GuestVector* to) {
+    return FT_Stroker_LineTo_nid_postfix(stroker, to);
+}
+APS5_EXPORT("cKndiZnt0EA", FT_Stroker_LineToForward_nid_no_patch);
+
+int APS5_VABI FT_Stroker_EndSubPathForward_nid_no_patch(void* stroker) {
+    return FT_Stroker_EndSubPath_nid_postfix(stroker);
+}
+APS5_EXPORT("pBqh-Uh-gns", FT_Stroker_EndSubPathForward_nid_no_patch);
+
+void APS5_VABI FT_Stroker_SetForward_nid_no_patch(void* stroker, std::int64_t radius, std::int32_t lineCap, std::int32_t lineJoin, std::int64_t miterLimit) {
+    return FT_Stroker_Set_nid_postfix(stroker, radius, lineCap, lineJoin, miterLimit);
+}
+APS5_EXPORT("B3uU5aDZn94", FT_Stroker_SetForward_nid_no_patch);
+
+void APS5_VABI FT_Stroker_RewindForward_nid_no_patch(void* stroker) {
+    return FT_Stroker_Rewind_nid_postfix(stroker);
+}
+APS5_EXPORT("Po8kyd3DlIw", FT_Stroker_RewindForward_nid_no_patch);
+
+int APS5_VABI FT_Stroker_GetBorderCountsForward_nid_no_patch(void* stroker, std::int32_t border, std::uint32_t* points, std::uint32_t* contours) {
+    return FT_Stroker_GetBorderCounts_nid_postfix(stroker, border, points, contours);
+}
+APS5_EXPORT("LfyUi-LkdCk", FT_Stroker_GetBorderCountsForward_nid_no_patch);
+
+int APS5_VABI FT_Stroker_ConicToForward_nid_no_patch(void* stroker, const FreeType::GuestVector* control, const FreeType::GuestVector* to) {
+    return FT_Stroker_ConicTo_nid_postfix(stroker, control, to);
+}
+APS5_EXPORT("TPKhRt1QIeE", FT_Stroker_ConicToForward_nid_no_patch);
+
+int APS5_VABI FT_Stroker_CubicToForward_nid_no_patch(void* stroker, const FreeType::GuestVector* control1, const FreeType::GuestVector* control2, const FreeType::GuestVector* to) {
+    return FT_Stroker_CubicTo_nid_postfix(stroker, control1, control2, to);
+}
+APS5_EXPORT("6+yXRlVrjbc", FT_Stroker_CubicToForward_nid_no_patch);
+
 }
 
 #endif

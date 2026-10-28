@@ -94,7 +94,6 @@
 | `FT_CMap_Done` | `h0n4Fb9j2R8` |
 | `FT_CMap_New` | `wLqQQWyOdpc` |
 | `FT_Done_GlyphSlot` | `oJm1lThZ3iQ` |
-| `FT_Done_Memory` | `UTumVjeIQtg` |
 | `FT_Get_Module_Interface` | `5NYsP564wwY` |
 | `ft_service_list_lookup` | `00MQVzW2OPY` |
 | `ft_stub_set_char_sizes` | `dGrmvw2Y1qA` |
@@ -139,4 +138,4 @@ The following 13.60 data exports remain unavailable. Their guest structure layou
 
 ### Pending dependency exports
 
-Forty additional callable NIDs are reserved for open libSceFreeType implementation or export changes. They are not supplied by this batch. Once their base implementations land, Windows requires matching Ot forwarding entries; macOS and Linux must be checked through the retained dependency. Introducing child stubs for those entries would shadow future working providers.
+Additional callable NIDs not supplied here remain reserved for open libSceFreeType implementation or export changes. They are not supplied by this batch. Once their base implementations land, Windows requires matching Ot forwarding entries; macOS and Linux must be checked through the retained dependency. Introducing child stubs for those entries would shadow future working providers.
