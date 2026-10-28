@@ -261,6 +261,26 @@ bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {
     return idle;
 }
 
+bool Driver::WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout) {
+    require(!onWorkerThread(), "worker cannot wait for itself");
+    std::unique_lock lock(mutex);
+    const auto target = accepted;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto idle = [&] { return failure != nullptr || stopping || completed >= target; };
+    const auto titleWaits = [&] {
+        return std::any_of(awaitedSlots.begin(), awaitedSlots.end(), [&](const AwaitedSlot& slot) {
+            const auto awaited = slot.address.load(std::memory_order_acquire);
+            return awaited != 0 && awaitsTitle(awaited);
+        });
+    };
+    ++idleWaiters;
+    while (!idle() && !titleWaits() && std::chrono::steady_clock::now() < deadline) changed.wait_for(lock, std::chrono::milliseconds(1));
+    --idleWaiters;
+    rethrowFailure();
+    checkStopping();
+    return idle();
+}
+
 std::vector<AwaitedWait> Driver::AwaitedWaits() {
     std::vector<AwaitedWait> result;
     for (const auto& slot : awaitedSlots) {
