@@ -43,7 +43,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_savedata_ps4_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataPs4.cpp)
     target_include_directories(guest_savedata_ps4_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_savedata_ps4_tests PRIVATE libSceSaveData.native libc)
+    target_link_libraries(guest_savedata_ps4_tests PRIVATE libSceSaveData.native libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_savedata_ps4_tests)
     add_test(NAME guest_savedata_ps4 COMMAND guest_savedata_ps4_tests)
     if(WIN32)

@@ -3,12 +3,18 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 namespace {
 
@@ -87,6 +93,25 @@ void TestSaveDataMemoryV1() {
     Check(sceSaveDataTerminate() == 0, "Terminate after v1 Initialize");
 }
 
+void TestInitialize2() {
+    using Initialize2 = int (APS5_VABI*)(const void*);
+#ifdef _WIN32
+    void* symbol = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("libSceSaveData.native.prx"), "sceSaveDataInitialize2"));
+#else
+    void* symbol = dlsym(RTLD_DEFAULT, "sceSaveDataInitialize2");
+#endif
+    if (!symbol) {
+        std::fprintf(stderr, "sceSaveDataInitialize2 is not exported by libSceSaveData.native\n");
+        std::abort();
+    }
+    const auto initialize2 = reinterpret_cast<Initialize2>(symbol);
+    Check(sceSaveDataSetupSaveDataMemory(8, 0x1000, nullptr) == SaveDataErrorNotInitialized, "SetupSaveDataMemory before Initialize2");
+    Check(initialize2(nullptr) == 0, "Initialize2");
+    Check(sceSaveDataSetupSaveDataMemory(8, 0x1000, nullptr) == 0, "SetupSaveDataMemory after Initialize2");
+    Check(sceSaveDataTerminate() == 0, "Terminate after Initialize2");
+    Check(sceSaveDataSetupSaveDataMemory(8, 0x1000, nullptr) == SaveDataErrorNotInitialized, "SetupSaveDataMemory after the Initialize2 session ended");
+}
+
 void TestMountPs4() {
     SaveDataMountResult result{};
     Check(sceSaveDataMount(nullptr, &result) == SaveDataErrorParameter, "null mount is PARAMETER");
@@ -115,6 +140,7 @@ int main() {
     TestTransferringMountPs4();
     TestDirNameSearchPs4();
     TestSaveDataMemoryV1();
+    TestInitialize2();
     TestMountPs4();
 
     std::filesystem::current_path(previous);

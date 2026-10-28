@@ -54,7 +54,7 @@ int APS5_VABI sceSaveDataGetSaveDataRootPath(void);
 int APS5_VABI sceSaveDataGetSaveDataRootUsbPath(void);
 int APS5_VABI sceSaveDataGetSavePoint(void);
 int APS5_VABI sceSaveDataGetUpdatedDataCount(void);
-int APS5_VABI sceSaveDataInitialize2();
+int APS5_VABI sceSaveDataInitialize2(const void* init);
 int APS5_VABI sceSaveDataInitializeForCdlg(void);
 int APS5_VABI sceSaveDataIsDeletingUsbDb(void);
 int APS5_VABI sceSaveDataIsMounted();
