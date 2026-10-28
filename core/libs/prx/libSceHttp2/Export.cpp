@@ -184,9 +184,8 @@ int APS5_VABI sceHttp2DeleteTemplate(int tmpl_id) {
 }
 
 int APS5_VABI sceHttp2GetAllResponseHeaders(int req_id, char** header, size_t* header_size) {
-    if (!Transport(req_id, false)) return ERROR_INVALID_ID;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    const auto request = Transport(req_id, false);
+    return request ? request->Headers(header, header_size) : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttp2GetResponseContentLength(int req_id, int* result, uint64_t* content_length) {
