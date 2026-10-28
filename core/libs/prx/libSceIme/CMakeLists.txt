@@ -18,6 +18,11 @@ if(BUILD_TESTING)
     configure_host_test_executable(ime_host_text_tests)
     add_test(NAME ime_host_text COMMAND ime_host_text_tests)
 
+    add_test_executable(ime_composition_tests tests/Composition.cpp)
+    target_include_directories(ime_composition_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(ime_composition_tests)
+    add_test(NAME ime_composition COMMAND ime_composition_tests)
+
     add_test_executable(guest_ime_pad_route_tests ${LIBS_INCLUDE_DIR}/tests/GuestImePadRoute.cpp)
     target_include_directories(guest_ime_pad_route_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_ime_pad_route_tests PRIVATE libSceIme libc)
