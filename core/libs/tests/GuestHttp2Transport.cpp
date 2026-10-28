@@ -578,6 +578,30 @@ struct AsyncQueue {
     }
 };
 
+void AsyncOptionalArguments(int ssl) {
+    std::fprintf(stderr, "HTTP2 async optional arguments scenario\n");
+    Server server(Mode::Normal, "localhost");
+    Client client(ssl);
+    Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify async optional host name");
+    client.Create(server.Url("localhost"));
+    AsyncQueue queue(client.request);
+    int opaque = 0;
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, &opaque) == 0, "async opaque option submission");
+    queue.ExpectEvent();
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "async opaque option completion");
+    Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async opaque option result");
+    std::array<char, 64> buffer{};
+    Require(sceHttp2ReadDataAsync(client.request, buffer.data(), buffer.size(), nullptr, &opaque) == 0, "async null kqueue read submission");
+    queue.ExpectNoEvent();
+    Http2AsyncResult readResult{};
+    Require(sceHttp2WaitAsync(client.request, &readResult, nullptr, nullptr) == 0, "async null kqueue read completion");
+    Require(readResult.req_id == client.request && readResult.result == 13 && readResult.event_type == 1, "async null kqueue read result");
+    Require(std::string(buffer.data(), 13) == "response body", "async null kqueue read body");
+    server.Join();
+    Require(server.Negotiated(), "async optional h2 ALPN");
+}
+
 void AsyncDelete(int ssl, bool waiter) {
     std::fprintf(stderr, "HTTP2 async delete scenario waiter %d\n", waiter ? 1 : 0);
     Server server(Mode::StallHeaders);
@@ -963,6 +987,7 @@ int main(int argc, char** argv) {
         Capacity(ssl);
         Retries(ssl);
         Async(ssl);
+        AsyncOptionalArguments(ssl);
         AsyncDelete(ssl, false);
         AsyncDelete(ssl, true);
         AsyncTwoWaiters(ssl);
