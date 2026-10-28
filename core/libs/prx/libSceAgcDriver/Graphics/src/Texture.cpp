@@ -4359,14 +4359,13 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         if (units != 0) waitForIdlePublish(reason);
         if (published != nullptr) *published = units != 0;
     }
-    if (noting != nullptr && noting == Recorder::Active()) {
+    if (flush.size() == 1 && noting != nullptr && noting == Recorder::Active()) {
         if (const auto notes = noting->StampedNotesSince(firstNote); !notes.empty()) {
             auto& pending = Pending();
             std::lock_guard lock(pending.mutex);
-            for (const auto& texture : flush) {
-                texture->flushNotes.insert(texture->flushNotes.end(), notes.begin(), notes.end());
-                if (texture->flushNotes.size() > 32) texture->flushNotes.erase(texture->flushNotes.begin(), texture->flushNotes.end() - 32);
-            }
+            auto& own = flush.front()->flushNotes;
+            own.insert(own.end(), notes.begin(), notes.end());
+            if (own.size() > 32) own.erase(own.begin(), own.end() - 32);
         }
     }
     return true;

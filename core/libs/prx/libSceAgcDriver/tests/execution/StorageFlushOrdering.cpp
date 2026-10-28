@@ -202,6 +202,23 @@ void RunStoredAgain(AgcDriver::VulkanDevice& device, const GuestBlock& guest, st
     }
 }
 
+void RunStoredAloneAfterJoint(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset) {
+    const auto first = guest.Address() + offset;
+    const auto target = device.Target();
+    const std::array stores{Compile(StoreImageCode, ImageUserData(first), target), Compile(StoreImageCode, ImageUserData(first + ImageBytes), target)};
+    const auto restore = Compile(RestoreImageCode, ImageUserData(first), target);
+    for (const auto& store : stores) device.Dispatch(store, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
+    const std::string what = "storage flush ordering, 1 image stored alone after a joint store of 2 images in the open batch: ";
+    Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes * 2u, nullptr, "test"), what + "the joint store left no results pending");
+    device.Dispatch(restore, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(RestoreImageCode.data()));
+    const auto open = OpenSerial();
+    Require(AgcDriver::Graphics::StorageTexture::FlushPending(first, ImageBytes, nullptr, "test"), what + "the second store left no results pending");
+    Require(OpenSerial() != open, what + "the second store did not wait for the joint store, whose writes are not the image's own");
+    device.WaitIdle();
+    const auto* words = guest.Words() + offset / 4u;
+    Require(words[0] == Restored && words[FarDword] == Restored, what + "the newer texels did not land over the joint store");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -214,6 +231,7 @@ int main(int argc, char** argv) {
             RunStoredAgain(*device, guest, BlockBytes / 4u, 1, false);
             RunStoredAgain(*device, guest, BlockBytes / 8u * 5u, 2, false);
             RunStoredAgain(*device, guest, BlockBytes / 8u * 3u, 1, true);
+            RunStoredAloneAfterJoint(*device, guest, BlockBytes / 8u * 5u);
             std::puts("storage flush ordering stored-again tests passed");
             return 0;
         }
@@ -224,6 +242,7 @@ int main(int argc, char** argv) {
         RunStoredAgain(*device, guest, BlockBytes / 4u, 1, false);
         RunStoredAgain(*device, guest, BlockBytes / 8u * 5u, 2, false);
         RunStoredAgain(*device, guest, BlockBytes / 8u * 3u, 1, true);
+        RunStoredAloneAfterJoint(*device, guest, BlockBytes / 8u * 5u);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {
