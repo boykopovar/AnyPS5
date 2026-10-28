@@ -581,6 +581,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
     const auto* unit = ToAnnexB(decoder, input->auData, static_cast<std::size_t>(input->auSize));
     auto avc = decoder.codec == CodecAvc ? Videodec2Avc::Parse_nid_no_patch(decoder.avc, *unit) : Videodec2Avc::Metadata{};
     if (decoder.codec == CodecAvc && !CarriesAvcSlice(*unit)) {
+        if (decoder.parameterSets.size() + unit->size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Videodec2: invalid access unit");
         decoder.parameterSets.insert(decoder.parameterSets.end(), unit->begin(), unit->end());
         EmitDecoded(handle, decoder, frame, output);
         return 0;
