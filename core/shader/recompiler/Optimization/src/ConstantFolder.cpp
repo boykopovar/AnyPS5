@@ -664,6 +664,40 @@ bool replaceBinaryIdentity(IrValue& inst, IrType type, std::uint64_t identity) {
     return false;
 }
 
+bool foldBitwiseSelf(IrBuilder& builder, IrValue& inst) {
+    auto& lhs = resolveArg(inst, 0);
+    auto& rhs = resolveArg(inst, 1);
+    const auto opcode = inst.Opcode();
+    const std::uint32_t absorbing = opcode == IrOpcode::BitwiseOr32 ? 0xffffffffu : 0u;
+    if (opcode != IrOpcode::BitwiseXor32 && (isImmediateU32(lhs, absorbing) || isImmediateU32(rhs, absorbing))) {
+        replaceWith(inst, builder.Constant(absorbing));
+        return true;
+    }
+    if (&lhs == &rhs) {
+        if (opcode == IrOpcode::BitwiseXor32) replaceWith(inst, builder.Constant(0u));
+        else replaceWith(inst, lhs);
+        return true;
+    }
+    const bool complement = (lhs.Opcode() == IrOpcode::BitwiseNot32 && &resolveArg(lhs, 0) == &rhs) || (rhs.Opcode() == IrOpcode::BitwiseNot32 && &resolveArg(rhs, 0) == &lhs);
+    if (!complement) return false;
+    replaceWith(inst, builder.Constant(opcode == IrOpcode::BitwiseAnd32 ? 0u : 0xffffffffu));
+    return true;
+}
+
+bool foldLowBitOfOnes(IrBuilder& builder, IrValue& inst) {
+    auto& lhs = resolveArg(inst, 0);
+    auto& rhs = resolveArg(inst, 1);
+    const bool lowBit = isImmediateU32(rhs, 1u);
+    auto& shifted = lowBit ? lhs : rhs;
+    if (!lowBit && !isImmediateU32(lhs, 1u)) return false;
+    if (shifted.Opcode() != IrOpcode::ShiftRightLogical32 || !isImmediateU32(resolveArg(shifted, 0), 0xffffffffu)) return false;
+    auto& amount = resolveArg(shifted, 1);
+    if (amount.Opcode() != IrOpcode::BitwiseAnd32) return false;
+    if (!isImmediateU32(resolveArg(amount, 0), 31u) && !isImmediateU32(resolveArg(amount, 1), 31u)) return false;
+    replaceWith(inst, builder.Constant(1u));
+    return true;
+}
+
 bool foldSelect(IrValue& inst) {
     auto& condition = resolveArg(inst, 0);
     if (isImmediate(condition, IrType::U1)) {
@@ -1118,6 +1152,10 @@ bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
                 replaceWith(value, resolveArg(value, 0));
                 return true;
             }
+            if (isImmediateU32(resolveArg(value, 0), 0u)) {
+                replaceWith(value, resolveArg(value, 0));
+                return true;
+            }
             if (!isImmediate(shift, IrType::U32)) return false;
             const auto amount = shift.ImmediateU32() & 31u;
             readThroughUnusedBits(value, 0, UINT32_MAX << amount);
@@ -1170,6 +1208,7 @@ bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
                 return true;
             }
             if (replaceBinaryIdentity(value, IrType::U32, 0xffffffffu)) return true;
+            if (foldBitwiseSelf(builder, value) || foldLowBitOfOnes(builder, value)) return true;
             if (foldRedundantMask(value)) return true;
             bool changed = false;
             for (std::size_t side = 0; side < 2u; ++side) {
@@ -1191,6 +1230,7 @@ bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
                 return true;
             }
             if (replaceBinaryIdentity(value, IrType::U32, 0u)) return true;
+            if (foldBitwiseSelf(builder, value)) return true;
             return opcode == IrOpcode::BitwiseOr32 && mergeMaskedParts(program, value);
         }
         case IrOpcode::BitwiseNot32: {
