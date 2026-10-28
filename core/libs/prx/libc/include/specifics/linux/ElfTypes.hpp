@@ -3,6 +3,11 @@
 
 #ifdef __linux__
 #include <link.h>
+#ifdef ANYPS5_GUEST_LIFTED
+#include <cstddef>
+extern "C" int GuestCpuIterateImages_nid_no_patch(int (*callback)(dl_phdr_info*, std::size_t, void*), void* data);
+#define dl_iterate_phdr GuestCpuIterateImages_nid_no_patch
+#endif
 #else
 
 #include <cstdint>
