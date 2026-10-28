@@ -133,11 +133,71 @@ void DataDirectory() {
     u_setDataDirectory_nid_postfix(nullptr);
 }
 
+void TimeZoneDirectory() {
+    std::int32_t status = 0;
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "" && status == 0);
+    u_setTimeZoneFilesDirectory_nid_postfix("/app0/tz", &status);
+    Require(status == 0 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "/app0/tz" && status == 0);
+
+    status = 7;
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "" && status == 7);
+    u_setTimeZoneFilesDirectory_nid_postfix("/other", &status);
+    Require(status == 7);
+    status = 0;
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "/app0/tz");
+
+    status = -124;
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "/app0/tz" && status == -124);
+    u_setTimeZoneFilesDirectory_nid_postfix("/warn", &status);
+    Require(status == -124);
+    status = 0;
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "/warn");
+
+    u_setTimeZoneFilesDirectory_nid_postfix(nullptr, &status);
+    Require(status == 1);
+    status = 0;
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
+
+    u_setTimeZoneFilesDirectory_nid_postfix("/first", &status);
+    u_setTimeZoneFilesDirectory_nid_postfix("", &status);
+    Require(status == 0 && std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "");
+
+    char buffer[] = "/copy/me";
+    u_setTimeZoneFilesDirectory_nid_postfix(buffer, &status);
+    buffer[1] = 'X';
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "/copy/me");
+    u_setTimeZoneFilesDirectory_nid_postfix("C:\\tz/mixed", &status);
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "C:\\tz/mixed");
+    Require(std::string(u_getDataDirectory_nid_postfix()) == "");
+    u_setDataDirectory_nid_postfix("/data");
+    Require(std::string(u_getTimeZoneFilesDirectory_nid_postfix(&status)) == "C:\\tz/mixed");
+    u_setDataDirectory_nid_postfix(nullptr);
+
+    std::vector<std::thread> threads;
+    for (int index = 0; index < 8; ++index) {
+        threads.emplace_back([index] {
+            const std::string value = "/zone/" + std::to_string(index);
+            std::int32_t local = 0;
+            for (int round = 0; round < 500; ++round) u_setTimeZoneFilesDirectory_nid_postfix(value.c_str(), &local);
+            Require(local == 0);
+        });
+    }
+    for (auto& thread : threads) thread.join();
+    const std::string final = u_getTimeZoneFilesDirectory_nid_postfix(&status);
+    Require(final.size() == 7 && final.starts_with("/zone/") && final[6] >= '0' && final[6] < '8');
+    status = 0;
+    u_setTimeZoneFilesDirectory_nid_postfix(nullptr, &status);
+
+    RequireThrows([&] { u_getTimeZoneFilesDirectory_nid_postfix(nullptr); });
+    RequireThrows([&] { u_setTimeZoneFilesDirectory_nid_postfix("/x", nullptr); });
+}
+
 }
 
 int main() {
     Locking();
     Memory();
     DataDirectory();
+    TimeZoneDirectory();
     std::puts("ICU configuration tests passed");
 }
