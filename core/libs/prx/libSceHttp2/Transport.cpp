@@ -244,29 +244,6 @@ int AddHeader(Settings& settings, const char* name, const char* value, std::uint
     return 0;
 }
 
-static const char* Reason(int status) {
-    switch (status) {
-        case 200: return "OK";
-        case 201: return "Created";
-        case 204: return "No Content";
-        case 301: return "Moved Permanently";
-        case 302: return "Found";
-        case 303: return "See Other";
-        case 304: return "Not Modified";
-        case 307: return "Temporary Redirect";
-        case 308: return "Permanent Redirect";
-        case 400: return "Bad Request";
-        case 401: return "Unauthorized";
-        case 403: return "Forbidden";
-        case 404: return "Not Found";
-        case 429: return "Too Many Requests";
-        case 500: return "Internal Server Error";
-        case 502: return "Bad Gateway";
-        case 503: return "Service Unavailable";
-        default: return "";
-    }
-}
-
 struct Request::State {
     int sslContext;
     const std::shared_ptr<Capacity> capacity;
@@ -515,7 +492,7 @@ struct Request::State {
                     "sceHttp2: automatic redirects are not implemented");
                 Require(!state.settings.auth || (state.status != 401 && state.status != 407), "sceHttp2: authentication is not implemented");
                 state.ready = true;
-                state.allHeaders = "HTTP/1.1 " + std::to_string(state.status) + " " + Reason(state.status) + "\r\n";
+                state.allHeaders = "HTTP/2.0 " + std::to_string(state.status) + " HTTP2 NO PHRASE\r\n";
                 for (const auto& [key, value] : state.blockHeaders) state.allHeaders += key + ": " + value + "\r\n";
                 state.allHeaders += "\r\n";
             }

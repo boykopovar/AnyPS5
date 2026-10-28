@@ -415,7 +415,7 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     std::size_t rawSize = 0;
     Require(sceHttp2GetAllResponseHeaders(client.request, &rawHeaders, &rawSize) == 0, "response header serialization");
     const std::string blob(rawHeaders, rawSize);
-    Require(blob.starts_with("HTTP/1.1 ") && blob.ends_with("\r\n\r\n") && blob.find("x-loopback: yes\r\n") != std::string::npos,
+    Require(blob.starts_with("HTTP/2.0 ") && blob.ends_with("\r\n\r\n") && blob.find("x-loopback: yes\r\n") != std::string::npos,
         "response header block");
     const std::size_t statusEnd = blob.find("\r\n");
     Require(statusEnd != std::string::npos, "response status line terminator");
@@ -426,7 +426,9 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     std::size_t phraseLength = 0;
     Require(sceHttpParseStatusLine(blob.data(), statusEnd + 2, &major, &minor, &code, &phrase, &phraseLength) ==
         static_cast<int>(statusEnd + 2), "response status line parses");
-    Require(major == 1 && minor == 1 && code == expected, "response status line values");
+    Require(major == 2 && minor == 0 && code == expected, "response status line values");
+    Require(phraseLength == std::strlen(" HTTP2 NO PHRASE") && std::strncmp(phrase, " HTTP2 NO PHRASE", phraseLength) == 0,
+        "response reason phrase");
     const char* value = nullptr;
     std::size_t valueLength = 0;
     Require(sceHttpParseResponseHeader(blob.data(), blob.size(), "x-loopback", &value, &valueLength) > 0 &&
