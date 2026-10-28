@@ -40,6 +40,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -717,9 +718,9 @@ void SslCallbacks(int trusted) {
 }
 
 void Http1Transport(int ssl) {
-    for (const auto mode : {Mode::Http10, Mode::Http11, Mode::Http11Chunked, Mode::Http11Close, Mode::Http1Plain}) {
+    const std::pair<Mode, int> cases[] = {{Mode::Http10, 1}, {Mode::Http11, 2}, {Mode::Http11Chunked, 2}, {Mode::Http11Close, 2}, {Mode::Http1Plain, 2}, {Mode::Http1Plain, 3}};
+    for (const auto& [mode, version] : cases) {
         Server server(mode);
-        const int version = mode == Mode::Http10 ? 1 : 2;
         Client client(ssl, 1, 0, version);
         const std::string upload = "upload bytes";
         Require(sceHttp2AddRequestHeader(client.tmpl, "X-Inherited", "retained", 0) == 0, "HTTP1 inherited header");
