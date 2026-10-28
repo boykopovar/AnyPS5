@@ -11491,6 +11491,27 @@ void meshIndexBufferTests() {
     expectFailure([] { static_cast<void>(AgcDriver::Graphics::MeshIndexBufferDescriptor(AgcDriver::Pm4::DrawParameters{0, 3, 2, 1, 0, true})); }, "invalid mesh index buffer range");
 }
 
+void snapshotMemoryTests() {
+    constexpr VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    constexpr VkMemoryPropertyFlags bar = host | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    VkPhysicalDeviceMemoryProperties memory{};
+    memory.memoryHeapCount = 2;
+    memory.memoryHeaps[0] = {VkDeviceSize{16} << 30u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    memory.memoryHeaps[1] = {VkDeviceSize{32} << 30u, 0};
+    memory.memoryTypeCount = 3;
+    memory.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    memory.memoryTypes[1] = {host | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 1};
+    memory.memoryTypes[2] = {bar, 0};
+    Require(AgcDriver::Graphics::SnapshotMemoryProperties(memory, false) == bar, "a resizable BAR over the whole device heap was not chosen for snapshots");
+    Require(AgcDriver::Graphics::SnapshotMemoryProperties(memory, true) == host, "disabled BAR snapshots still chose device-local memory");
+    memory.memoryHeapCount = 3;
+    memory.memoryHeaps[2] = {VkDeviceSize{256} << 20u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    memory.memoryTypes[2] = {bar, 2};
+    Require(AgcDriver::Graphics::SnapshotMemoryProperties(memory, false) == host, "a 256 MiB BAR window was taken for snapshots");
+    memory.memoryTypeCount = 2;
+    Require(AgcDriver::Graphics::SnapshotMemoryProperties(memory, false) == host, "a device without host-visible device memory did not keep host snapshots");
+}
+
 void stagingPoolBudgetTests() {
     if (std::getenv("APS5_STAGING_POOL_MIB") != nullptr) return;
     VkPhysicalDeviceMemoryProperties memory{};
@@ -12835,6 +12856,7 @@ int main(int argc, char** argv) {
         meshLimitTests();
         meshIndexBufferTests();
         stagingPoolBudgetTests();
+        snapshotMemoryTests();
         validationTests();
         vertexCopyTests();
         highestDrawIndexTests();

@@ -5198,6 +5198,15 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+void drawInputMemoryTests(const Device& device) {
+    alignas(64) static std::array<std::uint32_t, 64> indices{};
+    for (std::uint32_t i = 0; i < indices.size(); ++i) indices[i] = i;
+    const auto copy = CopyDrawInput(device.GetContext(), nullptr, reinterpret_cast<std::uint64_t>(indices.data()), sizeof(indices), 4, Recorder::SnapshotUse::Index32);
+    indices[9] = 0x10000;
+    Require((copy.buffer->Properties() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == 0, "an index copy left host memory, so its highest index would be scanned from the guest instead of the copy");
+    Require(HighestDrawIndex(copy.buffer->Bytes(), 4, false) == 63u, "the highest index of an index copy followed a later store to the guest");
+}
+
 void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied = false) {
     auto context = device.GetContext();
     constexpr std::size_t bytes = 65536;
@@ -12123,6 +12132,11 @@ int main(int argc, char** argv) {
             std::cout << "In-place draw input tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-input-memory-only") {
+            drawInputMemoryTests(device);
+            std::cout << "Draw input memory tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-inputs-copied-only") {
             drawInputInPlaceTests(device, recorder, true);
             std::cout << "Copied draw input tests passed\n";
@@ -12207,6 +12221,7 @@ int main(int argc, char** argv) {
         unwrittenSnapshotTests(device);
         drawSnapshotUploadTests(device, recorder);
         drawInputReuseTests(device, recorder);
+        drawInputMemoryTests(device);
         drawInputInPlaceTests(device, recorder);
         RunResidentPresentTests(device.GetContext());
         sliceDirtyTests(device, recorder);
