@@ -177,6 +177,24 @@ class ConfigureSeedPathTests(unittest.TestCase):
                                  'set("HAVE_FEATURE" "1" CACHE INTERNAL "Test HAVE_FEATURE")\n')
                 self.assertEqual(self.cache.read_bytes(), self.original)
 
+    def test_symbolic_link_loops_are_reported_without_a_traceback(self):
+        loop = self.root / "loop.cmake"
+        try:
+            loop.symlink_to(loop.name)
+        except OSError as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        for arguments in ((str(self.cache), str(loop)), (str(loop), str(self.root / "seed.cmake"))):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, str(TOOL), *arguments], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(str(loop), result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertTrue(loop.is_symlink())
+                self.assertEqual(os.readlink(loop), loop.name)
+                self.assertFalse((self.root / "seed.cmake").exists())
+                self.assertEqual(self.cache.read_bytes(), self.original)
+
     def test_filters_do_not_allow_overwriting_cache(self):
         for options in (("--include", "HAVE_*"), ("--include", "NO_MATCH_*"), ("--exclude", "HAVE_*")):
             with self.subTest(options=options):
