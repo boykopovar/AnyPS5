@@ -355,6 +355,7 @@ std::optional<bool> evaluableAlone(const IrResourcePlan& program, const IrValue&
         case IrOpcode::LoadAddressU32:
         case IrOpcode::ReadConstBuffer: return IsRawRead(program, value);
         case IrOpcode::Phi: return std::nullopt;
+        case IrOpcode::NanPropagateF32: return value.ArgumentCount() < 6u ? std::optional(false) : std::nullopt;
         case IrOpcode::CompositeExtractU64:
         case IrOpcode::CompositeExtractU32x2: {
             if (value.ArgumentCount() < 2) return true;
@@ -369,7 +370,7 @@ std::optional<bool> evaluableAlone(const IrResourcePlan& program, const IrValue&
     }
     const auto arguments = evaluatedArguments(value.Opcode());
     if (!arguments) return false;
-    if (value.ArgumentCount() < *arguments) return false;
+    if (value.ArgumentCount() < *arguments) return true;
     return std::nullopt;
 }
 
