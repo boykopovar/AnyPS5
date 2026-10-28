@@ -206,5 +206,8 @@ extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_trai
 inline constexpr std::size_t kTimePutCharVtableSlots = 7;
 static_assert(kTimePutCharVtableSlots * sizeof(std::uintptr_t) == 56);
 extern "C" std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots];
+inline constexpr std::size_t kMoneyGetCharVtableSlots = 8;
+static_assert(kMoneyGetCharVtableSlots * sizeof(std::uintptr_t) == 64);
+extern "C" std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyGetCharVtableSlots];
 
 #endif
