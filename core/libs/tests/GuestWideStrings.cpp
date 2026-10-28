@@ -202,7 +202,7 @@ int main() {
 
     require(wcsncat_s_nid_postfix(strBuf, 8, u"12345", 5) == 34 && strBuf[0] == 0);
     wmemset_nid_postfix(strBuf, u'x', 4);
-    require(wcsncat_s_nid_postfix(strBuf, 4, u"a", 1) == 22 && strBuf[0] == 0);
+    require(wcsncat_s_nid_postfix(strBuf, 4, u"a", 1) == 34 && strBuf[0] == 0);
     wcsncpy_s_nid_postfix(strBuf, 8, u"ab", 2);
     require(wcsncat_s_nid_postfix(strBuf, 8, strBuf, 2) == 0 && same(strBuf, u"abab", 5));
     wcsncpy_s_nid_postfix(strBuf, 8, u"ab", 2);

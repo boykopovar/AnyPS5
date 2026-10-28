@@ -503,7 +503,7 @@ int APS5_VABI strcpy_s_nid_postfix(char* dest, size_t destsz, const char* src) {
 }
 
 int APS5_VABI strncat_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {
-    return SonyAppendStringS("strncat_s", dest, destsz, src, count, true, true);
+    return SonyAppendStringS("strncat_s", dest, destsz, src, count, true, false);
 }
 
 int APS5_VABI strcat_s_nid_postfix(char* dest, size_t destsz, const char* src) {

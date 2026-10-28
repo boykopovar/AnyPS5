@@ -216,6 +216,15 @@ static void CheckConstraintHandlerCalls() {
     std::strcpy(appended, "ab");
     Require(strcat_s_nid_postfix(appended, sizeof(appended), appended + 1) == 22 && appended[0] == '\0');
     Require(handlerMessage == "strcat_s: buffer overlap");
+    char split[8] = {'a', 'b', 0, 'c', 0};
+    Require(strncat_s_nid_postfix(split, sizeof(split), split + 3, 2) == 0 && std::strcmp(split, "abc") == 0);
+    char unterminated[1] = {'x'};
+    handlerCalls = 0;
+    Require(strncat_s_nid_postfix(unterminated, sizeof(unterminated), "a", 1) == 34 && unterminated[0] == '\0');
+    Require(handlerCalls == 1 && handlerError == 34 && handlerMessage == "strncat_s: buffer too small");
+    unterminated[0] = 'x';
+    Require(strcat_s_nid_postfix(unterminated, sizeof(unterminated), "a") == 22 && unterminated[0] == '\0');
+    Require(handlerCalls == 2 && handlerError == 22 && handlerMessage == "strcat_s: bad argument");
     set_constraint_handler_s_nid_postfix(previous);
 }
 

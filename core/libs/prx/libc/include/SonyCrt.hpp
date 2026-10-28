@@ -184,7 +184,7 @@ int SonyAppendStringS(const char* function, TChar* dest, std::size_t destsz, con
     if (!dest || destsz == 0 || destsz > SonyRsizeMax) return SonySafeViolation(function, "bad destination argument", 22);
     std::size_t used = 0;
     while (used < destsz && dest[used] != 0) ++used;
-    if (used == destsz || !src || (counted && count > SonyRsizeMax)) {
+    if ((!counted && used == destsz) || !src || (counted && count > SonyRsizeMax)) {
         dest[0] = 0;
         return SonySafeViolation(function, "bad argument", 22);
     }
