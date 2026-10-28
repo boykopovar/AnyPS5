@@ -29,6 +29,7 @@ using namespace SceVideodec2;
 using namespace H264Fixture;
 using namespace HevcFixture;
 
+constexpr std::uint32_t CodecAvc = 1;
 constexpr std::uint32_t CodecHevc = 974921;
 constexpr std::uint32_t CodecVp9 = 2382845;
 
