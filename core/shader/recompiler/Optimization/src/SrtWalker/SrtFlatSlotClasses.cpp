@@ -74,8 +74,7 @@ std::vector<std::uint32_t> ComputeGuardedFlatSlots(const IrResourcePlan& plan) {
         const IrValue* value = pending.back();
         pending.pop_back();
         if (!seen.insert(value).second) continue;
-        const IrValue* handle = value->ArgumentCount() != 0u && value->Argument(0) != nullptr ? value->Argument(0)->Resolve() : nullptr;
-        if (IsRawRead(plan, *value) && handle != nullptr && LoadedFromMemory(*handle)) poisonable.push_back(value);
+        if (IsRawRead(plan, *value) && AddressLoadedFromMemory(plan, *value)) poisonable.push_back(value);
         const auto follow = [&](const IrValue* argument) {
             if (argument == nullptr) return;
             argument = argument->Resolve();
