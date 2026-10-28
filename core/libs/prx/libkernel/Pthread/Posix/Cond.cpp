@@ -73,7 +73,8 @@ int APS5_VABI pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, Kerne
 }
 
 int APS5_VABI pthread_condattr_getclock_nid_postfix(const PthreadCondattr* attr, KernelClockid* clockId) {
-    if (!attr || !*attr || !clockId) NotImplemented_nid_no_patch(__func__);
+    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
+    if (!clockId) NotImplemented_nid_no_patch(__func__);
     *clockId = (*attr)->_clockid;
     return 0;
 }

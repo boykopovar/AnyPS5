@@ -1067,6 +1067,13 @@ int main() {
     Require(chdir_nid_postfix("/") == 0);
     Require(getcwd_nid_postfix(directoryPath, sizeof(directoryPath)) == directoryPath && std::strcmp(directoryPath, "/") == 0);
     Require(readlink_nid_postfix(file.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 22);
+    Require(lchflags_nid_postfix(file.c_str(), 0) == 0);
+    Require(lchflags_nid_postfix(nullptr, 0) == -1 && Error() == 14);
+    Require(lchflags_nid_postfix("", 0) == -1 && Error() == 2);
+    Require(lchflags_nid_postfix((root / "missing.bin").string().c_str(), 0) == -1 && Error() == 2);
+    Require(lchflags_nid_postfix((file + "/child").c_str(), 0) == -1 && Error() == 20);
+    Require(lchflags_nid_postfix(file.c_str(), 0x20) == -1 && Error() == 45);
+    Require(lchflags_nid_postfix(file.c_str(), 0x200000) == -1 && Error() == 1);
     const auto symbolic = (root / "symbolic").string();
     const int created = symlink_nid_postfix("original.bin", symbolic.c_str());
     if (created == 0) {
@@ -1118,6 +1125,10 @@ int main() {
         Require(readlink_nid_postfix(dangling.c_str(), buffer, sizeof(buffer)) == 11 && !std::filesystem::exists(dangling));
         Require(symlink_nid_postfix("missing.bin", dangling.c_str()) == -1 && Error() == 17);
 #endif
+        Require(lchflags_nid_postfix(dangling.c_str(), 0) == 0);
+        Require(lchflags_nid_postfix(symbolic.c_str(), 0) == 0);
+        Require(lchflags_nid_postfix(dangling.c_str(), 0x20) == -1 && Error() == 45);
+        Require(lchflags_nid_postfix(dangling.c_str(), 0x200000) == -1 && Error() == 1);
     } else {
         Require(created == -1 && Error() == 1);
         std::fprintf(stderr, "symbolic links unavailable: the symlink success cases not tested\n");

@@ -753,15 +753,21 @@ int ChmodNative_nid_no_patch(const std::filesystem::path& native, int mode) {
     return NativeChmod(native, mode);
 }
 
-int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags) {
+int ChangeFileFlags_nid_no_patch(const char* function, const char* path, std::uint64_t flags, bool follow) {
     std::string copy;
     if (const int error = PathError(path, copy)) return PosixFailure(error);
     path = copy.c_str();
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return PosixFailure(error);
-    if (const int error = LookupError(native)) return PosixFailure(error);
-    if (const int error = SetFileFlags("chflags", path, flags)) return PosixFailure(error);
+    FileStat linkStatus{};
+    const bool link = !follow && native.has_filename() && File::FillLinkStat(native, &linkStatus) && (linkStatus.st_mode & 0170000) == 0120000;
+    if (const int error = link ? 0 : LookupError(native)) return PosixFailure(error);
+    if (const int error = SetFileFlags(function, path, flags)) return PosixFailure(error);
     return 0;
+}
+
+int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags) {
+    return ChangeFileFlags_nid_no_patch("chflags", path, flags, true);
 }
 
 int APS5_VABI fchflags_nid_postfix(int d, std::uint64_t flags) {

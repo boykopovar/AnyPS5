@@ -567,6 +567,7 @@ struct DrawOutcome {
     // A recorded draw began a render pass of its own, or continued the previous draw's.
     bool passBegun = false;
     bool passContinued = false;
+    PassBreak passBreak = PassBreak::Continued;
     bool keyStoresFlushed = false;
     bool storesFlushed = false;
     bool addressDraw = false;
@@ -643,6 +644,8 @@ struct DrawProfile {
     std::uint64_t passesBegun = 0;
     std::uint64_t passesContinued = 0;
     std::array<DrawPassCounts, 2> passTotals{};
+    std::array<std::uint64_t, PassBreakCount> passBreaks{};
+    std::array<std::uint64_t, PassBreakCount> reportedPassBreaks{};
     std::array<std::uint64_t, SyncCount> reasons{};
     // The CPU inside Graphics::Draw, split by outcome: a synchronous draw costs ten times a recorded
     // one, so one average would only show the synchronous population.
@@ -713,6 +716,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     if (outcome.recorded) ++(outcome.waited ? profile.waited : profile.recorded);
     if (outcome.completion) ++profile.completion;
     if (outcome.passBegun) ++profile.passesBegun;
+    if (outcome.passBegun) ++profile.passBreaks[static_cast<std::size_t>(outcome.passBreak)];
     if (outcome.passContinued) ++profile.passesContinued;
     if (outcome.recorded) {
         auto& totals = profile.passTotals[outcome.addressDraw ? 1 : 0];
@@ -742,8 +746,16 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     const auto synchronous = profile.draws - profile.recorded - profile.waited;
     const auto average = [](double total, std::uint64_t count) { return count != 0 ? total / static_cast<double>(count) : 0.0; };
     char line[2048];
-    int n = std::snprintf(line, sizeof(line), "[draws] %llu draws over 10 s (%llu recorded avg %.0f us, of them %llu with completion; %llu recorded then waited avg %.0f us; %llu synchronous avg %.0f us; render passes %llu begun, %llu draws continued one; waited or synchronous because:", static_cast<unsigned long long>(profile.draws), static_cast<unsigned long long>(profile.recorded), average(profile.recordedUs, profile.recorded), static_cast<unsigned long long>(profile.completion), static_cast<unsigned long long>(profile.waited), average(profile.waitedUs, profile.waited), static_cast<unsigned long long>(synchronous), average(profile.synchronousUs, synchronous), static_cast<unsigned long long>(profile.passesBegun), static_cast<unsigned long long>(profile.passesContinued));
+    int n = std::snprintf(line, sizeof(line), "[draws] %llu draws over 10 s (%llu recorded avg %.0f us, of them %llu with completion; %llu recorded then waited avg %.0f us; %llu synchronous avg %.0f us; render passes %llu begun", static_cast<unsigned long long>(profile.draws), static_cast<unsigned long long>(profile.recorded), average(profile.recordedUs, profile.recorded), static_cast<unsigned long long>(profile.completion), static_cast<unsigned long long>(profile.waited), average(profile.waitedUs, profile.waited), static_cast<unsigned long long>(synchronous), average(profile.synchronousUs, synchronous), static_cast<unsigned long long>(profile.passesBegun));
     const auto room = [&] { return n > 0 && static_cast<std::size_t>(n) < sizeof(line); };
+    bool listed = false;
+    for (std::size_t i = 1; i < PassBreakCount && room(); ++i) {
+        const auto count = profile.passBreaks[i] - profile.reportedPassBreaks[i];
+        if (count == 0) continue;
+        n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "%s%s %llu", listed ? ", " : " (", PassBreakNames[i], static_cast<unsigned long long>(count));
+        listed = true;
+    }
+    if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "%s, %llu draws continued one; waited or synchronous because:", listed ? ")" : "", static_cast<unsigned long long>(profile.passesContinued));
     for (std::size_t i = SyncNone + 1; i < SyncCount && room(); ++i) {
         if (profile.reasons[i] != 0) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu", SyncReasonNames[i], static_cast<unsigned long long>(profile.reasons[i]));
     }
@@ -792,6 +804,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.addressBuilds = 0;
     profile.draws = profile.recorded = profile.waited = profile.completion = 0;
     profile.passesBegun = profile.passesContinued = 0;
+    profile.reportedPassBreaks = profile.passBreaks;
     profile.reasons.fill(0);
     profile.recordedUs = profile.waitedUs = profile.synchronousUs = 0;
     profile.targetLookups = profile.slowLookups = 0;
@@ -1123,6 +1136,12 @@ std::array<DrawPassCounts, 2> DrawPassTotals() {
     auto& stats = Profile();
     std::lock_guard lock(stats.mutex);
     return stats.passTotals;
+}
+
+std::array<std::uint64_t, PassBreakCount> DrawPassBreaks() {
+    auto& stats = Profile();
+    std::lock_guard lock(stats.mutex);
+    return stats.passBreaks;
 }
 
 void CountDrawSkip(DrawSkip kind, double us) {
@@ -2269,6 +2288,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool continued = start.continued;
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
+    outcome.passBreak = start.reason;
     const auto commands = start.commands;
     if (!continued) {
         recorder->PrepareSampleSlot();

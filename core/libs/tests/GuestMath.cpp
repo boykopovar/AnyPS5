@@ -834,6 +834,86 @@ static void CheckTanhConsoleBits() {
     }
 }
 
+static void CheckSinhMsunBits() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x0000000000000000ull, 0x0000000000000000ull}, {0x8000000000000000ull, 0x8000000000000000ull},
+        {0x3e2fffffffffffffull, 0x3e2fffffffffffffull}, {0x3e30000000000000ull, 0x3e30000000000000ull},
+        {0xbe30000000000000ull, 0xbe30000000000000ull}, {0x3ff0000000000000ull, 0x3ff2cd9fc44eb982ull},
+        {0xbff0000000000000ull, 0xbff2cd9fc44eb982ull}, {0x3fefffffffffffffull, 0x3ff2cd9fc44eb982ull},
+        {0x4035ffffffffffffull, 0x41dab5adb9c435e5ull}, {0xc035ffffffffffffull, 0xc1dab5adb9c435e5ull},
+        {0x0000000000000001ull, 0x0000000000000001ull}, {0x7ff0000000000000ull, 0x7ff0000000000000ull},
+        {0xfff0000000000000ull, 0xfff0000000000000ull},
+        {0xbfd6a0128184d680ull, 0xbfd719794d320780ull}, {0xbfbdff8696a49900ull, 0xbfbe111cd84473d7ull},
+        {0xbfd6d8bb6b4dca00ull, 0xbfd755bf29c06d04ull}, {0xbfcd8f04fd096d80ull, 0xbfcdd2743062c130ull},
+        {0xbfdaafb23b684980ull, 0xbfdb7764637ce2b1ull}, {0x4030fc47aee85be4ull, 0x4166b421a358e13dull},
+        {0x3ff0ed5ed6534a20ull, 0x3ff444323b77d92aull}, {0x402e263f514d91a0ull, 0x413ae005c1e986f0ull},
+        {0x402dc690717af4e8ull, 0x41364b45352a81bdull}, {0x403270a47f0a53e2ull, 0x41884ea3c3c84121ull},
+        {0xc012535983b8e876ull, 0xc04868fc3820124dull}, {0xc0304bcc37b4b009ull, 0xc156ca0b8a37acd3ull},
+        {0xc01a5966b21f1396ull, 0xc076ae9222cc12f7ull}, {0xc02ddcff626eb852ull, 0xc1374ae500e7533full},
+        {0xc020ed9a3019cd6eull, 0xc0a2854d2aab8a5full},
+        {0x4035dab76b89b207ull, 0x41d716f7bb9c87dbull}, {0x4035d187a12d7d23ull, 0x41d6469c55754089ull},
+        {0x403527ff77fdabb1ull, 0x41c6f9a671b8ec60ull}, {0x4035deab000d3561ull, 0x41d772ea071259caull},
+        {0xc035232f2cb69934ull, 0xc1c68c16c49344beull},
+    };
+    for (const auto& [input, expected] : cases) {
+        const std::uint64_t result = std::bit_cast<std::uint64_t>(sinh_nid_postfix(std::bit_cast<double>(input)));
+        if (result != expected) {
+            std::fprintf(stderr, "Guest sinh failed for %016llx: got %016llx, expected %016llx\n", static_cast<unsigned long long>(input), static_cast<unsigned long long>(result), static_cast<unsigned long long>(expected));
+            std::abort();
+        }
+    }
+}
+
+static bool SinhWithinUlps(std::uint64_t result, std::uint64_t expected, std::uint64_t ulps) {
+    return ((result ^ expected) >> 63) == 0 && (result > expected ? result - expected : expected - result) <= ulps;
+}
+
+static void CheckSinhLargeArguments() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x4036000000000000ull, 0x41dab5adb9c43600ull}, {0x4036000000000001ull, 0x41dab5adb9c4361aull},
+        {0x4059000000000000ull, 0x48e3494a9b171bf5ull}, {0x4062c00000000000ull, 0x4d652cac29822593ull},
+        {0x40862e41ffffffffull, 0x7fdffc045692fc9eull}, {0x40862e4200000000ull, 0x7fdffc045693009eull},
+        {0x40862e4200000001ull, 0x7fdffc045693049eull}, {0x40862e42ffffffffull, 0x7fe000020b8c410bull},
+        {0x4086330000000000ull, 0x7fecee0e3df7d1f3ull},
+        {0x408633cdffffffffull, 0x7feffdc12c49df1cull}, {0x408633ce00000000ull, 0x7feffdc12c49e31cull},
+        {0x408633ce8fb9e87dull, 0x7fefffffffbffd3cull}, {0x408633ce8fba087dull, 0x7ff0000000000000ull},
+        {0x408633ceffffffffull, 0x7ff0000000000000ull}, {0x408633cf00000000ull, 0x7ff0000000000000ull},
+        {0x7fefffffffffffffull, 0x7ff0000000000000ull},
+    };
+    for (const auto& [input, expected] : cases) {
+        for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{1} << 63}) {
+            const std::uint64_t result = std::bit_cast<std::uint64_t>(sinh_nid_postfix(std::bit_cast<double>(input | sign)));
+            const bool overflow = expected == 0x7ff0000000000000ull;
+            if (overflow ? result != (expected | sign) : !SinhWithinUlps(result, expected | sign, 4)) {
+                std::fprintf(stderr, "Guest sinh failed for %016llx: got %016llx, expected %016llx\n", static_cast<unsigned long long>(input | sign), static_cast<unsigned long long>(result), static_cast<unsigned long long>(expected | sign));
+                std::abort();
+            }
+        }
+    }
+}
+
+static void CheckSinhOverflowErrno() {
+    constexpr int sentinel = 1234;
+    for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{1} << 63}) {
+        for (const std::uint64_t input : {0x408633cf00000000ull, 0x7fefffffffffffffull}) {
+            errno = sentinel;
+            const std::uint64_t result = std::bit_cast<std::uint64_t>(sinh_nid_postfix(std::bit_cast<double>(input | sign)));
+            if (result != (0x7ff0000000000000ull | sign) || errno != ERANGE) {
+                std::fprintf(stderr, "Guest sinh overflow failed for %016llx: got %016llx, errno %d\n", static_cast<unsigned long long>(input | sign), static_cast<unsigned long long>(result), errno);
+                std::abort();
+            }
+        }
+        for (const std::uint64_t input : {0x408633ce8fb9e87dull, 0x7ff0000000000000ull, 0x3ff0000000000000ull, 0ull}) {
+            errno = sentinel;
+            sinh_nid_postfix(std::bit_cast<double>(input | sign));
+            if (errno != sentinel) {
+                std::fprintf(stderr, "Guest sinh changed errno for %016llx: errno %d\n", static_cast<unsigned long long>(input | sign), errno);
+                std::abort();
+            }
+        }
+    }
+}
+
 static void CheckRoundingNaNConsoleBits() {
     constexpr std::uint64_t cases[][2] = {
         {0x7ff0000000000001ull, 0x7ff8000000000001ull}, {0xfff4000000000123ull, 0xfffc000000000123ull}, {0x7ff8000000000456ull, 0x7ff8000000000456ull},
@@ -915,6 +995,44 @@ static void CheckNextafterEnvironment(T (APS5_VABI *next)(T, T), UInt sign, UInt
         Require(errno == (mode == FE_UPWARD ? 97 : ERANGE));
     }
     _mm_setcsr(savedControl);
+}
+
+static void CheckExpm1ScalingRounding() {
+    const RestoreFloatingPointState saved;
+    const unsigned savedCsr = _mm_getcsr();
+    const struct {
+        std::uint64_t input;
+        std::uint64_t result[4];
+    } cases[] = {
+        {0x407ff33f4d52628cull, {0x6e06c8c735268691ull, 0x6e06c8c73526868full, 0x6e06c8c735268691ull, 0x6e06c8c735268690ull}},
+        {0x407eff5467ccdb38ull, {0x6ca6e270fe0a802eull, 0x6ca6e270fe0a802cull, 0x6ca6e270fe0a802eull, 0x6ca6e270fe0a802cull}},
+    };
+    const int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    double (APS5_VABI * volatile call)(double) = expm1_nid_postfix;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13u) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (std::uint16_t sticky : {0u, 5u, 32u}) {
+                for (const auto& item : cases) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0 && std::fesetround(rounding[mode]) == 0);
+                    Require(fesetexceptflag_nid_postfix(&sticky, 0x3f) == 0);
+                    _mm_setcsr(control | sticky);
+                    GuestFloatingPointEnvironment before;
+                    Require(fegetenv_nid_postfix(&before) == 0 && (before.status & 0x3fu) == sticky);
+                    errno = 1234;
+                    const auto result = std::bit_cast<std::uint64_t>(call(std::bit_cast<double>(item.input)));
+                    const int error = errno;
+                    GuestFloatingPointEnvironment after;
+                    Require(fegetenv_nid_postfix(&after) == 0);
+                    if (result != item.result[mode] || after.mxcsr != (control | sticky | 0x20u) || (after.status & 0x3fu) != sticky || after.control != before.control || error != 1234) {
+                        std::fprintf(stderr, "expm1 scaling: input=%016llx mode=%u denorm=%u sticky=%u bits=%016llx csr=%x x87=%x errno=%d\n", static_cast<unsigned long long>(item.input), mode, denorm, sticky, static_cast<unsigned long long>(result), after.mxcsr, after.status, error);
+                        Require(false);
+                    }
+                }
+            }
+        }
+    }
+    _mm_setcsr(savedCsr);
 }
 
 static void CheckAsinl() {
@@ -1984,6 +2102,28 @@ static void CheckDinkumwareFloatCharacteristics() {
         for (std::size_t index = 24; index < 32; ++index) Require(reinterpret_cast<const unsigned char*>(table)[index] == 0);
 }
 
+static void CheckCbrtConsoleBits() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x0000000000000000ull, 0x0000000000000000ull}, {0x8000000000000000ull, 0x8000000000000000ull},
+        {0x0000000000000001ull, 0x2990000000000000ull}, {0x8000000000000001ull, 0xa990000000000000ull},
+        {0x000fffffffffffffull, 0x2aa428a2f98d728aull}, {0x0010000000000000ull, 0x2aa428a2f98d728bull},
+        {0x3ff0000000000000ull, 0x3ff0000000000000ull}, {0xbff0000000000000ull, 0xbff0000000000000ull},
+        {0x4020000000000000ull, 0x4000000000000000ull}, {0xc03b000000000000ull, 0xc008000000000000ull},
+        {0x408f400000000000ull, 0x4024000000000000ull}, {0x4000000000000000ull, 0x3ff428a2f98d728bull},
+        {0x3fe0000000000000ull, 0x3fe965fea53d6e3dull}, {0x7fefffffffffffffull, 0x554428a2f98d728bull},
+        {0xffefffffffffffffull, 0xd54428a2f98d728bull}, {0x7ff0000000000000ull, 0x7ff0000000000000ull},
+        {0xfff0000000000000ull, 0xfff0000000000000ull}, {0x7ff8000000000001ull, 0x7ff8000000000001ull},
+        {0xfff8000000000002ull, 0xfff8000000000002ull}, {0x3ffa0ccfe147c94dull, 0x3ff2d29f09b6d6a3ull},
+        {0xbf840fe48e07e54dull, 0xbfcb634d0e8f50ffull}, {0x3fa7d31e3ec31ee2ull, 0x3fd70508d1167185ull},
+        {0xc050f6b81592ae3full, 0xc01050a4409443faull}, {0xc0506b7f30c60f3cull, 0xc0102385f7679661ull},
+        {0xc039809ec6db32bcull, 0xc0078c3d13f2e055ull},
+    };
+    for (const auto& [input, expected] : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(cbrt_nid_postfix(std::bit_cast<double>(input))) == expected && errno == 1234);
+    }
+}
+
 static void CheckLogbConsoleBits() {
     constexpr struct {
         std::uint64_t input;
@@ -2080,15 +2220,23 @@ int main() {
     Require(std::abs(atan2f_nid_postfix(1.f, -1.f) - 2.3561945f) < 0.000001f);
     Require(tanf_nid_postfix(0.f) == 0.f);
     unsigned int randomState = 1;
-    Require(rand_r_nid_postfix(&randomState) == 33613 && randomState == 33613u);
+    Require(rand_r_nid_postfix(&randomState) == 16807 && randomState == 16807u);
+    Require(rand_r_nid_postfix(&randomState) == 282475249 && rand_r_nid_postfix(&randomState) == 1622650073);
     randomState = 0;
-    Require(rand_r_nid_postfix(&randomState) == 16806 && randomState == 16806u);
-    for (const unsigned int seed : {0u, 1u, 12345u, 0x7ffffffeu, 0xffffffffu}) {
-        srand_nid_postfix(seed);
-
-        randomState = seed;
-        for (int step = 0; step < 8; ++step) Require(rand_r_nid_postfix(&randomState) == rand_nid_postfix());
-    }
+    Require(rand_r_nid_postfix(&randomState) == 0x2ae1b767 && randomState == 0x2ae1b767u);
+    randomState = 0x7fffffffu;
+    Require(rand_r_nid_postfix(&randomState) == 0 && randomState == 0u);
+    randomState = 0x7ffffffeu;
+    Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
+    randomState = 0xffffffffu;
+    Require(rand_r_nid_postfix(&randomState) == 2147466840 && randomState == 2147466840u);
+    srand_nid_postfix(1);
+    Require(rand_nid_postfix() == 408024109 && rand_nid_postfix() == 11635919 && rand_nid_postfix() == 196474438);
+    srand_nid_postfix(0);
+    Require(rand_nid_postfix() == 0 && rand_nid_postfix() == 408024109);
+    srand_nid_postfix(0xffffffffu);
+    Require(rand_nid_postfix() == 876841727 && rand_nid_postfix() == 830605684);
+    for (int step = 0; step < 1000; ++step) Require(static_cast<unsigned int>(rand_nid_postfix()) <= 0x3fffffffu);
     bool threw = false;
     try { rand_r_nid_postfix(nullptr); } catch (...) { threw = true; }
     Require(threw);
@@ -2202,14 +2350,19 @@ int main() {
     CheckFegetenv();
     CheckLongDouble();
     CheckNearbyintl();
+    CheckCbrtConsoleBits();
     CheckLogbConsoleBits();
     CheckExpm1ConsoleBits();
     CheckLog1pConsoleBits();
     CheckNextafterConsoleBits();
     CheckTanhConsoleBits();
+    CheckSinhMsunBits();
+    CheckSinhLargeArguments();
+    CheckSinhOverflowErrno();
     CheckRoundingNaNConsoleBits();
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
+    CheckExpm1ScalingRounding();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);

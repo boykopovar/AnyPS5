@@ -425,6 +425,10 @@ unsigned long long APS5_VABI strtoull_nid_postfix(const char* str, char** endptr
     return ParseInteger<unsigned long long>(str, endptr, base, std::strtoull);
 }
 
+long long APS5_VABI strtoq_nid_postfix(const char* str, char** endptr, int base) {
+    return strtoll_nid_postfix(str, endptr, base);
+}
+
 unsigned long long APS5_VABI strtouq_nid_postfix(const char* str, char** endptr, int base) {
     return strtoull_nid_postfix(str, endptr, base);
 }
@@ -952,6 +956,25 @@ int APS5_VABI wcsncat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_
 
 int APS5_VABI wcscat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src) {
     return wcsncat_s_nid_postfix(dest, destsz, src, static_cast<size_t>(-1));
+}
+
+int APS5_VABI timingsafe_memcmp_nid_postfix(const void* b1, const void* b2, size_t len) {
+    const auto* p1 = static_cast<const unsigned char*>(b1);
+    const auto* p2 = static_cast<const unsigned char*>(b2);
+    int result = 0;
+    std::uint32_t done = 0;
+    for (size_t i = 0; i < len; ++i) {
+        const std::uint32_t a = p1[i];
+        const std::uint32_t b = p2[i];
+        const std::uint32_t lt = (a - b) >> 31;
+        const std::uint32_t gt = (b - a) >> 31;
+        const int cmp = static_cast<int>(gt) - static_cast<int>(lt);
+        const std::uint32_t d = a ^ b;
+        const std::uint32_t diffMask = static_cast<std::uint32_t>(-static_cast<std::int32_t>((d | -d) >> 31));
+        result |= cmp & static_cast<int>(~done);
+        done |= diffMask;
+    }
+    return result;
 }
 
 }

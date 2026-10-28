@@ -131,6 +131,31 @@ struct LibreSslRsa {
     void* mtBlinding;
 };
 
+struct LibreSslX509StoreContext {
+    void* store;
+    int currentMethod;
+    void* cert;
+    void* untrusted;
+    void* crls;
+    void* param;
+    void* otherContext;
+    void* callbacks[12];
+    int valid;
+    int lastUntrusted;
+    void* chain;
+    void* tree;
+    int explicitPolicy;
+    int errorDepth;
+    int error;
+    void* currentCert;
+    void* currentIssuer;
+    void* currentCrl;
+    int currentCrlScore;
+    unsigned int currentReasons;
+    LibreSslX509StoreContext* parent;
+    void* exData;
+};
+
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
@@ -451,12 +476,12 @@ int APS5_VABI X509_NAME_get_text_by_NID_nid_postfix(void);
 int APS5_VABI X509_NAME_oneline_nid_postfix(void);
 int APS5_VABI X509_NAME_print_ex_nid_postfix(void);
 int APS5_VABI X509_STORE_CTX_get1_chain_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_get_chain_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_get_current_cert_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(void);
+void* APS5_VABI X509_STORE_CTX_get_chain_nid_postfix(LibreSslX509StoreContext* context);
+void* APS5_VABI X509_STORE_CTX_get_current_cert_nid_postfix(LibreSslX509StoreContext* context);
+int APS5_VABI X509_STORE_CTX_get_error_nid_postfix(LibreSslX509StoreContext* context);
+int APS5_VABI X509_STORE_CTX_get_error_depth_nid_postfix(LibreSslX509StoreContext* context);
 int APS5_VABI X509_STORE_CTX_get_ex_data_nid_postfix(void);
-int APS5_VABI X509_STORE_CTX_set_error_nid_postfix(void);
+void APS5_VABI X509_STORE_CTX_set_error_nid_postfix(LibreSslX509StoreContext* context, int error);
 int APS5_VABI X509_STORE_add_cert_nid_postfix(void);
 int APS5_VABI X509_STORE_add_crl_nid_postfix(void);
 int APS5_VABI X509_STORE_add_lookup_nid_postfix(void);

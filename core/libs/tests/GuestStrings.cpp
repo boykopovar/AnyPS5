@@ -542,6 +542,18 @@ int main() {
     Require(std::memcmp(dest, "abc:", 4) == 0);
     Require(memccpy_nid_postfix(dest, "abcdef", ':', 6) == nullptr);
     Require(memccpy_nid_postfix(dest, "abcdef", ':', 0) == nullptr);
+    const char safeA[] = "abcdef";
+    const char safeB[] = "abcdeg";
+    const char safeC[] = "abcdef";
+    Require(timingsafe_memcmp_nid_postfix(safeA, safeC, 6) == 0);
+    Require(timingsafe_memcmp_nid_postfix(safeA, safeB, 6) < 0);
+    Require(timingsafe_memcmp_nid_postfix(safeB, safeA, 6) > 0);
+    Require(timingsafe_memcmp_nid_postfix(safeA, safeB, 5) == 0);
+    Require(timingsafe_memcmp_nid_postfix(safeA, safeB, 0) == 0);
+    const unsigned char highA[] = {0x00, 0x80};
+    const unsigned char highB[] = {0x00, 0x7f};
+    Require(timingsafe_memcmp_nid_postfix(highA, highB, 2) > 0);
+    Require(timingsafe_memcmp_nid_postfix(highB, highA, 2) < 0);
     CheckSecureCopySizeLimits();
     CheckSecureStringSizeLimits();
     return CheckMemcpyOverlap() ? 0 : 1;

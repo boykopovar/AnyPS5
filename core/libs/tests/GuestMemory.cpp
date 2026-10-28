@@ -184,10 +184,8 @@ static void CheckAudioCoprocessorProtection() {
     Require(sceKernelMprotect(writable, length, 0x3f2) == 0);
     static_cast<volatile unsigned char*>(writable)[0] = 9;
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(writable), length) == 0);
-    bool rejected = false;
     void* undefined = nullptr;
-    try { sceKernelMapFlexibleMemory(&undefined, length, 0x400, 0); } catch (const std::invalid_argument&) { rejected = true; }
-    Require(rejected && undefined == nullptr);
+    Require(sceKernelMapFlexibleMemory(&undefined, length, 0x400, 0) == SCE_KERNEL_ERROR_EINVAL && undefined == nullptr);
 }
 
 static void CheckMprotectIgnoresUndefinedBits() {
@@ -268,14 +266,15 @@ static void CheckStrictMemoryProtectionBits() {
     };
     std::size_t available = 0;
     Require(sceKernelAvailableFlexibleMemorySize(&available) == 0);
-    for (const int protection : {-256, -129, -128, -14, -1, 8, 0x400, std::numeric_limits<int>::min()}) {
+    for (const int protection : {-256, -129, -128, -14, -1, 8, 0x400, 0x800, 0x3ff, std::numeric_limits<int>::min()}) {
         void* invalid = nullptr;
-        rejected([&] { sceKernelMapFlexibleMemory(&invalid, length, protection, 0); });
-        Require(invalid == nullptr);
+        Require(sceKernelMapFlexibleMemory(&invalid, length, protection, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+        Require(sceKernelMapNamedFlexibleMemory(&invalid, length, protection, 0, "undefined") == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
         std::size_t after = 0;
         Require(sceKernelAvailableFlexibleMemorySize(&after) == 0 && after == available);
-        rejected([&] { sceKernelMapDirectMemory(&invalid, length, protection, 0, physical, 0); });
-        Require(invalid == nullptr);
+        Require(sceKernelMapDirectMemory(&invalid, length, protection, 0, physical, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+        Require(sceKernelMapDirectMemory2(&invalid, length, 0, protection, 0, physical, 0) == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
+        Require(sceKernelMapNamedDirectMemory(&invalid, length, protection, 0, physical, 0, "undefined") == SCE_KERNEL_ERROR_EINVAL && invalid == nullptr);
         rejected([&] { sceKernelMtypeprotect(mapping, length, 2, protection); });
         VirtualQueryInfo info{};
         Require(sceKernelVirtualQuery(mapping, 0, &info, sizeof(info)) == 0);
@@ -423,6 +422,27 @@ static void CheckBatchMapStopsAtInvalidEntry() {
     Require(sceKernelBatchMap2(unmaps, 2, &processed, 0) == SCE_KERNEL_ERROR_EINVAL && processed == 1);
     Require(sceKernelBatchMap2(entries, 1, &processed, 0) == 0 && processed == 1);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(entries[0].start), page) == 0);
+}
+
+static void CheckBatchMapPlacesAtTheGivenStart() {
+    constexpr std::size_t page = 0x4000;
+    constexpr int mapFlexible = 3;
+    constexpr int unmap = 1;
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, page * 2, 0, page) == 0 && reserved != nullptr);
+    auto* base = static_cast<unsigned char*>(reserved);
+    KernelBatchMapEntry entries[2] = {{base, 0, page, 3, 0, 0, mapFlexible}, {base + page, 0, page, 3, 0, 0, mapFlexible}};
+    int processed = -1;
+    Require(sceKernelBatchMap(entries, 2, &processed) == 0 && processed == 2);
+    Require(entries[0].start == base && entries[1].start == base + page);
+    base[0] = 0x5a;
+    base[page * 2 - 1] = 0xa5;
+    Require(base[0] == 0x5a && base[page * 2 - 1] == 0xa5);
+    KernelBatchMapEntry unmaps[2] = {entries[0], entries[1]};
+    unmaps[0].operation = unmap;
+    unmaps[1].operation = unmap;
+    processed = -1;
+    Require(sceKernelBatchMap(unmaps, 2, &processed) == 0 && processed == 2);
 }
 
 static void CheckVirtualQueryFindsNeighbours() {
@@ -810,6 +830,42 @@ static void CheckGetDirectMemoryType() {
     Require(type == 3 && start == first + page && end == first + page * 2);
     Require(sceKernelReleaseDirectMemory(first + page, page * 2) == 0);
     Require(sceKernelGetDirectMemoryType(second, &type, &start, &end) == SCE_KERNEL_ERROR_ENOENT);
+}
+
+static void CheckDirectMemoryQuery() {
+    struct QueryInfo {
+        std::int64_t start;
+        std::int64_t end;
+        int memoryType;
+    };
+    constexpr std::size_t page = 0x4000;
+    std::int64_t first = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 5, 0, 3, &first) == 0);
+    Require(sceKernelReleaseDirectMemory(first + page * 2, page * 3) == 0);
+    std::int64_t second = 0;
+    Require(sceKernelAllocateDirectMemory(first + page * 4, first + page * 5, page, 0, 1, &second) == 0 && second == first + page * 4);
+    QueryInfo info{-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first, 0, &info, sizeof(info)) == 0);
+    Require(info.start == first && info.end == first + page * 2 && info.memoryType == 3);
+    info = {-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first + page * 2 - 1, 0, &info, sizeof(info)) == 0);
+    Require(info.start == first && info.end == first + page * 2 && info.memoryType == 3);
+    info = {-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first + page, 1, &info, sizeof(info)) == 0);
+    Require(info.start == first && info.end == first + page * 2 && info.memoryType == 3);
+    info = {-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first + page * 2, 0, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
+    Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
+    Require(sceKernelDirectMemoryQuery(first + page * 3, 1, &info, sizeof(info)) == 0);
+    Require(info.start == second && info.end == second + page && info.memoryType == 1);
+    info = {-1, -1, -1};
+    Require(sceKernelDirectMemoryQuery(first, 0, nullptr, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelDirectMemoryQuery(-1, 1, &info, sizeof(info)) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelDirectMemoryQuery(first, 0, &info, sizeof(info) - 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(info.start == -1 && info.end == -1 && info.memoryType == -1);
+    Require(sceKernelReleaseDirectMemory(first, page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(second, page) == 0);
+    Require(sceKernelDirectMemoryQuery(first, 0, &info, sizeof(info)) == SCE_KERNEL_ERROR_EACCES);
 }
 
 static void CheckMtypeprotect() {
@@ -3504,6 +3560,23 @@ static void CheckMunmapOverUnmappedPages() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), 0) == SCE_KERNEL_ERROR_EINVAL);
 }
 
+static void CheckMemoryPoolBlockStats() {
+    KernelMemoryPoolBlockStats stats{-1, -1, -1, -1};
+    Require(sceKernelMemoryPoolGetBlockStats(nullptr, sizeof(stats)) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats) - 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(stats.available_flushed_blocks == -1 && stats.allocated_flushed_blocks == -1);
+    Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats)) == 0);
+    Require(stats.available_cached_blocks == 0 && stats.allocated_cached_blocks == 0);
+    Require(stats.available_flushed_blocks == 0 && stats.allocated_flushed_blocks == 0);
+    constexpr std::size_t block = std::size_t{2} << 20;
+    std::int64_t phys = -1;
+    Require(sceKernelMemoryPoolExpand(0, static_cast<std::int64_t>(sceKernelGetDirectMemorySize()), block, block, &phys) == 0);
+    Require(phys >= 0 && phys % static_cast<std::int64_t>(block) == 0);
+    Require(sceKernelMemoryPoolGetBlockStats(&stats, sizeof(stats)) == 0);
+    Require(stats.available_flushed_blocks == 1 && stats.allocated_flushed_blocks == 0);
+    Require(sceKernelReleaseDirectMemory(phys, block) == 0);
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_PIN_WAIT_MS", "1000");
@@ -3522,6 +3595,7 @@ int main(int argc, char** argv) {
     CheckMappedLeasesPreserveReadableRuns();
     CheckVirtualQuerySplitFlexibleRanges();
     CheckVirtualQueryForNonReadableGuestRange();
+    CheckMemoryPoolBlockStats();
     CheckReleaseFlexibleMemory();
     CheckFlexibleMappingIgnoresFlag8000();
     CheckSceKernelMmap();
@@ -3536,6 +3610,7 @@ int main(int argc, char** argv) {
     CheckMunmapScopedFlexibleRelease();
     CheckGuestModuleUsesFlexibleMemory();
     CheckBatchMapStopsAtInvalidEntry();
+    CheckBatchMapPlacesAtTheGivenStart();
     CheckCheckedReleaseDirectMemory();
     CheckReleaseSkipsFreePages();
     CheckAudioCoprocessorProtection();
@@ -3565,6 +3640,7 @@ int main(int argc, char** argv) {
     CheckMlock();
     CheckSharedDirectMemoryLifecycle();
     CheckGetDirectMemoryType();
+    CheckDirectMemoryQuery();
     CheckMtypeprotect();
     CheckHeapAlignment();
     CheckHeapAfterMappingReuse();

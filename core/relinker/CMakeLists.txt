@@ -56,6 +56,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MaskedStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AndnLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CallSiteResolver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CodeInstructionCollector.cpp
@@ -251,6 +252,11 @@ if(BUILD_TESTING)
     add_test(NAME elf_reader_bounds COMMAND elf_reader_bounds_tests)
     set_tests_properties(elf_reader_bounds PROPERTIES TIMEOUT 20)
 
+    add_test_executable(relr_relocations_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/RelrRelocationTests.cpp)
+    target_link_libraries(relr_relocations_tests PRIVATE relinker_core)
+    add_test(NAME relr_relocations COMMAND relr_relocations_tests)
+    set_tests_properties(relr_relocations PROPERTIES TIMEOUT 20)
+
     add_test_executable(call_site_index_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/CallSiteIndexTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CallSiteResolver.cpp
@@ -391,6 +397,21 @@ if(BUILD_TESTING)
     target_include_directories(param_json_utf8_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
     add_test(NAME param_json_utf8 COMMAND param_json_utf8_tests)
     set_tests_properties(param_json_utf8 PROPERTIES TIMEOUT 20)
+
+    if(WIN32)
+        add_test_executable(windows_file_writer_tests
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/tests/WindowsFileWriterTests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/src/NativePath.cpp
+        )
+        target_include_directories(windows_file_writer_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/io/include
+        )
+        add_test(NAME windows_file_writer_binary COMMAND windows_file_writer_tests binary)
+        add_test(NAME windows_file_writer_text COMMAND windows_file_writer_tests text)
+        set_tests_properties(windows_file_writer_binary windows_file_writer_text PROPERTIES TIMEOUT 20)
+    endif()
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test_executable(file_writer_tests
@@ -569,6 +590,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_optional_plt.py $<TARGET_FILE:relinker>)
         add_test(NAME optional_rela COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_optional_rela.py $<TARGET_FILE:relinker>)
+        add_test(NAME relr_conversion COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_relr_relocations.py $<TARGET_FILE:relinker>)
+        add_test(NAME guest_relr_conversion COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_relr_relocations.py $<TARGET_FILE:relinker> guest)
+        set_tests_properties(relr_conversion guest_relr_conversion PROPERTIES TIMEOUT 20)
         add_test(NAME empty_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_empty_tls.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_tls_zero_fill COMMAND ${Python3_EXECUTABLE}
@@ -620,6 +646,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_tls_relocations.py $<TARGET_FILE:relinker>)
         add_test(NAME executable_export_bounds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_export_bounds.py $<TARGET_FILE:relinker>)
+        add_test(NAME executable_export_attributes COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_executable_export_attributes.py $<TARGET_FILE:relinker>)
         add_test(NAME macos_empty_tls COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_empty_tls.py $<TARGET_FILE:relinker>)
         set_tests_properties(macos_empty_tls PROPERTIES TIMEOUT 60)
@@ -940,6 +968,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
     )
     target_sources(strict_nid_filter_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/ControlFlowGraph.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/EntryPointCollector.cpp
