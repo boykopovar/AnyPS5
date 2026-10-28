@@ -363,6 +363,10 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
     for (const std::uint32_t word : info.targetMerge.descriptor) writer.WriteU32(word);
     writer.WriteBool(info.targetMerge.depthStencilWrites);
     writer.WriteBool(info.targetMerge.depthStencilTests);
+    if (info.depthExportEnable) {
+        writer.WriteU32(std::bit_cast<std::uint32_t>(info.depthExportMin));
+        writer.WriteU32(std::bit_cast<std::uint32_t>(info.depthExportMax));
+    }
 }
 
 ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
@@ -448,6 +452,10 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
         for (std::uint32_t& word : info.targetMerge.descriptor) word = reader.ReadU32();
         info.targetMerge.depthStencilWrites = reader.ReadBool();
         info.targetMerge.depthStencilTests = reader.ReadBool();
+    }
+    if (version >= 49u && info.depthExportEnable) {
+        info.depthExportMin = std::bit_cast<float>(reader.ReadU32());
+        info.depthExportMax = std::bit_cast<float>(reader.ReadU32());
     }
     if (version < 5u) {
         const auto input = [](PixelInput value, bool present) { return present ? PixelInputBit(value) : 0u; };
@@ -853,7 +861,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(48u);
+    writer.WriteU32(49u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -903,7 +911,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 48u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 49u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);

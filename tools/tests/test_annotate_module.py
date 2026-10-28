@@ -1,4 +1,5 @@
 import contextlib
+import os
 import io
 import re
 import shutil
@@ -120,7 +121,8 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
 
 class AnnotateModuleTests(unittest.TestCase):
     def setUp(self):
-        self.assertIsNotNone(annotate_module.gnu_objdump(), "GNU binutils objdump (objdump or gobjdump) is required to run these tests")
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU binutils objdump (objdump or gobjdump) is required to run these tests")
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
@@ -253,6 +255,73 @@ class AnnotateModuleTests(unittest.TestCase):
 
     def test_wrong_machine_fails(self):
         self.assert_fails(build_module(machine=0xB7), "not an x86-64 ELF")
+
+
+class InputProtectionTests(unittest.TestCase):
+    def test_cli_rejects_alias_without_success_or_partial_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "report.exports.txt"
+            original = build_module()
+            module.write_bytes(original)
+            result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "report"), "--no-names"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("separate from the input", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(module.read_bytes(), original)
+            self.assertFalse((root / "report.imports.txt").exists())
+            self.assertFalse((root / "report.asm").exists())
+
+    def test_all_report_outputs_are_checked_before_any_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for suffix in (".imports.txt", ".exports.txt", ".asm"):
+                with self.subTest(suffix=suffix):
+                    prefix = root / suffix[1:].replace(".", "_")
+                    module = Path(str(prefix) + suffix)
+                    original = build_module()
+                    module.write_bytes(original)
+                    with self.assertRaisesRegex(annotate_module.ModuleError, "separate from the input"):
+                        annotate_module.annotate(str(module), str(prefix), annotate_module.Namer({}))
+                    self.assertEqual(module.read_bytes(), original)
+                    for other in (".imports.txt", ".exports.txt", ".asm"):
+                        if other != suffix:
+                            self.assertFalse(Path(str(prefix) + other).exists())
+
+    def test_hardlinked_outputs_preserve_the_input_and_existing_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            original = build_module()
+            module.write_bytes(original)
+            prefix = root / "report"
+            first = root / "report.imports.txt"
+            first.write_bytes(b"previous report")
+            os.link(module, root / "report.asm")
+            with self.assertRaisesRegex(annotate_module.ModuleError, "separate from the input"):
+                annotate_module.annotate(str(module), str(prefix), annotate_module.Namer({}))
+            self.assertEqual(module.read_bytes(), original)
+            self.assertEqual(first.read_bytes(), b"previous report")
+            self.assertFalse((root / "report.exports.txt").exists())
+
+    def test_symlinked_output_is_rejected_where_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            original = build_module()
+            module.write_bytes(original)
+            output = root / "report.asm"
+            try:
+                output.symlink_to(module)
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows symbolic-link privileges unavailable")
+                raise
+            with self.assertRaisesRegex(annotate_module.ModuleError, "separate from the input"):
+                annotate_module.annotate(str(module), str(root / "report"), annotate_module.Namer({}))
+            self.assertEqual(module.read_bytes(), original)
 
 
 if __name__ == "__main__":

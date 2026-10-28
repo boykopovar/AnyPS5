@@ -124,6 +124,7 @@ struct DrawPassCounts {
     std::uint64_t storeFlushes = 0;
 };
 std::array<DrawPassCounts, 2> DrawPassTotals();
+std::array<std::uint64_t, PassBreakCount> DrawPassBreaks();
 const char* IndirectDrawPathName(IndirectDrawPath path);
 
 // Draw packets that drew nothing, for the [draws] line: Nothing (an empty count, or no color writes

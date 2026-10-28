@@ -232,9 +232,13 @@ def main(argv=None):
     parser.add_argument("--ref", default="HEAD", help="branch or commit whose first-parent history is measured")
     parser.add_argument("--cache", type=Path, help="reuse per-commit counts while the scanner, ISA list and Python version match")
     args = parser.parse_args(argv)
+    outputs = [args.output / name for name in ("history.json", "history.svg", "history.html")]
     try:
+        for index, path in enumerate(outputs):
+            for other in outputs[index + 1:]:
+                if (path.exists() and other.exists() and path.samefile(other)) or path.resolve() == other.resolve():
+                    raise ValueError(f"generated reports cannot alias each other: {path.name} and {other.name}")
         if args.cache:
-            outputs = [args.output / name for name in ("history.json", "history.svg", "history.html")]
             if any(args.cache.resolve() == path.resolve() or
                    (args.cache.exists() and path.exists() and args.cache.samefile(path)) for path in outputs):
                 raise ValueError("history cache must differ from generated reports")

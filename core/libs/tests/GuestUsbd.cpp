@@ -241,8 +241,38 @@ void Device() {
 
 }
 
+void CheckTransferFillers() {
+    auto* transfer = sceUsbdAllocTransfer(3);
+    Require(transfer != nullptr, "transfer allocation failed");
+    std::uint8_t data[64] = {};
+    int device = 0;
+    int user = 0;
+    sceUsbdFillBulkTransfer(transfer, &device, 0x02, data, 64, &MarkDone, &user, 500);
+    Require(transfer->deviceHandle == &device && transfer->endpoint == 0x02 && transfer->type == 2 && transfer->timeout == 500, "bulk transfer target not filled");
+    Require(transfer->buffer == data && transfer->length == 64 && transfer->userData == &user && transfer->callback == &MarkDone, "bulk transfer buffer or callback not filled");
+    sceUsbdFillIsoTransfer(transfer, &device, 0x83, data, 48, 3, &MarkDone, &user, 0);
+    Require(transfer->endpoint == 0x83 && transfer->type == 1 && transfer->length == 48 && transfer->numIsoPackets == 3, "iso transfer not filled");
+    sceUsbdSetIsoPacketLengths(transfer, 16);
+    for (int packet = 0; packet < 3; ++packet) Require(transfer->isoPacketDescriptors[packet].length == 16, "iso packet length not set");
+    Require(sceUsbdGetIsoPacketBuffer(transfer, 0) == data && sceUsbdGetIsoPacketBuffer(transfer, 1) == data + 16 && sceUsbdGetIsoPacketBuffer(transfer, 2) == data + 32, "iso packet buffers do not follow the packet lengths");
+    Require(sceUsbdGetIsoPacketBuffer(transfer, 3) == nullptr, "a packet past the last one has a buffer");
+    std::uint8_t control[12] = {};
+    sceUsbdFillControlSetup(control, 0x80, 6, 0x0100, 0x0409, 4);
+    Require(control[0] == 0x80 && control[1] == 6 && control[2] == 0x00 && control[3] == 0x01 && control[4] == 0x09 && control[5] == 0x04 && control[6] == 4 && control[7] == 0, "control setup not packed little-endian");
+    sceUsbdFillControlTransfer(transfer, &device, control, &MarkDone, &user, 100);
+    Require(transfer->type == 0 && transfer->endpoint == 0 && transfer->length == 12 && transfer->buffer == control && transfer->timeout == 100, "control transfer not filled from its setup");
+    Require(sceUsbdControlTransferGetSetup(transfer) == control && sceUsbdControlTransferGetData(transfer) == control + 8, "control setup or data pointer wrong");
+    sceUsbdFillControlTransfer(transfer, &device, nullptr, &MarkDone, &user, 100);
+    Require(transfer->length == 0 && sceUsbdControlTransferGetData(transfer) == nullptr, "a control transfer without a buffer has data");
+    Require(Throws([] { sceUsbdFillBulkTransfer(nullptr, nullptr, 0, nullptr, 0, nullptr, nullptr, 0); }), "filling a null bulk transfer did not throw");
+    Require(Throws([] { sceUsbdFillControlSetup(nullptr, 0, 0, 0, 0, 0); }), "filling a null control setup did not throw");
+    Require(Throws([] { sceUsbdGetIsoPacketBuffer(nullptr, 0); }), "the packet buffer of a null transfer did not throw");
+    sceUsbdFreeTransfer(transfer);
+}
+
 int main(int argc, char** argv) {
     Require(sceUsbdInit() == 0, "initialization failed");
+    CheckTransferFillers();
     void** list = nullptr;
     const std::int64_t count = sceUsbdGetDeviceList(&list);
     Require(count >= 0 && list != nullptr && list[count] == nullptr, "device list is not a null-terminated array of the reported length");

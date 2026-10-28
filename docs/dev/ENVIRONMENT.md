@@ -121,7 +121,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_CPU_STORES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketMemory.cpp` |  | writes packet stores on the CPU instead of recording them on the GPU |
 | `APS5_DCC_KEYS_EACH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | records every DCC key store at once instead of batching them |
 | `APS5_DEPTH_COPY_MIN_KIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 1024 | minimum surface size in KiB for a depth target to take the depth-copy path |
-| `APS5_DEPTH_PLANE_COPY_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp` | 256 | budget in MiB of the sampled depth-plane copies kept for reuse (least recently used copies leave first); `0` keeps every copy |
+| `APS5_DEPTH_PLANE_COPY_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp` | 256 | budget in MiB of the sampled depth-plane copies kept for reuse (least recently used copies leave first; copies sampled since the previous present stay while all copies hold at most twice the budget); `0` keeps every copy |
 | `APS5_DEPTH_PLANE_WHOLE_STORE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/DepthSurface.cpp` |  | stores a stale depth plane whole when memory over it is read, instead of only the 64 KiB units the read overlaps |
 | `APS5_DISPATCH_CACHE_BYTES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/DispatchCache.cpp` | 268435456 | size of the dispatch cache in bytes (0 keeps the default of 256 MiB) |
 | `APS5_DISPATCH_CACHE_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/DispatchCache.cpp` | 8192 | number of dispatch cache entries; 0 picks a default from the variant count |
@@ -130,6 +130,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_DISPMOVE_MAX_KIB` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 1024 | upper bound in KiB on the read-only buffers a dispatch-cache hit moves into its template, above which the dispatch is prepared again |
 | `APS5_DRAIN_ALL` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketMemory.cpp` |  | drains every packet, disabling the batched recording path |
 | `APS5_DRAIN_COMPLETION_LABELS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/DeferredLabels.cpp` |  | records completion labels immediately instead of deferring them with the batch, and drains a label recorded while a copied write-back is pending instead of storing it behind the write-backs |
+| `APS5_DRAW_CACHE_BYTES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` | 268435456 | size of the draw cache in bytes, evicting least-recently-used entries past it (0 keeps the default of 256 MiB) |
 | `APS5_DRAW_CACHE_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` | 4096 | number of entries in the draw cache; 0 keeps the default 4096 |
 | `APS5_DRAW_DRAIN` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketMemory.cpp` |  | treats draw packets as drains, waiting for them instead of recording ahead |
 | `APS5_DRAW_INPUTS_IN_PLACE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | binds draw vertex and index ranges in place from host imports also with NVIDIA's Windows driver, which copies them by default |
@@ -149,6 +150,8 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_DUMP_SCALE` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 4 | keeps every n-th pixel in each direction of a dumped frame (1 to 16384; any other value fails) |
 | `APS5_DUMP_SHADERS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | writes each prepared shader's request to shader_<address>.req |
 | `APS5_DUMP_STORAGE` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | selects storage textures to dump by hex address or WxHxL[:format] extent as storage_<address>_<n>.raw |
+| `APS5_DUMP_STORAGE_GATE` | path | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` | | with `APS5_DUMP_STORAGE`, waits for this path to exist and reads matching live images directly without guest writeback; at most eight addresses, 8 MiB linear storage per image; writes `storage_direct_<address>_<n>.raw` with the existing pitch, height and VkFormat header and first-mip pixels |
+| `APS5_TEST_DIRECT_READBACK` | set | `core/libs/prx/libSceAgcDriver/tests/execution/LayeredVolumeDraw.cpp` | | runs the clean-volume gated live-image readback regression in the layered volume execution test |
 | `APS5_DUMP_SUBMITS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/SubmissionCapture.cpp` |  | directory in which every submission is captured for replay |
 | `APS5_DUMP_TARGETS` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` | 0 | dumps the first n renders of each non-resident color target as target_<address>_<n>.raw in the working directory; a non-zero value also runs every draw synchronously, and in practice it needs APS5_NO_RESIDENT_TARGETS=1 |
 | `APS5_DUMP_TEXTURE` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | hex addresses or WxH extents whose sampled textures are dumped on each of their first 8 uploads as texture_<address>_<n>.raw |
@@ -556,6 +559,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_DISPLAY_INDEX` | integer | `core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp` | 0 | SDL display index used for the initial window size and centered position; invalid or unavailable indices fail window creation; selection does not guarantee the window will not activate |
 | `ANYPS5_FULLSCREEN` | presence | `core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp` |  | opens the display window fullscreen at the desktop resolution when set to a non-empty value other than 0; F11 still switches back |
 | `ANYPS5_INPUT_CONFIG` | string | `core/libs/prx/libSceVideoOut/src/InputMapping.cpp` |  | path of the input mapping file that binds host keys and mouse to guest pad actions |
 | `ANYPS5_REQUIRE_DISPLAY` | presence | `core/libs/prx/libSceVideoOut/tests/Flip.cpp` |  | makes video-out tests fail instead of skipping when no display or Vulkan device is available |

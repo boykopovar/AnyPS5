@@ -2,6 +2,20 @@
 
 ### Unknown function info
 
+- [libSceNpUniversalDataSystem additional exports](../../../core/libs/prx/libSceNpUniversalDataSystem/Export.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `sceNpUniversalDataSystemIntCloseStream` | `pSyd06cKZVk` |
+| `sceNpUniversalDataSystemIntDeleteUserData` | `IiSeRSN++Mc` |
+| `sceNpUniversalDataSystemIntGetNpCommIdByNpTitleId` | `ONOoGEhy+mg` |
+| `sceNpUniversalDataSystemIntGetNpTitleIdListByNpCommId` | `FgmhJGcGztU` |
+| `sceNpUniversalDataSystemIntGetObjectState` | `KSHif9MWQjQ` |
+| `sceNpUniversalDataSystemIntOpenObjectsDefinitionConfStream` | `O5enyfsJoK0` |
+| `sceNpUniversalDataSystemIntOpenObjectsDefinitionConfStreamByObjectId` | `vOdDBWSu-Gk` |
+| `sceNpUniversalDataSystemIntOpenStreamByUri` | `tkUOy4Ag4wo` |
+| `sceNpUniversalDataSystemIntReadStream` | `ABFxQ2B50RA` |
+
 - [Events](../../../core/libs/prx/libSceNpUniversalDataSystem/src/Event.cpp): `sceNpUniversalDataSystemCreateEvent` copies `prop` and returns the event's own property object through `prop_ptr`, as [KytyPS5](https://github.com/KytyPS5/KytyPS5/blob/9e41d8320a2774b303fbad344c2347e8d0292e83/src/libs/libTrophy.cpp) does; `sceNpUniversalDataSystemEventPropertyObjectSetObject`, `SetArray` and the array setters for objects and arrays store a copy of `value` and return the stored copy through `value_ptr`. Destroying a property object or array that its Create function did not return (an event's property object or a stored copy) does nothing, as its owner frees it. These ownership rules are not verified on a console, nor are the output of `sceNpUniversalDataSystemEventToString` (still `{}`) and `sceNpUniversalDataSystemEventEstimateSize` (still 3).
 - [sceNpUniversalDataSystemCreateContext](../../../core/libs/prx/libSceNpUniversalDataSystem/src/Context.cpp) and [sceNpUniversalDataSystemCreateHandle](../../../core/libs/prx/libSceNpUniversalDataSystem/src/Handle.cpp) (libSceNpUniversalDataSystem) - native return codes for null output pointers (`context == nullptr` and `handle == nullptr`) are unresolved and unverified on a console. The reimplementation in [KytyPS5](https://github.com/KytyPS5/KytyPS5/blob/9e41d8320a2774b303fbad344c2347e8d0292e83/src/libs/libTrophy.cpp#L620-L640) returns `0x80553102` (`SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT`), but this error return is unverified against native hardware; host paths continue to throw `std::invalid_argument` until the native contract is established.
 

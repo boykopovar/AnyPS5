@@ -351,7 +351,7 @@ if (supported) fetch("./release.json", { cache: "no-cache" }).then(response => {
   if (!value.tag || !["windows", "linux"].every(target => Number.isSafeInteger(value.platforms?.[target]?.expandedBytes))) throw new Error("Invalid release information");
   release = value;
   update();
-}).catch(error => fail(error.message));
+}).catch(error => fail(error instanceof TypeError ? "Cannot reach the release information: check the connection and reload the page." : error.message));
 
 if (!("webkitdirectory" in $("folder"))) {
   $("choose-folder").disabled = true;

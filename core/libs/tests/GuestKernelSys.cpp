@@ -151,7 +151,7 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
         Require(!std::filesystem::is_symlink(std::filesystem::symlink_status(other)));
 #endif
         Require(std::filesystem::hard_link_count(file) == 3);
-        Require(std::filesystem::remove(other) && std::filesystem::remove(symbolic) && std::filesystem::remove(dangling));
+        Require(std::filesystem::remove(other) && unlink_nid_postfix(symbolic.c_str()) == 0 && unlink_nid_postfix(dangling.c_str()) == 0);
     }
     Require(sceKernelClose(directory) == 0);
     Require(std::filesystem::remove(linked) && std::filesystem::remove(file));
@@ -767,6 +767,107 @@ void CheckPipePathconf(F fn) {
     Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
 }
 
+int Kenv(int what, const char* name, const char* value, int len) {
+    return kenv_nid_postfix(what, name, const_cast<char*>(value), len);
+}
+
+void CheckKernelEnvironment() {
+    constexpr int get = 0, set = 1, unset = 2, dump = 3;
+    char buffer[300];
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(Kenv(dump, nullptr, nullptr, 0) == 0);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(unset, "anyps5.alpha", nullptr, 0) == -1 && Error() == 2);
+    Require(Kenv(4, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
+    Require(Kenv(-1, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
+    Require(Kenv(set, "anyps5.alpha", "one", 0) == -1 && Error() == 22);
+    Require(Kenv(set, "anyps5.alpha", "one", 3) == -1 && Error() == 63);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(set, "anyps5.negative", "one", -1) == 0);
+    Require(Kenv(get, "anyps5.negative", buffer, sizeof(buffer)) == 4 && std::strcmp(buffer, "one") == 0);
+    Require(Kenv(set, "anyps5.negative", std::string(128, 'v').c_str(), -1) == 0);
+    Require(Kenv(set, "anyps5.negative", std::string(129, 'v').c_str(), -1) == -1 && Error() == 63);
+    Require(Kenv(unset, "anyps5.negative", nullptr, 0) == 0);
+
+    Require(Kenv(set, "anyps5.alpha", "one", 4) == 0);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == 4 && std::strcmp(buffer, "one") == 0);
+    Require(Kenv(get, "anyps5", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(get, "anyps5.alph", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(get, "anyps5.alphaa", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(Kenv(get, "anyps5.alpha", buffer, 2) == 2 && buffer[0] == 'o' && buffer[1] == 'n' && buffer[2] == 0x5a);
+    Require(Kenv(get, "anyps5.alpha", buffer, 0) == 0 && buffer[2] == 0x5a);
+    Require(Kenv(get, "anyps5.alpha", nullptr, 0) == 0);
+    Require(Kenv(get, "anyps5.alpha", nullptr, 4) == -1 && Error() == 14);
+    Require(Kenv(get, "anyps5.alpha", reinterpret_cast<char*>(0x10), 4) == -1 && Error() == 14);
+    Require(Kenv(set, "anyps5.alpha", "", 1) == 0);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == 1 && buffer[0] == '\0');
+    Require(Kenv(set, "anyps5.alpha", "one", 129) == 0);
+    Require(Kenv(set, "anyps5.beta", "two", 1000) == 0);
+    Require(Kenv(set, "anyps5.alpha", "uno", 4) == 0);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == 4 && std::strcmp(buffer, "uno") == 0);
+
+    constexpr char expected[] = "anyps5.alpha=uno\0anyps5.beta=two";
+    constexpr int needed = sizeof(expected);
+    Require(Kenv(dump, nullptr, nullptr, 0) == needed);
+    Require(Kenv(dump, nullptr, buffer, 0) == needed);
+    Require(Kenv(dump, nullptr, nullptr, sizeof(buffer)) == needed);
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(Kenv(dump, nullptr, buffer, sizeof(buffer)) == 0 && std::memcmp(buffer, expected, needed) == 0 && buffer[needed] == 0x5a);
+    Require(Kenv(dump, nullptr, buffer, needed) == 0);
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(Kenv(dump, nullptr, buffer, 20) == needed && std::memcmp(buffer, expected, 20) == 0 && buffer[20] == 0x5a);
+    Require(Kenv(dump, nullptr, reinterpret_cast<char*>(0x10), sizeof(buffer)) == -1 && Error() == 14);
+    Require(Kenv(dump, reinterpret_cast<const char*>(0x10), buffer, sizeof(buffer)) == 0);
+
+    Require(Kenv(get, nullptr, buffer, sizeof(buffer)) == -1 && Error() == 14);
+    Require(Kenv(get, reinterpret_cast<const char*>(0x10), buffer, sizeof(buffer)) == -1 && Error() == 14);
+    Require(Kenv(4, nullptr, buffer, sizeof(buffer)) == -1 && Error() == 14);
+    Require(Kenv(set, "anyps5.gamma", nullptr, 4) == -1 && Error() == 14);
+    Require(Kenv(set, "anyps5.gamma", reinterpret_cast<const char*>(0x10), 4) == -1 && Error() == 14);
+    Require(Kenv(get, "anyps5.gamma", buffer, sizeof(buffer)) == -1 && Error() == 2);
+
+    const std::string longest(128, 'n');
+    const std::string longestValue(128, 'v');
+    Require(Kenv(set, (longest + "x").c_str(), "v", 2) == -1 && Error() == 63);
+    Require(Kenv(get, (longest + "x").c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
+    Require(Kenv(set, longest.c_str(), longestValue.c_str(), 129) == 0);
+    Require(Kenv(get, longest.c_str(), buffer, sizeof(buffer)) == 129 && std::strcmp(buffer, longestValue.c_str()) == 0);
+    Require(Kenv(set, "anyps5.gamma", (longestValue + "v").c_str(), 1000) == -1 && Error() == 63);
+    Require(Kenv(set, "anyps5.gamma", longestValue.c_str(), 128) == -1 && Error() == 63);
+    Require(Kenv(unset, longest.c_str(), nullptr, 0) == 0);
+    Require(Kenv(get, longest.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 2);
+
+    Require(Kenv(set, "anyps5.eq=name", "tail", 5) == 0);
+    Require(Kenv(get, "anyps5.eq", buffer, sizeof(buffer)) == 10 && std::strcmp(buffer, "name=tail") == 0);
+    Require(Kenv(unset, "anyps5.eq", nullptr, 0) == 0);
+    Require(Kenv(unset, "anyps5.eq", nullptr, 0) == -1 && Error() == 2);
+    Require(Kenv(unset, "anyps5.alpha", nullptr, 0) == 0);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(dump, nullptr, nullptr, 0) == static_cast<int>(sizeof("anyps5.beta=two")));
+    Require(Kenv(unset, "anyps5.beta", nullptr, 0) == 0);
+    Require(Kenv(dump, nullptr, nullptr, 0) == 0);
+
+    for (int i = 0; i < 512; ++i) Require(Kenv(set, ("anyps5.fill" + std::to_string(i)).c_str(), "x", 2) == 0);
+    Require(Kenv(set, "anyps5.overflow", "x", 2) == 0);
+    Require(Kenv(get, "anyps5.overflow", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(set, "anyps5.fill0", "y", 2) == 0);
+    Require(Kenv(get, "anyps5.fill0", buffer, sizeof(buffer)) == 2 && buffer[0] == 'y');
+    Require(Kenv(unset, "anyps5.fill511", nullptr, 0) == 0);
+    Require(Kenv(set, "anyps5.overflow", "x", 2) == 0);
+    Require(Kenv(get, "anyps5.overflow", buffer, sizeof(buffer)) == 2);
+    for (int i = 0; i < 511; ++i) Require(Kenv(unset, ("anyps5.fill" + std::to_string(i)).c_str(), nullptr, 0) == 0);
+    Require(Kenv(unset, "anyps5.overflow", nullptr, 0) == 0);
+    Require(Kenv(dump, nullptr, nullptr, 0) == 0);
+}
+
+template <typename F>
+void CheckUnsupportedPathconf(F fn, int descriptor) {
+    Require(fn(descriptor, 53) == 200112);
+    for (const int name : {0, 1, 4, 5, 6, 7, 8, 12, 18, 54, 55, 61, -1})
+        Require(fn(descriptor, name) == -1 && Error() == 45);
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -788,6 +889,7 @@ int main() {
     CheckAmmWaitConcurrentSubmits();
     CheckSchedSetscheduler();
     CheckSigreturn();
+    CheckKernelEnvironment();
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
@@ -815,6 +917,19 @@ int main() {
     CheckDescriptorPathconf(_fpathconf_nid_postfix, descriptor);
     CheckPipePathconf(fpathconf_nid_postfix);
     CheckPipePathconf(_fpathconf_nid_postfix);
+    const int kqueueDescriptor = kqueue_nid_postfix();
+    Require(kqueueDescriptor >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, kqueueDescriptor);
+    Require(close_nid_postfix(kqueueDescriptor) == 0);
+    const std::string namedSharedMemory = "/anyps5-kernel-sys-pathconf-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int sharedMemoryDescriptor = shm_open_nid_postfix(namedSharedMemory.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0600);
+    Require(sharedMemoryDescriptor >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, sharedMemoryDescriptor);
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, sharedMemoryDescriptor);
+    Require(close_nid_postfix(sharedMemoryDescriptor) == 0);
+    Require(shm_unlink_nid_postfix(namedSharedMemory.c_str()) == 0);
     Require(close_nid_postfix(descriptor) == 0);
     Require(fstatfs_nid_postfix(-1, reinterpret_cast<KernelStatfs*>(viaPublic)) == -1 && Error() == 9);
     Require(fstat_nid_postfix(descriptor, &viaFstat) == -1 && Error() == 9);
@@ -1037,6 +1152,40 @@ int main() {
     Require(kldunload_nid_postfix(-1) == -1 && Error() == 1);
     Require(kldunload_nid_postfix(0) == -1 && Error() == 1);
     Require(kldunload_nid_postfix(1) == -1 && Error() == 1);
+    struct SymbolLookup {
+        std::int32_t version;
+        const char* name;
+        std::uint64_t value;
+        std::uint64_t size;
+    };
+    const std::string longSymbol(1024, 's');
+    SymbolLookup lookup{32, "symbol", 7, 9};
+    Require(kldsym_nid_postfix(-1, 1, nullptr) == -1 && Error() == 14);
+    Require(kldsym_nid_postfix(-1, 1, reinterpret_cast<void*>(0x10)) == -1 && Error() == 14);
+    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 2);
+    Require(lookup.value == 7 && lookup.size == 9);
+    for (const std::int32_t version : {0, 24, 31, 33}) {
+        lookup = {version, "symbol", 0, 0};
+        Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 22);
+        lookup.name = nullptr;
+        Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 22);
+    }
+    for (const int command : {0, 2, -1}) {
+        lookup = {32, nullptr, 0, 0};
+        Require(kldsym_nid_postfix(-1, command, &lookup) == -1 && Error() == 22);
+    }
+    lookup = {32, nullptr, 0, 0};
+    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 14);
+    lookup.name = reinterpret_cast<const char*>(0x10);
+    Require(kldsym_nid_postfix(0, 1, &lookup) == -1 && Error() == 14);
+    lookup.name = longSymbol.c_str();
+    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 63);
+    lookup.name = "";
+    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 2);
+    lookup.name = "symbol";
+    for (const int missing : {-2147483647 - 1, 1, 2, 3, 100, 2147483647}) {
+        Require(kldsym_nid_postfix(missing, 1, &lookup) == -1 && Error() == 2);
+    }
     const std::string throughFile = (root / "file.txt" / "child").string();
     Require(pathconf_nid_postfix(throughFile.c_str(), 4) == -1 && Error() == 20);
     Require(fchmodat_nid_postfix(-100, throughFile.c_str(), 0600, 0) == -1 && Error() == 20);
@@ -1067,6 +1216,13 @@ int main() {
     Require(chdir_nid_postfix("/") == 0);
     Require(getcwd_nid_postfix(directoryPath, sizeof(directoryPath)) == directoryPath && std::strcmp(directoryPath, "/") == 0);
     Require(readlink_nid_postfix(file.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 22);
+    Require(lchflags_nid_postfix(file.c_str(), 0) == 0);
+    Require(lchflags_nid_postfix(nullptr, 0) == -1 && Error() == 14);
+    Require(lchflags_nid_postfix("", 0) == -1 && Error() == 2);
+    Require(lchflags_nid_postfix((root / "missing.bin").string().c_str(), 0) == -1 && Error() == 2);
+    Require(lchflags_nid_postfix((file + "/child").c_str(), 0) == -1 && Error() == 20);
+    Require(lchflags_nid_postfix(file.c_str(), 0x20) == -1 && Error() == 45);
+    Require(lchflags_nid_postfix(file.c_str(), 0x200000) == -1 && Error() == 1);
     const auto symbolic = (root / "symbolic").string();
     const int created = symlink_nid_postfix("original.bin", symbolic.c_str());
     if (created == 0) {
@@ -1118,6 +1274,10 @@ int main() {
         Require(readlink_nid_postfix(dangling.c_str(), buffer, sizeof(buffer)) == 11 && !std::filesystem::exists(dangling));
         Require(symlink_nid_postfix("missing.bin", dangling.c_str()) == -1 && Error() == 17);
 #endif
+        Require(lchflags_nid_postfix(dangling.c_str(), 0) == 0);
+        Require(lchflags_nid_postfix(symbolic.c_str(), 0) == 0);
+        Require(lchflags_nid_postfix(dangling.c_str(), 0x20) == -1 && Error() == 45);
+        Require(lchflags_nid_postfix(dangling.c_str(), 0x200000) == -1 && Error() == 1);
     } else {
         Require(created == -1 && Error() == 1);
         std::fprintf(stderr, "symbolic links unavailable: the symlink success cases not tested\n");

@@ -268,6 +268,11 @@ def export_lines(exports, thread_local, namer):
 
 
 def annotate(module_path, prefix, namer):
+    source = Path(module_path)
+    for suffix in (".imports.txt", ".exports.txt", ".asm"):
+        output = Path(prefix + suffix)
+        if output.resolve() == source.resolve() or (output.exists() and source.exists() and output.samefile(source)):
+            raise ModuleError(f"annotation output must be separate from the input module: {output}")
     module = Module(Path(module_path).read_bytes())
     slots = module.imports()
     exports, thread_local = module.exports()

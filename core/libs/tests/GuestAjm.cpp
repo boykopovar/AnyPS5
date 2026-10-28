@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1671,6 +1672,15 @@ void TestResampleOpus(std::uint32_t context) {
     RequireDecimated(reference.pcm, decimated.pcm, 2, 2);
     Require(decimated.afterFirstJob.ratio == 2.0f && decimated.afterFirstJob.samples == 2);
     Require(decimated.atEnd.result == 0 && decimated.atEnd.samples >= 0 && decimated.atEnd.samples <= 2);
+
+    for (const float ratio : {0x1p32f, 0x1p63f, std::nextafter(0x1p64f, 0.0f), 0x1p64f, std::numeric_limits<float>::max()}) {
+        const std::uint32_t extreme = CreateOpus(context);
+        const auto skipped = Stream(context, extreme, OPUS_STEREO, sizeof(OPUS_STEREO), 2, 512, ratio);
+        Require(skipped.pcm.size() == 2);
+        Require(skipped.pcm[0] == reference.pcm[0] && skipped.pcm[1] == reference.pcm[1]);
+        Require(skipped.atEnd.result == 0 && skipped.atEnd.samples == 0);
+        Require(sceAjmInstanceDestroy(context, extreme) == 0);
+    }
 
     const std::uint32_t slower = CreateOpus(context);
     const auto interpolated = Stream(context, slower, OPUS_STEREO, sizeof(OPUS_STEREO), 2, 512, 0.5f);

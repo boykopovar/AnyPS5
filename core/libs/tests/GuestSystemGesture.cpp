@@ -277,5 +277,10 @@ int main() {
     for (std::size_t index = 1; index < otherHandles.size(); ++index) Require(sceSystemGestureClose(otherHandles[index]) == 0);
     Require(sceSystemGestureClose(handle) == 0);
     Require(sceSystemGestureFinalizePrimitiveTouchRecognizer() == 0);
+    Require(sceSystemGestureOpen(0, nullptr) == static_cast<int>(0x80890003));
+    Require(sceSystemGestureClose(handle) == static_cast<int>(0x80890003));
+    Require(sceSystemGestureGetPrimitiveTouchEventsCount(handle) == static_cast<int>(0x80890003));
+    Require(sceSystemGestureAppendTouchRecognizer(handle, &recognizer) == static_cast<int>(0x80890003));
+    Require(sceSystemGestureFinalizePrimitiveTouchRecognizer() == 0);
     return 0;
 }

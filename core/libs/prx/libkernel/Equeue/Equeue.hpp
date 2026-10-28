@@ -131,7 +131,7 @@ void EqueueDescriptorClosed(int descriptor);
 void KqueueDescriptorClosed(int descriptor);
 void EqueueDescriptorReadShut(int descriptor);
 void KqueueDescriptorReadShut(int descriptor);
-bool IsKqueueDescriptor(int descriptor);
+extern "C" bool IsKqueueDescriptor_nid_no_patch(int descriptor);
 std::optional<bool> KqueueReadable(int descriptor);
 KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t flags, void* udata);
 void RequireVnodeNotes(uint32_t fflags);

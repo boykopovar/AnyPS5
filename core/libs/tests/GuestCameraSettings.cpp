@@ -56,6 +56,8 @@ void CheckGetter(GetU32 get, std::uint32_t expected, const char* message) {
     Require(get(99, Channel0, &value, nullptr) == ErrorNotOpen && value == 0x5a5a5a5a, "a fabricated handle must not read settings");
     Require(get(1, 0, &value, nullptr) == ErrorParam, "a getter must reject channel 0");
     Require(get(1, ChannelBoth, &value, nullptr) == ErrorParam, "a getter must reject both channels");
+    Require(get(1, 4, &value, nullptr) == ErrorParam, "a getter must reject channel 4");
+    Require(get(1, 0xFFFFFFFFu, &value, nullptr) == ErrorParam, "a getter must reject invalid channel");
     Require(get(1, Channel0, nullptr, nullptr) == ErrorParam, "a getter must reject a null result");
     Require(get(1, Channel0, &value, &option) == ErrorParam, "a getter must reject an option");
     Require(value == 0x5a5a5a5a, "a refused getter must not write its result");
@@ -113,7 +115,9 @@ void CheckSetter(SetU32 set, std::uint32_t largestValue) {
     std::uint32_t option = 0;
     Require(set(1, ChannelBoth, largestValue, nullptr) == ErrorNotConnected, "a setter must report NOT_CONNECTED");
     Require(set(0, Channel0, 0, nullptr) == ErrorParam, "a setter must reject handle 0");
+    Require(set(1, 0, 0, nullptr) == ErrorParam, "a setter must reject channel 0");
     Require(set(1, 4, 0, nullptr) == ErrorParam, "a setter must reject channel 4");
+    Require(set(1, 0xFFFFFFFFu, 0, nullptr) == ErrorParam, "a setter must reject invalid channel");
     Require(set(1, Channel0, 0, &option) == ErrorParam, "a setter must reject an option");
     if (largestValue != UINT32_MAX) Require(set(1, Channel0, largestValue + 1, nullptr) == ErrorParam, "a setter must reject a value past its range");
 }

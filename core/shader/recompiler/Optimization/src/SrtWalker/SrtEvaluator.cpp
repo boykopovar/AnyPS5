@@ -206,7 +206,10 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
         _runtime.userDataUse->asBase |= std::uint64_t {1} << origin;
         return true;
     };
-    if (!baseWord() || !Arg(handle, 1, high) || !Arg(inst, 1, offset)) {
+    ++_addressDepth;
+    const bool argsEvaluated = baseWord() && Arg(handle, 1, high) && Arg(inst, 1, offset);
+    --_addressDepth;
+    if (!argsEvaluated) {
         return false;
     }
     const auto base = ((high << 32u) | static_cast<std::uint32_t>(low)) & AddressMask;
@@ -215,7 +218,10 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
     if (inst.Opcode() == IrOpcode::ReadConstBuffer) {
         std::uint64_t records = 0;
         std::uint64_t word3 = 0;
-        if (handle.ArgumentCount() != 4u || !Arg(handle, 2, records) || !Arg(handle, 3, word3)) {
+        ++_addressDepth;
+        const bool handleEvaluated = handle.ArgumentCount() == 4u && Arg(handle, 2, records) && Arg(handle, 3, word3);
+        --_addressDepth;
+        if (!handleEvaluated) {
             return false;
         }
         if (immediate < 0) {
@@ -252,7 +258,11 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
     }
     std::uint32_t word = 0;
     if (_runtime.readMemory != nullptr) {
-        if (!_runtime.readMemory(_runtime.userContext, address, &word)) {
+        const bool scoped = _addressDepth == 0u && _descriptorBytes != 0u && _runtime.descriptorScope != nullptr;
+        if (scoped) static_cast<void>(_runtime.descriptorScope(_runtime.userContext, _descriptorBytes));
+        const bool ok = _runtime.readMemory(_runtime.userContext, address, &word);
+        if (scoped) static_cast<void>(_runtime.descriptorScope(_runtime.userContext, 0u));
+        if (!ok) {
             return false;
         }
     } else {
@@ -521,6 +531,8 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
             BasicEvaluator active(_program, _runtime, _cleanFlatSlots, _cleanEvaluator, &mask);
             active._outer = this;
             active._firstLane = inst.Value();
+            active._addressDepth = _addressDepth;
+            active._descriptorBytes = _descriptorBytes;
             active.ReportInaccessibleReads(_inaccessible);
             active.ReportNullRootReads(_nullRoots);
             return active.EvaluateWide(inst.Argument(0), result);
@@ -542,7 +554,14 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
                 return false;
             }
             if (slot < _cleanFlatSlots.size() && _cleanFlatSlots[slot] != 0u && _cleanEvaluator != nullptr) {
-                return _cleanEvaluator->EvaluateWide(TNode::SrtRead(_program, slot), result);
+                const auto savedDepth = _cleanEvaluator->_addressDepth;
+                const auto savedBytes = _cleanEvaluator->_descriptorBytes;
+                _cleanEvaluator->_addressDepth = _addressDepth;
+                _cleanEvaluator->_descriptorBytes = _descriptorBytes;
+                const bool ok = _cleanEvaluator->EvaluateWide(TNode::SrtRead(_program, slot), result);
+                _cleanEvaluator->_addressDepth = savedDepth;
+                _cleanEvaluator->_descriptorBytes = savedBytes;
+                return ok;
             }
             return EvaluateWide(TNode::SrtRead(_program, slot), result);
         }
@@ -796,12 +815,16 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
         }
         case IrOpcode::SelectU32:
         case IrOpcode::SelectU1:
-        case IrOpcode::SelectF32:
-            if (ternary()) {
+        case IrOpcode::SelectF32: {
+            ++_addressDepth;
+            const bool condOk = Arg(inst, 0, a);
+            --_addressDepth;
+            if (condOk && Arg(inst, 1, b) && Arg(inst, 2, c)) {
                 result = a != 0u ? b : c;
                 return true;
             }
             return false;
+        }
         case IrOpcode::IEqual32:
             if (binary()) {
                 result = static_cast<std::uint32_t>(a) == static_cast<std::uint32_t>(b) ? 1u : 0u;

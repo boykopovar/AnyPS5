@@ -2681,7 +2681,13 @@ namespace {
 #ifdef _WIN32
 bool readPages(std::byte* destination, std::uint64_t source, std::size_t bytes) {
     SIZE_T copied = 0;
-    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(source), destination, bytes, &copied) != 0 && copied == bytes;
+    if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(source), destination, bytes, &copied) != 0) {
+        require(copied == bytes, "short committed guest memory read");
+        return true;
+    }
+    const auto error = GetLastError();
+    require(error == ERROR_PARTIAL_COPY || error == ERROR_NOACCESS || error == ERROR_INVALID_ADDRESS, "cannot read committed guest memory");
+    return false;
 }
 
 template <class Visit>
@@ -2690,9 +2696,14 @@ void visitReadablePages(std::byte* destination, std::uint64_t source, std::size_
         visit(std::size_t{0}, bytes, true);
         return;
     }
+    ForgetPages(static_cast<std::uintptr_t>(source), bytes);
     for (std::size_t offset = 0; offset < bytes;) {
-        const auto chunk = std::min<std::size_t>(bytes - offset, PageBytes - static_cast<std::size_t>((source + offset) % PageBytes));
-        visit(offset, chunk, readPages(destination + offset, source + offset, chunk));
+        const auto cursor = source + offset;
+        const auto chunk = std::min<std::size_t>(bytes - offset, PageBytes - static_cast<std::size_t>(cursor % PageBytes));
+        MEMORY_BASIC_INFORMATION memory{};
+        require(VirtualQuery(reinterpret_cast<const void*>(cursor), &memory, sizeof(memory)) == sizeof(memory), "cannot query guest memory after a failed committed read");
+        const bool readable = memory.State == MEM_COMMIT && (memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0 && readableProtection(memory.Protect & 0xffu);
+        visit(offset, chunk, readable && readPages(destination + offset, cursor, chunk));
         offset += chunk;
     }
 }

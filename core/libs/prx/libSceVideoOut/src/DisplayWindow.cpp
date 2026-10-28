@@ -25,6 +25,16 @@ void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("DisplayWindow: ") + reason);
 }
 
+int initialDisplayIndex() {
+    const auto value = std::getenv("ANYPS5_DISPLAY_INDEX");
+    if (value == nullptr) return 0;
+    char* end = nullptr;
+    const auto index = std::strtol(value, &end, 10);
+    const auto count = SDL_GetNumVideoDisplays();
+    require(end != value && *end == '\0' && index >= 0 && index < count, "ANYPS5_DISPLAY_INDEX is not a connected display index");
+    return static_cast<int>(index);
+}
+
 void applyAppIcon(SDL_Window* window) {
     if (!HasAppIcon_nid_postfix()) return;
     const auto data = GetAppIconData_nid_postfix();
@@ -54,7 +64,8 @@ void DisplayWindow::Ensure(std::uint32_t sourceWidth, std::uint32_t sourceHeight
 
 void DisplayWindow::create(std::uint32_t sourceWidth, std::uint32_t sourceHeight) {
     SDL_Rect usable{};
-    require(SDL_GetDisplayUsableBounds(0, &usable) == 0, SDL_GetError());
+    const auto displayIndex = initialDisplayIndex();
+    require(SDL_GetDisplayUsableBounds(displayIndex, &usable) == 0, SDL_GetError());
     require(DisplayWindowInitialSizePercent > 0 && DisplayWindowInitialSizePercent <= 100, "initial window size percent must be between 1 and 100");
     require(usable.w > 0 && usable.h > 0, "usable display extent must be positive");
     const auto boundsWidth = static_cast<std::uint32_t>(static_cast<std::uint64_t>(usable.w) * DisplayWindowInitialSizePercent / 100);
@@ -65,7 +76,7 @@ void DisplayWindow::create(std::uint32_t sourceWidth, std::uint32_t sourceHeight
     AgcDriverLockVulkanLoader_nid_postfix();
     const char* fullscreen = std::getenv("ANYPS5_FULLSCREEN");
     const Uint32 fullscreenFlag = fullscreen != nullptr && *fullscreen != '\0' && std::strcmp(fullscreen, "0") != 0 ? static_cast<Uint32>(SDL_WINDOW_FULLSCREEN_DESKTOP) : 0u;
-    window = SDL_CreateWindow(title.value, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, static_cast<int>(initialSize.width), static_cast<int>(initialSize.height), SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | fullscreenFlag);
+    window = SDL_CreateWindow(title.value, SDL_WINDOWPOS_CENTERED_DISPLAY(displayIndex), SDL_WINDOWPOS_CENTERED_DISPLAY(displayIndex), static_cast<int>(initialSize.width), static_cast<int>(initialSize.height), SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | fullscreenFlag);
     AgcDriverUnlockVulkanLoader_nid_postfix();
     require(window != nullptr, SDL_GetError());
     SDL_SetWindowMinimumSize(window, static_cast<int>(DisplayWindowMinimumWidth), static_cast<int>(DisplayWindowMinimumHeight));

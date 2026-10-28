@@ -539,6 +539,18 @@ bool Driver::queue0Before(std::uint64_t received) const {
     return false;
 }
 
+bool Driver::waitFreeBefore(std::uint64_t received) const {
+    for (const auto& [queue, worker] : workers) {
+        if (queue == 0 || worker.executingWaits) continue;
+        if (worker.executingWaitFree != 0 && worker.executingWaitFree < received) return true;
+        for (const auto& pending : worker.pending) {
+            if (!pending.waitFree || pending.received >= received) break;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Driver::orderReleased(std::uint32_t queue, std::uint64_t received) const {
     if (!queue0Before(received)) return true;
     const auto awaited = queue0Awaited.load(std::memory_order_acquire);

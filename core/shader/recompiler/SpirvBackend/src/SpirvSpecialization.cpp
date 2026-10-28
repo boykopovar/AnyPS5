@@ -3,6 +3,7 @@
 #undef SPV_ENABLE_UTILITY_CODE
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include <algorithm>
+#include <array>
 #include <initializer_list>
 #include <map>
 #include <memory>
@@ -579,6 +580,7 @@ public:
         resultTypes.Reset(bound);
         vectorTypes.Reset(bound);
         removed.Reset(bound);
+        decoratedResults.Reset(bound);
         aliases.Reset(bound);
         composites.Reset(bound);
         privateTables.Reset(bound);
@@ -592,6 +594,8 @@ public:
             bool hasType = false;
             spv::HasResultAndType(op, &hasResult, &hasType);
             if (hasResult && hasType) resultTypes.emplace(instruction.at(2), instruction.at(1));
+            if (op == spv::OpDecorate || op == spv::OpDecorateId || op == spv::OpDecorateString) decoratedResults.insert(instruction.at(1));
+            if (op == spv::OpGroupDecorate) for (std::size_t index = 2; index < instruction.size(); ++index) decoratedResults.insert(instruction[index]);
             if (op == spv::OpTypeBool) types.emplace(instruction.at(1), ScalarType{1u, true});
             if (op == spv::OpTypeInt) types.emplace(instruction.at(1), ScalarType{instruction.at(2), false});
             if (op == spv::OpTypeVector) vectorTypes.insert(instruction.at(1));
@@ -720,11 +724,17 @@ private:
         extracts.Reset(bound);
         IdTable<std::uint32_t> bitcasts;
         bitcasts.Reset(bound);
+        std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> blockBitcasts;
+        std::map<std::array<std::uint32_t, 3>, std::uint32_t> blockNanTests;
         IdTable<std::pair<std::uint32_t, std::uint32_t>> constPointers;
         constPointers.Reset(bound);
         for (auto& instruction : instructions) {
             if (instruction.empty()) continue;
             auto op = Opcode(instruction);
+            if (op == spv::OpFunction || op == spv::OpLabel) {
+                blockBitcasts.clear();
+                blockNanTests.clear();
+            }
             if (op == spv::OpFunction) function = true;
             if (op == spv::OpFunctionEnd) function = false;
             if (!function) continue;
@@ -771,7 +781,23 @@ private:
                     instruction = Make(spv::OpCopyObject, {instruction[1], instruction[2], source});
                     changed = true;
                 } else {
-                    bitcasts.emplace(instruction[2], instruction[3]);
+                    const auto [found, inserted] = decoratedResults.contains(instruction[2])
+                        ? std::pair{blockBitcasts.end(), true}
+                        : blockBitcasts.try_emplace(std::pair{instruction[1], instruction[3]}, instruction[2]);
+                    if (inserted) {
+                        bitcasts.emplace(instruction[2], instruction[3]);
+                    } else {
+                        instruction = Make(spv::OpCopyObject, {instruction[1], instruction[2], found->second});
+                        changed = true;
+                    }
+                }
+            }
+            const bool nanTest = (op == spv::OpIsNan && instruction.size() == 4u) || (op == spv::OpFUnordNotEqual && instruction.size() == 5u && instruction[3] == instruction[4]);
+            if (nanTest && !decoratedResults.contains(instruction[2])) {
+                const auto [found, inserted] = blockNanTests.try_emplace(std::array<std::uint32_t, 3>{op, instruction[1], instruction[3]}, instruction[2]);
+                if (!inserted) {
+                    instruction = Make(spv::OpCopyObject, {instruction[1], instruction[2], found->second});
+                    changed = true;
                 }
             }
             op = Opcode(instruction);
@@ -1147,6 +1173,7 @@ private:
     IdTable<std::uint32_t> resultTypes;
     IdSet vectorTypes;
     IdSet removed;
+    IdSet decoratedResults;
     IdTable<std::uint32_t> aliases;
     IdTable<std::vector<std::uint32_t>> composites;
     IdTable<std::uint32_t> privateTables;
