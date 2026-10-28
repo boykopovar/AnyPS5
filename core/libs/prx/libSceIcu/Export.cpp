@@ -168,11 +168,6 @@ int APS5_VABI u_getFC_NFKC_Closure_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuUnknown__kd2qcTMvHE_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("+kd2qcTMvHE", sceIcuUnknown__kd2qcTMvHE_nid_no_patch);
-
 int APS5_VABI u_getIntPropertyMap_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
