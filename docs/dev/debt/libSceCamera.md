@@ -1,5 +1,16 @@
 # libSceCamera technical debt
 
+### Unknown function info
+
+- [libSceCamera additional exports](../../../core/libs/prx/libSceCamera/InventoryExports.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `sceCameraGetUsageInfo` | `BTUze28HY6k` |
+| `sceCameraGetUsageInfoWithoutCountProcess` | `9dHXTyfIUec` |
+| `sceCameraOpenByModuleIdWithMode` | `inXzc8jI6+Y` |
+| `sceCameraSetForceDriverMode` | `IBBi2SqEtoY` |
+
 ### Functional
 
 - [sceCameraIsAttached](../../../core/libs/prx/libSceCamera/Export.cpp) (libSceCamera) - no camera is ever attached: index 0 returns 0 (not attached) and any other index returns `SCE_CAMERA_ERROR_PARAM` (0x802E0000), as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/9a8ae4417bbfc79b1a43eb8a2eb0bb602148261e/src/core/libraries/camera/camera.cpp#L187-L200) does without a configured camera, with the error value from its [camera_error.h](https://github.com/shadps4-emu/shadPS4/blob/9a8ae4417bbfc79b1a43eb8a2eb0bb602148261e/src/core/libraries/camera/camera_error.h). Not measured on a console. Closes when: a host camera is exposed to guests.

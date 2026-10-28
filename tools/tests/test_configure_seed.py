@@ -37,6 +37,69 @@ set(MINI_OPTION "value" CACHE STRING "An option, not a check result")
 
 
 class ConfigureSeedPathTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "requires POSIX file size limits")
+    def test_failed_write_preserves_existing_seed_and_allows_retry(self):
+        seed = self.root / "seed.cmake"
+        original = b"previous complete seed\n"
+        seed.write_bytes(original)
+        self.cache.write_text("//Test LONG_FEATURE\nLONG_FEATURE:INTERNAL=" + "x" * 300 + "\n", encoding="utf-8")
+        program = ("import resource, signal, sys; signal.signal(signal.SIGXFSZ, signal.SIG_IGN); "
+                   "resource.setrlimit(resource.RLIMIT_FSIZE, (64, 64)); "
+                   "sys.path.insert(0, sys.argv[1]); import configure_seed; configure_seed.main(sys.argv[2:])")
+        result = subprocess.run([sys.executable, "-c", program, str(TOOL.parent), str(self.cache), str(seed)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(seed.read_bytes(), original)
+        self.assertEqual(list(self.root.glob(".configure-seed-*")), [])
+        result = self.run_seed(seed)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("LONG_FEATURE", seed.read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX file modes")
+    def test_existing_modes_and_new_file_umask_are_preserved(self):
+        seed = self.root / "seed.cmake"
+        program = "import os,sys; os.umask(0o027); sys.path.insert(0,sys.argv[1]); import configure_seed; configure_seed.main(sys.argv[2:])"
+        arguments = [sys.executable, "-c", program, str(TOOL.parent), str(self.cache), str(seed)]
+        result = subprocess.run(arguments, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(seed.stat().st_mode & 0o777, 0o640)
+        seed.chmod(0o600)
+        result = subprocess.run(arguments, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(seed.stat().st_mode & 0o777, 0o600)
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows read-only attributes")
+    def test_read_only_seed_is_not_replaced_and_leaves_no_temporary_file(self):
+        seed = self.root / "seed.cmake"
+        original = b"old seed\n"
+        seed.write_bytes(original)
+        seed.chmod(0o444)
+        try:
+            result = self.run_seed(seed)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertEqual(seed.read_bytes(), original)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(list(self.root.glob(".configure-seed-*")), [])
+        finally:
+            seed.chmod(0o666)
+
+    def test_output_symlink_keeps_the_link_and_updates_its_target(self):
+        target = self.root / "target.cmake"
+        target.write_text("old seed", encoding="utf-8")
+        seed = self.root / "seed.cmake"
+        try:
+            seed.symlink_to(target)
+        except OSError as error:
+            if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                self.skipTest("symbolic link creation needs Windows privilege")
+            raise
+        result = self.run_seed(seed)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(seed.is_symlink())
+        self.assertIn("HAVE_FEATURE", target.read_text(encoding="utf-8"))
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -312,7 +375,7 @@ class ChecksParsingTests(unittest.TestCase):
                 "SINGLE": ("", "Test SINGLE"),
             })
 
-    @unittest.skipUnless(shutil.which("cmake"), "CMake is required for cache round trips")
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required for cache round trips")
     def test_multiline_help_from_real_cmake_survives_seed_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

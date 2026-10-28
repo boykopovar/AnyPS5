@@ -299,6 +299,18 @@ class CheckMainSyncTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("merge: clean", result.stdout)
 
+    def test_missing_git_executable_reports_usage_error_without_traceback(self):
+        def missing_run(*args, **kwargs):
+            raise FileNotFoundError(2, "No such file or directory: 'git'")
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with unittest.mock.patch("subprocess.run", side_effect=missing_run), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                check_main_sync.main(["--repo", str(self.repo.path)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("No such file or directory: 'git'", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

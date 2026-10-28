@@ -16,6 +16,13 @@ function(add_test_executable target)
     endif()
 endfunction()
 
+function(configure_host_test_executable target)
+    if(MINGW)
+        target_compile_options(${target} PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(${target} PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+endfunction()
+
 function(add_asan_test_options test options)
     if(ANYPS5_ENABLE_ASAN)
         set_property(TEST ${test} APPEND PROPERTY ENVIRONMENT_MODIFICATION "ASAN_OPTIONS=string_append::${options}")

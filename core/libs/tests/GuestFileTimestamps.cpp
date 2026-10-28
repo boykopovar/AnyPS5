@@ -304,5 +304,8 @@ int main() {
             DeleteFileW(std::filesystem::path(danglingLink).c_str()), "remove the link fixtures");
     }
 #endif
+#ifdef _WIN32
+    DeleteFileW(std::filesystem::path(linkPath).c_str());
+#endif
     std::filesystem::remove_all(root);
 }

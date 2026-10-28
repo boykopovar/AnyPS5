@@ -841,16 +841,14 @@ int APS5_VABI wcscoll_nid_postfix(const char16_t* first, const char16_t* second)
 
 size_t APS5_VABI wcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, size_t count) {
     const size_t length = Length(source);
-    if (count != 0) {
-        const size_t copied = length < count ? length : count - 1;
-        std::memcpy(destination, source, copied * sizeof(char16_t));
-        destination[copied] = 0;
-    }
+    if (count != 0) std::memcpy(destination, source, (length < count ? length + 1 : count) * sizeof(char16_t));
     return length;
 }
 
 size_t APS5_VABI strxfrm_nid_postfix(char* destination, const char* source, size_t count) {
-    return strlcpy_nid_postfix(destination, source, count);
+    const size_t length = std::strlen(source);
+    if (count != 0) std::memcpy(destination, source, length < count ? length + 1 : count);
+    return length;
 }
 
 char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** context) {

@@ -422,14 +422,14 @@ int main() {
     Require(std::strcmp(transformed, "abc") == 0 && transformed[4] == 'z');
     std::memset(transformed, 'z', sizeof(transformed));
     Require(strxfrm_nid_postfix(transformed, "abcdefgh", 4) == 8);
-    Require(std::strcmp(transformed, "abc") == 0 && transformed[4] == 'z');
+    Require(std::memcmp(transformed, "abcd", 4) == 0 && transformed[4] == 'z');
     std::memset(transformed, 'z', sizeof(transformed));
     Require(strxfrm_nid_postfix(transformed, "abcdefg", sizeof(transformed)) == 7 && std::strcmp(transformed, "abcdefg") == 0);
     std::memset(transformed, 'z', sizeof(transformed));
-    Require(strxfrm_nid_postfix(transformed, "abcdefgh", sizeof(transformed)) == 8 && std::strcmp(transformed, "abcdefg") == 0);
+    Require(strxfrm_nid_postfix(transformed, "abcdefgh", sizeof(transformed)) == 8 && std::memcmp(transformed, "abcdefgh", 8) == 0);
     std::memset(transformed, 'z', sizeof(transformed));
     Require(strxfrm_nid_postfix(transformed, "", sizeof(transformed)) == 0 && transformed[0] == '\0' && transformed[1] == 'z');
-    Require(strxfrm_nid_postfix(transformed, "abc", 1) == 3 && transformed[0] == '\0' && transformed[1] == 'z');
+    Require(strxfrm_nid_postfix(transformed, "abc", 1) == 3 && transformed[0] == 'a' && transformed[1] == 'z');
     Require(strxfrm_nid_postfix(nullptr, "abc", 0) == 3);
     Require(strpbrk_nid_postfix(buffer, "ay") == buffer + 1);
     Require(strpbrk_nid_postfix(buffer, "") == nullptr);

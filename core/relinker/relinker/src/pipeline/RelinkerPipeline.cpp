@@ -70,9 +70,11 @@ RelinkResult RelinkerPipeline::Relink() {
         throw RelinkerException("ET_NONE inputs do not specify an ELF object type");
     if (inputType == kEtCore)
         throw RelinkerException("ET_CORE core dumps are not executable images");
-    if (inputType != ET_EXEC && inputType != ET_DYN && inputType != kEtSceDynExec && inputType != kEtSceDynamic) {
+    if (inputType == ET_EXEC)
+        throw RelinkerException("ET_EXEC inputs are linked at fixed addresses; conversion requires a position-independent image", 0x10);
+    if (inputType != ET_DYN && inputType != kEtSceDynExec && inputType != kEtSceDynamic) {
         std::ostringstream message;
-        message << "Unsupported ELF object type 0x" << std::hex << inputType << ": expected ET_EXEC, ET_DYN, 0xfe10 or 0xfe18";
+        message << "Unsupported ELF object type 0x" << std::hex << inputType << ": expected ET_DYN, 0xfe10 or 0xfe18";
         throw RelinkerException(message.str(), 0x10);
     }
 

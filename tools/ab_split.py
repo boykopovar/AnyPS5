@@ -75,7 +75,7 @@ def read_log(lines):
                 current = {"kind": kind, "index": index, "begin": (present, seconds), "settled": None, "end": None,
                            "reports": {name: [] for name, _ in KINDS}}
                 phases.append(current)
-            elif current is not None and current["index"] == index:
+            elif current is not None and current["index"] == index and current["kind"] == kind:
                 current["settled"] = (present, seconds)
             continue
         for name, prefix in KINDS:
