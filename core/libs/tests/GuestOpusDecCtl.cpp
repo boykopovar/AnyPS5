@@ -127,7 +127,7 @@ void RequireRequests(const Api& api) {
     Require(api.ctl(state.data(), OPUS_RESET_STATE) == 0);
     Require(Get(api, state.data(), OPUS_GET_GAIN_REQUEST) == 0 && Get(api, state.data(), OPUS_GET_PHASE_INVERSION_DISABLED_REQUEST) == 0);
     Require(Get(api, state.data(), OPUS_GET_SAMPLE_RATE_REQUEST) == 24000);
-    if (!api.celt) Require(Get(api, state.data(), OPUS_GET_INBAND_FEC_REQUEST) == 0 && Get(api, state.data(), 4051) == 1);
+    if (!api.celt) Require(Get(api, state.data(), OPUS_GET_INBAND_FEC_REQUEST) == 0 && Get(api, state.data(), 4051) == 0);
     Require(api.destroy(state.data()) == 0);
     Require(api.terminate(&context) == 0);
 }

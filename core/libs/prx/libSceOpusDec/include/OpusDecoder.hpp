@@ -141,6 +141,7 @@ public:
         case OPUS_RESET_STATE:
             decoder.inbandFec = 0;
             decoder.gain = 0;
+            decoder.unknownFlag = 0;
             decoder.phaseInversionDisabled = 0;
             if (opus_decoder_ctl(decoder.codec.get(), OPUS_RESET_STATE) != OPUS_OK) fail("libopus did not reset");
             apply(decoder);
