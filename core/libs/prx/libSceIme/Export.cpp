@@ -15,7 +15,9 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIme/include/ImeComposition.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
+#include "prx/libSceIme/include/ImeHostText.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
 
@@ -69,13 +71,19 @@ constexpr uint32_t EventPressEnter = 5;
 constexpr uint32_t CaretMoveLeft = 1;
 constexpr uint32_t CaretMoveRight = 2;
 
+struct PendingInput {
+    ImeHostInput input;
+    std::u16string paste;
+};
+
 struct Session {
     Param param{};
     ImeExtKeyboardFilter extKeyboardFilter = nullptr;
     std::u16string text;
     std::uint32_t caret = 0;
     std::deque<ImeEvent> events;
-    std::deque<ImeHostInput> hostInputs;
+    std::deque<PendingInput> hostInputs;
+    ImeComposition composition;
     std::uint64_t id = 0;
     std::uint64_t revision = 0;
 };
@@ -271,7 +279,15 @@ std::size_t UnitsAfter(const Session& session) {
     return caret + 1 < session.text.size() && IsHighSurrogate(session.text[caret]) && IsLowSurrogate(session.text[caret + 1]) ? 2 : 1;
 }
 
-std::optional<DeferredFilter> Apply(Session& session, const ImeHostInput& input) {
+std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pending) {
+    const ImeHostInput& input = pending.input;
+    if (input.kind == ImeHostInputKind::Preedit) {
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        session.composition.Set(ImeHostText::PreeditUnits(input.text, size), input.start, input.length);
+        return std::nullopt;
+    }
+    if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) return std::nullopt;
     switch (input.kind) {
         case ImeHostInputKind::Text: {
             std::size_t size = 0;
@@ -372,10 +388,11 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
     {
         std::lock_guard lock(g_imeMutex);
         if (g_session) {
-            g_session->hostInputs.push_back(input);
+            g_session->hostInputs.push_back({input, {}});
             return;
         }
     }
+    if (input.kind == ImeHostInputKind::Preedit) return;
     const ImeHostTextSink sink = g_textSink.load();
     if (sink == nullptr) return;
     std::u16string units;
@@ -576,9 +593,9 @@ int APS5_VABI sceImeUpdate(EventHandler handler) {
             std::lock_guard lock(g_imeMutex);
             if (!g_session || g_session->param.handler != handler) return 0;
             if (!g_session->hostInputs.empty()) {
-                const ImeHostInput input = g_session->hostInputs.front();
+                const PendingInput pending = std::move(g_session->hostInputs.front());
                 g_session->hostInputs.pop_front();
-                if (const std::optional<DeferredFilter> deferred = Apply(*g_session, input)) {
+                if (const std::optional<DeferredFilter> deferred = Apply(*g_session, pending)) {
                     runFilter = true;
                     filter = g_session->param.filter;
                     filterText = g_session->text;
