@@ -5,6 +5,22 @@
 
 #include "SDL_keyboard.h"
 
+namespace {
+
+bool IsPasteShortcut(const SDL_KeyboardEvent& key) {
+    const unsigned modifiers = key.keysym.mod;
+    if ((modifiers & KMOD_ALT) != 0) return false;
+#ifdef __APPLE__
+    const bool command = (modifiers & KMOD_GUI) != 0;
+#else
+    const bool command = (modifiers & KMOD_CTRL) != 0;
+#endif
+    if (command && key.keysym.sym == SDLK_v) return true;
+    return (modifiers & KMOD_SHIFT) != 0 && !command && key.keysym.scancode == SDL_SCANCODE_INSERT;
+}
+
+}
+
 void ImeTextInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
     ImeHostInput input{};
     switch (event.type) {
@@ -24,6 +40,12 @@ void ImeTextInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
             break;
         case SDL_KEYDOWN:
             if (event.key.windowID != windowId) return;
+            if (IsPasteShortcut(event.key)) {
+                if (event.key.repeat != 0 || clipboard == nullptr || !ImeCapturesKeyboard_nid_postfix()) return;
+                std::string text;
+                if (clipboard(text) && !text.empty()) ImePublishPaste_nid_postfix(text.data(), text.size());
+                return;
+            }
             switch (event.key.keysym.scancode) {
                 case SDL_SCANCODE_BACKSPACE: input.kind = ImeHostInputKind::Backspace; break;
                 case SDL_SCANCODE_DELETE: input.kind = ImeHostInputKind::Delete; break;
