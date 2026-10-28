@@ -602,6 +602,29 @@ void AsyncOptionalArguments(int ssl) {
     Require(server.Negotiated(), "async optional h2 ALPN");
 }
 
+void AsyncBlockingWait(int ssl) {
+    std::fprintf(stderr, "HTTP2 async blocking wait scenario\n");
+    Server server(Mode::StallResponse, "localhost");
+    Client client(ssl);
+    client.Create(server.Url("localhost"));
+    AsyncQueue queue(client.request);
+    Require(sceHttp2SendRequestAsync(client.request, nullptr, 0, &queue.option, nullptr) == 0, "async blocking submission");
+    std::thread release([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        server.Release();
+    });
+    const auto started = std::chrono::steady_clock::now();
+    uint32_t timeout = 0;
+    Http2AsyncResult result{};
+    Require(sceHttp2WaitAsync(client.request, &result, &timeout, nullptr) == 0, "zero timeout waits for the completion");
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    release.join();
+    Require(elapsed >= std::chrono::milliseconds(200), "zero timeout returned before the completion");
+    Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async blocking result");
+    queue.ExpectEvent();
+    server.Join();
+}
+
 void AsyncDelete(int ssl, bool waiter) {
     std::fprintf(stderr, "HTTP2 async delete scenario waiter %d\n", waiter ? 1 : 0);
     Server server(Mode::StallHeaders);
@@ -988,6 +1011,7 @@ int main(int argc, char** argv) {
         Retries(ssl);
         Async(ssl);
         AsyncOptionalArguments(ssl);
+        AsyncBlockingWait(ssl);
         AsyncDelete(ssl, false);
         AsyncDelete(ssl, true);
         AsyncTwoWaiters(ssl);

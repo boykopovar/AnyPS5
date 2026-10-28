@@ -27,6 +27,7 @@ static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
 static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
+static constexpr int ERROR_TIMEOUT = static_cast<int>(0x817B1068);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
 
 enum class Http2Kind : std::uint8_t { Context, Template, Request, CookieBox };
@@ -424,8 +425,8 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
     }
     std::unique_lock lock(state->mutex);
     const auto available = [&] { return state->retired || !state->pending.empty(); };
-    if (timeout) {
-        if (!state->changed.wait_for(lock, std::chrono::microseconds(*timeout), available)) NotImplemented_nid_no_patch("sceHttp2WaitAsync: waiting for an operation that has not completed");
+    if (timeout && *timeout != 0) {
+        if (!state->changed.wait_for(lock, std::chrono::microseconds(*timeout), available)) return ERROR_TIMEOUT;
     } else {
         state->changed.wait(lock, available);
     }
