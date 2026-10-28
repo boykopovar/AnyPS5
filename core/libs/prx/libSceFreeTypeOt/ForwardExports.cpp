@@ -10,11 +10,6 @@ int APS5_VABI FT_Activate_SizeForward_nid_no_patch(FreeType::GuestSizeRec* size)
 }
 APS5_EXPORT("EBvr2CZnjVo", FT_Activate_SizeForward_nid_no_patch);
 
-std::int64_t APS5_VABI FT_Angle_DiffForward_nid_no_patch(std::int64_t first, std::int64_t second) {
-    return FT_Angle_Diff_nid_postfix(first, second);
-}
-APS5_EXPORT("D1l8+Bu+-Y8", FT_Angle_DiffForward_nid_no_patch);
-
 int APS5_VABI FT_Bitmap_ConvertForward_nid_no_patch(FreeType::GuestLibrary* library, const FreeType::GuestBitmap* source, FreeType::GuestBitmap* target, std::int32_t alignment) {
     return FT_Bitmap_Convert_nid_postfix(library, source, target, alignment);
 }
@@ -34,11 +29,6 @@ void APS5_VABI FT_Bitmap_NewForward_nid_no_patch(FreeType::GuestBitmap* bitmap) 
     return FT_Bitmap_New_nid_postfix(bitmap);
 }
 APS5_EXPORT("-AeE58GkM+Q", FT_Bitmap_NewForward_nid_no_patch);
-
-std::int64_t APS5_VABI FT_CosForward_nid_no_patch(std::int64_t angle) {
-    return FT_Cos_nid_postfix(angle);
-}
-APS5_EXPORT("yD4-QaNSink", FT_CosForward_nid_no_patch);
 
 int APS5_VABI FT_Done_FaceForward_nid_no_patch(FreeType::GuestFaceRec* face) {
     return FT_Done_Face_nid_postfix(face);

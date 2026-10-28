@@ -139,3 +139,5 @@ The following 13.60 data exports remain unavailable. Their guest structure layou
 ### Pending dependency exports
 
 Additional callable NIDs not supplied here remain reserved for open libSceFreeType implementation or export changes. They are not supplied by this batch. Once their base implementations land, Windows requires matching Ot forwarding entries; macOS and Linux must be checked through the retained dependency. Introducing child stubs for those entries would shadow future working providers.
+
+Windows forwarding for `FT_Cos` and `FT_Angle_Diff` is reserved for the provider wiring in [#11613](https://github.com/boykopovar/AnyPS5/pull/11613). Their base implementations remain reachable through the dependency on non-Windows hosts; this batch does not add competing Windows thunks.
