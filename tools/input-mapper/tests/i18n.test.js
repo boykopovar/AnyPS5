@@ -32,8 +32,10 @@ test('language substitution preserves canonical inputs and exported INI bytes', 
     assert.equal(translate('unsupported', 'help'), 'Help');
 });
 
-test('Egyptian diagnostics retain action tokens and unknown technical details', () => {
+test('translated diagnostics retain action tokens and unknown technical details', () => {
     assert.equal(diagnostic('ar-EG', 'Cross: Unknown or empty KEY value.'), 'Cross: قيمة KEY مش معروفة أو فاضية.');
+    assert.equal(diagnostic('sv', 'Cross: Unknown or empty KEY value.'), 'Cross: Okänt eller tomt KEY-värde.');
     assert.equal(diagnostic('ar-EG', 'Unexpected diagnostic'), 'Unexpected diagnostic');
+    assert.equal(diagnostic('sv', 'Unexpected diagnostic'), 'Unexpected diagnostic');
     assert.equal(diagnostic('fr', 'Cross: Unknown or empty KEY value.'), 'Cross: Unknown or empty KEY value.');
 });
