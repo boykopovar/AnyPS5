@@ -2,7 +2,9 @@
 
 ### Unknown function info
 
-- [libSceNpUtility additional exports](../../../core/libs/prx/libSceNpUtility/Export.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+- [libSceNpUtility additional exports](../../../core/libs/prx/libSceNpUtility/Export.cpp) - these name/NID pairs are present in the inspected export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+The inventory label is not authenticated retail-firmware provenance. The inspected image contains raw module-parameter words `0x13590001` at +0x10 and `0x13600007` at +0x14. Using the [published static ELF membership procedure](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298), its 102 unique function NIDs have sorted-LF SHA-256 `79cc4b0f5b859cc3d8edecd19bd3e981166f7186ddd9479aec3b53b076d8f212`; all 4 entries below are present. This digest identifies the function-NID set, not the whole binary or its ABI. An independent review on [this PR](https://github.com/boykopovar/AnyPS5/pull/11953#pullrequestreview) corroborated these identities using a separately reported 13.42 reference; that does not establish matching binaries, prototypes or behavior.
 
 | Name | NID |
 | --- | --- |
