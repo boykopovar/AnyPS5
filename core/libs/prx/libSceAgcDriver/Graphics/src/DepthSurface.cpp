@@ -868,6 +868,24 @@ public:
         return false;
     }
 
+    void TakeStencilStorage() {
+        if (target.samples != 1 || target.stencilAddress == 0) return;
+        const auto bytes = DepthSliceBytes(target.extent, 1u);
+        auto storage = StorageTexture::FindPending(target.stencilAddress, bytes);
+        if (storage == nullptr) storage = StorageTexture::FindLive(target.stencilAddress, bytes);
+        if (storage == nullptr) return;
+        const auto& described = storage->Descriptor();
+        const auto format = ResolveTextureFormat(described.format);
+        if (described.baseAddress != target.stencilAddress || described.width != target.extent.width || described.height != target.extent.height || (format != VK_FORMAT_R8_UINT && format != VK_FORMAT_R8_UNORM)) return;
+        if (stencilTaken.lock() == storage && stencilTakenVersion == storage->Version()) return;
+        storage->Refresh();
+        copyPlane(stencilPlane, storage, true, false, Recorder::Active() == nullptr);
+        stencilTaken = storage;
+        stencilTakenVersion = storage->Version();
+        written = ++depthWrites;
+        NoteHostWrite();
+    }
+
     void TakeStorage() {
         if (target.samples != 1 || hostFormat != target.format) return;
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
@@ -1216,6 +1234,8 @@ private:
     std::map<std::array<std::uint32_t, 13>, std::shared_ptr<Texture>> textures;
     PlaneStorage depthPlane;
     PlaneStorage stencilPlane;
+    std::weak_ptr<StorageTexture> stencilTaken;
+    std::uint64_t stencilTakenVersion = 0;
     std::uint64_t depthMemory = 0;
     std::uint64_t stencilMemory = 0;
     StencilCopy stencilCopy;
@@ -2489,6 +2509,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
     takePlanes(*surface, created, htileCleared | (cleared ? VK_IMAGE_ASPECT_DEPTH_BIT : 0u));
     if (cleared || htileCleared != 0u) surface->expanded = false;
     if (created && !inherits && target.htileAddress == 0) surface->TakeStorage();
+    surface->TakeStencilStorage();
     if (cleared && (!created || inherits)) {
         if (target.samples != 1u) surface->sampling.Refuse("native multisample depth fast-clear transition is not implemented");
         if (!created) surface->NoteHtileClear(VK_IMAGE_ASPECT_DEPTH_BIT);
