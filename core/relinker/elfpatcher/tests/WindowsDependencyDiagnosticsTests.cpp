@@ -240,6 +240,7 @@ void expectDiagnostic(const Fs::path& runner, const std::vector<std::string>& ex
 }
 
 int main() {
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     try {
         checkRuntimeDependencies();
         std::vector<wchar_t> filename(32768);
