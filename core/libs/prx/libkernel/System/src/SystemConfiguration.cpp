@@ -199,6 +199,32 @@ bool IsUnansweredMib(const int* name, std::uint32_t nameLength) {
     return (name[0] == 1 && (name[1] == 6 || name[1] == 7 || name[1] == 12 || name[1] == 27 || name[1] == 32)) || (name[0] == 6 && (name[1] == 4 || name[1] == 11));
 }
 
+struct SysconfConstant {
+    int name;
+    std::int64_t value;
+};
+
+constexpr SysconfConstant kSysconfConstants[] = {
+    {6, 1}, {7, -1}, {8, 200112}, {9, 99}, {10, 2048}, {11, 99}, {12, 1000}, {13, 0}, {14, 32},
+    {15, 2048}, {16, 255}, {17, 199212}, {18, 200112}, {19, -1}, {20, 1}, {21, -1}, {22, 200112},
+    {23, -1}, {24, -1}, {25, 200112}, {28, 200112}, {29, 200112}, {30, -1}, {31, 200112}, {32, 200112},
+    {33, 200112}, {34, -1}, {35, 200112}, {36, 200112}, {37, 200112}, {38, 200112}, {39, 200112},
+    {40, -1}, {41, 200112}, {42, 16}, {43, 1024}, {44, 0}, {45, 2147483647}, {46, -1}, {48, 62},
+    {49, 30}, {50, 2147483647}, {51, 128}, {52, 32}, {59, -1}, {60, -1}, {61, -1}, {62, -1}, {63, -1},
+    {64, -1}, {65, 200112}, {66, 200112}, {67, -1}, {68, 200112}, {74, 200112}, {75, 64}, {76, 200112},
+    {77, 1}, {78, 1}, {79, 200112}, {80, 200112}, {81, -1}, {82, 200112}, {83, 200112}, {84, 200112},
+    {85, 4}, {86, 256}, {87, 200112}, {88, 200112}, {89, 200112}, {90, -1}, {91, -1}, {93, 16384},
+    {94, -1}, {95, 200112}, {96, 200112}, {97, -1}, {101, 255}, {102, -1}, {103, -1}, {104, -1},
+    {105, 1}, {106, -1}, {107, 64}, {108, -1}, {109, -1}, {110, -1}, {111, -1}, {112, -1}, {113, -1},
+    {114, -1}, {115, -1}, {118, 200112}, {119, 200112}, {120, 32}, {122, 8},
+};
+
+const SysconfConstant* FindSysconfConstant(int name) {
+    const auto* end = std::end(kSysconfConstants);
+    const auto* entry = std::lower_bound(std::begin(kSysconfConstants), end, name, [](const SysconfConstant& constant, int key) { return constant.name < key; });
+    return entry != end && entry->name == name ? entry : nullptr;
+}
+
 bool IsUnansweredName(const char* name) {
     static constexpr const char* unanswered[] = {
         "hw.byteorder",
@@ -293,9 +319,18 @@ std::int64_t APS5_VABI sysconf_nid_postfix(int name) {
 #endif
             break;
         }
-        default:
-            *__error_nid_postfix() = 22;
+        case 27:
+            *__error_nid_postfix() = 2;
             return -1;
+        default: {
+            const SysconfConstant* constant = FindSysconfConstant(name);
+            if (!constant) {
+                *__error_nid_postfix() = 22;
+                return -1;
+            }
+            *__error_nid_postfix() = saved;
+            return constant->value;
+        }
     }
     if (result <= 0) { *__error_nid_postfix() = 5; return -1; }
     *__error_nid_postfix() = saved;

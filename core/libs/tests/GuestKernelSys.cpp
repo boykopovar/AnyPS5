@@ -151,7 +151,7 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
         Require(!std::filesystem::is_symlink(std::filesystem::symlink_status(other)));
 #endif
         Require(std::filesystem::hard_link_count(file) == 3);
-        Require(std::filesystem::remove(other) && std::filesystem::remove(symbolic) && std::filesystem::remove(dangling));
+        Require(std::filesystem::remove(other) && unlink_nid_postfix(symbolic.c_str()) == 0 && unlink_nid_postfix(dangling.c_str()) == 0);
     }
     Require(sceKernelClose(directory) == 0);
     Require(std::filesystem::remove(linked) && std::filesystem::remove(file));

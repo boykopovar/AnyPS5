@@ -319,6 +319,19 @@ bool Exited(HANDLE native) {
     return WaitForSingleObject(native, 0) == WAIT_OBJECT_0;
 }
 
+using NtSuspendThreadFunction = LONG(NTAPI*)(HANDLE, PULONG);
+constexpr LONG ThreadIsTerminating = static_cast<LONG>(0xc000004bu);
+
+LONG SuspendTarget(HANDLE native) {
+    static const auto suspend = [] {
+        const auto found = reinterpret_cast<NtSuspendThreadFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSuspendThread")));
+        if (found == nullptr) throw std::runtime_error("sceKernelRaiseException: ntdll.dll has no NtSuspendThread");
+        return found;
+    }();
+    ULONG previous = 0;
+    return suspend(native, &previous);
+}
+
 bool RestoringContext(DWORD64 rip) {
     static const std::array<DWORD64, 2> stubs = [] {
         const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -695,7 +708,9 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
     alignas(16) Delivery delivery{handler, signum, {}, {}, SaveVectors ? 1u : 0u};
     const auto contextDeadline = std::chrono::steady_clock::now() + RetryLimit;
     for (;;) {
-        if (SuspendThread(native) == static_cast<DWORD>(-1)) {
+        const LONG suspended = SuspendTarget(native);
+        if (suspended == ThreadIsTerminating) return Attempt::Exited;
+        if (suspended < 0) {
             if (Exited(native)) return Attempt::Exited;
             throw std::runtime_error("sceKernelRaiseException: cannot suspend the target thread");
         }
