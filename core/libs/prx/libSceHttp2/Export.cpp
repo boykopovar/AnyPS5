@@ -14,6 +14,7 @@
 #include <exception>
 #include <mutex>
 #include <memory>
+#include <optional>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -62,7 +63,7 @@ static std::unordered_map<int, Http2Handle> g_handles;
 static std::atomic<GuestSceHttp2Test::AsyncPublishHook> g_asyncPublishHook{nullptr};
 static std::atomic<void*> g_asyncPublishHookData{nullptr};
 
-static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state, int req_id, const Http2AsyncOption& option,
+static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state, int req_id, const Http2AsyncOption* option,
     int event_type, int result, std::exception_ptr failure) {
     std::lock_guard lock(state->mutex);
     if (state->retired) return;
@@ -76,7 +77,7 @@ static void CompleteAsync(const std::shared_ptr<Http2AsyncState>& state, int req
     if (const auto hook = g_asyncPublishHook.load(std::memory_order_acquire)) {
         hook(g_asyncPublishHookData.load(std::memory_order_acquire));
     }
-    sceKernelTriggerUserEvent(option.equeue, option.user_event_id, option.user_data);
+    if (option) sceKernelTriggerUserEvent(option->equeue, option->user_event_id, option->user_data);
 }
 
 static void RetireAsync(const std::shared_ptr<Http2AsyncState>& state) {
@@ -274,12 +275,13 @@ int APS5_VABI sceHttp2ReadData(int req_id, void* data, size_t size) {
 }
 
 int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* kqueue_option, void* option) {
-    if (!kqueue_option || option) NotImplemented_nid_no_patch(__func__);
+    (void)option;
     if (!data && size) return ERROR_NULL_POINTER;
     std::shared_ptr<Http2AsyncState> state;
     const auto request = Transport(req_id, false, &state);
     if (!request) return ERROR_INVALID_ID;
-    const Http2AsyncOption async = *static_cast<const Http2AsyncOption*>(kqueue_option);
+    const std::optional<Http2AsyncOption> async = kqueue_option
+        ? std::optional<Http2AsyncOption>(*static_cast<const Http2AsyncOption*>(kqueue_option)) : std::nullopt;
     std::thread([request, state, async, data, size, req_id] {
         int result = 0;
         std::exception_ptr failure;
@@ -288,7 +290,7 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
         } catch (...) {
             failure = std::current_exception();
         }
-        CompleteAsync(state, req_id, async, 1, result, std::move(failure));
+        CompleteAsync(state, req_id, async ? &*async : nullptr, 1, result, std::move(failure));
     }).detach();
     return 0;
 }
@@ -299,14 +301,15 @@ int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size
 }
 
 int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t size, Http2AsyncOption* kqueue_option, void* option) {
-    if (!kqueue_option || option) NotImplemented_nid_no_patch(__func__);
+    (void)option;
     if (!post_data && size) return ERROR_NULL_POINTER;
     std::shared_ptr<Http2AsyncState> state;
     const auto request = Transport(req_id, true, &state);
     if (!request) return ERROR_INVALID_ID;
     std::vector<std::uint8_t> body;
     if (size) body.assign(static_cast<const std::uint8_t*>(post_data), static_cast<const std::uint8_t*>(post_data) + size);
-    const Http2AsyncOption async = *kqueue_option;
+    const std::optional<Http2AsyncOption> async = kqueue_option
+        ? std::optional<Http2AsyncOption>(*kqueue_option) : std::nullopt;
     std::thread([request, state, async, body = std::move(body), req_id]() mutable {
         int result = 0;
         std::exception_ptr failure;
@@ -315,7 +318,7 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
         } catch (...) {
             failure = std::current_exception();
         }
-        CompleteAsync(state, req_id, async, 0, result, std::move(failure));
+        CompleteAsync(state, req_id, async ? &*async : nullptr, 0, result, std::move(failure));
     }).detach();
     return 0;
 }
