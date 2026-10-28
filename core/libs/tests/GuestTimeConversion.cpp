@@ -51,7 +51,7 @@ static void CheckNullArguments() {
         const char* expected = convert == gmtime_s_nid_postfix ? "gmtime_s: bad argument" : "localtime_s: bad argument";
         for (int which = 0; which < 3; ++which) {
             g_constraintCalls = 0;
-            Require(convert(which == 1 ? nullptr : &timer, which == 0 ? nullptr : which == 1 ? &result : nullptr) == nullptr,
+            Require(convert(which == 0 ? &timer : nullptr, which == 1 ? &result : nullptr) == nullptr,
                 "null argument was accepted");
             Require(g_constraintCalls == 1 && g_constraintMessage == expected, "null argument did not report a bad argument");
         }
