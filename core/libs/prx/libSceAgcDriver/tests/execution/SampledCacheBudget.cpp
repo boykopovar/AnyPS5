@@ -120,6 +120,21 @@ void deviceSelectionTests() {
     std::puts("sampled-cache device selection CPU tests passed");
 }
 
+void spillTests() {
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    Require(SampledTextureSpill(0, true, false, false) == 0 && SampledTextureSpill(SampledSpillLimit, false, true, false) == 0, "a device without a host heap was given room for sampled textures past its share");
+    std::uint64_t spill = 0;
+    for (std::uint64_t step = 1; step <= 8; ++step) {
+        spill = SampledTextureSpill(spill, true, false, true);
+        Require(spill == step * 256u * MiB, "after " + std::to_string(step) + " budget reads with a refused texture the room past the device's share is " + std::to_string(spill / MiB) + " MiB, not " + std::to_string(step * 256u) + " MiB");
+    }
+    Require(SampledTextureSpill(spill, true, false, true) == 2048u * MiB, "the room past the device's share grew beyond 2 GiB");
+    Require(SampledTextureSpill(spill, false, false, true) == spill, "a budget read without a refused texture changed the room before the cache was quiet");
+    Require(SampledTextureSpill(spill, false, true, true) == spill - 256u * MiB, "a quiet budget read did not give back one step");
+    Require(SampledTextureSpill(100u * MiB, false, true, true) == 0, "a quiet budget read with less than a step left did not give back the rest");
+    std::puts("sampled texture spill CPU tests passed");
+}
+
 class Device {
 public:
     explicit Device(bool enableStorageImageMultisample = true) {
@@ -1313,6 +1328,10 @@ int main(int argc, char** argv) {
         }
         if (mode == "device-selection-cpu") {
             deviceSelectionTests();
+            return 0;
+        }
+        if (mode == "spill-cpu") {
+            spillTests();
             return 0;
         }
         const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
