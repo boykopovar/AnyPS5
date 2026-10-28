@@ -183,10 +183,11 @@ std::uint32_t EmitBranchCondition(SpirvValueEmitContext& ctx, const BlockInfo& i
     const auto own = ctx.Def(info.condition);
     const auto other = ctx.otherHalf->Def(info.condition);
     if (condition == BranchCondition::ExecZero || condition == BranchCondition::VccZero || condition == BranchCondition::SccZero) {
-        const auto clear = Binary(state, spv::OpLogicalOr, TypeBool(state), Unary(state, spv::OpLogicalNot, TypeBool(state), own), Unary(state, spv::OpLogicalNot, TypeBool(state), other));
-        return Unary(state, spv::OpLogicalNot, TypeBool(state), EmitWaveAny(state, clear));
+        const auto ownClear = EmitWaveAny(state, Unary(state, spv::OpLogicalNot, TypeBool(state), own));
+        const auto otherClear = EmitWaveAny(state, Unary(state, spv::OpLogicalNot, TypeBool(state), other));
+        return Unary(state, spv::OpLogicalNot, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), ownClear, otherClear));
     }
-    return EmitWaveAny(state, Binary(state, spv::OpLogicalOr, TypeBool(state), own, other));
+    return Binary(state, spv::OpLogicalOr, TypeBool(state), EmitWaveAny(state, own), EmitWaveAny(state, other));
 }
 
 void EmitStructuredTerminator(SpirvValueEmitContext& ctx, const IrProgram& program, const BlockInfo& info) {
