@@ -40,6 +40,7 @@ namespace {
 constexpr std::size_t secureSizeMax = (std::size_t{1} << 61) - 1;
 constexpr int secureViolationResult = -23;
 constexpr int guestEinval = 22;
+constexpr int guestErange = 34;
 
 void ReportConstraint(const char* message) {
     SonyInvokeConstraintHandler(message, nullptr, guestEinval);
@@ -845,6 +846,38 @@ static int FormatSecure(const char* badArgument, const char* badFormat, char* bu
     }
 }
 
+static int FormatTerminated(const char* badArgument, const char* badFormat, const char* overflow, char* buffer, size_t size, const char* format, const void* args) {
+    if (buffer == nullptr || size == 0 || size > secureSizeMax) {
+        ReportConstraint(badArgument);
+        return 0;
+    }
+    if (format == nullptr) {
+        buffer[0] = 0;
+        ReportConstraint(badFormat);
+        return 0;
+    }
+    std::string text;
+    bool violated = false;
+    try {
+        LibcDetail::FormatWindows(nullptr, 0, format, args, &text, true);
+    } catch (const LibcDetail::FormatConstraintViolation& violation) {
+        std::memcpy(buffer, text.data(), std::min(text.size(), size - 1));
+        buffer[0] = 0;
+        ReportConstraint(violation.what());
+        violated = true;
+    }
+    if (!violated && text.size() < size) {
+        std::memcpy(buffer, text.c_str(), text.size() + 1);
+        return static_cast<int>(text.size());
+    }
+    if (!violated) {
+        std::memcpy(buffer, text.data(), size - 1);
+        buffer[0] = 0;
+    }
+    if (!violated || text.size() >= size) SonyInvokeConstraintHandler(overflow, nullptr, guestErange);
+    return 0;
+}
+
 int APS5_VABI vsnprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
     return FormatSecure("vsnprintf_s: bad argument", "vsnprintf_s: bad format argument", buffer, size, format, args);
 }
@@ -906,6 +939,18 @@ int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* form
     return result;
 }
 
+int APS5_VABI vsprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
+    return FormatTerminated("vsprintf_s: bad argument", "vsprintf_s: bad format argument", "vsprintf_s: buffer overflow", buffer, size, format, args);
+}
+
+int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    const int result = FormatTerminated("sprintf_s: bad argument", "sprintf_s: bad format argument", "sprintf_s: buffer overflow", buffer, size, format, args);
+    __builtin_sysv_va_end(args);
+    return result;
+}
+
 int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
@@ -923,18 +968,13 @@ int APS5_VABI vsscanf_s_nid_postfix(const char* buffer, const char* format, VaLi
 }
 
 int APS5_VABI vsprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
-    if (RequiresGuestFormatting(format)) return LibcDetail::FormatWindows(buffer, size, format, args);
-    std::va_list copy;
-    va_copy(copy, *reinterpret_cast<std::va_list*>(args));
-    const int result = std::vsnprintf(buffer, size, format, copy);
-    va_end(copy);
-    return result;
+    return FormatTerminated("vsprintf_s: bad argument", "vsprintf_s: bad format argument", "vsprintf_s: buffer overflow", buffer, size, format, args);
 }
 
 int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
-    const int result = RequiresGuestFormatting(format) ? LibcDetail::FormatWindows(buffer, size, format, args) : std::vsnprintf(buffer, size, format, args);
+    const int result = FormatTerminated("sprintf_s: bad argument", "sprintf_s: bad format argument", "sprintf_s: buffer overflow", buffer, size, format, args);
     va_end(args);
     return result;
 }
