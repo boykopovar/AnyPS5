@@ -1046,18 +1046,38 @@ void testParameterSetsBound() {
         0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x22, 0x59, 0x60, 0x00,
         0x00, 0x00, 0x01, 0x68, 0xeb, 0xe3, 0xcb, 0x22, 0xc0,
     };
-    std::vector<std::uint8_t> buffer(frameBufferBytes());
-    const auto handle = createDecoder(CodecAvc, 1);
-    const InputData input{sizeof(InputData), Parameters, sizeof(Parameters), 1000, 0, 0};
+    const DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, CodecAvc, 1, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 1};
+    DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
+    check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "memory query failed");
+    std::uint64_t handle = 0;
+    check(sceVideodec2CreateDecoder_nid_postfix(&config, &memory, &handle) == 0, "decoder creation failed");
+    std::vector<std::uint8_t> storage;
+    const auto buffer = AlignedFrameStorage(storage, memory.maxFrameBufferSize, memory.frameBufferAlignment);
+    auto units = accessUnits(false);
+    auto first = units.front();
+    std::size_t slice = 0;
+    for (std::size_t index = 0; index + 3 < first.size(); ++index) {
+        if (first[index] != 0 || first[index + 1] != 0 || first[index + 2] != 1) continue;
+        const auto type = first[index + 3] & 0x1fu;
+        if (type >= 1 && type <= 5) {
+            slice = index > 0 && first[index - 1] == 0 ? index - 1 : index;
+            break;
+        }
+        index += 2;
+    }
+    check(slice != 0, "first access unit missing slice");
+    const std::vector<std::uint8_t> validParameters(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(slice));
+    first.erase(first.begin(), first.begin() + static_cast<std::ptrdiff_t>(slice));
+    const InputData paramInput{sizeof(InputData), validParameters.data(), validParameters.size(), 999, 0, 0x9f};
     FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
     OutputInfo output{sizeof(OutputInfo)};
-    check(sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output) == 0, "first parameter unit failed");
+    check(sceVideodec2Decode_nid_postfix(handle, &paramInput, &frame, &output) == 0, "valid parameter unit failed");
     check(!output.isValid && !frame.isAccepted, "parameter unit produced picture");
     std::vector<std::uint8_t> largeParameters(2u * 1024u * 1024u + 1u);
     for (std::size_t offset = 0; offset + sizeof(Parameters) <= largeParameters.size(); offset += sizeof(Parameters)) {
         std::memcpy(largeParameters.data() + offset, Parameters, sizeof(Parameters));
     }
-    const InputData largeInput{sizeof(InputData), largeParameters.data(), largeParameters.size(), 1001, 0, 0};
+    const InputData largeInput{sizeof(InputData), largeParameters.data(), largeParameters.size(), 1000, 0, 0};
     bool threw = false;
     try {
         sceVideodec2Decode_nid_postfix(handle, &largeInput, &frame, &output);
@@ -1065,6 +1085,8 @@ void testParameterSetsBound() {
         threw = std::string(error.what()) == "Videodec2: invalid access unit";
     }
     check(threw, "oversized parameter unit did not throw");
+    const InputData sliceInput{sizeof(InputData), first.data(), first.size(), 1001, 0, 0xa0};
+    check(sceVideodec2Decode_nid_postfix(handle, &sliceInput, &frame, &output) == 0, "slice decode failed after rejected parameter unit");
     check(sceVideodec2Reset_nid_postfix(handle) == 0, "reset failed");
     check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
 }
