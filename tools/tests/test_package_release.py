@@ -571,6 +571,60 @@ class ReleaseNoteDestinationsTests(unittest.TestCase):
 
 
 class ReleaseNotesTests(unittest.TestCase):
+    def test_oversized_final_body_preserves_input_and_outputs(self):
+        remainder = "## New Contributors\n" + "x" * prepare_release_notes.BODY_LIMIT
+        for notes in (remainder, "## What's Changed\n* Fix\n\n" + remainder):
+            for existing in (False, True):
+                with self.subTest(changes=notes != remainder, existing=existing), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    source = root / "notes.json"
+                    body = root / "body/body.md"
+                    full = root / "full/release-notes.md"
+                    source.write_text(json.dumps({"body": notes}), encoding="utf-8")
+                    original = source.read_bytes()
+                    if existing:
+                        body.parent.mkdir()
+                        full.parent.mkdir()
+                        body.write_bytes(b"previous body")
+                        full.write_bytes(b"previous full")
+                    with self.assertRaisesRegex(ValueError, "exceeds 125000 characters"):
+                        prepare_release_notes.prepare_notes(source, body, full)
+                    self.assertEqual(source.read_bytes(), original)
+                    if existing:
+                        self.assertEqual(body.read_bytes(), b"previous body")
+                        self.assertEqual(full.read_bytes(), b"previous full")
+                    else:
+                        self.assertFalse(body.parent.exists())
+                        self.assertFalse(full.parent.exists())
+
+    def test_final_body_at_character_limit_preserves_unicode_and_full_notes(self):
+        for length in (prepare_release_notes.BODY_LIMIT - 1, prepare_release_notes.BODY_LIMIT):
+            with self.subTest(length=length), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source, body, full = (root / name for name in ("notes.json", "body.md", "full.md"))
+                prefix = "## New Contributors\n"
+                expected = prefix + "\u00e9" * (length - len(prefix))
+                notes = "## What's Changed\n* Fix\n\n" + expected
+                source.write_text(json.dumps({"body": notes}), encoding="utf-8")
+                prepare_release_notes.prepare_notes(source, body, full)
+                self.assertEqual(body.read_bytes(), expected.encode("utf-8"))
+                self.assertEqual(full.read_bytes(), notes.encode("utf-8"))
+
+    def test_cli_rejects_oversized_final_body_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body.md", "full.md"))
+            source.write_text(json.dumps({"body": "x" * (prepare_release_notes.BODY_LIMIT + 1)}), encoding="utf-8")
+            body.write_bytes(b"previous body")
+            full.write_bytes(b"previous full")
+            result = subprocess.run([sys.executable, str(Path(prepare_release_notes.__file__)),
+                                     "--input", str(source), "--body", str(body), "--full", str(full)],
+                                    capture_output=True, text=True, encoding="utf-8")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("exceeds 125000 characters", result.stderr)
+            self.assertEqual(body.read_bytes(), b"previous body")
+            self.assertEqual(full.read_bytes(), b"previous full")
+
     def test_aliased_paths_preserve_input_and_existing_outputs(self):
         for pair in ((0, 1), (0, 2), (1, 2)):
             for alias in ("same", "symlink", "hardlink"):
@@ -720,6 +774,26 @@ class ReleaseNotesEdgeCaseTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             self.assertIn(input_dir.name, stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_main_reports_error_for_unexpected_json_shapes(self):
+        for shape in ("{}", "[]", "null"):
+            with self.subTest(shape=shape):
+                with tempfile.TemporaryDirectory() as directory:
+                    directory = Path(directory)
+                    source_path = directory / "source.json"
+                    source_path.write_text(shape, encoding="utf-8")
+                    body_path = directory / "body.md"
+                    body_path.write_text("pre-existing body", encoding="utf-8")
+                    full_path = directory / "full.md"
+                    full_path.write_text("pre-existing full", encoding="utf-8")
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                        prepare_release_notes.main(["--input", str(source_path), "--body", str(body_path), "--full", str(full_path)])
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertIn("must be a JSON object with a body field", stderr.getvalue())
+                    self.assertNotIn("Traceback", stderr.getvalue())
+                    self.assertEqual(body_path.read_text(encoding="utf-8"), "pre-existing body")
+                    self.assertEqual(full_path.read_text(encoding="utf-8"), "pre-existing full")
 
     def test_main_reconfigures_streams(self):
         class Stream:

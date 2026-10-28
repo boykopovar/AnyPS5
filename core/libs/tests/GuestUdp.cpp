@@ -117,6 +117,25 @@ static void CheckSendToPortZero() {
     Require(close_nid_postfix(bound) == 0 && close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
 }
 
+static void CheckShutReadUnconnected() {
+    const int receiver = socket_nid_postfix(2, 2, 0);
+    const int sender = socket_nid_postfix(2, 2, 0);
+    Require(receiver >= 0 && sender >= 0);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+    Require(sendto_nid_postfix(sender, "x", 1, 0, address.data(), address.size()) == 1);
+    char buffer[4];
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0x02) == 1);
+    *__error_nid_postfix() = 0;
+    Require(shutdown_nid_postfix(receiver, 0) == -1 && *__error_nid_postfix() == 57);
+    int queued = -1;
+    Require(ioctl_nid_postfix(receiver, 0x4004667f, &queued) == 0 && queued == 0);
+    Require(recv_nid_postfix(receiver, buffer, sizeof(buffer), 0) == 0);
+    Require(close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
+}
+
 static void CheckDontWait() {
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 0);
@@ -242,6 +261,7 @@ int main() {
     CheckArrivalTimestamps(28);
     CheckDontWait();
     CheckSendToPortZero();
+    CheckShutReadUnconnected();
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 17);
     Require(receiver >= 0 && sender >= 0 && receiver != sender);

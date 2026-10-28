@@ -10,6 +10,7 @@
 namespace {
 
 constexpr int ResolverTimedOut = static_cast<int>(0x804101E2u);
+constexpr int AlreadyInitialized = static_cast<int>(0x80550C02u);
 constexpr int NotInitialized = static_cast<int>(0x80550C03u);
 constexpr int ContextMax = static_cast<int>(0x80550C04u);
 constexpr int ContextNotStarted = static_cast<int>(0x80550C08u);
@@ -42,9 +43,14 @@ int main() {
     Require(sceNpMatching2RegisterRoomMessageCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterRoomMessageCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterSignalingCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterSignalingCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2SetDefaultRequestOptParam(1, nullptr) == NotInitialized, "sceNpMatching2SetDefaultRequestOptParam", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpMatching2Terminate() == NotInitialized, "sceNpMatching2Terminate", "terminating before initialization did not return NOT_INITIALIZED");
+    Require(sceNpMatching2Initialize(nullptr) == InvalidArgument, "sceNpMatching2Initialize", "a null parameter did not return INVALID_ARGUMENT");
+    init.size = 0x10;
+    Require(sceNpMatching2Initialize(&init) == InvalidArgument, "sceNpMatching2Initialize", "an invalid parameter size did not return INVALID_ARGUMENT");
 
     init.size = 0x30;
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initialization failed");
+    Require(sceNpMatching2Initialize(&init) == AlreadyInitialized, "sceNpMatching2Initialize", "initializing when already initialized did not return ALREADY_INITIALIZED");
 
     Require(sceNpMatching2CreateContext(nullptr, &context) == InvalidArgument, "sceNpMatching2CreateContext", "a null parameter was taken");
     create.size = 0x30;
@@ -80,11 +86,13 @@ int main() {
     Require(sceNpMatching2SetDefaultRequestOptParam(1, requestOpt) == 0, "sceNpMatching2SetDefaultRequestOptParam", "setting the default option failed");
 
     Require(sceNpMatching2Terminate() == 0, "sceNpMatching2Terminate", "termination failed");
+    Require(sceNpMatching2Terminate() == NotInitialized, "sceNpMatching2Terminate", "terminating after termination did not return NOT_INITIALIZED");
     Require(sceNpMatching2DestroyContext(1) == NotInitialized, "sceNpMatching2DestroyContext", "a context was destroyed after termination");
     Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initializing again failed");
     Require(sceNpMatching2RegisterRoomEventCallback(5, nullptr, nullptr) == InvalidContextId, "sceNpMatching2Terminate", "a context created before termination is still found");
     Require(sceNpMatching2CreateContext(&create, &created) == 0 && created == 1, "sceNpMatching2Terminate", "termination did not restart the context ids at 1");
     Require(sceNpMatching2Terminate() == 0, "sceNpMatching2Terminate", "the second termination failed");
+    Require(sceNpMatching2Terminate() == NotInitialized, "sceNpMatching2Terminate", "the third termination did not return NOT_INITIALIZED");
 
     if (failures != 0) return 1;
     std::puts("NpMatching2 offline tests passed");

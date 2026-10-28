@@ -15,6 +15,10 @@
 #else
 #include <sys/mman.h>
 #endif
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -87,7 +91,13 @@ public:
         GuestArena::GuestArenaCommit_nid_postfix(raw, bytes, PAGE_READWRITE, bytes);
         base = static_cast<std::uint8_t*>(raw);
 #else
+#ifdef __APPLE__
+        mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(at);
+        raw = at == nullptr ? mmap(nullptr, bytes + Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0)
+                            : (mach_vm_allocate(mach_task_self(), &address, bytes + Block, VM_FLAGS_FIXED) == KERN_SUCCESS ? reinterpret_cast<void*>(address) : MAP_FAILED);
+#else
         raw = mmap(at, bytes + Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | (at != nullptr ? MAP_FIXED_NOREPLACE : 0), -1, 0);
+#endif
         Require(raw != MAP_FAILED && (at == nullptr || raw == at), "resident heap mirror: cannot map the guest heap");
         base = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(raw) + Block - 1) / Block * Block);
 #endif

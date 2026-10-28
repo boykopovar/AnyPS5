@@ -118,6 +118,10 @@ void SetHostImportDeferredSettles(bool enabled);
 std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);
 void SetHostImportMaxBytes(std::uint64_t bytes);
 std::uint64_t HostImportLiveBytes();
+// A flip ends a frame: an import used in the current or the previous frame is never evicted for another one.
+void NoteHostImportFrame();
+std::uint64_t HostImportFramesEnded();
+std::uint64_t HostImportEpoch();
 std::uint64_t HostImportBudgetRemaining(const Context& context);
 struct HostImportSettleCounts {
     std::uint64_t submitted = 0;

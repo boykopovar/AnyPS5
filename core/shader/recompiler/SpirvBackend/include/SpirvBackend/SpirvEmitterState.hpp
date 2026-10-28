@@ -94,7 +94,7 @@ struct SpirvEmitterState {
     SpirvModule module;
     const IrProgram& program;
     ShaderStageInputInfo inputInfo;
-    std::array<std::uint32_t, 10> tessVariables {};
+    std::array<std::uint32_t, 11> tessVariables {};
     std::uint32_t tessInnerVariable = 0;
 
     SpirvRequirements requirements;
@@ -111,6 +111,7 @@ struct SpirvEmitterState {
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     bool robustBufferAccess2 = false;
+    bool exactRobustLoads = false;
     bool float32FlushToZero = false;
     bool float32DenormPreserve = false;
     bool fusedExactArithmetic = false;
@@ -200,7 +201,7 @@ struct SpirvEmitterState {
     std::uint32_t loopGuardVisits = 0;
     std::uint32_t loopGuardPc = 0;
     std::uint32_t srgbTableVariable = 0;
-    std::uint32_t gcnBufferFormatVariable = 0;
+    std::uint32_t gcnBufferFormatFunction = 0;
     std::uint32_t gdsVariable = 0;
     std::uint32_t gdsLength = 0;
     std::uint32_t pushConstantVariable = 0;

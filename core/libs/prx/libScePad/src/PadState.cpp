@@ -16,6 +16,7 @@ namespace {
     struct Quat { float w = 1.0f, x = 0.0f, y = 0.0f, z = 0.0f; };
     constexpr std::uint64_t kLatchExpiry = 100000;
     constexpr std::uint64_t kLatchExpiryLimit = 500000;
+    constexpr std::uint32_t kInterceptedButton = 0x80000000;
     std::uint64_t injectedTimestamp = 0;
 
     struct QueuedInput {
@@ -158,14 +159,15 @@ bool Pad::IsInitialized() {
 namespace {
 PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t changeTime, std::uint64_t now, const Pad::InputCommandFile::Input& injected, int port) {
     PadData data{};
-    data.buttons = state.buttons | injected.buttons;
-    const auto& sticks = injected.hasSticks ? injected.sticks : state.sticks;
+    const bool intercepted = state.intercepted;
+    data.buttons = intercepted ? kInterceptedButton : state.buttons | injected.buttons;
+    const auto& sticks = !intercepted && injected.hasSticks ? injected.sticks : state.sticks;
     data.left_stick_x = sticks[0];
     data.left_stick_y = sticks[1];
     data.right_stick_x = sticks[2];
     data.right_stick_y = sticks[3];
     const auto trigger = [&](std::uint8_t analog, std::uint32_t bit) -> std::uint8_t {
-        return (injected.buttons & bit) != 0 || (analog == 0 && (state.buttons & bit) != 0) ? 255 : analog;
+        return (!intercepted && (injected.buttons & bit) != 0) || (analog == 0 && (state.buttons & bit) != 0) ? 255 : analog;
     };
     data.analog_buttons_l2 = trigger(state.analogButtonsL2, 0x100);
     data.analog_buttons_r2 = trigger(state.analogButtonsR2, 0x200);
@@ -209,11 +211,19 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
     data.timestamp = changeTime;
 
     std::uint8_t touchNum = 0;
+    const bool injectedContact = !intercepted && injected.hasTouch;
+    if (injectedContact && injected.touchActive) {
+        touchNum = 1;
+        data.touch_data_touch0_x = injected.touchX;
+        data.touch_data_touch0_y = injected.touchY;
+        data.touch_data_touch0_id = injected.touchId;
+    }
     for (int i = 0; i < 2; ++i) {
         const PadTouchPoint& tp = state.touch[i];
         if (!tp.active) { slot.prevTouchActive[i] = false; continue; }
         if (!slot.prevTouchActive[i]) slot.touchIds[i] = static_cast<std::uint8_t>(slot.nextTouchId++ & 0x7F);
         slot.prevTouchActive[i] = true;
+        if (injectedContact) continue;
         if (touchNum == 0) {
             data.touch_data_touch0_x = tp.x; data.touch_data_touch0_y = tp.y; data.touch_data_touch0_id = slot.touchIds[i];
         } else {
@@ -221,10 +231,11 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
         }
         ++touchNum;
     }
-    if (touchNum == 0 && (state.touchLeft || state.touchRight || injected.touchLeft || injected.touchRight)) {
+    const bool injectedTouch = !intercepted && (injected.touchLeft || injected.touchRight);
+    if (!injectedContact && touchNum == 0 && (state.touchLeft || state.touchRight || injectedTouch)) {
         data.buttons |= 0x100000;
         touchNum = 1;
-        data.touch_data_touch0_x = state.touchRight || injected.touchRight ? kTouchPadWidth * 3 / 4 : kTouchPadWidth / 4;
+        data.touch_data_touch0_x = state.touchRight || (!intercepted && injected.touchRight) ? kTouchPadWidth * 3 / 4 : kTouchPadWidth / 4;
         data.touch_data_touch0_y = kTouchPadHeight / 2;
         data.touch_data_touch0_id = 0;
     }
@@ -471,7 +482,11 @@ extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState
         slot.state.analogButtonsL2 == input.analogButtonsL2 && slot.state.analogButtonsR2 == input.analogButtonsR2 &&
         slot.state.touchLeft == input.touchLeft && slot.state.touchRight == input.touchRight &&
         slot.state.hasMotion == input.hasMotion && slot.state.accel == input.accel && slot.state.gyro == input.gyro &&
-        slot.state.touch == input.touch && slot.state.deviceKind == input.deviceKind) return;
+        slot.state.touch == input.touch && slot.state.deviceKind == input.deviceKind && slot.state.intercepted == input.intercepted) return;
+    if (input.intercepted) {
+        slot.pressedSinceRead = 0;
+        if (!slot.state.intercepted) slot.queue.clear();
+    }
     const std::uint32_t pressed = input.buttons & ~slot.state.buttons;
     slot.timestamp = sceKernelGetProcessTime();
     if (pressed != 0) {

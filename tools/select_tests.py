@@ -154,6 +154,14 @@ def paths(arguments):
             yield value
 
 
+def changed_paths(path):
+    data = Path(path).read_bytes()
+    if b"\0" in data:
+        return [name for name in data.decode("utf-8").split("\0") if name]
+    text = data.decode("utf-8-sig")
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
 def chunks(names):
     batch, size = [], 0
     for name in names:
@@ -305,10 +313,10 @@ def main(argv=None):
     s = sub.add_parser("select", help="write a ninja file and a ctest index list for a configured tree")
     s.add_argument("build")
     s.add_argument("graph")
-    s.add_argument("changed", help="file with one changed path per line")
+    s.add_argument("changed", help="file with newline-separated or Git -z NUL-separated changed paths")
     e = sub.add_parser("explain", help="explain saved-graph selections without a configured build; CTest may add fixtures")
     e.add_argument("graph", type=Path)
-    e.add_argument("changed", type=Path, help="file with one changed path per line")
+    e.add_argument("changed", type=Path, help="file with newline-separated or Git -z NUL-separated changed paths")
     c = sub.add_parser("ctest", help="run ctest on a tree, limited to the selected tests if select wrote any")
     c.add_argument("build")
     c.add_argument("arguments", nargs=argparse.REMAINDER, help="ctest arguments")
@@ -320,7 +328,7 @@ def main(argv=None):
     if args.command == "explain":
         try:
             graph = load_graph(args.graph)
-            changed = [line.strip() for line in args.changed.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+            changed = changed_paths(args.changed)
             reasons = {}
             picked, full = select(graph, changed, reasons)
         except (OSError, ValueError) as error:
@@ -343,7 +351,7 @@ def main(argv=None):
         return 0
     try:
         graph = load_graph(args.graph)
-        changed = [line.strip() for line in Path(args.changed).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+        changed = changed_paths(args.changed)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     picked, full = select(graph, changed)

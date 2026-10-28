@@ -252,6 +252,25 @@ void scanning() {
     require(progress.Events.back().Completed < progress.Events.back().Total, "Failed scan reported completion");
 }
 
+void branchAcrossSignedBoundary() {
+    std::vector<std::uint8_t> image(64 + 32, 0x90);
+    image[64] = 0xc3;
+    const std::array<std::uint8_t, 5> jump{0xe9, 0xeb, 0xff, 0xff, 0xff};
+    std::copy(jump.begin(), jump.end(), image.begin() + 64 + 16);
+    image.back() = 0xc3;
+    Domain::ProgramHeader header{};
+    header.Type = 1;
+    header.Flags = 1;
+    header.Offset = 64;
+    header.MappedAddress = 0x7ffffffffffffff0;
+    header.FileSize = image.size() - 64;
+    header.MemorySize = header.FileSize;
+    Io::WriteU64(image, 24, 0x8000000000000000);
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
+    require(instructions.contains(0x8000000000000000), "Lost the entry above the signed boundary");
+    require(instructions.contains(0x7ffffffffffffff0), "Lost the branch target below the signed boundary");
+}
+
 class FailingProgress final : public Domain::IProgress {
 public:
     std::string InputPath;
@@ -368,7 +387,7 @@ void relocationValidation() {
             converter.Convert(source, {});
             throw std::runtime_error("Unsupported relocation type was accepted");
         } catch (const Domain::RelinkerException& error) {
-            require(std::string(error.what()).find("Unsupported relocation type 0x99") != std::string::npos, "Wrong error for unsupported relocation");
+            require(std::string(error.what()) == "Unsupported relocation type 0x99", "Wrong error for unsupported relocation");
             require(error.FailureOffset == 0x2700, "Wrong failure offset for unsupported relocation");
         }
     }
@@ -407,6 +426,7 @@ int main() {
         runtimeLifecyclePolicy();
         fixedBase();
         scanning();
+        branchAcrossSignedBoundary();
         diagnosticContext();
         cancellation();
         baseRelocations();

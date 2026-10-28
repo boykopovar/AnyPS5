@@ -27,9 +27,15 @@ def prepare_notes(source, body, full):
         for second in paths[index + 1:]:
             if first.resolve() == second.resolve() or (first.exists() and second.exists() and first.samefile(second)):
                 raise ValueError("Release note input and outputs must be distinct files")
-    notes = json.loads(source.read_text(encoding="utf-8-sig"))["body"]
+    payload = json.loads(source.read_text(encoding="utf-8-sig"))
+    if not isinstance(payload, dict) or "body" not in payload:
+        raise ValueError("Generated release notes response must be a JSON object with a body field")
+    notes = payload["body"]
     if not isinstance(notes, str):
         raise ValueError("Generated release notes body must be a string")
+    body_text = release_body(notes)
+    if len(body_text) > BODY_LIMIT:
+        raise ValueError(f"Release notes body exceeds {BODY_LIMIT} characters after removing What's Changed")
     for destination in (body, full):
         if destination.is_dir():
             raise IsADirectoryError(str(destination))
@@ -38,7 +44,7 @@ def prepare_notes(source, body, full):
     body.parent.mkdir(parents=True, exist_ok=True)
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_bytes(notes.encode("utf-8"))
-    body.write_bytes(release_body(notes).encode("utf-8"))
+    body.write_bytes(body_text.encode("utf-8"))
 
 
 def main(argv=None):

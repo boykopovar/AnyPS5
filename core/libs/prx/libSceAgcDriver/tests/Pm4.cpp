@@ -83,6 +83,7 @@ void testCatalog() {
         if (!reason.empty()) expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, std::string(reason).c_str());
     }
     check(values.size() == 56, "reference opcode catalog is incomplete");
+    check(AgcDriver::Pm4::Name(makePacket(0x3a, {0})[0]) == "DRAW_INDEX_MULTI_INST", "opcode 0x3a is not DRAW_INDEX_MULTI_INST");
     expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0xff, {0}), 0); }, "not known");
     check(AgcDriver::Pm4::KnownName(makePacket(0xff, {0})[0]).empty() && AgcDriver::Pm4::Name(makePacket(0xff, {0})[0]) == "UNKNOWN_0xff", "an unknown opcode is named");
     const std::array<std::pair<std::uint32_t, const char*>, 11> custom{{
@@ -106,6 +107,19 @@ void testNopPad() {
     largest[0] = 0xfffe1000u;
     check(AgcDriver::Pm4::PacketWords(largest[0]) == largest.size(), "the largest counted NOP is not sized by its count");
     AgcDriver::Pm4::Validate(largest, 0);
+}
+
+void testWorkloadNopPayloadsIgnored() {
+    AgcDriver::QueueState state;
+    for (const auto& packet : {
+        makePacket(0x10, {1, 0x18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}),
+        makePacket(0x10, {1, 33, 0xffffffffu, 0xfffffffdu, 0, 0, 0, 0, 0, 0, 0}),
+        makePacket(0x10, {1, 0, 0, 0, 0, 0, 0, 0}),
+    }) execute(state, packet);
+    check(state.markers.empty() && state.indexBase == 0 && !state.indexBufferSize && state.indexType == 0 &&
+        state.instanceCount == 1 && state.predication.operation == 0 && state.predication.address == 0 &&
+        state.shader.begin() == state.shader.end() && !state.savedContext && state.constantRam.empty(),
+        "a workload NOP payload reached queue state");
 }
 
 void testRegisters() {
@@ -672,6 +686,19 @@ void testTraceRegisterWrites() {
     for (const auto& invalid : {makePacket(0x37, {0x06000000u, 0xc347u, 0u, 1u, 2u}), makePacket(0x37, {0x06010000u, 0xc348u, 0u, 1u}), makePacket(0x37, {0x06010000u, 0xc343u, 1u, 1u})}) {
         expectFailure([&] { execute(state, invalid); }, "register destination outside");
     }
+}
+
+void testTagMarkers() {
+    for (const auto flags : {0u, 1u, 4u}) {
+        const auto tag = makePacket(0x79, {0x342u, 0xc6000005u}, flags);
+        check(AgcDriver::Pm4::IsTagMarker(tag), "a tag write to 0x342 was not a tag marker");
+        AgcDriver::Pm4::Validate(tag, 0x20u);
+        AgcDriver::QueueState state;
+        execute(state, tag);
+        check(!state.userConfig.contains(0x342u), "a tag marker wrote register state");
+    }
+    check(!AgcDriver::Pm4::IsTagMarker(makePacket(0x79, {0x343u, 0xc6000005u}, 4)), "a write to another register was a tag marker");
+    expectFailure([] { AgcDriver::Pm4::Validate(makePacket(0x79, {0x343u, 0xc6000005u}), 0x20u); }, "graphics packet in compute queue");
 }
 
 void testMemoryCopyDecode() {
@@ -2081,6 +2108,7 @@ int main(int argc, char** argv) {
         }
         testCatalog();
         testNopPad();
+        testWorkloadNopPayloadsIgnored();
         testRewindPayloadBits();
         testWriteChangedKeepsUntouchedBytes();
         testWriteChangedStoresExactlyTheChangedRuns();
@@ -2094,6 +2122,7 @@ int main(int argc, char** argv) {
         testIndexAttributesIndirect();
         testMemory();
         testTraceRegisterWrites();
+        testTagMarkers();
         testCopies();
         testMemoryCopyDecode();
         testMemorySynchronization();

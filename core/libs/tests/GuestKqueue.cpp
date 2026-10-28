@@ -61,6 +61,7 @@ static constexpr std::uint32_t NoteTrigger = 0x01000000;
 static constexpr std::uint32_t NoteLowat = 0x0001;
 static constexpr std::uint32_t NoteFfcopy = 0xc0000000;
 static constexpr std::uint32_t NoteFfor = 0x80000000;
+static constexpr std::uint32_t NoteMseconds = 0x0002;
 static constexpr std::uint32_t NoteUseconds = 0x0004;
 static constexpr std::uint32_t NoteNseconds = 0x0008;
 static constexpr std::uint32_t NoteDelete = 0x0001;
@@ -215,13 +216,24 @@ static void TimerReadd() {
     Require(Apply(kq, Change(10, EvfiltTimer, EvAdd | EvOneshot, 0, 100000)) == 0);
     Require(Throws([kq] { Apply(kq, Change(10, EvfiltTimer, EvAdd, 0, 5)); }));
     Require(Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, 100000)) == 0);
-    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, NoteUseconds, 5)); }));
+    Require(Apply(kq, Change(11, EvfiltTimer, EvAdd, NoteMseconds, 100000)) == 0);
+    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, NoteMseconds | NoteUseconds, 5)); }));
+    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0x10, 5)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, 0)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, INTPTR_MAX)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd | EvClear, 0, 5)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvEnable, 0, 5)); }));
     Require(Apply(kq, Change(12, EvfiltTimer, EvAdd | EvDisable, 0, 100000)) == 0);
-    Require(Throws([kq] { Apply(kq, Change(12, EvfiltTimer, EvAdd, 0, 5)); }));
+    Require(Apply(kq, Change(12, EvfiltTimer, EvAdd, 0, 5)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    Require(Poll(kq, events, 4) == 0);
+
+    Require(Apply(kq, Change(13, EvfiltTimer, EvAdd, 0, 30)) == 0);
+    const auto unitArmed = std::chrono::steady_clock::now();
+    Require(Apply(kq, Change(13, EvfiltTimer, EvAdd, NoteMseconds, 30)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 13);
+    Require(std::chrono::steady_clock::now() - unitArmed >= std::chrono::milliseconds(20));
+    Require(Apply(kq, Change(13, EvfiltTimer, EvDelete)) == 0);
     Require(close_nid_postfix(kq) == 0);
 }
 
@@ -618,6 +630,47 @@ static void LowWaterMarks() {
     Require(Poll(kq, events, 4) == 1 && events[0].data == 1);
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
     Require(close_nid_postfix(kq) == 0);
+}
+
+static void SocketShutReadReportsEof() {
+    for (const bool queued : {true, false}) {
+        const int kq = kqueue_nid_postfix();
+        int pair[2];
+        Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+        KernelEvent events[4]{};
+        Require(Apply(kq, Change(static_cast<std::uintptr_t>(pair[0]), EvfiltRead, EvAdd)) == 0);
+        if (queued) {
+            Require(send_nid_postfix(pair[1], "abc", 3, 0) == 3);
+            Require(Wait(kq, events, 4) == 1 && events[0].data == 3 && (events[0].flags & EvEof) == 0);
+        } else {
+            Require(Poll(kq, events, 4) == 0);
+        }
+        Require(shutdown_nid_postfix(pair[0], 0) == 0);
+        Require(Poll(kq, events, 4) == 1 && events[0].data == 0 && (events[0].flags & EvEof) != 0);
+        Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0 && close_nid_postfix(kq) == 0);
+    }
+    for (const bool duplicated : {false, true}) {
+        const int kq = kqueue_nid_postfix();
+        int pair[2];
+        Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+        const int watched = duplicated ? dup_nid_postfix(pair[0]) : pair[0];
+        Require(watched >= 0);
+        KernelEvent events[4]{};
+        Require(Apply(kq, Change(static_cast<std::uintptr_t>(watched), EvfiltRead, EvAdd)) == 0);
+        const KernelTimespec limit{5, 0};
+        const auto start = std::chrono::steady_clock::now();
+        std::thread shutter([&pair] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            Require(shutdown_nid_postfix(pair[0], 0) == 0);
+        });
+        Require(kevent_nid_postfix(kq, nullptr, 0, events, 4, &limit) == 1);
+        const auto waited = std::chrono::steady_clock::now() - start;
+        shutter.join();
+        Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
+        Require(events[0].ident == static_cast<std::uintptr_t>(watched) && events[0].data == 0 && (events[0].flags & EvEof) != 0);
+        if (duplicated) Require(close_nid_postfix(watched) == 0);
+        Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0 && close_nid_postfix(kq) == 0);
+    }
 }
 
 #ifdef __linux__
@@ -1432,6 +1485,7 @@ int main() {
     UserEvents();
     WatchKqueue();
     SocketPair();
+    SocketShutReadReportsEof();
 #ifdef __linux__
     EdgeTriggeredSocketRead();
     EdgeTriggeredSocketWrite();

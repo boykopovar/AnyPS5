@@ -11,6 +11,10 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#ifdef __APPLE__
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include <sys/mman.h>
+#endif
 
 using Entry = void (APS5_VABI*)(std::uint64_t, std::uint64_t);
 
@@ -507,6 +511,34 @@ void RunContextlessOptions() {
     return result;
 }
 
+#ifdef __APPLE__
+std::uint64_t CollectedBytes(void* region, std::size_t bytes) {
+    std::uint64_t total = 0;
+    Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(region), bytes, [](void* count, std::uintptr_t begin, std::uintptr_t end) { *static_cast<std::uint64_t*>(count) += end - begin; }, &total), "collect the watched region");
+    return total;
+}
+
+void CheckContextLeavesWriteWatch() {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) return;
+    constexpr std::size_t bytes = 64 * 1024;
+    void* region = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    Require(region != MAP_FAILED, "map the watched region");
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(region, bytes);
+    CollectedBytes(region, bytes);
+    Require(CollectedBytes(region, bytes) == 0, "an armed region reports no writes");
+    FiberStorage storage{};
+    auto* fiber = reinterpret_cast<FiberObject*>(&storage);
+    Require(_sceFiberInitializeImpl_nid_postfix(fiber, "watched", SmallEntry, 0, region, bytes, nullptr, 0) == 0, "initialize a fiber on the watched region");
+    Require(CollectedBytes(region, bytes) == bytes, "a fiber context is reported as written");
+    Require(CollectedBytes(region, bytes) == bytes, "a fiber context is not armed again while the fiber exists");
+    Require(sceFiberFinalize(fiber) == 0, "finalize the fiber");
+    CollectedBytes(region, bytes);
+    Require(CollectedBytes(region, bytes) == 0, "the region is armed again after the fiber is finalized");
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(region, bytes);
+    munmap(region, bytes);
+}
+#endif
+
 }
 
 int main(int argc, char** argv) {
@@ -517,6 +549,9 @@ int main(int argc, char** argv) {
     }
     Require(argc == 1, "known test arguments");
     RunSmallContextFirst();
+#ifdef __APPLE__
+    CheckContextLeavesWriteWatch();
+#endif
     FiberObject* self = nullptr;
     Require(sceFiberGetSelf(&self) == FiberErrorPermission, "no fiber on the thread");
     Require(_sceFiberInitializeImpl_nid_postfix(g_first, "first", FirstEntry, 11, g_firstContext.data(), g_firstContext.size(), nullptr, 0) == 0, "initialize first");

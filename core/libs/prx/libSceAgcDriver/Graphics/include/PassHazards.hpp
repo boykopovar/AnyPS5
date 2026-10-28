@@ -5,6 +5,7 @@
 #define VK_NO_PROTOTYPES
 #endif
 #include <vulkan/vulkan.h>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -26,6 +27,23 @@ struct PassAccess {
 };
 
 enum class PassHazard : std::uint8_t { None, ReadAfterWrite, WriteAfterWrite, WriteAfterRead, Image, UnknownRead, UnknownWrite };
+
+enum class PassBreak : std::uint8_t { Continued, NewBatch, Command, Label, Samples, Forced, Segment, Key, ReadAfterWrite, WriteAfterWrite, WriteAfterRead, Image, UnknownRead, UnknownWrite, Count };
+constexpr std::size_t PassBreakCount = static_cast<std::size_t>(PassBreak::Count);
+constexpr std::array<const char*, PassBreakCount> PassBreakNames{"continued", "new batch", "command", "label", "samples", "forced", "segment", "key", "read after write", "write after write", "write after read", "image", "unknown read", "unknown write"};
+
+constexpr PassBreak PassBreakFor(PassHazard hazard) {
+    switch (hazard) {
+    case PassHazard::ReadAfterWrite: return PassBreak::ReadAfterWrite;
+    case PassHazard::WriteAfterWrite: return PassBreak::WriteAfterWrite;
+    case PassHazard::WriteAfterRead: return PassBreak::WriteAfterRead;
+    case PassHazard::Image: return PassBreak::Image;
+    case PassHazard::UnknownRead: return PassBreak::UnknownRead;
+    case PassHazard::UnknownWrite: return PassBreak::UnknownWrite;
+    case PassHazard::None: break;
+    }
+    return PassBreak::Key;
+}
 
 class GuestRangeSet {
 public:

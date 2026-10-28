@@ -145,7 +145,7 @@ int APS5_VABI pthread_mutexattr_getprotocol_nid_postfix(const PthreadMutexattr* 
 
 int APS5_VABI pthread_mutexattr_setprioceiling_nid_postfix(PthreadMutexattr* attr, int prioceiling) {
     if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
-    if ((*attr)->protocol != POSIX_PRIO_PROTECT) return POSIX_EINVAL;
+    if ((*attr)->protocol != POSIX_PRIO_PROTECT || prioceiling < 256 || prioceiling > 767) return POSIX_EINVAL;
     (*attr)->ceiling = prioceiling;
     return 0;
 }

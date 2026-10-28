@@ -7,6 +7,7 @@
 
 static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EFAULT = 14;
+static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -38,6 +39,11 @@ int main() {
         Require(pthread_rename_np_nid_postfix(self, name) == 0);
         RequireName(self, name);
     }
+    Require(scePthreadRename(self, "SceRenamed") == 0);
+    RequireName(self, "SceRenamed");
+    Require(scePthreadRename(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadRename(nullptr, "Unused") == SCE_KERNEL_ERROR_EINVAL);
+    RequireName(self, "SceRenamed");
     Pthread worker = nullptr;
     Require(scePthreadCreate(&worker, nullptr, Unnamed, nullptr, nullptr) == 0);
     Require(scePthreadJoin(worker, nullptr) == 0);

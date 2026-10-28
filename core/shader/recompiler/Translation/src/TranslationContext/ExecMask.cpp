@@ -15,12 +15,30 @@ IrU32 TranslationContext::hostExecWord(std::uint32_t half) {
     if (half != 0u && program.WaveSize() != 64u) {
         return word;
     }
-    auto active = ballotMask(IrU1(ir.ConstantBool(true)));
-    if (program.Resources().stage == IrShaderStage::Pixel) {
-        const IrU64 lanes(ir.ConstructU64(active[0].Value(), active[1].Value()));
-        active = extractU64(IrU64(ir.Emit(IrOpcode::WqmU64, IrType::U64, {&lanes.Value()})));
-    }
+    const auto active = ballotMask(IrU1(ir.ConstantBool(true)));
     return IrU32(ir.BitwiseAnd(word.Value(), active[half].Value()));
+}
+
+IrU1 TranslationContext::execLanes(const std::array<IrU32, 2>& mask) {
+    if (program.Resources().stage != IrShaderStage::Pixel || !wholeQuad) return threadBit(mask);
+    if (mask[0].Value().HasImmediate() && mask[1].Value().HasImmediate()) {
+        const std::uint64_t value = (static_cast<std::uint64_t>(mask[1].Value().ImmediateU32()) << 32u) | mask[0].Value().ImmediateU32();
+        std::uint64_t quads = value | (value >> 1u) | (value >> 2u) | (value >> 3u);
+        quads &= 0x1111111111111111ull;
+        if (quads * 0xfull == value) return threadBit(mask);
+    }
+    IrValue& builtin = ir.Emit(IrOpcode::GetBuiltin, IrOpcodeType(IrOpcode::GetBuiltin), {&ir.Constant(static_cast<std::uint32_t>(StageInputKind::HelperInvocation)), &ir.Constant(0u)});
+    const auto live = ballotMask(IrU1(ir.IEqual(builtin, ir.Constant(0u))));
+    const IrU64 liveLanes(ir.ConstructU64(live[0].Value(), live[1].Value()));
+    const auto liveQuads = extractU64(IrU64(ir.Emit(IrOpcode::WqmU64, IrType::U64, {&liveLanes.Value()})));
+    const IrU64 lanes(ir.ConstructU64(mask[0].Value(), mask[1].Value()));
+    const auto quads = extractU64(IrU64(ir.Emit(IrOpcode::WqmU64, IrType::U64, {&lanes.Value()})));
+    std::array<IrU32, 2> words = mask;
+    for (std::size_t half = 0; half < words.size(); ++half) {
+        IrValue& helpers = ir.BitwiseAnd(liveQuads[half].Value(), ir.BitwiseNot(live[half].Value()));
+        words[half] = IrU32(ir.BitwiseOr(mask[half].Value(), ir.BitwiseAnd(quads[half].Value(), helpers)));
+    }
+    return threadBit(words);
 }
 
 IrU1 TranslationContext::threadBit(const std::array<IrU32, 2>& mask) {
