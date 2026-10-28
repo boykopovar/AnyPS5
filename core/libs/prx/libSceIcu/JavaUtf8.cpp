@@ -37,6 +37,10 @@ std::int64_t Skipped(const std::uint8_t* source, std::int64_t lead, std::int64_t
     return 1;
 }
 
+int Encoded(char16_t unit) {
+    return unit != 0 && unit <= 0x7f ? 1 : unit <= 0x7ff ? 2 : 3;
+}
+
 }
 
 extern "C" {
@@ -95,6 +99,44 @@ char16_t* APS5_VABI u_strFromJavaModifiedUTF8WithSub_nid_postfix(char16_t* desti
     }
     const auto required = Icu::Checked(written + extra);
     if (substitutions) *substitutions = replaced;
+    if (destinationLength) *destinationLength = required;
+    Icu::Terminate(destination, capacity, required, status);
+    return destination;
+}
+
+
+char* APS5_VABI u_strToJavaModifiedUTF8_nid_postfix(char* destination, std::int32_t capacity, std::int32_t* destinationLength,
+                                                    const char16_t* source, std::int32_t sourceLength, std::int32_t* status) {
+    if (Icu::Failure(status)) return nullptr;
+    if ((!source && sourceLength != 0) || sourceLength < -1 || (!destination && capacity != 0) || capacity < 0) {
+        *status = Icu::IllegalArgument;
+        return nullptr;
+    }
+    std::int64_t length = sourceLength;
+    if (length < 0) for (length = 0; source[length] != 0; ++length) {}
+    std::int64_t written = 0;
+    std::int64_t extra = 0;
+    bool full = false;
+    for (std::int64_t index = 0; index < length; ++index) {
+        const auto unit = source[index];
+        const auto size = Encoded(unit);
+        if (!full && capacity - written >= size) {
+            if (size == 1) {
+                destination[written++] = static_cast<char>(unit);
+            } else if (size == 2) {
+                destination[written++] = static_cast<char>(0xc0 | (unit >> 6));
+                destination[written++] = static_cast<char>(0x80 | (unit & 0x3f));
+            } else {
+                destination[written++] = static_cast<char>(0xe0 | (unit >> 12));
+                destination[written++] = static_cast<char>(0x80 | ((unit >> 6) & 0x3f));
+                destination[written++] = static_cast<char>(0x80 | (unit & 0x3f));
+            }
+        } else {
+            full = true;
+            extra += size;
+        }
+    }
+    const auto required = Icu::Checked(written + extra);
     if (destinationLength) *destinationLength = required;
     Icu::Terminate(destination, capacity, required, status);
     return destination;
