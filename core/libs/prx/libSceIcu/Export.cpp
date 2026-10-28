@@ -362,11 +362,6 @@ int APS5_VABI u_strFoldCase_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceIcuUnknown_OAFz3KoG_gA_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("OAFz3KoG-gA", sceIcuUnknown_OAFz3KoG_gA_nid_no_patch);
-
 int APS5_VABI sceIcuUnknown_RIcNJWDYKhM_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
