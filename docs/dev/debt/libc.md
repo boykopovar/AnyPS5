@@ -6,6 +6,8 @@
 
 ### Unknown function info
 
+- [__std_calloc_crt](../../../core/libs/prx/libc/src/FileAndHeap.cpp) (libc, NID `1a7K+jO+ST0`) is unverified on PS5. Its two `size_t` arguments and forwarding to `calloc` follow [Microsoft STL](https://github.com/microsoft/STL/blob/b6f01e438b68ee497f9c08313e49d12bb2f0d8e0/stl/src/tzdb.cpp#L647-L649); the export name and NID are listed in [ps5rs](https://github.com/claimore22/ps5rs/blob/5f252a658ff470bcb2b6cd15205fd8ca64ae4477/data/stubs/by_library/libc.txt). Whether the console wrapper uses the application allocator and preserves the same allocation errors as `calloc` is not measured.
+
 - [frexpf](../../../core/libs/prx/libc/src/Math.cpp) (libc) - follows the bundled PPSA03766 implementation: exponent-bit decomposition, conditional single-precision subnormal scaling, zero exponent for zero/NaN/infinity, and unchanged signaling NaNs. PPSA07923 agrees on results/exponents but unconditionally scales finite inputs, additionally raising overflow/inexact on large values; that SDK variant is not reproduced. Masked-exception observations cover rounding, DAZ/FTZ and sticky flags; unmasked traps and other SDK versions are unverified.
 
 - [strtonum](../../../core/libs/prx/libc/src/StringExtensions.cpp) (libc) is unverified on the console. Its signature, decimal parsing, inclusive bounds, error strings, error precedence and errno preservation follow [FreeBSD 11.4 strtonum.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdlib/strtonum.c). Parsing uses the host `strtoll` with base 10. It is not exported by `libSceLibcInternal.sprx` on a PS5 (firmware 13.60), so a payload process cannot call it there
