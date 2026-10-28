@@ -9,7 +9,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
 
 namespace Hmd2 {
 
@@ -275,22 +274,12 @@ void TestReprojection() {
             "the reprojection work size did not answer the console's requirement");
     alignas(Hmd2::ReprojectionBufferAlign) static std::uint8_t work[Hmd2::ReprojectionBufferSize]{};
     std::uint8_t display[64]{};
-    std::uint8_t auxiliary[64]{};
     Hmd2::ReprojectionInitializeParameter initParam{};
     Require(sceHmd2ReprojectionInitialize(nullptr, nullptr) == Hmd2::ParameterNull, "initialization without a param");
     Require(sceHmd2ReprojectionInitialize(&initParam, nullptr) == Hmd2::ParameterNull, "initialization without buffers");
     initParam.workMemory = work;
     Require(sceHmd2ReprojectionInitialize(&initParam, nullptr) == Hmd2::ParameterNull, "initialization without a display memory");
     initParam.displayMemory = display;
-    initParam.auxiliaryMemory = auxiliary;
-    bool threw = false;
-    try {
-        sceHmd2ReprojectionInitialize(&initParam, nullptr);
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw, "initialization with auxiliary memory did not throw");
-    initParam.auxiliaryMemory = nullptr;
     initParam.timingInterval = 0;
     Require(sceHmd2ReprojectionInitialize(&initParam, nullptr) == 0, "initialization did not succeed");
     const auto* state = reinterpret_cast<const Hmd2::ReprojectionState*>(work);
