@@ -551,7 +551,24 @@ void CheckPlusAndContentRestriction() {
     Require(SetContentRestriction(bad) == InvalidArgument, "sceNpSetContentRestriction must reject restrictions without an array");
 }
 
+static void APS5_VABI PremiumEvent(int, int, void*) {}
+
+static void CheckAccountQueriesAndPremiumCallback() {
+    std::uint8_t age = 0x5a;
+    Require(sceNpGetAccountAge(1, 0x10000, nullptr) == InvalidArgument, "sceNpGetAccountAge must reject a null age");
+    Require(sceNpGetAccountAge(1, 0x10000, &age) == SignedOut, "sceNpGetAccountAge must report the user as signed out");
+    Require(age == 0x5a, "sceNpGetAccountAge must leave the age untouched");
+    unsigned char language[8];
+    std::memset(language, 0x5a, sizeof(language));
+    Require(sceNpGetAccountLanguage2(1, 0x10000, language) == SignedOut, "sceNpGetAccountLanguage2 must report the user as signed out");
+    for (const unsigned char byte : language) Require(byte == 0x5a, "sceNpGetAccountLanguage2 must leave the language untouched");
+    Require(sceNpRegisterPremiumEventCallback(nullptr, nullptr) == InvalidArgument, "sceNpRegisterPremiumEventCallback must reject a null callback");
+    Require(sceNpRegisterPremiumEventCallback(reinterpret_cast<void*>(&PremiumEvent), nullptr) == 0, "registering a premium event callback");
+    Require(sceNpUnregisterPremiumEventCallback() == 0, "unregistering the premium event callback");
+}
+
 int main() {
+    CheckAccountQueriesAndPremiumCallback();
     CheckOnlineIdQueries();
     CheckUserIdQueries();
     CheckStateCallbacksA();

@@ -1138,7 +1138,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->library = SDL_LoadObject("libvulkan.so.1");
 #endif
     if (state->library == nullptr) {
-        throw std::runtime_error(std::string("Vulkan loader: ") + SDL_GetError());
+        throw VulkanUnavailable(std::string("Vulkan loader: ") + SDL_GetError());
     }
     APS5_LOG_OUT("Vulkan loader loaded library=%p", state->library);
     state->instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(state->library, "vkGetInstanceProcAddr"));
@@ -1177,7 +1177,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         create.enabledExtensionCount = static_cast<std::uint32_t>(instanceExtensions.size());
         create.ppEnabledExtensionNames = instanceExtensions.data();
     }
-    check(state->InstanceFunction<PFN_vkCreateInstance>("vkCreateInstance")(&create, nullptr, &state->instance), "vkCreateInstance");
+    const VkResult instanceResult = state->InstanceFunction<PFN_vkCreateInstance>("vkCreateInstance")(&create, nullptr, &state->instance);
+    if (instanceResult == VK_ERROR_INCOMPATIBLE_DRIVER) throw VulkanUnavailable("vkCreateInstance: Vulkan result " + std::to_string(instanceResult));
+    check(instanceResult, "vkCreateInstance");
     APS5_LOG_OUT("Vulkan instance created instance=%p", reinterpret_cast<void*>(state->instance));
     if (window != nullptr) {
         state->surface = window->createSurface(window->context, state->instance);
@@ -1267,7 +1269,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         throw std::runtime_error(std::string("Vulkan: no usable device whose name contains ANYPS5_GPU=\"") + requestedName + "\"; devices: " + candidateNames);
     }
     if (selected == VK_NULL_HANDLE) {
-        throw std::runtime_error(window ? "Vulkan: no Vulkan 1.1 device with graphics, compute and swapchain presentation" : "Vulkan: no Vulkan 1.1 graphics and compute queue");
+        throw VulkanUnavailable(window ? "Vulkan: no Vulkan 1.1 device with graphics, compute and swapchain presentation" : "Vulkan: no Vulkan 1.1 graphics and compute queue");
     }
     APS5_LOG_OUT("Physical device selected physical=%p queueFamily=%u", reinterpret_cast<void*>(selected), family);
     VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};

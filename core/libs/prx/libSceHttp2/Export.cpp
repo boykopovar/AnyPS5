@@ -200,7 +200,8 @@ int APS5_VABI sceHttp2GetStatusCode(int req_id, int* status_code) {
 }
 
 int APS5_VABI sceHttp2Init(int libnet_mem_id, int libssl_ctx_id, size_t pool_size, int max_concurrent_request) {
-    if (max_concurrent_request <= 0) NotImplemented_nid_no_patch(__func__);
+    if (max_concurrent_request == 0) return ERROR_INVALID_VALUE;
+    if (max_concurrent_request < 0) NotImplemented_nid_no_patch(__func__);
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_handlesMutex);
     Http2Handle handle{Http2Kind::Context, 0, pool_size};

@@ -405,6 +405,8 @@ RelinkResult RelinkerPipeline::Relink() {
                 continue;
 
             const FileByteOffset symOff = symbolEntryPos(symIdx);
+            if (!isTlsRelocation(relType) && (raw[symOff + 4] & 15) == STT_TLS)
+                throw RelinkerException("Non-TLS relocation names an STT_TLS symbol", pos);
 
             std::uint32_t nameOff = 0;
             std::memcpy(&nameOff, raw.data() + symOff, 4);

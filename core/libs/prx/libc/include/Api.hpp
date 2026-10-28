@@ -174,6 +174,10 @@ std::uint32_t APS5_VABI _Fetch_or_seq_cst_4_nid_postfix(volatile std::uint32_t* 
 std::uint8_t APS5_VABI _Fetch_xor_seq_cst_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value);
 std::uint16_t APS5_VABI _Fetch_xor_seq_cst_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value);
 std::uint32_t APS5_VABI _Fetch_xor_seq_cst_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value);
+std::uint64_t APS5_VABI _Fetch_add_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value);
+std::uint64_t APS5_VABI _Fetch_and_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value);
+std::uint64_t APS5_VABI _Fetch_or_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value);
+std::uint64_t APS5_VABI _Fetch_xor_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value);
 std::uint8_t APS5_VABI _Atomic_fetch_add_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int);
 std::uint16_t APS5_VABI _Atomic_fetch_add_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int);
 std::uint64_t APS5_VABI _Atomic_fetch_add_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value, int order);
@@ -1144,6 +1148,7 @@ const void* APS5_VABI __std_min_element_8_nid_postfix(const void* first, const v
 std::int32_t APS5_VABI __std_min_4i_nid_postfix(const void* first, const void* last);
 const void* APS5_VABI __std_max_element_1_nid_postfix(const void* first, const void* last, bool isSigned);
 const void* APS5_VABI __std_max_element_2_nid_postfix(const void* first, const void* last, bool isSigned);
+std::int32_t APS5_VABI __std_max_4i_nid_postfix(const void* first, const void* last);
 const void* APS5_VABI __std_max_element_4_nid_postfix(const void* first, const void* last, bool isSigned);
 const void* APS5_VABI __std_max_element_8_nid_postfix(const void* first, const void* last, bool isSigned);
 std::uint64_t APS5_VABI __std_max_8u_nid_postfix(const void* first, const void* last);

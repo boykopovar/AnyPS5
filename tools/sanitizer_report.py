@@ -123,13 +123,13 @@ def main(argv=None):
     try:
         known = load_known(args.known, args.sanitizer) if args.known else {}
         text, failing = summarize(args.title, results(args.junit), known, reports(args.junit))
+        if args.summary:
+            with args.summary.open("a", encoding="utf-8") as summary:
+                summary.write(text)
     except (OSError, ET.ParseError, ValueError) as error:
         print(f"sanitizer_report: {error}", file=sys.stderr)
         return 2
     sys.stdout.write(text)
-    if args.summary:
-        with args.summary.open("a", encoding="utf-8") as summary:
-            summary.write(text)
     return 1 if failing else 0
 
 
