@@ -11,6 +11,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
+if(ANYPS5_GUEST_LIFTED)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "ANYPS5_GUEST_LIFTED builds the libraries for Linux with Clang, not for ${CMAKE_SYSTEM_NAME} with ${CMAKE_CXX_COMPILER_ID}")
+    endif()
+    add_compile_definitions(ANYPS5_GUEST_LIFTED)
+endif()
+
 if(APPLE)
     set(ANYPS5_PRX_RPATH "@loader_path")
 else()
