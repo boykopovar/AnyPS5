@@ -1,9 +1,9 @@
 #pragma once
+#include "prx/libSceFreeType/include/MemoryAllocation.hpp"
 
 #include "prx/libSceFreeType/include/GuestList.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "SceTypes.hpp"
-#include "prx/libSceFreeType/include/MemoryAllocation.hpp"
 
 extern "C" {
 
