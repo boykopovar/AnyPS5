@@ -167,7 +167,7 @@ class DatabaseCacheTests(unittest.TestCase):
                         if json_output:
                             self.assertEqual(json.loads(result.stdout), {"db_entries": 0, "rows": []})
                         else:
-                            self.assertIn("0 unknowns, 0 suggestions (0 already implemented)", result.stdout)
+                            self.assertIn("0 unknowns, 0 suggestions (0 names already in use)", result.stdout)
 
     def test_environment_variable_selects_the_database_and_help_names_it(self):
         script = str(Path(nid_names.__file__))
@@ -398,6 +398,27 @@ class NidArgumentTests(unittest.TestCase):
 
 
 class SourceCollectionTests(unittest.TestCase):
+    def test_trailing_return_definitions_are_collected_without_declarations_or_literals(self):
+        text = ('auto APS5_VABI sceTrailing() -> int { return 0; }\n'
+                'auto APS5_VABI sceNoThrow() noexcept(true) -> unsigned long { return 0; }\n'
+                'auto APS5_VABI pointer_nid_postfix() -> const char* { return nullptr; }\n'
+                'auto APS5_VABI sceDeclaration() -> int;\n'
+                'const char* example = "auto APS5_VABI sceQuoted() -> int { return 0; }";\n'
+                '/* auto APS5_VABI sceComment() -> int { return 0; } */\n')
+        self.write_source(text)
+        expected = {"sceTrailing", "sceNoThrow", "pointer", "pointer_nid_postfix"}
+        self.assertEqual(nid_names.collect_real_names(), expected)
+        matches = list(nid_names.source_definitions(text))
+        self.assertEqual([match.group(1) for match in matches], ["sceTrailing", "sceNoThrow", "pointer_nid_postfix"])
+        self.assertTrue(all(text[match.end() - 1] == "{" for match in matches))
+
+    def test_trailing_return_export_names_reach_the_overlap_consumer(self):
+        import pr_overlap
+
+        text = "auto APS5_VABI sceTrailing() noexcept(false) -> int { return 0; }\n"
+        exports = pr_overlap.source_exports(text, "core/libs/prx/libSceExample")
+        self.assertEqual(exports, {("core/libs/prx/libSceExample", nid_names.compute_nid("sceTrailing")): {"sceTrailing"}})
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -434,6 +455,34 @@ class SourceCollectionTests(unittest.TestCase):
         result = self.cli("--db", database)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
         self.assertIn("core/libs/prx/libSceExample/\u8cc7\u6599.cpp", result.stdout.decode("utf-8"))
+
+    def test_named_stub_and_implementation_are_reported_as_names_in_use(self):
+        stub_name, implementation_name = "scePadPending", "scePadImplemented"
+        stub_nid = nid_names.compute_nid(stub_name)
+        implementation_nid = nid_names.compute_nid(implementation_name)
+        self.write_source(
+            f'APS5_EXPORT("{stub_nid}", exampleUnknown00);\n'
+            f'APS5_EXPORT("{implementation_nid}", exampleUnknown01);\n'
+            'int APS5_VABI scePadPending() { NotImplemented_nid_no_patch(__func__); return 0; }\n'
+            'int APS5_VABI scePadImplemented() { return 1; }\n')
+        database = self.root / "aerolib.csv"
+        database.write_text(f"{stub_nid} {stub_name}\n{implementation_nid} {implementation_name}\n", encoding="utf-8")
+
+        text_result = self.cli("--db", database)
+        self.assertEqual(text_result.returncode, 0, text_result.stderr.decode("utf-8", errors="replace"))
+        text = text_result.stdout.decode("utf-8")
+        self.assertIn(f"{stub_nid}  ", text)
+        self.assertIn(f"{implementation_nid}  ", text)
+        self.assertIn("name-in-use  scePadPending", text)
+        self.assertIn("name-in-use  scePadImplemented", text)
+        self.assertEqual(text.count("name-in-use"), 2)
+        self.assertIn("2 names already in use", text)
+
+        json_result = self.cli("--db", database, "--json")
+        self.assertEqual(json_result.returncode, 0, json_result.stderr.decode("utf-8", errors="replace"))
+        rows = json.loads(json_result.stdout.decode("utf-8"))["rows"]
+        self.assertEqual({row["nid"]: row["status"] for row in rows},
+                         {stub_nid: "name-in-use", implementation_nid: "name-in-use"})
 
     def test_error_preserves_unicode_paths_with_legacy_stderr(self):
         database = self.root / "\u8cc7\u6599"

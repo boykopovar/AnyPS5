@@ -192,6 +192,19 @@ class UnwrapTest(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertFalse(output.exists())
 
+    def test_many_load_segments_over_one_range_are_refused_instead_of_exhausting_memory(self):
+        segments = [(PT_LOAD, 5, 0x100000, 0x400000 + index * 0x400000, 0x200000, 1) for index in range(200)]
+        container = build_container(segments, [], {0x100000: bytes(0x200000)})
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("bytes of output", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(output.exists())
+
     def test_write_failure_preserves_output_and_removes_temporary_files(self):
         directory = Path(self.directory)
         source = directory / "input.self"
@@ -893,6 +906,63 @@ class UnwrapTest(unittest.TestCase):
                 self.assertIn("inner ELF is not 64-bit little-endian", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertFalse(output.exists())
+
+    def test_unsupported_inner_elf_versions_are_refused(self):
+        for identification in (0, 1, 2, 255):
+            for version in (0, 1, 2, 0x1000001, 0xFFFFFFFF):
+                if identification == version == 1:
+                    continue
+                with self.subTest(identification=identification, version=version):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    container[ELF_HEADER_OFFSET + 6] = identification
+                    struct.pack_into("<I", container, ELF_HEADER_OFFSET + 0x14, version)
+                    with self.assertRaises(unwrap_self.Refused) as refused:
+                        unwrap_self.parse_elf(container)
+                    self.assertEqual(str(refused.exception),
+                                     f"unsupported inner ELF version (identification {identification}, object {version})")
+
+    def test_unsupported_inner_elf_versions_preserve_output(self):
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        for identification, version in ((0, 1), (2, 1), (1, 0), (1, 2), (1, 0x1000001), (255, 0xFFFFFFFF)):
+            for previous in (None, b"previous output"):
+                with self.subTest(identification=identification, version=version, previous=previous):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    container[ELF_HEADER_OFFSET + 6] = identification
+                    struct.pack_into("<I", container, ELF_HEADER_OFFSET + 0x14, version)
+                    source.write_bytes(container)
+                    if previous is None:
+                        output.unlink(missing_ok=True)
+                    else:
+                        output.write_bytes(previous)
+                    before = set(directory.iterdir())
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(str(source), result.stderr)
+                    self.assertIn(f"unsupported inner ELF version (identification {identification}, object {version})", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(source.read_bytes(), container)
+                    self.assertEqual(set(directory.iterdir()), before)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
+
+    def test_current_elf_versions_preserve_the_separate_abi_version(self):
+        for magic in (SELF_MAGIC, unwrap_self.SELF_MAGIC_KERNEL):
+            for abi_version in (0, 1, 255):
+                with self.subTest(magic=magic, abi_version=abi_version):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads(), magic=magic))
+                    container[ELF_HEADER_OFFSET + 8] = abi_version
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    data, headers = read_program_headers(output)
+                    self.assertEqual(data[6], 1)
+                    self.assertEqual(struct.unpack_from("<I", data, 0x14)[0], 1)
+                    self.assertEqual(data[8], abi_version)
+                    self.assertEqual(len(headers), len(default_segments()))
+                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
 
     def test_a_container_whose_load_segments_look_encrypted_is_refused(self):
         random_like = bytes(range(256)) * 4

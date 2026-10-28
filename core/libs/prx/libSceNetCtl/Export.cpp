@@ -822,6 +822,15 @@ static NetCtlNatInfo DiscoverNatInfo(in_addr localAddress) {
     return result;
 }
 
+extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::uint32_t* netmask, std::uint32_t* mtu) {
+    HostIpv4Interface host;
+    if (!FindHostIpv4Interface(host)) return false;
+    *address = host.address.s_addr;
+    *netmask = host.netmask.s_addr;
+    *mtu = host.mtu;
+    return true;
+}
+
 static void WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
     std::memcpy(info->opaque, &value, sizeof(value));
 }

@@ -369,8 +369,16 @@ void TestAt9() {
 }
 
 int main() {
+    Require(sceAudiodecInitLibrary(0) == errorInvalidType);
     Require(sceAudiodecInitLibrary(4) == errorInvalidType);
     Require(sceAudiodecTermLibrary(0) == errorInvalidType);
+    Require(sceAudiodecTermLibrary(4) == errorInvalidType);
+    Require(sceAudiodecDeleteDecoder(0) == errorInvalidHandle);
+    Require(sceAudiodecDeleteDecoder(-1) == errorInvalidHandle);
+    Require(sceAudiodecClearContext(0) == errorInvalidHandle);
+    Require(sceAudiodecClearContext(-1) == errorInvalidHandle);
+    Require(sceAudiodecDecode(0, nullptr) == errorInvalidHandle);
+    Require(sceAudiodecDecode(-1, nullptr) == errorInvalidHandle);
 
     AudiodecParamMp3 mp3{sizeof(mp3), 1};
     AudiodecMp3Info mp3Info{};
@@ -379,6 +387,7 @@ int main() {
     Require(sceAudiodecCreateDecoder(&ctrl, 2) == errorArg);
     for (std::uint32_t type = 1; type <= 3; ++type) Require(sceAudiodecInitLibrary(type) == 0);
     Require(sceAudiodecCreateDecoder(nullptr, 2) == errorInvalidCtrlPointer);
+    Require(sceAudiodecCreateDecoder(&ctrl, 0) == errorInvalidType);
     Require(sceAudiodecCreateDecoder(&ctrl, 5) == errorInvalidType);
     mp3.ui_size = 12;
     Require(sceAudiodecCreateDecoder(&ctrl, 2) == errorInvalidParamSize);

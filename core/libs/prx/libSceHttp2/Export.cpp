@@ -337,11 +337,12 @@ int APS5_VABI sceHttp2AbortRequest(int req_id) {
 int APS5_VABI sceHttp2GetMemoryPoolStats(int lib_http2_ctx_id, Http2MemoryPoolStats* stats) {
     if (stats == nullptr) return ERROR_NULL_POINTER;
     std::lock_guard lock(g_handlesMutex);
-    if (!FindHandle(lib_http2_ctx_id, Http2Kind::Context)) {
+    const auto* context = FindHandle(lib_http2_ctx_id, Http2Kind::Context);
+    if (!context) {
         std::memset(stats, 0, sizeof(*stats));
         return ERROR_INVALID_ID;
     }
-    NotImplemented_nid_no_patch(__func__);
+    *stats = {context->poolSize, 0, 0, 0};
     return 0;
 }
 

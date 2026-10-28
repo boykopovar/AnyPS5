@@ -191,6 +191,9 @@ def load_graph(path):
     for name, paths in graph["closures"].items():
         if not isinstance(name, str) or not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
             raise ValueError(f"{path}: invalid test graph closure {name!r}")
+    for name, test in graph["tests"].items():
+        if test["target"] is not None and test["target"] not in graph["closures"]:
+            raise ValueError(f"{path}: invalid test graph entry {name!r}: missing closure for {test['target']!r}")
     return graph
 
 

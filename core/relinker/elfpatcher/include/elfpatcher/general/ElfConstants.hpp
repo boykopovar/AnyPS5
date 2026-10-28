@@ -152,6 +152,7 @@ inline constexpr std::uint32_t R_X86_64_IRELATIVE = 37;
 inline constexpr std::uint8_t STB_GLOBAL = 1;
 inline constexpr std::uint8_t STB_WEAK = 2;
 inline constexpr std::uint8_t STT_NOTYPE = 0;
+inline constexpr std::uint8_t STT_OBJECT = 1;
 inline constexpr std::uint8_t STT_FUNC = 2;
 inline constexpr std::uint8_t STT_TLS = 6;
 inline constexpr std::uint8_t STV_DEFAULT = 0;

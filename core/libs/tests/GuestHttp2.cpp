@@ -50,8 +50,8 @@ int main() {
         Require(Throws([&] { sceHttp2SslDisableOption(id, 0x20); }));
     }
     Http2MemoryPoolStats stats{1, 2, 3, 4};
-    Require(Throws([&] { sceHttp2GetMemoryPoolStats(context, &stats); }));
-    Require(stats.pool_size == 1 && stats.current_inuse_size == 3);
+    Require(sceHttp2GetMemoryPoolStats(context, &stats) == 0);
+    Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "http2-unsupported-async") == 0);
     Require(sceKernelAddUserEventEdge(eq, request) == 0);

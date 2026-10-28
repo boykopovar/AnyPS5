@@ -46,6 +46,8 @@ RECORD_HAS_SEGMENT = 0x800
 RECORD_SEGMENT_SHIFT = 20
 FIRST_REGION = 0x400
 MAX_ALIGNMENT_PADDING = 64 * 1024 * 1024
+MAX_OUTPUT_FACTOR = 4
+MIN_OUTPUT_LIMIT = 256 * 1024 * 1024
 PT_LOAD = 1
 PT_NOTE = 4
 ENTROPY_LIMIT = 7.5
@@ -106,6 +108,9 @@ def parse_elf(data):
     header = bytearray(data[inner:inner + 0x40])
     if header[4] != 2 or header[5] != 1:
         raise Refused("inner ELF is not 64-bit little-endian")
+    version = struct.unpack_from("<I", header, 0x14)[0]
+    if header[6] != 1 or version != 1:
+        raise Refused("unsupported inner ELF version (identification %d, object %d)" % (header[6], version))
     program_offset = struct.unpack_from("<Q", header, 0x20)[0]
     machine = struct.unpack_from("<H", header, 0x12)[0]
     if machine != 62:
@@ -327,6 +332,10 @@ def unwrap(path, output, verbose=False):
     if padding > MAX_ALIGNMENT_PADDING:
         raise Refused("segment alignment requires more than %d bytes of output padding" % MAX_ALIGNMENT_PADDING)
     cursor = empty_end
+    output_limit = max(MAX_OUTPUT_FACTOR * len(data), MIN_OUTPUT_LIMIT)
+    if cursor > output_limit:
+        raise Refused("the load segments need %d bytes of output, more than the %d allowed for a %d byte container"
+                      % (cursor, output_limit, len(data)))
 
     result = bytearray(cursor)
     for region in regions:

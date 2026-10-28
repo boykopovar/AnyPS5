@@ -1061,6 +1061,11 @@ int main() {
     std::filesystem::create_symlink("missing.txt", dangling);
     const auto statLoop = root / "stat-loop";
     std::filesystem::create_symlink("stat-loop", statLoop);
+    for (const auto* linkPath : {&dangling, &statLoop}) {
+        Require(sceKernelRmdir(linkPath->string().c_str()) == static_cast<int>(0x80020014u));
+        Require(rmdir_nid_postfix(linkPath->string().c_str()) == -1 && *__error_nid_postfix() == 20);
+        Require(lstat_nid_postfix(linkPath->string().c_str(), &linkStatus) == 0 && (linkStatus.st_mode & 0170000) == 0120000);
+    }
     errno = 0;
     Require(!File::TryFillFileStat(statLoop, &status) && errno == ELOOP);
     Require(sceKernelStat(statLoop.generic_string().c_str(), &status) == SCE_KERNEL_ERROR_ELOOP);
@@ -1123,6 +1128,19 @@ int main() {
         Require(sceKernelRmdir(belowStatLoop.c_str()) == static_cast<int>(0x8002003eu));
         Require(rmdir_nid_postfix(belowStatLoop.c_str()) == -1 && *__error_nid_postfix() == 62);
         Require(sceKernelRmdir(statLoop.string().c_str()) == static_cast<int>(0x80020014u));
+        Require(rmdir_nid_postfix(statLoop.string().c_str()) == -1 && *__error_nid_postfix() == 20);
+        const auto danglingDirectoryLink = root / "dangling-directory-link";
+        Require(CreateSymbolicLinkW(danglingDirectoryLink.c_str(), L"missing-directory",
+            SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0);
+        for (const auto* linkPath : {&danglingLink, &danglingDirectoryLink, &directoryLink}) {
+            Require(sceKernelRmdir(linkPath->string().c_str()) == static_cast<int>(0x80020014u));
+            Require(rmdir_nid_postfix(linkPath->string().c_str()) == -1 && *__error_nid_postfix() == 20);
+            const DWORD linkAttributes = GetFileAttributesW(linkPath->c_str());
+            Require(linkAttributes != INVALID_FILE_ATTRIBUTES && (linkAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
+        }
+        const DWORD targetAttributes = GetFileAttributesW(targetDirectory.c_str());
+        Require(targetAttributes != INVALID_FILE_ATTRIBUTES && (targetAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0);
+        Require(RemoveDirectoryW(danglingDirectoryLink.c_str()) != 0);
         Require(sceKernelTruncate_nid_postfix(statLoop.string().c_str(), 0) == static_cast<int>(0x8002003eu));
         Require(truncate_nid_postfix(statLoop.string().c_str(), 0) == -1 && *__error_nid_postfix() == 62);
         FileStat followed{};

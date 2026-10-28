@@ -18,9 +18,9 @@ VERIFIED = "Verified 1 patches: 1 ok, 0 not-checked, 0 mismatch\n"
 
 class PatchAdvisorTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = tempfile.TemporaryDirectory(prefix="patch advisor-")
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         self.catalog = self.root / "catalog"
         self.catalog.mkdir()
         self.input = self.root / "eboot.bin"
@@ -317,6 +317,87 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertNotIn("Recommended:", output.getvalue())
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_optional_catalog_metadata_is_displayed_after_verification(self, run):
+        self.entry.update({"id": "missing_module_fix", "name": "Missing module fix", "category": "compatibility",
+                           "description": "Removes an unused dependency", "notes": "Review before converting",
+                           "contributors": ["Ada", "Ben"], "source": "https://example.org/patches/test00001",
+                           "revision": 2, "tested": [{"stage": "verification", "result": "passed",
+                                                     "evidence": "One synthetic patch verified", "environment": "Linux",
+                                                     "date": "2026-10-26"},
+                                                    {"stage": "launch", "result": "partial",
+                                                     "evidence": "Reached the title screen"}]})
+        self.write_index()
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for options, heading in (((), "Recommended:"), (("--list-verified",), "Verified catalog entries: 1")):
+            with self.subTest(options=options):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(self.advise(*options), 0)
+                self.assertIn(heading, output.getvalue())
+                for detail in ("ID: missing_module_fix", "Name: Missing module fix", "Category: compatibility",
+                               "Description: Removes an unused dependency", "Notes: Review before converting",
+                               "Contributor: Ada", "Contributor: Ben", "Source: https://example.org/patches/test00001",
+                               "Revision: 2", "Tested: verification passed on Linux (2026-10-26): One synthetic patch verified",
+                               "Tested: launch partial: Reached the title screen"):
+                    self.assertIn(detail, output.getvalue())
+        self.assertEqual(run.call_count, 2)
+        self.module.write_bytes(b"different module")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(self.advise("--list-verified"), 1)
+        self.assertNotIn("Name: Missing module fix", output.getvalue())
+        self.assertEqual(run.call_count, 2)
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_invalid_optional_metadata_does_not_hide_valid_entry(self, run):
+        invalid = (("id", "Bad ID", "id must match"), ("name", "line\nbreak", "name must be"),
+                   ("category", ["fps"], "invalid category"), ("description", 7, "description must be"),
+                   ("tested", [{"stage": "gameplay", "result": "passed"}], "invalid tested record fields"),
+                   ("tested", [{"stage": "gameplay", "result": "passed", "evidence": "ran", "date": "2026-02-30"}], "tested date must be a valid calendar date"),
+                   ("notes", "", "notes must be"), ("contributors", ["Ada", "ada"], "duplicate contributor"),
+                   ("source", "file:///tmp/patch", "source must be an HTTPS URL"),
+                   ("revision", True, "revision must be a positive integer"),
+                   ("unexpected", "value", "invalid fields"))
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for field, value, error in invalid:
+            with self.subTest(field=field, value=value):
+                bad = dict(self.entry, **{field: value})
+                self.write_index([bad, self.entry])
+                run.reset_mock()
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(self.advise("--list-verified"), 0)
+                self.assertIn(f"Catalog entry 1 ('patch.toml'): rejected: {error}", output.getvalue())
+                self.assertIn("Verified catalog entries: 1", output.getvalue())
+                self.assertIn(f"Catalog entry 2: {self.catalog / 'patch.toml'}", output.getvalue())
+                run.assert_called_once()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_duplicate_verified_ids_are_rejected_without_blocking_other_ids(self, run):
+        first = dict(self.entry, id="shared")
+        second = dict(self.entry, id="shared")
+        third = dict(self.entry, id="other")
+        self.write_index([first, second, third])
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(self.advise("--list-verified"), 0)
+        self.assertIn("Catalog entry 1 ('patch.toml'): rejected: duplicate verified id 'shared'", output.getvalue())
+        self.assertIn("Catalog entry 2 ('patch.toml'): rejected: duplicate verified id 'shared'", output.getvalue())
+        self.assertIn("Verified catalog entries: 1", output.getvalue())
+        self.assertIn(f"Catalog entry 3: {self.catalog / 'patch.toml'}", output.getvalue())
+        self.assertNotIn(f"Catalog entry 1: {self.catalog / 'patch.toml'}", output.getvalue())
+        self.assertEqual(run.call_count, 3)
+        other_version = dict(second, contentVersion="02.000.000")
+        self.write_index([first, other_version])
+        run.reset_mock()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(self.advise(), 0)
+        self.assertIn("ID: shared", output.getvalue())
+        run.assert_called_once()
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_list_verified_skips_individual_errors(self, run):
         bad = dict(self.entry, patch="missing.toml")
         wrong_hash = dict(self.entry, targets={"Media/Modules/module.prx": "0" * 64})
@@ -387,7 +468,7 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertIn("--patches", output.getvalue())
         self.assertIn("--module-dir Media/Modules", output.getvalue())
         self.assertIn("--executable picker/picker.bin", output.getvalue())
-        self.assertIn(f"--sce-module-path {self.root}", output.getvalue())
+        self.assertIn(suggest_patches.command_line(["--sce-module-path", str(self.root)]), output.getvalue())
 
     @patch.object(suggest_patches.subprocess, "run")
     def test_no_entries_for_title_is_distinct(self, run):

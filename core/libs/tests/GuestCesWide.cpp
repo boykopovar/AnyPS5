@@ -67,6 +67,10 @@ int main() {
     std::memcpy(&yLe, "\x78\x01\x00\x00", 4);
     Require(sceCesUtf32leToSbc(&yLe, cp1252, &sbc) == 0 && sbc == 0x9F);
     Require(sceCesUtf32leToSbc(nullptr, cp1252, &sbc) == invalidSrcBuffer);
+    Require(sceCesUtf32beToSbc(nullptr, cp1252, &sbc) == invalidSrcBuffer);
+    Require(sceCesUtf16beToSbc(nullptr, 1, &length, cp1252, &sbc) == invalidSrcBuffer);
+    Require(sceCesUtf16leToSbc(nullptr, 1, &length, cp1252, &sbc) == invalidSrcBuffer);
+    Require(sceCesUtf32ToSbc(0x0178, nullptr, &sbc) == invalidParameter);
     for (int value = 0; value < 256; ++value) {
         if (value == 0x98) {
             Require(sceCesSbcToUtf32(cp1251, static_cast<std::uint8_t>(value), &utf32) == unassignedCode);

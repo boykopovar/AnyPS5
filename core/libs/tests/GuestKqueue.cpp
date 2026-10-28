@@ -61,6 +61,7 @@ static constexpr std::uint32_t NoteTrigger = 0x01000000;
 static constexpr std::uint32_t NoteLowat = 0x0001;
 static constexpr std::uint32_t NoteFfcopy = 0xc0000000;
 static constexpr std::uint32_t NoteFfor = 0x80000000;
+static constexpr std::uint32_t NoteMseconds = 0x0002;
 static constexpr std::uint32_t NoteUseconds = 0x0004;
 static constexpr std::uint32_t NoteNseconds = 0x0008;
 static constexpr std::uint32_t NoteDelete = 0x0001;
@@ -215,13 +216,24 @@ static void TimerReadd() {
     Require(Apply(kq, Change(10, EvfiltTimer, EvAdd | EvOneshot, 0, 100000)) == 0);
     Require(Throws([kq] { Apply(kq, Change(10, EvfiltTimer, EvAdd, 0, 5)); }));
     Require(Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, 100000)) == 0);
-    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, NoteUseconds, 5)); }));
+    Require(Apply(kq, Change(11, EvfiltTimer, EvAdd, NoteMseconds, 100000)) == 0);
+    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, NoteMseconds | NoteUseconds, 5)); }));
+    Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0x10, 5)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, 0)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd, 0, INTPTR_MAX)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvAdd | EvClear, 0, 5)); }));
     Require(Throws([kq] { Apply(kq, Change(11, EvfiltTimer, EvEnable, 0, 5)); }));
     Require(Apply(kq, Change(12, EvfiltTimer, EvAdd | EvDisable, 0, 100000)) == 0);
-    Require(Throws([kq] { Apply(kq, Change(12, EvfiltTimer, EvAdd, 0, 5)); }));
+    Require(Apply(kq, Change(12, EvfiltTimer, EvAdd, 0, 5)) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    Require(Poll(kq, events, 4) == 0);
+
+    Require(Apply(kq, Change(13, EvfiltTimer, EvAdd, 0, 30)) == 0);
+    const auto unitArmed = std::chrono::steady_clock::now();
+    Require(Apply(kq, Change(13, EvfiltTimer, EvAdd, NoteMseconds, 30)) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == 13);
+    Require(std::chrono::steady_clock::now() - unitArmed >= std::chrono::milliseconds(20));
+    Require(Apply(kq, Change(13, EvfiltTimer, EvDelete)) == 0);
     Require(close_nid_postfix(kq) == 0);
 }
 

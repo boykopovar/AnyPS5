@@ -1,4 +1,5 @@
 add_library(libSceCamera SHARED EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/InventoryExports.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Handles.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Attributes.cpp
