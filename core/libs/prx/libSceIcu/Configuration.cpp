@@ -18,6 +18,7 @@ std::mutex MemoryLock;
 MemoryFunctions Memory;
 std::mutex DirectoryLock;
 std::string DataDirectory;
+std::string TimeZoneDirectory;
 
 }
 
@@ -53,6 +54,24 @@ void APS5_VABI u_setDataDirectory_nid_postfix(const char* directory) {
     std::string copy = directory ? directory : "";
     const std::lock_guard lock(DirectoryLock);
     DataDirectory = std::move(copy);
+}
+
+
+const char* APS5_VABI u_getTimeZoneFilesDirectory_nid_postfix(std::int32_t* status) {
+    if (Icu::Failure(status)) return "";
+    const std::lock_guard lock(DirectoryLock);
+    return TimeZoneDirectory.c_str();
+}
+
+void APS5_VABI u_setTimeZoneFilesDirectory_nid_postfix(const char* path, std::int32_t* status) {
+    if (Icu::Failure(status)) return;
+    const std::lock_guard lock(DirectoryLock);
+    TimeZoneDirectory.clear();
+    if (!path) {
+        *status = Icu::IllegalArgument;
+        return;
+    }
+    TimeZoneDirectory = path;
 }
 
 }
