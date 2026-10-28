@@ -10,4 +10,4 @@
 #include "Space.hpp"
 #include "Unescape.hpp"
 #include "Identified.hpp"
-#include "Search.hpp"
+#include "Utf16Search.hpp"
