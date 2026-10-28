@@ -8,6 +8,14 @@
 void ImeTextInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
     ImeHostInput input{};
     switch (event.type) {
+        case SDL_TEXTEDITING:
+            if (event.edit.windowID != windowId) return;
+            static_assert(sizeof(input.text) >= sizeof(event.edit.text));
+            std::memcpy(input.text, event.edit.text, sizeof(event.edit.text));
+            input.kind = ImeHostInputKind::Preedit;
+            input.start = event.edit.start;
+            input.length = event.edit.length;
+            break;
         case SDL_TEXTINPUT:
             if (event.text.windowID != windowId) return;
             static_assert(sizeof(input.text) >= sizeof(event.text.text));
