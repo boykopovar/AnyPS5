@@ -82,7 +82,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, Emulation emulation, std::span<const std::uint32_t> pixelCode, std::uint32_t inputs, VkCullModeFlags cullMode = VK_CULL_MODE_NONE, bool flat = false, VkProvokingVertexModeEXT provoking = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, bool strip = false, bool builtins = false) {
+ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, Emulation emulation, std::span<const std::uint32_t> pixelCode, std::uint32_t inputs, VkCullModeFlags cullMode = VK_CULL_MODE_NONE, bool flat = false, VkProvokingVertexModeEXT provoking = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, bool strip = false, bool builtins = false, bool mixedAlias = false) {
     Pixels.fill(Unwritten);
     auto target = device.Target();
     target.fragmentShaderBarycentricEnabled = false;
@@ -109,6 +109,10 @@ ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, Emulatio
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
     pixel.interpolatorCount = 1;
     if (flat) pixel.interpolatorSettings[0] = 0x400u;
+    if (mixedAlias) {
+        pixel.interpolatorCount = 2;
+        pixel.interpolatorSettings[1] = 0x400u;
+    }
     pixel.inputAddr = inputs;
     pixel.hasPerspectiveCenterVgpr = (inputs & PixelInputBit(PixelInput::PerspectiveCenter)) != 0u;
     pixel.noPerspective = (inputs & PixelInputBit(PixelInput::LinearCenter)) != 0u;
@@ -393,8 +397,51 @@ void CheckStripFlatLast(AgcDriver::VulkanDevice& device, Emulation emulation, co
     std::printf("flat last-provoking strip through %s passed: %u and %u pixels of its even and odd triangle\n", name.c_str(), checked[0], checked[1]);
 }
 
+void CheckMixedAlias(AgcDriver::VulkanDevice& device, Emulation emulation) {
+    const auto positions = ClipPositions(emulation);
+    for (const auto [mode, last] : {std::pair{0u, true}, {2u, false}, {2u, true}, {1u, false}}) {
+        const std::array<std::uint32_t, 6> code{
+            0xc8080000u, 0xc8090001u, 0xc80e0400u | mode,
+            0xf800180fu, 0x03030203u, 0xbf810000u};
+        const auto result = Draw(device, emulation, code, PixelInputBit(PixelInput::PerspectiveCenter),
+            VK_CULL_MODE_NONE, false, last ? VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT : VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT,
+            false, false, true);
+        std::uint32_t checked = 0;
+        for (std::uint32_t y = 0; y < Height; ++y) for (std::uint32_t x = 0; x < Width; ++x) {
+            const auto expected = BarycentricsUnsnapped(emulation, x, y);
+            if (!expected.inside) continue;
+            const auto snapped = BarycentricsSnapped(emulation, x, y);
+            float smooth = 0, smoothSnapped = 0;
+            for (std::size_t i = 0; i < 3; ++i) {
+                smooth += expected.perspective[i] * positions[i][0];
+                smoothSnapped += snapped.perspective[i] * positions[i][0];
+            }
+            for (const auto channel : {0u, 2u, 3u}) Require(Pixel(x, y, channel) == positions[last ? 2u : 0u][0],
+                "mixed flat/smooth alias lost the provoking value: mode=" + std::to_string(mode) +
+                " actual=" + std::to_string(Pixel(x, y, channel)));
+            Require(MatchesEither(Pixel(x, y, 1), smooth, smoothSnapped), "mixed alias changed smooth interpolation");
+            ++checked;
+        }
+        Require(checked > 200, "mixed alias checked too few pixels");
+        std::printf("mixed flat/smooth alias passed: mode=%u provoking=%s pixels=%u\n", mode, last ? "last" : "first", checked);
+    }
+    for (const auto [mode, last] : {std::pair{0u, false}, {1u, true}}) {
+        const std::array<std::uint32_t, 6> code{0xc8080000u, 0xc8090001u, 0xc80e0400u | mode, 0xf800180fu, 0x03030203u, 0xbf810000u};
+        bool rejected = false;
+        try {
+            Draw(device, emulation, code, PixelInputBit(PixelInput::PerspectiveCenter), VK_CULL_MODE_NONE, false,
+                last ? VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT : VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, false, false, true);
+        } catch (const std::exception& error) {
+            std::printf("mixed alias rejected mode=%u last=%d: %s\n", mode, last, error.what());
+            rejected = std::string(error.what()).find("not measured") != std::string::npos;
+        }
+        Require(rejected, "mixed alias bypassed an unmeasured provoking-vertex restriction");
+    }
+}
+
 void RunEmulation(AgcDriver::VulkanDevice& device, Emulation emulation) {
     const std::string name = emulation == Emulation::Geometry ? "geometry stage" : emulation == Emulation::Tessellation ? "tessellation stages" : "rect-list stages";
+    if (emulation != Emulation::RectList) CheckMixedAlias(device, emulation);
     const auto perspective = PixelInputBit(PixelInput::PerspectiveCenter);
     const auto linear = PixelInputBit(PixelInput::LinearCenter);
     auto result = Draw(device, emulation, BarycentricPixelCode, perspective);

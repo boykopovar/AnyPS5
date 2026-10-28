@@ -344,7 +344,9 @@ void CollectPixelInputs(const IrProgram& program, const ShaderPixelInputInfo* pi
         if (!read[input] || (pixel->InputIsDefault(input) && !halfRead[input])) {
             continue;
         }
-        const bool vertexInput = slotPerVertex[pixel->InputSlot(input)];
+        const bool flatAlias = program.Metadata().barycentricEmulation &&
+            IsPixelParameterFlat(*pixel, input) && !perVertex[input];
+        const bool vertexInput = !flatAlias && slotPerVertex[pixel->InputSlot(input)];
         AddInput(info, StageInputKind::Parameter, input, 4, "in_param_" + std::to_string(input), vertexInput);
         if (vertexInput && interpolated[input] && !IsPixelParameterFlat(*pixel, input)) {
             (linear(input) ? noPerspective : smooth) = true;

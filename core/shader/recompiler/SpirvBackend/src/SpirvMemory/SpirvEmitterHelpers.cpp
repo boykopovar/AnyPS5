@@ -236,7 +236,7 @@ void DefineInputs(SpirvEmitterState& state) {
         if (pixelStage && input.kind == StageInputKind::Parameter) {
             const auto location = PixelParameterLocation(state, input.location);
             const auto shared = std::find_if(state.inputs.begin(), state.inputs.end(), [&](const SpirvInputBinding& other) {
-                return &other != &input && other.kind == StageInputKind::Parameter && other.variableId != 0u && PixelParameterLocation(state, other.location) == location;
+                return &other != &input && other.kind == StageInputKind::Parameter && other.variableId != 0u && (!emulated || other.perVertex == input.perVertex) && PixelParameterLocation(state, other.location) == location;
             });
             if (shared != state.inputs.end()) {
                 if (shared->perVertex != input.perVertex) {

@@ -1229,6 +1229,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
 }
 
 std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool* created, std::uint64_t* storeHash) {
+    ValidateProvokingVertex(context, state, shaders);
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     if (created != nullptr) *created = false;
     if (storeHash != nullptr) *storeHash = 0;
