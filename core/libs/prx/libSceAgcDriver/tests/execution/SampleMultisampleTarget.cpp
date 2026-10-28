@@ -15,6 +15,7 @@
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
+#include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -431,9 +432,20 @@ void RequireStoreRefused(AgcDriver::VulkanDevice& device, const std::array<std::
     Require(refusal.find(expected) != std::string::npos, what + " was not refused: " + refusal);
 }
 
+bool DeclaresCapability(std::span<const std::uint32_t> words, spv::Capability capability) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0u && count <= words.size() - cursor, "a SPIR-V instruction is truncated");
+        if ((words[cursor] & 0xffffu) == spv::OpCapability && words[cursor + 1u] == static_cast<std::uint32_t>(capability)) return true;
+        cursor += count;
+    }
+    return false;
+}
+
 std::vector<std::array<float, 4>> RunLoad(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, bool arrayed, std::uint32_t fragments) {
     std::vector<std::uint32_t> userData;
     const auto program = CompileLoad(device, texture, userData, arrayed);
+    Require(!DeclaresCapability(program.spirv, spv::CapabilityImageMSArray), "the multisampled image_load declared ImageMSArray, which only multisampled arrayed storage images need");
     std::vector<std::array<float, 4>> loaded(Side * Side * fragments);
     const auto codeAddress = reinterpret_cast<std::uintptr_t>((arrayed ? ArrayLoadCode : LoadCode).data());
     for (std::uint32_t first = 0; first < loaded.size(); first += Threads) {

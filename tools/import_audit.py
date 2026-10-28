@@ -687,9 +687,8 @@ def module_stem(name, fold):
         name = name.lower()
     for suffix in MODULE_FILE_SUFFIXES:
         if len(name) > len(suffix) and name.endswith(suffix):
-            name = name[:-len(suffix)]
-            break
-    return name
+            return name[:-len(suffix)]
+    return None
 
 
 class ModuleNames(set):
@@ -699,10 +698,14 @@ class ModuleNames(set):
     def __init__(self, names=(), fold=False):
         super().__init__(names)
         self.fold = fold
-        self.stems = {module_stem(name, fold) for name in self}
+        self.files = {name.lower() if fold else name for name in self}
+        self.stems = {stem for name in self if (stem := module_stem(name, fold)) is not None}
 
     def __contains__(self, library):
-        return isinstance(library, str) and module_stem(library, self.fold) in self.stems
+        if not isinstance(library, str):
+            return False
+        filename = library.lower() if self.fold else library
+        return filename in self.files or module_stem(library, self.fold) in self.stems
 
 
 def classify(nid, library, providers, stubs, modules, partial=frozenset()):

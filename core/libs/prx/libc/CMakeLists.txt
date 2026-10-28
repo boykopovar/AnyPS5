@@ -131,6 +131,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if(BUILD_TESTING AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND NOT MSVC)
         add_test(NAME libc_floating_point_contraction
                 COMMAND ${CMAKE_COMMAND} -DCOMPILER=${CMAKE_CXX_COMPILER}
+                    "-DARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}"
                     "-DOPTIONS=$<JOIN:$<TARGET_PROPERTY:libc,COMPILE_OPTIONS>, >"
                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}/libc_floating_point_contraction
                     -P ${LIBS_INCLUDE_DIR}/tests/LibcFloatingPointContraction.cmake)

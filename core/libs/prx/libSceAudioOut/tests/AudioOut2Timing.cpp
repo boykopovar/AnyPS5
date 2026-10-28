@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2Internal.hpp"
 #include "SceTypes.hpp"
 
 #include <chrono>
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <random>
 #include <string>
@@ -159,6 +161,44 @@ void TestLevelExcludesCushion() {
     Require(result == queueFull);
     Require(accepted >= cushionGrains + queueDepth);
     session.Close();
+}
+
+void TestDeviceLevelDoesNotWaitForTheContext(bool low) {
+    Session session("anyps5_audio_out2_level_poll.raw", low);
+    auto& context = *reinterpret_cast<AudioOut2Context*>(session.context);
+    Require(context.device != 0);
+    std::promise<void> started;
+    auto ready = started.get_future();
+    std::unique_lock lock(context.lock);
+    auto poll = std::async(std::launch::async, [&] {
+        started.set_value();
+        std::uint32_t level = 99;
+        std::uint32_t available = 99;
+        Require((low ? sceAudioOut2LoContextGetQueueLevel : sceAudioOut2ContextGetQueueLevel)(session.context, &level, &available) == 0);
+        return std::pair{level, available};
+    });
+    ready.wait();
+    const bool completed = poll.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+    lock.unlock();
+    const auto result = poll.get();
+    session.Close();
+    Require(completed);
+    Require(result.first == 0 && result.second == queueDepth);
+}
+
+void TestLevelWithoutADeviceUsesThePlaybackClock() {
+    AudioOut2Context context;
+    context.queueDepth = queueDepth;
+    context.queued = queueDepth;
+    context.playHead = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    const auto handle = reinterpret_cast<AudioOut2ContextHandle>(&context);
+    std::uint32_t level = 99;
+    std::uint32_t available = 99;
+    Require(sceAudioOut2ContextGetQueueLevel(handle, &level, &available) == 0);
+    Require(level == queueDepth && available == 0);
+    context.playHead = std::chrono::steady_clock::now() - std::chrono::seconds(5);
+    Require(sceAudioOut2LoContextGetQueueLevel(handle, &level, &available) == 0);
+    Require(level == 0 && available == queueDepth);
 }
 
 void TestPrimingAfterRunningDry() {
@@ -316,6 +356,9 @@ int main() {
     TestReadAtNextPush();
     TestRecreatedPort();
     TestLevelExcludesCushion();
+    TestDeviceLevelDoesNotWaitForTheContext(false);
+    TestDeviceLevelDoesNotWaitForTheContext(true);
+    TestLevelWithoutADeviceUsesThePlaybackClock();
     TestPrimingAfterRunningDry();
     TestLowLatencyCallsRejectBadArguments();
     TestLowLatencyReadsAtNextPush();

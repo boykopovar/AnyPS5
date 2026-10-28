@@ -127,5 +127,12 @@ int main() {
     Require(result.padding == 0x5a5a5a5a && result.extended == &extended);
     Require(extended.type == 0x5a5a5a5a && extended.content[2047] == 'x');
     Require(sceWebBrowserDialogTerminate() == 0);
+    Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogOpen(param) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogClose() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(&result) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
+    Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_NONE);
     return 0;
 }

@@ -82,5 +82,16 @@ std::int64_t APS5_VABI FT_Sin_nid_postfix(std::int64_t angle);
 std::int64_t APS5_VABI FT_Tan_nid_postfix(std::int64_t angle);
 void APS5_VABI FT_Vector_Unit_nid_postfix(FreeType::GuestVector* vector, std::int64_t angle);
 std::int64_t APS5_VABI FT_Angle_Diff_nid_postfix(std::int64_t first, std::int64_t second);
+int APS5_VABI FT_Stroker_GetCounts_nid_postfix(void* stroker, std::uint32_t* points, std::uint32_t* contours);
+int APS5_VABI FT_Stroker_CubicTo_nid_postfix(void* stroker, const FreeType::GuestVector* control1, const FreeType::GuestVector* control2, const FreeType::GuestVector* to);
+void APS5_VABI FT_Stroker_Done_nid_postfix(void* stroker);
+int APS5_VABI FT_Stroker_GetBorderCounts_nid_postfix(void* stroker, std::int32_t border, std::uint32_t* points, std::uint32_t* contours);
+int APS5_VABI FT_Stroker_EndSubPath_nid_postfix(void* stroker);
+int APS5_VABI FT_Stroker_LineTo_nid_postfix(void* stroker, const FreeType::GuestVector* to);
+int APS5_VABI FT_Stroker_New_nid_postfix(FreeType::GuestLibrary* library, void** stroker);
+void APS5_VABI FT_Stroker_Set_nid_postfix(void* stroker, std::int64_t radius, std::int32_t lineCap, std::int32_t lineJoin, std::int64_t miterLimit);
+void APS5_VABI FT_Stroker_Rewind_nid_postfix(void* stroker);
+int APS5_VABI FT_Stroker_BeginSubPath_nid_postfix(void* stroker, const FreeType::GuestVector* to, std::uint8_t open);
+int APS5_VABI FT_Stroker_ConicTo_nid_postfix(void* stroker, const FreeType::GuestVector* control, const FreeType::GuestVector* to);
 
 }

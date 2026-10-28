@@ -82,10 +82,11 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, Emulation emulation, std::span<const std::uint32_t> pixelCode, std::uint32_t inputs, VkCullModeFlags cullMode = VK_CULL_MODE_NONE, bool flat = false, VkProvokingVertexModeEXT provoking = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, bool strip = false) {
+ShaderRecompiler::RecompileResult Draw(AgcDriver::VulkanDevice& device, Emulation emulation, std::span<const std::uint32_t> pixelCode, std::uint32_t inputs, VkCullModeFlags cullMode = VK_CULL_MODE_NONE, bool flat = false, VkProvokingVertexModeEXT provoking = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, bool strip = false, bool builtins = false) {
     Pixels.fill(Unwritten);
     auto target = device.Target();
     target.fragmentShaderBarycentricEnabled = false;
+    target.fragmentBarycentricBuiltins = builtins;
     static const auto trianglePositions = ClipPositions(Emulation::Geometry);
     static const auto rectanglePositions = ClipPositions(Emulation::RectList);
     static const auto stripPositions = StripPositions();
@@ -429,6 +430,17 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (device->Target().fragmentBarycentricBuiltins) {
+            const auto perspective = PixelInputBit(PixelInput::PerspectiveCenter);
+            const auto linear = PixelInputBit(PixelInput::LinearCenter);
+            auto builtin = Draw(*device, Emulation::Tessellation, BarycentricPixelCode, perspective, VK_CULL_MODE_NONE, false, VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, false, true);
+            Require(!builtin.barycentricEmulation.active, "reading PERSP_CENTER I/J with barycentric built-ins needed generated stages");
+            const auto builtinSmooth = CheckBarycentrics(Emulation::Tessellation, "PERSP_CENTER I/J from BaryCoordKHR", true);
+            builtin = Draw(*device, Emulation::Tessellation, BarycentricPixelCode, linear, VK_CULL_MODE_NONE, false, VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT, false, true);
+            Require(!builtin.barycentricEmulation.active, "reading LINEAR_CENTER I/J with barycentric built-ins needed generated stages");
+            const auto builtinLinear = CheckBarycentrics(Emulation::Tessellation, "LINEAR_CENTER I/J from BaryCoordNoPerspKHR", false);
+            std::printf("barycentric built-in tests passed: %u perspective and %u linear I/J pixels\n", builtinSmooth, builtinLinear);
+        }
         const bool geometry = device->GeometryLimits().has_value();
         const bool tessellation = device->Target().tessellation.has_value();
         if (!geometry && !tessellation) {

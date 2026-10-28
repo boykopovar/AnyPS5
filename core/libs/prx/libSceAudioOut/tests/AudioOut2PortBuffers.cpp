@@ -275,6 +275,28 @@ void TestRenderingSizedByLevelStaysWithinQueueDepth() {
     RequirePlayed(played, order);
 }
 
+void TestBufferReusedAcrossPortsKeepsEachPortsGrain(bool advanced) {
+    const auto voice = Grain(0.01f);
+    const std::vector<float> silence(voice.size(), 0.0f);
+    auto shared = voice;
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        AudioOut2PortParam portParams{};
+        portParams.port_type = portTypeMain;
+        portParams.data_format = formatStereoFloat;
+        portParams.sampling_freq = frequency;
+        AudioOut2PortHandle other = 0;
+        Require(sceAudioOut2PortCreate(context, &portParams, &other) == 0);
+        SetData(port, shared.data());
+        shared = silence;
+        SetData(other, shared.data());
+        if (advanced) Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        SetData(port, nullptr);
+        SetData(other, nullptr);
+    }, advanced);
+    RequirePlayed(played, {&voice});
+}
+
 }
 
 int main() {
@@ -288,5 +310,7 @@ int main() {
     TestAdvancingPortWithoutNewBufferPlaysSilence();
     TestRewrittenBufferRepeats();
     TestRenderingSizedByLevelStaysWithinQueueDepth();
+    TestBufferReusedAcrossPortsKeepsEachPortsGrain(false);
+    TestBufferReusedAcrossPortsKeepsEachPortsGrain(true);
     return 0;
 }

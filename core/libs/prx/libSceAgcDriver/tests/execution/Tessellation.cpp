@@ -21,6 +21,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_set>
 #include <utility>
@@ -565,7 +566,7 @@ struct Stages {
     ShaderRecompiler::RecompileResult fragment;
 };
 
-ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, std::uint32_t& pushCursor, const PatchDraw& patches = Triangles) {
+ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, std::uint32_t& pushCursor, const PatchDraw& patches = Triangles, std::uint32_t depthRemapMode = 0u) {
     static const std::array<std::uint32_t, 8> domainUserData{};
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const bool hull = stage == ShaderStage::TessellationControl;
@@ -582,10 +583,12 @@ ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& t
         pixel = info;
     } else {
         vertex = ShaderRecompiler::ShaderVertexStageInfo{};
+        vertex->depthRemapMode = depthRemapMode;
         graphics = ShaderRecompiler::GraphicsCompileContext{hull ? 0u : 8u, {}, std::nullopt, patches.configuration, {reinterpret_cast<std::uintptr_t>(patches.indices.data()), static_cast<std::uint32_t>(patches.indices.size()), 2, patches.instances}};
     }
     auto layout = stage == ShaderStage::Fragment ? PixelPushLayout(pushCursor, target) : ShaderRecompiler::BindingLayout{0, 0, pushCursor, AgcDriver::Graphics::PipelinePushSlotBytes - pushCursor};
     if (layout.pushConstantOffsetBytes < AgcDriver::Graphics::PipelinePushSlotBytes) layout.pushConstantSizeBytes = ShaderRecompiler::TessellationLevelPushOffsetBytes - layout.pushConstantOffsetBytes;
+    if (depthRemapMode != 0u && layout.pushConstantOffsetBytes < AgcDriver::Graphics::PipelinePushSlotBytes) layout.pushConstantSizeBytes = ShaderRecompiler::DepthRemapPushOffsetBytes - layout.pushConstantOffsetBytes;
     const ShaderRecompiler::RecompileRequest request{
         {stage, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {64, hull ? 0u : 8u, userData, std::nullopt, pixel, vertex, memory},
@@ -634,7 +637,17 @@ std::uint32_t Row(float y) {
     return static_cast<std::uint32_t>((1.0f - y) * 0.5f * Height);
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, VkCullModeFlags cull, VkFrontFace front, const PatchDraw& patches = Triangles) {
+struct DepthDraw {
+    std::uint64_t address;
+    bool write;
+    bool negativeOneToOne = false;
+    float scale = 1.0f;
+    float offset = 0.0f;
+    float clampMin = 0.0f;
+    float clampMax = 1.0f;
+};
+
+void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, VkCullModeFlags cull, VkFrontFace front, const PatchDraw& patches = Triangles, const DepthDraw* depth = nullptr) {
     for (std::size_t i = 0; i < Pixels.size(); i += 4) {
         for (std::size_t c = 0; c < 4; ++c) Pixels[i + c] = std::byte{Background[c]};
     }
@@ -665,8 +678,93 @@ void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, VkCullModeFlags
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
     state.blendConstants = {};
+    if (depth != nullptr) {
+        state.depth = AgcDriver::Graphics::DepthTarget{depth->address, 0u, {Width, Height}, VK_FORMAT_D32_SFLOAT, 1.0f, 0u};
+        state.depthTest = true;
+        state.depthWrite = depth->write;
+        state.depthCompare = depth->write ? VK_COMPARE_OP_ALWAYS : VK_COMPARE_OP_LESS;
+        state.depthScale = depth->scale;
+        state.depthOffset = depth->offset;
+        state.depthClampMin = depth->clampMin;
+        state.depthClampMax = depth->clampMax;
+        state.negativeOneToOne = depth->negativeOneToOne;
+        state.viewport.minDepth = depth->negativeOneToOne ? depth->offset - depth->scale : depth->offset;
+        state.viewport.maxDepth = depth->offset + depth->scale;
+        auto context = device.graphicsContext();
+        context.depthRangeUnrestricted = false;
+        AgcDriver::Graphics::ApplyDepthRemap(context, state);
+    }
     device.Draw(state, {reinterpret_cast<std::uintptr_t>(patches.indices.data()), static_cast<std::uint32_t>(patches.indices.size()), 2, patches.instances, 0, true, 0, patches.firstInstance}, shaders);
     device.WaitIdle();
+}
+
+void RequireDepthRangeRemap(AgcDriver::VulkanDevice& device) {
+    auto target = device.Target();
+    Require(device.graphicsContext().depthClamp, "tessellation depth remap needs depth clamping");
+    target.depthRangeRemap = true;
+    const auto compile = [&](float z, std::uint32_t mode) {
+        std::vector<std::uint32_t> domain(DomainCode.begin(), DomainCode.end());
+        const auto literal = std::ranges::find(domain, 0x7e260280u);
+        Require(literal != domain.end(), "the domain fixture has no constant depth");
+        *literal = 0x7e2602ffu;
+        domain.insert(literal + 1, std::bit_cast<std::uint32_t>(z));
+        std::uint32_t cursor = 0u;
+        return Stages{
+            Compile(target, ShaderStage::Local, LocalCode, cursor),
+            Compile(target, ShaderStage::TessellationControl, HullCode, cursor),
+            Compile(target, ShaderStage::TessellationEvaluation, domain, cursor, Triangles, mode),
+            Compile(target, ShaderStage::Fragment, PixelCode, cursor),
+        };
+    };
+    const auto covered = [] {
+        std::uint32_t count = 0u;
+        for (std::size_t offset = 0; offset < Pixels.size(); offset += 4u) {
+            if (Pixels[offset] == std::byte{255}) ++count;
+        }
+        return count;
+    };
+    Draw(device, compile(0.5f, 0u), VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+    const auto expected = covered();
+    Require(expected != 0u, "the depth fixture drew no tessellated patches");
+    struct Case {
+        bool symmetric;
+        float scale;
+        float offset;
+        float clampMin;
+        float clampMax;
+        float z;
+        bool drawn;
+        float probe;
+        bool passes;
+    };
+    constexpr std::array<Case, 14> cases{{
+        {true, 1.0f, 0.0f, 0.0f, 1.0f, 0.75f, true, 0.5f, true},
+        {true, 1.0f, 0.0f, 0.0f, 1.0f, -0.5f, true, 0.25f, false},
+        {true, 1.0f, 0.0f, 0.0f, 1.0f, -1.25f, false, 0.5f, true},
+        {true, 1.0f, 0.0f, 0.0f, 1.0f, 1.25f, false, 0.5f, true},
+        {false, 2.0f, -0.5f, 0.0f, 1.0f, 0.25f, true, 0.125f, false},
+        {false, 2.0f, -0.5f, 0.0f, 1.0f, 0.75f, true, 0.875f, true},
+        {false, 2.0f, -0.5f, 0.0f, 1.0f, -0.125f, false, 0.5f, true},
+        {false, 2.0f, -0.5f, 0.0f, 1.0f, 1.125f, false, 0.5f, true},
+        {false, 2.0f, -0.5f, 0.25f, 0.75f, 0.4f, true, 0.35f, false},
+        {false, 2.0f, -0.5f, 0.25f, 0.75f, 0.6f, true, 0.65f, true},
+        {false, 2.0f, -0.5f, 0.25f, 0.75f, 0.2f, true, 0.2f, true},
+        {false, 2.0f, -0.5f, 0.25f, 0.75f, 0.8f, true, 0.8f, false},
+        {false, -2.0f, 1.5f, 0.0f, 1.0f, 0.4f, true, 0.65f, true},
+        {false, -2.0f, 1.5f, 0.0f, 1.0f, 0.6f, true, 0.35f, false},
+    }};
+    alignas(4096) static std::array<std::array<float, Width * Height>, cases.size()> depths{};
+    for (std::size_t index = 0; index < cases.size(); ++index) {
+        const auto& test = cases[index];
+        const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(depths[index].data()));
+        const DepthDraw write{address, true, test.symmetric, test.scale, test.offset, test.clampMin, test.clampMax};
+        Draw(device, compile(test.z, test.symmetric ? 2u : 1u), VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE, Triangles, &write);
+        Require(covered() == (test.drawn ? expected : 0u), "tessellation remap clipping differs in case " + std::to_string(index));
+        const DepthDraw probe{address, false};
+        Draw(device, compile(test.probe, 0u), VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE, Triangles, &probe);
+        Require(covered() == (test.passes ? expected : 0u), "tessellation remap stored depth differs in case " + std::to_string(index));
+    }
+    std::puts("Tessellation depth remap: 14 clipping and stored-depth cases passed");
 }
 
 std::uint32_t CoveredPixels(std::uint32_t patch, bool interior) {
@@ -1095,7 +1193,7 @@ void RequireRegisteredMergedStages() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -1103,6 +1201,10 @@ int main() {
         if (!target.tessellation.has_value()) {
             std::puts("tessellation: skipped, the device has no tessellation shaders");
             return VulkanTestSkipped;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--depth-remap") {
+            RequireDepthRangeRemap(*device);
+            return 0;
         }
         RequireSingleControlPointHulls(target);
         ExpectRefusal(target, ShaderStage::TessellationControl, HullUnguardedFactors, "not written by control point 0 alone");

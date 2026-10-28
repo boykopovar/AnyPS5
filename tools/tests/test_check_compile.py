@@ -607,23 +607,22 @@ class CheckCompileOutputTests(CheckCompileFixture):
                     self.assertEqual(path.read_bytes(), content, str(path))
                 self.assertEqual(set(self.build.iterdir()), set(preserved))
 
-    def test_rejected_saved_temporary_mode_is_not_hidden(self):
-        compiler = shutil.which("gcc") or shutil.which("clang")
-        if compiler is None:
-            self.skipTest("needs a C compiler")
+    def test_unmodeled_saved_temporary_modes_are_rejected_before_the_compiler_runs(self):
         source = self.source("unit.c")
-        original = subprocess.run([compiler, "-save-temps=invalid", "-fsyntax-only", str(source)],
-                                  cwd=self.build, capture_output=True, text=True)
-        if original.returncode == 0:
-            self.skipTest("compiler accepts unknown saved-temporary modes with -fsyntax-only")
-        self.assertIn("save-temps", original.stderr)
-        self.manifest([{"directory": str(self.build), "file": str(source),
-                        "arguments": [compiler, "-save-temps=invalid", "-c", str(source),
-                                      "-o", str(self.build / "unit.o")]}])
-        result = self.tool("unit.c")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("save-temps", result.stderr)
-        self.assertFalse((self.build / "unit.o").exists())
+        invoked = self.root / "invoked"
+        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
+        for option in ("-save-temps=invalid", "-save-temps=diag", "--save-temps=diag",
+                       "-save-temps=CWD", "-save-temps="):
+            with self.subTest(option=option):
+                self.manifest([{"directory": str(self.build), "file": str(source),
+                                "arguments": [sys.executable, str(script), str(invoked), option,
+                                              "-c", str(source), "-o", str(self.build / "unit.o")]}])
+                result = self.tool("unit.c")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(f"unsupported saved-temporary mode in {option}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(invoked.exists(), result.stdout + result.stderr)
+                self.assertFalse((self.build / "unit.o").exists(), result.stdout + result.stderr)
 
 
 class CheckCompileResponseTests(CheckCompileFixture):

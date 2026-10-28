@@ -503,6 +503,11 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         }
         decode = std::move(refreshed);
     }
+    if (decode != nullptr && !userPatches.empty() && verifyDrawRecipe()) {
+        auto patched = std::make_shared<DrawDecode>(*decode);
+        for (const auto& patch : userPatches) patched->programs.at(patch.program).userData.at(patch.index) = patch.value;
+        decode = std::move(patched);
+    }
     try {
         resolveDrawDecode(queue, submission, localDevice->graphicsContext(), decode, registerKey, drawKey, profile);
     } catch (...) {

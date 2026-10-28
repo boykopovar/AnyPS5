@@ -1431,7 +1431,9 @@ void ApplyDepthRemap(const Context& context, State& state) {
     const auto& viewport = state.viewport;
     const bool inRange = viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1;
     if (context.depthRangeUnrestricted || inRange) return;
-    Require(state.stages.path == ShaderPath::Vertex && !state.stages.mesh && !state.stages.tessellation, "viewport depth outside [0, 1] is remapped on the vertex path only");
+    const bool vertex = state.stages.path == ShaderPath::Vertex && !state.stages.tessellation;
+    const bool tessellation = state.stages.path == ShaderPath::Tessellation && state.stages.tessellation.has_value();
+    Require((vertex || tessellation) && !state.stages.mesh, "viewport depth outside [0, 1] is remapped on the vertex and tessellation paths only");
     Require(context.depthClamp, "viewport depth outside [0, 1] needs depth clamping to stand in for the console's clamp");
     const float clampMin = std::clamp(state.depthClampMin, 0.0f, 1.0f);
     const float clampMax = std::clamp(state.depthClampMax, 0.0f, 1.0f);
@@ -2332,7 +2334,7 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
             Require(target.samples == 1, "CB metadata pass over a multisampled color target, whose texels are on the host, is unsupported (only a CB resolve is modeled)");
         }
         Require((read(cx, 0x31c + slot * 0xfu) & 0x10000000u) == 0 || target.dccAddress != 0, "CB metadata pass over a mipmapped DCC color target, whose keys are not modeled");
-        if (target.cmaskAddress != 0 || target.dccAddress != 0) requireCovered(target);
+        if (target.dccAddress != 0 || (target.cmaskAddress != 0 && pass.mode != ColorMetadataPass::Mode::EliminateFastClear)) requireCovered(target);
         pass.targets.push_back(target);
     }
     return pass;

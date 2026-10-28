@@ -272,6 +272,8 @@ def syntax_arguments(arguments, directory, source):
                 trimmed.append(forwarded)
             index += 1
             continue
+        if not positional and argument.startswith(("-save-temps=", "--save-temps=")) and argument not in DROP:
+            raise ValueError(f"unsupported saved-temporary mode in {argument}")
         if not positional and (argument in (*DROP, *PREPROCESSING) or argument.startswith(("-MT", "-MF", "-MQ", "-MJ"))):
             index += 1
             continue

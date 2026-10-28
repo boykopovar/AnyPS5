@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
 #include "prx/libSceAgc/Patch/include/WaitRegMem.hpp"
 #include "prx/libSceAgc/Patch/include/Nop.hpp"
+#include "prx/libSceAgc/Patch/include/QueueEndOfPipeAction.hpp"
 #include "prx/libSceAgc/Misc/include/Suspend.hpp"
 #include "prx/libSceAgc/Misc/include/RegisterDefaults.hpp"
 #include "prx/libSceAgc/Misc/include/PacketInfo.hpp"
@@ -593,6 +594,32 @@ void testMemory() {
     check(storage.words == beforeMask, "invalid mask patch modified packet memory");
 }
 
+void testEndOfPipePatches() {
+    std::array<std::uint32_t, 8> packet{};
+    packet[0] = Agc::Command::Header(0x49u, 8);
+    packet[1] = 0xf0000fffu;
+    packet[2] = 2u << 29u;
+    check(sceAgcQueueEndOfPipeActionPatchData(packet.data(), 0x1122334455667788ull) == 0, "end-of-pipe data patch failed");
+    check(packet[5] == 0x55667788u && packet[6] == 0x11223344u, "64-bit end-of-pipe data patch did not write both halves");
+    packet[2] = 1u << 29u;
+    check(sceAgcQueueEndOfPipeActionPatchData(packet.data(), 0x0badf00du) == 0, "32-bit end-of-pipe data patch failed");
+    check(packet[5] == 0x0badf00du && packet[6] == 0u, "32-bit end-of-pipe data patch wrote the wrong words");
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(packet.data(), 0x100000000ull); });
+    check(packet[5] == 0x0badf00du && packet[6] == 0u, "a rejected 32-bit data patch changed the packet");
+    check(sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 0x0a5u) == 0, "end-of-pipe GCR control patch failed");
+    check(packet[1] == (0xf0000fffu | (0x0a5u << 12u)), "end-of-pipe GCR control patch did not keep the other control bits");
+    check(sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 0x100u) == 0 && packet[1] == (0xf0000fffu | (0x300u << 12u)), "end-of-pipe GCR control 0x100 did not gain 0x200");
+    check(sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 0x200u) == 0 && packet[1] == (0xf0000fffu | (0x200u << 12u)), "end-of-pipe GCR control 0x200 changed");
+    const auto before = packet;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 0x1000u); });
+    check(packet == before, "a rejected GCR control patch changed the packet");
+    packet[0] = Agc::Command::Header(0x47u, 6);
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(packet.data(), 1); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 1); });
+    packet[0] = before[0];
+    check(packet == before, "a data or GCR control patch of another packet changed it");
+}
+
 struct AtomicGdsAllocation {
     Storage storage;
     std::uint32_t capacity = 15;
@@ -869,6 +896,7 @@ int main(int argc, char** argv) {
         testRegisterRange();
         testPacketPayloadAddress();
         testMemory();
+        testEndOfPipePatches();
         testAtomicGds();
         testDebugRaiseException();
         testDefaults();
