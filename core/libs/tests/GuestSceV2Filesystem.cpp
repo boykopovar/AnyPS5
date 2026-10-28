@@ -16,6 +16,7 @@
 namespace {
 
 constexpr int NoSuchFile = 2;
+constexpr int Fault = 14;
 constexpr int TypeNotFound = -1;
 constexpr int TypeNone = 0;
 constexpr int TypeRegular = 1;
@@ -50,6 +51,14 @@ void TestStat() {
     Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(root.c_str(), nullptr, &error) == TypeDirectory && error == 0, "directory");
     perms = 1234;
     Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(At("missing").c_str(), &perms, &error) == TypeNotFound && error == NoSuchFile && perms == 1234, "missing path");
+}
+
+void TestStatInvalidPath() {
+    int perms = 1234;
+    int error = -1;
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(nullptr, &perms, &error) == TypeNone && error == Fault && perms == 1234, "a null path");
+    error = -1;
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix("", &perms, &error) == TypeNotFound && error == NoSuchFile && perms == 1234, "an empty path");
 }
 
 void TestStatError() {
@@ -111,6 +120,7 @@ int main() {
     root = ".";
     AppArchiveFixture::WriteArchive(directory / "app0.zar", {{"Readme.TXT", {'r', 'e', 'a', 'd'}}, {"Data/Sub.txt", {'s'}}});
     TestStat();
+    TestStatInvalidPath();
     TestStatError();
     TestArchivedStat();
     TestDirectories();

@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <filesystem>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 
 #ifdef _WIN32
@@ -54,8 +55,11 @@ std::filesystem::path StatusPath(const std::filesystem::path& path) {
 
 int StatType(const char* path, int* perms, int* error) {
     errno = 0;
+    std::string copy;
+    int code = CopyGuestPath_nid_no_patch(path, copy);
+    if (code == 0 && copy.empty()) code = GuestFilesystem::NoSuchFile;
     std::filesystem::path native;
-    int code = ResolvePathError_nid_no_patch(path, native, false, true);
+    if (code == 0) code = ResolvePathError_nid_no_patch(copy.c_str(), native, false, true);
     int type;
     if (code != 0) {
         errno = code;
