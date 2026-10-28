@@ -1,6 +1,8 @@
 #include "AppArchiveFixture.hpp"
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <algorithm>
@@ -13,38 +15,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-extern "C" {
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-int APS5_VABI fopen_s_nid_postfix(FileStream**, const char*, const char*);
-FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI fscanf_nid_postfix(FileStream*, const char*, ...);
-char* APS5_VABI fgets_nid_postfix(char*, int, FileStream*);
-char16_t* APS5_VABI fgetws_nid_postfix(char16_t*, int, FileStream*);
-int APS5_VABI fseek_nid_postfix(FileStream*, std::int64_t, int);
-std::int64_t APS5_VABI ftell_nid_postfix(FileStream*);
-void APS5_VABI rewind_nid_postfix(FileStream*);
-int APS5_VABI ungetc_nid_postfix(int, FileStream*);
-int APS5_VABI feof_nid_postfix(FileStream*);
-void APS5_VABI clearerr_nid_postfix(FileStream*);
-int APS5_VABI fileno_nid_postfix(FileStream*);
-int APS5_VABI setvbuf_nid_postfix(FileStream*, char*, int, std::size_t);
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-int APS5_VABI close_nid_postfix(int);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::size_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const void*, std::size_t);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::size_t, std::int64_t);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-std::int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int, FileStat*);
-int APS5_VABI stat_nid_postfix(const char*, FileStat*);
-int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
-int APS5_VABI access_nid_postfix(const char*, int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 
