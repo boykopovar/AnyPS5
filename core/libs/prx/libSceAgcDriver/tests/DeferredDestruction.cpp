@@ -65,8 +65,14 @@ VKAPI_ATTR VkResult VKAPI_CALL reloadedQueueWaitIdle(VkQueue queue) {
     return VK_SUCCESS;
 }
 
+VKAPI_ATTR void VKAPI_CALL reloadedFreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks* allocator) {
+    mockFreeMemory(device, memory, allocator);
+    events.push_back("reloaded free");
+}
+
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL reloadedProc(VkDevice device, const char* name) {
     if (std::strcmp(name, "vkQueueWaitIdle") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&reloadedQueueWaitIdle);
+    if (std::strcmp(name, "vkFreeMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&reloadedFreeMemory);
     return mockProc(device, name);
 }
 
@@ -212,8 +218,27 @@ void AccountingUntilFree() {
     const auto fifth = record(0x35, 0);
     MemoryAccounting::Free(&mockFreeMemory, device, fifth);
     Expect(count() == 0, "a direct free left memory counted");
+    const auto later = Handle<VkDevice>(0x111);
+    const auto laterProc = DeferDestructionToIdle(later, reloadedProc);
+    events.clear();
+    const auto sixth = record(0x36, 0);
+    MemoryAccounting::Free(freeMemory, device, sixth, &allocator);
+    Expect(count() == 0 && lastAllocator == &allocator && events == std::vector<std::string>{"memory 54 on 272"}, "an earlier device's immediate free used a later resolver or left memory counted");
+    const auto laterMemory = Handle<VkDeviceMemory>(0x37);
+    VkMemoryAllocateInfo laterAllocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    laterAllocation.allocationSize = 3u << 20u;
+    laterAllocation.memoryTypeIndex = 1;
+    MemoryAccounting::Record(later, laterMemory, laterAllocation, properties, "later deferred memory");
+    MemoryAccounting::Free(ContextFor(later, laterProc), laterMemory);
+    const auto queued = MemoryAccounting::Read(later);
+    Expect(DeferredObjects(later) == 1 && queued.complete && queued.allocations.size() == 1 && queued.allocations.front().bytes == laterAllocation.allocationSize && queued.allocations.front().heap == 1, "a later device's queued free changed its allocation charge");
+    DestroyDeferredObjects(later);
+    const auto drained = MemoryAccounting::Read(later);
+    Expect(drained.complete && drained.allocations.empty() && events == std::vector<std::string>{"memory 54 on 272", "memory 55 on 273", "reloaded free"}, "a later device did not clear accounting through its own free callback");
+    MemoryAccounting::ForgetDevice(later);
     MemoryAccounting::ForgetDevice(device);
     inspectFree = false;
+    if (failures == 0) std::puts("deferred memory accounting preserves per-device resolvers across loader changes");
     if (failures == 0) std::puts("deferred memory accounting survives queuing and failed waits, and clears at actual frees");
 }
 
