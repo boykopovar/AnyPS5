@@ -330,7 +330,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "ctest":
         selected = Path(args.build, "select.tests")
-        extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+        try:
+            extra = ["-I", selected.read_text(encoding="utf-8-sig").strip()] if selected.exists() else []
+        except (OSError, UnicodeDecodeError) as error:
+            parser.error(f"{selected}: {error}")
         return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
     if args.command == "explain":
         try:
