@@ -2,8 +2,14 @@
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 
 
@@ -31,6 +37,29 @@ void Require(bool value, const char* name, const char* what) {
     ++failures;
 }
 
+struct ContextParameterA {
+    std::int32_t userId;
+    std::uint32_t serviceLabel;
+    std::uint64_t size;
+};
+
+using CreateContextAFn = int (APS5_VABI*)(const ContextParameterA*, std::uint16_t*);
+using RegisterLobbyCallbackFn = int (APS5_VABI*)(std::uint16_t, void*, void*);
+
+template <typename Function>
+Function Resolve(const char* name) {
+#ifdef _WIN32
+    void* symbol = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("libSceNpMatching2.prx"), name));
+#else
+    void* symbol = dlsym(RTLD_DEFAULT, name);
+#endif
+    if (!symbol) {
+        std::fprintf(stderr, "%s is not exported by libSceNpMatching2\n", name);
+        std::abort();
+    }
+    return reinterpret_cast<Function>(symbol);
+}
+
 bool NullStatusThrows(std::uint16_t ctxId) {
     try {
         sceNpMatching2SignalingGetConnectionStatus(ctxId, 1, 1, nullptr, nullptr, nullptr);
@@ -43,9 +72,13 @@ bool NullStatusThrows(std::uint16_t ctxId) {
 }
 
 int main() {
+    const auto createContextA = Resolve<CreateContextAFn>("sceNpMatching2CreateContextA");
+    const auto registerLobbyEvent = Resolve<RegisterLobbyCallbackFn>("sceNpMatching2RegisterLobbyEventCallback");
+    const auto registerLobbyMessage = Resolve<RegisterLobbyCallbackFn>("sceNpMatching2RegisterLobbyMessageCallback");
     NpMatching2InitializeParameter init{};
     NpMatching2CreateContextParameter create{};
     create.size = 0x28;
+    ContextParameterA createA{1, 0, 0x10};
     unsigned char requestOpt[24] = {};
     std::uint16_t context = 77;
 
@@ -61,6 +94,9 @@ int main() {
     Require(sceNpMatching2RegisterRoomEventCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterRoomEventCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterRoomMessageCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterRoomMessageCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterSignalingCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterSignalingCallback", "a call before initialization did not return NOT_INITIALIZED");
+    Require(createContextA(nullptr, nullptr) == NotInitialized, "sceNpMatching2CreateContextA", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(registerLobbyEvent(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyEventCallback", "a call before initialization did not return NOT_INITIALIZED");
+    Require(registerLobbyMessage(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyMessageCallback", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2SetDefaultRequestOptParam(1, nullptr) == NotInitialized, "sceNpMatching2SetDefaultRequestOptParam", "a call before initialization did not return NOT_INITIALIZED first");
     Require(sceNpMatching2Terminate() == NotInitialized, "sceNpMatching2Terminate", "terminating before initialization did not return NOT_INITIALIZED");
     Require(sceNpMatching2Initialize(nullptr) == InvalidArgument, "sceNpMatching2Initialize", "a null parameter did not return INVALID_ARGUMENT");
@@ -120,6 +156,21 @@ int main() {
     Require(sceNpMatching2RegisterRoomMessageCallback(1, nullptr, nullptr) == 0, "sceNpMatching2RegisterRoomMessageCallback", "registering failed");
     Require(sceNpMatching2RegisterSignalingCallback(99, nullptr, nullptr) == InvalidContextId, "sceNpMatching2RegisterSignalingCallback", "an unknown context was taken");
     Require(sceNpMatching2RegisterSignalingCallback(1, nullptr, nullptr) == 0, "sceNpMatching2RegisterSignalingCallback", "registering failed");
+    Require(registerLobbyEvent(99, nullptr, nullptr) == InvalidContextId, "sceNpMatching2RegisterLobbyEventCallback", "an unknown context was taken");
+    Require(registerLobbyEvent(1, nullptr, nullptr) == 0, "sceNpMatching2RegisterLobbyEventCallback", "registering failed");
+    Require(registerLobbyMessage(99, nullptr, nullptr) == InvalidContextId, "sceNpMatching2RegisterLobbyMessageCallback", "an unknown context was taken");
+    Require(registerLobbyMessage(1, nullptr, nullptr) == 0, "sceNpMatching2RegisterLobbyMessageCallback", "registering failed");
+    created = 77;
+    Require(createContextA(nullptr, &created) == InvalidArgument, "sceNpMatching2CreateContextA", "a null parameter was taken");
+    createA.size = 0x28;
+    Require(createContextA(&createA, &created) == InvalidArgument, "sceNpMatching2CreateContextA", "parameter size 0x28 was taken");
+    createA.size = 0x10;
+    Require(createContextA(&createA, nullptr) == InvalidArgument, "sceNpMatching2CreateContextA", "a null output was taken");
+    Require(created == 77, "sceNpMatching2CreateContextA", "a refused call wrote the context id");
+    Require(createContextA(&createA, &created) == 0 && created == 2, "sceNpMatching2CreateContextA", "the freed context id 2 was not handed out");
+    created = 77;
+    Require(createContextA(&createA, &created) == ContextMax && created == 77, "sceNpMatching2CreateContextA", "an eleventh context did not return CONTEXT_MAX");
+    Require(sceNpMatching2ContextStop(2) == ContextNotStarted, "sceNpMatching2CreateContextA", "the context it created is not a regular context");
     Require(sceNpMatching2SetDefaultRequestOptParam(99, nullptr) == InvalidArgument, "sceNpMatching2SetDefaultRequestOptParam", "a null option was not refused before the context");
     Require(sceNpMatching2SetDefaultRequestOptParam(99, requestOpt) == InvalidContextId, "sceNpMatching2SetDefaultRequestOptParam", "an unknown context was taken");
     Require(sceNpMatching2SetDefaultRequestOptParam(1, requestOpt) == 0, "sceNpMatching2SetDefaultRequestOptParam", "setting the default option failed");
@@ -139,6 +190,8 @@ int main() {
     Require(sceNpMatching2ContextStop(1) == NotInitialized, "sceNpMatching2ContextStop", "a call after termination did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterContextCallback(nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterContextCallback", "a call after termination did not return NOT_INITIALIZED");
     Require(sceNpMatching2RegisterSignalingCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterSignalingCallback", "a call after termination did not return NOT_INITIALIZED");
+    Require(registerLobbyEvent(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyEventCallback", "a call after termination did not return NOT_INITIALIZED");
+    Require(createContextA(&createA, &created) == NotInitialized, "sceNpMatching2CreateContextA", "a call after termination did not return NOT_INITIALIZED");
 
     if (failures != 0) return 1;
     std::puts("NpMatching2 offline tests passed");

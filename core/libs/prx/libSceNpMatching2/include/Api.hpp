@@ -20,6 +20,12 @@ struct NpMatching2CreateContextParameter {
     std::uint64_t size;
 };
 
+struct NpMatching2CreateContextParameterA {
+    std::int32_t userId;
+    std::uint32_t serviceLabel;
+    std::uint64_t size;
+};
+
 extern "C" {
 
 int APS5_VABI sceNpMatching2ContextStart(std::uint16_t ctxId, std::uint64_t timeout);
@@ -53,7 +59,7 @@ int APS5_VABI sceNpMatching2SignalingGetConnectionInfo();
 int APS5_VABI sceNpMatching2Terminate(void);
 
 int APS5_VABI sceNpMatching2AbortContextStart(std::uint16_t ctxId);
-int APS5_VABI sceNpMatching2CreateContextA();
+int APS5_VABI sceNpMatching2CreateContextA(const NpMatching2CreateContextParameterA* param, std::uint16_t* ctxId);
 int APS5_VABI sceNpMatching2CreateContextInternal();
 int APS5_VABI sceNpMatching2CreateJoinRoomA();
 int APS5_VABI sceNpMatching2GetLobbyInfoList();
@@ -72,8 +78,8 @@ int APS5_VABI sceNpMatching2GrantRoomOwner();
 int APS5_VABI sceNpMatching2JoinLobby();
 int APS5_VABI sceNpMatching2JoinRoomA();
 int APS5_VABI sceNpMatching2LeaveLobby();
-int APS5_VABI sceNpMatching2RegisterLobbyEventCallback();
-int APS5_VABI sceNpMatching2RegisterLobbyMessageCallback();
+int APS5_VABI sceNpMatching2RegisterLobbyEventCallback(std::uint16_t ctxId, void* callback, void* userdata);
+int APS5_VABI sceNpMatching2RegisterLobbyMessageCallback(std::uint16_t ctxId, void* callback, void* userdata);
 int APS5_VABI sceNpMatching2RegisterManualUdpSignalingCallback();
 int APS5_VABI sceNpMatching2SendLobbyChatMessage();
 int APS5_VABI sceNpMatching2SetExtraInitParam();
