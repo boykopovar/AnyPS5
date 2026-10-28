@@ -34,6 +34,33 @@ static void Require(bool value, const char* message) {
     }
 }
 
+static int g_constraintCalls = 0;
+static std::string g_constraintMessage;
+
+static void APS5_VABI RecordConstraint(const char* message, void* pointer, int error) {
+    Require(pointer == nullptr && error == 22, "constraint handler arguments");
+    ++g_constraintCalls;
+    g_constraintMessage = message;
+}
+
+static void CheckNullArguments() {
+    void* const previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&RecordConstraint));
+    const std::int64_t timer = 0;
+    GuestTm result{};
+    for (const auto convert : {gmtime_s_nid_postfix, localtime_s_nid_postfix}) {
+        const char* expected = convert == gmtime_s_nid_postfix ? "gmtime_s: bad argument" : "localtime_s: bad argument";
+        for (int which = 0; which < 3; ++which) {
+            g_constraintCalls = 0;
+            Require(convert(which == 1 ? nullptr : &timer, which == 0 ? nullptr : which == 1 ? &result : nullptr) == nullptr,
+                "null argument was accepted");
+            Require(g_constraintCalls == 1 && g_constraintMessage == expected, "null argument did not report a bad argument");
+        }
+        g_constraintCalls = 0;
+        Require(convert(&timer, &result) == &result && g_constraintCalls == 0, "valid conversion reported a violation");
+    }
+    set_constraint_handler_s_nid_postfix(previous);
+}
+
 static bool Equal(const GuestTm& left, const GuestTm& right) {
     return left.tm_sec == right.tm_sec && left.tm_min == right.tm_min && left.tm_hour == right.tm_hour
         && left.tm_mday == right.tm_mday && left.tm_mon == right.tm_mon && left.tm_year == right.tm_year
@@ -438,6 +465,7 @@ static void CheckRejectedZone() {
 int main() {
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not set the guest time zone");
     tzset_nid_postfix();
+    CheckNullArguments();
 
     constexpr std::array<UtcCase, 7> utcCases{{
         {0, 70, 0, 1, 0, 0, 0, 4, 0},
