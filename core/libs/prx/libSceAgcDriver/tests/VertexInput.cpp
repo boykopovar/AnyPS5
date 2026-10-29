@@ -217,6 +217,8 @@ void run() {
         Require(VertexBufferReadSize(input[0], 5, 1) == 176, "bounded vertex fetch failed");
         input[0].resource.fields[2] = 5;
         Require(live.TryGet(104, input) == bounded, "bounded record count rebuilt the layout");
+        Require(VertexBufferReadSize(input[0], 5, 1) == 176, "bounded record count changed the fetch");
+        input[0].resource.fields[2] = 0;
         fails([&] { VertexBufferReadSize(input[0], 5, 1); });
     }
     {

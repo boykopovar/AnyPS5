@@ -1618,7 +1618,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         fetchOf[i] = fetches.size();
         fetches.push_back({address, address + bytes, stride, attribute.fetchIndex, DecodeVertexFormat(attribute).alignment});
         const auto recordBytes = static_cast<std::uint64_t>(fields[2]) * stride;
-        fetchValid.push_back(args == nullptr && stride != 0 ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
+        fetchValid.push_back(args == nullptr && stride != 0 && VertexBufferOutOfBoundsSelect(attribute) <= 1u ? static_cast<std::size_t>(std::min(recordBytes, static_cast<std::uint64_t>(bytes))) : bytes);
     }
     const auto soloFetches = SoloZeroPaddedFetchIndices(fetches, fetchValid);
     std::vector<bool> isSolo(fetches.size(), false);

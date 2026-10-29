@@ -699,7 +699,7 @@ void DrawVertexInput(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics:
     userData[7] = 0x31016facu;
     ShaderRecompiler::ShaderVertexStageInfo info{};
     info.resourcesNum = 1u;
-    info.resources[0].fields = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), stride == 0u ? 16u : 3u, 0x3104dfacu};
+    info.resources[0].fields = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), stride == 0u ? 16u : 48u, 0x3104dfacu};
     info.resourcesDst[0] = {8, 4, 0, 0};
     info.fetchAttribReg = 8u;
     info.fetchBufferReg = 10u;

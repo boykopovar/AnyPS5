@@ -266,6 +266,14 @@ inline bool VertexFetchOutOfRange(const ShaderRecompiler::VertexAttribute& attri
     return records == 0;
 }
 
+inline bool StridedFetchReadsZero(const ShaderRecompiler::VertexAttribute& attribute) {
+    const auto select = VertexBufferOutOfBoundsSelect(attribute);
+    const auto records = attribute.resource.fields[2];
+    if (select == 2u) return records == 0;
+    if (select == 3u) return records < DecodeVertexFormat(attribute).bytes;
+    return false;
+}
+
 inline std::uint64_t ZeroStrideAvailableBytes(const ShaderRecompiler::VertexAttribute& attribute) {
     return VertexFetchOutOfRange(attribute) ? 0u : DecodeVertexFormat(attribute).bytes;
 }
@@ -292,8 +300,11 @@ inline std::size_t VertexBufferReadSize(const ShaderRecompiler::VertexAttribute&
     const auto index = attribute.fetchIndex == 0 ? maxIndex : firstInstance + instances - 1u;
     const auto bytes = DecodeVertexFormat(attribute).bytes;
     const auto select = VertexBufferOutOfBoundsSelect(attribute);
-    const auto recordsUnchecked = stride == 0 ? select != 1u : select <= 1u;
-    Require(recordsUnchecked || index < records, "vertex fetch exceeds descriptor record count");
+    const auto indexChecked = stride == 0 && select == 1u;
+    const auto readsZero = stride != 0 && select >= 2u && StridedFetchReadsZero(attribute);
+    if (readsZero || (indexChecked && index >= records)) {
+        Require(false, "vertex fetch exceeds descriptor record count: OOB_SELECT " + std::to_string(select) + ", stride " + std::to_string(stride) + ", NUM_RECORDS " + std::to_string(records) + (attribute.fetchIndex == 0 ? ", vertex index " : ", instance index ") + std::to_string(index));
+    }
     const auto required = static_cast<std::uint64_t>(stride) * index + bytes;
     Require(stride != 0 || required <= ZeroStrideAvailableBytes(attribute), "vertex fetch exceeds descriptor byte range");
     Require(required <= std::numeric_limits<std::size_t>::max(), "vertex fetch exceeds addressable byte range");

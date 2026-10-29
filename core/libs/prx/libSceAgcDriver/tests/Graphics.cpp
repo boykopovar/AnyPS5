@@ -11209,9 +11209,25 @@ void validationTests() {
         attribute.resource.fields[3] = 0x1004dfacu;
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "oob_select 1 past the records still spans its fetch");
         attribute.resource.fields[3] = 0x2004dfacu;
-        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "record count");
+        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "oob_select 2 checked the index against NUM_RECORDS");
+        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1, 0) == 16, "oob_select 2 index 0 changed");
+        Require(AgcDriver::Graphics::VertexBufferExtent(attribute) == 80, "oob_select 2 indirect extent is not the descriptor's record range");
+        {
+            auto narrow = attribute;
+            narrow.resource.fields[1] = (narrow.resource.fields[1] & 0xffffu) | (12u << 16u);
+            narrow.resource.fields[2] = 303;
+            narrow.resource.fields[3] = (74u << 12u) | (2u << 28u);
+            Require(AgcDriver::Graphics::VertexBufferReadSize(narrow, 319706, 1) == 12u * 319706u + 12u, "oob_select 2 stride 12 index past NUM_RECORDS was rejected");
+            narrow.resource.fields[2] = 0;
+            expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(narrow, 1, 1); }, "vertex fetch exceeds descriptor record count: OOB_SELECT 2, stride 12, NUM_RECORDS 0, vertex index 1");
+        }
         attribute.resource.fields[3] = 0x3004dfacu;
-        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "record count");
+        Require(AgcDriver::Graphics::VertexBufferExtent(attribute) == 80, "oob_select 3 indirect extent is not the descriptor's record range");
+        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1); }, "vertex fetch exceeds descriptor record count: OOB_SELECT 3, stride 32, NUM_RECORDS 3, vertex index 3");
+        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1); }, "record count");
+        attribute.resource.fields[2] = 72;
+        Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 3, 1) == 112, "oob_select 3 with NUM_RECORDS covering the fetch rejected an index");
+        attribute.resource.fields[2] = 3;
         attribute.resource.fields[3] = 77u << 12u;
         attribute.fetchIndex = 1;
         attribute.resource.fields[1] = 0;
@@ -11238,6 +11254,7 @@ void validationTests() {
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1, 7) == 16, "OOB_SELECT 1 must read the whole element for the last index below NUM_RECORDS");
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 9); }, "record count");
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1, 8); }, "record count");
+        expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1, 8); }, "vertex fetch exceeds descriptor record count: OOB_SELECT 1, stride 0, NUM_RECORDS 8, instance index 8");
         zeroStride(1, 1);
         Require(AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 1) == 16, "OOB_SELECT 1 with one record must read the element at index 0");
         expectFailure([&] { AgcDriver::Graphics::VertexBufferReadSize(attribute, 0, 2); }, "record count");
