@@ -434,6 +434,62 @@ void filterAndPltCompaction() {
     requireFailure([&] { Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, exceptional, input.Text, input.TextVaddr); }, "Exception metadata was ignored");
 }
 
+void relativeTableTargetsBounds() {
+    using Relinker::UnusedNidFilter::StrictDataRegion;
+    using Relinker::UnusedNidFilter::ReadRelativeTableTargets;
+
+    std::vector<std::uint8_t> tableBytes(16);
+    write<std::int32_t>(tableBytes, 0, 0x100);
+    write<std::int32_t>(tableBytes, 4, -0x80);
+    write<std::int32_t>(tableBytes, 8, 0x500);
+    write<std::int32_t>(tableBytes, 12, 0x20);
+
+    const std::vector<StrictDataRegion> data = {
+        {0x2000, tableBytes}
+    };
+
+    const auto targets = ReadRelativeTableTargets(data, 0x2000, 0x1000, 0x2000);
+    require(targets == std::vector<std::uint64_t>{0x2100, 0x1F80, 0x2500, 0x2020},
+            "Valid relative table targets were not read");
+
+    const auto bounded = ReadRelativeTableTargets(data, 0x2000, 0x1000, 0x1200);
+    require(bounded == std::vector<std::uint64_t>{0x2100, 0x1F80},
+            "Relative table reading did not terminate when target fell outside the text section");
+
+    requireFailure([&] {
+        ReadRelativeTableTargets(data, 0x2000, 0x1000, 0);
+    }, "Zero text size was accepted by relative table reader");
+
+    requireFailure([&] {
+        ReadRelativeTableTargets(data, 0x2000, std::numeric_limits<std::uint64_t>::max() - 0x10, 0x100);
+    }, "Wrapping text range was accepted by relative table reader");
+
+    std::vector<std::uint8_t> discBytes(4);
+    write<std::int32_t>(discBytes, 0, 0x8);
+    const std::vector<StrictDataRegion> discData = {
+        {std::numeric_limits<std::uint64_t>::max() - 0x20, discBytes}
+    };
+    requireFailure([&] {
+        ReadRelativeTableTargets(discData, std::numeric_limits<std::uint64_t>::max() - 0x20, std::numeric_limits<std::uint64_t>::max() - 0x30, 0x100);
+    }, "Wrapping text range was accepted by relative table reader");
+
+    const auto missingBase = ReadRelativeTableTargets(data, 0x3000, 0x1000, 0x2000);
+    require(missingBase.empty(), "Table base outside data regions returned targets");
+
+    const auto unalignedEnd = ReadRelativeTableTargets(data, 0x200D, 0x1000, 0x2000);
+    require(unalignedEnd.empty(), "Table base with fewer than four bytes remaining returned targets");
+
+    std::vector<std::uint8_t> wrapBytes(8);
+    write<std::int32_t>(wrapBytes, 0, 0x1080);
+    write<std::int32_t>(wrapBytes, 4, -0x200);
+    const std::vector<StrictDataRegion> wrapData = {
+        {std::numeric_limits<std::uint64_t>::max() - 0x7F, wrapBytes}
+    };
+    const auto modularWrap = ReadRelativeTableTargets(wrapData, std::numeric_limits<std::uint64_t>::max() - 0x7F, 0x1000, 0x200);
+    require(modularWrap == std::vector<std::uint64_t>{0x1000},
+            "Modular two's-complement displacement wrapping across the address boundary was lost");
+}
+
 void relativeRelocationTableBounds() {
     std::vector<std::uint8_t> bytes(0x400, 0);
     bytes[0] = 0x7F;
@@ -672,6 +728,50 @@ void sceDynlibDataOffsets() {
                    "Strict filter accepted a RELATIVE relocation symbol outside the symbol table");
 }
 
+void duplicatePointerRelocations() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    importThunk(input, 16, 0x2000);
+    auto bytes = elfFixture(input);
+    bytes.resize(0xA00);
+    write<std::uint16_t>(bytes, 56, 4);
+    write<std::uint32_t>(bytes, 176, 2);
+    write<std::uint32_t>(bytes, 180, 6);
+    write<std::uint64_t>(bytes, 184, 0x300);
+    write<std::uint64_t>(bytes, 192, 0x2000);
+    write<std::uint64_t>(bytes, 208, 0x40);
+    write<std::uint64_t>(bytes, 216, 0x40);
+    write<std::uint64_t>(bytes, 224, 8);
+    write<std::uint32_t>(bytes, 232, 0x61000000);
+    write<std::uint32_t>(bytes, 236, 4);
+    write<std::uint64_t>(bytes, 240, 0x500);
+    write<std::uint64_t>(bytes, 264, 0x500);
+    write<std::uint64_t>(bytes, 272, 0x500);
+    write<std::uint64_t>(bytes, 280, 0x10);
+    write<std::int64_t>(bytes, 0x300, 0x6100002F);
+    write<std::uint64_t>(bytes, 0x308, 0x400);
+    write<std::int64_t>(bytes, 0x310, 0x61000031);
+    write<std::uint64_t>(bytes, 0x318, 48);
+    write<std::int64_t>(bytes, 0x320, 0x61000033);
+    write<std::uint64_t>(bytes, 0x328, 24);
+    write<std::uint64_t>(bytes, 0x900, 0x2040);
+    write<std::uint64_t>(bytes, 0x908, 8);
+    write<std::uint64_t>(bytes, 0x910, 0x1010);
+    write<std::uint64_t>(bytes, 0x918, 0x2040);
+    write<std::uint64_t>(bytes, 0x920, 8);
+    write<std::uint64_t>(bytes, 0x928, 0x1010);
+    const std::vector<Relinker::NidReference> references = {{"live", {}, 6, 0x900, 0x2000, 0}};
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).size() == 1,
+            "Strict filter rejected an identical duplicate pointer relocation");
+    write<std::uint64_t>(bytes, 0x928, 0x1020);
+    requireFailure([&] { (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr); },
+                   "Strict filter accepted a conflicting duplicate pointer relocation");
+    write<std::uint64_t>(bytes, 0x928, 0x1010);
+    write<std::uint64_t>(bytes, 0x918, 0x2000);
+    requireFailure([&] { (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr); },
+                   "Strict filter accepted a pointer relocation overlapping an import slot");
+}
+
 }
 
 int main() {
@@ -694,8 +794,10 @@ int main() {
         exceptionDataWithoutPersonality();
         filterCallbackDataImports();
         filterAndPltCompaction();
+        relativeTableTargetsBounds();
         relativeRelocationTableBounds();
         sceDynlibDataOffsets();
+        duplicatePointerRelocations();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

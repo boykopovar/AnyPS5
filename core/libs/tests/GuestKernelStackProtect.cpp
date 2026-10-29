@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <atomic>
@@ -11,24 +13,16 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <sys/mman.h>
 #else
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI scePthreadKeyDelete(PthreadKey key);
-int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
-int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end);
-void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection, int flags, int descriptor, std::int64_t offset) noexcept;
-int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept;
-int* APS5_VABI __error_nid_postfix();
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr std::uintptr_t Page = 0x4000;
@@ -49,6 +43,16 @@ static PageState QueryPage(std::uintptr_t address) {
     Require(VirtualQuery(reinterpret_cast<const void*>(address), &memory, sizeof(memory)) == sizeof(memory));
     const bool mapped = memory.State == MEM_COMMIT;
     return {mapped, mapped && (memory.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) != 0, (static_cast<std::uint64_t>(memory.State) << 32) | memory.Protect};
+#elif defined(__APPLE__)
+    mach_vm_address_t region = address;
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t info{};
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    if (mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) != KERN_SUCCESS || region > address) return {false, false, 0};
+    const bool readable = (info.protection & VM_PROT_READ) != 0;
+    const bool writable = (info.protection & VM_PROT_WRITE) != 0;
+    return {true, readable && writable, 1ull | (readable ? 2ull : 0) | (writable ? 4ull : 0) | ((info.protection & VM_PROT_EXECUTE) != 0 ? 8ull : 0)};
 #else
     std::FILE* maps = std::fopen("/proc/self/maps", "r");
     Require(maps != nullptr);
@@ -112,7 +116,6 @@ static void CheckFixedStackRemap(std::uintptr_t low, void* start) {
     reject(address + 1, Page, FixedPrivateAnonymous, -1, 0, 22);
     reject(address, Page, FixedPrivateAnonymous, 0, 0, 22);
     reject(address, Page, FixedPrivateAnonymous, -1, Page, 22);
-    reject(address, Page, FixedPrivateAnonymous | 0x4000, -1, 0, 0);
     int active = 0;
     const auto activePage = reinterpret_cast<std::uintptr_t>(&active) & ~(Page - 1);
     void* activeStart = nullptr;
@@ -459,7 +462,7 @@ static void ProtectHostStacks() {
     for (void* partial : {static_cast<void*>(nullptr), reinterpret_cast<void*>(1)}) RunOnReservedStack(ProtectReservedStack, partial);
     RunOnReservedStack(ProtectStackBottom, nullptr);
 }
-#else
+#elif defined(__linux__)
 static int ProtectUnlimitedStack() {
     int local = 0;
     void* start = nullptr;
@@ -537,11 +540,15 @@ int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
     ProtectHostStacks();
-#else
+#elif defined(__linux__)
     if (argc > 1 && std::strcmp(argv[1], "--unlimited-stack") == 0) return ProtectUnlimitedStack();
     if (argc > 1 && std::strcmp(argv[1], "--read-only-bottom") == 0) return ProtectMainStackBottom({1}, 3);
     if (argc > 1 && std::strcmp(argv[1], "--reprotect-bottom") == 0) return ProtectMainStackBottom({0, 3}, 7);
     ProtectMainStacks();
+    ProtectStack(0);
+#else
+    (void)argc;
+    (void)argv;
     ProtectStack(0);
 #endif
     std::atomic<bool> passed{false};

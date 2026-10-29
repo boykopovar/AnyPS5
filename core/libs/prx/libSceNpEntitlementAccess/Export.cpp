@@ -1,3 +1,4 @@
+#include "prx/libSceNpEntitlementAccess/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -23,8 +24,14 @@ static constexpr uint32_t SKU_FLAG_FULL = 3;
 
 namespace {
 
+#ifdef _WIN32
+const wchar_t* ConfiguredEntitlements() { return _wgetenv(L"ANYPS5_ENTITLEMENTS"); }
+#else
+const char* ConfiguredEntitlements() { return std::getenv("ANYPS5_ENTITLEMENTS"); }
+#endif
+
 std::filesystem::path EntitlementsPath() {
-    if (const char* configured = std::getenv("ANYPS5_ENTITLEMENTS"); configured != nullptr && configured[0] != '\0') return configured;
+    if (const auto* configured = ConfiguredEntitlements(); configured != nullptr && configured[0] != 0) return configured;
 #ifdef _WIN32
     wchar_t module[MAX_PATH];
     const auto length = GetModuleFileNameW(nullptr, module, MAX_PATH);
@@ -50,7 +57,7 @@ const std::vector<NpEntitlementAccessAddcontEntitlementInfo>& OwnedAddons() {
         const auto path = EntitlementsPath();
         std::ifstream file(path);
         if (!file) {
-            if (std::getenv("ANYPS5_ENTITLEMENTS") != nullptr || std::filesystem::exists(path)) throw std::runtime_error("NpEntitlementAccess: cannot read " + path.string());
+            if (ConfiguredEntitlements() != nullptr || std::filesystem::exists(path)) throw std::runtime_error("NpEntitlementAccess: cannot read " + path.string());
             return addons;
         }
         std::string line;
@@ -119,11 +126,13 @@ int APS5_VABI sceNpEntitlementAccessInitialize(const NpEntitlementAccessInitPara
 }
 
 int APS5_VABI sceNpEntitlementAccessAbortRequest(std::int64_t requestId) {
-    throw std::logic_error("sceNpEntitlementAccessAbortRequest: asynchronous request tracking is unimplemented");
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpEntitlementAccessDeleteRequest(std::int64_t requestId) {
-    throw std::logic_error("sceNpEntitlementAccessDeleteRequest: asynchronous request tracking is unimplemented");
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpEntitlementAccessGenerateTransactionId(NpEntitlementAccessTransactionId* transactionId) {
@@ -139,11 +148,9 @@ int APS5_VABI sceNpEntitlementAccessRequestConsumeUnifiedEntitlement(std::int32_
  return SCE_NP_ERROR_SIGNED_OUT;
 }
 
-
 int APS5_VABI sceNpEntitlementAccessRequestConsumeServiceEntitlement(std::int32_t userId, std::uint32_t serviceLabel, const NpServiceEntitlementLabel* entitlementLabel, const NpEntitlementAccessTransactionId* transactionId, std::int32_t count, std::int64_t* requestId) {
  return SCE_NP_ERROR_SIGNED_OUT;
 }
-
 
 int APS5_VABI sceNpEntitlementAccessPollServiceEntitlementInfo(std::int64_t requestId, std::int32_t* result, NpEntitlementAccessServiceInfo* info) {
     return SCE_NP_ERROR_SIGNED_OUT;

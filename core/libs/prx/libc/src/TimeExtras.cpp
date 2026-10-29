@@ -1,14 +1,11 @@
+#include "prx/libc/include/SonyCrt.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <cstdint>
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 
 namespace {
-
-struct Xtime {
-    std::int64_t sec;
-    std::int64_t nsec;
-};
 
 constexpr int timeUtc = 1;
 constexpr std::int64_t nanosPerSecond = 1000000000;
@@ -34,10 +31,6 @@ std::int64_t wrappingAdd(std::int64_t left, std::int64_t right) {
 }  // namespace
 
 extern "C" {
-
-GuestTm* APS5_VABI gmtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
-GuestTm* APS5_VABI localtime_s_nid_postfix(const std::int64_t* timer, GuestTm* result);
-std::int64_t APS5_VABI _Xtime_get_ticks_nid_postfix();
 
 GuestTm* APS5_VABI gmtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result) {
     return gmtime_s_nid_postfix(timer, result);
@@ -74,6 +67,7 @@ Xtime APS5_VABI _Xtime_to_ts_nid_postfix(const Xtime* time) {
 Xtime APS5_VABI _Xtime_diff_to_ts_nid_postfix(const Xtime* target) {
     Xtime now{};
     xtime_get_nid_postfix(&now, timeUtc);
+
     std::int64_t seconds = wrappingAdd(target->sec, target->nsec / nanosPerSecond);
     std::int64_t nanos = target->nsec % nanosPerSecond;
     if (nanos < 0) {

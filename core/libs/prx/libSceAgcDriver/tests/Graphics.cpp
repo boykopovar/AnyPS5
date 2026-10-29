@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -10,7 +11,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "ShaderDiskCache.hpp"
 #include "ShaderCacheDirectory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -31,6 +31,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include <limits>
 #include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #include <windows.h>
@@ -64,8 +65,6 @@
 #include <type_traits>
 #include <thread>
 #include <vector>
-
-extern "C" std::terminate_handler APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(std::terminate_handler handler);
 
 namespace {
 
@@ -105,6 +104,7 @@ AgcDriver::QueueState makeState() {
     queue.context[0x114] = 0;
     queue.context[0xb4] = 0;
     queue.context[0xb5] = std::bit_cast<std::uint32_t>(1.0f);
+    queue.context[0x3] = 0;
     queue.shader[0x008] = 0x100;
     queue.shader[0x009] = 0;
     return queue;
@@ -163,9 +163,15 @@ void inactiveVertexPointSizeTests() {
         }
         throw std::runtime_error("potentially active point size passed the state decoder");
     };
-    for (const auto primitive : {1u, 9u}) {
+    {
         auto queue = pointSizeState();
-        queue.userConfig[0x242] = primitive;
+        queue.userConfig[0x242] = 9;
+        rejected(queue);
+    }
+    {
+        auto queue = pointSizeState();
+        queue.userConfig[0x242] = 1;
+        queue.context[0x2d5] = 0x2020;
         rejected(queue);
     }
     for (const auto stages : {0x2004u, 0x2020u}) {
@@ -222,6 +228,73 @@ void PolygonPrimitiveTests() {
     Require(indexedState.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN && indexedState.primitiveRestart, "indexed polygon decoding did not keep primitive restart");
 }
 
+void vertexPointListTests() {
+    const auto pointState = [](std::uint32_t control, std::uint32_t size, std::uint32_t limits) {
+        auto queue = makeState();
+        queue.userConfig[0x242] = 1;
+        queue.context[0x1b3] = queue.context[0x1b4] = 2;
+        queue.context[0x207] = control;
+        queue.context[0x280] = size;
+        queue.context[0x281] = limits;
+        return queue;
+    };
+    {
+        const auto queue = pointState(0x01210000u, 0x00080008u, 0x00080008u);
+        const auto rejection = AgcDriver::Graphics::DrawRejection(queue, false);
+        Require(rejection.empty(), "a vertex-path point list with a vertex point size failed the draw precheck: " + rejection);
+        const auto state = AgcDriver::Graphics::DecodeState(queue);
+        Require(state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST && state.paClVsOutCntl == 0x01210000u, "a vertex-path point list with a vertex point size did not decode as a point list");
+        Require(AgcDriver::Graphics::RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Point, "a vertex-path point list is not rasterized as points");
+        Require(state.vertexPoints && state.pointSize == 1.0f && state.pointSizeMin == 1.0f && state.pointSizeMax == 1.0f, "PA_SU_POINT_SIZE and PA_SU_POINT_MINMAX of 8 did not decode as one-pixel points");
+        ShaderRecompiler::ShaderVertexStageInfo vertex{};
+        vertex.paClVsOutCntl = 1u << 21u;
+        AgcDriver::Graphics::ApplyPointSize(state, vertex);
+        Require(vertex.pointList && vertex.paClVsOutCntl == ((1u << 16u) | (1u << 21u)) && vertex.pointSize == 1.0f && vertex.pointSizeMin == 1.0f && vertex.pointSizeMax == 1.0f, "the vertex stage did not receive the vertex point size");
+    }
+    {
+        const auto state = AgcDriver::Graphics::DecodeState(pointState(0, 0x00200020u, 0x00100004u));
+        Require(state.vertexPoints && state.pointSize == 4.0f && state.pointSizeMin == 0.5f && state.pointSizeMax == 2.0f, "a register point size did not decode as diameters");
+        ShaderRecompiler::ShaderVertexStageInfo vertex{};
+        vertex.paClVsOutCntl = 1u << 21u;
+        AgcDriver::Graphics::ApplyPointSize(state, vertex);
+        Require(vertex.pointList && vertex.paClVsOutCntl == (1u << 21u) && vertex.pointSize == 4.0f, "a register point size turned on the vertex point size");
+    }
+    {
+        const auto state = AgcDriver::Graphics::DecodeState(pointState(0x01210000u, 0x00200010u, 0x00400000u));
+        Require(state.pointSizeMin == 0.0f && state.pointSizeMax == 8.0f, "a vertex point size refused a register size whose width and height differ");
+    }
+    {
+        auto queue = makeState();
+        queue.context[0x1b3] = queue.context[0x1b4] = 2;
+        queue.context[0x207] = 0x01210000u;
+        const auto state = AgcDriver::Graphics::DecodeState(queue);
+        Require(!state.vertexPoints, "a triangle draw decoded as vertex points");
+        ShaderRecompiler::ShaderVertexStageInfo vertex{};
+        AgcDriver::Graphics::ApplyPointSize(state, vertex);
+        Require(!vertex.pointList && vertex.paClVsOutCntl == 0, "a triangle draw received a point size");
+    }
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(pointState(0, 0x00200010u, 0x00080008u)); }, "points whose PA_SU_POINT_SIZE width and height differ are unsupported");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(pointState(0, 0x00080008u, 0x00080010u)); }, "PA_SU_POINT_MINMAX with a minimum above its maximum is unsupported");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(pointState(1u << 16u, 0x00080008u, 0x00080008u)); }, "USE_VTX_POINT_SIZE without VS_OUT_MISC_VEC_ENA is unsupported");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(pointState(0, 0, 0x00080008u)); }, "points of size 0 (PA_SU_POINT_SIZE 0) are unsupported");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(pointState(0x01210000u, 0x00080008u, 0)); }, "a vertex point size clamped to 0 (PA_SU_POINT_MINMAX maximum 0) is unsupported");
+    {
+        const auto state = AgcDriver::Graphics::DecodeState(pointState(0x01210000u, 0, 0x00200000u));
+        Require(state.pointSize == 0.0f && state.pointSizeMin == 0.0f && state.pointSizeMax == 4.0f, "a vertex point size refused a zero register size or a zero clamp minimum");
+        static_cast<void>(AgcDriver::Graphics::DecodeState(pointState(0, 0x00080008u, 0)));
+    }
+    for (const auto sprite : {1u << 17u, 1u << 23u}) {
+        auto queue = pointState(0x01210000u, 0x00080008u, 0x00080008u);
+        queue.context[0x1b5] = 0x486bu;
+        queue.context[0x1b6] = 2;
+        queue.context[0x191] = 0;
+        queue.context[0x192] = sprite;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "point sprite texture coordinates (SPI_PS_INPUT_CNTL PT_SPRITE_TEX) are not implemented");
+        queue.context[0x1b5] = 0x4869u;
+        Require(AgcDriver::Graphics::DecodeState(queue).vertexPoints, "PT_SPRITE_TEX was refused with point sprites off");
+    }
+}
+
 void retainedPixelStageTests() {
     using namespace AgcDriver::Graphics;
     auto queue = makeState();
@@ -242,6 +315,9 @@ void retainedPixelStageTests() {
         Require(!PixelProgramSkipped(queue), "an enabled high render target lost its pixel program");
         queue.context[0x8e] = queue.context[0x8f] = 0;
     }
+    queue.context[0x3] = 0;
+    queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.0f);
+    queue.context[0xb5] = std::bit_cast<std::uint32_t>(1.0f);
     queue.context[0x1b3] = queue.context[0x1b4] = 2;
     for (const auto [format, control] : {std::pair{1u, 1u}, std::pair{2u, 2u}, std::pair{9u, 0x100u}, std::pair{9u, 0x103u}}) {
         queue.context[0x1c4] = format;
@@ -251,6 +327,25 @@ void retainedPixelStageTests() {
         const auto pixel = DecodePixelStageInfo(queue.context, ExportMappings(state), PixelProgramSkipped(queue));
         Require(pixel.depthExportEnable == ((control & 1u) != 0) && pixel.stencilRefExportEnable == ((control & 2u) != 0) && pixel.sampleMaskExportEnable == ((control & 0x100u) != 0), "decoding lost an enabled pixel export");
     }
+    queue.context[0x1c4] = 1;
+    queue.context[0x203] = 1;
+    queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.25f);
+    queue.context[0xb5] = std::bit_cast<std::uint32_t>(0.75f);
+    const auto clampState = DecodeState(queue);
+    const auto clamped = DecodePixelStageInfo(queue.context, ExportMappings(clampState));
+    Require(clamped.depthExportEnable && clamped.depthExportMin == 0.25f && clamped.depthExportMax == 0.75f, "PA_SC_VPORT_ZMIN_0/ZMAX_0 did not become the exported depth clamp");
+    queue.context[0x3] = 0x10000;
+    const auto unclamped = DecodePixelStageInfo(queue.context, ExportMappings(clampState));
+    Require(unclamped.depthExportEnable && unclamped.depthExportMin == -std::numeric_limits<float>::infinity() && unclamped.depthExportMax == std::numeric_limits<float>::infinity(), "DB_RENDER_OVERRIDE.DISABLE_VIEWPORT_CLAMP did not leave the exported depth unclamped");
+    queue.context[0x3] = 0;
+    queue.context[0xb4] = std::bit_cast<std::uint32_t>(0.9f);
+    expectFailure([&] { static_cast<void>(DecodePixelStageInfo(queue.context, ExportMappings(clampState))); }, "invalid viewport depth clamp bounds");
+    queue.context[0xb4] = std::bit_cast<std::uint32_t>(std::numeric_limits<float>::quiet_NaN());
+    expectFailure([&] { static_cast<void>(DecodePixelStageInfo(queue.context, ExportMappings(clampState))); }, "invalid viewport depth clamp bounds");
+    queue.context[0x1c4] = 0;
+    queue.context[0x203] = 0x10;
+    const auto notExporting = DecodePixelStageInfo(queue.context, ExportMappings(clampState));
+    Require(!notExporting.depthExportEnable && notExporting.depthExportMin == 0.0f && notExporting.depthExportMax == 1.0f, "a draw without depth export took the viewport depth clamp");
     queue.context[0x203] = 0;
     for (const auto alpha : {0xaa00u, 0xaa01u}) {
         queue.context[0x2dc] = alpha;
@@ -751,7 +846,7 @@ void msaaEnableClearOneSampleTargetTests() {
     queue = drawC();
     queue.context[0x1b3] |= ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
     requireOneSample(queue, "draw C with an enabled but unaddressed ANCILLARY input");
-    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with PS_ITER_SAMPLE, a sample index or coverage input, or a sample-mask export";
+    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index or coverage input, or a sample-mask export";
     for (const auto input : {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) {
         queue = drawC();
         queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(input);
@@ -759,6 +854,10 @@ void msaaEnableClearOneSampleTargetTests() {
     }
     queue = drawC();
     queue.context[0x293] = 0x10000u;
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveSample);
+    requireOneSample(queue, "draw C with PS_ITER_SAMPLE and a sample-interpolated input");
+    Require(!DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample color target without MSAA_ENABLE asked for sample shading");
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
     expectFailure([&] { DecodeState(queue); }, refused);
     queue = drawC();
     queue.context[0x1c4] = 9;
@@ -766,10 +865,12 @@ void msaaEnableClearOneSampleTargetTests() {
     expectFailure([&] { DecodeState(queue); }, refused);
     queue = drawC();
     queue.context[0x2dc] = 0x0000aa01u;
-    expectFailure([&] { DecodeState(queue); }, "without MSAA_ENABLE are unsupported for points, lines");
-    queue = drawC();
-    queue.userConfig[0x242] = 2;
-    expectFailure([&] { DecodeState(queue); }, "without MSAA_ENABLE are unsupported for points, lines");
+    expectFailure([&] { DecodeState(queue); }, "without MSAA_ENABLE are unsupported for points or alpha-to-coverage");
+    for (const auto primitive : {2u, 3u}) {
+        queue = drawC();
+        queue.userConfig[0x242] = primitive;
+        requireOneSample(queue, "a line list or strip into PPSA18216's draw C target");
+    }
     const auto twoTargets = [&](std::uint32_t first, std::uint32_t second) {
         auto pair = drawC();
         for (const auto offset : {0x318u, 0x31bu, 0x31cu}) pair.context[offset + 0xfu] = pair.context.at(offset);
@@ -831,41 +932,80 @@ void msaaEnableClearOneSampleTargetTests() {
     queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
     Require(AgcDriver::Graphics::PixelProgramSkipped(queue), "the depth-only draw did not skip its pixel program");
     requireOneSampleDepth(queue, 0, "a one-sample depth target whose skipped pixel program has PS_ITER_SAMPLE and sample index and coverage inputs");
-    constexpr std::string_view depthRefused = "a one-sample depth target under a multisampled rasterizer without MSAA_ENABLE is unsupported for points or lines and with alpha-to-coverage, a sample index or coverage input, a sample-mask export, or DB_EQAA Z interpolation or overrasterization";
     for (const bool color : {false, true}) {
-        for (const auto input : {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) {
-            queue = depthTarget(color);
-            queue.context[0x203] |= 0x40u;
-            queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(input);
-            expectFailure([&] { DecodeState(queue); }, depthRefused);
-        }
+        queue = depthTarget(color);
+        queue.context[0x203] |= 0x40u;
+        queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
+        Require(!AgcDriver::Graphics::PixelProgramSkipped(queue), "the ANCILLARY draw skipped its pixel program");
+        requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program reads ANCILLARY without PS_ITER_SAMPLE");
+        queue.context[0x1b3] = queue.context[0x1b4] = 0x2b01u;
+        requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program reads PERSP_SAMPLE, the position and ANCILLARY without PS_ITER_SAMPLE");
         queue = depthTarget(color);
         queue.context[0x203] |= 0x40u;
         queue.context[0x293] = 0x10000u;
         Require(!AgcDriver::Graphics::PixelProgramSkipped(queue), "the PS_ITER_SAMPLE draw skipped its pixel program");
         requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target whose running pixel program has PS_ITER_SAMPLE and no sample index or coverage input");
         Require(!DecodeState(queue).perSampleShading, "a PS_ITER_SAMPLE program drawn as one sample still shades per sample");
-        queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
-        expectFailure([&] { DecodeState(queue); }, depthRefused);
-        queue = depthTarget(color);
-        queue.context[0x1c4] = 9;
-        queue.context[0x203] |= 0x100u;
-        expectFailure([&] { DecodeState(queue); }, depthRefused);
-        queue = depthTarget(color);
-        queue.context[0x2dc] = 0x0000aa01u;
-        expectFailure([&] { DecodeState(queue); }, depthRefused);
-        queue = depthTarget(color);
-        queue.userConfig[0x242] = 2;
-        expectFailure([&] { DecodeState(queue); }, depthRefused);
-        for (const auto eqaa : {0x00050002u, 0x00090002u, 0x01010002u, 0x08010002u}) {
+        for (const auto eqaa : {0x00040000u, 0x00050000u}) {
             queue = depthTarget(color);
             queue.context[0x201] = eqaa;
-            expectFailure([&] { DecodeState(queue); }, depthRefused);
+            requireOneSampleDepth(queue, color ? 1u : 0u, "a one-sample depth target under a 4x PA_SC_AA_CONFIG without MSAA_ENABLE with DB_EQAA INTERPOLATE_COMP_Z");
         }
     }
     queue = depthTarget(true);
     queue.context[0x31d] = 0x12000;
     expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
+}
+
+void UnwrittenDepthPlaneTests() {
+    using AgcDriver::Graphics::DecodeState;
+    using AgcDriver::Graphics::DrawRejection;
+    const auto fresh = [](std::uint32_t depthControl) {
+        auto written = makeState();
+        written.context[0x200] = depthControl;
+        written.context[0x1b3] = 2;
+        written.context[0x1b4] = 2;
+        AgcDriver::QueueState queue;
+        queue.shader = written.shader;
+        queue.userConfig = written.userConfig;
+        written.context.ForEach([&](std::uint32_t offset, std::uint32_t value) { queue.context[offset] = value; });
+        return queue;
+    };
+    auto queue = fresh(0x777);
+    auto state = DecodeState(queue);
+    Require(!state.depth && !state.depthTest && !state.depthWrite && !state.stencilTest, "depth and stencil tests on unwritten depth and stencil planes were kept (PPSA24040's DB_DEPTH_CONTROL)");
+    auto rejection = DrawRejection(queue, false);
+    Require(rejection.empty(), "the precheck refused depth and stencil tests on unwritten depth and stencil planes: " + rejection);
+    queue = fresh(0x77f);
+    state = DecodeState(queue);
+    Require(!state.depth && !state.depthBoundsTest, "a depth bounds test on unwritten depth and stencil planes was kept");
+    rejection = DrawRejection(queue, false);
+    Require(rejection.empty(), "the precheck refused a depth bounds test on unwritten depth and stencil planes: " + rejection);
+    queue = fresh(0x007007b3);
+    queue.context[0x010] = 0x80000183;
+    queue.context[0x012] = 0x00001000;
+    queue.context[0x014] = 0x00001000;
+    queue.context[0x007] = 0x0001001f;
+    queue.context[0x00b] = 0x3f800000;
+    state = DecodeState(queue);
+    Require(state.depth && state.depthTest && !state.stencilTest && state.renderExtent.width == 32 && state.renderExtent.height == 2, "a depth plane beside an unwritten DB_STENCIL_INFO did not decode as depth only");
+    rejection = DrawRejection(queue, false);
+    Require(rejection.empty(), "the precheck refused a depth plane beside an unwritten DB_STENCIL_INFO: " + rejection);
+    queue = fresh(0x007007b3);
+    queue.context[0x011] = 0x20000181;
+    queue.context[0x013] = 0x00002000;
+    queue.context[0x015] = 0x00002000;
+    queue.context[0x007] = 0x003f003f;
+    queue.context[0x00b] = 0x3f800000;
+    queue.context[0x10c] = 0x01ffff00;
+    queue.context[0x10d] = 0x01ffff00;
+    state = DecodeState(queue);
+    Require(!state.depthTest && state.stencilTest, "a stencil plane beside an unwritten DB_Z_INFO kept the depth test or lost the stencil test");
+    rejection = DrawRejection(queue, false);
+    Require(rejection.empty(), "the precheck refused a stencil plane beside an unwritten DB_Z_INFO: " + rejection);
+    queue.context[0x010] = 0x80000183;
+    queue.ClearContext();
+    for (const auto offset : {0x010u, 0x011u}) Require(queue.context.contains(offset) && queue.context.at(offset) == 0, "CLEAR_STATE did not reset DB_Z_INFO and DB_STENCIL_INFO to their clear-state value 0");
 }
 
 void MsaaEnableSingleSampleTests() {
@@ -1076,11 +1216,30 @@ void ShaderStageTests() {
         lines.context[0x29b] = 1;
         Require(AgcDriver::Graphics::DecodeState(lines).stages.mesh->provokingVertex == 1, "a last-vertex geometry draw does not take its flat inputs and layer from the second vertex of each output line");
         lines.context[0x29b] = 0;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(lines); }, "missing register in context bank at DWORD 0x280");
+        lines.context[0x280] = 0x00080008u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(lines); }, "missing register in context bank at DWORD 0x281");
+        lines.context[0x281] = 0xffff0000u;
         state = AgcDriver::Graphics::DecodeState(lines);
         mesh = *state.stages.mesh;
         Require(mesh.outputPrimitiveSize == 1 && mesh.maxPrimitives == 255 && AgcDriver::Graphics::RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Point, "a point-list subgroup did not decode as points");
         Require(mesh.provokingVertex == 0, "a point draw has provoking vertex 0");
+        Require(state.pointSize == 1.0f && state.pointSizeMin == 0.0f && state.pointSizeMax == 8191.875f, "geometry points did not decode the queue's default point size and limits");
         lines.context[0x205] = raster;
+        auto points = lines;
+        points.userConfig[0x242] = 6;
+        points.userConfig[0x25b] = 0x5c2e;
+        points.context[0x1ff] = 0x8a;
+        points.context[0x2ce] = 3;
+        points.context[0x29b] = 0;
+        points.context[0x280] = 0x00180018u;
+        points.context[0x281] = 0x00400008u;
+        const auto pointState = AgcDriver::Graphics::DecodeState(points);
+        const auto& pointMesh = *pointState.stages.mesh;
+        ShaderRecompiler::ShaderVertexStageInfo pointInfo{};
+        AgcDriver::Graphics::ApplyPointSize(pointState, pointInfo);
+        Require(pointInfo.pointList && pointInfo.pointSize == 3.0f && pointInfo.pointSizeMin == 1.0f && pointInfo.pointSizeMax == 8.0f, "geometry points lost their register sizes");
+        Require(pointMesh.outputPrimitiveSize == 1u && pointMesh.primitivesPerGroup == 44u && pointMesh.verticesPerGroup == 46u && pointMesh.maxVertices == 138u && pointMesh.maxPrimitives == 138u && pointMesh.threadsPerGroup == 192u && AgcDriver::Graphics::RasterPrimitiveOf(pointState) == ShaderRecompiler::RasterPrimitive::Point, "triangle-strip input with point output did not decode the reported subgroup");
         lines.context[0x29b] = 1;
         lines.context[0x2ce] = 1;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(lines); }, "unsupported geometry input or output assembly");
@@ -1157,8 +1316,40 @@ void ShaderStageTests() {
     queue.context[0x2db] = 0x40049;
     queue.context[0x286] = 0x42800000;
     queue.context[0x287] = 0x3f800000;
-    queue.context[0x2d5] = 0x202d;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "combined tessellation and geometry");
+    queue.context[0x2d5] = 0x0260210d;
+    {
+        const auto wave32 = AgcDriver::Graphics::DecodeState(queue).stages;
+        Require(wave32.path == AgcDriver::Graphics::ShaderPath::Tessellation && wave32.hullWaveSize == 32 && wave32.vertexWaveSize == 32 && !wave32.tessellationGeometry, "HS_W32 and GS_W32 tessellation routing decoded differently");
+    }
+    queue.context[0x2d5] = 0x60212d;
+    queue.context[0x29b] = 2;
+    queue.context[0x2ce] = 6;
+    queue.context[0x1ff] = 0xc0;
+    queue.context[0x2ab] = 4;
+    queue.userConfig[0x25b] = 0x4020;
+    queue.shader[0x8b] = 0x67001c;
+    {
+        std::vector<AgcDriver::Graphics::RegisterRead> geometryLog;
+        AgcDriver::Graphics::ShaderStages geometry;
+        {
+            const AgcDriver::Graphics::RegisterReadLogScope logScope(&geometryLog);
+            geometry = AgcDriver::Graphics::DecodeState(queue).stages;
+        }
+        for (const auto read : geometryLog) Require(AgcDriver::Graphics::DrawKeyCovers(read), "DrawKeyRegisters lacks a tessellation geometry register the decoder reads: " + std::to_string(read.offset));
+        Require(geometry.path == AgcDriver::Graphics::ShaderPath::TessellationGeometry && geometry.tessellation && !geometry.mesh && geometry.hullWaveSize == 32 && geometry.vertexWaveSize == 32, "tessellation followed by an NGG geometry stage decoded differently");
+        const auto& subgroup = geometry.tessellationGeometry;
+        Require(subgroup && subgroup->inputPrimitive == 4 && subgroup->primitivesPerGroup == 10 && subgroup->verticesPerGroup == 30 && subgroup->maxVertices == 192 && subgroup->maxPrimitives == 128 && subgroup->threadsPerGroup == 192 && subgroup->ldsSizeDwords == 1536 && subgroup->esgsItemSize == 4, "the geometry subgroup after tessellation decoded differently");
+    }
+    queue.context[0x2d5] = 0x0260212d;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported tessellation and geometry routing");
+    queue.context[0x2d5] = 0x60012d;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "unsupported tessellation and geometry routing");
+    queue.context.erase(0x29b);
+    queue.context.erase(0x2ce);
+    queue.context.erase(0x1ff);
+    queue.context.erase(0x2ab);
+    queue.shader.erase(0x8b);
+    queue.userConfig.erase(0x25b);
     queue.context[0x2d5] = 0x0200210d;
     queue.context[0x2d6] = 0;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "control-point counts");
@@ -1647,14 +1838,23 @@ void UnclampedNormalizedColorTests() {
     const auto pass = AgcDriver::Graphics::DecodeColorMetadataPass(eliminate);
     Require(pass.has_value() && pass->mode == AgcDriver::Graphics::ColorMetadataPass::Mode::EliminateFastClear && pass->targets.size() == 1 && pass->targets[0].format == VK_FORMAT_R8G8_UNORM, "a fast-clear eliminate over an unclamped UNORM target was refused");
     queue.context[0x1e0] = blending;
-    expectFailure([&] { DecodeState(queue); }, "blending unclamped normalized color is not implemented (CB_COLOR_INFO 0x0000000c, CB_BLEND0_CONTROL 0x40000504)");
+    state = DecodeState(queue);
+    Require(state.colors.at(0).partialWriteMask == AgcDriver::Graphics::UnclampedBlendMask && state.blends.at(0).blendEnable && state.blends.at(0).colorWriteMask != 0, "an 8_8 UNORM target that blends with BLEND_CLAMP clear (CB_COLOR_INFO 0x0000000c, CB_BLEND0_CONTROL 0x40000504) was not routed to the pixel shader");
+    const auto merge = AgcDriver::Graphics::ExportTargetMerge(state);
+    Require(merge.blend.enabled && !merge.blend.snorm && merge.mask == AgcDriver::Graphics::UnclampedBlendMask && merge.samples == 1u && merge.blend.colorSource == VK_BLEND_FACTOR_SRC_ALPHA && merge.blend.colorDestination == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA && merge.blend.colorOperation == VK_BLEND_OP_ADD && merge.blend.writeMask == state.blends.at(0).colorWriteMask, "the unclamped blend of an 8_8 UNORM target was not described to the pixel shader");
     queue.context[0x31c] |= 0x10000u;
     state = DecodeState(queue);
     Require(!state.blends.at(0).blendEnable && state.blends.at(0).colorWriteMask != 0, "an unclamped UNORM target with BLEND_BYPASS was refused or blended");
     queue = target(0x0000010cu);
     Require(DecodeState(queue).colors.at(0).format == VK_FORMAT_R8G8_SNORM, "an unclamped SNORM target that does not blend was refused");
     queue.context[0x1e0] = blending;
-    expectFailure([&] { DecodeState(queue); }, "blending unclamped normalized color is not implemented");
+    state = DecodeState(queue);
+    Require(state.colors.at(0).partialWriteMask == AgcDriver::Graphics::UnclampedBlendMask && AgcDriver::Graphics::ExportTargetMerge(state).blend.snorm, "an unclamped SNORM target that blends was not routed to the pixel shader as signed");
+    auto unsignedMasked = target(0x0000000cu);
+    unsignedMasked.context[0x1e0] = blending;
+    unsignedMasked.context[0x8e] = 0x1u;
+    state = DecodeState(unsignedMasked);
+    Require(state.colors.at(0).partialWriteMask == AgcDriver::Graphics::UnclampedBlendMask && state.blends.at(0).colorWriteMask == VK_COLOR_COMPONENT_R_BIT, "an unclamped UNORM target that blends with a write mask that skips a component was not routed to the pixel shader");
     queue = target(0x00000604u);
     expectFailure([&] { DecodeState(queue); }, "unclamped normalized color is unsupported");
     queue = target(0x0000800cu);
@@ -1731,7 +1931,8 @@ void DisabledColorTests() {
     const auto thirdSlice = AgcDriver::Graphics::DecodeState(queue);
     Require(thirdSlice.depth && thirdSlice.depth->firstSlice == 3 && thirdSlice.depth->address == depthOnly.depth->address + 3u * AgcDriver::Graphics::DepthSliceBytes(depthOnly.depth->extent, 4u), "a depth view of slice 3 lost its slice or its Z offset");
     queue.context[0x002] = 1u << 26u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "on a surface without mips");
+    const auto singleLevelMip = AgcDriver::Graphics::DecodeState(queue);
+    Require(singleLevelMip.depth && singleLevelMip.depth->address == depthOnly.depth->address && singleLevelMip.depth->extent.width == depthOnly.depth->extent.width && singleLevelMip.depth->extent.height == depthOnly.depth->extent.height, "a depth view mip on a single-level surface did not select its first level");
     queue.context[0x002] = 0;
     {
         using AgcDriver::Graphics::ComputeElementMipLayout;
@@ -1789,8 +1990,35 @@ void TuningFieldTests() {
     Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "DISABLE_DUAL_QUAD was rejected");
     Require(state.hasColorTarget && state.blend.colorWriteMask == baseline.blend.colorWriteMask, "DISABLE_DUAL_QUAD changed color output");
     queue.context[0x202] = 0xcc0013;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "copy ROP");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "source or brush form");
+    queue.context[0x202] = 0x5b0010;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "source or brush form");
+    queue.context[0x202] = 0x5a0010;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "an XOR ROP was rejected");
+    Require(state.hasColorTarget && state.colorRop == 0x5a && AgcDriver::Graphics::LogicOpFromRop(state.colorRop) == VK_LOGIC_OP_XOR, "an XOR ROP did not decode");
     queue.context[0x202] = 0xcc0010;
+    Require(AgcDriver::Graphics::DecodeState(queue).colorRop == AgcDriver::Graphics::CopyRop, "the copy ROP did not decode as the copy operation");
+    const std::array<std::pair<std::uint8_t, VkLogicOp>, 14> ropOperations{{
+        {0x0f, VK_LOGIC_OP_COPY_INVERTED}, {0xa0, VK_LOGIC_OP_AND}, {0xf0, VK_LOGIC_OP_COPY}, {0xfa, VK_LOGIC_OP_OR},
+        {0x00, VK_LOGIC_OP_CLEAR}, {0x11, VK_LOGIC_OP_NOR}, {0x33, VK_LOGIC_OP_COPY_INVERTED}, {0x55, VK_LOGIC_OP_INVERT}, {0x66, VK_LOGIC_OP_XOR},
+        {0x88, VK_LOGIC_OP_AND}, {0xaa, VK_LOGIC_OP_NO_OP}, {0xcc, VK_LOGIC_OP_COPY}, {0xee, VK_LOGIC_OP_OR}, {0xff, VK_LOGIC_OP_SET}}};
+    for (const auto& [rop, operation] : ropOperations) Require(AgcDriver::Graphics::LogicOpFromRop(rop) == operation, "a ROP3 code mapped to the wrong logic operation");
+    std::uint32_t documentedRops = 0;
+    for (std::uint32_t rop = 0; rop < 256u; ++rop) {
+        try {
+            static_cast<void>(AgcDriver::Graphics::LogicOpFromRop(static_cast<std::uint8_t>(rop)));
+            ++documentedRops;
+        } catch (const std::runtime_error&) {
+        }
+    }
+    Require(documentedRops == 28u, "a ROP3 code outside the source and brush forms was accepted, or one inside them was refused");
+    auto blendedLogic = queue;
+    blendedLogic.context[0x202] = 0x5a0010;
+    blendedLogic.context[0x1e0] = 0x40000101u;
+    for (std::uint32_t index = 0; index < 4u; ++index) blendedLogic.context[0x105 + index] = 0u;
+    blendedLogic.context[0x31c] |= 0x8000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(blendedLogic); }, "logic operation together with blending");
     for (const auto groups : {1u, 2u, 15u}) {
         queue.context[0x2d5] = 0x2000u | (groups << 15u);
         state = AgcDriver::Graphics::DecodeState(queue);
@@ -2396,10 +2624,12 @@ void DepthStencilTests() {
         queue.context[0x000] = 0x22u | control;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "DB_RENDER_CONTROL");
     }
-    queue.context[0x000] = 0x22;
+    queue.context[0x000] = 0x23;
     queue.context[0x011] = 0;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "writable stencil plane");
-    Require(AgcDriver::Graphics::DrawRejection(queue, false).find("writable stencil plane") != std::string::npos, "precheck accepted clear without a stencil plane");
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depthWrite && state.depthCompare == VK_COMPARE_OP_ALWAYS && !state.stencilTest && state.colors.size() == 2, "a depth and stencil clear without a stencil plane does not clear depth alone");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "precheck rejected a stencil clear without a stencil plane");
+    queue.context[0x000] = 0x22;
     queue.context[0x010] = 0;
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(!state.depth && !state.depthTest && !state.depthWrite && !state.stencilTest && state.colors.size() == 2, "clear flags without depth/stencil planes changed color-only rendering");
@@ -2828,7 +3058,12 @@ void depthCopyPassTests() {
     queue.context[0x31c] = 0x40710;
     queue.context[0x8e] = 1;
     auto pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->depthAddress == 0x100000 && pass->samples == 2 && pass->sample == 0 && pass->extent.width == 64 && pass->extent.height == 4, "a centroid DB depth copy of a two-sample depth plane decoded differently");
+    Require(pass.has_value() && pass->source.address == 0x100000 && pass->source.samples == 2 && pass->sample == 0 && pass->source.extent.width == 64 && pass->source.extent.height == 4, "a centroid DB depth copy of a two-sample depth plane decoded differently");
+    {
+        const auto words = AgcDriver::Graphics::DepthCopySourceWords(pass->source);
+        const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+        Require(resource.baseAddress == pass->source.address && resource.dimension == AgcDriver::Graphics::TextureDimension::k2DMsaa && resource.samples == 2 && resource.width == 64 && resource.height == 4 && resource.tileMode == AgcDriver::Graphics::TextureTileMode::kZ64KBX && resource.pipeBankXor == pass->source.pipeBankXor && resource.dccAddress == pass->source.htileAddress, "the DB depth copy source descriptor of a two-sample plane decoded differently");
+    }
     Require(pass->color.format == VK_FORMAT_R32_SFLOAT && pass->color.samples == 1 && pass->color.address == reinterpret_cast<std::uintptr_t>(colorMemory.data()), "the DB depth copy target decoded differently");
     queue.context[0x000] = 0x104;
     Require(DecodeDepthCopyPass(queue)->sample == 1, "COPY_SAMPLE without COPY_CENTROID did not select the sample");
@@ -2853,23 +3088,31 @@ void depthCopyPassTests() {
     expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "single-sample R32 float");
     queue.context[0x31c] = 0x40710;
     queue.context[0x10f] = std::bit_cast<std::uint32_t>(16.0f);
-    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "over part of the depth surface");
+    Require(DecodeDepthCopyPass(queue).has_value(), "a DB depth copy whose viewport covers part of the depth surface was refused");
     queue.context[0x10f] = std::bit_cast<std::uint32_t>(32.0f);
+    queue.context[0x1e0] = 1u << 30u;
+    expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "blending");
+    queue.context[0x1e0] = 0;
     queue.context[0x010] = 0x80001187;
     expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "mipmapped or partially resident");
     queue.context[0x010] = 0x80000187;
     queue.context[0x012] = 0x00001003;
     pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->depthAddress == 0x100000, "a DB depth copy kept the pipe-bank XOR of a two-sample depth plane in its address");
+    Require(pass.has_value() && pass->source.address == 0x100000 && pass->source.pipeBankXor == 0x300, "a DB depth copy kept the pipe-bank XOR of a two-sample depth plane in its address");
     queue.context[0x012] = 0x00001000;
     queue.context[0x002] = 1u | (1u << 13u);
     pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->depthAddress == 0x100000 + AgcDriver::Graphics::DepthSliceBytes({64, 4}, 4u), "a DB depth copy of slice 1 did not address the slice the depth surface registers");
+    Require(pass.has_value() && pass->source.address == 0x100000 + AgcDriver::Graphics::DepthSliceBytes({64, 4}, 4u), "a DB depth copy of slice 1 did not address the slice the depth surface registers");
     queue.context[0x002] = 0;
     Require(DecodeDepthCopyPass(queue).has_value(), "the restored DB depth copy was refused");
     queue.context[0x010] = 0x80000183;
     pass = DecodeDepthCopyPass(queue);
-    Require(pass.has_value() && pass->samples == 1 && pass->sample == 0, "a centroid DB depth copy of a one-sample depth plane decoded differently");
+    Require(pass.has_value() && pass->source.samples == 1 && pass->sample == 0, "a centroid DB depth copy of a one-sample depth plane decoded differently");
+    {
+        const auto words = AgcDriver::Graphics::DepthCopySourceWords(pass->source);
+        const auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
+        Require(resource.baseAddress == pass->source.address && resource.dimension == AgcDriver::Graphics::TextureDimension::k2D && resource.samples == 1 && resource.width == 64 && resource.height == 4 && resource.dccAddress == 0, "the DB depth copy source descriptor of a one-sample plane decoded differently");
+    }
     queue.context[0x000] = 0x104;
     expectFailure([&] { (void)DecodeDepthCopyPass(queue); }, "a sample the depth plane does not have");
 }
@@ -2931,11 +3174,22 @@ void metadataPassTests() {
     expectFailure([&] { DecodeColorMetadataPass(bound); }, "depth or stencil work");
     bound.context[0x200] = 0x7a;
     expectFailure([&] { DecodeColorMetadataPass(bound); }, "depth or stencil work");
+    const auto keyed = [&](auto state) {
+        const auto keysAt = reinterpret_cast<std::uintptr_t>(dccKeys.data());
+        state.context[0x31c] |= 0x10000000;
+        state.context[0x325] = static_cast<std::uint32_t>(keysAt >> 8u);
+        state.context[0x3a8] = static_cast<std::uint32_t>(keysAt >> 40u);
+        return state;
+    };
     queue.context[0x91] = 0x40020;
-    expectFailure([&] { DecodeColorMetadataPass(queue); }, "over part of a color target");
+    pass = DecodeColorMetadataPass(queue);
+    Require(pass.has_value() && pass->targets.size() == 1, "a partial metadata pass over a target without CMASK or DCC keys was refused");
+    expectFailure([&] { DecodeColorMetadataPass(keyed(queue)); }, "over part of a color target");
     queue.context[0x91] = 0x40040;
     queue.context[0x10f] = std::bit_cast<std::uint32_t>(16.0f);
-    expectFailure([&] { DecodeColorMetadataPass(queue); }, "over part of a color target");
+    pass = DecodeColorMetadataPass(queue);
+    Require(pass.has_value() && pass->targets.size() == 1, "a metadata pass with a partial viewport over a target without CMASK or DCC keys was refused");
+    expectFailure([&] { DecodeColorMetadataPass(keyed(queue)); }, "over part of a color target");
     queue.context[0x10f] = std::bit_cast<std::uint32_t>(32.0f);
     queue.context[0x202] = 0xcc0030;
     queue.context[0x1c5] = 9;
@@ -2954,9 +3208,19 @@ void metadataPassTests() {
     queue.context[0x324] = 0;
     pass = DecodeColorMetadataPass(queue);
     Require(pass.has_value() && pass->targets.size() == 1 && pass->targets[0].dccAddress == keysAddress, "the metadata pass lost the target's DCC keys");
+    auto partial = queue;
+    partial.context[0x10f] = std::bit_cast<std::uint32_t>(16.0f);
+    expectFailure([&] { DecodeColorMetadataPass(partial); }, "over part of a color target");
     auto mipmapped = queue;
     mipmapped.context[0x3b0] |= 1u << 28u;
     expectFailure([&] { DecodeColorMetadataPass(mipmapped); }, "mipmapped DCC");
+    const auto chain = AgcDriver::Graphics::DecodeColorBuffer(mipmapped.context, 0);
+    const auto chainSurface = AgcDriver::Graphics::SurfaceForTarget(chain);
+    Require(chain.dccAddress == 0 && chainSurface.mipCount == 2 && chainSurface.dccAddress == keysAddress, "the surface of a mipmapped DCC color target lost its keys");
+    auto mipmappedArray = mipmapped;
+    mipmappedArray.context[0x3b8] |= 1u;
+    mipmappedArray.context[0x31b] = 1u << 13u;
+    Require(AgcDriver::Graphics::SurfaceForTarget(AgcDriver::Graphics::DecodeColorBuffer(mipmappedArray.context, 0)).dccAddress == 0, "a mipmapped DCC array color target took keys whose layers are not modeled");
     const AgcDriver::Graphics::Context context{};
     const auto texels = [&](std::uint32_t value) {
         for (std::size_t offset = 0; offset < colorMemory.size(); offset += 4) {
@@ -3170,6 +3434,11 @@ void cmaskTests() {
     queue.context[0x202] = 0xcc0020;
     auto pass = AgcDriver::Graphics::DecodeColorMetadataPass(queue);
     Require(pass.has_value() && pass->targets.size() == 1 && pass->targets[0].cmaskAddress == cmaskAddress, "the metadata pass lost the target's CMASK");
+    auto partial = queue;
+    partial.context[0x10f] = std::bit_cast<std::uint32_t>(16.0f);
+    Require(AgcDriver::Graphics::DecodeColorMetadataPass(partial).has_value(), "a fast-clear eliminate of a CMASK target without DCC keys over part of it was refused");
+    partial.context[0x202] = 0xcc0060;
+    expectFailure([&] { AgcDriver::Graphics::DecodeColorMetadataPass(partial); }, "over part of a color target");
     const AgcDriver::Graphics::Context context{};
     const auto texels = [&](std::uint32_t value) {
         for (std::size_t offset = 0; offset < colorMemory.size(); offset += 4) {
@@ -3349,6 +3618,43 @@ void msaaEnableClearDepthTests() {
     state = DecodeState(queue);
     Require(state.colors.empty(), "a depth-only 4x draw without MSAA_ENABLE decoded a color target");
     requireCentered(state, "a 4x depth target rasterized without MSAA_ENABLE");
+    for (const auto primitive : {2u, 3u}) {
+        queue = drawB();
+        queue.userConfig[0x242] = primitive;
+        state = DecodeState(queue);
+        Require(state.topology == (primitive == 2u ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_LINE_STRIP) && state.colors.size() == 1 && state.colors[0].samples == 4, "PPSA18216's line list or strip into its 4x depth and color pair lost its topology or color target");
+        requireCentered(state, "a line list or strip into PPSA18216's 4x depth and color pair without MSAA_ENABLE");
+        Require(!state.sampleLocationGrid && !state.perSampleShading, "a line list or strip without MSAA_ENABLE kept a sample location grid or sample shading");
+        Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a line list or strip into PPSA18216's 4x depth and color pair");
+    }
+    queue = drawB();
+    queue.userConfig[0x242] = 1;
+    queue.context[0x2d5] = 0x2030;
+    queue.userConfig[0x25b] = 0x6633;
+    queue.context[0x1ff] = 255;
+    queue.context[0x2ce] = 5;
+    queue.context[0x29b] = 2;
+    queue.context[0x2ab] = 4;
+    queue.shader[0x8a] = 3u << 29u;
+    queue.shader[0x8b] = 3u << 16u;
+    state = DecodeState(queue);
+    Require(state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST && state.stages.mesh && state.stages.mesh->outputPrimitiveSize == 3u && AgcDriver::Graphics::RasterPrimitiveOf(state) == ShaderRecompiler::RasterPrimitive::Triangle && state.colors.size() == 1 && state.colors[0].samples == 4, "a point list into a geometry program that outputs triangle strips into PPSA18216's 4x depth and color pair did not decode as triangles");
+    requireCentered(state, "triangles a geometry program makes from a point list into PPSA18216's 4x depth and color pair without MSAA_ENABLE");
+    for (const auto primitive : {4u, 2u, 1u}) {
+        queue = drawB();
+        queue.userConfig[0x242] = primitive;
+        queue.context[0x2d5] = 0x2030;
+        queue.userConfig[0x25b] = 0x6633;
+        queue.context[0x1ff] = 255;
+        queue.context[0x2ce] = 5;
+        queue.context[0x29b] = 0;
+        queue.context[0x2ab] = 4;
+        queue.context[0x280] = 0x00080008u;  // point-output geometry programs decode PA_SU_POINT_SIZE / PA_SU_POINT_MINMAX before this rejection
+        queue.context[0x281] = 0x00080008u;
+        queue.shader[0x8a] = 3u << 29u;
+        queue.shader[0x8b] = 3u << 16u;
+        expectFailure([&] { DecodeState(queue); }, "multisampled targets rasterized without MSAA_ENABLE are unsupported for points or alpha-to-coverage");
+    }
     for (const auto eqaa : {0x00050002u, 0x00090002u, 0x01010002u, 0x08010002u}) {
         queue = drawB();
         queue.context[0x201] = eqaa;
@@ -3360,7 +3666,7 @@ void msaaEnableClearDepthTests() {
     expectFailure([&] { DecodeState(queue); }, "a multisampled depth target rasterized without MSAA_ENABLE with a sample-mask export");
     queue = drawB();
     queue.context[0x2dc] = 0x0000aa01u;
-    expectFailure([&] { DecodeState(queue); }, "multisampled targets rasterized without MSAA_ENABLE are unsupported for points, lines or alpha-to-coverage");
+    expectFailure([&] { DecodeState(queue); }, "multisampled targets rasterized without MSAA_ENABLE are unsupported for points or alpha-to-coverage");
     queue = drawB();
     queue.context[0x010] = 0xa2900987;
     expectFailure([&] { DecodeState(queue); }, "the depth target's sample count differs from the rasterizer's");
@@ -3656,7 +3962,7 @@ void multisampleTests() {
     }
     queue = multisampled();
     queue.context[0x31d] = 0x1000;
-    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples");
+    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
     queue.context[0x31d] = 0;
     queue.context[0x293] = 0x10000u;
     Require(DecodeState(queue).samples == 1 && !DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE into a one-sample target did not rasterize sample 0 alone");
@@ -3667,7 +3973,7 @@ void multisampleTests() {
     const auto aliased = AgcDriver::Graphics::SampleLocations(state);
     for (std::uint32_t sample = 0; sample < state.samples; ++sample) Require(aliased[sample].x == 0.5f && aliased[sample].y == 0.5f, "a 2x target rasterized without MSAA_ENABLE did not place every sample at the pixel center");
     queue.context[0x2dc] = 0x0000aa01u;
-    expectFailure([&] { DecodeState(queue); }, "without MSAA_ENABLE are unsupported for points, lines or alpha-to-coverage");
+    expectFailure([&] { DecodeState(queue); }, "without MSAA_ENABLE are unsupported for points or alpha-to-coverage");
     queue = multisampled();
     queue.context[0x292] = 2;
     queue.context[0x302] = 0x44cc;
@@ -3752,6 +4058,10 @@ void multisampleTests() {
         for (const auto offset : {0x31cu, 0x32bu}) packed.context[offset] = (packed.context[offset] & ~0x41f7cu) | packedInfo;
         expectFailure([&] { DecodeColorMetadataPass(packed); }, std::string("CB resolves of ") + name + " color targets");
     }
+    auto uintSource = rasterizedResolve;
+    for (const auto offset : {0x31cu, 0x32bu}) uintSource.context[offset] = (uintSource.context[offset] & ~0x700u) | (4u << 8u);
+    const auto uintPass = DecodeColorMetadataPass(uintSource);
+    Require(uintPass.has_value() && uintPass->mode == ColorMetadataPass::Mode::Resolve && uintPass->source.has_value() && uintPass->source->packing == ShaderRecompiler::ColorExportPacking::Uint && uintPass->targets.size() == 1, "a CB resolve of an unsigned integer target was refused");
     queue = rasterizedResolve;
     queue.context[0x31c] |= 0x10000000u;
     queue.context[0x325] = 0;
@@ -4045,6 +4355,49 @@ void multisampleDccStateTests() {
         changed.context[0x3b0] |= 1u << 28u;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "multisampled color mips");
     }
+    for (const auto samples : {2u, 4u, 8u}) {
+        AgcDriver::Graphics::ColorTarget target{};
+        target.extent = {64, 64};
+        target.format = VK_FORMAT_R8G8B8A8_UNORM;
+        target.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
+        target.samples = samples;
+        target.dccAddress = 0x200000u;
+        target.dccPipeAligned = true;
+        target.cmaskAddress = 0x300000u;
+        target.cmaskBytes = AgcDriver::Graphics::CmaskBytes(64, 64);
+        const std::vector<std::byte> dcc(AgcDriver::Graphics::MultisampledDccBytes(target), std::byte{0x00});
+        std::vector<std::byte> cmask(target.cmaskBytes);
+        for (std::size_t index = 0; index < cmask.size(); ++index) cmask[index] = std::byte{static_cast<std::uint8_t>(index * 37u)};
+        const auto clear = AgcDriver::Graphics::MultisampledDccClear(target, dcc, cmask);
+        Require(clear.float32[0] == 0.0f && clear.float32[1] == 0.0f && clear.float32[2] == 0.0f && clear.float32[3] == 0.0f, "a uniform 0000 DCC clear of a multisampled target without CMASK fast clears did not import as 0000");
+        target.cmaskFastClear = true;
+        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::MultisampledDccClear(target, dcc, cmask)); }, "multisampled DCC CMASK compression or register clear");
+    }
+    for (const auto samples : {2u, 4u, 8u}) {
+        for (const auto format : {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB}) {
+            for (const auto key : {0x00u, 0x40u, 0x80u, 0xc0u}) {
+                for (const auto alphaOnMsb : {false, true}) {
+                    AgcDriver::Graphics::ColorTarget target{};
+                    target.extent = {64, 64};
+                    target.format = format;
+                    target.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
+                    target.elementBytes = 4;
+                    target.samples = samples;
+                    target.dccAddress = 0x200000u;
+                    target.dccPipeAligned = true;
+                    target.dccAlphaOnMsb = alphaOnMsb;
+                    const std::vector<std::byte> dcc(AgcDriver::Graphics::MultisampledDccBytes(target), static_cast<std::byte>(key));
+                    const auto clear = AgcDriver::Graphics::MultisampledDccClear(target, dcc, {});
+                    const auto alpha = alphaOnMsb ? 3u : format == VK_FORMAT_B8G8R8A8_SRGB ? 2u : 0u;
+                    for (std::uint32_t channel = 0; channel < 4; ++channel) {
+                        const bool one = channel == alpha ? key == 0x40u || key == 0xc0u : key == 0x80u || key == 0xc0u;
+                        Require(clear.float32[channel] == static_cast<float>(one), "an sRGB multisampled DCC endpoint did not produce its exact linear clear value");
+                    }
+                }
+            }
+        }
+    }
+
 }
 
 void multisampledDepthTests() {
@@ -4110,6 +4463,76 @@ void multisampledDepthTests() {
     Require(!DecodeState(queue).perSampleShading, "PS_ITER_SAMPLE requested sample shading for a single-sample scan");
     queue = singleSampleScan();
     queue.context[0x31d] = 0;
+    state = DecodeState(queue);
+    Require(state.truncatedCoverage && !state.mergedCoverage && state.colors.size() == 1 && state.colors[0].samples == 1, "a single-sample scan into a 4x depth target and a one-sample color target did not take the color from sample 0");
+    requireCentered(state, "a single-sample scan into a 4x depth target and a one-sample color target");
+    const auto truncatedTwoSample = [&] {
+        auto queue = singleSampleScan();
+        queue.context[0x2f8] = 0x00100001;
+        queue.context[0x292] = 3;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0xcc44;
+        queue.context[0x010] = 0x22900987;
+        queue.context[0x31d] = 0;
+        return queue;
+    };
+    queue = truncatedTwoSample();
+    state = DecodeState(queue);
+    Require(state.samples == 2 && state.depth && state.depth->samples == 2 && state.colors.size() == 1 && state.colors[0].samples == 1 && state.truncatedCoverage && !state.mergedCoverage && !state.perSampleShading, "a one-sample color target beside a 2x depth target under a 2x rasterizer with MSAA_ENABLE (PPSA02225's registers) did not take the color from sample 0");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a one-sample color target beside a 2x depth target");
+    queue = truncatedTwoSample();
+    queue.context[0x293] = 0x10000u;
+    queue.context[0x1b3] = queue.context[0x1b4] = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveSample) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::FrontFace);
+    state = DecodeState(queue);
+    Require(state.truncatedCoverage && state.perSampleShading && state.samples == 2 && state.colors[0].samples == 1, "PS_ITER_SAMPLE into a one-sample color target beside a 2x depth target (PPSA02225's registers) did not run per sample with sample 0's color");
+    queue = truncatedTwoSample();
+    queue.context[0x31d] = 0x12000;
+    expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
+    const auto oneFragment = [&] {
+        auto queue = singleSampleScan();
+        queue.context[0x2f8] = 0x00210002;
+        queue.context[0x292] = 3;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0x622ae6ae;
+        queue.context[0x31d] = 0x2000;
+        queue.context[0x201] = 0x112202;
+        return queue;
+    };
+    queue = oneFragment();
+    state = DecodeState(queue);
+    Require(state.samples == 4 && !state.customSampleLocations && state.depth && state.depth->samples == 4 && state.colors.size() == 1 && state.colors[0].samples == 1 && state.truncatedCoverage && !state.mergedCoverage && !state.perSampleShading, "a 4-sample color target with one fragment beside a 4x depth target (PPSA02015's registers) did not keep sample 0's color in its one fragment");
+    Require(AgcDriver::Graphics::DrawRejection(queue, false).empty(), "the precheck refused a 4-sample color target with one fragment beside a 4x depth target");
+    queue = oneFragment();
+    queue.context[0x31c] |= 0x4000u;
+    queue.context[0x321] = 0x00c3a1b2u;
+    queue.context[0x3a0] = 0x01u;
+    state = DecodeState(queue);
+    Require(state.colors.size() == 1 && state.colors[0].fmaskAddress == ((1ull << 40u) | 0xc3a10000ull), "a compressed one-fragment color target did not decode its FMASK address");
+    queue.context[0x321] = 0u;
+    queue.context[0x3a0] = 0u;
+    expectFailure([&] { DecodeState(queue); }, "a compressed one-fragment color target without an FMASK address is unsupported");
+    queue.context[0x321] = 0xa5u;
+    expectFailure([&] { DecodeState(queue); }, "a compressed one-fragment color target without an FMASK address is unsupported");
+    queue = oneFragment();
+    Require(DecodeState(queue).colors[0].fmaskAddress == 0u, "an uncompressed one-fragment color target noted an FMASK address");
+    queue = oneFragment();
+    queue.context[0x31d] = 0xa000;
+    expectFailure([&] { DecodeState(queue); }, "color targets with more than one but fewer fragments than samples (EQAA) are unsupported");
+    queue = oneFragment();
+    queue.context[0x31d] = 0x8000;
+    expectFailure([&] { DecodeState(queue); }, "color targets with more fragments than samples are unsupported");
+    queue = oneFragment();
+    queue.context[0x201] = 0x012202;
+    expectFailure([&] { DecodeState(queue); }, "a one-fragment color target is supported only with static DB_EQAA anchors at the depth target's sample count");
+    queue = oneFragment();
+    queue.context[0x201] = 0x112201;
+    expectFailure([&] { DecodeState(queue); }, "a one-fragment color target is supported only with static DB_EQAA anchors at the depth target's sample count");
+    queue = oneFragment();
+    queue.context[0x2f8] = 0x00100001;
+    queue.context[0x010] = 0x22900987;
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) queue.context[0x2fe + pixel * 4u] = 0xcc44;
+    expectFailure([&] { DecodeState(queue); }, "a one-fragment color target's sample count differs from the rasterizer's");
+    queue = oneFragment();
+    queue.context[0x010] = 0;
+    queue.context[0x011] = 0;
     expectFailure([&] { DecodeState(queue); }, "a color target's sample count differs from the rasterizer's");
     queue = singleSampleScan();
     queue.context[0x010] = 0x22900983;
@@ -4363,6 +4786,83 @@ void DepthRemapTests() {
     floating.depthWrite = true;
     AgcDriver::Graphics::ApplyDepthRemap(remapping, floating);
     Require(floating.depthRemap.mode == 1 && floating.viewport.minDepth == 0 && floating.viewport.maxDepth == 1 && floating.depthClamp, "a written float depth target refused clipped clamp bounds");
+    auto tessellated = AgcDriver::Graphics::DecodeState(queue);
+    tessellated.stages.path = AgcDriver::Graphics::ShaderPath::Tessellation;
+    tessellated.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3u, 3u, 1u, 2u, 2u};
+    auto nativeTessellation = tessellated;
+    AgcDriver::Graphics::ApplyDepthRemap(unrestricted, nativeTessellation);
+    Require(nativeTessellation.depthRemap.mode == 0 && nativeTessellation.viewport.minDepth == -0.5f && nativeTessellation.viewport.maxDepth == 1.5f, "an unrestricted tessellation draw was remapped");
+    AgcDriver::Graphics::ApplyDepthRemap(remapping, tessellated);
+    Require(tessellated.depthRemap.mode == 1 && tessellated.depthRemap.scale == 2.0f && tessellated.depthRemap.offset == -0.5f && tessellated.depthClamp, "a tessellation draw did not remap its depth range");
+    auto combined = nativeTessellation;
+    combined.stages.mesh = ShaderRecompiler::MeshConfiguration{};
+    expectFailure([&] { AgcDriver::Graphics::ApplyDepthRemap(remapping, combined); }, "vertex and tessellation paths only");
+}
+
+void DepthBoundsEmulationTests() {
+    auto queue = makeState();
+    queue.context[0x204] = 0;
+    queue.context[0x113] = std::bit_cast<std::uint32_t>(0.5f);
+    queue.context[0x114] = std::bit_cast<std::uint32_t>(0.5f);
+    auto base = AgcDriver::Graphics::DecodeState(queue);
+    base.depth = AgcDriver::Graphics::DepthTarget{0x10000, 0, {64, 64}, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0};
+    base.depthTest = base.depthWrite = base.stencilTest = false;
+    base.depthBoundsTest = true;
+    base.depthBias = true;
+    base.depthBiasConstant = 4.0f;
+    const ShaderRecompiler::ShaderPixelStageInfo pixel{};
+    const AgcDriver::Graphics::Context emulating{};
+    const auto emulated = [&](float minBound, float maxBound) {
+        auto state = base;
+        state.minDepthBounds = minBound;
+        state.maxDepthBounds = maxBound;
+        AgcDriver::Graphics::ApplyDepthBoundsEmulation(emulating, state, pixel);
+        Require(!state.depthBoundsTest && state.depthTest && !state.depthWrite && !state.depthBias && state.viewport.x == base.viewport.x && state.viewport.width == base.viewport.width && state.viewport.height == base.viewport.height, "an emulated depth bounds test did not become a read-only depth test over the same coverage");
+        return state;
+    };
+    const auto upper = emulated(0.0f, 0.000125f);
+    Require(upper.depthCompare == VK_COMPARE_OP_GREATER_OR_EQUAL && upper.viewport.minDepth == 0.000125f && upper.viewport.maxDepth == 0.000125f, "an upper depth bound was not tested as the bound at or above the stored depth");
+    const auto lower = emulated(0.000125f, 1.0f);
+    Require(lower.depthCompare == VK_COMPARE_OP_LESS_OR_EQUAL && lower.viewport.minDepth == 0.000125f && lower.viewport.maxDepth == 0.000125f, "a lower depth bound was not tested as the bound at or below the stored depth");
+    const auto whole = emulated(0.0f, 1.0f);
+    Require(whole.depthCompare == VK_COMPARE_OP_GREATER_OR_EQUAL && whole.viewport.minDepth == 1.0f && whole.viewport.maxDepth == 1.0f, "bounds covering [0, 1] were not tested against the upper bound");
+    AgcDriver::Graphics::Context native{};
+    native.depthBounds = true;
+    auto kept = base;
+    AgcDriver::Graphics::ApplyDepthBoundsEmulation(native, kept, pixel);
+    Require(kept.depthBoundsTest && !kept.depthTest && kept.depthBias && kept.viewport.minDepth == base.viewport.minDepth, "a device with the depth bounds test had it emulated");
+    auto absent = base;
+    absent.depth.reset();
+    AgcDriver::Graphics::ApplyDepthBoundsEmulation(emulating, absent, pixel);
+    Require(absent.depthBoundsTest && !absent.depthTest, "a draw without a depth target had its depth bounds emulated");
+    const auto refuses = [&](const char* expected, auto change) {
+        auto state = base;
+        state.minDepthBounds = 0.0f;
+        state.maxDepthBounds = 0.5f;
+        auto context = emulating;
+        auto program = pixel;
+        change(state, context, program);
+        expectFailure([&] { AgcDriver::Graphics::ApplyDepthBoundsEmulation(context, state, program); }, expected);
+    };
+    refuses("both bounds inside", [](auto& state, auto&, auto&) { state.minDepthBounds = 0.25f; });
+    refuses("with depth testing", [](auto& state, auto&, auto&) { state.depthTest = true; });
+    refuses("reads or exports depth", [](auto&, auto&, auto& program) { program.posZ = true; });
+    refuses("reads or exports depth", [](auto&, auto&, auto& program) { program.depthExportEnable = true; });
+    refuses("normalized depth target", [](auto& state, auto&, auto&) { state.depth->format = VK_FORMAT_D16_UNORM; });
+    refuses("stays in [0, 1]", [](auto&, auto& context, auto&) { context.depthRangeUnrestricted = true; });
+    refuses("depth bounds outside [0, 1]", [](auto& state, auto&, auto&) { state.maxDepthBounds = 1.5f; });
+    refuses("writes on a failed test", [](auto& state, auto&, auto&) {
+        state.stencilTest = true;
+        state.stencilFront.writeMask = 0xffu;
+        state.stencilFront.failOp = VK_STENCIL_OP_REPLACE;
+    });
+    auto stencil = base;
+    stencil.stencilTest = true;
+    stencil.stencilFront.writeMask = stencil.stencilBack.writeMask = 0xffu;
+    stencil.stencilFront.passOp = stencil.stencilBack.passOp = VK_STENCIL_OP_REPLACE;
+    stencil.maxDepthBounds = 0.5f;
+    AgcDriver::Graphics::ApplyDepthBoundsEmulation(emulating, stencil, pixel);
+    Require(stencil.depthTest && stencil.stencilTest, "a stencil test that writes only on a pass refused the depth bounds emulation");
 }
 
 void UnusedViewportDepthTests() {
@@ -4507,8 +5007,71 @@ void UnditheredAlphaToCoverageTests() {
     }
 }
 
+void TwoSampleDitheredAlphaToCoverageTests() {
+    auto dithered = makeState();
+    dithered.context[0x203] = 0x8010;
+    dithered.context[0x201] = 0x00101001;
+    dithered.context[0x2dc] = 0xe701;
+    dithered.context[0x2f8] = 0x00108001;
+    dithered.context[0x292] = 3;
+    dithered.context[0x31d] = 0x9000;
+    dithered.context[0x1c5] = 4;
+    dithered.context[0x1b3] = 2;
+    dithered.context[0x1b4] = 2;
+    const auto locate = [&](std::uint32_t locations) {
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) dithered.context[0x2fe + pixel * 4u] = locations;
+    };
+    for (const auto locations : {0xcc44u, 0xc44cu}) {
+        locate(locations);
+        for (const auto eqaa : {0x00101001u, 0x00101101u}) {
+            dithered.context[0x201] = eqaa;
+            const auto rejection = AgcDriver::Graphics::DrawRejection(dithered, false);
+            Require(rejection.empty(), "two-sample DB_ALPHA_TO_MASK 0xe701 refused: " + rejection);
+            const auto state = AgcDriver::Graphics::DecodeState(dithered);
+            Require(state.alphaToCoverage && state.ditheredAlphaToCoverage && state.ditheredAlphaSamples == 2 && state.samples == 2, "two-sample DB_ALPHA_TO_MASK 0xe701 did not select the two-sample dither");
+        }
+    }
+    dithered.context[0x201] = 0x00101001;
+    for (const auto eqaa : {0x00103001u, 0x00101011u, 0x00101003u, 0x00101201u, 0x00301001u}) {
+        dithered.context[0x201] = eqaa;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(dithered); }, "DB_EQAA");
+        Require(AgcDriver::Graphics::DrawRejection(dithered, false).find("DB_EQAA") != std::string::npos, "the precheck accepted unmatched two-sample dither samples");
+    }
+    dithered.context[0x201] = 0x00101001;
+    locate(0x44ccu);
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(dithered); }, "two-sample locations");
+    Require(AgcDriver::Graphics::DrawRejection(dithered, false).find("two-sample locations") != std::string::npos, "the precheck accepted unmeasured two-sample dither locations");
+    locate(0xc44cu);
+    dithered.context[0x2fe + 12u] = 0xcc44u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(dithered); }, "two-sample locations");
+    Require(AgcDriver::Graphics::DrawRejection(dithered, false).find("two-sample locations") != std::string::npos, "the precheck accepted two-sample dither locations that vary by pixel");
+    locate(0xc44cu);
+    for (const auto format : {3u, 5u, 6u}) {
+        dithered.context[0x1c5] = format;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(dithered); }, "FP16_ABGR or 32_ABGR");
+        Require(AgcDriver::Graphics::DrawRejection(dithered, false).find("FP16_ABGR or 32_ABGR") != std::string::npos, "the precheck accepted an unmeasured two-sample dither export format");
+    }
+    dithered.context[0x1c5] = 9;
+    Require(AgcDriver::Graphics::DecodeState(dithered).ditheredAlphaSamples == 2, "a 32_ABGR export refused the two-sample dither");
+    dithered.context[0x1c5] = 4;
+    dithered.context[0x203] |= 0x800u;
+    Require(!AgcDriver::Graphics::DecodeState(dithered).alphaToCoverage, "the shader disable override was ignored for DB_ALPHA_TO_MASK 0xe701");
+    Require(AgcDriver::Graphics::DrawRejection(dithered, false).empty(), "the precheck ignored the shader disable override for DB_ALPHA_TO_MASK 0xe701");
+    dithered.context[0x203] &= ~0x800u;
+    dithered.context[0x201] = 0x00133303;
+    dithered.context[0x2f8] = 0x0030e003;
+    dithered.context[0x31d] = 0x1b000;
+    for (std::uint32_t pixel = 0; pixel < 4; ++pixel) {
+        dithered.context[0x2fe + pixel * 4u] = 0xbd153fd1u;
+        dithered.context[0x2ff + pixel * 4u] = 0x9773f95bu;
+    }
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(dithered); }, "DB_EQAA");
+    Require(AgcDriver::Graphics::DrawRejection(dithered, false).find("DB_EQAA") != std::string::npos, "the precheck accepted DB_ALPHA_TO_MASK 0xe701 with eight samples");
+}
+
 void AlphaToCoverageTests() {
     UnditheredAlphaToCoverageTests();
+    TwoSampleDitheredAlphaToCoverageTests();
     auto dithered = makeState();
     dithered.context[0x203] = 0x8010;
     dithered.context[0x201] = 0x00133303;
@@ -4526,7 +5089,7 @@ void AlphaToCoverageTests() {
     Require(rejection.empty(), "eight-sample default dither refused: " + rejection);
     const auto ditheredState = AgcDriver::Graphics::DecodeState(dithered);
     Require(ditheredState.alphaToCoverage && ditheredState.samples == 8, "default dither did not enable eight-sample coverage");
-    Require(ditheredState.ditheredAlphaToCoverage, "default dither did not reach the shader state");
+    Require(ditheredState.ditheredAlphaToCoverage && ditheredState.ditheredAlphaSamples == 8, "default dither did not reach the shader state");
     for (const auto eqaa : {0x00133333u, 0x00132303u, 0x00133203u, 0x00333303u}) {
         dithered.context[0x201] = eqaa;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(dithered); }, "DB_EQAA");
@@ -5677,6 +6240,7 @@ void descriptorPoolResetFailureTest() {
     });
     cache.Free(allocation);
     _ZSt13set_terminatePFvvE_nid_postfix(previous);
+
 }
 
 void pushConstantTests() {
@@ -5766,8 +6330,8 @@ void descriptorSnapshotTests() {
                     Require(descriptor.buffer == original[index].buffer && descriptor.offset == original[index].offset && descriptor.range == original[index].range, "snapshot update changed an untouched buffer descriptor");
                 } else {
                     const auto& item = snapshots->snapshots[snapshot];
-                    Require(descriptor.buffer == item.buffer->Handle() && descriptor.offset == 0 && descriptor.range == moved[snapshot].size, "snapshot descriptor used another element's buffer or range");
-                    Require(sameBytes(bufferBytes(descriptor.buffer), moved[snapshot].words.data(), moved[snapshot].size), "snapshot descriptor lost its buffer data");
+                    Require(descriptor.buffer == item.buffer->Handle() && descriptor.offset == item.offset && descriptor.range == moved[snapshot].size, "snapshot descriptor used another element's buffer or range");
+                    Require(sameBytes(bufferBytes(descriptor.buffer).subspan(descriptor.offset), moved[snapshot].words.data(), moved[snapshot].size), "snapshot descriptor lost its buffer data");
                     ++snapshot;
                 }
             }
@@ -6058,6 +6622,32 @@ void resourceTests() {
     expectSingleAccepted(changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(8); binding.bufferWritten = {false}; }), "a read-only strided V# whose last record runs 8 bytes into the render target");
     expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(8); binding.bufferWritten = {true}; }), "aliases the render target");
     expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(60); }), "aliases the render target");
+    {
+        mock = MockVulkan{};
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::Graphics::Recorder recorder(context);
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto strided = changed([&](auto& binding) { binding.guestDescriptor = stridedBefore(8); });
+        strided.bufferWritten = {false};
+        vertex.bindings.push_back(strided);
+        AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, state.color, 0, 0);
+        const auto movedFor = [&](std::uint32_t past) {
+            auto drawn = vertex;
+            drawn.bindings[0].guestDescriptor = stridedBefore(past);
+            const std::array<AgcDriver::Graphics::CompiledShader, 2> stages{{{ShaderRecompiler::ShaderStage::Vertex, &drawn, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+            return resources.MovedReadOnlyBuffers(stages, recorder, &state.color);
+        };
+        const auto listed = [](const auto& moved) { return !moved.has_value() ? std::string("refused") : std::to_string(moved->size()) + " moved" + (moved->empty() ? std::string() : ", the first " + std::to_string(moved->front().size) + " bytes"); };
+        auto moved = movedFor(8);
+        Require(moved.has_value() && moved->empty(), "a cached build whose strided buffer runs 8 bytes into the render target took it as moved for the same words and target (" + listed(moved) + ")");
+        moved = movedFor(4);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().address == state.color.address - 236u && moved->front().size == 236, "a strided buffer that moved to run 4 bytes into the render target was not listed at its size up to the target (" + listed(moved) + ")");
+        moved = movedFor(60);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().address == state.color.address - 180u && moved->front().size == 240, "a strided buffer that moved to run a whole stride into the render target was cut (" + listed(moved) + ")");
+        recorder.Sync();
+    }
+    Require(mock.live == 0, "the strided buffer's moved check leaked Vulkan objects");
     expectSingleAccepted(changed([](auto& binding) { binding.count = 3; binding.guestDescriptor = join(join(vsharp(guestFirst.data(), 16), vsharp(guestSecond.data(), 32)), vsharp(reinterpret_cast<const void*>(0x1000), 8)); }), "an unmapped V# element");
     expectSingleFailure(changed([&](auto& binding) { binding.count = 2; binding.guestDescriptor = join(vsharp(guestFirst.data(), 16), vsharp(reinterpret_cast<const void*>(state.color.address), 64)); }), "aliases the render target");
     expectSingleFailure(changed([](auto& binding) { binding.count = 17; binding.guestDescriptor.assign(68, 0); }), "per-stage limits");
@@ -6367,7 +6957,7 @@ void imageTableSnapshotAllocationTests() {
         const auto snapshots = resources.PrepareDrawBindings(recorder, moved);
         Require(snapshots != nullptr && snapshots->snapshots.size() == 1 && cache.Counters().sets == sets + 1, "an empty image table prevented draw snapshot allocation");
         Require(mock.variableDescriptorCount == 1u, "an empty draw snapshot table did not reserve one physical image descriptor");
-        Require(sameBytes(bufferBytes(snapshots->snapshots[0].buffer->Handle()), moved[0].words.data(), moved[0].size), "an empty image table changed draw snapshot contents");
+        Require(sameBytes(bufferBytes(snapshots->snapshots[0].buffer->Handle()).subspan(snapshots->snapshots[0].offset), moved[0].words.data(), moved[0].size), "an empty image table changed draw snapshot contents");
         const auto& currentMap = findWrite(map.binding).buffers.at(0);
         Require(currentMap.buffer == originalMap.buffer && currentMap.offset == originalMap.offset && currentMap.range == originalMap.range, "draw snapshots replaced the empty image table map");
         std::array<std::uint32_t, Abi::HeaderWords> header{};
@@ -6687,8 +7277,37 @@ void sampledTextureBudgetTests() {
     Require(SampledTextureBudget(memory, &reported, 5 * GiB) == 5 * GiB + 128 * MiB, "a 15 GiB budget with 4 GiB used outside the texture caches does not leave 5 GiB 128 MiB after the 4 GiB storage cache and 1 GiB 896 MiB of headroom");
     reported.heapUsage[2] = 3 * GiB;
     Require(SampledTextureBudget(memory, &reported, 5 * GiB) == 9 * GiB + 128 * MiB, "usage below the cached bytes is not read as no other device memory in use");
+    reported.heapUsage[2] = 9 * GiB;
+    Require(SampledTextureBudget(memory, &reported, 5 * GiB, 4 * GiB + 512 * MiB) == 4 * GiB + 640 * MiB, "a storage image cache larger than TextureCacheBudget was not reserved in full");
+    Require(SampledTextureBudget(memory, &reported, 5 * GiB, 1 * GiB) == 5 * GiB + 128 * MiB, "a storage image cache smaller than TextureCacheBudget did not keep the TextureCacheBudget reservation");
     reported.heapUsage[2] = 12 * GiB;
     Require(SampledTextureBudget(memory, &reported, 1 * GiB) == 2 * GiB, "a heap whose other users leave no room does not keep the 2 GiB floor");
+    {
+        using AgcDriver::Graphics::StorageTextureBudget;
+        auto small = memory;
+        small.memoryHeaps[2].size = 8 * GiB;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT example{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        example.heapBudget[2] = 7373 * MiB;
+        example.heapUsage[2] = 2 * GiB + 3686 * MiB;
+        Require(SampledTextureBudget(small, &example, 3686 * MiB, 3686 * MiB) == 2 * GiB, "3686 MiB of storage images on an 8 GiB heap with a 7373 MiB budget and 2 GiB of other use left the sampled cache above its floor");
+        for (const auto heapGiB : {8u, 16u}) {
+            small.memoryHeaps[2].size = heapGiB * GiB;
+            for (std::uint64_t budget = 4 * GiB; budget <= heapGiB * GiB; budget += GiB) {
+                example.heapBudget[2] = budget;
+                for (std::uint64_t other = 0; other <= budget; other += GiB) {
+                    for (std::uint64_t sampled = 0; sampled <= 4 * GiB; sampled += 512 * MiB) {
+                        for (std::uint64_t storage = 0; storage <= heapGiB * GiB / 2u; storage += 512 * MiB) {
+                            example.heapUsage[2] = other + sampled + storage;
+                            const auto sampledLimit = SampledTextureBudget(small, &example, sampled + storage, storage);
+                            const auto storageLimit = StorageTextureBudget(small, &example, sampled, storage);
+                            if (sampledLimit > 2 * GiB) Require(other + storage + sampledLimit + budget / 8u <= budget, "the sampled cache budget and the storage images held exceed the reported budget less its eighth");
+                            if (storageLimit > 512 * MiB) Require(other + sampled + storageLimit + budget / 8u <= budget, "the storage cache budget and the sampled textures held exceed the reported budget less its eighth");
+                        }
+                    }
+                }
+            }
+        }
+    }
     memory.memoryHeaps[0].flags = 0;
     memory.memoryHeaps[2].flags = 0;
     Require(SampledTextureBudget(memory, &reported, 0) == 2 * GiB, "a device without a device-local heap does not keep 2 GiB of sampled textures");
@@ -6709,29 +7328,29 @@ void storageTextureBudgetTests() {
     reported.heapBudget[1] = 100 * GiB;
     Require(StorageTextureBudget(memory, &reported, 0, 0) == 4 * GiB, "a zero budget for the largest device-local heap did not fall back to a quarter of the heap");
     reported.heapBudget[2] = 10 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 0, 0) == 2560 * MiB, "a 10 GiB budget on the 16 GiB heap does not limit the storage image cache to a quarter of the budget");
+    Require(StorageTextureBudget(memory, &reported, 0, 0) == 5 * GiB, "a 10 GiB budget on the 16 GiB heap does not limit the storage image cache to half of the budget");
     reported.heapUsage[2] = 5 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 2560 * MiB, "2 GiB used outside the texture caches on a 10 GiB budget lowered the storage image cache below its quarter");
+    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 5 * GiB, "2 GiB used outside the texture caches on a 10 GiB budget lowered the storage image cache below its half");
     reported.heapUsage[2] = 8 * GiB + 512 * MiB;
     Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 2304 * MiB, "a 10 GiB budget with 5632 MiB used outside the texture caches does not leave 2304 MiB after 1 GiB of sampled textures and 1280 MiB of headroom");
     reported.heapUsage[2] = 9 * GiB;
     Require(StorageTextureBudget(memory, &reported, 3 * GiB, 2 * GiB) == 1792 * MiB, "3 GiB of sampled textures were not reserved in full");
     reported.heapUsage[2] = 1 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 2560 * MiB, "usage below the cached bytes is not read as no other device memory in use");
+    Require(StorageTextureBudget(memory, &reported, 1 * GiB, 2 * GiB) == 5 * GiB, "usage below the cached bytes is not read as no other device memory in use");
     Require(StorageTextureBudget(memory, &reported, 7 * GiB, 1 * GiB) == 1792 * MiB, "7 GiB of sampled textures with the usage below the cached bytes do not leave 1792 MiB after their reservation and 1280 MiB of headroom");
     reported.heapUsage[2] = 9 * GiB + 512 * MiB;
     Require(StorageTextureBudget(memory, &reported, 2 * GiB, 512 * MiB) == 512 * MiB, "a heap whose other users leave no room does not keep the 512 MiB floor");
     reported.heapUsage[2] = 0;
     reported.heapBudget[2] = 6 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 0, 0) == 1536 * MiB, "a 6 GiB budget on the 16 GiB heap does not limit the storage image cache to a quarter of the budget");
+    Require(StorageTextureBudget(memory, &reported, 0, 0) == 3 * GiB, "a 6 GiB budget on the 16 GiB heap does not limit the storage image cache to half of the budget");
     reported.heapBudget[2] = 1 * GiB;
     Require(StorageTextureBudget(memory, &reported, 0, 0) == 512 * MiB, "a 1 GiB budget does not keep the 512 MiB floor");
     reported.heapBudget[2] = 40 * GiB;
-    Require(StorageTextureBudget(memory, &reported, 0, 0) == 4 * GiB, "a budget above the heap size raised the storage image cache past a quarter of the heap");
+    Require(StorageTextureBudget(memory, &reported, 0, 0) == 8 * GiB, "a budget above the heap size raised the storage image cache past half of the heap");
     memory.memoryHeaps[2].size = 8 * GiB;
     reported.heapBudget[2] = 7189 * MiB;
     reported.heapUsage[2] = 4491 * MiB;
-    Require(StorageTextureBudget(memory, &reported, 49 * MiB, 506 * MiB) == 7189 * MiB / 4u, "49 MiB of sampled textures on an 8 GiB heap with a 7189 MiB budget and 3936 MiB used outside the texture caches held the storage image cache below a quarter of the budget");
+    Require(StorageTextureBudget(memory, &reported, 49 * MiB, 506 * MiB) == 7189 * MiB - 3936 * MiB - 49 * MiB - 7189 * MiB / 8u, "49 MiB of sampled textures on an 8 GiB heap with a 7189 MiB budget and 3936 MiB used outside the texture caches did not leave the storage image cache what the budget has left after them and its eighth");
     reported.heapUsage[2] = 6490 * MiB;
     Require(StorageTextureBudget(memory, &reported, 2 * GiB, 506 * MiB) == 512 * MiB, "2 GiB of sampled textures on an 8 GiB heap with a 7189 MiB budget and 3936 MiB used outside the texture caches did not take the storage image cache back to its 512 MiB floor");
     memory.memoryHeaps[2].size = 10 * GiB;
@@ -6748,8 +7367,8 @@ void storageTextureBudgetTests() {
                     reported.heapUsage[2] = outside + sampled + 512 * MiB;
                     const auto limit = StorageTextureBudget(memory, &reported, sampled, 512 * MiB);
                     Require(limit >= 512 * MiB, "pressure sweep lost the storage cache floor");
-                    Require(limit <= std::max<std::uint64_t>(512 * MiB, budget / 4u), "pressure sweep exceeded a quarter of the reported budget above the floor");
-                    Require(limit <= std::max<std::uint64_t>(2 * GiB, heapGiB * GiB / 4u), "pressure sweep exceeded the heap storage cache cap");
+                    Require(limit <= std::max<std::uint64_t>(512 * MiB, budget / 2u), "pressure sweep exceeded half of the reported budget above the floor");
+                    Require(limit <= std::max<std::uint64_t>(512 * MiB, heapGiB * GiB / 2u), "pressure sweep exceeded half of the heap");
                     if (outside != 0) Require(limit <= previous, "additional non-cache memory usage grew the storage cache budget");
                     if (limit > 512 * MiB) Require(outside + sampled + budget / 8u + limit <= budget, "storage cache budget consumed live sampled memory or pressure headroom");
                     previous = limit;
@@ -6760,6 +7379,27 @@ void storageTextureBudgetTests() {
     memory.memoryHeaps[0].flags = 0;
     memory.memoryHeaps[2].flags = 0;
     Require(StorageTextureBudget(memory, &reported, 0, 0) == 2 * GiB, "a device without a device-local heap does not keep 2 GiB of storage images");
+    using AgcDriver::Graphics::StorageTextureCeiling;
+    memory.memoryHeaps[0] = {256 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    memory.memoryHeaps[2] = {16 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    reported = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    Require(StorageTextureCeiling(memory, nullptr) == 4 * GiB, "without VK_EXT_memory_budget the storage image cache ceiling is not a quarter of the 16 GiB heap");
+    reported.heapBudget[2] = 6 * GiB;
+    Require(StorageTextureCeiling(memory, &reported) == 3 * GiB, "the storage image cache ceiling on a 6 GiB budget is not half of the budget, the cap the cache may reach");
+    reported.heapBudget[2] = 40 * GiB;
+    Require(StorageTextureCeiling(memory, &reported) == 8 * GiB, "the storage image cache ceiling on a 40 GiB budget is not half of the 16 GiB heap");
+    reported.heapBudget[2] = 768 * MiB;
+    Require(StorageTextureCeiling(memory, &reported) == 512 * MiB, "the storage image cache ceiling on a 768 MiB budget does not keep the 512 MiB floor");
+    for (std::uint64_t budget = 1 * GiB; budget <= 24 * GiB; budget += 512 * MiB) {
+        reported.heapBudget[2] = budget;
+        const auto ceiling = StorageTextureCeiling(memory, &reported);
+        for (std::uint64_t used = 0; used <= budget; used += 256 * MiB) {
+            reported.heapUsage[2] = used;
+            Require(StorageTextureBudget(memory, &reported, 256 * MiB, 512 * MiB) <= ceiling, "the storage image cache budget exceeds the ceiling idle device buffers are reclaimed up to");
+        }
+        reported.heapUsage[2] = 0;
+        Require(StorageTextureBudget(memory, &reported, 0, 0) == ceiling, "an idle heap does not give the storage image cache its full ceiling");
+    }
 }
 
 void sampledBudgetReportTests() {
@@ -6804,6 +7444,41 @@ void misalignedShaderDataTests() {
         Require(!resources.DataWordsDiffer(liveShader) && resources.DataWordsHash() == AgcDriver::Graphics::ShaderResources::DataWordsHash(liveShader), "the refreshed template's words are not the dispatch's");
     }
     Require(mock.live == 0, "misaligned shader data resources leaked Vulkan objects");
+}
+
+void imageTableTemplateRefreshTests() {
+    namespace Abi = ShaderRecompiler::ImageTableAbi;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.imageTableCapacity = 2;
+    context.limits.maxDescriptorSetSampledImages = 2;
+    context.limits.maxPerStageDescriptorSampledImages = 2;
+    const auto commands = reinterpret_cast<VkCommandBuffer>(std::uintptr_t{1});
+    {
+        ShaderRecompiler::RecompileResult compute;
+        auto map = makeBinding(Role::ImageTableMap, static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::ImageTableMap), 1, std::vector<std::uint32_t>(Abi::HeaderWords));
+        map.guestDescriptor[Abi::HeaderVersion] = Abi::Version;
+        map.guestDescriptor[Abi::HeaderElementFaults] = Abi::HeaderWords;
+        map.guestDescriptor[Abi::HeaderSamplerFaults] = Abi::HeaderWords;
+        compute.bindings.push_back(map);
+        auto images = makeBinding(Role::ImageTable, ShaderRecompiler::RuntimeAbi::ImageTableBinding, 0, {});
+        images.kind = Kind::SampledImage;
+        compute.bindings.push_back(images);
+        compute.bindings.push_back(makeBinding(Role::ShaderData, 1, 1, ShaderDataWords({0x11, 0x22})));
+        compute.shaderDataDwords = ShaderRecompiler::RuntimeAbi::ShaderDataDwords;
+        auto live = compute;
+        live.bindings[2].guestDescriptor = ShaderDataWords({0x33, 0x44});
+        const AgcDriver::Graphics::CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &compute, 0};
+        const AgcDriver::Graphics::CompiledShader liveShader{ShaderRecompiler::ShaderStage::Compute, &live, 0};
+        AgcDriver::Graphics::ShaderResources resources(context, shader);
+        const auto data = findWrite(1).buffers.at(0).buffer;
+        Require(!resources.DataWordsDiffer(shader), "a template's own words differ from the shader that built it");
+        Require(resources.DataWordsDiffer(liveShader), "a template with an image table missed the dispatch's new words");
+        Require(resources.RefreshData(commands, liveShader), "a refresh of a template with an image table recorded nothing");
+        Require(sameBytes(bufferBytes(data), live.bindings[2].guestDescriptor.data(), 3u * sizeof(std::uint32_t)), "a refresh of a template with an image table did not write the dispatch's words");
+        Require(!resources.DataWordsDiffer(liveShader), "the refreshed template's words are not the dispatch's");
+    }
+    Require(mock.live == 0, "image table template refresh resources leaked Vulkan objects");
 }
 
 struct ModuleShape {
@@ -7744,6 +8419,38 @@ void pipelineLibraryClearWaitsForBuildTests() {
     Require(mock.live == 0, "clearing during a library build leaked Vulkan objects");
 }
 
+void tessellationPipelineLibraryCacheTests() {
+    using namespace AgcDriver::Graphics;
+    for (const auto shared : {true, false}) {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.graphicsPipelineLibrary = true;
+        context.tessellationShader = true;
+        context.tessellationPipelineCache = shared;
+        context.limits.maxTessellationPatchSize = 32;
+        context.limits.maxPushConstantsSize = 256;
+        context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+        State state{};
+        state.stages.path = ShaderPath::Tessellation;
+        state.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3, 3, 2, 1, 4, 128, 16, false};
+        ShaderRecompiler::RecompileResult vertex, control, evaluation, fragment;
+        vertex.spirv = makeModule({});
+        control.spirv = makeModule({});
+        evaluation.spirv = makeModule({});
+        fragment.spirv = makeModule({.fragment = true});
+        vertex.variantId = 201;
+        control.variantId = 202;
+        evaluation.variantId = 203;
+        fragment.variantId = 204;
+        const std::array<CompiledShader, 4> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::TessellationControl, &control, 0}, {ShaderRecompiler::ShaderStage::TessellationEvaluation, &evaluation, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+        std::array<std::uint32_t, 1> mainKey{31};
+        const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), VK_NULL_HANDLE, false, mainKey, {}};
+        Require(Pipeline::Prebuild(context, state, VertexInputLayout{}, resources, shaders) == shared, shared ? "tessellation pipelines skipped graphics pipeline libraries with a shared pipeline cache" : "tessellation pipelines without the pipeline cache were built from graphics pipeline libraries");
+        ClearPipelineLibraries(context.device);
+        Require(mock.live == 0, "tessellation pipeline library tests leaked Vulkan objects");
+    }
+}
+
 void framebufferOwnerTests() {
     using namespace AgcDriver::Graphics;
     mock = MockVulkan{};
@@ -7811,12 +8518,15 @@ void barycentricEmulationTests() {
     const std::array<FragmentParameter, 3> parameters{{{0u, 0u, false, false}, {1u, 1u, false, true}, {2u, 2u, true, false}}};
     const auto layout = LayoutBarycentricEmulation(parameters, {true, true, true});
     Require(layout.smoothLocation == 1u && layout.linearLocation == 3u && layout.perVertexLocations == std::vector<std::pair<std::uint32_t, std::uint32_t>>{{1u, 4u}}, "emulated barycentrics did not take the free locations in order");
+    const auto offsetLayout = LayoutBarycentricEmulation(parameters, {true, true, false, true});
+    Require(offsetLayout.smoothLocation == 1u && offsetLayout.reciprocalWLocation == 3u && offsetLayout.perVertexLocations == std::vector<std::pair<std::uint32_t, std::uint32_t>>{{1u, 4u}}, "perspective offset emulation did not reserve reciprocal-w inputs");
+    Require(LayoutBarycentricEmulation(parameters, {true, true, false}).reciprocalWLocation == BarycentricEmulationLayout::NoLocation, "non-offset perspective barycentrics reserved reciprocal-w inputs");
     Require(LayoutBarycentricEmulation(parameters, {}).perVertexLocations.empty() && LayoutBarycentricEmulation(parameters, {}).smoothLocation == BarycentricEmulationLayout::NoLocation, "an inactive emulation was given locations");
     std::vector<FragmentParameter> crowded;
     for (std::uint32_t location = 0; location < 11u; ++location) crowded.push_back({location, location, false, true});
     expectFailure([&] { static_cast<void>(LayoutBarycentricEmulation(crowded, {true, false, false})); }, "exceed 32 locations");
 
-    const auto compile = [&](std::span<const std::uint32_t> code, bool barycentric, std::uint32_t secondInput = 0xffffffffu) {
+    const auto compile = [&](std::span<const std::uint32_t> code, bool barycentric, std::uint32_t secondInput = 0xffffffffu, bool builtins = false) {
         auto queue = makeState();
         queue.context[0x1b3] = 0x2u;
         queue.context[0x1b4] = 0x2u;
@@ -7831,6 +8541,7 @@ void barycentricEmulationTests() {
         request.target.spirvVersion = 0x00010300u;
         request.target.subgroupSize = 64;
         request.target.fragmentShaderBarycentricEnabled = barycentric;
+        request.target.fragmentBarycentricBuiltins = builtins;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
         return Recompile(request);
@@ -7878,6 +8589,15 @@ void barycentricEmulationTests() {
     static constexpr std::array<std::uint32_t, 6> sharedSlot{0xc8080000u, 0xc8090001u, 0xc80e0402u, 0xf800180fu, 0x03030202u, 0xbf810000u};
     const auto shared = compile(sharedSlot, false, 0x400u);
     Require(shared.barycentricEmulation.active && !barycentricCapability(shared), "inputs sharing a slot with different interpolation did not emulate per-vertex parameters");
+    static constexpr std::array<std::uint32_t, 5> interpolatesAndReadsIj{0xc8080000u, 0xc8090001u, 0xf800180fu, 0x02020100u, 0xbf810000u};
+    for (const auto& code : {std::span<const std::uint32_t>(readsIj), std::span<const std::uint32_t>(interpolatesAndReadsIj)}) {
+        const auto builtin = compile(code, false, 0xffffffffu, true);
+        const auto builtinDecorations = decorations(builtin, spv::DecorationBuiltIn);
+        Require(!builtin.barycentricEmulation.active && barycentricCapability(builtin) && std::find(builtinDecorations.begin(), builtinDecorations.end(), static_cast<std::uint32_t>(spv::BuiltInBaryCoordKHR)) != builtinDecorations.end() && decorations(builtin, spv::DecorationPerVertexKHR).empty(), "reading the I/J VGPRs with barycentric built-ins did not use BaryCoordKHR");
+        Require(std::ranges::none_of(builtin.fragmentParameters, [](const FragmentParameter& parameter) { return parameter.perVertex; }), "barycentric built-ins made a parameter per-vertex");
+    }
+    Require(compile(interpolatesAndReadsIj, false).barycentricEmulation.active, "reading the I/J VGPRs next to v_interp_p1/p2 without the extension did not emulate barycentrics");
+    Require(compile(readsVertex, false, 0xffffffffu, true).barycentricEmulation.active, "v_interp_mov of P10 with only barycentric built-ins did not emulate per-vertex parameters");
     fragment = compile(readsVertex, false);
     Require(fragment.barycentricEmulation.active && !fragment.barycentricEmulation.smooth && fragment.fragmentParameters.size() == 1u && fragment.fragmentParameters[0].perVertex, "v_interp_mov of P10 did not emulate per-vertex parameters");
     Require(decorations(fragment, spv::DecorationLocation) == std::vector<std::uint32_t>{0u} && decorations(fragment, spv::DecorationPerVertexKHR).empty() && !decorations(fragment, spv::DecorationFlat).empty() && !barycentricCapability(fragment), "the emulated per-vertex parameter was not a flat array at the first free location");
@@ -7927,9 +8647,11 @@ void barycentricEmulationTests() {
     Require(BarycentricPatches(state, patchShaders) && !BarycentricPatches(state, shaders), "generated tessellation stages were not recognised as barycentric patches");
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     ValidateShaders(patchShaders, state, subgroup, false);
-    for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, VK_PRIMITIVE_TOPOLOGY_POINT_LIST}) {
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    ValidateShaders(patchShaders, state, subgroup, false);
+    for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, VK_PRIMITIVE_TOPOLOGY_POINT_LIST}) {
         state.topology = topology;
-        expectFailure([&] { ValidateShaders(patchShaders, state, subgroup, false); }, "require a triangle list");
+        expectFailure([&] { ValidateShaders(patchShaders, state, subgroup, false); }, "require a triangle list or strip");
     }
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     const std::array<CompiledShader, 4> plainPatchShaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::TessellationControl, &patches.control, 0}, {ShaderStage::TessellationEvaluation, &patches.evaluation, 0}, {ShaderStage::Fragment, &plain, 0}}};
@@ -8477,6 +9199,24 @@ std::string interlockShape(std::span<const std::uint32_t> words) {
     return shape;
 }
 
+bool coherentImageRead(std::span<const std::uint32_t> words) {
+    std::map<std::uint32_t, std::uint32_t> sources;
+    std::set<std::uint32_t> coherent;
+    std::uint32_t image = 0;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+        if (op == spv::OpDecorate && words[at + 2] == spv::DecorationCoherent) coherent.insert(words[at + 1]);
+        if (op == spv::OpLoad || op == spv::OpAccessChain || op == spv::OpInBoundsAccessChain) sources[words[at + 2]] = words[at + 3];
+        if (op == spv::OpImageRead) image = words[at + 3];
+    }
+    for (std::size_t step = 0; image != 0 && step < 8u; ++step) {
+        if (coherent.contains(image)) return true;
+        const auto source = sources.find(image);
+        image = source == sources.end() ? 0u : source->second;
+    }
+    return false;
+}
+
 std::string interlockExits(std::span<const std::uint32_t> words, std::size_t& kills, std::size_t& terminates) {
     struct Block {
         std::vector<spv::Op> ops;
@@ -8719,7 +9459,7 @@ void stencilRefExportTests() {
             Require(AgcDriver::Graphics::DrawRejection(unused, false).empty(), "the precheck rejected STENCIL_OP_VAL_EXPORT_ENABLE without a stencil test in DB_SHADER_CONTROL " + std::to_string(shaderControl));
             Require(AgcDriver::Graphics::DecodePixelStageInfo(unused.context, IdentityExports).stencilRefExportEnable == ((shaderControl & 2u) != 0), "STENCIL_OP_VAL_EXPORT_ENABLE without a stencil test exported the stencil reference");
             const bool replaces = (shaderControl & 6u) == 4u;
-            for (const auto [ops, writeMask, compare, accepted] : {std::tuple{0x000u, 0xffu, 7u, true}, std::tuple{0x737u, 0xffu, 7u, true}, std::tuple{0x110u, 0xffu, 7u, true}, std::tuple{0x050u, 0x00u, 7u, true}, std::tuple{0x040u, 0xffu, 7u, replaces}, std::tuple{0x40040u, 0xffu, 7u, replaces}, std::tuple{0x404u, 0x0fu, 0u, replaces}, std::tuple{0x040u, 0xffu, 2u, false}, std::tuple{0x340u, 0xffu, 7u, false}, std::tuple{0x042u, 0xffu, 7u, false}, std::tuple{0x050u, 0xffu, 7u, false}, std::tuple{0x600u, 0xffu, 7u, false}, std::tuple{0x008u, 0xffu, 7u, false}, std::tuple{0x900u, 0xffu, 7u, false}, std::tuple{0x5000u, 0xffu, 7u, false}}) {
+            for (const auto [ops, writeMask, compare, accepted] : {std::tuple{0x000u, 0xffu, 7u, true}, std::tuple{0x737u, 0xffu, 7u, true}, std::tuple{0x110u, 0xffu, 7u, true}, std::tuple{0x050u, 0x00u, 7u, true}, std::tuple{0x040u, 0xffu, 7u, replaces}, std::tuple{0x40040u, 0xffu, 7u, replaces}, std::tuple{0x404u, 0x0fu, 0u, replaces}, std::tuple{0x040u, 0xffu, 2u, false}, std::tuple{0x340u, 0xffu, 7u, false}, std::tuple{0x042u, 0xffu, 7u, false}, std::tuple{0x050u, 0xffu, 7u, false}, std::tuple{0x600u, 0xffu, 7u, false}, std::tuple{0x008u, 0xffu, 7u, false}, std::tuple{0x900u, 0xffu, 7u, false}, std::tuple{0x5000u, 0xffu, 7u, false}, std::tuple{0x0c0u, 0xffu, 7u, false}, std::tuple{0x00bu, 0xffu, 7u, false}}) {
                 auto stenciled = stencilRefExportQueue(shaderControl, zFormat);
                 for (const auto [offset, word] : {std::pair{0x010u, 0x80000180u}, std::pair{0x011u, 0x20000181u}, std::pair{0x012u, 0x00001000u}, std::pair{0x013u, 0x00002000u}, std::pair{0x015u, 0x00002000u}, std::pair{0x007u, 0x003f003fu}, std::pair{0x000u, 0u}, std::pair{0x002u, 0u}, std::pair{0x00au, 0u}, std::pair{0x00bu, 0x3f800000u}, std::pair{0x200u, 0x007007b3u}}) stenciled.context[offset] = word;
                 stenciled.context[0x10b] = ops;
@@ -9029,6 +9769,99 @@ void stencilReferenceUnusedTests() {
     std::cout << "Unused stencil reference sample equivalence passed: " << accepted << " accepted states, " << countermodels << " dependent countermodels\n";
 }
 
+void stencilLogicOperationTests() {
+    const auto queueFor = [](std::uint32_t ops, std::uint32_t front, std::uint32_t back, std::uint32_t depthControl) {
+        auto queue = makeState();
+        for (const auto [offset, word] : {std::pair{0x000u, 0u}, std::pair{0x002u, 0u}, std::pair{0x007u, (1u << 16u) | 3u}, std::pair{0x00au, 0u}, std::pair{0x00bu, 0u}, std::pair{0x010u, 0x22900983u}, std::pair{0x011u, 0x20000181u}, std::pair{0x012u, 0x100u}, std::pair{0x014u, 0x100u}, std::pair{0x013u, 0x200u}, std::pair{0x015u, 0x200u}, std::pair{0x005u, 0x300u}, std::pair{0x01eu, 0x1u}}) queue.context[offset] = word;
+        queue.context[0x10b] = ops;
+        queue.context[0x10c] = front;
+        queue.context[0x10d] = back;
+        queue.context[0x200] = depthControl;
+        return queue;
+    };
+    const auto refMaskOf = [](std::uint32_t test, std::uint32_t writeMask, std::uint32_t value) { return test | 0xff00u | (writeMask << 16u) | (value << 24u); };
+    const auto apply = [](std::uint32_t op, std::uint32_t stencil, std::uint32_t value) {
+        switch (op) {
+            case 1: return 0u;
+            case 10: return stencil & value;
+            case 11: return stencil | value;
+            case 12: return stencil ^ value;
+            case 15: return ~(stencil ^ value);
+            default: return stencil;
+        }
+    };
+    const auto matches = [&](const AgcDriver::Graphics::State& state, const VkStencilOpState& face, std::uint32_t ops, std::uint32_t compare, std::uint32_t refMask, const std::string& name) {
+        const auto test = refMask & 0xffu;
+        const auto compareMask = (refMask >> 8u) & 0xffu;
+        const auto writeMask = (refMask >> 16u) & 0xffu;
+        const auto value = refMask >> 24u;
+        for (std::uint32_t stencil = 0; stencil < 256u; ++stencil) {
+            for (const bool depthPass : {false, true}) {
+                const bool stencilPass = stencilComparison(static_cast<VkCompareOp>(compare), test & compareMask, stencil & compareMask);
+                const auto op = (ops >> (!stencilPass ? 0u : !depthPass ? 8u : 4u)) & 0xfu;
+                const auto expected = ((stencil & ~writeMask) | (apply(op, stencil, value) & writeMask)) & 0xffu;
+                const auto [actual, passed] = stencilReferenceOutcome(state, face, face.reference, stencil, depthPass, true);
+                Require(actual == expected && passed == (stencilPass && depthPass), name + ": stencil " + std::to_string(stencil) + (depthPass ? " passing" : " failing") + " the depth test became " + std::to_string(actual) + ", expected " + std::to_string(expected));
+            }
+        }
+    };
+    std::size_t accepted = 0;
+    for (const auto op : {10u, 11u, 12u, 15u}) {
+        for (const auto placement : {0x010u, 0x001u, 0x100u, 0x111u}) {
+            for (const auto compare : {7u, 0u, 2u, 3u}) {
+                for (const auto [test, writeMask, value] : {std::tuple{0x00u, 0xffu, 0x5au}, std::tuple{0xa5u, 0xffu, 0x21u}, std::tuple{0xa5u, 0x3cu, 0xffu}, std::tuple{0xffu, 0xf0u, 0x0fu}, std::tuple{0x5au, 0x81u, 0x00u}}) {
+                    const auto ops = op * placement;
+                    const auto refMask = refMaskOf(test, writeMask, value);
+                    const auto queue = queueFor(ops, refMask, refMask, 0x13u | (compare << 8u));
+                    const auto name = "stencil operation " + std::to_string(op) + " in DB_STENCIL_CONTROL " + std::to_string(ops) + " with compare " + std::to_string(compare) + " and DB_STENCILREFMASK " + std::to_string(refMask);
+                    const auto bits = (op == 11u || op == 12u ? value : ~value) & writeMask;
+                    if (op == 11u && compare != 0u && compare != 7u && (~test & bits) != 0u) {
+                        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(queue)); }, "stencil OR of");
+                        continue;
+                    }
+                    const auto state = AgcDriver::Graphics::DecodeState(queue);
+                    Require(state.stencilTest && state.depthTest && (state.stencilFront.writeMask & 0xffu) == (bits != 0u ? bits : writeMask), "the write mask is not narrowed to the bits changed by " + name);
+                    matches(state, state.stencilFront, ops, compare, refMask, name);
+                    ++accepted;
+                }
+            }
+        }
+    }
+    for (const auto [ops, refMask, name] : {std::tuple{0x0c1u, refMaskOf(0x80u, 0xffu, 0xffu), "XOR of every written bit beside ZERO"}, std::tuple{0x0cbu, refMaskOf(0x8fu, 0xffu, 0x0fu), "OR and XOR of the same bits"}, std::tuple{0x0fau, refMaskOf(0x80u, 0xffu, 0xf0u), "AND and XNOR of the same bits"}, std::tuple{0xb0bu, refMaskOf(0x30u, 0x3cu, 0xf0u), "OR on stencil fail and depth fail"}}) {
+        const auto queue = queueFor(ops, refMask, refMask, 0x13u | (3u << 8u));
+        const auto state = AgcDriver::Graphics::DecodeState(queue);
+        matches(state, state.stencilFront, ops, 3u, refMask, name);
+        ++accepted;
+    }
+    {
+        const auto front = refMaskOf(0x11u, 0xffu, 0x0fu);
+        const auto back = refMaskOf(0x22u, 0x3cu, 0x30u);
+        const auto queue = queueFor(0x0c0u | (0x0a0u << 12u), front, back, 0x93u | (7u << 8u) | (5u << 20u));
+        const auto state = AgcDriver::Graphics::DecodeState(queue);
+        Require(state.stencilFront.passOp == VK_STENCIL_OP_INVERT && state.stencilFront.writeMask == 0x0fu && state.stencilBack.passOp == VK_STENCIL_OP_ZERO && state.stencilBack.writeMask == 0x0cu, "front XOR and back AND did not keep their own write masks");
+        matches(state, state.stencilFront, 0x0c0u, 7u, front, "front XOR beside a back AND");
+        matches(state, state.stencilBack, 0x0a0u, 5u, back, "back AND beside a front XOR");
+        accepted += 2;
+    }
+    for (const auto [ops, refMask, reason] : {std::tuple{0x0d0u, refMaskOf(0u, 0xffu, 0x0fu), "stencil operation 13 is unsupported"}, std::tuple{0x0e0u, refMaskOf(0u, 0xffu, 0x0fu), "stencil operation 14 is unsupported"}, std::tuple{0x0cau, refMaskOf(0u, 0xffu, 0x0fu), "stencil logic operations on write masks"}, std::tuple{0x0fcu, refMaskOf(0u, 0xffu, 0x0fu), "stencil logic operations on write masks"},std::tuple{0x0c1u, refMaskOf(0u, 0xffu, 0x0fu), "combine a logic operation"}, std::tuple{0x5c0u, refMaskOf(0u, 0xffu, 0x01u), "combine a logic operation"}}) {
+        const auto queue = queueFor(ops, refMask, refMask, 0x13u | (7u << 8u));
+        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(queue)); }, reason);
+    }
+    for (const auto ops : {0x0c0u, 0x0b0u}) {
+        auto exported = stencilRefExportQueue(0x12u, 9u);
+        for (const auto [offset, word] : {std::pair{0x010u, 0x80000180u}, std::pair{0x011u, 0x20000181u}, std::pair{0x012u, 0x00001000u}, std::pair{0x013u, 0x00002000u}, std::pair{0x015u, 0x00002000u}, std::pair{0x007u, 0x003f003fu}, std::pair{0x000u, 0u}, std::pair{0x002u, 0u}, std::pair{0x00au, 0u}, std::pair{0x00bu, 0x3f800000u}, std::pair{0x200u, 0x007007b3u}}) exported.context[offset] = word;
+        exported.context[0x10b] = ops;
+        exported.context[0x10c] = exported.context[0x10d] = refMaskOf(0u, 0xffu, 0x0fu);
+        if (ops == 0x0c0u) {
+            const auto state = AgcDriver::Graphics::DecodeState(exported);
+            Require(state.stencilFront.passOp == VK_STENCIL_OP_INVERT && state.stencilFront.writeMask == 0x0fu, "a stencil test value export changed a stencil XOR");
+        } else {
+            expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(exported)); }, "stencil OR is unsupported with a pixel shader that exports the stencil test value");
+        }
+    }
+    std::cout << "Stencil logic operations matched AND, OR, XOR and XNOR under the write mask for " << accepted << " register states\n";
+}
+
 std::set<std::string> bufferViews(std::span<const std::uint32_t> words) {
     std::set<std::string> views;
     for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
@@ -9140,7 +9973,7 @@ void ProvokingVertexTests() {
     ValidateProvokingVertex(unsupported, first);
     auto last = first;
     last.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
-    expectFailure([&] { ValidateProvokingVertex(unsupported, last); }, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
+    ValidateProvokingVertex(unsupported, last);
     auto supported = unsupported;
     supported.provokingVertexLast = true;
     ValidateProvokingVertex(supported, last);
@@ -9169,6 +10002,14 @@ void ProvokingVertexTests() {
     const std::array<CompiledShader, 1> flatP10Shaders{{{ShaderRecompiler::ShaderStage::Fragment, &flatP10Pixel, 0}}};
     ValidateProvokingVertex(supported, last, flatP10Shaders);
     expectFailure([&] { ValidateProvokingVertex(supported, first, flatP10Shaders); }, "v_interp_mov p10 of a flat input with the first provoking vertex is not measured");
+    const std::array<std::uint32_t, 7> flatP20Color{0xc8120001u, 0xc8160101u, 0xc81a0201u, 0xc81e0301u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+    const auto flatP20Pixel = recompilePixel({0x400u}, flatP20Color);
+    const auto p20Inputs = locatedInputs(flatP20Pixel.spirv.Words());
+    Require(p20Inputs.size() == 1 && p20Inputs[0].location == 0 && p20Inputs[0].flat && !p20Inputs[0].perVertex, "flat v_interp_mov P20 did not compile to a flat input");
+    Require(flatP20Pixel.fragmentParameters.size() == 1 && flatP20Pixel.fragmentParameters[0].flatP20 && !flatP20Pixel.fragmentParameters[0].flatP10 && !flatP20Pixel.fragmentParameters[0].perVertex && !flatP10Pixel.fragmentParameters[0].flatP20, "flat v_interp_mov P20 was not recorded apart from P10");
+    const std::array<CompiledShader, 1> flatP20Shaders{{{ShaderRecompiler::ShaderStage::Fragment, &flatP20Pixel, 0}}};
+    ValidateProvokingVertex(supported, first, flatP20Shaders);
+    expectFailure([&] { ValidateProvokingVertex(supported, last, flatP20Shaders); }, "v_interp_mov p20 of a flat input with the last provoking vertex is not measured");
     auto lastStrip = last;
     lastStrip.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
     auto lastList = last;
@@ -9255,6 +10096,105 @@ void ProvokingVertexTests() {
     expectFailure([&] { ValidateProvokingVertex(supported, last); }, "invalid provoking vertex mode");
 }
 
+void UnobservedProvokingVertexTests() {
+    using namespace AgcDriver::Graphics;
+    auto last = DecodeState(makeState());
+    last.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+    const Context unsupported{};
+    const auto module = [](std::initializer_list<std::uint32_t> instructions) {
+        std::vector<std::uint32_t> words{spv::MagicNumber, 0x10300u, 0u, 4u, 0u};
+        words.insert(words.end(), instructions);
+        return words;
+    };
+    ShaderRecompiler::RecompileResult fragment{};
+    const std::array<CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+    const ShaderRecompiler::FragmentParameter smooth{0, 0, false, false};
+    const auto refused = [&](const State& state) {
+        expectFailure([&] { ValidateProvokingVertex(unsupported, state, shaders); }, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
+    };
+    for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_POINT_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN}) {
+        auto state = last;
+        state.topology = topology;
+        ValidateProvokingVertex(unsupported, state);
+        fragment.fragmentParameters.clear();
+        fragment.spirv = module({});
+        ValidateProvokingVertex(unsupported, state, shaders);
+        fragment.fragmentParameters = {smooth};
+        fragment.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationLocation, 0u});
+        ValidateProvokingVertex(unsupported, state, shaders);
+        for (std::uint32_t read = 0; read < 4; ++read) {
+            const ShaderRecompiler::FragmentParameter observed{1, 1, read == 0, read == 1, read == 2, read == 3, false};
+            fragment.fragmentParameters = {smooth, observed};
+            refused(state);
+        }
+        fragment.fragmentParameters = {smooth};
+        for (const std::uint32_t decoration : {static_cast<std::uint32_t>(spv::DecorationFlat), static_cast<std::uint32_t>(spv::DecorationPerVertexKHR)}) {
+            fragment.spirv = module({(3u << 16u) | spv::OpDecorate, 1u, decoration});
+            refused(state);
+            fragment.spirv = module({(4u << 16u) | spv::OpMemberDecorate, 1u, 0u, decoration});
+            refused(state);
+        }
+        fragment.spirv = module({(5u << 16u) | spv::OpDecorate, 1u, spv::DecorationLocation});
+        refused(state);
+        fragment.spirv = std::vector<std::uint32_t>{};
+        refused(state);
+    }
+    fragment.fragmentParameters = {smooth};
+    for (const std::uint32_t generated : {static_cast<std::uint32_t>(spv::BuiltInSampleId), static_cast<std::uint32_t>(spv::BuiltInFrontFacing), static_cast<std::uint32_t>(spv::BuiltInSubgroupLocalInvocationId)}) {
+        fragment.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, generated, (3u << 16u) | spv::OpDecorate, 1u, spv::DecorationFlat});
+        ValidateProvokingVertex(unsupported, last, shaders);
+        fragment.spirv = module({(3u << 16u) | spv::OpDecorate, 1u, spv::DecorationFlat, (4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, generated});
+        ValidateProvokingVertex(unsupported, last, shaders);
+        fragment.spirv = module({(5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, generated, (4u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationFlat});
+        ValidateProvokingVertex(unsupported, last, shaders);
+        fragment.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, generated, (3u << 16u) | spv::OpDecorate, 2u, spv::DecorationFlat});
+        refused(last);
+        fragment.spirv = module({(5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, generated, (4u << 16u) | spv::OpMemberDecorate, 1u, 1u, spv::DecorationFlat});
+        refused(last);
+    }
+    for (const std::uint32_t passed : {static_cast<std::uint32_t>(spv::BuiltInLayer), static_cast<std::uint32_t>(spv::BuiltInViewportIndex), static_cast<std::uint32_t>(spv::BuiltInPrimitiveId)}) {
+        fragment.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, passed, (3u << 16u) | spv::OpDecorate, 1u, spv::DecorationFlat});
+        refused(last);
+        fragment.spirv = module({(5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, passed, (4u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationFlat});
+        refused(last);
+    }
+    ShaderRecompiler::RecompileResult vertex{};
+    vertex.fragmentParameters = {{0, 0, true, true, true, true, true}};
+    vertex.spirv = module({(3u << 16u) | spv::OpDecorate, 1u, spv::DecorationFlat});
+    fragment.fragmentParameters = {smooth};
+    fragment.spirv = module({});
+    const std::array<CompiledShader, 2> stages{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+    ValidateProvokingVertex(unsupported, last, stages);
+    Context supported{};
+    supported.provokingVertexLast = true;
+    for (const auto stage : {ShaderRecompiler::ShaderStage::Vertex, ShaderRecompiler::ShaderStage::TessellationEvaluation, ShaderRecompiler::ShaderStage::Geometry, ShaderRecompiler::ShaderStage::Mesh}) {
+        ShaderRecompiler::RecompileResult writer{};
+        const std::array<CompiledShader, 2> written{{{stage, &writer, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        const auto refusedWrite = [&] {
+            expectFailure([&] { ValidateProvokingVertex(unsupported, last, written); }, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
+            ValidateProvokingVertex(supported, last, written);
+        };
+        for (const std::uint32_t selected : {static_cast<std::uint32_t>(spv::BuiltInLayer), static_cast<std::uint32_t>(spv::BuiltInViewportIndex)}) {
+            writer.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, selected});
+            refusedWrite();
+            writer.spirv = module({(5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, selected});
+            refusedWrite();
+            writer.spirv = module({(5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, selected, (4u << 16u) | spv::OpMemberDecorate, 1u, 1u, spv::DecorationPerPrimitiveEXT});
+            refusedWrite();
+            writer.spirv = module({(4u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationPerPrimitiveEXT, (5u << 16u) | spv::OpMemberDecorate, 1u, 0u, spv::DecorationBuiltIn, selected});
+            ValidateProvokingVertex(unsupported, last, written);
+            writer.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, selected, (3u << 16u) | spv::OpDecorate, 1u, spv::DecorationPerPrimitiveEXT});
+            ValidateProvokingVertex(unsupported, last, written);
+        }
+        writer.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, spv::BuiltInPosition, (5u << 16u) | spv::OpMemberDecorate, 2u, 0u, spv::DecorationBuiltIn, spv::BuiltInPointSize});
+        ValidateProvokingVertex(unsupported, last, written);
+        writer.spirv = std::vector<std::uint32_t>{};
+        refusedWrite();
+    }
+    const std::array<CompiledShader, 1> missing{{{ShaderRecompiler::ShaderStage::Fragment, nullptr, 0}}};
+    expectFailure([&] { ValidateProvokingVertex(unsupported, last, missing); }, "last provoking vertex requires VK_EXT_provoking_vertex with provokingVertexLast enabled");
+}
+
 void ProvokingVertexRenderPassTests() {
     using namespace AgcDriver::Graphics;
     const auto first = DecodeState(makeState());
@@ -9313,6 +10253,8 @@ void ConservativeRasterizationTests() {
     geometry.context[0x2ce] = 3;
     geometry.context[0x29b] = 2;
     geometry.context[0x2ab] = 4;
+    geometry.context[0x280] = 0x00080008u;  // PA_SU_POINT_SIZE and PA_SU_POINT_MINMAX: a point-output geometry program decodes them
+    geometry.context[0x281] = 0x00080008u;
     geometry.shader[0x8a] = 3u << 29u;
     geometry.shader[0x8b] = 3u << 16u;
     for (const auto input : {1u, 2u, 4u}) {
@@ -9434,6 +10376,34 @@ ShaderRecompiler::RecompileRequest packedExportRequest(const AgcDriver::QueueSta
     return request;
 }
 
+void uintTargetTests() {
+    using ShaderRecompiler::ColorExportPacking;
+    auto queue = makeState();
+    queue.context[0x31c] = (queue.context.at(0x31c) & ~0x1f7cu) | (4u << 2u) | (4u << 8u);
+    queue.context[0x1e0] = 1u << 30u;
+    for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = 0;
+    const auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.color.format == VK_FORMAT_R32_UINT && state.color.elementBytes == 4 && state.color.bytes == colorMemory.size() && state.color.packing == ColorExportPacking::Uint, "a 32-bit UINT target did not get the unsigned integer export packing");
+    const auto packings = AgcDriver::Graphics::ExportPackings(state);
+    Require(packings[0] == ColorExportPacking::Uint && std::all_of(packings.begin() + 1, packings.end(), [](ColorExportPacking packing) { return packing == ColorExportPacking::None; }), "export 0 did not carry the unsigned integer packing");
+    Require(!state.blends.at(0).blendEnable && state.blends.at(0).colorWriteMask != 0, "blending into a UINT target was not dropped");
+    auto bytes = queue;
+    bytes.context[0x31c] = (bytes.context.at(0x31c) & ~0x1f7cu) | (1u << 2u) | (4u << 8u);
+    const auto eight = AgcDriver::Graphics::DecodeState(bytes);
+    Require(eight.color.format == VK_FORMAT_R8_UINT && eight.color.packing == ColorExportPacking::Uint && !eight.blends.at(0).blendEnable, "an 8-bit UINT target did not get the unsigned integer export packing");
+    auto words = queue;
+    words.context[0x1c5] = 7u;
+    words.context[0x1e0] = 0;
+    const auto uint16 = AgcDriver::Graphics::DecodeState(words);
+    Require(uint16.color.packing == ColorExportPacking::None && uint16.color.uintExport, "a UINT16_ABGR export into a UINT target was retyped twice");
+    auto halves = queue;
+    halves.context[0x1c5] = 4u;
+    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(halves)); }, "color export format 4 into an unsigned integer target is unsupported");
+    auto unorm = queue;
+    unorm.context[0x31c] = (unorm.context.at(0x31c) & ~0x1f7cu) | (4u << 2u) | (7u << 8u);
+    Require(AgcDriver::Graphics::DecodeState(unorm).color.packing == ColorExportPacking::None, "a 32-bit float target got the unsigned integer export packing");
+}
+
 void unorm10_11_11TargetTests() {
     using ShaderRecompiler::ColorExportPacking;
     auto queue = makeState();
@@ -9519,6 +10489,332 @@ void unorm10_11_11TargetTests() {
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(uintExport)); }, "fragment output 0 has no color export packing path");
 }
 
+void unorm4_4_4_4TargetTests() {
+    using ShaderRecompiler::ColorExportPacking;
+    auto queue = makeState();
+    queue.context[0x31c] = (queue.context.at(0x31c) & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (19u << 2u) | (2u << 11u);
+    queue.context[0x1b3] = 2;
+    queue.context[0x1b4] = 2;
+    const auto state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.color.format == VK_FORMAT_R16_UINT && state.color.elementBytes == 2 && state.color.componentMapping == 0x1bu && state.color.packing == ColorExportPacking::Unorm4_4_4_4, "a 4_4_4_4 unorm target did not decode to an R16_UINT attachment with reversed exports");
+    const auto packings = AgcDriver::Graphics::ExportPackings(state);
+    Require(packings[0] == ColorExportPacking::Unorm4_4_4_4 && std::all_of(packings.begin() + 1, packings.end(), [](ColorExportPacking packing) { return packing == ColorExportPacking::None; }), "export 0 did not carry the 4_4_4_4 unorm packing");
+    Require(state.color.partialWriteMask == 0u && state.blends[0].colorWriteMask == 0xfu && AgcDriver::Graphics::ExportTargetMerge(state).mask == 0u, "a full write of a 4_4_4_4 unorm target merged into the target");
+    auto changed = queue;
+    for (const auto& [targetMask, wordMask] : {std::pair{1u, 0xf000u}, std::pair{7u, 0xfff0u}, std::pair{8u, 0x000fu}, std::pair{0xau, 0x0f0fu}}) {
+        changed.context[0x8e] = targetMask;
+        Require(AgcDriver::Graphics::DrawRejection(changed, false).empty(), "the draw precheck refused CB_TARGET_MASK " + std::to_string(targetMask) + " of a 4_4_4_4 unorm target");
+        const auto partial = AgcDriver::Graphics::DecodeState(changed);
+        Require(partial.color.partialWriteMask == wordMask && partial.colors.front().partialWriteMask == wordMask && partial.blends[0].colorWriteMask == 0u && partial.blend.colorWriteMask == 0u, "CB_TARGET_MASK " + std::to_string(targetMask) + " of a 4_4_4_4 unorm target did not merge its nibbles behind a closed write mask");
+        const auto merge = AgcDriver::Graphics::ExportTargetMerge(partial);
+        const auto expected = AgcDriver::Graphics::SurfaceForTarget(partial.color);
+        const auto surface = AgcDriver::Graphics::DecodeTextureResource(merge.descriptor);
+        Require(merge.target == 0u && merge.mask == wordMask && merge.samples == 1u && !merge.depthStencilWrites && surface.baseAddress == expected.baseAddress && surface.pipeBankXor == expected.pipeBankXor && surface.width == expected.width && surface.height == expected.height && surface.format == expected.format && surface.tileMode == expected.tileMode && surface.dimension == AgcDriver::Graphics::TextureDimension::k2D && surface.mipCount == 1u && surface.samples == 1u, "the merge descriptor of CB_TARGET_MASK " + std::to_string(targetMask) + " does not decode to the target's surface");
+    }
+    {
+        auto depthQueue = queue;
+        depthQueue.context[0x8e] = 1;
+        depthQueue.context[0x000] = 0;
+        depthQueue.context[0x002] = 0;
+        depthQueue.context[0x007] = (1u << 16u) | 3u;
+        depthQueue.context[0x00a] = 7;
+        depthQueue.context[0x00b] = 0;
+        depthQueue.context[0x010] = 0x22900983;
+        depthQueue.context[0x011] = 0x20000181;
+        for (const auto offset : {0x012u, 0x014u}) depthQueue.context[offset] = 0x100;
+        for (const auto offset : {0x013u, 0x015u}) depthQueue.context[offset] = 0x200;
+        depthQueue.context[0x005] = 0x300;
+        depthQueue.context[0x01e] = 0x1;
+        depthQueue.context[0x008] = std::bit_cast<std::uint32_t>(0.25f);
+        depthQueue.context[0x009] = std::bit_cast<std::uint32_t>(0.75f);
+        struct DepthStencilCase {
+            std::uint32_t control;
+            std::uint32_t ops;
+            std::uint32_t masks;
+            bool writes;
+        };
+        for (const auto& [control, ops, masks, writes] : {DepthStencilCase{0x00700710u, 0x00050050u, 0x01ffff01u, false}, DepthStencilCase{0x00700712u, 0x00050050u, 0x01ffff01u, false}, DepthStencilCase{0x00700714u, 0x00050050u, 0x01ffff01u, false}, DepthStencilCase{0x00700716u, 0x00050050u, 0x01ffff01u, true}, DepthStencilCase{0x00700711u, 0x00050050u, 0x01ffff01u, true}, DepthStencilCase{0x00700711u, 0u, 0x01ffff01u, false}, DepthStencilCase{0x00700711u, 0x00050050u, 0x0100ff01u, false}, DepthStencilCase{0x00700713u, 0u, 0x01ffff01u, false}, DepthStencilCase{0x00700718u, 0x00050050u, 0x01ffff01u, false}}) {
+            depthQueue.context[0x200] = control;
+            depthQueue.context[0x10b] = ops;
+            depthQueue.context[0x10c] = depthQueue.context[0x10d] = masks;
+            const auto what = "DB_DEPTH_CONTROL " + std::to_string(control) + " with stencil operations " + std::to_string(ops) + " and masks " + std::to_string(masks);
+            Require(AgcDriver::Graphics::DrawRejection(depthQueue, false).empty(), "the draw precheck refused a partial 4_4_4_4 write under " + what);
+            const auto partial = AgcDriver::Graphics::DecodeState(depthQueue);
+            const auto merge = AgcDriver::Graphics::ExportTargetMerge(partial);
+            Require(partial.depth.has_value() == ((control & 0xbu) != 0u) && partial.depthBoundsTest == ((control & 8u) != 0u) && merge.mask == 0xf000u && AgcDriver::Graphics::DepthStencilWrites(partial) == writes && merge.depthStencilWrites == writes && merge.depthStencilTests == ((control & 0xbu) != 0u), "a partial 4_4_4_4 write under " + what + (writes ? " did not report" : " reported") + " depth or stencil writes");
+        }
+        auto truncated = depthQueue;
+        truncated.context[0x200] = 0x00700712u;
+        truncated.context[0x010] = 0x22900987u;
+        truncated.context[0x2f8] = 0x00100001u;
+        truncated.context[0x292] = 3;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) truncated.context[0x2fe + pixel * 4u] = 0xcc44;
+        truncated.context[0x31d] = truncated.context.at(0x31d) & ~0x3f000u;
+        truncated.context[0x8e] = 0xf;
+        const auto full = AgcDriver::Graphics::DecodeState(truncated);
+        Require(full.samples == 2 && full.truncatedCoverage && !full.mergedCoverage && full.color.samples == 1 && full.color.partialWriteMask == 0u, "a full write of a one-sample 4_4_4_4 unorm target beside a 2x depth target did not decode as truncated coverage");
+        truncated.context[0x8e] = 1;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(truncated); }, "under merged or truncated coverage");
+    }
+    {
+        auto smoothed = queue;
+        smoothed.context[0x2f8] = 0x0020c002u;
+        smoothed.context[0x292] = 3;
+        smoothed.context[0x3b8] = 0x0dc00000u;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) smoothed.context[0x2fe + pixel * 4u] = 0xcc44;
+        smoothed.context[0x31d] = smoothed.context.at(0x31d) & ~0x3f000u;
+        smoothed.context[0x201] = 0x02130000u;
+        const auto merged = AgcDriver::Graphics::DecodeState(smoothed);
+        Require(merged.samples == 4 && merged.mergedCoverage && merged.color.samples == 1 && merged.color.partialWriteMask == 0u, "a full write of a one-sample 4_4_4_4 unorm target under OVERRASTERIZATION_AMOUNT 2 did not decode as merged coverage");
+        smoothed.context[0x8e] = 1;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(smoothed); }, "under merged or truncated coverage");
+    }
+    {
+        changed.context[0x8e] = 1;
+        const auto partial = AgcDriver::Graphics::DecodeState(changed);
+        auto killQueue = changed;
+        killQueue.context[0x203] = 0x40u;
+        const auto killState = AgcDriver::Graphics::DecodeState(killQueue);
+        killQueue.context[0x203] = 0x10u;
+        const auto earlyState = AgcDriver::Graphics::DecodeState(killQueue);
+        Require(killState.pixelKill && !killState.pixelEarlyZ && !earlyState.pixelKill && earlyState.pixelEarlyZ, "DB_SHADER_CONTROL.KILL_ENABLE of a 4_4_4_4 merge did not decode as a kill under late tests");
+        constexpr std::array<std::uint32_t, 3> mergeCode{0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto merging = packedExportRequest(changed, partial, mergeCode);
+        merging.context.pixel->targetMerge = AgcDriver::Graphics::ExportTargetMerge(partial);
+        const std::array<std::uint32_t, 3> capabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat};
+        merging.target.supportedCapabilities = capabilities;
+        merging.target.registrationWordLimit = 1u << 20u;
+        const ShaderRecompiler::RequestSerializer mergeSerializer;
+        Require(mergeSerializer.Deserialize(mergeSerializer.Serialize(merging)).request.context.pixel->targetMerge == merging.context.pixel->targetMerge, "the 4_4_4_4 target merge was lost in serialization");
+        auto unmerged = merging;
+        unmerged.context.pixel->targetMerge = {};
+        auto moved = merging;
+        moved.context.pixel->targetMerge.descriptor[0] += 0x100u;
+        std::vector<std::uint64_t> mergedKey, unmergedKey, movedKey;
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(merging, mergedKey);
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(unmerged, unmergedKey);
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(moved, movedKey);
+        Require(mergedKey != unmergedKey && mergedKey == movedKey, "the static shader key does not separate merging from plain writes, or depends on the merged target's address");
+        for (const bool registration : {false, true}) {
+            merging.target.registrationModules = registration;
+            const auto merged = ShaderRecompiler::Recompile(merging);
+            const auto words = merged.spirv.Copy();
+            std::size_t reads = 0, writes = 0;
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+                reads += static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpImageRead ? 1u : 0u;
+                writes += static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpImageWrite ? 1u : 0u;
+            }
+            const auto what = std::string(registration ? "a registration" : "a specialized") + " 4_4_4_4 merge module";
+            Require(merged.registrationModule == registration && reads == 1u && writes == 1u && interlockShape(words) == "capability extension ordered begin end " && declaresEarlyFragmentTests(merging), what + " did not read and write the target once inside a pixel interlock after early tests: " + interlockShape(words));
+            Require(coherentImageRead(words), what + " does not read the target through a Coherent image variable");
+            const auto bound = std::ranges::any_of(merged.bindings, [&](const ShaderRecompiler::DescriptorBinding& binding) {
+                if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) return false;
+                for (std::size_t offset = 0; offset + 8u <= binding.guestDescriptor.size(); offset += 8u) {
+                    if (std::equal(merging.context.pixel->targetMerge.descriptor.begin(), merging.context.pixel->targetMerge.descriptor.end(), binding.guestDescriptor.begin() + static_cast<std::ptrdiff_t>(offset))) return true;
+                }
+                return false;
+            });
+            Require(bound, what + " does not bind the merged target as a storage image");
+            ShaderRecompiler::RecompileResult vertex;
+            vertex.spirv = makeModule({});
+            const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+            const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &merged, 0}}};
+            Require(AgcDriver::Graphics::ValidateShaders(shaders, partial, subgroup, false) == std::set<std::uint32_t>{0u}, what + " lost its export to attachment 0");
+        }
+        auto lacking = merging;
+        const std::array<std::uint32_t, 2> noInterlock{spv::CapabilityShader, spv::CapabilityStorageImageReadWithoutFormat};
+        lacking.target.supportedCapabilities = noInterlock;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(lacking)); }, "fragmentShaderPixelInterlock");
+        auto unformatted = merging;
+        const std::array<std::uint32_t, 2> noFormatlessReads{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT};
+        unformatted.target.supportedCapabilities = noFormatlessReads;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(unformatted)); }, "storage image reads without a format");
+        auto killing = merging;
+        killing.context.pixel->pixelKillEnable = true;
+        killing.context.pixel->earlyZ = false;
+        for (const bool registration : {false, true}) {
+            killing.target.registrationModules = registration;
+            const auto words = ShaderRecompiler::Recompile(killing).spirv.Copy();
+            std::size_t reads = 0, writes = 0;
+            for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+                reads += static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpImageRead ? 1u : 0u;
+                writes += static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpImageWrite ? 1u : 0u;
+            }
+            Require(reads == 1u && writes == 1u && interlockShape(words) == "capability extension ordered begin end " && declaresEarlyFragmentTests(killing), "a killing 4_4_4_4 merge module under late tests of a draw without depth or stencil writes did not merge inside a pixel interlock after early tests");
+        }
+        killing.context.pixel->targetMerge.depthStencilWrites = true;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(killing)); }, "kills pixels under late tests of a draw writing depth or stencil");
+        auto earlyKilling = killing;
+        earlyKilling.context.pixel->earlyZ = true;
+        static_cast<void>(ShaderRecompiler::Recompile(earlyKilling));
+        auto exporting = merging;
+        exporting.context.pixel->depthExportEnable = true;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(exporting)); }, "exports depth");
+        alignas(16) static std::array<std::uint32_t, 4> counted{};
+        static const std::array<std::uint32_t, 4> counter{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(counted.data())), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(counted.data()) >> 32u) & 0xffffu, 16u, 0x31016facu};
+        constexpr std::array<std::uint32_t, 6> countingCode{0x7e000281u, 0xe0c80000u, 0x80000000u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto counting = packedExportRequest(changed, partial, countingCode);
+        counting.context.userData = counter;
+        counting.context.pixel->targetMerge = merging.context.pixel->targetMerge;
+        counting.target = merging.target;
+        counting.target.registrationModules = false;
+        counting.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
+        static const std::array<std::uint32_t, 4> atomicCapabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityInt64};
+        counting.target.supportedCapabilities = atomicCapabilities;
+        counting.context.pixel->earlyZ = false;
+        static_cast<void>(ShaderRecompiler::Recompile(counting));
+        counting.context.pixel->targetMerge.depthStencilTests = true;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(counting)); }, "writes guest memory (stores, atomics or GDS) under late tests");
+        counting.context.pixel->earlyZ = true;
+        const auto earlyWords = ShaderRecompiler::Recompile(counting).spirv.Copy();
+        std::size_t atomics = 0;
+        for (std::size_t at = 5; at < earlyWords.size() && (earlyWords[at] >> 16u) != 0; at += earlyWords[at] >> 16u) atomics += static_cast<spv::Op>(earlyWords[at] & 0xffffu) == spv::OpAtomicIAdd ? 1u : 0u;
+        Require(atomics == 1u && interlockShape(earlyWords) == "capability extension ordered begin end " && declaresEarlyFragmentTests(counting), "a 4_4_4_4 merge whose shader adds to a counter under early tests did not keep its one atomic add beside the merge");
+        constexpr std::array<std::uint32_t, 9> gdsReadCode{0xbefc03ffu, 0x00000100u, 0x7e000280u, 0xd8da0000u, 0x04000000u, 0xbf8c0000u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto gdsReading = packedExportRequest(changed, partial, gdsReadCode);
+        gdsReading.context.pixel->targetMerge = counting.context.pixel->targetMerge;
+        gdsReading.context.pixel->earlyZ = false;
+        gdsReading.target = counting.target;
+        static_cast<void>(ShaderRecompiler::Recompile(gdsReading));
+        constexpr std::array<std::uint32_t, 9> gdsAddCode{0xbefc03ffu, 0x00000100u, 0x7e000280u, 0xd8020000u, 0x00000000u, 0xbf8c0000u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto gdsAdding = gdsReading;
+        gdsAdding.shader.code = gdsAddCode;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(gdsAdding)); }, "writes guest memory (stores, atomics or GDS) under late tests");
+        auto lateMerge = counting;
+        lateMerge.context.pixel->earlyZ = false;
+        lateMerge.context.pixel->targetMerge = {};
+        static_cast<void>(ShaderRecompiler::Recompile(lateMerge));
+    }
+    changed = queue;
+    changed.context[0x8e] = 1u;
+    changed.context[0x31d] = (changed.context.at(0x31d) & ~0x3f000u) | (1u << 12u) | (1u << 15u);
+    {
+        const auto multisampled = AgcDriver::Graphics::DecodeState(changed);
+        Require(multisampled.samples == 2u && multisampled.color.samples == 2u && multisampled.color.partialWriteMask == 0xf000u && multisampled.blends[0].colorWriteMask == 0u && multisampled.perSampleShading, "a partial write of a 2-sample 4_4_4_4 unorm target did not merge per sample behind a closed write mask");
+        auto coverage = changed;
+        coverage.context[0x1b3] = 0x4002u;
+        coverage.context[0x1b4] = 0x4002u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(coverage); }, "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample");
+        coverage.context[0x8e] = 0xfu;
+        Require(!AgcDriver::Graphics::DecodeState(coverage).perSampleShading, "a full write of a 2-sample 4_4_4_4 unorm target with a SAMPLE_COVERAGE input was refused or ran per sample");
+        struct InputCase {
+            std::uint32_t inputs;
+            std::uint32_t position;
+            const char* what;
+        };
+        auto rasterized = changed;
+        rasterized.context[0x2f8] = 0x00100001u;
+        rasterized.context[0x292] = 3;
+        rasterized.context[0x3b8] = 0x0dc00000u;
+        for (std::uint32_t pixel = 0; pixel < 4; ++pixel) rasterized.context[0x2fe + pixel * 4u] = 0xcc44;
+        const auto inputState = [](AgcDriver::QueueState queue, std::uint32_t inputs, std::uint32_t position) {
+            queue.context[0x1b3] = inputs;
+            queue.context[0x1b4] = inputs;
+            queue.context[0x1b8] = position;
+            return queue;
+        };
+        for (const auto& [inputs, position, what] : {InputCase{0x0004u, 0u, "PERSP_CENTROID"}, InputCase{0x0040u, 0u, "LINEAR_CENTROID"}, InputCase{0x0001u, 0u, "PERSP_SAMPLE"}, InputCase{0x0008u, 0u, "PERSP_PULL_MODEL"}, InputCase{0x2002u, 0u, "ANCILLARY"}, InputCase{0x0402u, 0u, "POS_Z_FLOAT"}, InputCase{0x0802u, 0u, "POS_W_FLOAT"}, InputCase{0x0302u, 0x20000u, "POS_X_FLOAT and POS_Y_FLOAT at a sample"}, InputCase{0x0102u, 0x10000u, "POS_X_FLOAT at the centroid"}}) {
+            auto moved = inputState(rasterized, inputs, position);
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(moved); }, "cannot read the ancillary word or, unless every sample sits at the pixel centre");
+            moved.context[0x293] = moved.context.at(0x293) | 0x10000u;
+            Require(AgcDriver::Graphics::DecodeState(moved).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target whose shader the guest runs per sample was refused for reading ") + what);
+            if (inputs == 0x2002u) {
+                expectFailure([&] { AgcDriver::Graphics::DecodeState(inputState(changed, inputs, position)); }, "cannot read the ancillary word");
+                continue;
+            }
+            Require(AgcDriver::Graphics::DecodeState(inputState(changed, inputs, position)).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target raised from a one-sample rasterizer, every sample at the pixel centre, was refused for reading ") + what);
+        }
+        for (const auto& [inputs, position, what] : {InputCase{0x0302u, 0u, "POS_X_FLOAT and POS_Y_FLOAT at the centre"}, InputCase{0x0302u, 0x100000u, "POS_X_FLOAT and POS_Y_FLOAT at the upper-left corner"}, InputCase{0x9022u, 0u, "PERSP_CENTER, LINEAR_CENTER, FRONT_FACE and POS_FIXED_PT"}}) {
+            Require(AgcDriver::Graphics::DecodeState(inputState(rasterized, inputs, position)).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target whose pixel-rate shader reads ") + what + " was refused");
+        }
+        const auto merge = AgcDriver::Graphics::ExportTargetMerge(multisampled);
+        const auto surface = AgcDriver::Graphics::DecodeTextureResource(merge.descriptor);
+        Require(merge.samples == 2u && merge.mask == 0xf000u && surface.dimension == AgcDriver::Graphics::TextureDimension::k2DMsaa && surface.samples == 2u && surface.baseAddress == multisampled.color.surfaceAddress && surface.width == multisampled.color.extent.width && surface.height == multisampled.color.extent.height && surface.format == AgcDriver::Graphics::TargetMergeSurface(multisampled.color).format, "the merge descriptor of a 2-sample 4_4_4_4 unorm target does not decode to its multisampled surface");
+        auto unshaded = multisampled;
+        unshaded.perSampleShading = false;
+        expectFailure([&] { static_cast<void>(AgcDriver::Graphics::ExportTargetMerge(unshaded)); }, "needs per-sample shading");
+        constexpr std::array<std::uint32_t, 3> mergeCode{0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto merging = packedExportRequest(changed, multisampled, mergeCode);
+        merging.context.pixel->targetMerge = merge;
+        const std::array<std::uint32_t, 5> capabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityStorageImageMultisample, spv::CapabilityInterpolationFunction};
+        merging.target.supportedCapabilities = capabilities;
+        merging.target.fragmentShaderBarycentricEnabled = true;
+        const auto words = ShaderRecompiler::Recompile(merging).spirv.Copy();
+        std::size_t sampled = 0;
+        bool sampleRate = false;
+        for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+            const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+            if (op == spv::OpCapability && words[at + 1] == spv::CapabilitySampleRateShading) sampleRate = true;
+            if (op == spv::OpImageRead && (words[at] >> 16u) == 7u && words[at + 5] == spv::ImageOperandsSampleMask) ++sampled;
+            if (op == spv::OpImageWrite && (words[at] >> 16u) == 6u && words[at + 4] == spv::ImageOperandsSampleMask) ++sampled;
+        }
+        Require(sampleRate && sampled == 2u && interlockShape(words) == "capability extension ordered begin end ", "a 2-sample 4_4_4_4 merge module does not read and write the shaded sample inside a pixel interlock");
+        auto single = merging;
+        const std::array<std::uint32_t, 4> noMultisampleStorage{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityInterpolationFunction};
+        single.target.supportedCapabilities = noMultisampleStorage;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(single)); }, "storage image multisampling");
+        auto centred = merging;
+        centred.target.fragmentShaderBarycentricEnabled = false;
+        centred.context.pixel->sampleLocations = AgcDriver::Graphics::PixelSampleLocations(multisampled, *centred.context.pixel);
+        Require(std::ranges::all_of(centred.context.pixel->sampleLocations, [](std::uint8_t location) { return location == 0u; }), "a merge raised from a one-sample rasterizer did not keep every sample at the pixel centre");
+        static_cast<void>(ShaderRecompiler::Recompile(centred));
+        const auto rasterizedState = AgcDriver::Graphics::DecodeState(rasterized);
+        auto offCentre = packedExportRequest(rasterized, rasterizedState, mergeCode);
+        offCentre.context.pixel->targetMerge = AgcDriver::Graphics::ExportTargetMerge(rasterizedState);
+        offCentre.context.pixel->iteratesSamples = rasterizedState.perSampleShading;
+        offCentre.context.pixel->sampleLocations = AgcDriver::Graphics::PixelSampleLocations(rasterizedState, *offCentre.context.pixel);
+        Require(std::ranges::any_of(offCentre.context.pixel->sampleLocations, [](std::uint8_t location) { return location != 0u; }), "a 2-sample rasterizer's merge did not pass its off-centre sample locations");
+        offCentre.target.supportedCapabilities = capabilities;
+        offCentre.target.fragmentShaderBarycentricEnabled = false;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(offCentre)); }, "its centre-located barycentrics would follow the sample");
+        offCentre.target.fragmentShaderBarycentricEnabled = true;
+        static_cast<void>(ShaderRecompiler::Recompile(offCentre));
+        alignas(16) static std::array<std::uint32_t, 4> counted{};
+        static const std::array<std::uint32_t, 4> counter{static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(counted.data())), static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(counted.data()) >> 32u) & 0xffffu, 16u, 0x31016facu};
+        constexpr std::array<std::uint32_t, 6> countingCode{0x7e000281u, 0xe0c80000u, 0x80000000u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto counting = packedExportRequest(changed, multisampled, countingCode);
+        counting.context.userData = counter;
+        counting.context.pixel->targetMerge = merge;
+        counting.context.pixel->iteratesSamples = true;
+        counting.context.pixel->earlyZ = true;
+        counting.target = merging.target;
+        counting.target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
+        static const std::array<std::uint32_t, 6> atomicCapabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityStorageImageMultisample, spv::CapabilityInterpolationFunction, spv::CapabilityInt64};
+        counting.target.supportedCapabilities = atomicCapabilities;
+        expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(counting)); }, "each covered sample would repeat its writes");
+        auto unmergedCounting = counting;
+        unmergedCounting.context.pixel->targetMerge = {};
+        static_cast<void>(ShaderRecompiler::Recompile(unmergedCounting));
+    }
+    for (const auto& [number, swap] : {std::pair{1u, 2u}, std::pair{4u, 2u}, std::pair{0u, 0u}, std::pair{0u, 1u}, std::pair{0u, 3u}}) {
+        changed = queue;
+        changed.context[0x31c] = (changed.context[0x31c] & ~((7u << 8u) | (3u << 11u))) | (number << 8u) | (swap << 11u);
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 19 number type " + std::to_string(number) + " component swap " + std::to_string(swap));
+    }
+    changed = queue;
+    changed.context[0x31c] |= 0x10000000u;
+    changed.context[0x325] = 0x1234;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "DCC-compressed 4_4_4_4 unorm color targets");
+    changed = queue;
+    changed.context[0x31c] |= 0x40000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "truncating (ROUND_MODE) 4_4_4_4 unorm color targets");
+
+    constexpr std::array<std::uint32_t, 3> code{0xf800180fu, 0x07060504u, 0xbf810000u};
+    const auto request = packedExportRequest(queue, state, code);
+    auto plain = request;
+    plain.context.pixel->targetExportPacking.fill(ColorExportPacking::None);
+    const ShaderRecompiler::RequestSerializer serializer;
+    Require(serializer.Deserialize(serializer.Serialize(request)).request.context.pixel->targetExportPacking == request.context.pixel->targetExportPacking, "the 4_4_4_4 unorm packing was lost in serialization");
+    const auto packed = ShaderRecompiler::Recompile(request);
+    const auto unpacked = ShaderRecompiler::Recompile(plain);
+    Require(packed.PipelineVariantId() != unpacked.PipelineVariantId() && !(packed.spirv == unpacked.spirv), "the 4_4_4_4 export packing did not specialize the module");
+    ShaderRecompiler::RecompileResult vertex;
+    vertex.spirv = makeModule({});
+    const VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
+    Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the 4_4_4_4 packed export did not reach attachment 0");
+}
+
 void float11_11_10TargetTests() {
     using ShaderRecompiler::ColorExportPacking;
     auto queue = makeState();
@@ -9533,7 +10829,12 @@ void float11_11_10TargetTests() {
     auto changed = queue;
     changed.context[0x31c] &= ~0x40000u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "rounding (ROUND_MODE 0) 11_11_10 float color targets");
-    for (const auto swap : {0u, 1u, 3u}) {
+    changed = queue;
+    changed.context[0x31c] &= ~0x1800u;
+    const auto standard = AgcDriver::Graphics::DecodeState(changed);
+    Require(standard.color.format == VK_FORMAT_R32_UINT && standard.color.componentMapping == 0xe4u && standard.color.packing == ColorExportPacking::Float11_11_10, "an 11_11_10 float target with the standard component order did not decode");
+    Require(AgcDriver::Graphics::ExportMappings(standard)[0] == 0xe4u, "export 0 reordered its components into the standard-order 11_11_10 float target");
+    for (const auto swap : {1u, 3u}) {
         changed = queue;
         changed.context[0x31c] = (changed.context[0x31c] & ~0x1800u) | (swap << 11u);
         expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 7 number type 7 component swap " + std::to_string(swap));
@@ -9580,7 +10881,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(3);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(5);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 
@@ -10019,6 +11320,21 @@ void validationTests() {
         attribute.components = 2;
         attribute.resource.fields[1] |= 0x80000000u;
         expectFailure([&] { AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)); }, "descriptor flags");
+        attribute.resource.fields = {0x1000, 8u << 16u, 3, 71u << 12u};
+        attribute.components = 3;
+        context.formatProperties = [](VkPhysicalDevice, VkFormat format, VkFormatProperties* properties) {
+            *properties = {};
+            if (format == VK_FORMAT_R16G16B16A16_SFLOAT || format == VK_FORMAT_R8G8B8A8_UNORM) properties->bufferFeatures = VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
+        };
+        Require(AgcDriver::Graphics::DecodeVertexFormat(attribute).format == VK_FORMAT_R16G16B16_SFLOAT && AgcDriver::Graphics::DecodeVertexFormat(attribute).bytes == 6, "a 3-component 16_16_16_16 float attribute was not decoded as 3 components");
+        const auto widened = AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1));
+        Require(widened.attributes[0].format == VK_FORMAT_R16G16B16A16_SFLOAT && widened.bindings[0].stride == 8 && AgcDriver::Graphics::VertexReadBytes(attribute, widened.attributes[0].format) == 8, "a 3-component 16_16_16_16 float attribute was not widened to the format the device supports");
+        Require(AgcDriver::Graphics::VertexAttributeSignature(attribute) == "f32x3", "widening the vertex format changed the shader input");
+        attribute.resource.fields = {0x1000, 4u << 16u, 3, 56u << 12u};
+        Require(AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)).attributes[0].format == VK_FORMAT_R8G8B8A8_UNORM, "a 3-component 8_8_8_8 unorm attribute was not widened to the format the device supports");
+        attribute.resource.fields = {0x1000, 12u << 16u, 3, 74u << 12u};
+        expectFailure([&] { AgcDriver::Graphics::BuildVertexInputLayout(context, std::span(&attribute, 1)); }, "device does not support vertex format 106");
+        expectFailure([&] { AgcDriver::Graphics::VertexReadBytes(attribute, VK_FORMAT_R32G32B32A32_SFLOAT); }, "is not a form of");
     }
     for (const auto capability : {spv::CapabilityInt64Atomics, spv::CapabilityInt64ImageEXT}) {
         ShaderRecompiler::RecompileResult vertex;
@@ -10152,7 +11468,6 @@ void validationTests() {
     }
 }
 
-
 }
 
 bool recompilesDebugBranch(std::uint32_t opcode) {
@@ -10251,6 +11566,38 @@ void meshArgumentTests() {
     Require(same(ResolveMeshArguments(record(0xffffffffu, 1, 0), rules(points, 0xffffffffu)), {0, 0, 0, 0xffffffffu, 0}), "groups over the device limit draw nothing");
 }
 
+void meshLimitTests() {
+    AgcDriver::Graphics::Context context{};
+    context.meshLimits.maxMeshWorkGroupInvocations = 128;
+    context.meshLimits.maxMeshWorkGroupSize[0] = 96;
+    context.meshLimits.maxMeshOutputVertices = 256;
+    context.meshLimits.maxMeshOutputPrimitives = 512;
+    context.meshLimits.maxMeshSharedMemorySize = 12284;
+    ShaderRecompiler::MeshConfiguration mesh{
+        .inputPrimitive = 4u,
+        .primitivesPerGroup = 32u,
+        .verticesPerGroup = 96u,
+        .maxVertices = 256u,
+        .maxPrimitives = 512u,
+        .threadsPerGroup = 128u,
+        .ldsSizeDwords = 3071u,
+        .provokingVertex = 0u,
+        .esgsItemSize = 4u,
+    };
+    AgcDriver::Graphics::ValidateMeshLimits(context, mesh, 96);
+    expectFailure([&] { AgcDriver::Graphics::ValidateMeshLimits(context, mesh, 97); }, "mesh workgroup of 97 invocations exceeds device limits (128 invocations, 96 wide)");
+    mesh.maxVertices = 257;
+    expectFailure([&] { AgcDriver::Graphics::ValidateMeshLimits(context, mesh, 96); }, "mesh output vertices 257 exceed the device limit 256");
+    mesh.maxVertices = 256;
+    mesh.maxPrimitives = 513;
+    expectFailure([&] { AgcDriver::Graphics::ValidateMeshLimits(context, mesh, 96); }, "mesh output primitives 513 exceed the device limit 512");
+    mesh.maxPrimitives = 512;
+    mesh.ldsSizeDwords = 3072;
+    expectFailure([&] { AgcDriver::Graphics::ValidateMeshLimits(context, mesh, 96); }, "mesh LDS 12288 bytes exceeds the device shared memory limit 12284");
+    mesh.ldsSizeDwords = 3071;
+    AgcDriver::Graphics::ValidateMeshLimits(context, mesh, 96);
+}
+
 void debugBranchTests() {
     for (const auto opcode : {0x17u, 0x18u, 0x19u, 0x1au}) Require(recompilesDebugBranch(opcode), "a conditional debug branch did not recompile");
 }
@@ -10287,6 +11634,20 @@ void highestDrawIndexTests() {
         std::memcpy(shifted.data() + 1 + 2 * i, &value, sizeof(value));
     }
     Require(HighestDrawIndex(std::span<const std::byte>(shifted).subspan(1, 2 * 1000 + 1), 2, false) == 0x8001u, "an unaligned 16-bit range with a trailing byte");
+}
+
+void compactListRestartTests() {
+    using AgcDriver::Graphics::CompactListRestart;
+    std::array<std::uint16_t, 9> triangles{0, 1, 2, 3, 4, 0xffff, 5, 6, 7};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(triangles)), 2, 3) == 6 && triangles[0] == 0 && triangles[2] == 2 && triangles[3] == 5 && triangles[5] == 7, "a restart did not drop the incomplete triangle before it");
+    std::array<std::uint32_t, 7> lines{0, 1, 0xffffffffu, 2, 0xffffffffu, 3, 4};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(lines)), 4, 2) == 4 && lines[2] == 3 && lines[3] == 4, "a restart between whole lines changed them");
+    std::array<std::uint16_t, 4> points{0xffff, 6, 0xffff, 9};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(points)), 2, 1) == 2 && points[0] == 6 && points[1] == 9, "restart indices were drawn as points");
+    std::array<std::uint16_t, 5> tail{0, 1, 2, 3, 4};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(tail)), 2, 3) == 3, "the incomplete last triangle was kept");
+    std::array<std::uint16_t, 2> restartOnly{0xffff, 0xffff};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(restartOnly)), 2, 3) == 0, "a draw of only restart indices kept an index");
 }
 
 void storeAtFlipTests() {
@@ -10569,6 +11930,168 @@ void pipelineStoreLazyBufferPoolTests() {
     Require(mock.live == 0, "lazy buffer pool pipeline tests leaked Vulkan objects");
 }
 
+// The pipeline store's bound without a GPU: 1536 configurations cycled through the default 1024
+// entries keep coming back after their eviction, so the bound doubles and a later pass finds every
+// pipeline resident; a bound set with APS5_PIPELINE_STORE_ENTRIES never moves.
+void pipelineStoreGrowthTests(bool fixed) {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 301;
+    fragment.variantId = 302;
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    std::array<std::uint32_t, 1> mainKey{41}, fragmentKey{42};
+    const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), makeHandle<VkDescriptorSetLayout>(), true, mainKey, fragmentKey};
+    constexpr std::uint32_t configurations = 1536;
+    const auto pass = [&](std::uint32_t count) {
+        std::uint32_t built = 0;
+        for (std::uint32_t configuration = 0; configuration < count; ++configuration) {
+            VertexInputLayout input;
+            input.bindings.push_back({0, 4u * (configuration + 1u), VK_VERTEX_INPUT_RATE_VERTEX});
+            bool created = false;
+            static_cast<void>(CachedPipeline(context, State{}, input, resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &created));
+            built += created ? 1u : 0u;
+        }
+        return built;
+    };
+    std::uint32_t lastBuilt = 0;
+    for (int round = 0; round < 6; ++round) lastBuilt = pass(configurations);
+    const auto grown = PipelineStoreTotals();
+    if (fixed) {
+        Require(grown.bound == 1024, "a bound set with APS5_PIPELINE_STORE_ENTRIES changed");
+        Require(lastBuilt == configurations, "a fixed 1024-entry bound kept pipelines of a 1536-configuration cycle");
+    } else {
+        Require(grown.bound == 2048, "the bound did not grow to 2048 while evicted pipelines kept coming back");
+        Require(lastBuilt == 0, "a pass over 1536 configurations still rebuilt pipelines after the bound grew");
+    }
+    ClearCachedPipelines(context.device);
+    Require(mock.live == 0, "pipeline store growth tests leaked Vulkan objects");
+}
+
+void pipelineStoreTouchTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 401;
+    fragment.variantId = 402;
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    std::array<std::uint32_t, 1> mainKey{51}, fragmentKey{52};
+    const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), makeHandle<VkDescriptorSetLayout>(), true, mainKey, fragmentKey};
+    const auto layout = [](std::uint32_t configuration) {
+        VertexInputLayout input;
+        input.bindings.push_back({0, 4u * (configuration + 1u), VK_VERTEX_INPUT_RATE_VERTEX});
+        return input;
+    };
+    std::uint64_t hash = 0;
+    std::weak_ptr<Pipeline> touched;
+    std::weak_ptr<Pipeline> other;
+    {
+        auto first = CachedPipeline(context, State{}, layout(0), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr, &hash);
+        Require(hash != 0, "a stored pipeline reported no store hash");
+        std::uint64_t secondHash = 0;
+        auto second = CachedPipeline(context, State{}, layout(1), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, nullptr, &secondHash);
+        Require(secondHash != 0 && secondHash != hash, "two configurations reported the same store hash");
+        touched = first;
+        other = second;
+        const auto hits = PipelineStoreTotals().hits;
+        Require(TouchCachedPipeline(context, hash, touched) == first && PipelineStoreTotals().hits == hits + 1, "touching a stored pipeline did not return it as a hit");
+        Require(TouchCachedPipeline(context, hash, other) == nullptr, "touching a hash with another pipeline returned the stored one");
+        Require(TouchCachedPipeline(context, hash, std::weak_ptr<Pipeline>{}) == nullptr, "touching a hash without a pipeline returned the stored one");
+    }
+    for (std::uint32_t configuration = 2; configuration < PipelineStoreTotals().bound; ++configuration) static_cast<void>(CachedPipeline(context, State{}, layout(configuration), resources, shaders));
+    Require(TouchCachedPipeline(context, hash, touched) != nullptr, "the first pipeline left a store that was not yet full");
+    bool created = false;
+    static_cast<void>(CachedPipeline(context, State{}, layout(PipelineStoreTotals().bound), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &created));
+    Require(created, "the configuration that fills the store was already stored");
+    static_cast<void>(CachedPipeline(context, State{}, layout(0), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &created));
+    Require(!created, "a touched pipeline was evicted as the least recently used one");
+    static_cast<void>(CachedPipeline(context, State{}, layout(1), resources, shaders, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &created));
+    Require(created, "the least recently used pipeline stayed while a touched one was older");
+    ClearCachedPipelines(context.device);
+    Require(TouchCachedPipeline(context, hash, touched) == nullptr, "touching a pipeline of a cleared store returned it");
+    Require(mock.live == 0, "pipeline store touch tests leaked Vulkan objects");
+}
+
+// A journal longer than the store's starting bound: 1032 recorded pipelines replayed into an empty
+// store all stay resident (the replay grows the bound instead of dropping what does not fit).
+void pipelineStoreReplayGrowthTests() {
+    using namespace AgcDriver::Graphics;
+    const auto root = std::filesystem::temp_directory_path() / ("aps5-pipeline-store-replay-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(root);
+    struct Cleanup {
+        std::filesystem::path directory;
+        ~Cleanup() {
+            ShaderRecompiler::ShaderDiskCache::Shutdown();
+            std::error_code error;
+            std::filesystem::remove_all(directory, error);
+        }
+    } cleanup{root};
+#ifdef _WIN32
+    _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
+    _wputenv_s(L"ANYPS5_SHADER_CACHE_DIR", root.c_str());
+    _putenv_s("APS5_PIPELINE_JOURNAL_THREADS", "1");
+#else
+    setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
+    setenv("ANYPS5_SHADER_CACHE_DIR", root.string().c_str(), 1);
+    setenv("APS5_PIPELINE_JOURNAL_THREADS", "1", 1);
+#endif
+    Require(PipelineJournalEnabled(), "the journal is disabled with a shader cache directory set");
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.device = makeHandle<VkDevice>();
+    context.graphicsPipelineLibrary = true;
+    context.pipelineLinkTimeOptimization = false;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 401;
+    fragment.variantId = 402;
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    auto cache = std::make_unique<DescriptorCache>(context);
+    context.descriptorCache = cache.get();
+    const auto layouts = DescribeSetLayouts(context, shaders);
+    const auto resources = layouts.View();
+    constexpr std::uint64_t fingerprint = 0x5eed'0000'0000'0002ull;
+    {
+        auto absent = StartPipelineJournalReplay(context, fingerprint, {});
+        Require(absent != nullptr, "the first replay did not start");
+        absent->Wait();
+    }
+    constexpr std::uint32_t configurations = 1032;
+    for (std::uint32_t configuration = 0; configuration < configurations; ++configuration) {
+        VertexInputLayout input;
+        input.bindings.push_back({0, 4u * (configuration + 1u), VK_VERTEX_INPUT_RATE_VERTEX});
+        static_cast<void>(CachedPipeline(context, State{}, input, resources, shaders));
+    }
+    FlushPipelineJournal();
+    ClearCachedPipelines(context.device);
+    Require(PipelineStoreTotals().cached == 0, "clearing the device left pipelines in the store");
+    auto replay = StartPipelineJournalReplay(context, fingerprint, {});
+    Require(replay != nullptr, "the replay did not start");
+    replay->Wait();
+    const auto totals = PipelineStoreTotals();
+    Require(totals.cached == configurations, "a replay of " + std::to_string(configurations) + " recorded pipelines kept " + std::to_string(totals.cached) + " in the store (bound " + std::to_string(totals.bound) + ")");
+    ClearCachedPipelines(context.device);
+    context.descriptorCache = nullptr;
+    cache.reset();
+    Require(mock.live == 0, "pipeline store replay growth tests leaked Vulkan objects");
+}
+
 void pipelineJournalTests(bool longPath = false, bool extended = false) {
     using namespace AgcDriver::Graphics;
     using Stage = ShaderRecompiler::ShaderStage;
@@ -10719,6 +12242,39 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         const PipelineSetLayouts decodedLayouts{layouts.layouts.main, layouts.layouts.fragment, decoded.splitSets, decoded.mainLayoutKey, decoded.fragmentLayoutKey};
         BuildPipelineStoreKey(replayed, context, decoded.state, decoded.vertexInput, decodedLayouts, shaders, decoded.attachmentLayout);
         Require(!original.empty() && original == canonical && original == replayed, "the canonical or the decoded state keys another pipeline");
+        auto fmaskState = state;
+        fmaskState.samples = 8;
+        fmaskState.color.samples = 8;
+        fmaskState.color.fmaskAddress = 0x30000;
+        fmaskState.color.fmaskPipeBankXor = 0x1200;
+        for (auto& target : fmaskState.colors) {
+            target.samples = 8;
+            target.fmaskAddress = 0x40000;
+            target.fmaskPipeBankXor = 0x2300;
+        }
+        const auto fmaskRecipe = MakeGraphicsPipelineRecipe(fmaskState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        Require(fmaskRecipe.state.color.fmaskAddress == 0 && fmaskRecipe.state.color.fmaskPipeBankXor == 0, "the canonical state kept the primary target's FMASK location");
+        for (const auto& canonicalColor : fmaskRecipe.state.colors) {
+            Require(canonicalColor.fmaskAddress == 0 && canonicalColor.fmaskPipeBankXor == 0, "the canonical state kept an attachment's FMASK location");
+        }
+        const auto fmaskBytes = EncodeGraphicsPipelineRecipe(fmaskRecipe);
+        GraphicsPipelineRecipe fmaskDecoded;
+        Require(DecodeGraphicsPipelineRecipe(fmaskBytes, fmaskDecoded) && EncodeGraphicsPipelineRecipe(fmaskDecoded) == fmaskBytes, "the FMASK pipeline recipe did not round-trip byte for byte");
+        std::vector<std::byte> fmaskKey, fmaskReplayedKey;
+        BuildPipelineStoreKey(fmaskKey, context, fmaskState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(fmaskReplayedKey, context, fmaskDecoded.state, fmaskDecoded.vertexInput, layouts.View(), shaders, fmaskDecoded.attachmentLayout);
+        Require(fmaskKey != original && fmaskKey == fmaskReplayedKey, "the decoded FMASK state keys another pipeline");
+        auto relocatedFmask = fmaskState;
+        relocatedFmask.color.fmaskAddress += 0x10000;
+        relocatedFmask.color.fmaskPipeBankXor ^= 0x100;
+        for (auto& target : relocatedFmask.colors) {
+            target.fmaskAddress += 0x20000;
+            target.fmaskPipeBankXor ^= 0x200;
+        }
+        std::vector<std::byte> relocatedFmaskKey;
+        BuildPipelineStoreKey(relocatedFmaskKey, context, relocatedFmask, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        Require(relocatedFmaskKey == fmaskKey, "the FMASK resource location changed the pipeline key");
+        Require(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(relocatedFmask, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)) == fmaskBytes, "the FMASK resource location changed the journal recipe");
         auto gridState = state;
         gridState.samples = 2;
         gridState.customSampleLocations = true;
@@ -10737,6 +12293,30 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         GraphicsPipelineRecipe lineDecoded;
         Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(lineState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), lineDecoded), "the line strip mesh recipe does not decode");
         Require(lineDecoded.state.stages.mesh && lineDecoded.state.stages.mesh->outputPrimitiveSize == 2u && lineDecoded.state.stages.mesh->esgsItemSize == 4u, "the recipe dropped the mesh output primitive size");
+        auto pointState = state;
+        pointState.vertexPoints = true;
+        pointState.pointSize = 4.0f;
+        pointState.pointSizeMin = 0.5f;
+        pointState.pointSizeMax = 8.0f;
+        GraphicsPipelineRecipe pointDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(pointState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), pointDecoded), "the point list recipe does not decode");
+        Require(pointDecoded.state.vertexPoints && pointDecoded.state.pointSize == 4.0f && pointDecoded.state.pointSizeMin == 0.5f && pointDecoded.state.pointSizeMax == 8.0f, "the recipe dropped the vertex point list or its point sizes");
+        auto meshPointState = pointState;
+        meshPointState.vertexPoints = false;
+        meshPointState.stages.mesh = *lineState.stages.mesh;
+        meshPointState.stages.mesh->outputPrimitiveSize = 1u;
+        meshPointState.stages.mesh->provokingVertex = 0u;
+        GraphicsPipelineRecipe meshPointDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(meshPointState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), meshPointDecoded), "the mesh point recipe does not decode");
+        Require(!meshPointDecoded.state.vertexPoints && meshPointDecoded.state.stages.mesh && meshPointDecoded.state.stages.mesh->outputPrimitiveSize == 1u && meshPointDecoded.state.pointSize == 4.0f && meshPointDecoded.state.pointSizeMin == 0.5f && meshPointDecoded.state.pointSizeMax == 8.0f, "the recipe dropped mesh points or their sizes without the vertex point flag");
+        auto hullState = state;
+        hullState.stages.hullWaveSize = 32u;
+        hullState.stages.tessellation->mergedHull = true;
+        hullState.stages.tessellationGeometry = ShaderRecompiler::MeshConfiguration{4, 10, 30, 30, 60, 192, 512, 0, 4, 3};
+        hullState.rasterizerDiscard = true;
+        GraphicsPipelineRecipe hullDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(hullState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), hullDecoded), "the tessellation geometry recipe does not decode");
+        Require(hullDecoded.state.stages.hullWaveSize == 32u && hullDecoded.state.stages.tessellation && hullDecoded.state.stages.tessellation->mergedHull && hullDecoded.state.stages.tessellationGeometry && hullDecoded.state.stages.tessellationGeometry->threadsPerGroup == 192u && hullDecoded.state.rasterizerDiscard, "the recipe dropped the hull wave size, the merged hull, the geometry stage after tessellation or rasterizer discard");
         auto fourSampleState = state;
         fourSampleState.samples = 4;
         auto maskState = fourSampleState;
@@ -10760,6 +12340,15 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         BuildPipelineStoreKey(mergedKey, context, mergedState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
         BuildPipelineStoreKey(mergedReplayed, context, mergedDecoded.state, mergedDecoded.vertexInput, layouts.View(), shaders, mergedDecoded.attachmentLayout);
         Require(mergedKey != fourSamples && mergedKey == mergedReplayed, "the decoded merged coverage state keys another pipeline");
+        auto partialState = state;
+        partialState.colors[0].partialWriteMask = 0xf000u;
+        GraphicsPipelineRecipe partialDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(partialState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), partialDecoded), "the partial write recipe does not decode");
+        Require(partialDecoded.state.colors.size() == partialState.colors.size() && partialDecoded.state.colors[0].partialWriteMask == 0xf000u, "the recipe dropped the merged target's partial write mask");
+        std::vector<std::byte> partialKey, partialReplayed;
+        BuildPipelineStoreKey(partialKey, context, partialState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(partialReplayed, context, partialDecoded.state, partialDecoded.vertexInput, layouts.View(), shaders, partialDecoded.attachmentLayout);
+        Require(partialKey != original && partialKey == partialReplayed, "the decoded partial write state keys another pipeline");
         auto movedState = state;
         movedState.viewport.x = 5;
         movedState.colors[0].address = 0x9000;
@@ -10942,6 +12531,21 @@ int main(int argc, char** argv) {
             std::cout << "pipeline library clear waits for active part builds\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-replay-growth") {
+            pipelineStoreReplayGrowthTests();
+            std::cout << "a replayed journal longer than the store bound stays resident\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-growth") {
+            pipelineStoreGrowthTests(std::getenv("APS5_PIPELINE_STORE_ENTRIES") != nullptr);
+            std::cout << "pipeline store bound follows the evicted pipelines that come back\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-touch") {
+            pipelineStoreTouchTests();
+            std::cout << "a touched pipeline is returned as a hit and stays recently used\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pipeline-store-lazy-buffer-pool") {
             pipelineStoreLazyBufferPoolTests();
             std::cout << "cached pipelines survive lazy buffer pool creation\n";
@@ -11012,6 +12616,23 @@ int main(int argc, char** argv) {
             Require(mock.live == 0, "the sparse heap mirror unwatch test leaked Vulkan objects");
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--sparse-heap-mirror-budget") {
+            {
+                mock = MockVulkan{};
+                auto context = mockContext();
+                context.bufferDeviceAddress = true;
+                context.limits.maxStorageBufferRange = 1u << 27;
+                RunSparseHeapMirrorBudgetTests(context, {
+                    [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); },
+                    {},
+                    {},
+                    {},
+                    {}
+                });
+            }
+            Require(mock.live == 0, "the sparse heap mirror budget test leaked Vulkan objects");
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--heap-mirror-run-unwatch") {
             {
                 mock = MockVulkan{};
@@ -11031,6 +12652,32 @@ int main(int argc, char** argv) {
                 });
             }
             Require(mock.live == 0, "the heap mirror run unwatch test leaked Vulkan objects");
+            return 0;
+        }
+        if (argc == 2 && (std::string_view(argv[1]) == "--address-copy-cap" || std::string_view(argv[1]) == "--address-copy-cap-remembered")) {
+#ifdef _WIN32
+            _putenv_s("APS5_ADDRESS_COPY_MAX_MIB", "1");
+#else
+            setenv("APS5_ADDRESS_COPY_MAX_MIB", "1", 1);
+#endif
+            for (const int frames : {0, 1, 2}) {
+                mock = MockVulkan{};
+                auto context = mockContext();
+                context.bufferDeviceAddress = true;
+                context.limits.maxStorageBufferRange = 1u << 27;
+                RunAddressCopyCapTests(context, {
+                    [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); },
+                    {},
+                    [](VkDeviceAddress address) {
+                        const auto offset = address - 0x100000000000ULL;
+                        const auto buffer = reinterpret_cast<VkBuffer>(offset / 0x10000);
+                        return mockBufferMemory(buffer).subspan(offset % 0x10000);
+                    },
+                    {},
+                    {}
+                }, std::string_view(argv[1]) == "--address-copy-cap-remembered", frames);
+                Require(mock.live == 0, "the address copy cap test leaked Vulkan objects");
+            }
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--address-space-teardown") {
@@ -11102,6 +12749,12 @@ int main(int argc, char** argv) {
             std::cerr << "descriptor pool reset failure did not terminate\n";
             return 1;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--unobserved-provoking-vertex") {
+            UnobservedProvokingVertexTests();
+            ProvokingVertexTests();
+            std::cout << "Unobserved provoking vertex checks passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--covered-centroid-state") {
             multisampleTests();
             std::cout << "Covered-centroid and multisample state checks passed\n";
@@ -11154,6 +12807,7 @@ int main(int argc, char** argv) {
         retainedPixelStageTests();
         pipelineLibrarySetTests();
         pipelineLibraryClearWaitsForBuildTests();
+        tessellationPipelineLibraryCacheTests();
         framebufferOwnerTests();
         hdrComponentSwapTests();
         depthMaintenanceTests();
@@ -11161,6 +12815,7 @@ int main(int argc, char** argv) {
         srgb8TargetTests();
         DepthClipTests();
         DepthRemapTests();
+        DepthBoundsEmulationTests();
         UnusedViewportDepthTests();
         DepthStencilTests();
         OneDimensionalColorTests();
@@ -11170,12 +12825,15 @@ int main(int argc, char** argv) {
         ZExportTests();
         unorm10_11_11TargetTests();
         float11_11_10TargetTests();
+        unorm4_4_4_4TargetTests();
+        uintTargetTests();
         DepthBoundsBiasTests();
         conservativeZExportTests();
         earlyFragmentTestsTests();
         orderedPixelShaderTests();
         stencilRefExportTests();
         stencilReferenceUnusedTests();
+        stencilLogicOperationTests();
         aliasedBufferViewTests();
         LineStripTests();
         ShaderModuleKeyTests();
@@ -11211,6 +12869,7 @@ int main(int argc, char** argv) {
         UnwrittenSampleLocationTests();
         sampleLocationGridFallbackTests();
         sampleOrderTests();
+        UnwrittenDepthPlaneTests();
         depthCopyFormatTests();
         quadPixelMaskTests();
         ShaderStageTests();
@@ -11218,6 +12877,7 @@ int main(int argc, char** argv) {
         NggVertexWorkgroupTests();
         inactiveVertexPointSizeTests();
         PolygonPrimitiveTests();
+        vertexPointListTests();
         TuningFieldTests();
         PixelInputLayoutTests();
         UnexportedPixelInputTests();
@@ -11243,6 +12903,7 @@ int main(int argc, char** argv) {
         samplerTableDeviceLimitTests();
         tableUpdateAfterBindTests();
         misalignedShaderDataTests();
+        imageTableTemplateRefreshTests();
         debugBranchTests();
         hostImportBudgetTests();
         textureCacheBudgetTests();
@@ -11250,11 +12911,13 @@ int main(int argc, char** argv) {
         storageTextureBudgetTests();
         sampledBudgetReportTests();
         meshArgumentTests();
+        meshLimitTests();
         meshIndexBufferTests();
         stagingPoolBudgetTests();
         validationTests();
         vertexCopyTests();
         highestDrawIndexTests();
+        compactListRestartTests();
         storeAtFlipTests();
         storeAtLabelTests();
         nullVertexDescriptorTests();
@@ -11295,6 +12958,7 @@ int main(int argc, char** argv) {
         Require(mock.live == 0, "BDA resources leaked Vulkan objects");
         RunGuestAllocationTests();
         RunUnmappedGapTests();
+        RunVanishedPageReadTests();
         RunColorTargetLayoutTests();
         RunLiveStackAccessTests();
         RunTextureFormatTests();
@@ -11302,6 +12966,7 @@ int main(int argc, char** argv) {
         RunGuestTextureResourceTests();
         RunDepthSurfaceReuseTests();
         RunGuestSamplerResourceTests();
+        RunLastRecordIndicesTests();
         mock = MockVulkan{};
         auto textureDetilerContext = mockContext();
         textureDetilerContext.limits.minStorageBufferOffsetAlignment = 16;

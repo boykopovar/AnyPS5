@@ -3,6 +3,8 @@
 
 #include <vulkan/vulkan.h>
 #include <algorithm>
+#include <cstdint>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string_view>
@@ -20,6 +22,11 @@ inline VkPresentModeKHR SelectPresentMode(const char* requested, std::span<const
     }
     if (std::find(supported.begin(), supported.end(), mode) == supported.end()) throw std::runtime_error("Vulkan presentation: the surface does not support the requested present mode");
     return mode;
+}
+
+inline std::optional<std::uint32_t> SelectPresentQueue(std::uint32_t familyQueues, std::uint32_t queuesTaken) {
+    if (queuesTaken >= familyQueues) return std::nullopt;
+    return queuesTaken;
 }
 
 }

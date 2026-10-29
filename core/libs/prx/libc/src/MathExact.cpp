@@ -1,9 +1,11 @@
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <emmintrin.h>
 #include <limits>
 
 #include "prx/libc/include/General.hpp"
@@ -41,8 +43,8 @@ short TestExtended(const ExtendedBits& bits) {
     const int exponent = bits.signExponent & 0x7fff;
     const std::uint64_t fraction = bits.mantissa & 0x7fffffffffffffffull;
     if (exponent == 0x7fff) return fraction != 0 ? NotANumber : Infinite;
-    if (exponent != 0 || (bits.mantissa >> 63) != 0) return Finite;
-    return bits.mantissa != 0 ? Denormal : Zero;
+    if ((bits.mantissa >> 63) != 0) return Finite;
+    return exponent != 0 || bits.mantissa != 0 ? Denormal : Zero;
 }
 
 template<typename TFloat>
@@ -178,25 +180,13 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
 double APS5_VABI rint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::rint(x); }
 float APS5_VABI rintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::rint(x); }
 
-std::int64_t APS5_VABI lrint_nid_postfix(double x) {
-    ErrnoGuard guard;
-    return std::llrint(x);
-}
+std::int64_t APS5_VABI lrint_nid_postfix(double x) { return _mm_cvtsd_si64(_mm_set_sd(x)); }
 
-std::int64_t APS5_VABI lrintf_nid_postfix(float x) {
-    ErrnoGuard guard;
-    return std::llrint(x);
-}
+std::int64_t APS5_VABI lrintf_nid_postfix(float x) { return _mm_cvtss_si64(_mm_set_ss(x)); }
 
-long long APS5_VABI llrint_nid_postfix(double x) {
-    ErrnoGuard guard;
-    return std::llrint(x);
-}
+long long APS5_VABI llrint_nid_postfix(double x) { return _mm_cvtsd_si64(_mm_set_sd(x)); }
 
-long long APS5_VABI llrintf_nid_postfix(float x) {
-    ErrnoGuard guard;
-    return std::llrint(x);
-}
+long long APS5_VABI llrintf_nid_postfix(float x) { return _mm_cvtss_si64(_mm_set_ss(x)); }
 
 double APS5_VABI drem_nid_postfix(double x, double y) {
     return Remainder(x, y);
@@ -241,8 +231,9 @@ int APS5_VABI finitef_nid_postfix(float x) { return std::isfinite(x) ? 1 : 0; }
 
 int APS5_VABI __fpclassifyl_nid_postfix(long double x) {
     const ExtendedBits bits = Bits(x);
-    if ((bits.signExponent & 0x7fff) != 0 || bits.mantissa == 0) return TestExtended(bits);
-    return Denormal;
+    const int exponent = bits.signExponent & 0x7fff;
+    if (exponent == 0) return bits.mantissa != 0 ? Denormal : Zero;
+    return exponent != 0x7fff ? Finite : TestExtended(bits);
 }
 int APS5_VABI __isinfl_nid_postfix(long double x) { return TestExtended(Bits(x)) == Infinite ? 1 : 0; }
 int APS5_VABI __isnanl_nid_postfix(long double x) { return TestExtended(Bits(x)) == NotANumber ? 1 : 0; }

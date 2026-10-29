@@ -1,0 +1,5 @@
+# libSceVdecCore technical debt
+
+### Unknown function info
+
+- [sceVdecCoreAnalyzeStream, sceVdecCoreCreateDecoder, sceVdecCoreDeleteDecoder, sceVdecCoreFinalizeComputeResource, sceVdecCoreFlushDecodeOutput, sceVdecCoreGetDecodeOutput, sceVdecCoreInitializeComputeResource, sceVdecCoreMapMemoryBlock, sceVdecCoreQueryComputeResourceInfo, sceVdecCoreQueryFrameBufferInfo, sceVdecCoreQueryInstanceSize, sceVdecCoreResetDecoder, sceVdecCoreSetDecodeInput, sceVdecCoreSetDecodeOutputSw, sceVdecCoreSyncDecode, sceVdecCoreSyncDecodeOutputSw, sceVdecCoreSyncDecodeWptr, sceVdecCoreTrySyncDecode, sceVdecCoreTrySyncDecodeOutputSw and sceVdecCoreTrySyncDecodeWptr](../../../core/libs/prx/libSceVdecCore/Export.cpp) (libSceVdecCore) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceVdecCore.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified

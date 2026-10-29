@@ -1,3 +1,5 @@
+#include "prx/libSceRemoteplay/include/InventoryExports.hpp"
+#include "prx/libSceRemoteplay/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <stdexcept>
@@ -8,6 +10,23 @@
 constexpr int REMOTEPLAY_CONNECTION_STATUS_DISCONNECT = 0;
 
 extern "C" {
+
+int APS5_VABI sceRemoteplayIsRemoteViewering() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRemoteplayNotifyCanWakeup() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRemoteplayRegistCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRemoteplayUnregistCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int APS5_VABI sceRemoteplayGetConnectionStatus(int user_id, int* status) {
  (void)user_id;

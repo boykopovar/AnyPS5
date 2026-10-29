@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <cstdio>
@@ -8,8 +9,6 @@
 #include <thread>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern "C" char* APS5_VABI getcwd_nid_postfix(char*, std::size_t);
 
 namespace {
 

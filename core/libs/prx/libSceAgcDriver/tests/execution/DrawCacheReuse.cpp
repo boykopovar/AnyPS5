@@ -183,6 +183,20 @@ void StageDataHitsRefreshTheirWords(bool libraries) {
     Require(BrightestColorByte() == 255, mode + ": the draw of constant 1.0 wrote " + std::to_string(BrightestColorByte()) + ", expected 255");
 }
 
+void RefreshedStageDataVerifies() {
+    Registered(TriangleVertexHeader, TriangleVertexCode.data(), sizeof(TriangleVertexCode), 2);
+    Registered(ConstantPixelHeader, ConstantPixelCode.data(), sizeof(ConstantPixelCode), 1);
+    ColorMemory.fill(std::byte{0});
+    PixelConstant[0] = 0.25f;
+    const auto cached = SubmitConstantDraws(3);
+    Require(BrightestColorByte() == 64, "draw-entry verification: the initial constant did not render");
+    PixelConstant[0] = 1.0f;
+    const auto refreshed = SubmitConstantDraws(1);
+    Require(refreshed.verifyHits - cached.verifyHits == 1 && refreshed.stageDataHits - cached.stageDataHits == 1, "draw-entry verification: the refreshed constant did not exercise a verified stage data hit");
+    Require(refreshed.verifyMismatches == cached.verifyMismatches, "draw-entry verification: refreshed stage data differed from a fresh capture");
+    Require(BrightestColorByte() == 255, "draw-entry verification: the refreshed constant did not render");
+}
+
 void RetainedPixelCacheTransitions() {
     auto commands = Draws(32.0f, VertexCode.data(), 1, PixelCode.data(), 1, {});
     Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(1.0f)});
@@ -239,10 +253,14 @@ int main() {
             libraries = device->GraphicsPipelineLibraries();
         }
         if (!libraries && std::getenv("APS5_NO_GPL") == nullptr) return VulkanTestSkipped;
-        ThirdDrawHitsTheCache(libraries);
-        UserDataDrawsReuseTheirShape(libraries);
-        StageDataHitsRefreshTheirWords(libraries);
-        RetainedPixelCacheTransitions();
+        if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
+            RefreshedStageDataVerifies();
+        } else {
+            ThirdDrawHitsTheCache(libraries);
+            UserDataDrawsReuseTheirShape(libraries);
+            StageDataHitsRefreshTheirWords(libraries);
+            RetainedPixelCacheTransitions();
+        }
         AgcDriverShutdown_nid_postfix();
         Require(AgcDriver::Graphics::PipelineLibraryWorkers() == 0, "the driver's shutdown left the pipeline library worker running");
         std::cout << "A repeated draw reused the cached draw " << (libraries ? "with" : "without") << " graphics pipeline libraries\n";

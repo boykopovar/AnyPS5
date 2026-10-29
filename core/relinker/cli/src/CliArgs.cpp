@@ -13,8 +13,52 @@
 namespace Cli {
 
 const char* Usage() {
-    return "Usage: relinker [--help] [--windows | --macos] [--windows-diagnostics] [--windows-gui] [--trace-imports] [--windows-fixed-base <address>] [--linux-fixed-base <address>] [--macos-fixed-base <address>] [--skip-syscall-check | --trap-sdk-syscall-stubs] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... [--to-intel] [--to-rosetta] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] [--patches <file> | --no-patches] <input.elf> <output.elf>\n"
-           "       relinker --verify-patches <file> [--verify-output] [--skip-sce-module | --sce-module-path <path>] [--exclude-sce-module <file>]... [--module-dir <dir>]... [--executable <path>]... <path>\n"
+    return "Usage: relinker [options] <input.elf> <output>\n"
+           "       relinker --verify-patches <file> [--verify-output] [options] <path>\n"
+           "\n"
+           "Output:\n"
+           "  --windows                      Produce a Windows PE executable.\n"
+           "  --macos                        Produce an x86-64 Mach-O executable; bundled modules become Mach-O libraries.\n"
+           "  --windows-diagnostics          Include startup dependency diagnostics. Requires --windows.\n"
+           "  --windows-gui                  Select the Windows GUI subsystem. Requires --windows.\n"
+           "  --to-intel                     Convert supported AMD-only instructions for Intel CPUs.\n"
+           "  --to-rosetta                   Convert as --to-intel and lower what Rosetta lacks too. Implies --to-intel.\n"
+           "  --frame-red-zone               Windows: give leaf functions a frame so an exception on a guest thread can unwind.\n"
+           "  --rpath <path>                 System library search path. Default: $ORIGIN/libs.\n"
+           "  --registry                     Write <output-stem>.registry.json beside the output.\n"
+           "  --autorun                      Run the output after conversion and print its exit code.\n"
+           "\n"
+           "Layout:\n"
+           "  --sce-module-path <path>       Parent of the module directories. Default: the input file's directory.\n"
+           "  --module-dir <dir>             Also relink the modules of this directory. Repeatable.\n"
+           "  --executable <path>            Also convert another executable of the title. Repeatable.\n"
+           "  --windows-fixed-base <address> Map the lowest load page at a fixed Windows address instead of 0x400000.\n"
+           "  --linux-fixed-base <address>   Load the Linux executable at a fixed address instead of 0x400000.\n"
+           "  --macos-fixed-base <address>   Map the lowest load page of the macOS executable at a fixed address.\n"
+           "\n"
+           "Patches:\n"
+           "  --patches <file>               Apply the byte patches of this file.\n"
+           "  --no-patches                   Do not apply patches or discover relinker-patches.toml.\n"
+           "  --verify-patches <file>        Check a patch file against <path> without writing anything.\n"
+           "  --verify-output                With --verify-patches, treat <path> as converted output.\n"
+           "\n"
+           "Imports:\n"
+           "  --trace-imports                Pass each function import through the libc.prx call tracer.\n"
+           "  unused-filter=0                Keep all imported NID references (default).\n"
+           "  unused-filter=1                Filter unused non-PLT imports; preserve PLT imports.\n"
+           "  unused-filter=2                Strict unused-import analysis; unsupported cases are an error.\n"
+           "\n"
+           "Deprecated:\n"
+           "  --skip-sce-module              Disable bundled module processing.\n"
+           "  --exclude-sce-module <file>    Exclude a bundled module by filename. Repeatable.\n"
+           "  --skip-syscall-check           Disable syscall scanning.\n"
+           "  --trap-sdk-syscall-stubs       Replace recognized SDK syscall stubs with a trap. For debugging only.\n"
+           "  --lazy-binding                 Deprecated. Enable lazy symbol binding instead of eager binding.\n"
+           "\n"
+           "Other:\n"
+           "  --help                         Print this help and exit with code 0.\n"
+           "  --version                      Print the build revision and exit with code 0.\n"
+           "  Exit codes: 0 success, help or version, 1 invalid arguments or a patch mismatch, 2 conversion failed.\n"
            "Example: relinker input.elf output.elf";
 }
 
@@ -22,7 +66,7 @@ namespace {
 
 constexpr std::string_view kVerifyRejectedOptions[] = {
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
-    "--to-intel", "--to-rosetta", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
+    "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
     "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
 };
 
@@ -50,6 +94,7 @@ static std::uint64_t ParseFixedBase(std::string_view value, const std::uint64_t 
 Args ParseArgs(int argc, char* argv[]) {
     Args args;
     bool unusedFilterSpecified = false;
+    bool runPathSpecified = false;
     bool sceModulePathSpecified = false;
     std::vector<std::string> givenOptions;
 
@@ -59,6 +104,8 @@ Args ParseArgs(int argc, char* argv[]) {
         else if (arg.rfind("unused-filter=", 0) == 0) givenOptions.push_back("unused-filter=");
         if (arg == "--help") {
             args.showHelp = true;
+        } else if (arg == "--version") {
+            args.showVersion = true;
         } else if (arg == "--windows-fixed-base") {
             if (args.windowsFixedBase) throw std::runtime_error("--windows-fixed-base cannot be repeated");
             if (i + 1 >= argc || std::string(argv[i + 1]).empty() || std::string(argv[i + 1]).starts_with("--"))
@@ -93,11 +140,11 @@ Args ParseArgs(int argc, char* argv[]) {
             args.sceModulePath = argv[++i];
             sceModulePathSpecified = true;
         } else if (arg == "--exclude-sce-module") {
-            if (i + 1 >= argc)
+            if (i + 1 >= argc || std::string_view(argv[i + 1]).empty())
                 throw std::runtime_error("--exclude-sce-module requires a file name");
             args.excludedSceModules.insert(argv[++i]);
         } else if (arg == "--module-dir") {
-            if (i + 1 >= argc)
+            if (i + 1 >= argc || std::string_view(argv[i + 1]).empty())
                 throw std::runtime_error("--module-dir requires a directory");
             args.moduleDirectories.push_back(argv[++i]);
         } else if (arg == "--executable") {
@@ -105,6 +152,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.executables.push_back(argv[++i]);
         } else if (arg == "--to-intel") {
             args.toIntel = true;
+        } else if (arg == "--frame-red-zone") {
+            args.frameRedZone = true;
         } else if (arg == "--to-rosetta") {
             args.toRosetta = true;
             args.toIntel = true;
@@ -129,9 +178,11 @@ Args ParseArgs(int argc, char* argv[]) {
         } else if (arg == "--registry") {
             args.writeRegistry = true;
         } else if (arg == "--rpath") {
+            if (runPathSpecified) throw std::runtime_error("--rpath cannot be repeated");
             if (i + 1 >= argc)
                 throw std::runtime_error("--rpath requires a value");
             args.runPath = argv[++i];
+            runPathSpecified = true;
         } else if (arg == "--windows") {
             args.toWindows = true;
         } else if (arg == "--macos") {
@@ -191,14 +242,14 @@ Args ParseArgs(int argc, char* argv[]) {
         throw std::runtime_error("--to-rosetta conflicts with --windows");
     if (args.windowsDiagnostics && !args.toWindows)
         throw std::runtime_error("--windows-diagnostics requires --windows");
+    if (args.frameRedZone && !args.toWindows)
+        throw std::runtime_error("--frame-red-zone requires --windows");
 
     if (args.windowsGui && !args.toWindows)
         throw std::runtime_error("--windows-gui requires --windows");
 
     if (args.windowsFixedBase && !args.toWindows)
         throw std::runtime_error("--windows-fixed-base requires --windows");
-    if (args.traceImports && args.toMacos)
-        throw std::runtime_error("--trace-imports cannot be used with --macos");
     if (args.traceImports && args.lazyBinding)
         throw std::runtime_error("--trace-imports conflicts with --lazy-binding");
     if (args.linuxFixedBase && (args.toWindows || args.toMacos))
@@ -208,7 +259,7 @@ Args ParseArgs(int argc, char* argv[]) {
     if (args.macosFixedBase && !args.toMacos)
         throw std::runtime_error("--macos-fixed-base requires --macos");
 
-    if (!args.showHelp && (args.inputPath.empty() || (!verifying && args.outputPath.empty())))
+    if (!args.showHelp && !args.showVersion && (args.inputPath.empty() || (!verifying && args.outputPath.empty())))
         throw std::runtime_error(Usage());
 
 
