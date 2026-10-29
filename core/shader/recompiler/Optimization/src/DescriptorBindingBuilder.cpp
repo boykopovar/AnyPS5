@@ -322,6 +322,14 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
             plan.specialization.push_back({PipelineSpecialization::GatherLodBiasBase + index, std::bit_cast<std::uint32_t>(bias)});
         }
     }
+    for (const auto& pair : info.sampledPairs) {
+        if ((info.samplers.at(pair.sampler).uses & SamplerUseGatherLod) == 0u || info.images.at(pair.image).table != NoTable) continue;
+        const auto& words = snapshot.images.at(pair.image).dwords;
+        const auto minLod = (words[1] >> 8u) & 0xfffu;
+        const auto base = ((words[3] >> 12u) & 0xfu) * 256u;
+        const PipelineSpecializationConstant constant{PipelineSpecialization::GatherImageMinLodBase + pair.image, minLod > base ? minLod - base : 0u};
+        if (std::ranges::find(plan.specialization, constant) == plan.specialization.end()) plan.specialization.push_back(constant);
+    }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
         const bool convertedSample = !info.images[index].srgbDecodeCompatible && index < info.runtimeImageModes.size() && std::ranges::any_of(info.runtimeImageModes.at(index), [](const ImageResource& mode) { return mode.conversionFormat == IrBufferFormat::Format11_11_10UNorm; });

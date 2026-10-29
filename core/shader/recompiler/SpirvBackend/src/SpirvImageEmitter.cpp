@@ -816,7 +816,14 @@ std::uint32_t EmitTwoDimensionalGatherLod(SpirvValueEmitContext& ctx, const Imag
     state.module.AddFunction(spv::OpExtInst, u32, atLeastOne, GlslStd450(state), GLSLstd450UMax, levels, ConstantU32(state, 1u));
     const auto lastLevel = Unary(state, spv::OpConvertUToF, f32, Binary(state, spv::OpISub, u32, atLeastOne, ConstantU32(state, 1u)));
     const auto biased = Binary(state, spv::OpFAdd, f32, AddressF32(ctx, access, setup.layout.lod), bias);
-    const auto lod = FloatClamp(state, FloatClamp(state, biased, fixedLod(field(0u, 0xfffu)), fixedLod(field(12u, 0xfffu))), ZeroF32(state), lastLevel);
+    const auto atLeastMin = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, f32, atLeastMin, GlslStd450(state), GLSLstd450NMax, biased, fixedLod(field(0u, 0xfffu)));
+    const auto ceiling = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, f32, ceiling, GlslStd450(state), GLSLstd450NMin, atLeastMin, fixedLod(field(12u, 0xfffu)));
+    const auto imageMinLod = fixedLod(state.module.SpecializationConstant(u32, PipelineSpecialization::GatherImageMinLodBase + access.mem.resource, 0u));
+    const auto raised = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, f32, raised, GlslStd450(state), GLSLstd450NMax, ceiling, imageMinLod);
+    const auto lod = FloatClamp(state, raised, ZeroF32(state), lastLevel);
     const auto rounded = state.module.AllocateId();
     state.module.AddFunction(spv::OpExtInst, f32, rounded, GlslStd450(state), GLSLstd450Ceil, Binary(state, spv::OpFAdd, f32, lod, ConstantF32(state, 0x3f000000u)));
     const auto nearest = FloatClamp(state, Binary(state, spv::OpFSub, f32, rounded, ConstantF32(state, 0x3f800000u)), ZeroF32(state), lastLevel);
@@ -1478,7 +1485,7 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         gathered = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeConstruct, ImageVectorType(state, resultNumericClass, 4), gathered, component, component, component, component);
     }
-    if (HasFlag(mem, RdnaImageSampleFlagLod) && setup.layout.lod != NoImageComponent && !setup.dref && dimension == RdnaImageDimension::Dim2D && !access.image.cube && !access.image.remappedDepth1D && setup.layout.offset == NoImageComponent && !HasFlag(mem, RdnaImageSampleFlagGatherHorizontal)) {
+    if (HasFlag(mem, RdnaImageSampleFlagLod) && setup.layout.lod != NoImageComponent && !setup.dref && dimension == RdnaImageDimension::Dim2D && !access.image.cube && !access.image.remappedDepth1D && setup.layout.offset == NoImageComponent && !HasFlag(mem, RdnaImageSampleFlagGatherHorizontal) && state.program.Info().images.at(mem.resource).table == NoTable && state.program.Info().samplers.at(mem.sampler).table == NoTable) {
         const auto fetched = EmitTwoDimensionalGatherLod(ctx, access, setup);
         const auto supported = GatherLodSupported(state, mem.sampler);
         const auto scalarType = ImageScalarType(state, resultNumericClass);
