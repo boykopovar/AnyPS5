@@ -64,7 +64,7 @@ int main() {
     std::memset(setInfo + 32, 0xFF, 16);
     std::uint8_t flags[32];
     std::memset(flags, 0xA5, sizeof(flags));
-    Require(setInfoGetTrophyFlagArray(setInfo, flags) == 0, "the flag array call did not answer 0");
+    Require(setInfoGetTrophyFlagArray(setInfo, flags) == 128, "a full flag array did not return 128 set bits");
     for (std::size_t index = 0; index < 16; ++index) Require(flags[index] == 0xFF, "one full flag array did not fill the output");
     for (std::size_t index = 16; index < 32; ++index) Require(flags[index] == 0xA5, "bytes past the 16-byte output were written");
     std::memset(setInfo, 0, sizeof(setInfo));
@@ -72,7 +72,11 @@ int main() {
     setInfo[16] = 0x02;
     setInfo[32] = 0x04;
     setInfo[48 + 15] = 0x80;
-    Require(setInfoGetTrophyFlagArray(setInfo, flags) == 0 && flags[0] == 0x07 && flags[15] == 0x80 && flags[1] == 0, "the four flag arrays were not combined with OR");
+    Require(setInfoGetTrophyFlagArray(setInfo, flags) == 4 && flags[0] == 0x07 && flags[15] == 0x80 && flags[1] == 0, "the four flag arrays were not combined with OR, or the set bits were not counted");
+    std::memset(setInfo, 0, sizeof(setInfo));
+    Require(setInfoGetTrophyFlagArray(setInfo, flags) == 0 && flags[0] == 0, "an empty set did not return 0");
+    setInfo[0] = 0x01;
+    Require(setInfoGetTrophyFlagArray(setInfo, flags) == 1, "a single trophy did not return 1");
 
     std::uint8_t config[0x100] = {};
     Require(configHasGroupFeature(nullptr) == 0, "a null config did not answer 0");
