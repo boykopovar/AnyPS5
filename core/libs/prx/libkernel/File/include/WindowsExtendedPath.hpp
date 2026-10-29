@@ -18,10 +18,14 @@ inline std::filesystem::path WindowsNormalizedPath(const std::filesystem::path& 
     std::replace(text.begin(), text.end(), L'/', L'\\');
     if (text.starts_with(L"\\\\?\\") || text.starts_with(L"\\\\.\\")) return path;
     if (text.starts_with(L"\\\\")) {
-        const auto tail = std::filesystem::path(text.substr(1)).lexically_normal().make_preferred().native();
-        if (tail.size() + 2 < maxPath) return std::filesystem::path(L"\\" + tail);
+        const auto serverEnd = text.find(L'\\', 2);
+        const auto shareEnd = serverEnd == std::wstring::npos ? std::wstring::npos : text.find(L'\\', serverEnd + 1);
+        const std::wstring root = text.substr(0, shareEnd);
+        const std::wstring rest = shareEnd == std::wstring::npos ? std::wstring() : std::filesystem::path(text.substr(shareEnd)).lexically_normal().make_preferred().native();
+        const std::wstring joined = root + rest;
+        if (joined.size() < maxPath) return std::filesystem::path(joined);
         if (extended) *extended = true;
-        return std::filesystem::path(L"\\\\?\\UNC" + tail);
+        return std::filesystem::path(L"\\\\?\\UNC" + joined.substr(1));
     }
     const auto absolute = std::filesystem::absolute(path, error);
     if (error) return {};

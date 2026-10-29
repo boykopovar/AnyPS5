@@ -207,8 +207,6 @@ void Load(DirectoryState& state, int fd) {
         const int savedErrno = errno;
         const bool followLinks = InsideApp0(directoryPath);
         errno = savedErrno;
-#endif
-#ifdef _WIN32
         for (const auto& entryPath : ListDirectoryEntries(hostPath)) {
             const auto utf8Name = entryPath.filename().u8string();
             const std::string name(reinterpret_cast<const char*>(utf8Name.data()), utf8Name.size());
@@ -223,11 +221,7 @@ void Load(DirectoryState& state, int fd) {
             const std::string name(reinterpret_cast<const char*>(utf8Name.data()), utf8Name.size());
             FileStat entryStatus{};
             if (!File::FillLinkStat(it->path(), &entryStatus)) throw std::system_error(errno, std::generic_category(), "stat directory entry");
-#ifdef _WIN32
-            Add(state, name, static_cast<std::uint64_t>(entryStatus.st_ino), EntryType(it->path(), followLinks));
-#else
             Add(state, name, static_cast<std::uint64_t>(entryStatus.st_ino), DirectoryEntryType(it->symlink_status(error)));
-#endif
             if (error) throw std::system_error(error, "stat directory entry");
         }
         if (error) throw std::system_error(error, "read directory descriptor");

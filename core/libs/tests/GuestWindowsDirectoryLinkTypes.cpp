@@ -211,6 +211,22 @@ static void LongApp0Root(const std::filesystem::path& parent) {
     RemoveDirectories(base, deep);
 }
 
+static void LongNoFollow(const std::filesystem::path& parent) {
+    const auto base = parent / ("anyps5-long-nofollow-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    auto deep = base;
+    while (deep.native().size() < MAX_PATH + 16) deep /= std::wstring(40, L'a');
+    CreateDirectories(base, deep);
+    const auto external = base / "external";
+    Require(CreateDirectoryW(Extended(external).c_str(), nullptr) != 0);
+    LongJunction(deep / "packed", external);
+    const auto link = (deep / "packed").string();
+    Require(link.size() >= MAX_PATH);
+    Require(sceKernelOpen(link.c_str(), SCE_KERNEL_O_NOFOLLOW, 0) == static_cast<int>(0x8002001Fu));
+    Require(RemoveDirectoryW(Extended(deep / "packed").c_str()) != 0);
+    Require(RemoveDirectoryW(Extended(external).c_str()) != 0);
+    RemoveDirectories(base, deep);
+}
+
 static void SearchPatternAtMaxPath(const std::filesystem::path& parent) {
     const auto base = parent / ("anyps5-max-path-listing-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     auto deep = base;
@@ -286,6 +302,7 @@ int main() {
     Require(root.parent_path() == previous && root.filename().string().starts_with("anyps5-app0-links-"));
     std::filesystem::remove_all(root);
     LongApp0Root(previous);
+    LongNoFollow(previous);
     SearchPatternAtMaxPath(previous);
     std::puts("Windows directory link type tests passed");
 }

@@ -221,26 +221,27 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         File::RememberDescriptor(*archived, flags);
         return *archived;
     }
+    const auto openPath = File::WindowsExtendedPath(native);
 #ifdef _WIN32
     if ((flags & (SCE_KERNEL_O_DIRECTORY | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_DIRECTORY) {
         std::error_code error;
-        const auto status = std::filesystem::status(File::WindowsExtendedPath(native), error);
+        const auto status = std::filesystem::status(openPath, error);
         if (std::filesystem::exists(status) && !std::filesystem::is_directory(status)) return SceErrorFromErrno(ENOTDIR);
     }
     if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL) && native.has_filename()) {
-        const DWORD attributes = GetFileAttributesW(native.c_str());
+        const DWORD attributes = GetFileAttributesW(openPath.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return SceErrorFromErrno(EEXIST);
     }
 #endif
     if ((flags & SCE_KERNEL_O_NOFOLLOW) != 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) != (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) {
         constexpr int GuestEmlink = 31;
         std::error_code error;
-        if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GuestEmlink);
+        if (std::filesystem::is_symlink(openPath, error)) return SceErrorFromErrno(GuestEmlink);
 #ifdef _WIN32
-        const DWORD attributes = GetFileAttributesW(native.c_str());
+        const DWORD attributes = GetFileAttributesW(openPath.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;
-            if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "open")) return SceErrorFromErrno(GuestEmlink);
+            if (File::WindowsSymbolicLink::ReadJunction(openPath, junctionTarget, "open")) return SceErrorFromErrno(GuestEmlink);
         }
 #endif
     }

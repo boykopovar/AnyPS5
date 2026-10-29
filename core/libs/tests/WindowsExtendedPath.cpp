@@ -75,6 +75,7 @@ int main() {
     Require(Normalize(L"C:\\dir\\.\\sub\\..\\file.bin") == L"C:\\dir\\file.bin");
     Require(Normalize(L"C:\\" + name) == L"\\\\?\\C:\\" + name);
     Require(Normalize(L"\\\\server\\share\\dir\\..\\file.bin") == L"\\\\server\\share\\file.bin");
+    Require(Normalize(L"\\\\server\\share\\..\\file.bin") == L"\\\\server\\share\\file.bin");
     Require(Normalize(L"//server/share/dir/file.bin") == L"\\\\server\\share\\dir\\file.bin");
     Require(Normalize(L"\\\\server\\share\\" + name) == L"\\\\?\\UNC\\server\\share\\" + name);
     Require(Normalize(L"\\\\?\\C:\\" + name) == L"\\\\?\\C:\\" + name);
