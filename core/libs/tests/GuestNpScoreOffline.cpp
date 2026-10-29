@@ -47,6 +47,9 @@ using BoardInfoFn = int (APS5_VABI*)(int, std::uint32_t, void*, void*);
 using CreateTitleCtxAFn = int (APS5_VABI*)(std::uint32_t, int);
 using SetPlayerCharacterIdFn = int (APS5_VABI*)(int, int);
 using WaitAsyncFn = int (APS5_VABI*)(int, int*);
+using SetTimeoutFn = int (APS5_VABI*)(int, int, int, int, int, int);
+using SetThreadParamFn = int (APS5_VABI*)(int, std::uint64_t);
+using CreateTitleCtxFn = int (APS5_VABI*)(const void*, const void*, const void*);
 
 template <typename Function>
 Function Resolve(const char* name) {
@@ -328,6 +331,66 @@ void CheckContextsAndWaiting() {
     sceNpScoreDeleteRequest(req);
 }
 
+void CheckCrossSave() {
+    const auto byRange = Resolve<RangeFn>("sceNpScoreGetRankingByRangeForCrossSave");
+    const auto byRangeAsync = Resolve<RangeFn>("sceNpScoreGetRankingByRangeForCrossSaveAsync");
+    const auto friends = Resolve<FriendsFn>("sceNpScoreGetFriendsRankingForCrossSave");
+    const auto friendsAsync = Resolve<FriendsFn>("sceNpScoreGetFriendsRankingForCrossSaveAsync");
+    const auto byAccountId = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdForCrossSave");
+    const auto byAccountIdAsync = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdForCrossSaveAsync");
+    const auto byAccountIdPcId = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdPcIdForCrossSave");
+    const auto byAccountIdPcIdAsync = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdPcIdForCrossSaveAsync");
+    int req = NewRequest();
+    Require(sceNpScoreGetRankingByRange(req, 1, 1, ranksA, 2 * 0x90, nullptr, 0, nullptr, 0, 2, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetRankingByRange", "0x90 bytes per rank were not taken");
+    Require(byRange(req, 1, 1, ranksA, 0x88, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == InvalidAlignment, "sceNpScoreGetRankingByRangeForCrossSave", "0x88 bytes per rank were taken");
+    Require(byRange(req, 1, 0, ranksA, 0x80, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpScoreGetRankingByRangeForCrossSave", "rank 0 was taken");
+    CheckOffline("sceNpScoreGetRankingByRangeForCrossSave", byRange(req, 1, 1, ranksA, 0x90, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr), req);
+    Require(byRangeAsync(req, 1, 1, ranks, 0x80, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetRankingByRangeForCrossSaveAsync", "valid arguments did not return SIGNED_OUT");
+    sceNpScoreDeleteRequest(req);
+
+    req = NewRequest();
+    Require(friends(req, 1, 1, ranks, 0x88, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == InvalidAlignment, "sceNpScoreGetFriendsRankingForCrossSave", "0x88 bytes per friend were taken");
+    CheckOffline("sceNpScoreGetFriendsRankingForCrossSave", friends(req, 1, 1, ranks, 0x80, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr), req);
+    Require(friendsAsync(req, 1, 0, ranks, 0x80, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetFriendsRankingForCrossSaveAsync", "valid arguments did not return SIGNED_OUT");
+    sceNpScoreDeleteRequest(req);
+
+    req = NewRequest();
+    Require(byAccountId(req, 1, accountIds, 4, ranksA, 0x98, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == InvalidAlignment, "sceNpScoreGetRankingByAccountIdForCrossSave", "an account id array size other than 8 per id was taken");
+    CheckOffline("sceNpScoreGetRankingByAccountIdForCrossSave", byAccountId(req, 1, accountIds, 16, ranksA, 0x130, nullptr, 0, nullptr, 0, 2, nullptr, nullptr, nullptr), req);
+    Require(byAccountIdAsync(req, 1, accountIds, 8, ranksA, 0x98, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetRankingByAccountIdForCrossSaveAsync", "valid arguments did not return SIGNED_OUT");
+    Require(byAccountIdPcId(req, 1, accountIdPcIds, 8, ranksA, 0x98, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == InvalidAlignment, "sceNpScoreGetRankingByAccountIdPcIdForCrossSave", "an id array size other than 16 per id was taken");
+    Require(byAccountIdPcId(req, 1, accountIdPcIds, 16, ranksA, 0x98, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetRankingByAccountIdPcIdForCrossSave", "valid arguments did not return SIGNED_OUT");
+    Require(byAccountIdPcIdAsync(req, 1, accountIdPcIds, 16, ranksA, 0x98, nullptr, 0, nullptr, 0, 1, nullptr, nullptr, nullptr) == SignedOut, "sceNpScoreGetRankingByAccountIdPcIdForCrossSaveAsync", "valid arguments did not return SIGNED_OUT");
+    sceNpScoreDeleteRequest(req);
+}
+
+void CheckSettings() {
+    const auto setTimeout = Resolve<SetTimeoutFn>("sceNpScoreSetTimeout");
+    const auto setThreadParam = Resolve<SetThreadParamFn>("sceNpScoreSetThreadParam");
+    const auto createTitleCtx = Resolve<CreateTitleCtxFn>("sceNpScoreCreateTitleCtx");
+    const int req = NewRequest();
+    Require(setTimeout(context, 0, 0, 0, 0, 0) == 0, "sceNpScoreSetTimeout", "a title context was not found");
+    Require(setTimeout(req, 1, 1000000, 10000000, 10000000, 10000000) == 0, "sceNpScoreSetTimeout", "the minimum timeouts were refused for a request");
+    Require(setTimeout(999, 0, 0, 0, 0, 0) == InvalidId, "sceNpScoreSetTimeout", "an unknown id was taken");
+    Require(setTimeout(999, -1, 0, 0, 0, 0) == InvalidArgument, "sceNpScoreSetTimeout", "a negative retry count was not refused before the id");
+    Require(setTimeout(req, 0, 999999, 0, 0, 0) == InvalidArgument, "sceNpScoreSetTimeout", "a resolve timeout below 1 s was taken");
+    Require(setTimeout(req, 0, -1, 0, 0, 0) == InvalidArgument, "sceNpScoreSetTimeout", "a negative resolve timeout was taken");
+    Require(setTimeout(req, 0, 0, 9999999, 0, 0) == InvalidArgument, "sceNpScoreSetTimeout", "a connect timeout below 10 s was taken");
+    Require(setTimeout(req, 0, 0, 0, 9999999, 0) == InvalidArgument, "sceNpScoreSetTimeout", "a send timeout below 10 s was taken");
+    Require(setTimeout(req, 0, 0, 0, 0, 9999999) == InvalidArgument, "sceNpScoreSetTimeout", "a receive timeout below 10 s was taken");
+    Require(setThreadParam(700, 0) == 0, "sceNpScoreSetThreadParam", "setting the worker thread parameters failed");
+    unsigned char titleId[12] = {};
+    unsigned char titleSecret[128] = {};
+    Require(createTitleCtx(nullptr, titleSecret, selfNpId) == InsufficientArgument, "sceNpScoreCreateTitleCtx", "a null title id was taken");
+    Require(createTitleCtx(titleId, nullptr, selfNpId) == InsufficientArgument, "sceNpScoreCreateTitleCtx", "a null title secret was taken");
+    Require(createTitleCtx(titleId, titleSecret, nullptr) == InsufficientArgument, "sceNpScoreCreateTitleCtx", "a null NpId was taken");
+    const int created = createTitleCtx(titleId, titleSecret, selfNpId);
+    Require(created > 0, "sceNpScoreCreateTitleCtx", "no title context was created");
+    Require(sceNpScoreCreateRequest(created) > 0, "sceNpScoreCreateTitleCtx", "the context does not take requests");
+    Require(sceNpScoreDeleteNpTitleCtx(created) == 0, "sceNpScoreCreateTitleCtx", "the context could not be deleted");
+    sceNpScoreDeleteRequest(req);
+}
+
 }
 
 int main() {
@@ -348,6 +411,8 @@ int main() {
     CheckNpIdPcId();
     CheckGameDataAndBoard();
     CheckContextsAndWaiting();
+    CheckCrossSave();
+    CheckSettings();
     Require(Untouched(), "libSceNpScoreRanking", "an output array was written");
     if (failures != 0) return 1;
     std::puts("NpScoreRanking offline tests passed");
