@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
+#include "prx/libSceNpManager/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
