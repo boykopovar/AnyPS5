@@ -2,6 +2,7 @@
 #include "prx/libSceVideoOut/include/Telemetry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "Decoder/Png.hpp"
 #include "SDL_vulkan.h"
@@ -123,6 +124,7 @@ void DisplayWindow::updateAspectRatio(std::uint32_t sourceWidth, std::uint32_t s
 
 void DisplayWindow::Destroy() noexcept {
     if (window == nullptr) return;
+    fullscreen->Release();
     fullscreen.reset();
     hostWindow.reset();
     removeSubclass();
@@ -137,6 +139,7 @@ SDL_Window* DisplayWindow::Handle() const {
 void DisplayWindow::ToggleFullscreen() {
     require(window != nullptr, "window must exist before toggling fullscreen");
     fullscreen->Toggle();
+    fullscreen->Refresh(MouseIsOpen_nid_no_patch());
 }
 
 void DisplayWindow::DrawableSize(std::uint32_t& width, std::uint32_t& height) const {
@@ -170,6 +173,7 @@ void DisplayWindow::UpdateTitle() {
     char text[160];
     std::snprintf(text, sizeof(text), "%s | FPS: %.2f (%llu)", title.value, currentFps, static_cast<unsigned long long>(frameNum));
     SDL_SetWindowTitle(window, text);
+    fullscreen->Refresh(MouseIsOpen_nid_no_patch());
     if (auto* telemetry = VideoOutTelemetry::Instance(); telemetry != nullptr && (frameNum == 1 || frameNum % 30 == 0)) telemetry->EmitPresent(frameNum, currentFps);
 }
 
