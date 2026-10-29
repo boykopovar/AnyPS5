@@ -23,6 +23,9 @@ struct UcrtStreamState {
     char* base;
     int count;
     long flags;
+    long descriptor;
+    int characterBuffer;
+    int bufferSize;
 };
 extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t* path), void (*forget)(int descriptor));
 extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
