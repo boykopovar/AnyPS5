@@ -245,6 +245,13 @@ void scanning() {
     });
     require(instructions.size() == code.size(), "Progress changed image code analysis");
     require(updates > 10 && previous == 10000, "Missing intermediate image analysis progress");
+    std::vector<Domain::CodeRange> unpublished{{7, 9}};
+    reject([&] {
+        Relinker::CodeInstructionCollector().Collect(image, {header}, [](auto completed, auto total) {
+            if (completed == total) throw Domain::RelinkerException("cancelled");
+        }, nullptr, {}, &unpublished);
+    });
+    require(unpublished == std::vector<Domain::CodeRange>{{7, 9}}, "Cancelled analysis published ranges");
     code[70000] = 0x0f;
     code[70001] = 0x05;
     progress.Events.clear();
@@ -267,8 +274,8 @@ void branchAcrossSignedBoundary() {
     header.MemorySize = header.FileSize;
     Io::WriteU64(image, 24, 0x8000000000000000);
     const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
-    require(instructions.contains(0x8000000000000000), "Lost the entry above the signed boundary");
-    require(instructions.contains(0x7ffffffffffffff0), "Lost the branch target below the signed boundary");
+    require(std::binary_search(instructions.begin(), instructions.end(), 0x8000000000000000ull), "Lost the entry above the signed boundary");
+    require(std::binary_search(instructions.begin(), instructions.end(), 0x7ffffffffffffff0ull), "Lost the branch target below the signed boundary");
 }
 
 class FailingProgress final : public Domain::IProgress {

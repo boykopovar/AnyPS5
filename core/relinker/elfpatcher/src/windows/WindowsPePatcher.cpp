@@ -79,7 +79,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(std::vector<std::uint8_t> sour
         sections.push_back({".ehmeta", nextRva, SectionRead | 0x40u, std::move(metadata)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
-    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, nullptr, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message);
+    directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva, nullptr, [&](auto completed, auto total) { report(1500 + 6500 * completed / total); }, message, dynamicSection.SyscallContinuations);
     report(8000);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);
     const WindowsImportBuilder importBuilder;

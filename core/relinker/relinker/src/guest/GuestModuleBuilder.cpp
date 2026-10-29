@@ -1,6 +1,7 @@
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
+#include <relinker/analysis/SyscallScanner.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
@@ -9,6 +10,7 @@
 #include <io/BufferUtils.hpp>
 #include <nid/NidCompute.hpp>
 #include <algorithm>
+#include <bit>
 #include <functional>
 #include <limits>
 #include <map>
@@ -23,6 +25,38 @@
 namespace Relinker {
 
 namespace {
+
+std::optional<Domain::VirtualAddress> FindGuestPathconfImportAddress(const GuestImage& image) {
+    std::optional<Domain::VirtualAddress> candidate;
+    for (const auto* table : {&image.Dynamic.RelaPltData, &image.Dynamic.RelaData}) {
+        for (std::size_t position = 0; position < table->size(); position += 24) {
+            const auto info = Io::ReadU64(*table, position + 8);
+            const auto relType = static_cast<std::uint32_t>(info);
+            if ((relType != 1 && relType != 6 && relType != 7) || Io::ReadU64(*table, position + 16) != 0) continue;
+            const auto symbolIndex = static_cast<std::size_t>(info >> 32);
+            if (symbolIndex >= image.Symbols.size()) continue;
+            const auto& symbol = image.Symbols[symbolIndex];
+            if (symbol.Section != 0) continue;
+            if ((symbol.Info & 15) != 0 && (symbol.Info & 15) != 2) continue;
+            if (!symbol.Library.empty() && !symbol.Library.starts_with("libkernel")) continue;
+            std::string_view name = symbol.Name;
+            const auto hashPos = name.find('#');
+            if (hashPos != std::string_view::npos) {
+                name = name.substr(0, hashPos);
+            }
+            if (name == "pathconf" || name == "oc98+zOImus" || name == "pathconf_nid_postfix") {
+                const auto target = Io::ReadU64(*table, position);
+                if (table == &image.Dynamic.RelaPltData || relType == 7) {
+                    return target;
+                }
+                if (!candidate) {
+                    candidate = target;
+                }
+            }
+        }
+    }
+    return candidate;
+}
 
 struct GuestExport {
     std::size_t Provider;
@@ -408,11 +442,17 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
         for (const auto& function : unwindFunctions) unwindRanges.emplace_back(function.Begin, function.End);
         std::sort(unwindRanges.begin(), unwindRanges.end());
+        bool hasCodeTail = false;
+        std::map<FileByteOffset, std::vector<std::uint8_t>> syscallPatches;
+        std::vector<RoutedSyscallStub> routedStubs;
+        auto scanBytes = image.Bytes;
         for (const auto& header : codeHeaders) {
             std::vector<std::uint8_t> code(image.Bytes.begin() + header.Offset, image.Bytes.begin() + header.Offset + header.FileSize);
             if (sceImage)
-                if (const auto end = FindSceCodeEnd(code, header.MappedAddress, unwindFunctions, image.Got, image.Dynamic.RelaPltData.size()))
+                if (const auto end = FindSceCodeEnd(code, header.MappedAddress, unwindFunctions, image.Got, image.Dynamic.RelaPltData.size())) {
+                    hasCodeTail = hasCodeTail || *end - header.MappedAddress < code.size();
                     code.resize(*end - header.MappedAddress);
+                }
             auto scanCode = code;
             for (const auto& table : FindRelativeJumpTables(code, header.MappedAddress, unwindRanges)) {
                 if (table.Begin >= header.MappedAddress && table.End >= table.Begin) {
@@ -421,17 +461,61 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                     std::fill(scanCode.begin() + static_cast<std::ptrdiff_t>(maskBegin), scanCode.begin() + static_cast<std::ptrdiff_t>(maskEnd), std::uint8_t{0x90});
                 }
             }
+            std::copy(scanCode.begin(), scanCode.end(), scanBytes.begin() + header.Offset);
             const auto scanUnwindRanges = sceImage ? SceUnwindRanges(code, header.MappedAddress, unwindFunctions) : std::vector<CodeRange>{};
-            for (const auto offset : syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges)) {
+            std::vector<RoutedSyscallStub> segmentRoutedStubs;
+            for (const auto offset : syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges, &segmentRoutedStubs)) {
                 if (offset > code.size() || code.size() - offset < 2u)
                     throw Domain::RelinkerException("Syscall trap patch exceeds guest executable segment", header.MappedAddress + offset);
-                if (!image.PatchedRanges.empty()) {
-                    const GamePatch::WriterRange trap{header.Offset + offset, 2, "syscall trap"};
-                    GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Traps = std::span<const GamePatch::WriterRange>(&trap, 1)});
-                }
-                image.Bytes[header.Offset + offset] = 0x0F;
-                image.Bytes[header.Offset + offset + 1] = 0x0B;
+                syscallPatches.emplace(header.Offset + offset, std::vector<std::uint8_t>{0x0f, 0x0b});
             }
+
+            for (auto routed : segmentRoutedStubs) {
+                routed.StubOffset += header.Offset;
+                routedStubs.push_back(routed);
+            }
+        }
+        const auto tailPatches = hasCodeTail ? syscallScanner.ScanReferencedTailForSyscalls(image.Bytes, image.Headers, scanBytes, Io::Utf8Path(image.SourcePath), &routedStubs) : std::vector<RelinkPatch>{};
+        for (const auto& patch : tailPatches) syscallPatches.emplace(patch.Offset, patch.Bytes);
+        if (FindGuestPathconfImportAddress(image)) ValidateSyscallRoutes(image.Bytes, image.Headers, routedStubs, progress, Io::Utf8Path(image.SourcePath));
+        std::set<FileByteOffset> routedOffsets;
+        for (const auto& routed : routedStubs) {
+            if (!routedOffsets.insert(routed.StubOffset).second) continue;
+            const auto header = std::find_if(codeHeaders.begin(), codeHeaders.end(), [&](const auto& candidate) {
+                return routed.StubOffset >= candidate.Offset && routed.StubOffset - candidate.Offset < candidate.FileSize && routed.StubLength <= candidate.FileSize - (routed.StubOffset - candidate.Offset);
+            });
+            if (header == codeHeaders.end() || routed.SyscallNumber != 191 || routed.StubLength != 13)
+                throw Domain::RelinkerException("Unsupported guest syscall route patch", routed.StubOffset);
+            const auto stubVAddr = header->MappedAddress + (routed.StubOffset - header->Offset);
+            if (const auto pathconfTarget = FindGuestPathconfImportAddress(image)) {
+                const auto disp = std::bit_cast<std::int64_t>(*pathconfTarget - (stubVAddr + 6));
+                if (disp < std::numeric_limits<std::int32_t>::min() || disp > std::numeric_limits<std::int32_t>::max())
+                    throw Domain::RelinkerException("Syscall stub relocation distance exceeds 32-bit displacement", stubVAddr);
+                const auto disp32 = static_cast<std::uint32_t>(static_cast<std::int32_t>(disp));
+                syscallPatches.emplace(routed.StubOffset, std::vector<std::uint8_t>{
+                    0xFF, 0x25,
+                    static_cast<std::uint8_t>(disp32), static_cast<std::uint8_t>(disp32 >> 8),
+                    static_cast<std::uint8_t>(disp32 >> 16), static_cast<std::uint8_t>(disp32 >> 24),
+                    0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+                });
+            } else if (syscallScanner.TrapsSdkStubs()) {
+                syscallPatches.emplace(routed.StubOffset + 10, std::vector<std::uint8_t>{0x0f, 0x0b});
+            } else {
+                throw Domain::RelinkerException("Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import in " + Io::Utf8Path(image.SourcePath), stubVAddr);
+            }
+        }
+        for (const auto& [offset, patch] : syscallPatches) {
+            for (const auto& header : codeHeaders) {
+                if (patch != std::vector<std::uint8_t>{0x0f, 0x0b}) break;
+                if (offset < header.Offset || offset - header.Offset >= header.FileSize) continue;
+                image.Dynamic.SyscallContinuations.push_back(header.MappedAddress + (offset - header.Offset) + patch.size());
+                break;
+            }
+            if (!image.PatchedRanges.empty()) {
+                const GamePatch::WriterRange trap{offset, patch.size(), "syscall trap"};
+                GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Traps = std::span<const GamePatch::WriterRange>(&trap, 1)});
+            }
+            std::copy(patch.begin(), patch.end(), image.Bytes.begin() + offset);
         }
         const auto relativeDirectory = appDirectory(image);
         const auto destination = outputDirectory / relativeDirectory;
