@@ -1,8 +1,10 @@
 #include "prx/libSceJpegDec/include/Api.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <optional>
@@ -238,10 +240,25 @@ struct InputStream {
     std::size_t scanOffset = 2;
     bool inScan = false;
     std::optional<std::size_t> end;
+    std::atomic<bool> busy = false;
 };
 
 std::mutex streamMutex;
-std::unordered_map<const Context*, InputStream> streams;
+std::unordered_map<const Context*, std::shared_ptr<InputStream>> streams;
+
+class StreamUse {
+public:
+    explicit StreamUse(std::shared_ptr<InputStream> stream) : stream(std::move(stream)) {
+        if (this->stream->busy.exchange(true)) throw std::runtime_error("sceJpegDecDecodeWithInputControl: a call on a handle whose input stream another call is still reading is not implemented");
+    }
+    ~StreamUse() { stream->busy = false; }
+    StreamUse(const StreamUse&) = delete;
+    StreamUse& operator=(const StreamUse&) = delete;
+    InputStream& operator*() const { return *stream; }
+
+private:
+    std::shared_ptr<InputStream> stream;
+};
 
 void forgetStream(const Context* context) {
     std::lock_guard lock(streamMutex);
@@ -311,10 +328,13 @@ std::int32_t parseStream(const Context* context, const JpegDecInputControlParam*
     if (!imageInfo) return SCE_JPEG_DEC_ERROR_INVALID_ADDR;
     requireDecodeMode("sceJpegDecDecodeWithInputControl", param->operation & 1);
     if (!validDecodeOptions(0, param->down_scale)) throw std::runtime_error("sceJpegDecDecodeWithInputControl: the result for this down scale is not known");
-    InputStream& stream = [&]() -> InputStream& {
+    auto created = std::make_shared<InputStream>();
+    const StreamUse use(created);
+    {
         std::lock_guard lock(streamMutex);
-        return streams[context] = InputStream{};
-    }();
+        streams[context] = std::move(created);
+    }
+    InputStream& stream = *use;
     stream.input = param->input;
     stream.argument = param->input_argument;
     while (!(stream.header = Decoder::Jpeg::ParseHeader(stream.data)) && stream.status == 0 && mayBecomeHeader(stream)) pull(stream, INPUT_BLOCK_SIZE);
@@ -335,14 +355,16 @@ std::int32_t decodeStream(const Context* context, const JpegDecInputControlParam
     if (param->alpha_value > 255) return SCE_JPEG_DEC_ERROR_INVALID_PARAM;
     requireDecodeMode("sceJpegDecDecodeWithInputControl", param->operation & 1);
     if (format != PIXEL_FORMAT_R8G8B8A8 && format != PIXEL_FORMAT_B8G8R8A8) throw std::runtime_error("sceJpegDecDecodeWithInputControl: pixel format is not implemented");
-    InputStream* found = nullptr;
+    std::shared_ptr<InputStream> found;
     {
         std::lock_guard lock(streamMutex);
         const auto entry = streams.find(context);
-        if (entry != streams.end()) found = &entry->second;
+        if (entry != streams.end()) found = entry->second;
     }
-    if (!found || !found->header) throw std::runtime_error("sceJpegDecDecodeWithInputControl: decoding without a parsed header is not implemented");
-    InputStream& stream = *found;
+    if (!found) throw std::runtime_error("sceJpegDecDecodeWithInputControl: decoding without a parsed header is not implemented");
+    const StreamUse use(std::move(found));
+    InputStream& stream = *use;
+    if (!stream.header) throw std::runtime_error("sceJpegDecDecodeWithInputControl: decoding without a parsed header is not implemented");
     if (param->down_scale != stream.downScale) throw std::runtime_error("sceJpegDecDecodeWithInputControl: decoding at another down scale than the parse is not implemented");
     stream.status = 0;
     stream.input = param->input;

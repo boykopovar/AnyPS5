@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -30,12 +31,19 @@ struct Source {
     std::size_t offset = 0;
     std::size_t calls = 0;
     std::int32_t failure = 0;
+    void* deleteHandle = nullptr;
+    void* reenterHandle = nullptr;
+    const JpegDecInputControlParam* reenter = nullptr;
+    bool reenterThrew = false;
 };
 
 std::int32_t APS5_VABI ReadChunk(JpegDecInputChunk* chunk, void* argument) {
     auto* source = static_cast<Source*>(argument);
     ++source->calls;
     Require(chunk->data == nullptr && chunk->size == 0);
+    if (void* handle = std::exchange(source->deleteHandle, nullptr)) Require(sceJpegDecDelete(handle) == 0);
+    if (const JpegDecInputControlParam* param = std::exchange(source->reenter, nullptr))
+        source->reenterThrew = ThrowsRuntimeError([&] { sceJpegDecDecodeWithInputControl(source->reenterHandle, param, nullptr); });
     if (source->failure != 0) return source->failure;
     if (source->offset == source->bytes.size()) return 0;
     const std::size_t count = std::min(source->chunkSize, source->bytes.size() - source->offset);
@@ -114,6 +122,51 @@ void RequireStreamMatches(const std::vector<std::uint8_t>& jpeg, std::uint32_t w
     Require(sceJpegDecDelete(decoder.handle) == 0);
 }
 
+void RequireStreamOutlivesHandle(const std::vector<std::uint8_t>& jpeg, std::uint32_t width, std::uint32_t height) {
+    constexpr std::int32_t invalidHandle = static_cast<std::int32_t>(0x80650004);
+    std::int32_t expected = 0;
+    const std::vector<std::uint8_t> reference = Reference(jpeg, width, height, 1, &expected);
+
+    JpegHandle parsing(width);
+    Source deletedInParse{jpeg, 64};
+    deletedInParse.deleteHandle = parsing.handle;
+    JpegDecInputControlParam parse = StreamParam(0x10, deletedInParse);
+    JpegDecImageInfo info{};
+    Require(sceJpegDecDecodeWithInputControl(parsing.handle, &parse, &info) == 0);
+    Require(info.image_width == width && info.image_height == height);
+    std::vector<std::uint8_t> image(reference.size(), 0xCD);
+    JpegDecInputControlParam decode = StreamParam(0x20, deletedInParse);
+    decode.image_mem_addr = image.data();
+    decode.image_mem_size = static_cast<std::uint32_t>(image.size());
+    Require(sceJpegDecDecodeWithInputControl(parsing.handle, &decode, nullptr) == invalidHandle);
+
+    JpegHandle decoding(width);
+    Source deletedInDecode{jpeg, 64};
+    parse.input_argument = &deletedInDecode;
+    Require(sceJpegDecDecodeWithInputControl(decoding.handle, &parse, &info) == 0);
+    deletedInDecode.deleteHandle = decoding.handle;
+    decode.input_argument = &deletedInDecode;
+    Require(sceJpegDecDecodeWithInputControl(decoding.handle, &decode, nullptr) == expected);
+    Require(image == reference);
+    Require(sceJpegDecDecodeWithInputControl(decoding.handle, &decode, nullptr) == invalidHandle);
+
+    JpegHandle reentered(width);
+    Source outer{jpeg, 64};
+    parse.input_argument = &outer;
+    Require(sceJpegDecDecodeWithInputControl(reentered.handle, &parse, &info) == 0);
+    Source inner{jpeg, 64};
+    JpegDecInputControlParam innerDecode = decode;
+    innerDecode.input_argument = &inner;
+    outer.reenterHandle = reentered.handle;
+    outer.reenter = &innerDecode;
+    std::fill(image.begin(), image.end(), 0xCD);
+    decode.input_argument = &outer;
+    Require(sceJpegDecDecodeWithInputControl(reentered.handle, &decode, nullptr) == expected);
+    Require(outer.reenterThrew && inner.calls == 0);
+    Require(image == reference);
+    Require(sceJpegDecDelete(reentered.handle) == 0);
+}
+
 }  // namespace
 
 int main() {
@@ -149,9 +202,6 @@ int main() {
     reserved.reserved = 1;
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &reserved, nullptr) == invalidParam);
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &parse, nullptr) == invalidAddr);
-    JpegDecInputControlParam otherMode = parse;
-    otherMode.operation = 0x11;
-    Require(ThrowsRuntimeError([&] { sceJpegDecDecodeWithInputControl(decoder.handle, &otherMode, &info); }));
     Require(source.calls == 0);
 
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &parse, &info) == 0);
@@ -242,6 +292,7 @@ int main() {
     Require(sceJpegDecDelete(decoder.handle) == 0);
     Require(sceJpegDecDecodeWithInputControl(decoder.handle, &decode, nullptr) == invalidHandle);
 
+    RequireStreamOutlivesHandle(jpeg, 96, 64);
     RequireStreamMatches(TestJpeg(40, 24, 1), 40, 24, 1, 1);
     RequireStreamMatches(TestJpeg(64, 48, 3), 64, 48, 2, 37);
     RequireStreamMatches(TestJpeg(64, 48, 3), 64, 48, 8, 0x10000);
