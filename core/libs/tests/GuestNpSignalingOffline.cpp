@@ -11,7 +11,9 @@ constexpr int NotInitialized = static_cast<int>(0x80552701u);
 constexpr int AlreadyInitialized = static_cast<int>(0x80552702u);
 constexpr int CtxIdNotAvailable = static_cast<int>(0x80552704u);
 constexpr int CtxNotFound = static_cast<int>(0x80552705u);
+constexpr int ReqNotFound = static_cast<int>(0x80552707u);
 constexpr int ConnNotFound = static_cast<int>(0x8055270Eu);
+constexpr int ResultNotFound = static_cast<int>(0x80552713u);
 constexpr int InvalidArgument = static_cast<int>(0x80552715u);
 constexpr int OwnNpId = static_cast<int>(0x80552716u);
 
@@ -64,6 +66,25 @@ int main() {
     Require(sceNpSignalingDeactivateConnection(1, 1) == NotInitialized, "sceNpSignalingDeactivateConnection", "a call before initialization did not return NOT_INITIALIZED");
     Require(sceNpSignalingGetConnectionInfo(1, 1, 1, nullptr) == NotInitialized, "sceNpSignalingGetConnectionInfo", "a call before initialization did not return NOT_INITIALIZED first");
     Require(sceNpSignalingTerminate() == NotInitialized, "sceNpSignalingTerminate", "terminating before initialization did not return NOT_INITIALIZED");
+    NpSignalingAccountPlatformPair account{0x1234, 1, 0};
+    NpSignalingNetInfo netInfo{};
+    netInfo.size = sizeof(netInfo);
+    NpSignalingConnectionStatistics statistics{};
+    std::uint32_t status = 7;
+    std::uint32_t request = 7;
+    int option = -7;
+    Require(sceNpSignalingCreateContextA(-1, nullptr, nullptr, nullptr) == NotInitialized, "sceNpSignalingCreateContextA", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingActivateConnectionA(1, nullptr, nullptr) == NotInitialized, "sceNpSignalingActivateConnectionA", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetConnectionStatus(1, 1, nullptr, nullptr, nullptr) == NotInitialized, "sceNpSignalingGetConnectionStatus", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetConnectionInfoA(1, 1, 1, nullptr) == NotInitialized, "sceNpSignalingGetConnectionInfoA", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetConnectionFromNpId(1, nullptr, nullptr) == NotInitialized, "sceNpSignalingGetConnectionFromNpId", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetConnectionFromPeerAddress(1, 0, 0, nullptr) == NotInitialized, "sceNpSignalingGetConnectionFromPeerAddress", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetConnectionFromPeerAddressA(1, nullptr, nullptr) == NotInitialized, "sceNpSignalingGetConnectionFromPeerAddressA", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetContextOption(1, 1, nullptr) == NotInitialized, "sceNpSignalingGetContextOption", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetPeerNetInfoA(1, nullptr, nullptr) == NotInitialized, "sceNpSignalingGetPeerNetInfoA", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingCancelPeerNetInfo(1, 1) == NotInitialized, "sceNpSignalingCancelPeerNetInfo", "a call before initialization did not return NOT_INITIALIZED");
+    Require(sceNpSignalingGetPeerNetInfoResult(1, 1, nullptr) == NotInitialized, "sceNpSignalingGetPeerNetInfoResult", "a call before initialization did not return NOT_INITIALIZED first");
+    Require(sceNpSignalingGetConnectionStatistics(nullptr) == NotInitialized, "sceNpSignalingGetConnectionStatistics", "a call before initialization did not return NOT_INITIALIZED first");
 
     Require(sceNpSignalingInitialize(0, 0, 0, 0) == 0, "sceNpSignalingInitialize", "initialization failed");
     Require(sceNpSignalingInitialize(0, 0, 0, 0) == AlreadyInitialized, "sceNpSignalingInitialize", "a second initialization did not return ALREADY_INITIALIZED");
@@ -111,6 +132,73 @@ int main() {
     Require(sceNpSignalingGetConnectionInfo(99, 1, 1, info) == CtxNotFound, "sceNpSignalingGetConnectionInfo", "an unknown context was taken");
     Require(sceNpSignalingGetConnectionInfo(context, 1, 1, info) == ConnNotFound, "sceNpSignalingGetConnectionInfo", "a connection that was never created was found");
     Require(info[0] == 0xA5 && info[63] == 0xA5, "sceNpSignalingGetConnectionInfo", "connection information was written");
+
+    Require(sceNpSignalingCreateContextA(-1, nullptr, nullptr, &created) == InvalidArgument, "sceNpSignalingCreateContextA", "user id -1 was taken");
+    Require(sceNpSignalingCreateContextA(1, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpSignalingCreateContextA", "a null output was taken");
+    created = -7;
+    Require(sceNpSignalingCreateContextA(1, nullptr, nullptr, &created) == SignedOut && created == -7, "sceNpSignalingCreateContextA", "a signed-out user did not return SIGNED_OUT without a context");
+
+    NpSignalingAccountPlatformPair noAccount{0, 1, 0};
+    NpSignalingAccountPlatformPair noPlatform{0x1234, 0, 0};
+    Require(sceNpSignalingActivateConnectionA(context, nullptr, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "a null peer was taken");
+    Require(sceNpSignalingActivateConnectionA(context, &account, nullptr) == InvalidArgument, "sceNpSignalingActivateConnectionA", "a null output was taken");
+    Require(sceNpSignalingActivateConnectionA(99, &noAccount, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "account id 0 was not refused before the context");
+    Require(sceNpSignalingActivateConnectionA(99, &noPlatform, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "platform 0 was not refused before the context");
+    Require(sceNpSignalingActivateConnectionA(99, &account, &connection) == CtxNotFound, "sceNpSignalingActivateConnectionA", "an unknown context was taken");
+    Require(sceNpSignalingActivateConnectionA(context, &account, &connection) == SignedOut && connection == -7, "sceNpSignalingActivateConnectionA", "a valid peer did not return SIGNED_OUT without a connection");
+
+    Require(sceNpSignalingGetConnectionStatus(99, 1, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpSignalingGetConnectionStatus", "a null status was not refused before the context");
+    Require(sceNpSignalingGetConnectionStatus(99, 1, &status, nullptr, nullptr) == CtxNotFound && status == 7, "sceNpSignalingGetConnectionStatus", "an unknown context was taken");
+    std::uint32_t address = 0xA5A5A5A5u;
+    std::uint16_t port = 0xA5A5u;
+    Require(sceNpSignalingGetConnectionStatus(context, 1, &status, &address, &port) == 0 && status == 0, "sceNpSignalingGetConnectionStatus", "a connection that was never created is not INACTIVE");
+    Require(address == 0xA5A5A5A5u && port == 0xA5A5u, "sceNpSignalingGetConnectionStatus", "an inactive connection wrote a peer address");
+
+    Require(sceNpSignalingGetConnectionInfoA(99, 1, 1, nullptr) == InvalidArgument, "sceNpSignalingGetConnectionInfoA", "a null output was not refused before the context");
+    Require(sceNpSignalingGetConnectionInfoA(99, 1, 1, info) == CtxNotFound, "sceNpSignalingGetConnectionInfoA", "an unknown context was taken");
+    Require(sceNpSignalingGetConnectionInfoA(context, 1, 1, info) == ConnNotFound, "sceNpSignalingGetConnectionInfoA", "a connection that was never created was found");
+    Require(info[0] == 0xA5 && info[63] == 0xA5, "sceNpSignalingGetConnectionInfoA", "connection information was written");
+
+    Require(sceNpSignalingGetConnectionFromNpId(context, nullptr, &connection) == InvalidArgument, "sceNpSignalingGetConnectionFromNpId", "a null peer was taken");
+    Require(sceNpSignalingGetConnectionFromNpId(context, &peer, nullptr) == InvalidArgument, "sceNpSignalingGetConnectionFromNpId", "a null output was taken");
+    Require(sceNpSignalingGetConnectionFromNpId(99, &tooShort, &connection) == InvalidArgument, "sceNpSignalingGetConnectionFromNpId", "an invalid peer was not refused before the context");
+    Require(sceNpSignalingGetConnectionFromNpId(99, &peer, &connection) == CtxNotFound, "sceNpSignalingGetConnectionFromNpId", "an unknown context was taken");
+    Require(sceNpSignalingGetConnectionFromNpId(context, &peer, &connection) == ConnNotFound && connection == -7, "sceNpSignalingGetConnectionFromNpId", "a connection that was never created was found");
+
+    Require(sceNpSignalingGetConnectionFromPeerAddress(99, 0x0100007Fu, 0x3412u, nullptr) == InvalidArgument, "sceNpSignalingGetConnectionFromPeerAddress", "a null output was not refused before the context");
+    Require(sceNpSignalingGetConnectionFromPeerAddress(99, 0x0100007Fu, 0x3412u, &connection) == CtxNotFound, "sceNpSignalingGetConnectionFromPeerAddress", "an unknown context was taken");
+    Require(sceNpSignalingGetConnectionFromPeerAddress(context, 0x0100007Fu, 0x3412u, &connection) == ConnNotFound && connection == -7, "sceNpSignalingGetConnectionFromPeerAddress", "a connection that was never created was found");
+
+    Require(sceNpSignalingGetConnectionFromPeerAddressA(99, nullptr, &connection) == InvalidArgument, "sceNpSignalingGetConnectionFromPeerAddressA", "a null peer was not refused before the context");
+    Require(sceNpSignalingGetConnectionFromPeerAddressA(99, &account, &connection) == CtxNotFound, "sceNpSignalingGetConnectionFromPeerAddressA", "an unknown context was taken");
+    Require(sceNpSignalingGetConnectionFromPeerAddressA(context, &account, &connection) == InvalidArgument && connection == -7, "sceNpSignalingGetConnectionFromPeerAddressA", "a context created from an NpId was taken");
+
+    Require(sceNpSignalingGetContextOption(99, 2, nullptr) == InvalidArgument, "sceNpSignalingGetContextOption", "a null output was not refused before the context");
+    Require(sceNpSignalingGetContextOption(99, 2, &option) == CtxNotFound, "sceNpSignalingGetContextOption", "an unknown context was not refused before the option");
+    Require(sceNpSignalingGetContextOption(context, 2, &option) == InvalidArgument && option == -7, "sceNpSignalingGetContextOption", "option id 2 was taken");
+    Require(sceNpSignalingGetContextOption(context, 1, &option) == 0 && option == 1, "sceNpSignalingGetContextOption", "the flag set above does not read 1");
+    Require(sceNpSignalingSetContextOption(context, 1, 0) == 0, "sceNpSignalingSetContextOption", "clearing the flag failed");
+    Require(sceNpSignalingGetContextOption(context, 1, &option) == 0 && option == 0, "sceNpSignalingGetContextOption", "the cleared flag does not read 0");
+    Require(sceNpSignalingSetContextOption(context, 1, 1) == 0, "sceNpSignalingSetContextOption", "setting the flag failed");
+
+    Require(sceNpSignalingGetPeerNetInfoA(99, nullptr, &request) == InvalidArgument, "sceNpSignalingGetPeerNetInfoA", "a null peer was not refused before the context");
+    Require(sceNpSignalingGetPeerNetInfoA(99, &account, &request) == CtxNotFound, "sceNpSignalingGetPeerNetInfoA", "an unknown context was taken");
+    Require(sceNpSignalingGetPeerNetInfoA(context, &account, &request) == InvalidArgument && request == 7, "sceNpSignalingGetPeerNetInfoA", "a context created from an NpId was taken");
+
+    Require(sceNpSignalingCancelPeerNetInfo(99, 1) == CtxNotFound, "sceNpSignalingCancelPeerNetInfo", "an unknown context was taken");
+    Require(sceNpSignalingCancelPeerNetInfo(context, 1) == ReqNotFound, "sceNpSignalingCancelPeerNetInfo", "a request that was never made was found");
+
+    Require(sceNpSignalingGetPeerNetInfoResult(99, 1, nullptr) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "a null output was not refused before the context");
+    netInfo.size = 0;
+    Require(sceNpSignalingGetPeerNetInfoResult(99, 1, &netInfo) == CtxNotFound, "sceNpSignalingGetPeerNetInfoResult", "an unknown context was not refused before the size");
+    Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "size 0 was taken");
+    netInfo.size = sizeof(netInfo);
+    Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == ResultNotFound && netInfo.localAddr == 0, "sceNpSignalingGetPeerNetInfoResult", "a result that was never staged was found");
+
+    std::memset(&statistics, 0xA5, sizeof(statistics));
+    Require(sceNpSignalingGetConnectionStatistics(nullptr) == InvalidArgument, "sceNpSignalingGetConnectionStatistics", "a null output was taken");
+    Require(sceNpSignalingGetConnectionStatistics(&statistics) == 0, "sceNpSignalingGetConnectionStatistics", "the call failed");
+    Require(statistics.peakConnectionCount == 0 && statistics.activeConnectionCount == 0 && statistics.transientConnectionCount == 0 && statistics.establishedConnectionCount == 0, "sceNpSignalingGetConnectionStatistics", "a connection count is not 0");
 
     Require(sceNpSignalingDeleteContext(99) == 0, "sceNpSignalingDeleteContext", "deleting an unknown context failed");
     Require(sceNpSignalingDeleteContext(context) == 0, "sceNpSignalingDeleteContext", "deleting a context failed");
