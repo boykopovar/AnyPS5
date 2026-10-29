@@ -369,11 +369,10 @@ bool BufferPool::DeviceTiered(VkMemoryPropertyFlags properties) {
     return (properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 && (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 && DeviceTierEnabled();
 }
 
-std::size_t BufferPool::Capacity(std::size_t bytes, VkMemoryPropertyFlags properties) {
+std::size_t BufferPool::Capacity(std::size_t bytes) {
     constexpr std::size_t smallest = 256;
     if (exactSizes()) return bytes;
     if (bytes < classLimit) return std::max(smallest, std::bit_ceil(bytes));
-    if (!DeviceTiered(properties)) return bytes;
     const auto step = std::bit_floor(bytes) >> deviceClassBits;
     return (bytes + step - 1) / step * step;
 }
@@ -393,7 +392,7 @@ BufferPool::Tier& BufferPool::tierFor(std::size_t capacity, VkMemoryPropertyFlag
 
 std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    const auto capacity = Capacity(bytes, properties);
+    const auto capacity = Capacity(bytes);
     std::lock_guard lock(mutex);
     ++clock;
     if (profile) {

@@ -26,7 +26,7 @@ PR reports include a table of changed libraries with implemented export counts, 
 
 New or removed libraries show `Not present` on the missing side. Libraries whose snapshots contain both counts and report zero exports show `No exports`; if either count is absent, the table shows `Counts unavailable`. Wrappers show `Shared sources` with the source library's name. These rows show `n/a` for the percentage change. The table retains the scanner's counting rules; it does not measure compatibility.
 
-Implemented definitions are also classified as behaviourally empty when their body holds only `(void)name;` discards and at most one constant return, bare `return;` or `throw`, including a return of a local `static` wrapper that is itself behaviourally empty; wrapper calls whose arguments contain calls do not qualify. Comparisons list newly implemented behaviourally empty functions without changing any count. Older JSON snapshots without `inert_names` are accepted.
+Implemented definitions are also classified as behaviourally empty when their body holds only `(void)name;` discards and at most one constant return, bare `return;` or `throw`, including a return of a local wrapper that is itself behaviourally empty; wrapper calls whose arguments contain calls do not qualify. Comparisons list newly implemented behaviourally empty functions without changing any count. Older JSON snapshots without `inert_names` are accepted.
 
 ## One library
 

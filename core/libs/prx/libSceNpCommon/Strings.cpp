@@ -437,7 +437,8 @@ int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, st
 int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength) {
     if (dst == nullptr || dstSize == 0 || src == nullptr || srcLength == 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     if (dstSize < JSON_ESCAPE_MARGIN) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    std::size_t written = 0;
+    std::size_t written = ::strnlen(dst, dstSize);
+    if (written >= dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
     for (std::size_t i = 0; i < srcLength; ++i) {
         if (written > dstSize - JSON_ESCAPE_MARGIN) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
         const auto c = static_cast<unsigned char>(src[i]);
@@ -522,7 +523,7 @@ int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* 
         emit(encoded, length, JSON_SURROGATE_PAIR_LENGTH);
     }
     ++count;
-    if (count > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+    if (dst != nullptr && count > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
     if (dstLength != nullptr) *dstLength = count;
     if (out != nullptr) *out = '\0';
     return status;
@@ -556,7 +557,7 @@ int APS5_VABI sceNpUtilJsonGetOneChar(char* dst, std::size_t dstSize, const char
             } else {
                 used = JSON_SURROGATE_PAIR_LENGTH;
                 std::uint32_t low = 0;
-                if (srcLength < JSON_SURROGATE_PAIR_LENGTH || ParseUtf16Unit(src + 8, &low) < 0
+                if (srcLength < JSON_SURROGATE_PAIR_LENGTH || src[6] != '\\' || src[7] != 'u' || ParseUtf16Unit(src + 8, &low) < 0
                     || (low & SURROGATE_MASK) != LOW_SURROGATE) {
                     status = NP_UTIL_ERROR_BUFFER_TOO_SMALL;
                 } else {

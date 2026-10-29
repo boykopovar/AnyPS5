@@ -619,6 +619,11 @@ void SleepNanos(std::uint64_t nanos) {
     }
     SleepUntil(NowNanos() + nanos);
 #else
+    struct SleepRegistration {
+        std::atomic<int>* state = WaitState().bound;
+        SleepRegistration() { state->fetch_add(1, std::memory_order_seq_cst); }
+        ~SleepRegistration() { state->fetch_sub(1, std::memory_order_seq_cst); }
+    } registration;
     struct timespec req{};
     req.tv_sec = static_cast<time_t>(nanos / 1000000000ULL);
     req.tv_nsec = static_cast<long>(nanos % 1000000000ULL);

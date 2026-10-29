@@ -39,6 +39,15 @@ void CheckClosed() {
     const CameraStartParameter start = Start(1, 1);
     CameraFrameData frame{};
     frame.sizeThis = sizeof(CameraFrameData);
+    for (const int handle : {0, -1}) {
+        Require(sceCameraClose(handle) == ErrorParam, "closing non-positive handle must report PARAM");
+        Require(sceCameraCloseByHandle(handle) == ErrorParam, "closing by non-positive handle must report PARAM");
+        Require(sceCameraStart(handle, &start) == ErrorParam, "starting non-positive handle must report PARAM");
+        Require(sceCameraStartByHandle(handle, &start) == ErrorParam, "starting by non-positive handle must report PARAM");
+        Require(sceCameraStop(handle) == ErrorParam, "stopping non-positive handle must report PARAM");
+        Require(sceCameraStopByHandle(handle) == ErrorParam, "stopping by non-positive handle must report PARAM");
+        Require(sceCameraIsValidFrameData(handle, &frame) == ErrorParam, "validating non-positive handle must report PARAM");
+    }
     Require(sceCameraClose(1) == ErrorNotOpen, "closing before any open must report NOT_OPEN");
     Require(sceCameraCloseByHandle(1) == ErrorNotOpen, "closing by handle before any open must report NOT_OPEN");
     Require(sceCameraStart(1, &start) == ErrorNotOpen, "starting before any open must report NOT_OPEN");
@@ -99,6 +108,11 @@ void CheckFrames() {
 
 void CheckClose() {
     Require(sceCameraClose(0) == ErrorParam, "closing handle 0 must be rejected");
+    Require(sceCameraClose(-1) == ErrorParam, "closing negative handle must be rejected");
+    Require(sceCameraCloseByHandle(0) == ErrorParam, "closing by handle 0 must be rejected");
+    Require(sceCameraCloseByHandle(-1) == ErrorParam, "closing by negative handle must be rejected");
+    Require(sceCameraStopByHandle(0) == ErrorParam, "stopping by handle 0 must be rejected");
+    Require(sceCameraStopByHandle(-1) == ErrorParam, "stopping by negative handle must be rejected");
     const CameraStartParameter start = Start(1, 1);
     CameraFrameData frame{};
     frame.sizeThis = sizeof(frame);

@@ -23,16 +23,16 @@ std::uint64_t baselineRegisterStateKey(const QueueState& queue, bool allUserWord
         key ^= value;
         key *= 0x100000001b3ull;
     };
-    const auto userEnd = [&](std::uint32_t base) {
-        if (allUserWords) return base + 32u;
+    const auto userEnd = [&](std::uint32_t base, std::uint32_t limit) {
+        if (allUserWords) return base + limit;
         const auto resources = queue.shader.find(base - 1);
         if (resources == queue.shader.end()) return base;
         const auto count = ((resources->second >> 1u) & 0x1fu) | (((resources->second >> 27u) & 1u) << 5u);
-        return base + std::min(count, 32u);
+        return base + std::min(count, limit);
     };
-    const std::array<std::pair<std::uint32_t, std::uint32_t>, 3> users{{{0x00cu, userEnd(0x00cu)}, {0x08cu, userEnd(0x08cu)}, {0x10cu, userEnd(0x10cu)}}};
+    const std::array<std::array<std::uint32_t, 3>, 4> users{{{0x00cu, userEnd(0x00cu, 32u), 32u}, {0x04cu, userEnd(0x04cu, 16u), 16u}, {0x08cu, userEnd(0x08cu, 32u), 32u}, {0x10cu, userEnd(0x10cu, 32u), 32u}}};
     const auto unread = [&](std::uint32_t offset) {
-        return std::any_of(users.begin(), users.end(), [&](const auto& user) { return offset >= user.second && offset < user.first + 32u; });
+        return std::any_of(users.begin(), users.end(), [&](const auto& user) { return offset >= user[1] && offset < user[0] + user[2]; });
     };
     for (const auto& range : Graphics::DrawKeyRegisters) {
         const auto& bank = range.bank == Graphics::RegisterBank::Context ? queue.context : range.bank == Graphics::RegisterBank::Shader ? queue.shader : queue.userConfig;
