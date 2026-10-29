@@ -280,8 +280,14 @@ void CheckPosixLauncher() {
     HostBrowserLauncher empty{std::string()};
     Require(!empty.Launch("https://example.com/"));
     HostBrowserLauncher guarded(opener.string());
+    std::filesystem::remove(directory / "record");
     Require(!guarded.Launch("-https://example.com/"));
     Require(!guarded.Launch(""));
+    Require(!guarded.Launch("file:///etc/passwd"));
+    Require(!guarded.Launch("https://user@example.com/"));
+    Require(!guarded.Launch("https://example.com/ x"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Require(!std::filesystem::exists(directory / "record"));
     std::filesystem::remove_all(directory);
 }
 #endif
