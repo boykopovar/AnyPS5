@@ -144,9 +144,16 @@ void CheckSuppressedDoesNotUseAttempts() {
     Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Limited);
 }
 
+void CheckDocumentedValues() {
+    Require(OPEN_URL_MAX_ATTEMPTS == 3);
+    Require(OPEN_URL_WINDOW == std::chrono::seconds(60));
+    Require(OPEN_URL_DECLINE_COOLDOWN == std::chrono::seconds(600));
+}
+
 }
 
 int main() {
+    CheckDocumentedValues();
     CheckBusy();
     CheckNever();
     CheckRateCap();
