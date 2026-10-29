@@ -456,6 +456,7 @@ void verifyLayerSpecializationRelease() {
     static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance, spv::CapabilityMeshShadingEXT};
     static constexpr std::array<std::string_view, 3> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"};
     request.target = BufferTarget();
+    request.target.vulkanVersion = 0x00401000u;
     request.target.spirvVersion = 0x00010400u;
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
