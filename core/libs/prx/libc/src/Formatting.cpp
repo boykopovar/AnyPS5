@@ -146,6 +146,7 @@ public:
     void Skip() { ++position; }
     void Advance(std::ptrdiff_t count) { position += count; }
     std::ptrdiff_t Consumed() const { return position - start; }
+    const char* Remaining() const { return position; }
 
 #ifndef _WIN32
     std::size_t PeekWide(char32_t* point) const {
