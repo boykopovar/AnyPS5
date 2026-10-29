@@ -62,11 +62,50 @@ void RequireStrftimeDatesWithoutConsoleFormat() {
     RequireDate("%H:%M:%S", std::nullopt);
 }
 
+void RequireTime(const char* pattern, std::optional<int> expected) {
+    const auto actual = SystemServiceDateTime::TimeFormatOfStrftime(pattern);
+    Require(actual == expected, std::string("strftime time \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
+}
+
+void RequireStrftimeTimes() {
+    using namespace SystemServiceDateTime;
+    RequireTime("%r", TIME_FORMAT_12HOUR);
+    RequireTime("%I:%M:%S %p", TIME_FORMAT_12HOUR);
+    RequireTime("%l:%M:%S %P %Z", TIME_FORMAT_12HOUR);
+    RequireTime("%-I:%M %p", TIME_FORMAT_12HOUR);
+    RequireTime("%OI:%OM", TIME_FORMAT_12HOUR);
+    RequireTime("%T", TIME_FORMAT_24HOUR);
+    RequireTime("%R", TIME_FORMAT_24HOUR);
+    RequireTime("%H:%M:%S", TIME_FORMAT_24HOUR);
+    RequireTime("%k:%M", TIME_FORMAT_24HOUR);
+    RequireTime("%H\xE6\x99\x82%M\xE5\x88\x86%S\xE7\xA7\x92", TIME_FORMAT_24HOUR);
+    RequireTime("%H\xEC\x8B\x9C %M\xEB\xB6\x84 %S\xEC\xB4\x88", TIME_FORMAT_24HOUR);
+    RequireTime("%H\xE6\x97\xB6%M\xE5\x88\x86%S\xE7\xA7\x92", TIME_FORMAT_24HOUR);
+    RequireTime("%H%%%M", TIME_FORMAT_24HOUR);
+    RequireTime("%H:%M:%S %Z", TIME_FORMAT_24HOUR);
+}
+
+void RequireStrftimeTimesWithoutConsoleFormat() {
+    RequireTime("%H:%M %p", std::nullopt);
+    RequireTime("%I:%M %H", std::nullopt);
+    RequireTime("%r %T", std::nullopt);
+    RequireTime("%M:%S", std::nullopt);
+    RequireTime("%X", std::nullopt);
+    RequireTime("%x %T", std::nullopt);
+    RequireTime("%c", std::nullopt);
+    RequireTime("%H:%M:%", std::nullopt);
+    RequireTime("", std::nullopt);
+    RequireTime("HH:mm", std::nullopt);
+    RequireTime("%d/%m/%Y", std::nullopt);
+}
+
 }
 
 int main() {
     RequireStrftimeDates();
     RequireStrftimeDatesWithoutConsoleFormat();
+    RequireStrftimeTimes();
+    RequireStrftimeTimesWithoutConsoleFormat();
     if (failures != 0) return 1;
     std::puts("system service date and time locale: all checks passed");
     return 0;
