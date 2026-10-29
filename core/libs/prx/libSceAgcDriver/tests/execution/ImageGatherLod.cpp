@@ -29,6 +29,10 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t ClampWrap = 0;
 constexpr std::uint32_t ClampMirror = 1;
 constexpr std::uint32_t ClampEdge = 2;
+constexpr std::uint32_t ClampMirrorOnce = 3;
+constexpr std::uint32_t ClampHalfBorder = 4;
+constexpr std::uint32_t ClampBorder = 6;
+constexpr std::uint32_t ClampMirrorOnceBorder = 7;
 constexpr std::uint32_t FilterPoint = 0;
 constexpr std::uint32_t FilterBilinear = 1;
 constexpr std::uint32_t MipNone = 0;
@@ -59,6 +63,7 @@ struct Variant {
     std::uint32_t minLodRaw;
     std::uint32_t maxLodRaw;
     std::int32_t biasRaw;
+    std::uint32_t textureMinLodRaw;
     const char* name;
 };
 
@@ -67,11 +72,11 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format) {
+std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format, std::uint32_t minLodRaw = 0u) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Texels.data()));
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((Size - 1u) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (minLodRaw << 8u) | (format << 20u) | (((Size - 1u) & 3u) << 30u),
         ((Size - 1u) >> 2u) | ((Size - 1u) << 14u),
         0xfacu | ((Levels - 1u) << 16u) | (Type2D << 28u),
         0u,
@@ -136,11 +141,17 @@ int Address(int coordinate, int extent, std::uint32_t clamp) {
     }
 }
 
+bool Fallback(const Variant& variant) {
+    const auto border = [](std::uint32_t clamp) { return clamp == ClampHalfBorder || clamp == ClampBorder; };
+    return border(variant.clampX) || border(variant.clampY);
+}
+
 std::uint32_t Level(float lod, const Variant& variant) {
-    if (variant.mipFilter == MipNone) return 0u;
+    if (variant.mipFilter == MipNone || Fallback(variant)) return 0u;
     const auto clamp = [](float value, float low, float high) { return std::isnan(value) ? low : std::min(std::max(value, low), high); };
     const float biased = lod + static_cast<float>(variant.biasRaw) / 256.0f;
-    const float limited = clamp(clamp(biased, static_cast<float>(variant.minLodRaw) / 256.0f, static_cast<float>(variant.maxLodRaw) / 256.0f), 0.0f, static_cast<float>(Levels - 1u));
+    const float sampled = std::min(std::isnan(biased) ? static_cast<float>(variant.minLodRaw) / 256.0f : std::max(biased, static_cast<float>(variant.minLodRaw) / 256.0f), static_cast<float>(variant.maxLodRaw) / 256.0f);
+    const float limited = clamp(std::max(sampled, static_cast<float>(variant.textureMinLodRaw) / 256.0f), 0.0f, static_cast<float>(Levels - 1u));
     return static_cast<std::uint32_t>(std::clamp(std::ceil(limited + 0.5f) - 1.0f, 0.0f, static_cast<float>(Levels - 1u)));
 }
 
@@ -151,7 +162,10 @@ std::array<std::uint32_t, 4> Expected(std::uint32_t tid, const Variant& variant)
     const int extent = static_cast<int>(Size >> level);
     const int left = static_cast<int>(std::floor(u * static_cast<float>(extent) - 0.5f));
     const int top = static_cast<int>(std::floor(v * static_cast<float>(extent) - 0.5f));
-    const auto texel = [&](int x, int y) { return static_cast<std::uint32_t>(Red(level, static_cast<std::uint32_t>(Address(x, extent, variant.clampX)), static_cast<std::uint32_t>(Address(y, extent, variant.clampY)))); };
+    const auto texel = [&](int x, int y) {
+        if (Fallback(variant) && (x < 0 || y < 0 || x >= extent || y >= extent)) return 0u;
+        return static_cast<std::uint32_t>(Red(level, static_cast<std::uint32_t>(Address(x, extent, variant.clampX)), static_cast<std::uint32_t>(Address(y, extent, variant.clampY))));
+    };
     return {texel(left, top + 1), texel(left + 1, top + 1), texel(left + 1, top), texel(left, top)};
 }
 
@@ -159,7 +173,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const
     std::vector<std::uint32_t> userData(20, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
-    const auto texture = TextureDescriptor(variant.format);
+    const auto texture = TextureDescriptor(variant.format, variant.textureMinLodRaw);
     const auto sampler = SamplerDescriptor(variant);
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4);
@@ -207,15 +221,18 @@ int main() {
         FillTexels();
         FillInput();
         constexpr std::uint32_t AllLevels = 15u << 8u;
-        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 0u, AllLevels, 0, "clamp to edge, point"});
-        Run(*device, {Format8888UNorm, ClampWrap, ClampWrap, FilterPoint, MipPoint, 0u, AllLevels, 0, "wrap, point"});
-        Run(*device, {Format8888UNorm, ClampMirror, ClampMirror, FilterPoint, MipPoint, 0u, AllLevels, 0, "mirror, point"});
-        Run(*device, {Format8888UNorm, ClampEdge, ClampWrap, FilterBilinear, MipPoint, 0u, AllLevels, 0, "bilinear x/y"});
-        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 320u, 704u, 0, "MIN_LOD 1.25, MAX_LOD 2.75"});
-        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 512u, 512u, 0, "MIN_LOD = MAX_LOD = 2"});
-        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 0u, AllLevels, -192, "LOD_BIAS -0.75"});
-        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipNone, 0u, AllLevels, 0, "MIP_FILTER none"});
-        Run(*device, {Format8888UInt, ClampEdge, ClampWrap, FilterBilinear, MipPoint, 0u, AllLevels, 0, "8_8_8_8 UINT with a bilinear sampler"});
+        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 0u, AllLevels, 0, 0u, "clamp to edge, point"});
+        Run(*device, {Format8888UNorm, ClampWrap, ClampWrap, FilterPoint, MipPoint, 0u, AllLevels, 0, 0u, "wrap, point"});
+        Run(*device, {Format8888UNorm, ClampMirror, ClampMirror, FilterPoint, MipPoint, 0u, AllLevels, 0, 0u, "mirror, point"});
+        Run(*device, {Format8888UNorm, ClampEdge, ClampWrap, FilterBilinear, MipPoint, 0u, AllLevels, 0, 0u, "bilinear x/y"});
+        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 320u, 704u, 0, 0u, "MIN_LOD 1.25, MAX_LOD 2.75"});
+        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 512u, 512u, 0, 0u, "MIN_LOD = MAX_LOD = 2"});
+        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 0u, AllLevels, -192, 0u, "LOD_BIAS -0.75"});
+        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipNone, 0u, AllLevels, 0, 0u, "MIP_FILTER none"});
+        Run(*device, {Format8888UInt, ClampEdge, ClampWrap, FilterBilinear, MipPoint, 0u, AllLevels, 0, 0u, "8_8_8_8 UINT with a bilinear sampler"});
+        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 0u, AllLevels, 0, 640u, "T# MIN_LOD 2.5"});
+        Run(*device, {Format8888UNorm, ClampMirrorOnce, ClampMirrorOnceBorder, FilterPoint, MipPoint, 0u, AllLevels, 0, 0u, "mirror once (modes 3 and 7)"});
+        Run(*device, {Format8888UNorm, ClampBorder, ClampHalfBorder, FilterPoint, MipPoint, 0u, AllLevels, 0, 0u, "border modes 6 and 4: base-level gather"});
         std::puts("image 2D explicit-LOD gather tests passed");
         return 0;
     } catch (const std::exception& error) {
