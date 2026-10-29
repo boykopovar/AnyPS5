@@ -28,6 +28,7 @@ private:
     HostPauseSettings settings;
     Clock clock;
     bool keyPaused = false;
+    bool focusLost = false;
     std::chrono::steady_clock::time_point pausedAt{};
     std::atomic<bool> paused{false};
 };
