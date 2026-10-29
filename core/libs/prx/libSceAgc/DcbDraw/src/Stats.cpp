@@ -22,13 +22,12 @@ std::uint32_t* APS5_VABI sceAgcDcbGetLodStats(CommandBuffer* buf, std::uint8_t c
 }
 
 std::uint32_t APS5_VABI sceAgcDcbBeginOcclusionQueryGetSize(std::int32_t queryType) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (queryType == 1) return 0x120u;
+    return queryType == 0 ? 0x10u : 0u;
 }
 
 std::uint32_t APS5_VABI sceAgcDcbEndOcclusionQueryGetSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 0x10u;
 }
 
 }

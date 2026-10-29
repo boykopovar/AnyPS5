@@ -1,8 +1,12 @@
 import argparse
+import bisect
 import functools
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from nid_names import CPP_TOKEN
 
 PREFIXES = ("APS5_", "ANYPS5_")
 DOC = "docs/dev/ENVIRONMENT.md"
@@ -10,13 +14,14 @@ ROOTS = ("core",)
 EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".py"}
 SKIP = {"build", "build-linux", "build-relinker", "3rdparty", ".git"}
 
-INTEGER_READERS = {"kibSetting", "MaskFromEnvironment", "EnvInt", "configured", "environmentCount"}
+INTEGER_READERS = {"kibSetting", "MaskFromEnvironment", "EnvInt", "configured", "environmentCount", "EnvironmentNumber"}
 STRING_READERS = {"GetEnvironmentVariableA", "GetEnvironmentVariableW", "addWideString"}
-NULL_TEST = re.compile(r"[!=]=\s*(nullptr|NULL|0)\b|!\s*(?:std::)?_?w?getenv\(")
+NULL_TEST = re.compile(r"[!=]=\s*(nullptr|NULL|0)\b|!\s*(?:std::)?_?w?getenv\s*\(")
 INTEGER_TEST = re.compile(r"\b(atoi|strtol|strtoul|strtoll|strtoull|stoi|stol|stoul|from_chars|atoi64|_wtoi|_wtol|_wtoi64)\s*\(")
 GREP = (r'(getenv|_wgetenv|wgetenv|IsEnvironmentSet|kibSetting|MaskFromEnvironment|EnvInt|GetEnvironmentVariable[AW]'
-        r'|configured|PipelineSwitch|environmentCount|addWideString)'
+        r'|configured|PipelineSwitch|environmentCount|EnvironmentNumber|addWideString)'
         r'\([[:space:]]*(u|L)?"(APS5|ANYPS5)_[A-Za-z0-9_]+"')
+GREP = GREP.replace(r"\(", r"[[:space:]]*\(")
 
 
 def _name(prefixes):
@@ -26,7 +31,7 @@ def _name(prefixes):
 @functools.lru_cache(maxsize=None)
 def forms(prefixes=PREFIXES):
     name = _name(prefixes)
-    return (
+    readers = (
         ("getenv", re.compile(r'(?:std::)?getenv\(\s*"(?P<name>' + name + r')"\s*\)')),
         ("_wgetenv", re.compile(r'(?:std::)?_?wgetenv\(\s*L"(?P<name>' + name + r')"\s*\)')),
         ("IsEnvironmentSet", re.compile(r'IsEnvironmentSet\(\s*"(?P<name>' + name + r')"\s*\)')),
@@ -36,10 +41,12 @@ def forms(prefixes=PREFIXES):
         ("configured", re.compile(r'\b(?:configured|PipelineSwitch)\(\s*"(?P<name>' + name + r')"'
                                   r'(?:\s*,\s*(?P<default>[0-9]+)[uUlL]*)?')),
         ("environmentCount", re.compile(r'\benvironmentCount\(\s*"(?P<name>' + name + r')"\s*,\s*(?P<default>[0-9]+)')),
+        ("EnvironmentNumber", re.compile(r'\bEnvironmentNumber\(\s*"(?P<name>' + name + r')"\s*\)')),
         ("GetEnvironmentVariableA", re.compile(r'GetEnvironmentVariableA\(\s*"(?P<name>' + name + r')"')),
         ("GetEnvironmentVariableW", re.compile(r'GetEnvironmentVariableW\(\s*L"(?P<name>' + name + r')"')),
         ("addWideString", re.compile(r'\baddWideString\(\s*u"(?P<name>' + name + r')"\s*\)')),
     )
+    return tuple((reader, re.compile(form.pattern.replace(r"\(", r"\s*\(", 1), form.flags)) for reader, form in readers)
 
 
 def line_reads(line, prefixes=PREFIXES):
@@ -72,6 +79,37 @@ def default_of(match, window):
     return found.group(1) if found else ""
 
 
+def expression_window(text, code, matches, match, start, end):
+    peers = sorted((other.start() for _, other in matches if start <= other.start() < end))
+    if len(peers) < 2:
+        return text[start:end]
+    peer_set = set(peers)
+    depths = {}
+    commas = []
+    depth = 0
+    for pos in range(start, end):
+        if pos in peer_set:
+            depths[pos] = depth
+        token = code[pos]
+        if token in "([":
+            depth += 1
+        elif token in ")]":
+            depth -= 1
+        elif token == ",":
+            commas.append((pos, depth))
+    for pos, comma_depth in commas:
+        left = bisect.bisect_left(peers, pos)
+        if not left or left == len(peers):
+            continue
+        if comma_depth > min(depths[peers[left - 1]], depths[peers[left]]):
+            continue
+        if pos < match.start():
+            start = max(start, pos + 1)
+        elif pos >= match.end():
+            end = min(end, pos)
+    return text[start:end]
+
+
 def source_files(root):
     root = Path(root)
     if not root.is_dir():
@@ -88,16 +126,21 @@ def reads(roots, prefixes=PREFIXES):
         for path in source_files(root):
             try:
                 text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+            except (OSError, UnicodeDecodeError) as error:
+                raise ValueError(f"cannot read {path.as_posix()}: {error}") from error
+            matches = line_reads(text, prefixes)
+            if not matches:
                 continue
-            lines = text.splitlines()
-            for number, line in enumerate(lines, 1):
-                if not any(prefix in line for prefix in prefixes):
-                    continue
-                window = "\n".join(lines[number - 1:number + 2])
-                for reader, match in line_reads(line, prefixes):
-                    found.setdefault(match.group("name"), []).append(
-                        (path.as_posix(), number, kind_of(reader, window), default_of(match, window)))
+            code = CPP_TOKEN.sub(lambda token: token.group() if token.group("code") else " " * len(token.group()), text)
+            starts = [0] + [match.end() for match in re.finditer("\n", text)]
+            for reader, match in matches:
+                number = bisect.bisect_right(starts, match.start())
+                start = max(code.rfind(token, 0, match.start()) for token in ";{}") + 1
+                end = code.find(";", match.end())
+                end = end + 1 if end >= 0 else len(text)
+                window = expression_window(text, code, matches, match, start, end)
+                found.setdefault(match.group("name"), []).append(
+                    (path.as_posix(), number, kind_of(reader, window), default_of(match, window)))
     for sites in found.values():
         sites.sort()
     return found
@@ -158,6 +201,9 @@ def check(found, doc, prefixes, out):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="list the environment names the code reads, or check them against a reference document")
     parser.add_argument("--check", action="store_true",
@@ -176,7 +222,11 @@ def main(argv=None):
         if not Path(root).is_dir():
             print(f"error: scan root {root} is not a directory", file=sys.stderr)
             return 1
-    found = reads(roots, prefixes)
+    try:
+        found = reads(roots, prefixes)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     if args.check:
         return check(found, args.doc, prefixes, sys.stdout)
     if args.table:

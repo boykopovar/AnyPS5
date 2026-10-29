@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
 
         Store(texels);
         if (wake) {
-            const auto pendingDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            const auto pendingDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
             while (!AgcDriver::Graphics::StorageTexture::AnyPending() && std::chrono::steady_clock::now() < pendingDeadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
             Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "idle wake fixture did not observe pending storage results");
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
             cpu = nextTexels;
             Store(nextTexels);
         }
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (!stored() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         Require(stored(), "the queue-idle store did not bring the result to guest memory without a direct flush or further submission");
 

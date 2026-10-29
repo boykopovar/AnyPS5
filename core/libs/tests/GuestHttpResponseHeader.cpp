@@ -1,3 +1,4 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdio>
@@ -12,8 +13,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-extern "C" int APS5_VABI sceHttpParseResponseHeader(const char*, std::size_t, const char*, const char**, std::size_t*);
 
 static void Require(bool value) {
     if (!value) {

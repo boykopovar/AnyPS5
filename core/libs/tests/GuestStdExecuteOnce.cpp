@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <atomic>
@@ -5,7 +6,7 @@
 #include <thread>
 
 using Callback = int (APS5_VABI *)(void*, void*, void**);
-extern "C" int APS5_VABI std_execute_once_nid_postfix(int*, Callback, void*);
+
 static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> calls{0}, arrived{0};
@@ -53,6 +54,7 @@ int main() {
 
     try {
         std_execute_once_nid_postfix(&throwing, Throw, nullptr);
+
         std::abort();
     } catch (int value) {
         Require(value == 7 && throwing == 0);

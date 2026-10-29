@@ -114,7 +114,7 @@ void verify(std::uint32_t waveSize, std::uint32_t limit, bool int64Atomics) {
     const bool native = int64Atomics && limit < 68u;
     require(widths.contains(64u) == native, native ? "device-memory LDS did not use a 64-bit compare exchange" : "a 64-bit compare exchange appeared without device-memory LDS and shaderBufferInt64Atomics");
     require(widths.contains(32u) != native, native ? "device-memory LDS with shaderBufferInt64Atomics kept the workgroup lock" : "the 64-bit LDS atomic lost its workgroup lock");
-    require(result.bdaAbiVersion == (limit < 68u ? 1u : 0u), "the fault buffer for a misaligned 64-bit LDS atomic does not follow device-memory LDS at limit " + std::to_string(limit));
+    require(result.bdaAbiVersion == 1u, "a 64-bit LDS atomic did not get the fault buffer for a misaligned address at limit " + std::to_string(limit));
 }
 
 }

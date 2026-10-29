@@ -4,10 +4,13 @@
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
+#include <domain/ImportModule.hpp>
 #include <io/BufferUtils.hpp>
+#include <nid/NidCompute.hpp>
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <set>
 #include <span>
 #include <sstream>
 #include <string>
@@ -19,6 +22,8 @@ namespace Elfpatcher::Linux {
 namespace {
 
 constexpr std::uint64_t kLinuxUserAddressEnd = 0x800000000000;
+constexpr std::uint64_t kLazyPltGotBytes = 24;
+constexpr std::uint64_t kPltGotEntryBytes = 8;
 
 std::string Hex(const std::uint64_t value) {
     std::ostringstream text;
@@ -78,11 +83,9 @@ std::vector<std::uint8_t> RebasedRelocations(const std::vector<std::uint8_t>& ta
         }
         case R_X86_64_64:
         case R_X86_64_PC32:
-        case R_X86_64_COPY:
         case R_X86_64_GLOB_DAT:
         case R_X86_64_JUMP_SLOT:
         case R_X86_64_32:
-        case R_X86_64_32S:
         case R_X86_64_DTPMOD64:
         case R_X86_64_DTPOFF64:
         case R_X86_64_TPOFF64:
@@ -95,9 +98,30 @@ std::vector<std::uint8_t> RebasedRelocations(const std::vector<std::uint8_t>& ta
     return rebased;
 }
 
+void RequireZeroImportSlotAddends(const std::vector<std::uint8_t>& table) {
+    for (std::size_t entry = 0; entry < table.size(); entry += kRelaEntrySize) {
+        const auto type = static_cast<std::uint32_t>(Io::ReadU64(table, entry + 8));
+        if ((type == R_X86_64_GLOB_DAT || type == R_X86_64_JUMP_SLOT) && Io::ReadU64(table, entry + 16) != 0)
+            throw Domain::RelinkerException("GLOB_DAT/JUMP_SLOT relocation has a nonzero addend", Io::ReadU64(table, entry));
+    }
+}
+
 void RequireFileRange(const std::vector<std::uint8_t>& buf, const Domain::ProgramHeader& load) {
     if (load.Offset > buf.size() || load.FileSize > buf.size() - load.Offset)
         throw Domain::RelinkerException("PT_LOAD at " + Hex(load.MappedAddress) + " has file bytes outside the input");
+}
+
+void RequireLoaded(const std::vector<Domain::ProgramHeader>& headers, const std::uint64_t address, const std::uint64_t size, const std::uint32_t flags, const std::string& what) {
+    for (const auto& header : headers)
+        if (header.Type == PT_LOAD && (header.Flags == 0 || (header.Flags & flags) == flags) && address >= header.MappedAddress && address - header.MappedAddress < header.MemorySize && size <= header.MemorySize - (address - header.MappedAddress))
+            return;
+    const auto range = size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : std::string(" is not inside ");
+    throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : "a") + " PT_LOAD segment");
+}
+
+std::uint64_t RelocationWidth(const std::vector<std::uint8_t>& relocations, const std::size_t entry) {
+    const auto type = static_cast<std::uint32_t>(Io::ReadU64(relocations, entry + 8));
+    return type == R_X86_64_PC32 || type == R_X86_64_32 ? 4 : 8;
 }
 
 void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain::ProgramHeader>& headers) {
@@ -111,6 +135,11 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
     std::stable_sort(loads.begin(), loads.end(), [&headers](const std::size_t left, const std::size_t right) {
         return headers[left].MappedAddress < headers[right].MappedAddress;
     });
+    for (std::size_t position = 1; position < loads.size(); ++position) {
+        const auto& previous = headers[loads[position - 1]];
+        if (headers[loads[position]].MappedAddress - previous.MappedAddress < previous.MemorySize)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", headers[loads[position]].MappedAddress);
+    }
     for (std::size_t position = 0; position < loads.size(); ++position) {
         auto& load = headers[loads[position]];
         const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
@@ -169,7 +198,7 @@ std::vector<TracedImport> TracedImports(const Domain::SysVDynamicSection& dynSec
             const auto type = static_cast<std::uint32_t>(info);
             const auto symbol = info >> 32;
             const auto target = Io::ReadU64(table, entry);
-            if ((type != R_X86_64_GLOB_DAT && type != R_X86_64_JUMP_SLOT) || symbol == 0 || Io::ReadU64(table, entry + 16) != 0)
+            if ((type != R_X86_64_GLOB_DAT && type != R_X86_64_JUMP_SLOT) || symbol == 0)
                 continue;
             if (type == R_X86_64_GLOB_DAT && !dynSection.FunctionImports.contains(target))
                 continue;
@@ -188,6 +217,46 @@ std::vector<TracedImport> TracedImports(const Domain::SysVDynamicSection& dynSec
     collect(dynSection.RelaData);
     collect(dynSection.RelaPltData);
     return imports;
+}
+
+Domain::SysVDynamicSection ImportsByNid(Domain::SysVDynamicSection dynSection) {
+    RequireWholeEntries(dynSection.DynamicSegmentData, kDynEntrySize, "Executable dependency table");
+    for (std::size_t entry = 0; entry < dynSection.DynamicSegmentData.size(); entry += kDynEntrySize) {
+        if (static_cast<std::int64_t>(Io::ReadU64(dynSection.DynamicSegmentData, entry)) != DT_NEEDED)
+            continue;
+        const auto offset = Io::ReadU64(dynSection.DynamicSegmentData, entry + 8);
+        if (offset >= dynSection.DynStrData.size())
+            throw Domain::RelinkerException("DT_NEEDED string offset is out of bounds", offset);
+        const auto name = ReadDynamicString(dynSection.DynStrData, static_cast<std::uint32_t>(offset));
+        const auto library = Domain::NeededLibraryName(name);
+        if (library == name)
+            continue;
+        Io::WriteU64(dynSection.DynamicSegmentData, entry + 8, dynSection.DynStrData.size());
+        Io::AppendString(dynSection.DynStrData, library);
+    }
+    for (auto& library : dynSection.NeededLibraries)
+        library = Domain::NeededLibraryName(library);
+
+    std::set<std::uint64_t> symbols;
+    for (const auto* table : {&dynSection.RelaData, &dynSection.RelaPltData}) {
+        RequireWholeEntries(*table, kRelaEntrySize, "Relocation table");
+        for (std::size_t entry = 0; entry < table->size(); entry += kRelaEntrySize)
+            if (dynSection.NamedImports.contains(Io::ReadU64(*table, entry)))
+                symbols.insert(Io::ReadU64(*table, entry + 8) >> 32);
+    }
+    for (const auto symbol : symbols) {
+        if (symbol >= dynSection.DynSymData.size() / kSymEntrySize)
+            throw Domain::RelinkerException("Invalid import symbol index", symbol);
+        const auto symbolOffset = static_cast<std::size_t>(symbol * kSymEntrySize);
+        const auto name = ReadDynamicString(dynSection.DynStrData, Io::ReadU32(dynSection.DynSymData, symbolOffset));
+        if (name.empty() || name.find('#') != std::string::npos)
+            continue;
+        if (dynSection.DynStrData.size() > std::numeric_limits<std::uint32_t>::max())
+            throw Domain::RelinkerException("Dynamic string table too large");
+        Io::WriteU32(dynSection.DynSymData, symbolOffset, static_cast<std::uint32_t>(dynSection.DynStrData.size()));
+        Io::AppendString(dynSection.DynStrData, Nid::ComputeNid(name, ""));
+    }
+    return dynSection;
 }
 
 std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::uint64_t table, const std::uint64_t tableEnd, const std::uint64_t function) {
@@ -297,13 +366,16 @@ void LinuxElfPatcher::_appendTrampoline(
 std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     std::vector<std::uint8_t> sourceElf,
     const std::vector<Domain::ProgramHeader>& originalHeaders,
-    const Domain::SysVDynamicSection& dynSection,
+    const Domain::SysVDynamicSection& sourceDynSection,
     const std::uint64_t originalPltGotVaddr,
     const std::string& runPath,
     const bool lazyBinding,
     const bool dependencyDiagnostics,
     const std::vector<Codegen::TrampolineSite>& trampolines)
 {
+    const auto dynSection = ImportsByNid(sourceDynSection);
+    if (runPath.empty() || runPath.front() == ':' || runPath.back() == ':' || runPath.find("::") != std::string::npos)
+        throw Domain::RelinkerException("Empty Linux run path component is not supported");
     if (dependencyDiagnostics)
         throw Domain::RelinkerException("Linux target does not support --windows-diagnostics");
     if (_fixedBase && lazyBinding)
@@ -312,8 +384,16 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
         throw Domain::RelinkerException("--trace-imports conflicts with --lazy-binding");
     if (_traceImports && std::find(dynSection.NeededLibraries.begin(), dynSection.NeededLibraries.end(), "libc.prx") == dynSection.NeededLibraries.end())
         throw Domain::RelinkerException("--trace-imports requires libc.prx among the libraries");
+    RequireZeroImportSlotAddends(dynSection.RelaData);
+    RequireZeroImportSlotAddends(dynSection.RelaPltData);
     if (_fixedBase)
         RequireOnlyDependencies(dynSection.DynamicSegmentData);
+    RequireLoaded(originalHeaders, Io::ReadU64(sourceElf, kEhdrEntryOffset), 1, PF_X, "e_entry");
+    for (const auto& [relocationTable, name] : {std::pair{&dynSection.RelaData, "RELA r_offset"}, std::pair{&dynSection.RelaPltData, "JMPREL r_offset"}})
+        for (std::size_t entry = 0; entry < relocationTable->size(); entry += kRelaEntrySize)
+            RequireLoaded(originalHeaders, Io::ReadU64(*relocationTable, entry), RelocationWidth(*relocationTable, entry), 0, name);
+    if (!dynSection.RelaPltData.empty())
+        RequireLoaded(originalHeaders, originalPltGotVaddr, lazyBinding ? kLazyPltGotBytes : kPltGotEntryBytes, 0, "DT_PLTGOT");
     const auto traced = _traceImports ? TracedImports(dynSection) : std::vector<TracedImport>{};
     const std::uint64_t base = _fixedBase.value_or(0);
     const auto address = [this, base](const std::uint64_t vaddr) {
@@ -327,8 +407,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     std::vector<std::uint8_t> buf = std::move(sourceElf);
 
     const std::uint32_t type = _fixedBase ? ET_EXEC : ET_DYN;
-    buf[kEhdrOsAbiOffset] = 0;
-    buf[kEhdrAbiVersionOffset] = 0;
+    std::fill_n(buf.begin() + static_cast<std::ptrdiff_t>(kEhdrOsAbiOffset), 9, std::uint8_t{0});
     buf[kEhdrTypeOffset] = static_cast<std::uint8_t>(type & 0xFF);
     buf[kEhdrTypeOffset + 1] = static_cast<std::uint8_t>((type >> 8) & 0xFF);
     _byteWriter->WriteU64(buf, kEhdrShOffOffset, 0);

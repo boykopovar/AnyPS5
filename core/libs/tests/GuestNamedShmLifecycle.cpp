@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "nid/Sha1.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -14,31 +16,6 @@
 #include <string>
 #include <sys/mman.h>
 #include <unistd.h>
-
-extern "C" {
-int APS5_VABI shm_open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-std::int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int, FileStat*);
-std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int, const void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-int APS5_VABI dup2_nid_postfix(int, int);
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-int APS5_VABI mprotect_nid_postfix(void*, std::size_t, int);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-std::int64_t APS5_VABI writev_nid_postfix(int, const struct GuestIovec*, int);
-std::int64_t APS5_VABI pwritev_nid_postfix(int, const struct GuestIovec*, int, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-}
-
-struct GuestIovec {
-    void* base;
-    std::size_t length;
-};
 
 namespace {
 constexpr int ReadOnly = 0;
@@ -115,7 +92,7 @@ void Run() {
     Require(write_nid_postfix(descriptor, "xy", 2) == 1, "cross-EOF write did not return its short length");
     Require(lseek_nid_postfix(descriptor, 0, SEEK_END) == static_cast<std::int64_t>(Page), "cross-EOF write changed object size");
     char vectorBytes[] = "uv";
-    GuestIovec vectorWrite{vectorBytes, 2};
+    KernelIovec vectorWrite{vectorBytes, 2};
     Require(pwritev_nid_postfix(descriptor, nullptr, 0, Page) == 0, "zero-vector positioned write on a writable descriptor failed");
     Require(pwritev_nid_postfix(descriptor, &vectorWrite, 1, Page) == 0, "positioned vector write at EOF grew the object");
     Require(pwritev_nid_postfix(descriptor, &vectorWrite, 1, Page - 1) == 1, "positioned vector write past EOF was not short");
