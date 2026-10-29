@@ -210,6 +210,29 @@ bool CheckMergesort() {
     if (!correct) std::fprintf(stderr, "mergesort failed\n");
     return correct;
 }
+
+bool CheckHeapsort() {
+    bool correct = true;
+    for (const std::size_t count : {0, 1, 2, 3, 7, 16, 33, 1000}) {
+        std::vector<Element> elements;
+        for (std::size_t index = 0; index < count; ++index) elements.push_back({static_cast<int>((index * 7919) % 5), static_cast<int>(index)});
+        correct &= heapsort_nid_postfix(elements.data(), count, sizeof(Element), CompareKeys) == 0;
+        for (std::size_t index = 1; index < count; ++index) {
+            const auto& before = elements[index - 1];
+            const auto& after = elements[index];
+            correct &= before.key <= after.key;
+        }
+    }
+    unsigned char bytes[3] = {3, 1, 2};
+    *__error_nid_postfix() = 0;
+    correct &= heapsort_nid_postfix(nullptr, 0, 0, nullptr) == 0;
+    unsigned char single = 42;
+    correct &= heapsort_nid_postfix(&single, 1, 0, nullptr) == 0;
+    correct &= heapsort_nid_postfix(bytes, 3, 0, CompareFirstByte) == -1 && *__error_nid_postfix() == 22 && bytes[0] == 3;
+    correct &= heapsort_nid_postfix(nullptr, 0, 4, CompareKeys) == 0;
+    if (!correct) std::fprintf(stderr, "heapsort failed\n");
+    return correct;
+}
 }
 
 int main() {
@@ -229,5 +252,6 @@ int main() {
         for (const std::size_t count : {0, 1, 2, 6, 7, 8, 40, 41, 1000})
             correct &= ExpectSorted(size, count);
     correct &= CheckMergesort();
+    correct &= CheckHeapsort();
     return correct ? 0 : 1;
 }

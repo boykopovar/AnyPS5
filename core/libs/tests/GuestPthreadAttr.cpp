@@ -165,14 +165,7 @@ static void CheckSchedulingAttributes() {
 
     Require(pthread_attr_getscope_nid_postfix(&attr, nullptr) == GUEST_EINVAL);
 
-    bool threw = false;
-    try {
-        pthread_attr_getinheritsched_nid_postfix(&attr, nullptr);
-
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
+    Require(pthread_attr_getinheritsched_nid_postfix(&attr, nullptr) == GUEST_EINVAL);
 
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == GUEST_EINVAL);
@@ -196,6 +189,8 @@ static void CheckThreadScope() {
     PthreadAttr queryAttr = nullptr;
     Require(scePthreadAttrInit(&queryAttr) == SCE_OK);
     Require(scePthreadAttrGet(thread, &queryAttr) == SCE_OK);
+    int reportedInherit = -1;
+    Require(pthread_attr_getinheritsched_nid_postfix(&queryAttr, &reportedInherit) == 0 && reportedInherit == EXPLICIT_SCHED);
     int scope = -1;
     Require(pthread_attr_getscope_nid_postfix(&queryAttr, &scope) == 0 && scope == SCOPE_PROCESS);
 
@@ -218,10 +213,15 @@ static void CheckThreadScope() {
 
     Require(scePthreadAttrInit(&queryAttr) == SCE_OK);
     Require(scePthreadAttrGet(inheritedThread, &queryAttr) == SCE_OK);
+    reportedInherit = -1;
+    Require(pthread_attr_getinheritsched_nid_postfix(&queryAttr, &reportedInherit) == 0 && reportedInherit == INHERIT_SCHED);
     scope = -1;
     Require(pthread_attr_getscope_nid_postfix(&queryAttr, &scope) == 0 && scope == SCOPE_SYSTEM);
+    Require(pthread_attr_setinheritsched_nid_postfix(&queryAttr, EXPLICIT_SCHED) == 0);
     Require(pthread_attr_get_np_nid_postfix(inheritedThread, &queryAttr) == 0);
     Require(pthread_attr_getscope_nid_postfix(&queryAttr, &scope) == 0 && scope == SCOPE_SYSTEM);
+    reportedInherit = -1;
+    Require(pthread_attr_getinheritsched_nid_postfix(&queryAttr, &reportedInherit) == 0 && reportedInherit == INHERIT_SCHED);
     Require(scePthreadAttrDestroy(&queryAttr) == SCE_OK);
 
     releaseInherited.set_value();
@@ -319,7 +319,23 @@ static void CheckEndedThreads() {
     Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
 }
 
+static void CheckGetprioOfTheCallingThread() {
+    const Pthread self = scePthreadSelf();
+    int original = 0;
+    Require(scePthreadGetprio(self, &original) == SCE_OK);
+    int priority = 0;
+    Require(scePthreadSetprio(self, UPDATED_PRIORITY) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == UPDATED_PRIORITY);
+    Require(scePthreadSetprio(self, CREATION_PRIORITY) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == CREATION_PRIORITY);
+    Require(scePthreadGetprio(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadSetprio(self, original) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == original);
+}
+
 int main() {
+    CheckGetprioOfTheCallingThread();
     CheckStackSizeLimit();
     CheckSoloSched();
     CheckSchedArguments();
@@ -346,6 +362,11 @@ int main() {
     Require(reported.stackSize == STACK_SIZE);
     Require(reported.detachState == DETACH_JOINABLE);
 
+    for (const int rejected : {-1, 0, 255, 768, 895, 960, 1023, 131840}) Require(scePthreadSetprio(thread, rejected) == SCE_KERNEL_ERROR_EINVAL);
+    for (const int accepted : {256, 900, 959, 65792, -65280}) {
+        Require(scePthreadSetprio(thread, accepted) == SCE_OK);
+        Require(Query(thread).priority == accepted);
+    }
     Require(scePthreadSetprio(thread, UPDATED_PRIORITY) == SCE_OK);
     Require(scePthreadSetaffinity(thread, UPDATED_AFFINITY) == SCE_OK);
     reported = Query(thread);
