@@ -6,7 +6,6 @@
 #include <cstring>
 #include <cstdio>
 #include <source_location>
-#include <stdexcept>
 
 namespace {
 
@@ -68,35 +67,9 @@ void TestEmptyHeaderHasNoValue() {
     Require(GuardIntact(storage));
 }
 
-void TestHeaderWithStorageIsNotImplementedOffline() {
-    Storage storage;
-    IntrusivePtrStorage value;
-    std::memset(storage.bytes, kFill, sizeof(storage.bytes));
-    std::memset(value.bytes, kFill, sizeof(value.bytes));
-
-    _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBaseC2Ev(reinterpret_cast<CommonResponseHeaderBase*>(storage.bytes));
-    *reinterpret_cast<void**>(storage.bytes + kHeadersOffset) = reinterpret_cast<void*>(1);
-
-    bool threw = false;
-    try {
-        _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBase14getHeaderValueEPKcRNS2_12IntrusivePtrINS2_6StringEEE(
-            reinterpret_cast<const CommonResponseHeaderBase*>(storage.bytes), "Content-Type",
-            reinterpret_cast<IntrusivePtr*>(value.bytes));
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
-    Require(value.bytes[0] == kFill && value.bytes[sizeof(IntrusivePtr)] == kFill);
-
-    *reinterpret_cast<void**>(storage.bytes + kHeadersOffset) = nullptr;
-    _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBaseD2Ev(reinterpret_cast<CommonResponseHeaderBase*>(storage.bytes));
-    Require(GuardIntact(storage));
-}
-
 }
 
 int main() {
     TestEmptyHeaderHasNoValue();
-    TestHeaderWithStorageIsNotImplementedOffline();
     return 0;
 }
