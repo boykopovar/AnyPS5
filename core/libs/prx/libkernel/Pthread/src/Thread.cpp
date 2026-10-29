@@ -15,6 +15,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestCpu.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -776,7 +777,9 @@ static thread_local std::unique_ptr<PthreadPrivate> adoptedThread;
 // and aborts. scePthreadExit instead jumps back to the thread start routine, which,
 // like _endthreadex on Windows, skips the guest frames without unwinding them.
 static thread_local std::jmp_buf* threadExitJump = nullptr;
+#endif
 
+#if !defined(_WIN32) && !defined(ANYPS5_GUEST_LIFTED)
 static void* MeasureStackReserve(void* reserve) {
     std::uintptr_t low = 0;
     std::uintptr_t high = 0;
@@ -914,7 +917,12 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     BindHostCpuClock(self);
     TimedWait::BindThreadWaitState(&self->waitCount);
     CurrentGuestState().current = self;
+#ifdef ANYPS5_GUEST_LIFTED
+    GuestCpuUseStack_nid_no_patch(reinterpret_cast<std::uintptr_t>(self->stackAddress) + self->stackSize);
+    GuestCpu::SetX87Control(GUEST_THREAD_FPU_CONTROL);
+#else
     asm volatile("fldcw %0" : : "m"(GUEST_THREAD_FPU_CONTROL));
+#endif
     RegisterStack(self);
     sigprocmask_nid_postfix(3, &args->guestSignalMask, nullptr);
 #ifndef _WIN32
@@ -1099,12 +1107,16 @@ static void* StartNativeThread(void* opaque) {
     std::unique_ptr<NativeThreadArgs> args(static_cast<NativeThreadArgs*>(opaque));
     auto* self = args->guest->self;
     try {
+#ifdef ANYPS5_GUEST_LIFTED
+        self->stackAddress = static_cast<char*>(self->guestStack) + self->guestStackBytes - self->stackSize;
+#else
         std::uintptr_t low = 0;
         std::uintptr_t high = 0;
         const auto reserve = HostStackReserve();
         if (!HostStackLimits(&low, &high) || high - low < reserve + self->stackSize)
             throw std::runtime_error("Cannot query guest thread stack");
         self->stackAddress = reinterpret_cast<void*>(high - reserve - self->stackSize);
+#endif
         self->threadId = std::this_thread::get_id();
 #if defined(__linux__)
         self->hostTid = static_cast<int>(gettid());
@@ -1195,17 +1207,21 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     if (detached)
         ReleaseThread(published);
 #else
-    const auto reserve = HostStackReserve();
+#ifdef ANYPS5_GUEST_LIFTED
+    const std::size_t hostFrames = 0;
+#else
+    const std::size_t hostFrames = HostStackReserve() + HOST_STACK_MARGIN;
+#endif
     const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-    if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<std::size_t>::max() - reserve - HOST_STACK_MARGIN - page)
+    if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<std::size_t>::max() - hostFrames - page)
         throw std::runtime_error("scePthreadCreate: invalid stack size");
-    const std::size_t nativeStack = (p->stackSize + reserve + HOST_STACK_MARGIN + page - 1) / page * page;
+    const std::size_t stackBytes = (p->stackSize + hostFrames + page - 1) / page * page;
     sigset_t creatorMask;
     pthread_sigmask(SIG_SETMASK, nullptr, &creatorMask);
     args->signalMask = creatorMask;
 #if defined(__linux__)
     ReapRetiredStacks();
-    AllocateGuestStack(p.get(), nativeStack);
+    AllocateGuestStack(p.get(), stackBytes);
 #endif
     auto native = std::make_unique<NativeThreadArgs>(NativeThreadArgs{std::move(args), start.get_future(), {}});
     auto initialized = native->initialized.get_future();
@@ -1214,10 +1230,12 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
         FreeGuestStack(p.get());
         throw std::system_error(result, std::generic_category(), "Creating guest thread");
     }
-#if defined(__linux__)
+#if defined(ANYPS5_GUEST_LIFTED)
+    int created = pthread_attr_setstacksize(&nativeAttr, GuestCpuHostStackSize_nid_no_patch());
+#elif defined(__linux__)
     int created = pthread_attr_setstack(&nativeAttr, static_cast<char*>(p->guestStack) + GUEST_STACK_GUARD, p->guestStackBytes - GUEST_STACK_GUARD);
 #else
-    int created = pthread_attr_setstacksize(&nativeAttr, nativeStack);
+    int created = pthread_attr_setstacksize(&nativeAttr, stackBytes);
 #endif
     if (created == 0) {
         sigset_t allSignals;
