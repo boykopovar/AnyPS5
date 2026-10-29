@@ -28,7 +28,7 @@ target_include_directories(libSceVideoOut PRIVATE
         ${CMAKE_BINARY_DIR}/core/libs/prx/libSceAgcDriver/generated
 )
 add_dependencies(libSceVideoOut agc_trace_revision)
-target_link_libraries(libSceVideoOut PRIVATE libSceAgcDriver libScePad libSceUserService libSceMouse libSceKeyboard libSceIme libc libkernel decoder_png SDL2-static)
+target_link_libraries(libSceVideoOut PRIVATE libSceAgcDriver libSceAudioOut libScePad libSceUserService libSceMouse libSceKeyboard libSceIme libc libkernel decoder_png SDL2-static)
 if(WIN32)
     target_link_libraries(libSceVideoOut PRIVATE comctl32 dxgi)
 endif()

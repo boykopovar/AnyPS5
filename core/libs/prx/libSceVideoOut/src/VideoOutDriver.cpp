@@ -15,6 +15,8 @@
 #include "SDL_vulkan.h"
 #include "prx/libSceVideoOut/include/MainThread.hpp"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
+#include "prx/libSceVideoOut/include/HostPause.hpp"
+#include "prx/libSceAudioOut/include/HostPause.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
@@ -689,7 +691,10 @@ std::optional<AgcDriver::DisplayBuffer> VideoOutDriver::overlayPlane() {
 }
 
 void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& started) {
+    std::optional<HostPause> hostPause;
     try {
+        const auto pauseSettings = ReadHostPauseSettings(std::getenv("ANYPS5_PAUSE_KEY"), std::getenv("ANYPS5_PAUSE_ON_FOCUS_LOSS"));
+        if (pauseSettings.Enabled()) hostPause.emplace(pauseSettings);
         OnMainThread([&] {
             window.Ensure(VIDEO_OUT_DEFAULT_WIDTH, VIDEO_OUT_DEFAULT_HEIGHT);
             updateDisplayRefreshRate();
@@ -740,6 +745,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 }
             }
 
+            std::vector<HostPause::Change> pauseChanges;
             const bool quit = OnMainThread([&] {
                 SDL_Event event;
                 while (SDL_PollEvent(&event)) {
@@ -750,6 +756,10 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                         keyboardInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         imeTextInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         dialogInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
+                        if (hostPause) {
+                            const auto change = hostPause->HandleEvent(event, SDL_GetWindowID(window.Handle()));
+                            if (change.changed) pauseChanges.push_back(change);
+                        }
                     }
                 }
                 padInput->Update(window);
@@ -761,6 +771,14 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 throw ProcessShutdown{};
             }
             ModalDialogSetPresenter_nid_postfix(window.Handle() != nullptr);
+            for (const auto& change : pauseChanges) {
+                if (change.paused) std::fprintf(stderr, "[videoout] host pause: paused\n");
+                else std::fprintf(stderr, "[videoout] host pause: resumed after %.1f s\n", std::chrono::duration<double>(change.pausedFor).count());
+            }
+            if (hostPause && flipQueue->hold.Set(hostPause->Paused())) {
+                AudioOutSetHostPause_nid_no_patch(hostPause->Paused());
+                flipQueue->changed.NotifyAll();
+            }
             pollHostHdr();
             OnMainThread([&] { mouseInput->UpdateCapture(!padInput->MouseModeEnabled()); });
             if (current) {
@@ -818,6 +836,10 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
     }
 #endif
     current.reset();
+    if (hostPause) {
+        flipQueue->hold.Set(false);
+        AudioOutSetHostPause_nid_no_patch(false);
+    }
     {
         std::list<std::shared_ptr<FlipRequest>> cancelled;
         {
