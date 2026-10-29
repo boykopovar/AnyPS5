@@ -3,6 +3,13 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <chrono>
+#ifdef _WIN32
+#include <process.h>
+#define getpid _getpid
+#else
+#include <unistd.h>
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -195,26 +202,103 @@ static bool Fullscreen(const DisplayWindow& window) {
     return (SDL_GetWindowFlags(window.Handle()) & SDL_WINDOW_FULLSCREEN) != 0;
 }
 
+static bool DisplayRequired() {
+    return std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr || std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr;
+}
+
+static bool SkipsWithoutDisplay(const std::string& reason, bool required) {
+    return !required && reason.find("Vulkan support") != std::string::npos;
+}
+
+static void SkipPolicyTest() {
+    const std::string noVulkan = "DisplayWindow: Vulkan support is either not configured in SDL or not available in current SDL video driver (offscreen) or platform";
+    Require(SkipsWithoutDisplay(noVulkan, false), "a missing Vulkan window did not skip");
+    Require(!SkipsWithoutDisplay(noVulkan, true), "a missing Vulkan window skipped although a display was required");
+    for (const char* unexpected : {"DisplayWindow: failed to decode icon0.png", "DisplayWindow: initial window extent is smaller than the minimum", "SetWindowSubclass failed", ""}) {
+        Require(!SkipsWithoutDisplay(unexpected, false), (std::string("an unexpected failure was skipped: ") + unexpected).c_str());
+    }
+}
+
+static std::filesystem::path OwnDirectory() {
+    const auto base = std::filesystem::temp_directory_path();
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        const auto directory = base / ("anyps5_host_fullscreen_" + std::to_string(static_cast<long long>(::getpid())) + "_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "_" + std::to_string(attempt));
+        if (std::filesystem::create_directory(directory)) return directory;
+    }
+    Require(false, "could not create a private test directory");
+    return {};
+}
+
+class OwnedDirectory {
+public:
+    OwnedDirectory() : directory(OwnDirectory()), previous(std::filesystem::current_path()) {
+        std::filesystem::create_directories(directory / "app0" / "sce_sys");
+        std::ofstream(directory / "app0" / "sce_sys" / "param.json") << R"({"titleId":"PPSA00000","localizedParameters":{"defaultLanguage":"en-US","en-US":{"titleName":"Fullscreen Test"}}})";
+        std::filesystem::current_path(directory);
+    }
+    ~OwnedDirectory() {
+        std::error_code ignored;
+        std::filesystem::current_path(previous, ignored);
+        std::filesystem::remove_all(directory, ignored);
+    }
+    OwnedDirectory(const OwnedDirectory&) = delete;
+    OwnedDirectory& operator=(const OwnedDirectory&) = delete;
+    const std::filesystem::path& Path() const { return directory; }
+
+private:
+    std::filesystem::path directory;
+    std::filesystem::path previous;
+};
+
+static bool VideoAvailable() {
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) return true;
+    Require(!DisplayRequired(), (std::string("a display was required but SDL video failed: ") + SDL_GetError()).c_str());
+    std::printf("skipped, no display or Vulkan device: SDL video driver: %s\n", SDL_GetError());
+    return false;
+}
+
 static bool Open(DisplayWindow& window) {
     try {
         window.Ensure(640, 360);
     } catch (const std::exception& error) {
+        Require(SkipsWithoutDisplay(error.what(), DisplayRequired()), (std::string("window creation failed: ") + error.what()).c_str());
         std::printf("skipped, no display or Vulkan device: %s\n", error.what());
         return false;
     }
     return true;
 }
 
-static int WindowTest() {
-    const auto directory = std::filesystem::temp_directory_path() / "anyps5_host_fullscreen_window";
-    std::filesystem::remove_all(directory);
-    std::filesystem::create_directories(directory / "app0" / "sce_sys");
-    std::ofstream(directory / "app0" / "sce_sys" / "param.json") << R"({"titleId":"PPSA00000","localizedParameters":{"defaultLanguage":"en-US","en-US":{"titleName":"Fullscreen Test"}}})";
-    std::filesystem::current_path(directory);
-    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
-        std::printf("skipped, no display or Vulkan device: SDL video driver: %s\n", SDL_GetError());
-        return 77;
+static int FailedCreateTest() {
+    OwnedDirectory owned;
+    std::ofstream(owned.Path() / "app0" / "sce_sys" / "icon0.png", std::ios::binary) << "\x89PNG\r\n\x1a\n not an image";
+    if (!VideoAvailable()) return 77;
+    {
+        DisplayWindow window;
+        bool thrown = false;
+        try {
+            window.Ensure(640, 360);
+        } catch (const std::exception& error) {
+            thrown = std::strstr(error.what(), "icon0.png") != nullptr;
+            if (!thrown) {
+                Require(SkipsWithoutDisplay(error.what(), DisplayRequired()), (std::string("window creation failed: ") + error.what()).c_str());
+                std::printf("skipped, no display or Vulkan device: %s\n", error.what());
+                SDL_QuitSubSystem(SDL_INIT_VIDEO);
+                return 77;
+            }
+        }
+        Require(thrown, "a corrupt icon did not stop window creation");
+        Require(window.Handle() != nullptr, "the SDL window did not exist when creation failed");
+        window.Destroy();
+        Require(window.Handle() == nullptr, "Destroy did not release a window whose creation failed");
+        window.Destroy();
     }
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    return 0;
+}
+
+static int WindowTest() {
+    OwnedDirectory owned;
+    if (!VideoAvailable()) return 77;
     SDL_setenv("ANYPS5_FULLSCREEN", "windowed", 1);
     HostWindowSize windowed;
     {
@@ -250,8 +334,6 @@ static int WindowTest() {
         Require(!Fullscreen(window) && back == windowed, "leaving a fullscreen start did not give the creation size");
     }
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
-    std::filesystem::current_path(directory.parent_path());
-    std::filesystem::remove_all(directory);
     return 0;
 }
 
@@ -259,7 +341,9 @@ static int WindowTest() {
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "window") == 0) return WindowTest();
+    if (argc > 1 && std::strcmp(argv[1], "failedcreate") == 0) return FailedCreateTest();
     ParseTest();
+    SkipPolicyTest();
     ToggleTest();
     RestoreSizeTest();
     AdoptTest();
