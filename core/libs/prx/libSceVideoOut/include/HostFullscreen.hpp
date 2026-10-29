@@ -1,12 +1,15 @@
 #ifndef CORE_LIBS_PRX_LIBSCEVIDEOOUT_INCLUDE_HOSTFULLSCREEN_HPP
 #define CORE_LIBS_PRX_LIBSCEVIDEOOUT_INCLUDE_HOSTFULLSCREEN_HPP
 
+#include <string>
+
 enum class HostFullscreenMode {
     Windowed,
     Borderless,
 };
 
 HostFullscreenMode ParseHostFullscreenMode(const char* value, bool* unrecognized = nullptr);
+std::string HostFullscreenWarning(const char* value);
 
 struct HostWindowSize {
     int width = 0;
