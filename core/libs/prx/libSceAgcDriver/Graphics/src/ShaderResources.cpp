@@ -1395,6 +1395,13 @@ void OverrideCacheBudgetForTest(std::uint64_t bytes) {
     budgetOverride.store(bytes, std::memory_order_relaxed);
 }
 
+void SetSampledSpillForTest(std::uint64_t bytes) {
+    auto& cache = Textures();
+    std::lock_guard lock(cache.mutex);
+    cache.spill = bytes;
+    cache.spillQuietSince = std::chrono::steady_clock::now();
+}
+
 TextureCacheUse TextureCacheUsage() {
     TextureCacheUse use;
     {
