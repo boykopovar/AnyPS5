@@ -105,6 +105,14 @@ bool HasStencil(VkFormat format) {
     return format == VK_FORMAT_D16_UNORM_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_S8_UINT;
 }
 
+bool SameBlendAttachment(const VkPipelineColorBlendAttachmentState& left, const VkPipelineColorBlendAttachmentState& right) {
+    return left.blendEnable == right.blendEnable && left.srcColorBlendFactor == right.srcColorBlendFactor && left.dstColorBlendFactor == right.dstColorBlendFactor && left.colorBlendOp == right.colorBlendOp && left.srcAlphaBlendFactor == right.srcAlphaBlendFactor && left.dstAlphaBlendFactor == right.dstAlphaBlendFactor && left.alphaBlendOp == right.alphaBlendOp && left.colorWriteMask == right.colorWriteMask;
+}
+
+bool DifferingBlendAttachments(std::span<const VkPipelineColorBlendAttachmentState> attachments) {
+    return !attachments.empty() && !std::ranges::all_of(attachments, [&](const VkPipelineColorBlendAttachmentState& attachment) { return SameBlendAttachment(attachment, attachments.front()); });
+}
+
 Framebuffer::Framebuffer(const Context& context, VkRenderPass renderPass, std::span<const VkImageView> targets, VkExtent2D extent, std::uint32_t layers) : context(context) {
     // Cached objects outlive their device's teardown; they must not keep its buffer pool alive past it.
     this->context.bufferPool.reset();
@@ -704,6 +712,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             blend.logicOpEnable = VK_TRUE;
             blend.logicOp = logicOp;
         }
+        const bool independentAttachments = DifferingBlendAttachments(firstChannels);
+        Require(!independentAttachments || context.independentBlend, "color targets with differing blend states require the independentBlend device feature");
         blend.attachmentCount = static_cast<std::uint32_t>(firstChannels.size());
         blend.pAttachments = firstChannels.empty() ? nullptr : firstChannels.data();
         std::copy(state.blendConstants.begin(), state.blendConstants.end(), blend.blendConstants);
@@ -747,6 +757,8 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, pipelineCache, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateGraphicsPipelines");
         }
         if (alternateAlpha) {
+            const bool independentSecondChannels = DifferingBlendAttachments(secondChannels);
+            Require(!independentSecondChannels || context.independentBlend, "color targets with differing blend states require the independentBlend device feature");
             blend.pAttachments = secondChannels.data();
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, pipelineCache, 1, &pipelineInfo, nullptr, &secondChannel), "vkCreateGraphicsPipelines");
