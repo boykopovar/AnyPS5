@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libSceAudioOut/include/HostPause.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
 #include <algorithm>
 #include <array>
@@ -713,6 +714,91 @@ void testBackToBack() {
     LibcRunShutdown_nid_postfix();
 }
 
+unsigned displayWindowId() {
+    for (unsigned id = 1; id < 64; ++id) {
+        if (SDL_GetWindowFromID(id) != nullptr) return id;
+    }
+    throw std::runtime_error("the display window was not found");
+}
+
+void pushKey(unsigned windowId, SDL_Scancode key) {
+    SDL_Event event{};
+    event.type = SDL_KEYDOWN;
+    event.key.windowID = windowId;
+    event.key.keysym.scancode = key;
+    check(SDL_PushEvent(&event) == 1, "the key event was not queued");
+}
+
+bool waitForAudioPause(bool paused) {
+    for (int i = 0; i < 500; ++i) {
+        if (AudioOutHostPaused_nid_no_patch() == paused) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
+void testHostPause() {
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::vector<std::byte> allocation(6 * 65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    fillBuffer(storage, 259, 137);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr);
+    const auto flipCount = [&] {
+        std::lock_guard lock(cfg->mutex);
+        return cfg->flipStatus.count;
+    };
+    const auto waitForCount = [&](std::uint64_t target) {
+        std::unique_lock lock(cfg->mutex);
+        const bool reached = cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == target; });
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        return reached;
+    };
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 1) == 0, "the first flip was refused");
+    check(waitForCount(1), "the first flip did not present");
+    const unsigned windowId = displayWindowId();
+    check(!AudioOutHostPaused_nid_no_patch(), "the audio is paused before any key");
+
+    pushKey(windowId, SDL_SCANCODE_F7);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    check(!AudioOutHostPaused_nid_no_patch(), "a key other than the pause key paused the audio");
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 2) == 0 && waitForCount(2), "a flip did not present after an unrelated key");
+
+    pushKey(windowId, SDL_SCANCODE_F9);
+    check(waitForAudioPause(true), "the pause key did not pause the audio");
+    const auto held = flipCount();
+    std::uint64_t submitted = 0;
+    int refusals = 0;
+    for (int i = 0; i < 40; ++i) {
+        const int result = sceVideoOutSubmitFlip(handle, 0, 1, 100 + i);
+        if (result == 0) ++submitted;
+        else if (result == VIDEO_OUT_ERROR_FLIP_QUEUE_FULL) ++refusals;
+        else check(false, "a flip during the pause returned an unexpected error");
+    }
+    check(submitted == VIDEO_OUT_FLIP_QUEUE_CAPACITY && refusals == 40 - static_cast<int>(VIDEO_OUT_FLIP_QUEUE_CAPACITY), "the flip queue did not fill to its capacity during the pause");
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    check(flipCount() == held, "a flip presented during the pause");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->flipStatus.flipPendingNum == static_cast<int>(submitted), "the queued flips are not all pending during the pause");
+    }
+
+    pushKey(windowId, SDL_SCANCODE_F9);
+    check(waitForAudioPause(false), "the pause key did not resume the audio");
+    check(waitForCount(held + submitted), "the queued flips did not present after the resume");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->flipStatus.flipPendingNum == 0 && cfg->flipStatus.flipArg == static_cast<std::int64_t>(100 + submitted - 1), "the resumed flips left the wrong status");
+    }
+    check(sceVideoOutSubmitFlip(handle, 0, 1, 3) == 0 && waitForCount(held + submitted + 1), "a flip did not present after the resume");
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 std::uint32_t busyLoopResult(std::uint32_t iterations) {
     std::uint32_t value = 1;
     for (std::uint32_t i = 0; i < iterations; ++i) value = value * value + 1u;
@@ -1214,6 +1300,7 @@ int runTests(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "resolution") testOutputResolution();
         else if (argc == 2 && std::string(argv[1]) == "resolution_override") testOutputResolutionOverride();
         else if (argc == 2 && std::string(argv[1]) == "fresh") testFreshHandleCalls();
+        else if (argc == 2 && std::string(argv[1]) == "hostpause") testHostPause();
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");
         return 0;
