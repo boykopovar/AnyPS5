@@ -394,6 +394,19 @@ void TestRingBuf() {
     Require(_ZN3sce2np13RingBufMemory6ExpandEm(memory, 4) == 0 && memory->ringBuf.bufSize == 8 && _ZN3sce2np7RingBuf5WriteEPKvm(&memory->ringBuf, "fgh", 3) == 0
             && _ZN3sce2np7RingBuf4ReadEPvm(&memory->ringBuf, out, 6) == 0 && std::memcmp(out, "cdefgh", 6) == 0,
         "expanding moves the wrapped data and keeps its order");
+    NpRingBufMemory full {};
+    _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(&full, &heapAllocator);
+    Require(_ZN3sce2np13RingBufMemory4InitEm(&full, 4) == 0 && _ZN3sce2np7RingBuf5WriteEPKvm(&full.ringBuf, "ABCD", 4) == 0
+            && _ZN3sce2np7RingBuf4ReadEPvm(&full.ringBuf, out, 1) == 0 && _ZN3sce2np7RingBuf5WriteEPKvm(&full.ringBuf, "E", 1) == 0
+            && full.ringBuf.readPointer == full.ringBuf.buf + 1 && full.ringBuf.writePointer == full.ringBuf.buf + 1,
+        "a full ring buffer has its pointers together");
+    Require(_ZN3sce2np13RingBufMemory6ExpandEm(&full, 2) == 0 && full.ringBuf.bufSize == 6 && full.ringBuf.size == 4
+            && full.ringBuf.readPointer == full.ringBuf.buf + 1 && full.ringBuf.writePointer == full.ringBuf.buf + 1,
+        "expanding a full ring buffer moves no data and keeps its pointers together");
+    Require(_ZN3sce2np7RingBuf5WriteEPKvm(&full.ringBuf, "FG", 2) == 0 && full.ringBuf.size == 6 && full.ringBuf.readPointer == full.ringBuf.buf
+            && full.ringBuf.writePointer == full.ringBuf.buf + 2 && std::memcmp(full.ringBuf.buf, "FGCD", 4) == 0,
+        "the next write takes the expanded full buffer for empty and starts over the queued data, as in the module");
+    _ZN3sce2np13RingBufMemory7DestroyEv(&full);
     using Destructor = void (APS5_VABI*)(NpRingBufMemory*);
     reinterpret_cast<Destructor>(memory->ringBuf.vtable[1])(memory);
 
