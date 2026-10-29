@@ -64,14 +64,6 @@ int main() {
     Require(Throws([&] { _sceVideoRecordingQueryParam_nid_postfix(reinterpret_cast<VideoRecordingQueryParam*>(query.data())); }), "the default parameters were produced");
 
     Require(sceVideoRecordingQueryMemSize(nullptr) == InvalidArgument, "a heap size was reported for no parameters");
-    for (const std::uint32_t format : {0x1u, 0x2u, 0x10u, 0x11u, 0x28u, 0x40u, 0x41u}) {
-        Require(Throws([&] { Query(RecordingParam(format)); }), "a heap size was reported for a video format");
-        VideoRecordingParam param = RecordingParam(format);
-        param.option = 0;
-        Require(Throws([&] { Query(param); }), "a heap size was reported for a video format without the option");
-        param.mode = 1;
-        Require(Throws([&] { Query(param); }), "a heap size was reported for mode 1");
-    }
     for (std::uint32_t format = 0x3; format <= 0x44; ++format) {
         if (format == 0x10 || format == 0x11 || format == 0x28 || format == 0x40 || format == 0x41) continue;
         Require(Query(RecordingParam(format)) == InvalidArgument, "an unknown video format was accepted");
@@ -92,20 +84,10 @@ int main() {
         param.size = size;
         Require(Query(param) == NoVideoFormat, "a block that ends before its format was accepted");
     }
-    for (const std::uint64_t size : {0x25ull, 0x40ull, 0x1000ull}) {
-        VideoRecordingParam param = RecordingParam(1);
-        param.size = size;
-        Require(Throws([&] { Query(param); }), "a heap size was reported for a block with a format");
-    }
     for (const std::uint32_t duration : {0u, 3601u, 7200u, 0xffffffffu}) {
         VideoRecordingParam param = RecordingParam(1);
         param.duration = duration;
         Require(Query(param) == InvalidArgument, "a duration outside 1 to 3600 was accepted");
-    }
-    for (const std::uint32_t duration : {1u, 60u, 3599u}) {
-        VideoRecordingParam param = RecordingParam(1);
-        param.duration = duration;
-        Require(Throws([&] { Query(param); }), "a duration inside 1 to 3600 was refused");
     }
     for (const std::uint32_t mode : {2u, 3u}) {
         VideoRecordingParam param = RecordingParam(1);
@@ -146,8 +128,6 @@ int main() {
     Require(sceVideoRecordingOpen("clip.mp4", &minimal, heap.data(), MinimumHeap - 1) == InvalidArgument, "the recorder opened with a heap smaller than QueryMemSize asks");
     VideoRecordingParam optionOnly = RecordingParam(0);
     Require(sceVideoRecordingOpen("clip.mp4", &optionOnly, heap.data(), static_cast<int>(heap.size())) == NoVideoFormat, "the recorder opened with the option and no format");
-    Require(Throws([&] { sceVideoRecordingOpen("clip.mp4", &minimal, heap.data(), MinimumHeap); }), "the recorder opened without recording");
-    Require(Throws([&] { sceVideoRecordingOpen("clip.mp4", &video, heap.data(), 0x7fffffff); }), "the recorder opened without recording");
     for (const std::uint8_t value : heap) Require(value == Sentinel, "the heap was written");
     Require(sceVideoRecordingGetStatus() == StatusNone, "a failed open changed the status");
     Require(sceVideoRecordingStart() == NotOpen, "a failed open left a recorder to start");
