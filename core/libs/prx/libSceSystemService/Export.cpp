@@ -10,7 +10,6 @@
 #include <ctime>
 #include <atomic>
 #include <filesystem>
-#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -42,14 +41,14 @@ HostBrowserLauncher g_defaultUrlLauncher;
 HostMessageBoxConfirmation g_defaultUrlConfirmation;
 std::atomic<IUrlLauncher*> g_urlLauncher{&g_defaultUrlLauncher};
 std::atomic<IUrlConfirmation*> g_urlConfirmation{&g_defaultUrlConfirmation};
-std::mutex g_urlMutex;
+SteadyUrlClock g_steadyUrlClock;
+OpenUrlGate g_urlGate(g_steadyUrlClock);
 
 int OpenWebBrowserUrl(const char* uri) {
     const OpenUrlMode mode = OpenUrlModeFromEnvironment("sceSystemServiceLaunchWebBrowser");
     if (mode == OpenUrlMode::Never) return SCE_KERNEL_ERROR_EOPNOTSUPP;
-    const std::lock_guard lock(g_urlMutex);
-    const OpenUrlOutcome outcome = OpenUrlOnHost(mode, uri, *g_urlLauncher.load(), *g_urlConfirmation.load());
-    return outcome == OpenUrlOutcome::Launched ? SYSTEM_SERVICE_OK : SCE_KERNEL_ERROR_EOPNOTSUPP;
+    const OpenUrlGateOutcome outcome = g_urlGate.Run(mode, uri, *g_urlLauncher.load(), *g_urlConfirmation.load());
+    return outcome == OpenUrlGateOutcome::Launched ? SYSTEM_SERVICE_OK : SCE_KERNEL_ERROR_EOPNOTSUPP;
 }
 
 struct MeasuredParameter {
@@ -454,9 +453,10 @@ int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri) {
     return OpenWebBrowserUrl(uri);
 }
 
-extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation) {
+extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation, IUrlClock* clock) {
     g_urlLauncher = launcher != nullptr ? launcher : &g_defaultUrlLauncher;
     g_urlConfirmation = confirmation != nullptr ? confirmation : &g_defaultUrlConfirmation;
+    g_urlGate.Reset(clock != nullptr ? *clock : static_cast<IUrlClock&>(g_steadyUrlClock));
 }
 
 int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* arguments, const void* param) {
