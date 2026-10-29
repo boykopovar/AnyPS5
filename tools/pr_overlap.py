@@ -546,9 +546,10 @@ def report(rows, blob, main_exports=None):
     if main_exports:
         if confirmed:
             lines.append("")
-        lines.append("Exports introduced here that are already present in `main`:")
+        lines.append("Functions introduced here that are already exported by another library in `main`:")
         lines.append("")
-        lines.append(f"- {cell(main_exports)}")
+        lines.extend(f"- {code_span(name)} (also exported by {cell(libraries)})"
+                     for name, libraries in sorted(main_exports.items()))
     if uncompared:
         if confirmed:
             lines.append("")
@@ -576,13 +577,30 @@ def unverified_overlaps(rows):
 
 
 def main_export_findings(prs, current_exports):
+    by_name = {}
+    for (library, _nid), names in current_exports.items():
+        for name in names:
+            canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+            by_name.setdefault(canonical, set()).add(library)
+
     findings = {}
     for number, pr in prs.items():
-        candidates = set(pr.get("added_exports", {})) - set(pr.get("removed_exports", {}))
-        names = set()
-        for key in candidates & set(current_exports):
-            names.update(pr["added_exports"][key])
-            names.update(current_exports[key])
+        added = pr.get("added_exports", {})
+        removed = pr.get("removed_exports", {})
+        names = {}
+        for library, nid in added:
+            added_names = {
+                NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                for name in added[(library, nid)]
+            }
+            removed_names = {
+                NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                for name in removed.get((library, nid), ())
+            }
+            for canonical in added_names - removed_names:
+                existing = by_name.get(canonical, set()) - {library}
+                if existing:
+                    names.setdefault(canonical, set()).update(existing)
         if names:
             findings[number] = names
     return findings
