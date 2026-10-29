@@ -11,6 +11,8 @@ std::int32_t APS5_VABI FT_Outline_GetOutsideBorder_nid_postfix(const FreeType::G
 
 int APS5_VABI FT_Init_FreeType_nid_postfix(FreeType::GuestLibrary** alibrary);
 int APS5_VABI FT_Done_FreeType_nid_postfix(FreeType::GuestLibrary* library);
+int APS5_VABI FT_Reference_Library_nid_postfix(FreeType::GuestLibrary* library);
+int APS5_VABI FT_Done_Library_nid_postfix(FreeType::GuestLibrary* library);
 int APS5_VABI FT_New_Face_nid_postfix(FreeType::GuestLibrary* library, const char* filepathname, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
 int APS5_VABI FT_New_Memory_Face_nid_postfix(FreeType::GuestLibrary* library, const unsigned char* fileBase, std::int64_t fileSize, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
 int APS5_VABI FT_Reference_Face_nid_postfix(FreeType::GuestFaceRec* face);
