@@ -219,6 +219,9 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverAddEqEvent(eq, 0, &graphicsTag) == 0, "graphics event registration failed");
     check(sceAgcDriverAddEqEvent(eq, 0x20, &computeTag) == 0, "compute event registration failed");
     expectFailure([] { sceAgcDriverAddEqEvent(0, 0, nullptr); });
+    expectFailure([&] { sceAgcDriverAddEqEvent(eq, -1, &graphicsTag); });
+    expectFailure([] { sceAgcDriverDeleteEqEvent(0, 0); });
+    expectFailure([&] { sceAgcDriverDeleteEqEvent(eq, -1); });
     struct Output final : AgcDriver::IVideoOutput, AgcDriver::IFlipRequest, std::enable_shared_from_this<Output> {
         std::atomic<int> ready{0};
         std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return shared_from_this(); }
@@ -311,6 +314,7 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverDeleteEqEvent(eq, 0x20) == 0, "compute event deletion failed");
     owner.reset();
     check(sceKernelDeleteEqueue(eq) == 0, "event queue deletion failed");
+    expectFailure([&] { sceAgcDriverDeleteEqEvent(eq, 0); });
 }
 
 std::array<std::uint32_t, 5> writeData(volatile std::uint32_t* address, std::uint32_t value) {
