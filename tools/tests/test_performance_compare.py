@@ -133,6 +133,69 @@ class PerformanceCompareTests(unittest.TestCase):
         for text in ("Other GPU", "Driver 2", "source tree is dirty", "trace events were dropped", "do not isolate"):
             self.assertIn(text, rendered)
 
+    def test_trace_loss_and_totals_overflow_are_reported_separately(self):
+        for label in ("baseline", "candidate"):
+            for totals_full in (False, True):
+                for events_lost in (None, 0, 7):
+                    for args in ((), ("--json",)):
+                        with self.subTest(label=label, totals_full=totals_full, events_lost=events_lost, args=args):
+                            baseline = copy.deepcopy(self.baseline)
+                            candidate = copy.deepcopy(self.candidate)
+                            summary = baseline if label == "baseline" else candidate
+                            details = {"totals_full": totals_full}
+                            if events_lost is not None:
+                                details["events_lost"] = events_lost
+                            summary["trace_dropped"] = totals_full or bool(events_lost)
+                            summary["trace_dropped_threads"] = {"queue worker 0x0": details}
+                            self.write(self.before, baseline)
+                            self.write(self.after, candidate)
+                            result = self.run_cli(*args)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            output = "\n".join(json.loads(result.stdout)["notes"]) if args else result.stdout
+                            self.assertEqual(f"{label}: phase totals are incomplete" in output, totals_full)
+                            self.assertEqual(f"{label}: trace events were dropped" in output, bool(events_lost))
+                            if totals_full:
+                                self.assertNotIn("work included in phase totals", output)
+
+    def test_trace_loss_and_totals_overflow_on_different_threads_are_both_reported(self):
+        self.candidate.update(trace_dropped=True, trace_dropped_threads={
+            "gpu": {"events_lost": 3, "totals_full": False},
+            "presenter": {"totals_full": True},
+        })
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli("--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        notes = "\n".join(report["notes"])
+        self.assertIn("candidate: phase totals are incomplete", notes)
+        self.assertIn("candidate: trace events were dropped", notes)
+        self.assertNotIn("work included in phase totals", notes)
+        self.assertEqual(report["metrics_ms"]["frame_ms.p50"]["change"], 0)
+        self.assertEqual(report["candidate"], self.candidate)
+
+    def test_legacy_trace_loss_warning_is_preserved_without_thread_details(self):
+        for dropped in (False, True):
+            with self.subTest(dropped=dropped):
+                self.candidate["trace_dropped"] = dropped
+                report = performance_compare.compare(self.baseline, self.candidate)
+                warning = "candidate: trace events were dropped; the event trace omits some of the work included in phase totals."
+                self.assertEqual(warning in report["notes"], dropped)
+                self.assertNotIn("phase totals are incomplete", "\n".join(report["notes"]))
+
+    def test_invalid_trace_loss_details_are_rejected_with_location(self):
+        for details in (None, [], {"worker": None}, {"worker": {"totals_full": 1}},
+                        {"worker": {"events_lost": True}}, {"worker": {"events_lost": -1}}):
+            with self.subTest(details=details):
+                self.baseline["trace_dropped_threads"] = details
+                self.write(self.before, self.baseline)
+                self.write(self.after, self.candidate)
+                result = self.run_cli("--json")
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("before.jsonl:2:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_unknown_metadata_is_not_a_claim_of_equivalent_machines(self):
         self.baseline.update(dirty=None, gpu="", driver="")
         report = performance_compare.compare(self.baseline, self.candidate)
@@ -382,6 +445,44 @@ class PerformanceCompareTests(unittest.TestCase):
                 candidate[key] = value
                 self.write(self.after, candidate)
                 self.assertEqual(self.run_cli("--require-matching-context").returncode, 2)
+
+    def test_timed_windows_allow_different_first_present_counters(self):
+        for summary in (self.baseline, self.candidate):
+            summary["env"] = {"APS5_TRACE_SECONDS": "270:20"}
+            summary["window"].update(spec="seconds 270:20", ms=20000.0)
+        self.baseline["window"]["first_present"] = 1010
+        self.candidate["window"]["first_present"] = 700
+        self.baseline["presents"] = 20
+        self.candidate["presents"] = 40
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli("--require-matching-context", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["configuration_differences"], {})
+        self.assertEqual(report["baseline"], self.baseline)
+        self.assertEqual(report["candidate"], self.candidate)
+        self.assertEqual(report["metrics_ms"]["mean_frame_ms"]["change_pct"], -50.0)
+
+    def test_timed_windows_still_require_matching_requested_windows(self):
+        for summary in (self.baseline, self.candidate):
+            summary["env"] = {"APS5_TRACE_SECONDS": "270:20"}
+            summary["window"]["spec"] = "seconds 270:20"
+        self.candidate["window"].update(spec="seconds 280:20", first_present=700)
+        report = performance_compare.compare(self.baseline, self.candidate)
+        self.assertEqual(set(report["configuration_differences"]), {"window.spec"})
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli("--require-matching-context")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("window.spec", result.stderr)
+
+    def test_unknown_window_syntax_keeps_first_present_check(self):
+        for summary in (self.baseline, self.candidate):
+            summary["window"]["spec"] = "seconds unknown"
+        self.candidate["window"]["first_present"] = 700
+        report = performance_compare.compare(self.baseline, self.candidate)
+        self.assertEqual(set(report["configuration_differences"]), {"window.first_present"})
 
 
 

@@ -44,6 +44,8 @@ int main() {
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, nullptr, 1, &count, nullptr, info.size()) == invalidArgument, "null record buffer accepted");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, info.data(), -1, &count, nullptr, info.size()) == invalidArgument, "negative capacity accepted");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, info.data(), 1, &count, nullptr, info.size() - 1) == invalidArgument, "incorrect record size accepted");
+    Require(sceDeviceServiceQueryDeviceInfo_(0, nullptr, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "invalid device class accepted");
+    Require(sceDeviceServiceQueryDeviceInfo_(0xFFFF, nullptr, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "unrecognized device class accepted");
     DeviceServiceUsageFilter filter{1, 2, 3};
     Require(sceDeviceServiceQueryDeviceInfo_(0x8001, &filter, 0, info.data(), 1, &count, nullptr, info.size()) == 0, "valid HID filter rejected");
     Require(sceDeviceServiceQueryDeviceInfo_(0x8001, nullptr, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "missing HID filter accepted");

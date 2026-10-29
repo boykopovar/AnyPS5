@@ -20,6 +20,7 @@
 
 #include "prx/libc/include/WindowsFormatting.hpp"
 #include "prx/libc/include/ScanWideField.hpp"
+#include "prx/libc/include/ScanQuadLength.hpp"
 
 #ifdef _WIN32
 #include "prx/libc/include/WindowsScanning.hpp"
@@ -43,8 +44,11 @@ bool RequiresGuestFormatting(const char* format) {
         while (*format && std::strchr("-+ #0'0123456789.*$", *format)) ++format;
         if (*format == 'S' || *format == 'C' || *format == 'p' ||
             (*format == 'l' && (format[1] == 's' || format[1] == 'c' || format[1] == 'p'))) return true;
+        const char* lengthStart = format;
         while (*format && std::strchr("hljztL", *format)) ++format;
         if (*format && !std::strchr(LibcDetail::KnownConversions, *format)) return true;
+        const std::string length(lengthStart, format);
+        if (*format && LibcDetail::ApplicableLength(length, *format) != length) return true;
         if (*format && std::strchr("aAeEfFgG", *format)) return true;
         if (*format) ++format;
     }
@@ -86,6 +90,13 @@ void RejectGuestWideScan(const char* format) {
 
 bool IsWideScan(const std::string& length, char conversion) {
     return conversion == 'S' || conversion == 'C' || (length == "l" && (conversion == 's' || conversion == 'c' || conversion == '['));
+}
+
+const char* CutAtQuadScanDirective(const char* format, std::string& head) {
+    const char* const quad = LibcDetail::FindQuadScanDirective(format);
+    if (quad == nullptr) return format;
+    head.assign(format, quad);
+    return head.c_str();
 }
 
 #endif
@@ -548,6 +559,8 @@ int APS5_VABI vsscanf_nid_postfix(const char* input, const char* format, VaList*
 #ifdef _WIN32
     return LibcDetail::ScanWindows(input, format, args);
 #else
+    std::string head;
+    format = CutAtQuadScanDirective(format, head);
     if (ScansWideInProcess(format)) {
         LibcDetail::FormatArguments arguments(args);
         return ScanGuest(input, format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
@@ -572,6 +585,8 @@ int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
 int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
+    std::string head;
+    format = CutAtQuadScanDirective(format, head);
     const int result = ScansWideInProcess(format) ? ScanGuest(input, format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
                                                   : HostVsscanf(input, format, args);
     va_end(args);

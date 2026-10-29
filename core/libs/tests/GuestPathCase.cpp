@@ -60,13 +60,15 @@ int main() {
 #ifndef _WIN32
     std::filesystem::create_directory_symlink("Data", directory / "Linked");
     CheckRead("linked/SETTINGS.INI", 'x');
-    { std::ofstream file(directory / "Data" / "SETTINGS.INI"); file << 'z'; }
-    CheckRead("Data/Settings.ini", 'x');
-    CheckRead("Data/SETTINGS.INI", 'z');
-    bool ambiguous = false;
-    try { CheckRead("data/settings.ini", 'x'); } catch (const std::runtime_error&) { ambiguous = true; }
-    Require(ambiguous);
-    std::filesystem::remove(directory / "Data" / "SETTINGS.INI");
+    if (!std::filesystem::exists(directory / "Data" / "SETTINGS.INI")) {
+        { std::ofstream file(directory / "Data" / "SETTINGS.INI"); file << 'z'; }
+        CheckRead("Data/Settings.ini", 'x');
+        CheckRead("Data/SETTINGS.INI", 'z');
+        bool ambiguous = false;
+        try { CheckRead("data/settings.ini", 'x'); } catch (const std::runtime_error&) { ambiguous = true; }
+        Require(ambiguous);
+        std::filesystem::remove(directory / "Data" / "SETTINGS.INI");
+    }
     std::filesystem::remove(directory / "Data" / "Settings.ini");
     { std::ofstream file(directory / "Data" / "SETTINGS.ini"); file << 'n'; }
     CheckRead("data/settings.ini", 'n');

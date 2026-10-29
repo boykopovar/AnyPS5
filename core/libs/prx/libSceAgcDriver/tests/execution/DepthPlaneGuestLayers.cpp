@@ -459,10 +459,12 @@ void PooledPlaneCopies(const Context& context, const WatchedBlock& first, const 
     DepthSurfaceView(context, DepthTarget{first.Address(), 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
     DepthSurfaceView(context, DepthTarget{second.Address(), 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
     const auto sample = [&](const WatchedBlock& block, int round) {
+        Recorder::CountPresent();
+        Recorder::CountPresent();
         lastFilledImage = VK_NULL_HANDLE;
         bufferToImageCopies = 0;
         Require(DepthSurfaceTexture(context, words, ArrayOver(block.Address()), components) != nullptr, "the 2D array over a depth surface was not sampled through its depth planes in round " + std::to_string(round));
-        Require(DepthPlaneCopyCount() == 1, "the depth plane copies outgrew a budget that holds one in round " + std::to_string(round) + ", " + std::to_string(DepthPlaneCopyCount()) + " copies");
+        Require(DepthPlaneCopyCount() == 1, "the depth plane copies outgrew a budget that holds one, two presents after the other was sampled, in round " + std::to_string(round) + ", " + std::to_string(DepthPlaneCopyCount()) + " copies");
         Require(lastFilledImage.load() != VK_NULL_HANDLE && bufferToImageCopies.load() == 1, "a plane copy made again over a full budget was not filled from its surface once in round " + std::to_string(round) + ", " + std::to_string(bufferToImageCopies.load()) + " fills");
     };
     sample(first, 0);
