@@ -828,7 +828,10 @@ std::uint32_t EmitTwoDimensionalGatherLod(SpirvValueEmitContext& ctx, const Imag
     state.module.AddFunction(spv::OpExtInst, f32, rounded, GlslStd450(state), GLSLstd450Ceil, Binary(state, spv::OpFAdd, f32, lod, ConstantF32(state, 0x3f000000u)));
     const auto nearest = FloatClamp(state, Binary(state, spv::OpFSub, f32, rounded, ConstantF32(state, 0x3f800000u)), ZeroF32(state), lastLevel);
     const auto mipNone = Binary(state, spv::OpINotEqual, boolean, field(30u, 1u), ConstantU32(state, 0u));
-    const auto level = Select(state, i32, mipNone, ConstantI32(state, 0), Unary(state, spv::OpConvertFToS, i32, nearest));
+    const auto imageMinLevel = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, f32, imageMinLevel, GlslStd450(state), GLSLstd450Floor, imageMinLod);
+    const auto baseLevel = FloatClamp(state, imageMinLevel, ZeroF32(state), lastLevel);
+    const auto level = Select(state, i32, mipNone, Unary(state, spv::OpConvertFToS, i32, baseLevel), Unary(state, spv::OpConvertFToS, i32, nearest));
     const auto size = state.module.AllocateId();
     state.module.AddFunction(spv::OpImageQuerySizeLod, TypeI32Vector(state, 2), size, image, level);
     std::uint32_t extent[2] = {};

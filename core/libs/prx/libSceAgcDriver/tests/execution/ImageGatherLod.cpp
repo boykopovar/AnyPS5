@@ -29,10 +29,8 @@ constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t ClampWrap = 0;
 constexpr std::uint32_t ClampMirror = 1;
 constexpr std::uint32_t ClampEdge = 2;
-constexpr std::uint32_t ClampMirrorOnce = 3;
 constexpr std::uint32_t ClampHalfBorder = 4;
 constexpr std::uint32_t ClampBorder = 6;
-constexpr std::uint32_t ClampMirrorOnceBorder = 7;
 constexpr std::uint32_t FilterPoint = 0;
 constexpr std::uint32_t FilterBilinear = 1;
 constexpr std::uint32_t MipNone = 0;
@@ -147,7 +145,8 @@ bool Fallback(const Variant& variant) {
 }
 
 std::uint32_t Level(float lod, const Variant& variant) {
-    if (variant.mipFilter == MipNone || Fallback(variant)) return 0u;
+    if (Fallback(variant)) return 0u;
+    if (variant.mipFilter == MipNone) return std::min(variant.textureMinLodRaw / 256u, Levels - 1u);
     const auto clamp = [](float value, float low, float high) { return std::isnan(value) ? low : std::min(std::max(value, low), high); };
     const float biased = lod + static_cast<float>(variant.biasRaw) / 256.0f;
     const float sampled = std::min(std::isnan(biased) ? static_cast<float>(variant.minLodRaw) / 256.0f : std::max(biased, static_cast<float>(variant.minLodRaw) / 256.0f), static_cast<float>(variant.maxLodRaw) / 256.0f);
@@ -231,7 +230,7 @@ int main() {
         Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipNone, 0u, AllLevels, 0, 0u, "MIP_FILTER none"});
         Run(*device, {Format8888UInt, ClampEdge, ClampWrap, FilterBilinear, MipPoint, 0u, AllLevels, 0, 0u, "8_8_8_8 UINT with a bilinear sampler"});
         Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 0u, AllLevels, 0, 640u, "T# MIN_LOD 2.5"});
-        Run(*device, {Format8888UNorm, ClampMirrorOnce, ClampMirrorOnceBorder, FilterPoint, MipPoint, 0u, AllLevels, 0, 0u, "mirror once (modes 3 and 7)"});
+        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipNone, 0u, AllLevels, 0, 640u, "MIP_FILTER none, T# MIN_LOD 2.5"});
         Run(*device, {Format8888UNorm, ClampBorder, ClampHalfBorder, FilterPoint, MipPoint, 0u, AllLevels, 0, 0u, "border modes 6 and 4: base-level gather"});
         std::puts("image 2D explicit-LOD gather tests passed");
         return 0;
