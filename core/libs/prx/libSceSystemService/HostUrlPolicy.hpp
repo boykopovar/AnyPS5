@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <cstdlib>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -52,3 +54,52 @@ inline OpenUrlOutcome OpenUrlOnHost(OpenUrlMode mode, std::string_view url, IUrl
     if (mode == OpenUrlMode::Ask && !confirmation.Confirm(address)) return OpenUrlOutcome::Declined;
     return launcher.Launch(address) ? OpenUrlOutcome::Launched : OpenUrlOutcome::Failed;
 }
+
+class IUrlClock {
+public:
+    virtual ~IUrlClock() = default;
+    virtual std::chrono::steady_clock::time_point Now() = 0;
+};
+
+class SteadyUrlClock final : public IUrlClock {
+public:
+    std::chrono::steady_clock::time_point Now() override { return std::chrono::steady_clock::now(); }
+};
+
+enum class OpenUrlGateOutcome {
+    Disabled,
+    Rejected,
+    Busy,
+    Declined,
+    Failed,
+    Launched,
+};
+
+class OpenUrlGate {
+public:
+    explicit OpenUrlGate(IUrlClock& clock) : clock(&clock) {}
+
+    void Reset(IUrlClock& replacement) {
+        const std::lock_guard lock(state);
+        clock = &replacement;
+    }
+
+    OpenUrlGateOutcome Run(OpenUrlMode mode, std::string_view url, IUrlLauncher& launcher, IUrlConfirmation& confirmation) {
+        if (mode == OpenUrlMode::Never) return OpenUrlGateOutcome::Disabled;
+        if (ValidateHostUrl(url) != HostUrlVerdict::Ok) return OpenUrlGateOutcome::Rejected;
+        std::unique_lock lock(state, std::try_to_lock);
+        if (!lock.owns_lock()) return OpenUrlGateOutcome::Busy;
+        switch (OpenUrlOnHost(mode, url, launcher, confirmation)) {
+        case OpenUrlOutcome::Launched: return OpenUrlGateOutcome::Launched;
+        case OpenUrlOutcome::Declined: return OpenUrlGateOutcome::Declined;
+        case OpenUrlOutcome::Failed: return OpenUrlGateOutcome::Failed;
+        case OpenUrlOutcome::Rejected: return OpenUrlGateOutcome::Rejected;
+        case OpenUrlOutcome::Disabled: return OpenUrlGateOutcome::Disabled;
+        }
+        return OpenUrlGateOutcome::Failed;
+    }
+
+private:
+    std::mutex state;
+    IUrlClock* clock;
+};
