@@ -605,6 +605,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
 | `ANYPS5_LANGUAGE` | integer | `core/libs/prx/libSceSystemService/SystemService.hpp` | 1 | console language number from 0 to 30 returned by sceSystemServiceParamGetInt, defaulting to English US; `auto` (any letter case) maps the host's locale to a console language once per process and falls back to English US with one stderr line; any other value throws |
+| `ANYPS5_OPEN_URLS` | string | `core/libs/prx/libSceSystemService/HostUrlPolicy.hpp` |  | `never`, `ask` or `always`: whether `sceSystemServiceLaunchWebBrowser` opens a valid http or https address in the host's default browser; unset, empty and `never` keep the call failing, `ask` shows the address in a confirmation box first, `always` opens it without asking; any other value throws |
 
 ### libSceUsbStorage
 
