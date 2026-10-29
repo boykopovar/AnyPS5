@@ -19,3 +19,5 @@ public:
 };
 
 std::string HostConfirmationText(const std::string& url);
+
+extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation);
