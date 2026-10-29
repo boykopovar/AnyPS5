@@ -18,9 +18,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_jpeg_dec PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJpegDec>")
     endif()
-endif()
 
-if(BUILD_TESTING)
     add_test_executable(guest_jpeg_dec_input_control_tests ${LIBS_INCLUDE_DIR}/tests/GuestJpegDecInputControl.cpp)
     target_include_directories(guest_jpeg_dec_input_control_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_jpeg_dec_input_control_tests PRIVATE libSceJpegDec decoder_jpeg libc)
