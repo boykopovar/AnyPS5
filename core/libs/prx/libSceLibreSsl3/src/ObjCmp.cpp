@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 
 namespace {
 struct Object {
