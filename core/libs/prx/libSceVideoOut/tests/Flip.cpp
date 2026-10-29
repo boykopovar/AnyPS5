@@ -506,6 +506,13 @@ void testControls() {
     attribute.width = 64;
     attribute.height = 64;
     attribute.pixel_format = 0x8000000000000000ull;
+    constexpr int invalidValue = static_cast<int>(0x80290001u);
+    const std::array<VideoOutBuffers, 5> pastLast{buffer, buffer, buffer, buffer, buffer};
+    check(sceVideoOutRegisterBuffers2(handle, 3, 15, pastLast.data(), 5, &attribute, 0, nullptr) == invalidValue, "buffers 15 to 19 were not refused with INVALID_VALUE");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(!cfg->groups[3].occupied && !cfg->buffers[15].Occupied(), "a refused registration past the last buffer registered something");
+    }
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffers with set reserved pointers were rejected");
     check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
     check(owner->GetTriggeredEvents(&event, 1) == 0, "VRR status event triggered without a VRR change");

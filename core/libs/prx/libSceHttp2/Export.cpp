@@ -312,7 +312,7 @@ int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t ssl_flags) {
 }
 
 int APS5_VABI sceHttp2SetMinSslVersion(int id, uint32_t ssl_version) {
-    return Update(id, __func__, [&](auto&) { NotImplemented_nid_no_patch("sceHttp2SetMinSslVersion"); });
+    return Update(id, __func__, [&](auto&) { if (ssl_version < 2 || ssl_version > 5) NotImplemented_nid_no_patch("sceHttp2SetMinSslVersion"); });
 }
 
 int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {

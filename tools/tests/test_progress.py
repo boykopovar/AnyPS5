@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -718,7 +719,7 @@ class ProgressTests(unittest.TestCase):
             first, second = output / "progress.json", output / "progress.html"
             first.write_text("json report", encoding="utf-8")
             try:
-                second.hardlink_to(first)
+                os.link(first, second)
             except OSError:
                 self.skipTest("hard links are not available")
             others = {name: output / name for name in ("badge-libraries.svg", "badge-shaders.svg", "progress.svg")}

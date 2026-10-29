@@ -70,6 +70,8 @@ class FileStream {
     bool guestError = false;
     bool randomDevice = false;
     bool directory = false;
+    char16_t lowSurrogate = 0;
+    unsigned pushedBack = 0;
 
 public:
     explicit FileStream(std::FILE* handle, bool dynamic = false) : _handle(handle), _dynamic(dynamic) {
@@ -111,6 +113,8 @@ public:
         _handle = nullptr;
         _guest.flags = 0;
         _guest.descriptor = -1;
+        lowSurrogate = 0;
+        pushedBack = 0;
     }
 
     void RestoreHostStandard(std::FILE* stream, int kept) {
@@ -131,6 +135,8 @@ public:
     void MarkRandomDevice() {
         randomDevice = true;
         _guest.descriptor = -1;
+        lowSurrogate = 0;
+        pushedBack = 0;
     }
 
     bool IsRandomDevice() const {
@@ -150,6 +156,8 @@ public:
         _guest = {};
         guestError = false;
         randomDevice = false;
+        lowSurrogate = 0;
+        pushedBack = 0;
         if (!_handle) return false;
         _guest.flags = 0x10;
 #ifdef _WIN32
@@ -174,6 +182,8 @@ public:
         _guest = {};
         guestError = false;
         randomDevice = false;
+        lowSurrogate = 0;
+        pushedBack = 0;
 #ifdef _WIN32
         std::wstring wideMode;
         for (const char character : std::string_view(mode)) wideMode.push_back(static_cast<unsigned char>(character));
@@ -349,6 +359,24 @@ public:
         SyncStatus();
     }
 
+    char16_t TakeLowSurrogate() {
+        if (pushedBack != 0) return 0;
+        return std::exchange(lowSurrogate, char16_t{0});
+    }
+
+    void SetLowSurrogate(char16_t unit) {
+        lowSurrogate = unit;
+        pushedBack = 0;
+    }
+
+    void NotePushback() {
+        if (lowSurrogate != 0) ++pushedBack;
+    }
+
+    void NoteWideRead() {
+        if (pushedBack != 0) --pushedBack;
+    }
+
     int Close() {
         GetHandle();
 #ifdef _WIN32
@@ -358,6 +386,8 @@ public:
         const int result = std::fclose(std::exchange(_handle, nullptr));
         _guest.flags = 0;
         _guest.descriptor = -1;
+        lowSurrogate = 0;
+        pushedBack = 0;
         return result;
     }
 };

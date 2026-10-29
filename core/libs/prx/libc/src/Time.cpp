@@ -275,8 +275,10 @@ void addNumber(FormatBuffer& buffer, std::int64_t value, int modulus, const char
 }
 
 const char* tableName(int index, const char* const* names, const char* const* shortNames, int count) {
-    if (index < 0) return shortNames[0];
-    return index < count ? names[index] : "";
+    const auto field = static_cast<std::int32_t>(static_cast<std::uint32_t>(index) * 2u + (names == shortNames ? 0u : 1u));
+    if (field < 0) return shortNames[0];
+    if (field >= 2 * count) return "";
+    return field % 2 == 0 ? shortNames[field / 2] : names[field / 2];
 }
 
 int twoDigitYear(std::int64_t year) {
@@ -568,8 +570,9 @@ int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
         return time;
     }
 #endif
-    if (approximate < firstOrdinary || approximate > HOST_LAST_SECOND - SECONDS_PER_DAY) {
-        moved = calendarCycles(approximate - firstOrdinary, CALENDAR_CYCLE_SECONDS) * CALENDAR_CYCLE_SECONDS;
+    if (!ordinary || approximate < firstOrdinary || approximate > HOST_LAST_SECOND - SECONDS_PER_DAY) {
+        if (approximate < firstOrdinary || approximate > HOST_LAST_SECOND - SECONDS_PER_DAY)
+            moved = calendarCycles(approximate - firstOrdinary, CALENDAR_CYCLE_SECONDS) * CALENDAR_CYCLE_SECONDS;
         GuestTm window{};
         if (!utcCalendarFields(approximate - moved, window)) return -1;
         window.tm_isdst = host.tm_isdst;
