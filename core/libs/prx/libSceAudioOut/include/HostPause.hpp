@@ -6,8 +6,12 @@
 #include <cstdint>
 #include <vector>
 
+extern "C" {
+
 void AudioOutSetHostPause_nid_no_patch(bool paused);
 bool AudioOutHostPaused_nid_no_patch();
+
+}
 
 inline const void* AudioOutSilenceWhilePaused(const void* data, std::uint32_t bytes, std::vector<std::uint8_t>& silence) {
     if (!AudioOutHostPaused_nid_no_patch()) return data;
