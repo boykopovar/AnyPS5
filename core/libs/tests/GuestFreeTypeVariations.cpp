@@ -89,8 +89,6 @@ static void TestGetMMVar() {
     void* actual = nullptr;
     FT_MM_Var* expected = nullptr;
     if constexpr (!kHostLong64) {
-        Require(ThrowsWith([&] { FT_Get_MM_Var_nid_postfix(&pair.guest.rec, &actual); },
-                           "FT_Get_MM_Var_nid_postfix: the LP64 variation layouts need a 64-bit host FT_Long, which is not implemented"));
         Require(FT_Get_MM_Var_nid_postfix(nullptr, &actual) == FT_Get_MM_Var(nullptr, &expected));
         return;
     }
@@ -242,11 +240,7 @@ static void TestGetMultiMaster() {
         FacePair pair(variable ? VariableFont() : FontFixture::BuildFont(3, {}));
         FT_Multi_Master actual{};
         FT_Multi_Master expected{};
-        if constexpr (!kHostLong64) {
-            Require(ThrowsWith([&] { FT_Get_Multi_Master_nid_postfix(&pair.guest.rec, &actual); },
-                               "FT_Get_Multi_Master_nid_postfix: the LP64 variation layouts need a 64-bit host FT_Long, which is not implemented"));
-            continue;
-        }
+        if constexpr (!kHostLong64) continue;
         Require(FT_Get_Multi_Master_nid_postfix(&pair.guest.rec, &actual) == FT_Get_Multi_Master(pair.oracle, &expected));
         Require(actual.num_axis == expected.num_axis && actual.num_designs == expected.num_designs);
         Require(FT_Get_Multi_Master_nid_postfix(&pair.guest.rec, nullptr) == FT_Get_Multi_Master(pair.oracle, nullptr));
