@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -112,6 +113,50 @@ std::size_t PrivateBytes() {
 #endif
 }
 
+void BlocksFlowToAnotherThread() {
+    constexpr int rounds = 12;
+    constexpr int perRound = 200000;
+    std::size_t afterEarlyRounds = 0;
+    for (int round = 0; round < rounds; ++round) {
+        std::mutex lock;
+        std::vector<unsigned char*> handed;
+        std::atomic<bool> done{false};
+        std::thread freer([&] {
+            std::vector<unsigned char*> taken;
+            for (;;) {
+                const bool finished = done.load(std::memory_order_acquire);
+                {
+                    std::lock_guard guard(lock);
+                    taken.swap(handed);
+                }
+                for (auto* block : taken) {
+                    const auto size = static_cast<std::size_t>(block[0]) * 4 + 1;
+                    Check(block[size - 1] == block[0], "a block freed on another thread keeps its bytes until then");
+                    ::operator delete(block);
+                }
+                taken.clear();
+                if (finished) break;
+                std::this_thread::yield();
+            }
+        });
+        for (int i = 0; i < perRound; ++i) {
+            const auto seed = static_cast<unsigned char>(i % 256);
+            const auto size = static_cast<std::size_t>(seed) * 4 + 1;
+            auto* block = static_cast<unsigned char*>(::operator new(size));
+            block[0] = seed;
+            block[size - 1] = seed;
+            std::lock_guard guard(lock);
+            handed.push_back(block);
+        }
+        done.store(true, std::memory_order_release);
+        freer.join();
+        if (round == 3) afterEarlyRounds = PrivateBytes();
+    }
+    const auto afterLastRound = PrivateBytes();
+    std::printf("private bytes after 4 and after %d rounds of blocks freed on another thread: %zu, %zu\n", rounds, afterEarlyRounds, afterLastRound);
+    Check(afterLastRound < afterEarlyRounds + (64u << 20), "blocks freed on another thread do not pile up");
+}
+
 void ThreadsEndWithCachedBlocks() {
     constexpr int waves = 24;
     std::size_t afterEarlyWaves = 0;
@@ -144,6 +189,7 @@ int main() {
     SizedDeletesKeepTheirClass();
     BlocksCrossIntoLibstdcxx();
     BlocksMoveBetweenThreads();
+    BlocksFlowToAnotherThread();
     ThreadsEndWithCachedBlocks();
     if (failures != 0) {
         std::fprintf(stderr, "%d host allocator checks failed\n", failures);

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -168,7 +169,6 @@ char* APS5_VABI strtok_nid_postfix(char* text, const char* delimiters) {
     thread_local char* state = nullptr;
     return strtok_r_nid_postfix(text, delimiters, &state);
 }
-
 
 int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address) {
     std::uint8_t parts[3];

@@ -1,3 +1,4 @@
+#include "prx/libmdbg_syscore/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -226,8 +227,7 @@ int APS5_VABI sceDebugGetProcessCoredumpHandlerResult() {
 }
 
 int APS5_VABI sceDebugGetProcessEventCntlFlag() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 1;
 }
 
 int APS5_VABI sceDebugGetProcessInfo() {
@@ -651,8 +651,7 @@ int APS5_VABI sceDebugResumeThread() {
 }
 
 int APS5_VABI sceDebugSetProcessEventCntlFlag() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 1;
 }
 
 int APS5_VABI sceDebugSetStepThread() {

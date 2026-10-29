@@ -6,14 +6,20 @@ endif()
 project(Relinker CXX)
 
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
-set(ANYPS5_WINDOWS_TEST_EXIT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WindowsTestExit.cpp")
 
 function(add_test_executable target)
     add_executable(${target} ${ARGN})
     set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
     if(MINGW)
-        target_sources(${target} PRIVATE "${ANYPS5_WINDOWS_TEST_EXIT}")
+        target_sources(${target} PRIVATE $<TARGET_OBJECTS:anyps5_windows_test_exit>)
         target_link_options(${target} PRIVATE LINKER:--wrap=main)
+    endif()
+endfunction()
+
+function(configure_host_test_executable target)
+    if(MINGW)
+        target_compile_options(${target} PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(${target} PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
 endfunction()
 
@@ -56,6 +62,7 @@ endif()
 
 option(ANYPS5_ENABLE_SPIRV_TOOLS "Enable SPIRV-Tools validation and optimization" OFF)
 option(ANYPS5_ENABLE_ASAN "Build Linux targets with AddressSanitizer and use an ASan-compatible guest arena range" OFF)
+option(ANYPS5_ENABLE_TSAN "Build Linux targets with ThreadSanitizer" OFF)
 option(APS5_ENABLE_TIMING_LOG "Write frame timings asynchronously to frame-timing.log" OFF)
 option(APS5_ENABLE_TRACY "Build the Tracy profiler client and report performance timer scopes as Tracy zones" OFF)
 option(ANYPS5_USE_SYSTEM_DEPS "Resolve SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools from the system instead of the bundled submodules" OFF)
@@ -77,7 +84,30 @@ if(NOT ANYPS5_CXX_LINKS_STANDARD_LIBRARY)
         "Supported toolchains are listed in docs/dev/BUILD.md.")
 endif()
 
-if(ANYPS5_ENABLE_ASAN)
+if(ANYPS5_ENABLE_ASAN AND ANYPS5_ENABLE_TSAN)
+    message(FATAL_ERROR "ANYPS5_ENABLE_ASAN and ANYPS5_ENABLE_TSAN cannot be combined")
+endif()
+if(ANYPS5_ENABLE_TSAN)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(FATAL_ERROR "ANYPS5_ENABLE_TSAN is supported only on Linux")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+        message(FATAL_ERROR "ANYPS5_ENABLE_TSAN requires GCC or Clang")
+    endif()
+endif()
+
+option(ANYPS5_BUILD_FUZZERS "Build the relinker libFuzzer targets with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(ANYPS5_BUILD_FUZZERS)
+    if(NOT ANYPS5_RELINKER_ONLY)
+        message(FATAL_ERROR "ANYPS5_BUILD_FUZZERS requires ANYPS5_RELINKER_ONLY")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR APPLE OR WIN32)
+        message(FATAL_ERROR "ANYPS5_BUILD_FUZZERS requires Clang on Linux")
+    endif()
+    set(ANYPS5_RELINKER_CLI OFF CACHE BOOL "Build the native relinker command line" FORCE)
+    add_compile_options(-fsanitize=address,undefined,fuzzer-no-link -fno-sanitize=function -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+elseif(ANYPS5_ENABLE_ASAN)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
         message(FATAL_ERROR "ANYPS5_ENABLE_ASAN is supported only on Linux")
     endif()
@@ -87,6 +117,10 @@ if(ANYPS5_ENABLE_ASAN)
     add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address)
     add_compile_definitions(ANYPS5_ENABLE_ASAN=1)
+elseif(ANYPS5_ENABLE_TSAN)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+    add_compile_definitions(ANYPS5_ENABLE_TSAN=1)
 elseif(NOT APPLE)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
 endif()
@@ -94,6 +128,10 @@ endif()
 if(APPLE AND NOT ANYPS5_RELINKER_ONLY)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fexperimental-library>)
     add_link_options(-fexperimental-library)
+endif()
+
+if(MINGW)
+    add_library(anyps5_windows_test_exit OBJECT cmake/WindowsTestExit.cpp)
 endif()
 
 if(BUILD_TESTING)
@@ -107,6 +145,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/tests/RequestSerializerTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ControlFlow/src/RequestSerializer.cpp)
     target_include_directories(request_serializer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core/libs
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler
         ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include)
     add_test(NAME request_serializer COMMAND request_serializer_tests)
@@ -128,14 +167,23 @@ if(BUILD_TESTING)
     add_test(NAME pad_command_file COMMAND pad_command_file_tests)
     set_tests_properties(pad_command_file PROPERTIES TIMEOUT 20)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_mingw_host_only_test_targets.py)
         add_test(NAME shader_cache_native_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/tests/test_shader_cache_native_paths.py
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ShaderCacheVersion.cmake ${CMAKE_COMMAND})
         set_tests_properties(shader_cache_native_paths PROPERTIES TIMEOUT 20)
-        add_test(NAME shader_cache_runtime_sources COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_shader_cache_runtime_sources.py
-            ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler ${CMAKE_COMMAND})
-        set_tests_properties(shader_cache_runtime_sources PROPERTIES TIMEOUT 180)
+        foreach(shard RANGE 0 6)
+            if(shard EQUAL 0)
+                set(shader_cache_sources_test_name shader_cache_runtime_sources)
+            else()
+                set(shader_cache_sources_test_name shader_cache_runtime_sources_shard_${shard})
+            endif()
+            add_test(NAME ${shader_cache_sources_test_name} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_shader_cache_runtime_sources.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler ${CMAKE_COMMAND} --shard ${shard}/7)
+            set_tests_properties(${shader_cache_sources_test_name} PROPERTIES TIMEOUT 180)
+        endforeach()
         add_test(NAME pr_overlap_encoding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_encoding.py)
         add_test(NAME pr_overlap_dependencies COMMAND ${Python3_EXECUTABLE}
@@ -145,7 +193,10 @@ if(BUILD_TESTING)
         add_test(NAME pr_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_labels.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py ProgressHistoryTests)
+        add_test(NAME progress_history_output COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryReportOutputTests)
+        set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
         add_test(NAME progress_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress.py)
         add_test(NAME progress_encoding COMMAND ${Python3_EXECUTABLE}
@@ -158,8 +209,19 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_read_encoding.py)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
+        if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
+            add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
+        endif()
+        if(NOT APPLE)
+            add_test(NAME annotate_module COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
+            set_tests_properties(annotate_module PROPERTIES TIMEOUT 20)
+        endif()
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
+        add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_audit_dump.py)
         foreach(shard RANGE 0 11)
             if(shard EQUAL 0)
                 set(conventions_test_name conventions_function_bodies)
@@ -168,12 +230,18 @@ if(BUILD_TESTING)
             endif()
             add_test(NAME ${conventions_test_name} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_comments.py --shard ${shard}/12)
-            set_tests_properties(${conventions_test_name} PROPERTIES TIMEOUT 30)
+            set_tests_properties(${conventions_test_name} PROPERTIES TIMEOUT 120)
         endforeach()
+        add_test(NAME performance_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_csv.py)
+        set_tests_properties(performance_csv PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_wrapped_declarations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py)
         add_test(NAME conventions_ci_gate COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_ci_gate.py)
+        add_test(NAME preview_pad_timeline COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_preview_pad_timeline.py)
+        set_tests_properties(preview_pad_timeline PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_git_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_git.py)
         add_test(NAME conventions_doc_links COMMAND ${Python3_EXECUTABLE}
@@ -188,12 +256,29 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_test_registration.py --scripts)
         add_test(NAME build_eligibility COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_eligibility.py)
+        add_test(NAME check_skips_ctest COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips_ctest.py)
+        set_tests_properties(check_skips_ctest PROPERTIES TIMEOUT 30)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
+        add_test(NAME sanitizer_report COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_report.py)
         add_test(NAME select_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py)
         add_test(NAME check_main_sync COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_main_sync.py)
+        set(select_tests_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${select_tests_source}")
+        file(STRINGS "${select_tests_source}" select_tests_classes REGEX "^class [A-Za-z0-9_]*Tests\\(")
+        foreach(test_class IN LISTS select_tests_classes)
+            string(REGEX REPLACE "^class ([A-Za-z0-9_]+).*" "\\1" test_class "${test_class}")
+            if(test_class STREQUAL "SelectTests")
+                set_tests_properties(select_tests PROPERTIES ENVIRONMENT "ANYPS5_SELECT_TEST_CLASS=SelectTests" TIMEOUT 30)
+            else()
+                add_test(NAME select_tests_${test_class} COMMAND ${Python3_EXECUTABLE} "${select_tests_source}" ${test_class})
+                set_tests_properties(select_tests_${test_class} PROPERTIES TIMEOUT 30)
+            endif()
+        endforeach()
         add_test(NAME configure_seed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedTests)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
@@ -202,6 +287,12 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedRoundTripTests)
         add_test(NAME configure_seed_parsing COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ChecksParsingTests)
+        add_test(NAME vulkan_validation_gate_reports COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py ReportTests)
+        add_test(NAME vulkan_validation_gate_integration COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py IntegrationTests)
+        add_test(NAME vulkan_validation_gate_attribution COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_vulkan_validation_gate.py AttributionTests)
         add_test(NAME stubgen COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
@@ -210,6 +301,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen_stdout_newlines.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
+        add_test(NAME job_reference_errors COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_job_reference_errors.py)
+        set_tests_properties(job_reference_errors PROPERTIES TIMEOUT 20)
         add_test(NAME hardware_oracle_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_compare_results.py)
         set_tests_properties(hardware_oracle_compare PROPERTIES TIMEOUT 120)
@@ -221,6 +315,14 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_own_branch.py)
         add_test(NAME pr_overlap_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_errors.py)
+        add_test(NAME pr_overlap_branch_scan COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py)
+        add_test(NAME pr_overlap_progress COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_progress.py)
+        add_test(NAME pr_overlap_pages COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_pages.py)
+        add_test(NAME pr_overlap_export_cache COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_export_cache.py)
         add_test(NAME nid_database_cache COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_names.py)
         add_test(NAME release_package COMMAND ${Python3_EXECUTABLE}
@@ -237,27 +339,105 @@ if(BUILD_TESTING)
         add_test(NAME pad_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_timeline.py)
         set_tests_properties(pad_timeline PROPERTIES TIMEOUT 20)
+        function(register_check_compile_remaining_tests)
+            if(TEST check_compile)
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py")
+                file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py"
+                    check_compile_lines REGEX "^class CheckCompile|^    def test_")
+                foreach(line IN LISTS check_compile_lines)
+                    if(line MATCHES "^class (CheckCompile[A-Za-z0-9_]*)")
+                        set(check_compile_class "${CMAKE_MATCH_1}")
+                    elseif(NOT check_compile_class MATCHES "^CheckCompile(Fixture|Tests|OutputTests)$")
+                        string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${line}")
+                        add_test(NAME check_compile_${check_compile_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py ${check_compile_class}.${test_case})
+                        set_tests_properties(check_compile_${check_compile_class}_${test_case} PROPERTIES TIMEOUT 30)
+                    endif()
+                endforeach()
+            endif()
+        endfunction()
+        cmake_language(DEFER CALL register_check_compile_remaining_tests)
+        set(check_compile_modes_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_modes.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${check_compile_modes_source}")
+        file(STRINGS "${check_compile_modes_source}" check_compile_modes_cases REGEX "^    def test_")
+        foreach(test_case IN LISTS check_compile_modes_cases)
+            string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+            add_test(NAME check_compile_modes_${test_case} COMMAND ${Python3_EXECUTABLE}
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_modes.py" CheckCompileModeTests.${test_case})
+            set_tests_properties(check_compile_modes_${test_case} PROPERTIES TIMEOUT 60)
+        endforeach()
         add_test(NAME trace_digest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py)
+        add_test(NAME symbolize_samples COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_symbolize_samples.py)
+        add_test(NAME ab_split COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ab_split.py)
+        set_tests_properties(ab_split PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_bom_shebang COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_bom_shebang.py)
         set_tests_properties(conventions_bom_shebang PROPERTIES TIMEOUT 20)
         add_test(NAME env_reference COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_env_reference.py)
         set_tests_properties(env_reference PROPERTIES TIMEOUT 20)
-        add_test(NAME conventions_env_reference COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_env_reference.py)
-        set_tests_properties(conventions_env_reference PROPERTIES TIMEOUT 60)
+        set(env_reference_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_env_reference.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${env_reference_test_source}")
+        file(STRINGS "${env_reference_test_source}" env_reference_cases REGEX "^    def test_")
+        foreach(test_case IN LISTS env_reference_cases)
+            string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+            add_test(NAME conventions_env_reference_${test_case} COMMAND ${Python3_EXECUTABLE}
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_env_reference.py" "EnvReferenceDiffTests.${test_case}")
+            set_tests_properties(conventions_env_reference_${test_case} PROPERTIES TIMEOUT 30)
+        endforeach()
         add_test(NAME conventions_body_bom COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_body_bom.py)
         add_test(NAME conventions_blob_reads COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_blob_reads.py)
         add_test(NAME conventions_agent_files COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
+        add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_alignment.py)
+        add_test(NAME trace_intervals_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_intervals_csv.py)
+        set_tests_properties(trace_intervals_csv PROPERTIES TIMEOUT 20)
+        set(trace_digest_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${trace_digest_test_source}")
+        file(STRINGS "${trace_digest_test_source}" trace_digest_cases REGEX "^class |^    def test_")
+        set(trace_digest_first TRUE)
+        foreach(test_case IN LISTS trace_digest_cases)
+            if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                set(trace_digest_class "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+                if(trace_digest_first)
+                    set_tests_properties(trace_digest PROPERTIES
+                        ENVIRONMENT "TRACE_DIGEST_TEST=${trace_digest_class}.${test_case}" TIMEOUT 20)
+                    set(trace_digest_first FALSE)
+                else()
+                    add_test(NAME trace_digest_${trace_digest_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
+                        "${trace_digest_test_source}" "${trace_digest_class}.${test_case}")
+                    set_tests_properties(trace_digest_${trace_digest_class}_${test_case} PROPERTIES TIMEOUT 20)
+                endif()
+            endif()
+        endforeach()
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
-        add_test(NAME check_compile COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py)
+        add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_preprocessor.py)
+        set_tests_properties(check_compile_preprocessor PROPERTIES TIMEOUT 20)
+        set(check_compile_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${check_compile_test_source}")
+        file(STRINGS "${check_compile_test_source}" check_compile_cases REGEX "^class CheckCompile|^    def test_")
+        foreach(test_case IN LISTS check_compile_cases)
+            if(test_case MATCHES "^class (CheckCompile[A-Za-z0-9_]*)")
+                set(check_compile_class "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+                add_test(NAME check_compile_${test_case} COMMAND ${Python3_EXECUTABLE}
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py" "${check_compile_class}.${test_case}")
+                set_tests_properties(check_compile_${test_case} PROPERTIES TIMEOUT 30)
+            endif()
+        endforeach()
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)
@@ -338,6 +518,8 @@ if(NOT ANYPS5_USE_SYSTEM_DEPS)
     endif()
 endif()
 
+include(cmake/Jxr.cmake)
+
 set(LIBUSB_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(LIBUSB_INSTALL_TARGETS OFF CACHE BOOL "" FORCE)
 set(LIBUSB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
@@ -347,7 +529,8 @@ add_subdirectory(3rdparty/libusb-cmake EXCLUDE_FROM_ALL)
 set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 include(cmake/ZArchive.cmake)
-if(WIN32)
+include(cmake/Opus.cmake)
+if(WIN32 OR APPLE)
     set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
     set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)

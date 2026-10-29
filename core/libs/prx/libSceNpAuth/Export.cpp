@@ -1,3 +1,4 @@
+#include "prx/libSceNpAuth/include/Api.hpp"
 #include <atomic>
 #include <array>
 #include <cstddef>

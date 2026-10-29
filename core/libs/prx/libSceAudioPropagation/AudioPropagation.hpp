@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAUDIOPROPAGATION_AUDIOPROPAGATION_HPP
 #define CORE_LIBS_PRX_LIBSCEAUDIOPROPAGATION_AUDIOPROPAGATION_HPP
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -128,6 +129,14 @@ static_assert(offsetof(ReportInfo, function) == 32);
 static_assert(offsetof(ReportInfo, format) == 40);
 static_assert(offsetof(ReportInfo, arguments) == 48);
 
+inline constexpr std::uint32_t MaxPaths = 36;
+inline constexpr std::uint32_t MaxPathPoints = 4;
+inline constexpr std::uint32_t PathId = 0x010107d3;
+inline constexpr std::uint32_t PathPointId = 0x010107d2;
+inline constexpr std::uint32_t PathInvalid = 1;
+inline constexpr std::uint32_t PathPortal = 2;
+
+
 struct Attribute {
     std::uint32_t id;
     std::uint32_t reserved0;
@@ -209,6 +218,7 @@ std::int32_t APS5_VABI sceAudioPropagationSourceDestroy(AudioPropagationHandle s
 std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHandle source, const AudioPropagation::Attribute* attributes, std::uint32_t count);
 std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPathCount(AudioPropagationHandle source, std::uint32_t* count);
 std::int32_t APS5_VABI sceAudioPropagationSourceGetAudioPath(AudioPropagationHandle source, std::uint32_t index, AudioPropagationHandle* outPath);
+std::int32_t APS5_VABI sceAudioPropagationPathGetNumPoints(AudioPropagationHandle path, std::uint32_t* count);
 std::int32_t APS5_VABI sceAudioPropagationSourceGetRays(AudioPropagationHandle source, void* rays, std::uint32_t* count);
 std::int32_t APS5_VABI sceAudioPropagationSourceCalculateAudioPaths(AudioPropagationHandle source, const void* rays, std::uint32_t rayCount, std::uint32_t reflectionOrder, void* paths, std::uint32_t pathCount);
 std::int32_t APS5_VABI sceAudioPropagationSourceSetAudioPaths(AudioPropagationHandle source, const void* entries, std::uint32_t count);

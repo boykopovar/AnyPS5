@@ -39,6 +39,8 @@ struct SpirvRequirements {
 
 [[nodiscard]] SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program);
 inline constexpr std::uint32_t FunctionLdsDwordLimit = 8192u;
+inline constexpr std::uint32_t PixelFunctionStorageDwords = 4096u;
+inline constexpr std::uint32_t PixelFunctionLdsDescriptorSet = 2u;
 [[nodiscard]] std::uint32_t FunctionLdsDwords(const IrProgram& program);
 [[nodiscard]] std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const IrProgram& program);
 [[nodiscard]] std::unordered_set<const IrValue*> WaveUniformValues(const IrProgram& program);

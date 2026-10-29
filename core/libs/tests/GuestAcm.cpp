@@ -1,3 +1,4 @@
+#include "prx/libSceAcm/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -5,17 +6,6 @@
 #include <cstring>
 #include <initializer_list>
 #include "SceTypes.hpp"
-
-extern "C" {
-int APS5_VABI sceAcmContextCreate(std::uint32_t*);
-int APS5_VABI sceAcmContextDestroy(std::uint32_t);
-int APS5_VABI sceAcmBatchStartBuffer(std::uint32_t, const void*, std::size_t, void*, std::uint32_t*);
-int APS5_VABI sceAcmBatchStartBuffers(std::uint32_t, std::uint32_t, const void* const[], void*, std::uint32_t*);
-int APS5_VABI sceAcmBatchWait(std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo*, std::uint32_t, AcmReverbInput*, std::uint32_t, const AcmReverbFilter* const*, const float*, const AcmReverbOutput* const*);
-int APS5_VABI sceAcm_FFT(AcmBatchInfo*, std::int32_t, std::uint32_t, std::int32_t, const void* const*, std::int32_t, void* const*, std::int32_t);
-int APS5_VABI sceAcm_Panner(AcmBatchInfo*, std::uint32_t, const void* const*, std::uint32_t, std::uint32_t, std::uint32_t, const void* const*, const void* const*, const void* const*, void* const*);
-}
 
 static void Require(bool value) {
     if (!value) std::abort();
@@ -80,6 +70,13 @@ int main() {
     Require(descriptor[6] == reinterpret_cast<std::uintptr_t>(sources) && descriptor[7] == reinterpret_cast<std::uintptr_t>(sources));
     for (std::size_t index = 8; index < 16; ++index) Require(descriptor[index] == 0);
     commandBatch = {commands, 0, sizeof(commands)};
+    Require(sceAcm_FFT(&commandBatch, 512, 0, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 256, 1, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 4096, 1, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 2, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 2, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, nullptr, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, nullptr, 0) == BadPointer);
     Require(sceAcm_FFT(&commandBatch, 2048, 1, 0, sources, 0, outputs, 0) == BadPointer);
     Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, outputs, 3) == BadPointer);
     Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, outputs, 0) == 0);
@@ -121,6 +118,7 @@ int main() {
     Require(sceAcmContextDestroy(context1) == 0);
     Require(sceAcmContextDestroy(context1) == BadContext);
     Require(sceAcmBatchStartBuffer(context1, nullptr, 0, nullptr, &batch1) == BadContext);
+    Require(sceAcmBatchStartBuffers(context1, 0, nullptr, nullptr, &batch1) == BadContext);
     Require(sceAcmBatchWait(context1, batch1, 0) == BadContext);
 
     Require(sceAcmContextDestroy(context2) == 0);

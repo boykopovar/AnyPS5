@@ -34,6 +34,9 @@ bool SampleLocationsCompatibleDepth(const Context& context, VkFormat format, std
 std::uint64_t DepthSurfacesSerial();
 std::uint64_t DepthSurfacesReleased();
 std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel);
+bool DirectDepthCopy(const Context& context, VkFormat depthFormat, VkImageAspectFlagBits aspect, VkFormat colorFormat);
+void SetDirectDepthCopy(bool enabled);
+std::uint64_t DirectDepthCopyCount();
 std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32_t bytesPerTexel, std::uint32_t samples);
 void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes);
 bool HasResidentDepthGuards_nid_no_patch();
@@ -72,11 +75,23 @@ VkImageAspectFlags HtileFillClears(std::uint32_t pattern, bool stencilInHtile);
 std::uint64_t HtileMetadataBytes(VkExtent2D extent);
 bool HtileFillCovers(std::uint64_t htile, VkExtent2D extent, std::uint64_t address, std::size_t bytes);
 std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D);
+std::size_t DepthPlaneCopyCount();
+VkDeviceSize DepthPlaneCopyBytes();
 VkFormat HostDepthFormat(const Context& context, VkFormat format);
 float HostDepthBiasConstant(const Context& context, VkFormat format, float constant);
 std::shared_ptr<StorageTexture> DepthSurfaceStorage(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& resource, std::uint32_t mip);
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage);
-void CopyDepthSample(const Context& context, std::uint64_t depthAddress, std::uint32_t samples, std::uint32_t sample, StorageTexture& destination, VkImageView destinationView, VkExtent2D extent);
+std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target);
+class DepthCopySourceScope {
+public:
+    explicit DepthCopySourceScope(bool active);
+    ~DepthCopySourceScope();
+    DepthCopySourceScope(const DepthCopySourceScope&) = delete;
+    DepthCopySourceScope& operator=(const DepthCopySourceScope&) = delete;
+
+private:
+    bool previous;
+};
 
 struct StorageImageClear {
     std::array<std::uint32_t, 8> image{};

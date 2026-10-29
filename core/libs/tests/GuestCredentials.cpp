@@ -1,27 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI seteuid_nid_postfix(std::uint32_t);
-int APS5_VABI setegid_nid_postfix(std::uint32_t);
-int APS5_VABI setuid_nid_postfix(std::uint32_t);
-int APS5_VABI setgid_nid_postfix(std::uint32_t);
-int APS5_VABI setreuid_nid_postfix(std::uint32_t, std::uint32_t);
-int APS5_VABI setregid_nid_postfix(std::uint32_t, std::uint32_t);
-int APS5_VABI setresuid_nid_postfix(std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI setresgid_nid_postfix(std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI setgroups_nid_postfix(int, const std::uint32_t*);
-int APS5_VABI getgroups_nid_postfix(int, std::uint32_t*);
-int APS5_VABI getuid_nid_postfix(void);
-int APS5_VABI geteuid_nid_postfix(void);
-int APS5_VABI getgid_nid_postfix(void);
-int APS5_VABI getegid_nid_postfix(void);
-int APS5_VABI issetugid_nid_postfix(void);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 using SetId = int (APS5_VABI *)(std::uint32_t);
@@ -81,6 +64,32 @@ int main() {
     Require(Throws(setgid_nid_postfix, Unchanged));
     Require(getuid_nid_postfix() == 0 && geteuid_nid_postfix() == 0);
     Require(getgid_nid_postfix() == 0 && getegid_nid_postfix() == 0 && issetugid_nid_postfix() == 0);
+
+    std::uint32_t ruid = 99, euid = 99, suid = 99;
+    *__error_nid_postfix() = 13;
+    Require(getresuid_nid_postfix(&ruid, &euid, &suid) == 0);
+    Require(ruid == 0 && euid == 0 && suid == 0);
+    Require(*__error_nid_postfix() == 13);
+    ruid = 99;
+    euid = 99;
+    suid = 99;
+    Require(getresuid_nid_postfix(&ruid, nullptr, nullptr) == 0 && ruid == 0);
+    Require(getresuid_nid_postfix(nullptr, &euid, nullptr) == 0 && euid == 0);
+    Require(getresuid_nid_postfix(nullptr, nullptr, &suid) == 0 && suid == 0);
+    Require(getresuid_nid_postfix(nullptr, nullptr, nullptr) == 0);
+
+    std::uint32_t rgid = 99, egid = 99, sgid = 99;
+    *__error_nid_postfix() = 13;
+    Require(getresgid_nid_postfix(&rgid, &egid, &sgid) == 0);
+    Require(rgid == 0 && egid == 0 && sgid == 0);
+    Require(*__error_nid_postfix() == 13);
+    rgid = 99;
+    egid = 99;
+    sgid = 99;
+    Require(getresgid_nid_postfix(&rgid, nullptr, nullptr) == 0 && rgid == 0);
+    Require(getresgid_nid_postfix(nullptr, &egid, nullptr) == 0 && egid == 0);
+    Require(getresgid_nid_postfix(nullptr, nullptr, &sgid) == 0 && sgid == 0);
+    Require(getresgid_nid_postfix(nullptr, nullptr, nullptr) == 0);
     Require(setreuid_nid_postfix(Unchanged, Unchanged) == 0);
     Require(setreuid_nid_postfix(0, Unchanged) == 0);
     Require(setreuid_nid_postfix(Unchanged, 0) == 0);
@@ -123,6 +132,16 @@ int main() {
     Require(getgroups_nid_postfix(0, nullptr) == 1);
     Require(getgroups_nid_postfix(static_cast<int>(groups.size()), groups.data()) == 1 && groups[0] == 0);
     Require(groups[0] == static_cast<std::uint32_t>(getegid_nid_postfix()));
+    *__error_nid_postfix() = 13;
+    RequireFailure(setgroups_nid_postfix(1, reinterpret_cast<const std::uint32_t*>(1)), GuestEfault);
+    *__error_nid_postfix() = 13;
+    RequireFailure(getgroups_nid_postfix(1, reinterpret_cast<std::uint32_t*>(1)), GuestEfault);
+    Require(getgroups_nid_postfix(0, nullptr) == 1);
+
+    *__error_nid_postfix() = 13;
+    RequireFailure(getresuid_nid_postfix(reinterpret_cast<std::uint32_t*>(1), nullptr, nullptr), GuestEfault);
+    *__error_nid_postfix() = 13;
+    RequireFailure(getresgid_nid_postfix(nullptr, reinterpret_cast<std::uint32_t*>(1), nullptr), GuestEfault);
 
     const std::array<std::uint32_t, 3> wanted{0, 5, 7};
     Require(setgroups_nid_postfix(static_cast<int>(wanted.size()), wanted.data()) == 0);

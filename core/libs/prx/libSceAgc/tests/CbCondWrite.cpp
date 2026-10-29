@@ -1,14 +1,10 @@
+#include "prx/libSceAgc/Cb/include/Branch.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" {
-std::uint32_t* APS5_VABI sceAgcCbCondWrite(CommandBuffer*, std::uint32_t, std::uint32_t, const volatile void*, std::uint32_t, const volatile void*, std::uint32_t, std::uint32_t);
-std::uint32_t APS5_VABI sceAgcCbCondWriteGetSize();
-}
 
 namespace {
 

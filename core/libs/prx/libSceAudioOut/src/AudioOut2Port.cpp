@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -109,13 +110,20 @@ AudioOut2Grain AudioOut2CaptureGrain(const AudioOut2Context& context, bool snaps
         auto& port = g_ports[index];
         if (!port.used || port.context != &context || port.channels == 0) continue;
         const void* data = port.repeatedData;
+        const std::vector<std::byte>* setPcm = port.repeatedReused ? &port.repeatedPcm : nullptr;
+        AudioOut2QueuedData queued;
         if (!port.queuedData.empty()) {
-            data = port.queuedData.front();
+            queued = std::move(port.queuedData.front());
             port.queuedData.pop_front();
+            data = queued.data;
+            setPcm = queued.reused ? &queued.pcm : nullptr;
         }
         if (data != nullptr) {
             AudioOut2CapturedPort captured{index, port.generation, data};
-            if (snapshot) {
+            if (setPcm != nullptr) {
+                captured.pcm = *setPcm;
+                std::copy_n(port.volume, port.channels, captured.volume.begin());
+            } else if (snapshot) {
                 captured.pcm.resize(static_cast<std::size_t>(context.grain) * port.channels * (port.int16 ? sizeof(std::int16_t) : sizeof(float)));
                 std::memcpy(captured.pcm.data(), data, captured.pcm.size());
                 std::copy_n(port.volume, port.channels, captured.volume.begin());
@@ -156,6 +164,24 @@ void AudioOut2ReleasePorts(const AudioOut2Context& context) {
     std::lock_guard lock(g_portsLock);
     for (auto& port : g_ports) {
         if (port.used && port.context == &context) port = AudioOut2Port{};
+    }
+}
+
+static std::vector<std::byte> CopyGrain(const AudioOut2Port& port) {
+    if (port.data == nullptr || port.context == nullptr) return {};
+    std::vector<std::byte> pcm(static_cast<std::size_t>(port.context->grain) * port.channels * (port.int16 ? sizeof(std::int16_t) : sizeof(float)));
+    std::memcpy(pcm.data(), port.data, pcm.size());
+    return pcm;
+}
+
+static void MarkBufferReused(const AudioOut2Port& setter) {
+    if (setter.data == nullptr) return;
+    for (auto& port : g_ports) {
+        if (!port.used || &port == &setter || port.context != setter.context) continue;
+        for (auto& queued : port.queuedData) {
+            if (queued.data == setter.data) queued.reused = true;
+        }
+        if (port.repeatedData == setter.data) port.repeatedReused = true;
     }
 }
 
@@ -266,9 +292,13 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
             verdict = "null value";
         } else if (attribute.attribute_id == ATTRIBUTE_DATA && attribute.value_size == sizeof(entry->data)) {
             std::memcpy(&entry->data, attribute.value, sizeof(entry->data));
-            entry->queuedData.push_back(entry->data);
-            if (entry->queuedData.size() > QUEUED_DATA_MAX) entry->queuedData.pop_front();
+            MarkBufferReused(*entry);
+            AudioOut2QueuedData queued{entry->data, CopyGrain(*entry)};
             entry->repeatedData = entry->data != nullptr && (entry->lastBuffer == nullptr || entry->lastBuffer == entry->data) ? entry->data : nullptr;
+            entry->repeatedPcm = queued.pcm;
+            entry->repeatedReused = false;
+            entry->queuedData.push_back(std::move(queued));
+            if (entry->queuedData.size() > QUEUED_DATA_MAX) entry->queuedData.pop_front();
             if (entry->data != nullptr) entry->lastBuffer = entry->data;
             entry->dataSets++;
             verdict = "pcm data pointer";

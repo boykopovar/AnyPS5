@@ -8,10 +8,6 @@
 #include <stdexcept>
 #include <tuple>
 
-extern "C" int APS5_VABI sceAgcGetDataPacketPayloadRange(SceAgcMemoryRange* range, std::uint32_t* cmd, int type);
-extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddress(std::uint32_t** addr, std::uint32_t* cmd, int type);
-extern "C" int APS5_VABI sceAgcGetDataPacketPayloadAddress_0090(std::uint32_t** addr, std::uint32_t* cmd, int type);
-
 namespace {
 
 void check(bool condition, const char* message) {

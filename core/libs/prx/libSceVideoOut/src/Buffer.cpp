@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/Buffer.hpp"
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -59,6 +60,7 @@ int CommitBufferGroup(const std::string& function, VideoOutConfig& cfg, int setI
         AgcDriverCheckGuestMemory_nid_postfix(buffers[i].data, AgcDriverDisplayBufferSize_nid_postfix(display), display.alignment);
     }
     cfg.groups[setIndex] = group;
+    cfg.buffersEverRegistered = true;
     cfg.width = group.attribute.width;
     cfg.height = group.attribute.height;
     for (int i = 0; i < bufferNum; i++) {

@@ -25,7 +25,9 @@ public:
     }
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
     void SetNativeFloat16(bool enabled) { nativeFloat16 = enabled; }
+    void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
+    void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
@@ -81,7 +83,7 @@ private:
     IrU32 flushTinyF16Conversion(IrF32 value, IrU32 bits);
     void writeF16Conversion(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources);
     IrU32 readU32(const RdnaOperand& operand);
-    IrU32 flushF32Denormal(IrU32 bits);
+    IrU32 flushF32Denormal(IrU32 bits, std::uint32_t flushBit = 1u);
     IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr, bool afterRounding = true);
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
@@ -112,6 +114,7 @@ private:
     std::array<IrU32, 2> writeMask(const RdnaOperand& operand, IrU1 value, bool write64 = false);
     void writeCompareResult(const RdnaOperand& operand, IrU1 value);
     MemoryFlags addMemoryInfo(const MemoryInfo& memory, std::uint32_t pc);
+    bool floatAtomicFlush(IrOpcode opcode) const;
     ExportFlags addExportInfo(const RdnaInstruction& inst);
     AddressOperands readAddressOperands(const RdnaInstruction& inst, std::uint32_t firstSource);
     IrU32 getResourceDword(std::uint32_t index, std::uint32_t dword);
@@ -157,7 +160,6 @@ private:
     bool dsWrite2(const RdnaInstruction& inst);
     bool dsSrc2(const RdnaInstruction& inst, IrOpcode opcode);
     bool dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
-    bool sharedFloatFlush(IrOpcode opcode) const;
     bool dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue);
     bool dsCondxchg32(const RdnaInstruction& inst);
     bool dsAppendConsume(const RdnaInstruction& inst, IrOpcode opcode);
@@ -387,6 +389,8 @@ private:
     RdnaOpcode currentOpcode = RdnaOpcode::Unknown;
     std::uint32_t f32DenormalFlush = 0u;
     bool float32FlushToZero = false;
+    bool float32FlushDeclared = false;
+    bool float32DenormPreserve = false;
     std::uint32_t currentProgramCounter = 0;
     std::uint32_t currentVectorLimit = 1;
 };

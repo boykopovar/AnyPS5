@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <barrier>
 #include <chrono>
@@ -11,25 +14,6 @@
 #include <windows.h>
 
 class FileStream;
-
-extern "C" {
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI sceKernelClose(int);
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI flock_nid_postfix(int, int);
-std::int64_t APS5_VABI sceKernelWrite(int, const void*, std::size_t);
-std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelPwrite(int, const void*, std::size_t, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-FileStream* APS5_VABI fdopen_nid_postfix(int, const char*);
-FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-int APS5_VABI fileno_nid_postfix(FileStream*);
-}
 
 static void Require(bool condition) {
     if (!condition) std::abort();
@@ -53,7 +37,8 @@ static bool Acquires(int descriptor, int mode) {
 
 struct Fixture {
     static inline unsigned serial = 0;
-    std::string path = (std::filesystem::temp_directory_path() / ("anyps5-flock-" + std::to_string(::GetCurrentProcessId()) + "-" + std::to_string(serial++) + ".bin")).string();
+    std::filesystem::path native = std::filesystem::temp_directory_path() / ("anyps5-flock-" + std::to_string(::GetCurrentProcessId()) + "-" + std::to_string(serial++) + ".bin");
+    std::string path = native.string();
     std::set<int> descriptors;
     int source = Open(true);
     int other = Open(false);
@@ -76,7 +61,7 @@ struct Fixture {
     }
     ~Fixture() {
         for (const int descriptor : descriptors) Require(close_nid_postfix(descriptor) == 0);
-        Require(std::remove(path.c_str()) == 0);
+        Require(std::filesystem::remove(native));
     }
 };
 
@@ -262,7 +247,7 @@ static int ChildTry(const Fixture (&fixtures)[6], int mode) {
     wchar_t executable[32768];
     Require(::GetModuleFileNameW(nullptr, executable, 32768) != 0);
     std::wstring command = L"\"" + std::wstring(executable) + L"\" child " + std::to_wstring(mode | 4);
-    for (const Fixture& fixture : fixtures) command += L" \"" + std::filesystem::path(fixture.path).wstring() + L"\"";
+    for (const Fixture& fixture : fixtures) command += L" \"" + fixture.native.filename().wstring() + L"\"";
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
@@ -317,7 +302,8 @@ int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "child") {
         int busy = 0;
         for (int index = 3; index < argc; ++index) {
-            const int descriptor = open_nid_postfix(argv[index], 2, 0);
+            const std::string path = (std::filesystem::temp_directory_path() / argv[index]).string();
+            const int descriptor = open_nid_postfix(path.c_str(), 2, 0);
             Require(descriptor >= 0);
             if (flock_nid_postfix(descriptor, std::atoi(argv[2])) == 0) {
                 Require(flock_nid_postfix(descriptor, 8) == 0);

@@ -1,29 +1,12 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
 
-extern "C" {
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stackSize);
-int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, std::size_t* stackSize);
-int APS5_VABI scePthreadAttrSetdetachstate(PthreadAttr* attr, int state);
-int APS5_VABI scePthreadAttrGetdetachstate(const PthreadAttr* attr, int* state);
-int APS5_VABI scePthreadAttrSetschedpolicy(PthreadAttr* attr, int policy);
-int APS5_VABI scePthreadAttrGetschedpolicy(const PthreadAttr* attr, int* policy);
-int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inheritSched);
-int APS5_VABI scePthreadAttrGetinheritsched(const PthreadAttr* attr, int* inheritSched);
-int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedParam* param);
-int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedParam* param);
-int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask);
-int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
-static constexpr int SCE_KERNEL_ERROR_EOPNOTSUPP = static_cast<int>(0x8002002Du);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -81,9 +64,7 @@ int main() {
     Require(scePthreadAttrGetdetachstate(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrGetschedparam(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrGetschedpolicy(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
-    bool threw = false;
-    try { scePthreadAttrGetinheritsched(&attr, nullptr); } catch (const std::runtime_error&) { threw = true; }
-    Require(threw);
+    Require(scePthreadAttrGetinheritsched(&attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
     for (PthreadAttr* missing : {static_cast<PthreadAttr*>(nullptr), static_cast<PthreadAttr*>(&attr)}) {
         PthreadAttr unset = nullptr;

@@ -363,26 +363,34 @@ void readStat(const Json& definition, std::size_t index, StatRules& rules) {
     }
     const auto name = "stat " + std::to_string(*statId);
     const auto* aggregation = definition.Find("aggregation");
-    if (aggregation == nullptr || aggregation->kind != Json::Kind::String || aggregation->text != "latest") {
-        rules.skipped.push_back(name + " has aggregation " + (aggregation != nullptr ? describe(*aggregation) : std::string("none")) + "; only \"latest\" is supported");
+    const auto named = [](const Json* value, std::string_view text) { return value != nullptr && value->kind == Json::Kind::String && value->text == text; };
+    StatDefinition stat;
+    if (named(aggregation, "latest")) {
+        stat.aggregation = StatAggregation::Latest;
+    } else if (named(aggregation, "max")) {
+        stat.aggregation = StatAggregation::Max;
+    } else {
+        rules.skipped.push_back(name + " has aggregation " + (aggregation != nullptr ? describe(*aggregation) : std::string("none")) + "; only \"latest\" and \"max\" are supported");
         return;
     }
     const auto* type = definition.Find("dataType");
-    StatDefinition stat;
-    if (type != nullptr && type->kind == Json::Kind::String && type->text == "uint32") {
+    if (named(type, "uint32")) {
         stat.type = StatType::UInt32;
         stat.maximum = UINT32_MAX;
-    } else if (type != nullptr && type->kind == Json::Kind::String && type->text == "uint64") {
+    } else if (named(type, "uint64")) {
         stat.type = StatType::UInt64;
         stat.maximum = UINT64_MAX;
+    } else if (named(type, "int32")) {
+        stat.type = StatType::Int32;
+        stat.maximum = INT32_MAX;
     } else {
-        rules.skipped.push_back(name + " has dataType " + (type != nullptr ? describe(*type) : std::string("none")) + "; only \"uint32\" and \"uint64\" are supported");
+        rules.skipped.push_back(name + " has dataType " + (type != nullptr ? describe(*type) : std::string("none")) + "; only \"uint32\", \"uint64\" and \"int32\" are supported");
         return;
     }
     if (const auto* minimum = definition.Find("minValue")) {
         const auto value = minimum->Unsigned();
         if (!value || *value > stat.maximum) {
-            rules.skipped.push_back(name + " has minValue " + describe(*minimum) + ", which its " + type->text + " type cannot hold");
+            rules.skipped.push_back(name + " has minValue " + describe(*minimum) + (stat.type == StatType::Int32 ? ", which is not from 0 to its int32 limit" : ", which its " + type->text + " type cannot hold"));
             return;
         }
         stat.minimum = *value;
@@ -394,6 +402,15 @@ void readStat(const Json& definition, std::size_t index, StatRules& rules) {
             return;
         }
         stat.maximum = *value;
+    }
+    stat.initial = stat.minimum;
+    if (const auto* initial = definition.Find("initialValue"); initial != nullptr && stat.aggregation == StatAggregation::Max) {
+        const auto value = initial->Unsigned();
+        if (!value || *value < stat.minimum || *value > stat.maximum) {
+            rules.skipped.push_back(name + " has initialValue " + describe(*initial) + ", which is not from its minValue to its maxValue");
+            return;
+        }
+        stat.initial = *value;
     }
     if (!rules.stats.emplace(*statId, stat).second) rules.skipped.push_back(name + " is defined twice; the first definition is used");
 }
@@ -411,9 +428,20 @@ void readRule(const Json& rule, std::size_t index, StatRules& rules) {
         rules.skipped.push_back(where + " has no eventName");
         return;
     }
+    std::optional<StatFilter> filter;
     if (condition->members.size() != 1) {
-        rules.skipped.push_back(where + " filters " + event->text + " by more than its eventName; only eventName conditions are supported");
-        return;
+        const auto* property = condition->Find("property");
+        const auto* path = property != nullptr && property->kind == Json::Kind::Object ? property->Find("path") : nullptr;
+        const auto* comparator = property != nullptr && property->kind == Json::Kind::Object ? property->Find("comparator") : nullptr;
+        const auto* value = property != nullptr && property->kind == Json::Kind::Object ? property->Find("value") : nullptr;
+        const auto filterPath = path != nullptr && path->kind == Json::Kind::String ? propertyPath(path->text) : std::nullopt;
+        const auto filterValue = value != nullptr ? value->Unsigned() : std::nullopt;
+        const bool equal = comparator != nullptr && comparator->kind == Json::Kind::String && comparator->text == "==";
+        if (condition->members.size() != 2 || property == nullptr || property->kind != Json::Kind::Object || property->members.size() != 3 || !filterPath || !equal || !filterValue) {
+            rules.skipped.push_back(where + " filters " + event->text + " by more than its eventName; only an eventName with one \"$.name\" property equal to an unsigned integer is supported");
+            return;
+        }
+        filter = StatFilter{*filterPath, *filterValue};
     }
     const auto* output = action->Find("output");
     const auto* id = output != nullptr ? output->Find("statId") : nullptr;
@@ -432,7 +460,7 @@ void readRule(const Json& rule, std::size_t index, StatRules& rules) {
         rules.skipped.push_back(where + " for " + event->text + " reads " + (input != nullptr ? describe(*input) : std::string("no input")) + "; only \"$.name\" property paths are supported");
         return;
     }
-    rules.events[event->text].push_back({*path, *statId});
+    rules.events[event->text].push_back({*path, *statId, std::move(filter)});
 }
 
 }
