@@ -77,13 +77,20 @@ bool nullImageDescriptor(const DescriptorValue& descriptor) {
     return descriptor.dwords[0] == 0u && (descriptor.dwords[1] & 0xffu) == 0u;
 }
 
+bool imageFormatUnset(const DescriptorValue& descriptor) {
+    const auto format = (descriptor.dwords[1] >> 20u) & 0x1ffu;
+    return format == 0u || format == 0x1ffu;
+}
+
 ImageType rawImageType(const DescriptorValue& descriptor) {
     return static_cast<ImageType>((descriptor.dwords[3] >> 28u) & 0xfu);
 }
 
 bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor) {
     if (nullImageDescriptor(descriptor)) return true;
-    return static_cast<std::uint32_t>(rawImageType(descriptor)) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
+    const auto type = rawImageType(descriptor);
+    if (image.table == NoTable && image.resourceClass == ImageResourceClass::Sampled && image.read && !image.written && !image.atomic && type >= ImageType::Color1D && type <= ImageType::Color2DMsaa && imageFormatUnset(descriptor)) return true;
+    return static_cast<std::uint32_t>(type) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
 }
 
 IrBufferFormat rawImageFormat(const DescriptorValue& descriptor) {
