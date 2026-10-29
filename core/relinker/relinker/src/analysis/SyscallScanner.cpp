@@ -337,8 +337,9 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
         if (kind == ForbiddenInstruction::None)
             return;
 
-        if (trapSdkStubs && kind == ForbiddenInstruction::Invocation &&
-            (IsSdkSyscallStub(codeSection, opcode) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset))) {
+        const bool sdkStub = kind == ForbiddenInstruction::Invocation &&
+            (IsSdkSyscallStub(codeSection, opcode) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset));
+        if (trapSdkStubs && sdkStub) {
             trapped.push_back(opcode);
             std::ostringstream message;
             message << "Trapping SDK syscall instruction at code offset 0x" << std::hex << match.Offset << '\n';
@@ -364,6 +365,9 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
 
         if (number)
             msg << ": syscall number " << std::dec << *number;
+
+        if (sdkStub)
+            msg << "; it is a ps5-payload-dev SDK syscall stub, which --trap-sdk-syscall-stubs replaces with UD2";
 
         RelinkerException error(msg.str(), match.Offset);
         error.InputPath = source;
