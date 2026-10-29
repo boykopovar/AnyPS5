@@ -1,4 +1,5 @@
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -180,14 +181,20 @@ def resolve_path(path):
     except RuntimeError as error:
         raise ValueError(str(error)) from error
     except OSError as error:
-        raise ValueError(str(error)) from error
+        raise path_error(path, error) from error
     if resolved.is_symlink():
         try:
             resolved.stat()
         except OSError as error:
-            raise ValueError(str(error)) from error
+            raise path_error(path, error) from error
         raise ValueError(f"Symlink loop from {path!r}")
     return resolved
+
+
+def path_error(path, error):
+    if error.errno == getattr(errno, "ELOOP", None) or getattr(error, "winerror", None) == 1921:
+        return ValueError(f"Symlink loop from {path!r}: {error}")
+    return ValueError(str(error))
 
 
 def main(argv=None):

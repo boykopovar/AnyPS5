@@ -226,6 +226,17 @@ class PatchAdvisorTests(unittest.TestCase):
             suggest_patches.resolve_path(first)
         self.assertRegex(str(error.exception), r"Symlink loop|Too many levels of symbolic links")
 
+    def test_resolve_path_reports_windows_symlink_loops(self):
+        unresolvable = OSError(22, "The name of the file cannot be resolved by the system", "loop")
+        unresolvable.winerror = 1921
+        missing = OSError(2, "No such file or directory", "missing")
+        for failure, expected in ((unresolvable, True), (missing, False)):
+            with self.subTest(winerror=getattr(failure, "winerror", None)), \
+                    patch.object(suggest_patches.Path, "resolve", side_effect=failure):
+                with self.assertRaises(ValueError) as error:
+                    suggest_patches.resolve_path(self.root / "loop")
+                self.assertEqual("Symlink loop" in str(error.exception), expected, str(error.exception))
+
     def test_cli_path_symlink_loops_are_reported_without_traceback(self):
         first, second = self.root / "loop-first", self.root / "loop-second"
         try:
