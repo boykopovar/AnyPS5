@@ -436,5 +436,25 @@ class SkipReportTests(unittest.TestCase):
         self.assertRegex(found[0][1], check_skips.DEVICE_LIMITATION)
 
 
+class NotRunTests(unittest.TestCase):
+    def test_real_notrun_case_is_rejected_before_windows_agc_exemption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text('add_test(agc_missing "' + (root / "missing-program").as_posix() + '")\n', encoding="utf-8")
+            report = root / "report.xml"
+            generated = subprocess.run(["ctest", "--test-dir", str(root), "--output-junit", str(report)],
+                                       capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(generated.returncode, 0)
+            self.assertIn('status="notrun"', report.read_text(encoding="utf-8"))
+            for job in ("windows", "linux"):
+                with self.subTest(job=job):
+                    checked = subprocess.run([sys.executable, str(TOOL), str(report), "--job", job, "--require-tests"],
+                                             capture_output=True, text=True, timeout=10)
+                    self.assertEqual(checked.returncode, 2, checked.stdout + checked.stderr)
+                    self.assertIn("notrun", checked.stderr)
+                    self.assertIn("agc_missing", checked.stderr)
+                    self.assertNotIn("Traceback", checked.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

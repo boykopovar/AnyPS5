@@ -408,9 +408,8 @@ struct Replay {
                 waited();
                 stalled.store(true);
                 stalledAt.store(completed);
-                std::fprintf(stderr, "[frame-replay] pacing gave up at call %llu (%s): serials %llu/%llu, the capture had %llu in flight%s, blocked on%s\n", static_cast<unsigned long long>(call.ordinal),
-                             std::string(AgcDriver::FrameCallName(call.kind)).c_str(), static_cast<unsigned long long>(completed), static_cast<unsigned long long>(accepted), static_cast<unsigned long long>(inFlight),
-                             now >= limit ? ", and a queue ran for the whole busy timeout" : "", describeBlocked().c_str());
+                std::fprintf(stderr, "[frame-replay] pacing gave up at call %llu (%s): serials %llu/%llu, the capture had %llu in flight\n", static_cast<unsigned long long>(call.ordinal),
+                             std::string(AgcDriver::FrameCallName(call.kind)).c_str(), static_cast<unsigned long long>(completed), static_cast<unsigned long long>(accepted), static_cast<unsigned long long>(inFlight));
                 ++paceTimeouts;
                 if (options.strict) throw std::runtime_error("frame replay: call " + std::to_string(call.ordinal) + " waited longer than the pacing timeout");
                 return;

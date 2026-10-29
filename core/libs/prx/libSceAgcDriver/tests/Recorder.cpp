@@ -81,6 +81,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -5885,6 +5886,159 @@ bool addressShadowTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    constexpr std::size_t unit = 65536;
+    const auto& base = device.GetContext();
+    if (!UnitShadowEnabled() || base.hostImportAlignment == 0) {
+        std::cout << "skipped, unit shadows or host imports are unavailable\n";
+        return false;
+    }
+    constexpr std::size_t bytes = 1u << 20u;
+    constexpr std::uint64_t offset = 0x40000;
+    void* block = AllocateWatched(bytes, 65536);
+    if (block == nullptr) {
+        std::cout << "skipped, no write watching\n";
+        return false;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    auto* memory = static_cast<std::uint8_t*>(block);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    std::memset(memory, 0x55, bytes);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, address, bytes);
+        }
+    } unregister{base, block, address};
+    if (HostImportFor(base, address, bytes) == nullptr || !Watched(address, bytes)) {
+        std::cout << "skipped, host imports are unavailable: the test block is not imported and watched\n";
+        return false;
+    }
+    CollectWritesUncached(address, bytes);
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    const auto settle = [&] {
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    };
+    GuestTextureResource resource{};
+    resource.baseAddress = address + offset;
+    resource.width = 32;
+    resource.height = 32;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kStandard4KB;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    const auto layout = DescribeSurface(resource);
+    Require(layout.guestBytes <= StorageTexture::SmallStoreBytes && layout.guestBytes <= 0x8000 && offset + layout.guestBytes <= bytes, "the small tiled surface does not fit in the test block");
+    auto image = StorageTexture::Create(context, detiler, resource, 0);
+    image->Refresh();
+    settle();
+    const auto* import = HostImportFor(context, address, bytes);
+    Require(import != nullptr, "the small tiled surface lost its host import");
+    auto destination = ShadowDestinationFor(context, *import, resource.baseAddress, resource.baseAddress + unit);
+    Require(destination.has_value() && destination->seedUnits.empty(), "the small tiled surface has no whole-unit shadow destination");
+    auto neighbor = std::make_shared<Buffer>(context, unit, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    std::memset(neighbor->Bytes().data(), 0x7e, neighbor->Bytes().size());
+    {
+        const auto commands = recorder.Commands();
+        recorder.Keep(neighbor);
+        recorder.Keep(destination->slab);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkBufferCopy piece{0, destination->offset, unit};
+        context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, neighbor->Handle(), destination->buffer, 1, &piece);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        recorder.MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const ShadowedRange range{resource.baseAddress, resource.baseAddress + unit, destination->slab};
+        MarkShadowed(*import, std::span(&range, 1), TrackerGeneration());
+    }
+    Require(AnyShadowedOverlaps(resource.baseAddress, unit), "the neighboring tiled result is not shadowed");
+    auto pattern = std::make_shared<Buffer>(context, 32u * 32u * 4u, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    std::fill(pattern->Bytes().begin(), pattern->Bytes().end(), std::byte{0x3c});
+    {
+        const auto commands = recorder.Commands();
+        recorder.Keep(image);
+        recorder.Keep(pattern);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {32, 32, 1};
+        context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, pattern->Handle(), image->Image(), VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+        image->MarkDirty();
+    }
+    Require(StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(layout.guestBytes), nullptr, "storage image creation", PublishScope::None), "the flush for storage image creation stored nothing");
+    settle();
+    Require(memory[offset + 0x8000] == 0x7e, "the small tiled write-back discarded a neighboring shadowed result");
+    auto reader = StorageTexture::Create(context, detiler, resource, 0);
+    reader->Refresh();
+    Buffer readback(context, 32u * 32u * 4u, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    {
+        const auto commands = recorder.Commands();
+        recorder.Keep(reader);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {32, 32, 1};
+        context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, reader->Image(), VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), 1, &copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    }
+    settle();
+    Require(std::all_of(readback.Bytes().begin(), readback.Bytes().end(), [](std::byte value) { return value == std::byte{0x3c}; }), "a GPU reader did not observe the small tiled write-back");
+    StorageTexture::StoreReadbackBeforeLabel("readback before label");
+    settle();
+    const auto held = static_cast<std::size_t>(std::count(memory + offset, memory + offset + layout.guestBytes, std::uint8_t{0x3c}));
+    Require(held == 32u * 32u * 4u, "the label readback did not publish the small tiled image");
+    auto large = resource;
+    large.baseAddress = address + 0x80000;
+    large.width = 256;
+    large.height = 256;
+    large.tileMode = TextureTileMode::kR64KBX;
+    const auto largeLayout = DescribeSurface(large);
+    Require(largeLayout.guestBytes > StorageTexture::SmallStoreBytes && large.baseAddress + largeLayout.guestBytes <= address + bytes, "the large tiled surface does not fit in the test block");
+    auto largeImage = StorageTexture::Create(context, detiler, large, 0);
+    largeImage->Refresh();
+    settle();
+    auto largePattern = std::make_shared<Buffer>(context, 256u * 256u * 4u, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    std::fill(largePattern->Bytes().begin(), largePattern->Bytes().end(), std::byte{0x5a});
+    {
+        const auto commands = recorder.Commands();
+        recorder.Keep(largeImage);
+        recorder.Keep(largePattern);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {256, 256, 1};
+        context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, largePattern->Handle(), largeImage->Image(), VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+        largeImage->MarkDirty();
+    }
+    Require(StorageTexture::FlushPending(large.baseAddress, static_cast<std::size_t>(largeLayout.guestBytes), nullptr, "large storage image creation", PublishScope::None), "the large tiled flush stored nothing");
+    settle();
+    Require(AnyShadowedOverlaps(large.baseAddress, static_cast<std::size_t>(largeLayout.guestBytes)), "the large tiled write-back did not enter a unit shadow");
+    return true;
+}
+
 bool completionStoreShadowTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (!UnitShadowEnabled() || base.hostImportAlignment == 0) {
@@ -9326,6 +9480,109 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     std::cout << "Multisampled target guest access tests passed\n";
 }
 
+void repeatStorageGuardTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || !device.NullDescriptors()) {
+        std::cout << "4x color targets or nullDescriptor unavailable: repeated storage surface guard not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 256;
+    constexpr std::uint32_t targetSide = 64;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t targetBytes = 65536u;
+    constexpr std::size_t bytes = surfaceBytes + 2u * targetBytes;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the repeated storage surface block");
+    std::memset(block, 0, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            ClearMultisampleTargets(context.device);
+            ClearCachedTextures(context.device);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+#ifdef _WIN32
+            VirtualFree(block, 0, MEM_RELEASE);
+#else
+            std::free(block);
+#endif
+        }
+    } unregister{base, block};
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    context.nullDescriptors = true;
+    TextureCache cache(context);
+    context.textureCache = &cache;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the repeated storage surface has an unexpected size");
+    const auto guard = [&](std::uint64_t at) {
+        ColorTarget target{};
+        target.address = at;
+        target.surfaceAddress = at;
+        target.extent = {targetSide, targetSide};
+        target.surfaceExtent = target.extent;
+        target.format = VK_FORMAT_R8G8B8A8_UNORM;
+        target.bytes = targetBytes;
+        target.samples = 4;
+        std::lock_guard gpu(GpuMutex());
+        Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the guarding multisampled target has no view");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    };
+    const auto clearTargets = [&] {
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        ClearMultisampleTargets(context.device);
+    };
+    const auto refusal = [](const std::function<void()>& access) {
+        try {
+            access();
+        } catch (const std::exception& error) {
+            return std::string(error.what());
+        }
+        return std::string();
+    };
+    const auto stored = CachedStorageSurface(context, resource);
+    Require(stored != nullptr, "the storage surface has no image");
+    Require(RepeatStorageSurface(context, resource, stored) == stored && CachedStorageSurface(context, resource) == stored, "without a guarded target the repeat path and the lookup returned different images");
+    guard(address + surfaceBytes);
+    Require(RepeatStorageSurface(context, resource, stored) == stored && CachedStorageSurface(context, resource) == stored, "a guarded target that starts where the surface ends changed the repeat path's or the lookup's image");
+    clearTargets();
+    guard(address + targetBytes);
+    const auto repeated = refusal([&] { static_cast<void>(RepeatStorageSurface(context, resource, stored)); });
+    const auto looked = refusal([&] { static_cast<void>(CachedStorageSurface(context, resource)); });
+    Require(!looked.empty() && looked.find("a storage image access") != std::string::npos && looked.find("multisampled color target") != std::string::npos, "the lookup did not refuse a surface a guarded target overlaps after its first byte: " + looked);
+    Require(repeated == looked, "the repeat path decided differently from the lookup for a guarded target after the surface's first byte: " + repeated);
+    clearTargets();
+    std::cout << "Repeated storage surface guard tests passed\n";
+}
+
 void oneFragmentFmaskGuardTests(const Device& device) {
     const auto& base = device.GetContext();
     if (!device.NullDescriptors()) {
@@ -9906,8 +10163,8 @@ void singleCubeTests(const Device& device, Recorder& recorder) {
     context.detiler = &detiler;
     SampleProgram program(context, recorder, SAMPLE_ARRAY_SPV);
     const VkComponentMapping identity{};
-    for (const auto first : {0u, 5u, 6u}) {
-        std::array<std::uint32_t, 8> words{0x1000u, (56u << 20u) | (3u << 30u), 15u | (63u << 14u), 0xb0000facu, first | (first << 16u), 0, 0, 0};
+    for (const auto [first, last] : {std::pair{0u, 0u}, std::pair{5u, 5u}, std::pair{6u, 6u}, std::pair{0u, 4u}, std::pair{2u, 5u}}) {
+        std::array<std::uint32_t, 8> words{0x1000u, (56u << 20u) | (3u << 30u), 15u | (63u << 14u), 0xb0000facu, last | (first << 16u), 0, 0, 0};
         auto resource = DecodeTextureResource(words);
         const auto geometry = DescribeSurface(resource);
         std::vector<std::byte> memory(static_cast<std::size_t>(geometry.guestBytes) + 256);
@@ -12030,6 +12287,9 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--small-tiled-shadow-label-only") {
+            return smallTiledShadowLabelTests(device, recorder) ? 0 : 77;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--bda-shadowed-results-only") {
             return addressShadowTests(device, recorder) ? 0 : 77;
         }
@@ -12127,6 +12387,10 @@ int main(int argc, char** argv) {
             std::cout << "Copied draw input tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--repeat-storage-guard-only") {
+            repeatStorageGuardTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--multisample-only") {
             multisampleGuestAccessTests(device, recorder);
             oneFragmentFmaskGuardTests(device);
@@ -12191,6 +12455,7 @@ int main(int argc, char** argv) {
         bdaStagingTests(device, recorder);
         depthSurfaceProofTests(device, recorder);
         multisampleGuestAccessTests(device, recorder);
+        repeatStorageGuardTests(device, recorder);
         oneFragmentFmaskGuardTests(device);
         tiledResolveTests(device, recorder);
         fmaskDecompressMsaaTests(device, recorder);

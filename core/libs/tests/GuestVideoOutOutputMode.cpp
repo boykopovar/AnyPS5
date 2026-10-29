@@ -54,7 +54,7 @@ int main() {
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, nullptr, 0) == 1);
     Require(sceVideoOutIsOutputSupported(handle, 1, nullptr, nullptr, 0) == 1);
     const int highFrameRate = sceVideoOutIsOutputSupported(handle, 15, &options, nullptr, 0);
-    Require(highFrameRate == 1 || highFrameRate == UNSUPPORTED_OUTPUT_MODE);
+    Require(highFrameRate == 1 || highFrameRate == 0);
     Require(sceVideoOutConfigureOutput(handle, 15, &options, nullptr, 0) == UNSUPPORTED_OUTPUT_MODE);
     for (std::uint64_t mode : {0x4ull, 0x7ull, 0x8ull, 0xCull, 0xDull, 0xEull, 0x10ull, 0x11ull, 0x13ull}) {
         Require(sceVideoOutIsOutputSupported(handle, mode, &options, nullptr, 0) == UNSUPPORTED_OUTPUT_MODE);

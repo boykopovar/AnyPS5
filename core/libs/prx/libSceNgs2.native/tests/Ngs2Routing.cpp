@@ -79,14 +79,17 @@ static uintptr_t Input(uintptr_t system, const std::vector<std::int16_t>& pcm, s
     return voice;
 }
 
-static void Render(uintptr_t system, const std::vector<float>& expected, std::uint32_t channels = 2, std::uint32_t grain = Grain) {
+static void Render(uintptr_t system, const std::vector<float>& expected, std::uint32_t channels = 2, std::uint32_t grain = Grain, bool startup = false) {
     Require(sceNgs2SystemSetGrainSamples(system, grain) == SCE_NGS2_OK);
     std::vector<std::vector<float>> samples(expected.size(), std::vector<float>(grain * channels, 9.0f));
     std::vector<Ngs2RenderBufferInfo> info;
     for (auto& output : samples) info.push_back({output.data(), output.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels});
     Require(sceNgs2SystemRender(system, info.data(), static_cast<std::uint32_t>(info.size())) == SCE_NGS2_OK);
     for (std::size_t port = 0; port < expected.size(); port++) {
-        for (const auto sample : samples[port]) Require(std::fabs(sample - expected[port]) <= 0.000001f);
+        for (std::size_t i = 0; i < samples[port].size(); ++i) {
+            const float value = startup && i / channels < 3 ? 0.0f : expected[port];
+            Require(std::fabs(samples[port][i] - value) <= 0.000001f);
+        }
     }
 }
 
@@ -105,7 +108,7 @@ static void TestNoModules(std::uint32_t count, std::vector<float> expected) {
         input1 = Input(system, pcm1);
         Route(input1, 0, custom, 1);
     }
-    Render(system, expected);
+    Render(system, expected, 2, Grain, true);
     if (count > 1) {
         Route(input1, 0, custom, 0);
         expected[count - 1] = -0.5f;
@@ -153,7 +156,7 @@ static void TestGainRouting() {
             input1 = Input(system, pcm1);
             Route(input1, 0, custom, 1);
         }
-        Render(system, test.expected);
+        Render(system, test.expected, 2, Grain, true);
         Render(system, test.expected, 2, 64);
         Route(input0, 0, 0);
         if (input1 != 0) Route(input1, 0, 0);
@@ -188,7 +191,7 @@ static void TestUnityCopy() {
     }
     Require(sceNgs2SystemRender(system, info.data(), info.size()) == SCE_NGS2_OK);
     for (const auto& output : outputs) {
-        for (std::uint32_t i = 0; i < Grain; i++) Require(output[i * 2] == 0.25f && output[i * 2 + 1] == -0.5f);
+        for (std::uint32_t i = 0; i < Grain; i++) Require(output[i * 2] == (i < 3 ? 0.0f : 0.25f) && output[i * 2 + 1] == (i < 3 ? 0.0f : -0.5f));
     }
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
@@ -211,7 +214,7 @@ static void TestIndependentVoicesAndSilentRamp(std::uint32_t channels) {
     const auto input1 = Input(system, pcm1, channels);
     Route(input0, 0, first, 0, channels);
     Route(input1, 0, second, 0, channels);
-    Render(system, {0.5f, 0.75f}, channels);
+    Render(system, {0.5f, 0.75f}, channels, Grain, true);
     Route(input0, 0, 0, 0, channels);
     Render(system, {0.0f, 0.75f}, channels);
     SetGain(first, 4.0f);

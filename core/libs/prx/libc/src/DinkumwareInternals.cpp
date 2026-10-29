@@ -205,13 +205,12 @@ short APS5_VABI _Exp_nid_postfix(double* value, double y, short offset) {
     constexpr double HugeExp = 1842.0;
     constexpr double Eps = std::numeric_limits<double>::epsilon();
     constexpr double InverseLn2 = 1.4426950408889634073599246810018921;
-    constexpr double Ln2High = 22713.0 / 32768.0;
-    constexpr double Ln2Low = 1.4286068203094172321214581765680755e-6;
-    constexpr double P1 = 420.30235984910635;
-    constexpr double P2 = 15132.70094680474802;
-    constexpr double Q0 = 30.01511290683317;
-    constexpr double Q1 = 3362.72154416553028;
-    constexpr double Q2 = 30265.40189360949691;
+    constexpr double Ln2High = 0x1.62e42f8p-1;
+    constexpr double Ln2Low = 0x1.be8e7bcd5e4f2p-27;
+    constexpr double P0 = 0x1.152b741a5e84bp-15;
+    constexpr double P1 = 0x1.c70e8daf3bd0bp-7;
+    constexpr double Q0 = 0x1.03fa081572e11p-10;
+    constexpr double Q1 = 0x1.c718f8c124358p-4;
     constexpr double E = 0x1.5bf0a8b145769p+1;
     const short xKind = ClassifyValue(x);
     const short yKind = ClassifyValue(y);
@@ -277,14 +276,13 @@ short APS5_VABI _Exp_nid_postfix(double* value, double y, short offset) {
     g = static_cast<double>(exponent);
     g = (x - g * Ln2High) - g * Ln2Low;
     double factor;
-    if (-Eps < g && g < Eps) {
+    if (-Eps * 0.5 < g && g < Eps * 0.5) {
         factor = 1.0;
     } else {
         const double z = g * g;
-        const double w = (Q0 * z + Q1) * z + Q2;
-        g *= (z + P1) * z + P2;
-        factor = (w + g) / (w - g) * 2.0;
-        --exponent;
+        const double w = (Q0 * z + Q1) * z;
+        g *= (P0 * z + P1) * z + 0.5;
+        factor = (w + g + 1.0) / (w - g + 1.0);
     }
     const short result = ScaleProduct(*value, factor, y, exponent + offset);
     if (result == Finite && std::fpclassify(*value) == FP_SUBNORMAL) {
@@ -373,14 +371,13 @@ short APS5_VABI _FExp_nid_postfix(float* value, float y, short offset) {
     g = static_cast<float>(exponent);
     g = (x - g * Ln2High) - g * Ln2Low;
     float factor;
-    if (-Eps < g && g < Eps) {
+    if (-Eps * 0.5f < g && g < Eps * 0.5f) {
         factor = 1.0f;
     } else {
         const float z = g * g;
-        const float w = Q * z + 1.0f;
-        g *= P0 + P1 * z;
-        factor = (w + g) / (w - g) * 2.0f;
-        --exponent;
+        const float w = Q * z;
+        g *= P1 * z + P0;
+        factor = (w + g + 1.0f) / (w - g + 1.0f);
     }
     const short result = ScaleProduct(*value, factor, y, exponent + offset);
     if (result == Finite && std::fpclassify(*value) == FP_SUBNORMAL) {

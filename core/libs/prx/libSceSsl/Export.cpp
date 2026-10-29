@@ -9,7 +9,9 @@
 #include "SslTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
 #include <mbedtls/asn1.h>
 #include <mbedtls/base64.h>
@@ -27,6 +29,7 @@
 #include <mbedtls/x509_crt.h>
 
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -185,6 +188,47 @@ struct CertificateChain {
     ~CertificateChain() { mbedtls_x509_crt_free(&root); }
 };
 
+Pool systemRootPool{std::numeric_limits<std::size_t>::max() / 2};
+
+std::string SystemCaListPath() {
+    const char* const word = sceKernelGetFsSandboxRandomWord();
+    if (word == nullptr) throw std::runtime_error("SSL: the sandbox word for the system CA list is not available");
+    return std::string("/") + word + "/common/cert/CA_LIST.cer";
+}
+
+std::string ReadSystemCaList(const std::string& path) {
+    const int descriptor = sceKernelOpen(path.c_str(), 0, 0);
+    if (descriptor < 0) throw std::runtime_error("SSL: cannot open the system CA list " + path);
+    std::string text;
+    std::array<char, 16384> buffer{};
+    for (;;) {
+        const auto count = sceKernelRead(descriptor, buffer.data(), buffer.size());
+        if (count < 0) {
+            sceKernelClose(descriptor);
+            throw std::runtime_error("SSL: reading the system CA list failed");
+        }
+        if (count == 0) break;
+        text.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    sceKernelClose(descriptor);
+    return text;
+}
+
+const mbedtls_x509_crt* SystemRoots() {
+    static const std::unique_ptr<CertificateChain> roots = [] {
+        const auto path = SystemCaListPath();
+        const auto text = ReadSystemCaList(path);
+        if (text.empty()) throw std::runtime_error("SSL: the system CA list " + path + " is empty");
+        auto chain = std::make_unique<CertificateChain>();
+        PoolScope scope(systemRootPool);
+        const int result = mbedtls_x509_crt_parse(&chain->root, reinterpret_cast<const unsigned char*>(text.c_str()), text.size() + 1);
+        if (result < 0 && currentPoolExhausted) throw std::bad_alloc();
+        if (result < 0 || !chain->root.raw.p) throw std::runtime_error("SSL: the system CA list " + path + " has no certificate");
+        return chain;
+    }();
+    return &roots->root;
+}
+
 struct PrivateKey {
     mbedtls_pk_context key;
     PrivateKey() { mbedtls_pk_init(&key); }
@@ -317,6 +361,7 @@ struct Session {
     Random random;
     PrivateKey privateKey;
     mbedtls_x509_crt authorities;
+    mbedtls_x509_crt* linkedSystemRoots = nullptr;
     mbedtls_ssl_config config;
     mbedtls_ssl_context ssl;
 
@@ -331,20 +376,29 @@ struct Session {
         PoolScope scope(context->pool);
         mbedtls_ssl_free(&ssl);
         mbedtls_ssl_config_free(&config);
+        if (linkedSystemRoots) linkedSystemRoots->next = nullptr;
         mbedtls_x509_crt_free(&authorities);
     }
 
-    void Configure(const std::string& host, const std::string& alpn, std::uint32_t options) {
+    void Configure(const std::string& host, const std::string& alpn, std::uint32_t options, const mbedtls_x509_crt* systemRoots = nullptr) {
         verifyOptions = options;
         random.Seed();
         for (const auto& chain : context->authorities)
             for (const auto* entry = &chain->root; entry; entry = entry->next)
                 CheckBackend(mbedtls_x509_crt_parse_der(&authorities, entry->raw.p, entry->raw.len), "SSL CA certificate copy failed");
+        auto* trusted = &authorities;
+        if (systemRoots && !authorities.raw.p) {
+            trusted = const_cast<mbedtls_x509_crt*>(systemRoots);
+        } else if (systemRoots) {
+            linkedSystemRoots = &authorities;
+            while (linkedSystemRoots->next) linkedSystemRoots = linkedSystemRoots->next;
+            linkedSystemRoots->next = const_cast<mbedtls_x509_crt*>(systemRoots);
+        }
         CheckBackend(mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT),
             "SSL client configuration failed");
         mbedtls_ssl_conf_authmode(&config, MBEDTLS_SSL_VERIFY_OPTIONAL);
         mbedtls_ssl_conf_min_tls_version(&config, MBEDTLS_SSL_VERSION_TLS1_2);
-        mbedtls_ssl_conf_ca_chain(&config, &authorities, nullptr);
+        mbedtls_ssl_conf_ca_chain(&config, trusted, nullptr);
         mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &random.drbg);
         if (identity) {
             if (!identity->chain || !identity->key) throw std::logic_error("Incomplete SSL client identity is not supported");
@@ -480,6 +534,7 @@ struct SslConnection {
     int minimumVersion = SslVersionTls12;
     std::string alpn;
     std::shared_ptr<Session> session;
+    bool systemRoots = false;
 };
 
 struct Runtime {
@@ -834,6 +889,16 @@ int APS5_VABI sceSslCreateConnection(int sslCtxId, int sockId, const char* host)
     return id;
 }
 
+int SslTrustSystemRoots_nid_no_patch(int sslConnectionId) {
+    SystemRoots();
+    std::lock_guard lock(State().mutex);
+    auto* connection = FindConnection(sslConnectionId);
+    if (!connection) return ErrorInvalidId;
+    if (connection->session) throw std::logic_error("SslTrustSystemRoots_nid_no_patch: the connection has already started");
+    connection->systemRoots = true;
+    return 0;
+}
+
 int APS5_VABI sceSslDeleteConnection(int sslConnectionId) {
     std::shared_ptr<Session> session;
     std::lock_guard lock(State().mutex);
@@ -882,7 +947,7 @@ int Establish(const char* function, int sslConnectionId, std::shared_ptr<Session
             if (!KernelLookupSocketNative_nid_no_patch(connection->socket, &owner, &native)) return ErrorNetBadDescriptor;
             PoolScope scope(context->pool);
             session = std::make_shared<Session>(connection->context, std::move(context), std::move(owner), native);
-            session->Configure(connection->host, connection->alpn, connection->verifyOptions);
+            session->Configure(connection->host, connection->alpn, connection->verifyOptions, connection->systemRoots ? SystemRoots() : nullptr);
             connection->session = session;
         } else {
             session = connection->session;

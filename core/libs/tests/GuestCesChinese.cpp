@@ -358,6 +358,14 @@ int main() {
     Require(sceCesUcsProfileInitGb18030_2000(nullptr) == nullptr && sceCesUcsProfileInitGb18030_2005(nullptr) == nullptr);
     Require(sceCesEucCnToUcs2(gb2000, Bytes("\xD6\xD0"), 2, &consumed, &ucs2) == invalidParameter);
     Require(sceCesGbToUcs2(gb2005, Bytes("\xD6\xD0"), 2, &consumed, &ucs2) == 0 && consumed == 2 && ucs2 == 0x4E2D);
+    Require(sceCesUtf8ToEucCn(nullptr, 0, nullptr, gbk, nullptr, 0, nullptr) == invalidParameter);
+    Require(sceCesUtf8ToEucCn(nullptr, 0, nullptr, euc, nullptr, 0, nullptr) == invalidSrcBuffer);
+    Require(sceCesUtf8ToEucCn(Bytes("\xD6\xD0"), 0, nullptr, euc, nullptr, 0, nullptr) == srcBufferEnd);
+    Require(sceCesUtf8ToEucCn(Bytes("\xD6\xD0"), 2, nullptr, euc, nullptr, 0, nullptr) == invalidDstBuffer);
+    Require(sceCesUtf8ToGb(nullptr, 0, nullptr, euc, nullptr, 0, nullptr) == invalidParameter);
+    Require(sceCesUtf8ToGb(nullptr, 0, nullptr, gb2005, nullptr, 0, nullptr) == invalidSrcBuffer);
+    Require(sceCesUtf8ToGb(Bytes("\xD6\xD0"), 0, nullptr, gb2005, nullptr, 0, nullptr) == srcBufferEnd);
+    Require(sceCesUtf8ToGb(Bytes("\xD6\xD0"), 2, nullptr, gb2005, nullptr, 0, nullptr) == invalidDstBuffer);
     CheckGb18030(gb2000, false, 0xE61D3BD3, 0x83476043, 0x469CFCE5, 0, 0);
     CheckGb18030(gb2005, true, 0xE4CF78F0, 0x8D188DFC, 0xD675EFA1, 0, 0);
     return 0;
