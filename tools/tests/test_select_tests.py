@@ -636,6 +636,20 @@ class MissingCommandTests(unittest.TestCase):
             self.assertEqual(commands, {"absolute": [executable, helper], "relative": None, "path": None,
                                         "ambiguous": None, "existing": [helper], "stale": None})
 
+    def test_looping_subdirectory_is_skipped_when_recovering_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "nested").mkdir()
+            os.symlink("second", root / "first")
+            os.symlink("first", root / "second")
+            (root / "CTestTestfile.cmake").write_text('subdirs("first" "nested")\n', encoding="utf-8")
+            (root / "nested/CTestTestfile.cmake").write_text('add_test(kept "/bin/kept")\n', encoding="utf-8")
+            build = object.__new__(select_tests.Build)
+            build.path = str(root)
+            self.assertEqual(dict(build.test_commands({"kept"})), {"kept": {("/bin/kept",)}})
+            build.path = str(root / "first")
+            self.assertEqual(dict(build.test_commands({"kept"})), {})
+
 
     def test_main_reconfigures_streams(self):
         class Stream:
