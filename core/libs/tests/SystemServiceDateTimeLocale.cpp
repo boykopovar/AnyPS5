@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -175,6 +176,60 @@ void RequireLdmlTimesWithoutConsoleFormat() {
     RequireLdmlTime("dd/MM/yyyy", std::nullopt);
 }
 
+SystemServiceDateTime::HostPatterns Host(SystemServiceDateTime::PatternSyntax syntax, const char* date, const char* time) {
+    SystemServiceDateTime::HostPatterns host;
+    host.available = true;
+    host.syntax = syntax;
+    host.date = date;
+    host.time = time;
+    host.source = "test host";
+    return host;
+}
+
+void RequireResolution(const SystemServiceDateTime::HostPatterns& host, int date, int time, std::size_t dateNotices, std::size_t timeNotices, const std::string& what) {
+    std::vector<std::string> notices;
+    const auto notice = [&notices](const std::string& line) { notices.push_back(line); };
+    Require(SystemServiceDateTime::ResolveHostDateFormat(host, notice) == date, what + ": date format");
+    Require(notices.size() == dateNotices, what + ": date notices, got " + std::to_string(notices.size()));
+    notices.clear();
+    Require(SystemServiceDateTime::ResolveHostTimeFormat(host, notice) == time, what + ": time format");
+    Require(notices.size() == timeNotices, what + ": time notices, got " + std::to_string(notices.size()));
+}
+
+void RequireResolver() {
+    using namespace SystemServiceDateTime;
+    RequireResolution(Host(PatternSyntax::Strftime, "%m/%d/%Y", "%r"), DATE_FORMAT_MMDDYYYY, TIME_FORMAT_12HOUR, 0, 0, "strftime US");
+    RequireResolution(Host(PatternSyntax::Strftime, "%d.%m.%Y", "%T"), DATE_FORMAT_DDMMYYYY, TIME_FORMAT_24HOUR, 0, 0, "strftime DE");
+    RequireResolution(Host(PatternSyntax::Strftime, "%Y-%m-%d", "%H:%M:%S"), DATE_FORMAT_YYYYMMDD, TIME_FORMAT_24HOUR, 0, 0, "strftime SE");
+    RequireResolution(Host(PatternSyntax::Ldml, "M/d/yyyy", "h:mm:ss tt"), DATE_FORMAT_MMDDYYYY, TIME_FORMAT_12HOUR, 0, 0, "ldml US");
+    RequireResolution(Host(PatternSyntax::Ldml, "dd/MM/yyyy", "HH:mm:ss"), DATE_FORMAT_DDMMYYYY, TIME_FORMAT_24HOUR, 0, 0, "ldml GB");
+    RequireResolution(Host(PatternSyntax::Ldml, "yyyy/MM/dd", "H:mm:ss"), DATE_FORMAT_YYYYMMDD, TIME_FORMAT_24HOUR, 0, 0, "ldml JP");
+    RequireResolution(Host(PatternSyntax::Strftime, "%Y/%d/%m", "%T"), DATE_FORMAT_DDMMYYYY, TIME_FORMAT_24HOUR, 1, 0, "date without console format");
+    RequireResolution(Host(PatternSyntax::Strftime, "%m/%d/%Y", "%H %p"), DATE_FORMAT_MMDDYYYY, TIME_FORMAT_24HOUR, 0, 1, "time without console format");
+    RequireResolution(Host(PatternSyntax::Ldml, "%d/%m/%Y", "%H:%M"), DATE_FORMAT_DDMMYYYY, TIME_FORMAT_24HOUR, 1, 0, "strftime text read as letters");
+    HostPatterns unavailable;
+    unavailable.source = "LC_ALL selects the C locale";
+    RequireResolution(unavailable, DATE_FORMAT_DDMMYYYY, TIME_FORMAT_24HOUR, 1, 1, "unavailable host");
+}
+
+void RequireNoticeText() {
+    using namespace SystemServiceDateTime;
+    std::vector<std::string> notices;
+    const auto notice = [&notices](const std::string& line) { notices.push_back(line); };
+    HostPatterns unavailable;
+    unavailable.source = "LC_ALL selects the C locale";
+    ResolveHostDateFormat(unavailable, notice);
+    ResolveHostTimeFormat(unavailable, notice);
+    ResolveHostDateFormat(Host(PatternSyntax::Strftime, "%Y/%d/%m", "%p"), notice);
+    ResolveHostTimeFormat(Host(PatternSyntax::Strftime, "%Y/%d/%m", "%p %T"), notice);
+    Require(notices.size() == 4, "four notices");
+    if (notices.size() != 4) return;
+    Require(notices[0] == "ANYPS5_DATE_FORMAT=auto: LC_ALL selects the C locale; using day, month, year (1)", "unavailable date notice: " + notices[0]);
+    Require(notices[1] == "ANYPS5_TIME_FORMAT=auto: LC_ALL selects the C locale; using 24-hour (1)", "unavailable time notice: " + notices[1]);
+    Require(notices[2] == "ANYPS5_DATE_FORMAT=auto: the date pattern \"%Y/%d/%m\" of test host has no console date format; using day, month, year (1)", "unmapped date notice: " + notices[2]);
+    Require(notices[3] == "ANYPS5_TIME_FORMAT=auto: the time pattern \"%p %T\" of test host has no console time format; using 24-hour (1)", "unmapped time notice: " + notices[3]);
+}
+
 }
 
 int main() {
@@ -186,6 +241,8 @@ int main() {
     RequireLdmlDatesWithoutConsoleFormat();
     RequireLdmlTimes();
     RequireLdmlTimesWithoutConsoleFormat();
+    RequireResolver();
+    RequireNoticeText();
     if (failures != 0) return 1;
     std::puts("system service date and time locale: all checks passed");
     return 0;
