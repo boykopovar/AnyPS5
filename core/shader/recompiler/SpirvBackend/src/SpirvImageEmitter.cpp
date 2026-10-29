@@ -765,6 +765,61 @@ std::uint32_t EmitOneDimensionalGatherLz(SpirvValueEmitContext& ctx, const Image
     return result;
 }
 
+std::uint32_t EmitTwoDimensionalGatherLod(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SampleSetup& setup) {
+    auto& state = ctx.state;
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    const auto image = LoadSampledImageDescriptor(state, access.mem.resource);
+    const auto lod = AddressF32(ctx, access, setup.layout.lod);
+    const auto rounded = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, TypeF32(state), rounded, GlslStd450(state), GLSLstd450Floor, Binary(state, spv::OpFAdd, TypeF32(state), lod, ConstantF32(state, 0x3f000000u)));
+    const auto nonNegative = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, TypeF32(state), nonNegative, GlslStd450(state), GLSLstd450FMax, rounded, ZeroF32(state));
+    const auto requested = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertFToU, TypeU32(state), requested, nonNegative);
+    const auto levels = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQueryLevels, TypeU32(state), levels, image);
+    const auto atLeastOne = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, TypeU32(state), atLeastOne, GlslStd450(state), GLSLstd450UMax, levels, ConstantU32(state, 1u));
+    const auto level = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, TypeU32(state), level, GlslStd450(state), GLSLstd450UMin, requested, Binary(state, spv::OpISub, TypeU32(state), atLeastOne, ConstantU32(state, 1u)));
+    const auto levelF32 = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertUToF, TypeF32(state), levelF32, level);
+    const auto size = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQuerySizeLod, TypeU32Vector(state, 2), size, image, level);
+    const auto sizeF32 = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertUToF, TypeF32Vector(state, 2), sizeF32, size);
+    std::uint32_t extent[2] = {};
+    std::uint32_t first[2] = {};
+    for (std::uint32_t axis = 0; axis < 2u; axis++) {
+        extent[axis] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), extent[axis], sizeF32, axis);
+        const auto coord = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), coord, setup.coord, axis);
+        first[axis] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, TypeF32(state), first[axis], GlslStd450(state), GLSLstd450Floor, Binary(state, spv::OpFSub, TypeF32(state), Binary(state, spv::OpFMul, TypeF32(state), coord, extent[axis]), ConstantF32(state, 0x3f000000u)));
+    }
+    const auto sampled = MakeSampledImage(state, access.mem.resource, access.mem.sampler);
+    const auto vectorType = ImageVectorType(state, setup.numericClass, 4);
+    const auto scalarType = ImageScalarType(state, setup.numericClass);
+    const auto component = ImageConversionFormat(access.image).format == IrBufferFormat::Invalid ? ImageGatherComponent(EffectiveDmask(access.mem)) : 0u;
+    constexpr std::uint32_t half = 0x3f000000u, oneAndHalf = 0x3fc00000u;
+    const std::uint32_t corners[4][2] = {{half, oneAndHalf}, {oneAndHalf, oneAndHalf}, {oneAndHalf, half}, {half, half}};
+    std::uint32_t values[4] = {};
+    for (std::uint32_t index = 0; index < 4u; index++) {
+        const auto u = Binary(state, spv::OpFDiv, TypeF32(state), Binary(state, spv::OpFAdd, TypeF32(state), first[0], ConstantF32(state, corners[index][0])), extent[0]);
+        const auto v = Binary(state, spv::OpFDiv, TypeF32(state), Binary(state, spv::OpFAdd, TypeF32(state), first[1], ConstantF32(state, corners[index][1])), extent[1]);
+        const auto sampleCoord = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), sampleCoord, u, v);
+        const auto texel = state.module.AllocateId();
+        state.module.AddFunction(spv::OpImageSampleExplicitLod, vectorType, texel, sampled, sampleCoord, spv::ImageOperandsLodMask, levelF32);
+        values[index] = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, scalarType, values[index], texel, component);
+    }
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, vectorType, result, values[0], values[1], values[2], values[3]);
+    return result;
+}
+
 std::uint32_t PackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t texel) {
     auto& state = ctx.state;
     const auto info = ImageConversionFormat(access.image);
@@ -1349,6 +1404,10 @@ void EmitGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, con
         }
         const auto sample = EmitOneDimensionalGatherLz(ctx, access, setup);
         ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, sample), setup.numericClass, false, true));
+        return;
+    }
+    if (HasFlag(mem, RdnaImageSampleFlagLod) && setup.layout.lod != NoImageComponent && !setup.dref && dimension == RdnaImageDimension::Dim2D && !access.image.cube && setup.layout.offset == NoImageComponent && !HasFlag(mem, RdnaImageSampleFlagGatherHorizontal)) {
+        ctx.Define(access.inst, ResultVector(ctx, access, UnpackImageGather(ctx, access, EmitTwoDimensionalGatherLod(ctx, access, setup)), setup.numericClass, false, true));
         return;
     }
     const auto sampled = MakeSampledImage(state, mem.resource, mem.sampler);
