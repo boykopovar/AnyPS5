@@ -54,6 +54,8 @@
 
 - [Host pause](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut) - the vblank counter keeps running during a pause, so the flips queued meanwhile (at most `VIDEO_OUT_FLIP_QUEUE_CAPACITY`) find their vblank target already passed and present back to back on resume instead of one per vblank; the effect on a title's frame pacing is not measured
 
+- [Host pause](../../../core/libs/prx/libSceVideoOut/src/HostPause.cpp) (libSceVideoOut) - `ANYPS5_PAUSE_ON_FOCUS_LOSS` follows `SDL_WINDOWEVENT_FOCUS_LOST`, `SDL_WINDOWEVENT_MINIMIZED` and `SDL_WINDOWEVENT_FOCUS_GAINED` of the display window only. A window that starts without focus is not paused until its first focus event, and a restore from minimize resumes only through the focus-gained event that follows it. The event order was not observed on a real X11, Wayland, Windows or macOS window system, only through injected events
+
 - The following pending declarations have unverified signatures and behavior; they are parameterless import-resolution declarations and throw through `NotImplemented_nid_no_patch`: [`sceDbgVideoOutAddOutputModeVr60Privilege`](../../../core/libs/prx/libSceVideoOut/Unimplemented.cpp).
 
 - [ANYPS5_PAD_PORT0_STATE](../../../core/libs/prx/libSceVideoOut/include/Port0Presence.hpp) (libSceVideoOut) - the 500 ms hold before a controller's removal or return changes port 0, and the rule that keyboard and mouse input reaches port 0 only while a controller is bound there, are AnyPS5 choices that keep a flapping cable from flapping the title. The console's own reaction (how long it takes to report a removed pad, whether it pauses on connected false, and whether it logs the initial user out) is not measured.
