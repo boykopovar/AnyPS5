@@ -3,6 +3,7 @@
 ### Silent stubs
 
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
+- [scePadSetUserColor, scePadSetLightBarBlinking and scePadSetMuteLed](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - the colour byte order and the blink and mute value spaces are unmeasured. `scePadSetUserColor` treats the argument as 0x00RRGGBB and sets the emulated light bar through the same `Pad::SetLightBar` path as `scePadSetLightBar`, following the library's setter order (handle, then special handles succeed without effect). `scePadSetLightBarBlinking` validates the handle and the null parameter, then throws because no blink state is modelled; `scePadSetMuteLed` validates the handle, then throws because no mute LED is modelled
 - [scePadSetLightBarBaseBrightness, scePadDisableTriggerEffect](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - return success for known handles without changing hardware states. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
 
 ### Unknown function info

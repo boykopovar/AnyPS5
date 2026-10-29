@@ -527,8 +527,10 @@ int APS5_VABI scePadGetDataInternal(std::uint8_t port, PadData* data) {
 }
 
 int APS5_VABI scePadSetUserColor(std::int32_t handle, std::uint32_t color) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (SpecialHandle(handle)) return PAD_OK;
+    Pad::SetLightBar(PortOf(handle), true, static_cast<std::uint8_t>((color >> 16) & 0xFF), static_cast<std::uint8_t>((color >> 8) & 0xFF), static_cast<std::uint8_t>(color & 0xFF));
+    return PAD_OK;
 }
 
 int APS5_VABI scePadDisableVibration(std::int32_t handle, bool disabled) {
@@ -552,8 +554,11 @@ int APS5_VABI scePadSetLightBarBaseBrightness(std::int32_t handle, std::uint32_t
 }
 
 int APS5_VABI scePadSetLightBarBlinking(std::int32_t handle, const PadLightBarBlinkingParameter* parameter) {
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (SpecialHandle(handle)) return PAD_OK;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PAD_OK;
 }
 
 std::uint64_t APS5_VABI scePadGetIdleCount(std::int32_t userId) {
@@ -1155,8 +1160,10 @@ int APS5_VABI scePadSetFeatureReport2(std::int32_t handle, std::uint8_t reportId
 }
 
 int APS5_VABI scePadSetMuteLed(std::int32_t handle, std::uint32_t mode) {
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (SpecialHandle(handle)) return PAD_OK;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadBondUpdateInit(void) {
