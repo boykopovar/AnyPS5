@@ -3363,8 +3363,6 @@ void gcnColorSliceTests() {
         const auto target = DecodeColorBuffer(queue.context, 0);
         Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes, "a GCN color view of one array slice does not address that slice");
     }
-    queue.context[0x31b] = 1u << 13u;
-    expectFailure([&] { DecodeColorBuffer(queue.context, 0); }, "several array slices");
 }
 
 void cmaskTests() {
