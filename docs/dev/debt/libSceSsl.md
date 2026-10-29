@@ -17,3 +17,12 @@
 
 ### Functional
 - [System roots for HTTP](../../../core/libs/prx/libSceSsl/Export.cpp) (libSceSsl) - `SslTrustSystemRoots_nid_no_patch` makes one connection also trust the system CA list, read once per process from `/<sandbox word>/common/cert/CA_LIST.cer`. It is parsed into a separate allocation pool, not charged to the title's `sceSslInit` pool, and linked after the context's own authorities; `sceSslGetCaList` and `sceSslGetCaCerts` do not report it. A missing, empty or certificate-free list throws and names the path instead of trusting nothing. Only the HTTP libraries call it: whether a bare libSceSsl connection on the console trusts the system roots is not measured, so `sceSslCreateConnection` alone keeps trusting only the context's authorities
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceSsl/Export.cpp) - 2 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `IuduYLwFh9c` |
+| `Unknown` | `KPh5GncdOcc` |
