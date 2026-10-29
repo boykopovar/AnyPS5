@@ -8,3 +8,20 @@ HostFullscreenMode ParseHostFullscreenMode(const char* value) {
     if (std::strcmp(value, "1") == 0 || std::strcmp(value, "borderless") == 0) return HostFullscreenMode::Borderless;
     throw std::runtime_error("DisplayWindow: ANYPS5_FULLSCREEN must be 0, 1, windowed or borderless");
 }
+
+HostFullscreenState::HostFullscreenState(IHostFullscreenWindow& window) : window(window) {}
+
+void HostFullscreenState::Adopt(HostFullscreenMode mode, HostWindowSize size) {
+    windowedSize = size;
+    if (mode == HostFullscreenMode::Borderless && !window.IsFullscreen()) window.SetFullscreen(true);
+}
+
+void HostFullscreenState::Toggle() {
+    if (window.IsFullscreen()) {
+        window.SetFullscreen(false);
+        if (windowedSize.width > 0 && windowedSize.height > 0 && !(window.Size() == windowedSize)) window.SetSize(windowedSize);
+        return;
+    }
+    windowedSize = window.Size();
+    window.SetFullscreen(true);
+}

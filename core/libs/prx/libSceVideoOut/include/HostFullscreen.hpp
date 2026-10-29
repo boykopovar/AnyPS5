@@ -8,4 +8,31 @@ enum class HostFullscreenMode {
 
 HostFullscreenMode ParseHostFullscreenMode(const char* value);
 
+struct HostWindowSize {
+    int width = 0;
+    int height = 0;
+    friend bool operator==(const HostWindowSize&, const HostWindowSize&) = default;
+};
+
+class IHostFullscreenWindow {
+public:
+    virtual ~IHostFullscreenWindow() = default;
+    virtual bool IsFullscreen() const = 0;
+    virtual void SetFullscreen(bool fullscreen) = 0;
+    virtual HostWindowSize Size() const = 0;
+    virtual void SetSize(HostWindowSize size) = 0;
+};
+
+class HostFullscreenState {
+public:
+    explicit HostFullscreenState(IHostFullscreenWindow& window);
+
+    void Adopt(HostFullscreenMode mode, HostWindowSize windowedSize);
+    void Toggle();
+
+private:
+    IHostFullscreenWindow& window;
+    HostWindowSize windowedSize;
+};
+
 #endif
