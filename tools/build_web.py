@@ -104,6 +104,10 @@ def publish_libraries(output, release=None):
                     raise ValueError("Invalid library archive")
                 if any(file.flag_bits & 1 for file in files):
                     raise ValueError(f"Encrypted release archive {asset['name']} is not supported")
+                if any(file.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for file in files):
+                    raise ValueError("Library ZIP archive compression must be Store or Deflate")
+                if any((file.external_attr >> 16) & 0o170000 not in (0, 0o100000, 0o040000) for file in files):
+                    raise ValueError("Library ZIP links and special files are not supported")
                 names = {}
                 for file in files:
                     if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
@@ -224,6 +228,8 @@ def main(argv=None):
         for name in ("relinker_wasm.mjs", "relinker_wasm.wasm"):
             if not (output / "native" / name).is_file():
                 parser.error(f"Build relinker_wasm first: missing {name}")
+            if (output / "native" / name).stat().st_size == 0:
+                parser.error(f"Build relinker_wasm first: empty {name}")
         copy_sources(output)
         print(output)
         return 0

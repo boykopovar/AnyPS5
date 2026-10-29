@@ -411,21 +411,22 @@ void DefineModule(SpirvEmitterState& state) {
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeStencilRefReplacingEXT);
         }
         const bool merge = pixel.mergeMask != 0u;
+        const std::string mergeName = pixel.mergeBlend.enabled ? "blending into an unclamped normalized color target" : "a partial write of a packed color target";
         if (merge && (state.depthVariable != 0 || state.stencilRefVariable != 0 || pixel.psDepthExportEnable || pixel.psSampleMaskExportEnable || pixel.psStencilRefExportEnable || pixel.psAlphaToCoverage || pixel.QuadMasked() || (pixel.psPixelKillEnable && !pixel.psEarlyZ && pixel.mergeDepthStencilWrites))) {
-            throw std::runtime_error("a partial write of a packed color target merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests of a draw writing depth or stencil, exports depth, stencil or coverage, or runs with a quad sample mask cannot use");
+            throw std::runtime_error(mergeName + " merges inside the pixel shader after early depth and stencil tests, which a shader that kills pixels under late tests of a draw writing depth or stencil, exports depth, stencil or coverage, or runs with a quad sample mask cannot use");
         }
         if (merge && pixel.mergeSamples > 1u && WritesGuestMemory(state.program)) {
             throw std::runtime_error("a partial write of a multisampled packed color target runs the pixel shader once per sample, which a shader that writes guest memory (stores, atomics or GDS) cannot use: each covered sample would repeat its writes");
         }
         if (merge && !pixel.psEarlyZ && pixel.mergeDepthStencilTests && WritesGuestMemory(state.program)) {
-            throw std::runtime_error("a partial write of a packed color target merges inside the pixel shader after early depth and stencil tests, which a shader that writes guest memory (stores, atomics or GDS) under late tests cannot use: the pixels the tests reject would still write it");
+            throw std::runtime_error(mergeName + " merges inside the pixel shader after early depth and stencil tests, which a shader that writes guest memory (stores, atomics or GDS) under late tests cannot use: the pixels the tests reject would still write it");
         }
         if ((pixel.psEarlyZ && !pixel.psAlphaToCoverage && !pixel.QuadMasked()) || merge) {
             state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeEarlyFragmentTests);
         }
         if (pixel.psOrderedPixelShader || merge) {
             if (std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityFragmentShaderPixelInterlockEXT)) == state.supportedCapabilities.end()) {
-                throw std::runtime_error(merge ? "a partial write of a packed color target needs the fragmentShaderPixelInterlock feature, which the device lacks" : "a primitive-ordered pixel shader needs the fragmentShaderPixelInterlock feature, which the device lacks");
+                throw std::runtime_error(merge ? mergeName + " needs the fragmentShaderPixelInterlock feature, which the device lacks" : "a primitive-ordered pixel shader needs the fragmentShaderPixelInterlock feature, which the device lacks");
             }
             state.module.EmitCapability(spv::CapabilityFragmentShaderPixelInterlockEXT);
             state.module.EmitExtension("SPV_EXT_fragment_shader_interlock");

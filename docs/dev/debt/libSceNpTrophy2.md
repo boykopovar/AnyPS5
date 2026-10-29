@@ -4,6 +4,8 @@
 
 - [sceNpTrophy2GetRewardIcon](../../../core/libs/prx/libSceNpTrophy2/src/Context.cpp) (libSceNpTrophy2) - zeroes size and returns `SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND` (-2141898479): the `(int context, int handle, int reward_id, void* buffer, size_t* size)` signature and two-stage query pattern follow the bundled `Media/Plugins/PSNCore.prx` of PPSA06888 and SharpProspero; returning -2141898479 (0x80553911) when icons are unavailable is inferred from sibling calls (sceNpTrophy2GetGameIcon, sceNpTrophy2GetGroupIcon, sceNpTrophy2GetTrophyIcon) in KytyPS5 (libTrophy.cpp:464/483/502)
 - [libSceNpTrophy2](../../../core/libs/prx/libSceNpTrophy2/src/GameInfo.cpp): `sceNpTrophy2RegisterUnlockCallback` accepts a callback that is never called, as the callback's signature and when the console calls it are not known, `sceNpTrophy2UnregisterUnlockCallback` only returns success, and `sceNpTrophy2ShowTrophyList` returns success without showing a list (there is no system trophy UI; seen on PPSA15552).
+- [sceNpTrophy2RegisterContext](../../../core/libs/prx/libSceNpTrophy2/src/Context.cpp) (libSceNpTrophy2) - returns `SCE_NP_TROPHY2_OK` and ignores its arguments: it checks neither the context nor the handle and records nothing. Eight titles in my set call it.
+- [sceNpTrophy2DestroyHandle and sceNpTrophy2AbortHandle](../../../core/libs/prx/libSceNpTrophy2/src/Handle.cpp) (libSceNpTrophy2) - return `SCE_NP_TROPHY2_OK` and ignore the handle: `sceNpTrophy2CreateHandle` always hands out handle 1 and keeps no state, so there is nothing to destroy or abort. Eight titles in my set call `sceNpTrophy2DestroyHandle`; Steins;Gate Re:Boot (PPSA36591) also calls `sceNpTrophy2AbortHandle`.
 
 ### Unknown function info
 

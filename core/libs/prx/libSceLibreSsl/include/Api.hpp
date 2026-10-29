@@ -541,7 +541,7 @@ LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Stor
 void APS5_VABI X509_STORE_free_nid_postfix(LibreSslX509Store* store);
 LibreSslX509Store* APS5_VABI X509_STORE_new_nid_postfix(void);
 int APS5_VABI X509_STORE_set_flags_nid_postfix(LibreSslX509Store* store, std::uint64_t flags);
-int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(void);
+int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(LibreSslX509VerifyParam* param, const char* name, std::size_t length);
 int APS5_VABI X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(LibreSslX509VerifyParam* param, const char* text);
 void APS5_VABI X509_VERIFY_PARAM_set_hostflags_nid_postfix(LibreSslX509VerifyParam* param, std::uint32_t flags);
 int APS5_VABI X509_check_issued_nid_postfix(void);

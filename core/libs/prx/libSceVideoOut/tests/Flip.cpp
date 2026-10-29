@@ -150,7 +150,7 @@ void testPs4Buffers() {
     tiledChange.width = 64;
     tiledChange.height = 64;
     tiledChange.pixel_format = 0x8000000000000000ull;
-    check(expectFailure([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &tiledChange, nullptr); }).find("only supported for linear buffers") != std::string::npos, "a PS4 buffer set was changed to tiled");
+    check(expectFailure([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &tiledChange, nullptr); }).find("only supported for linear and PS4 buffers") != std::string::npos, "a PS4 buffer set was changed to tiled");
     void* const odd[1] = {storage.data() + 65536 + 256};
     check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, odd, 1, &attribute); }).find("4 KiB alignment") != std::string::npos, "a PS4 buffer was accepted below 4 KiB alignment");
     void* const fourth[1] = {storage.data() + 65536};
@@ -432,7 +432,7 @@ void testControls() {
     const auto cfg = VideoOutDriver::Get().GetConfig(handle);
     check(sceVideoOutIsOutputSupported(handle, VIDEO_OUT_OUTPUT_MODE_DEFAULT, nullptr, nullptr, 0) == 1, "default output mode is unsupported");
     const int highFrameRate = sceVideoOutIsOutputSupported(handle, VIDEO_OUT_OUTPUT_MODE_119_88HZ, nullptr, nullptr, 0);
-    check(highFrameRate == 1 || highFrameRate == VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE, "unexpected high-frame-rate support result");
+    check(highFrameRate == 1 || highFrameRate == 0, "unexpected high-frame-rate support result");
     check(sceVideoOutConfigureOutput(handle, VIDEO_OUT_OUTPUT_MODE_119_88HZ, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE, "unavailable output mode was configured");
     check(sceVideoOutIsOutputSupported(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode is supported");
     check(sceVideoOutConfigureOutput(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode was configured");

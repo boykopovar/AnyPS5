@@ -880,7 +880,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_thread_priority PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    else()
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         foreach(mode rt high)
             add_test(NAME agc_thread_priority_refused_${mode} COMMAND agc_thread_priority_tests refused)
             set_tests_properties(agc_thread_priority_refused_${mode} PROPERTIES ENVIRONMENT
@@ -3294,7 +3294,7 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_pm4_failure agc_driver_pm4_failure_inline agc_descriptor_pool_reset_failure agc_descriptor_cache agc_driver_address_space_teardown PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    if(NOT WIN32)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test(NAME agc_driver_pm4_priority_refused COMMAND agc_driver_pm4_tests priority-refused)
         set_tests_properties(agc_driver_pm4_priority_refused PROPERTIES ENVIRONMENT
             "ANYPS5_NO_SHADER_CACHE=1;APS5_THREAD_PRIORITY=high;DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/aps5-no-rtkit" SKIP_RETURN_CODE 77)

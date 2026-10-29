@@ -25,6 +25,8 @@ def results(path):
         name = case.get("name")
         if not name:
             raise ValueError(f"{path}: testcase has no name")
+        if name in found:
+            raise ValueError(f"{path}: testcase {name} is listed more than once")
         skipped, status = case.find("skipped"), case.get("status")
         reason = (skipped.get("message") or "").strip() if skipped is not None else ""
         if status in SKIPPED_STATUSES or (skipped is not None and (CTEST_SKIP.fullmatch(reason) or status not in FAILED_STATUSES)):
@@ -121,6 +123,11 @@ def main(argv=None):
     if args.known and not args.sanitizer:
         parser.error("--known needs at least one --sanitizer")
     try:
+        if args.summary:
+            for source in (args.junit, args.known):
+                if source is not None and (source.resolve() == args.summary.resolve() or
+                                           (source.exists() and args.summary.exists() and source.samefile(args.summary))):
+                    raise ValueError(f"summary output must differ from input: {source}")
         known = load_known(args.known, args.sanitizer) if args.known else {}
         text, failing = summarize(args.title, results(args.junit), known, reports(args.junit))
         if args.summary:

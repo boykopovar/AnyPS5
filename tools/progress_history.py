@@ -105,7 +105,7 @@ def save_cache(path, signature, commits):
             temporary = Path(output.name)
             json.dump({"schema_version": 1, "rules": signature, "commits": commits}, output, sort_keys=True)
             output.write("\n")
-        if path.exists():
+        if os.name != "nt" and path.exists():
             temporary.chmod(stat.S_IMODE(path.stat().st_mode))
         os.replace(temporary, path)
     finally:

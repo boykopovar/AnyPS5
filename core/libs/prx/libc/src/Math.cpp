@@ -92,7 +92,10 @@ float SinhfExp(float x) {
 }
 
 float GuestTgammaf(float x) {
+    const int savedErrno = errno;
     const float result = static_cast<float>(std::tgamma(static_cast<double>(x)));
+    errno = std::isfinite(x) && x < 0.0f && std::trunc(x) == x ? EDOM : savedErrno;
+    if (std::isnan(result) && !std::isnan(x)) return std::bit_cast<float>(0xffc00000u);
     if (result != 0.0f || !std::isfinite(x) || x >= 0.0f || std::trunc(x) == x) return result;
     const double interval = std::floor(-static_cast<double>(x));
     const bool negative = std::fmod(interval, 2.0) == 0.0;
@@ -1747,7 +1750,7 @@ double APS5_VABI nextafter_nid_postfix(double x, double y) {
 int APS5_VABI __isfinite_nid_postfix(double x) { return std::isfinite(x) ? 1 : 0; }
 int APS5_VABI __isnan_nid_postfix(double x) { return std::isnan(x) ? 1 : 0; }
 int APS5_VABI __isinf_nid_postfix(double x) { return std::isinf(x) ? 1 : 0; }
-int APS5_VABI __signbit_nid_postfix(double x) { return std::signbit(x) ? 1 : 0; }
+int APS5_VABI __signbit_nid_postfix(double x) { return std::signbit(x) ? 0x8000 : 0; }
 float APS5_VABI nanf_nid_postfix(const char* tagp) {
     (void)tagp;
     return std::bit_cast<float>(0x7fc00000u);
@@ -1899,10 +1902,10 @@ int APS5_VABI isnanf_nid_postfix(float x) { return __isnanf_nid_postfix(x); }
 int APS5_VABI isnan_nid_postfix(double x) { return __isnan_nid_postfix(x); }
 int APS5_VABI isinf_nid_postfix(double x) { return __isinf_nid_postfix(x); }
 int APS5_VABI __fpclassifyf_nid_postfix(float x) { return _FDtest_nid_postfix(&x); }
-int APS5_VABI __signbitf_nid_postfix(float x) { return std::signbit(x) ? 1 : 0; }
+int APS5_VABI __signbitf_nid_postfix(float x) { return std::signbit(x) ? 0x8000 : 0; }
 int APS5_VABI __signbitl_nid_postfix(long double x) {
     static_assert(sizeof(long double) == 16, "guest long double requires x87 extended precision storage");
-    return std::signbit(x) ? 1 : 0;
+    return std::signbit(x) ? 0x8000 : 0;
 }
 
 int APS5_VABI __isfinitel_nid_postfix(long double x) {

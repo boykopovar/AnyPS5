@@ -64,6 +64,7 @@ using PthreadDetachFn_nid_no_patch = int (APS5_VABI*)(void*);
 extern "C" void RegisterPthreadCreate_nid_no_patch(PthreadCreateFn_nid_no_patch fn);
 extern "C" void RegisterPthreadJoin_nid_no_patch(PthreadJoinFn_nid_no_patch fn);
 extern "C" void RegisterPthreadDetach_nid_no_patch(PthreadDetachFn_nid_no_patch fn);
+extern "C" void RegisterProcessorCount_nid_no_patch(unsigned count);
 struct ThreadForwards_nid_no_patch {
     int (APS5_VABI* once)(std::int32_t*, void (APS5_VABI*)(void));
     int (APS5_VABI* keyCreate)(int*, void (APS5_VABI*)(void*));

@@ -408,9 +408,12 @@ static void CheckSpecialPort(int user, int handle) {
     const PadLightBarParam lightBar{0, 0, 255};
     Require(scePadSetVibration(special, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadSetVibration(special, &vibration) == PAD_OK);
+    Require(scePadSetLightBar(special, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadSetLightBar(special, &lightBar) == PAD_OK);
     Require(scePadResetLightBar(special) == PAD_OK);
     Require(scePadSetMotionSensorState(special, true) == PAD_OK);
+    Require(scePadSetAngularVelocityDeadbandState(special, true) == PAD_OK);
+    Require(scePadSetTiltCorrectionState(special, true) == PAD_OK);
     Require(scePadResetOrientation(special) == PAD_OK);
     Require(scePadReadState(handle, data) == PAD_OK);
     Require(data[0].connected);

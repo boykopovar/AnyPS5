@@ -3,6 +3,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include FT_MODULE_H
+#include FT_DRIVER_H
 
 #include <cstdint>
 #include <cstring>
@@ -16,7 +17,7 @@ static_assert(sizeof(FT_Bool) == sizeof(std::uint8_t));
 
 namespace {
 
-enum class PropertyType { Unsigned, Signed, Boolean, Darkening, Unsupported };
+enum class PropertyType { Unsigned, Signed, Boolean, Darkening, IncreaseXHeight, Unsupported };
 using DarkeningParameters = FT_Int[8];
 
 PropertyType TypeOf(const char* moduleName, const char* propertyName) {
@@ -32,6 +33,11 @@ PropertyType TypeOf(const char* moduleName, const char* propertyName) {
         if (std::strcmp(propertyName, "no-stem-darkening") == 0) return PropertyType::Boolean;
         if (std::strcmp(propertyName, "darkening-parameters") == 0) return PropertyType::Darkening;
     }
+    if (autoHinter && (std::strcmp(propertyName, "fallback-script") == 0 ||
+        std::strcmp(propertyName, "default-script") == 0)) {
+        return PropertyType::Unsigned;
+    }
+    if (autoHinter && std::strcmp(propertyName, "increase-x-height") == 0) return PropertyType::IncreaseXHeight;
     return PropertyType::Unsupported;
 }
 
@@ -43,11 +49,35 @@ int Read(FT_Library library, const char* moduleName, const char* propertyName, v
     return error;
 }
 
+int ReadIncreaseXHeight(FT_Library library, const char* moduleName, const char* propertyName, void* output) {
+    GuestFaceRec* guestFace = nullptr;
+    std::memcpy(&guestFace, output, sizeof(guestFace));
+    const auto face = FaceOf(guestFace);
+    FT_Prop_IncreaseXHeight hostProp{};
+    hostProp.face = face ? face->host : nullptr;
+    const auto error = FT_Property_Get(library, moduleName, propertyName, &hostProp);
+    if (!error) {
+        const std::uint32_t limit = hostProp.limit;
+        std::memcpy(static_cast<char*>(output) + offsetof(GuestPropIncreaseXHeight, limit), &limit, sizeof(limit));
+    }
+    return error;
+}
+
 template <typename TValue>
 int Write(FT_Library library, const char* moduleName, const char* propertyName, const void* input) {
     TValue value{};
     std::memcpy(&value, input, sizeof(value));
     return FT_Property_Set(library, moduleName, propertyName, &value);
+}
+
+int WriteIncreaseXHeight(FT_Library library, const char* moduleName, const char* propertyName, const void* input) {
+    GuestPropIncreaseXHeight guestProp{};
+    std::memcpy(&guestProp, input, sizeof(guestProp));
+    const auto face = FaceOf(guestProp.face);
+    FT_Prop_IncreaseXHeight hostProp{};
+    hostProp.face = face ? face->host : nullptr;
+    hostProp.limit = guestProp.limit;
+    return FT_Property_Set(library, moduleName, propertyName, &hostProp);
 }
 
 }
@@ -61,6 +91,7 @@ extern "C" int APS5_VABI FT_Property_Get_nid_postfix(GuestLibrary* library, cons
         case PropertyType::Signed: return Read<FT_Int32>(host, moduleName, propertyName, value);
         case PropertyType::Boolean: return Read<FT_Bool>(host, moduleName, propertyName, value);
         case PropertyType::Darkening: return Read<DarkeningParameters>(host, moduleName, propertyName, value);
+        case PropertyType::IncreaseXHeight: return ReadIncreaseXHeight(host, moduleName, propertyName, value);
         default: NotImplemented_nid_no_patch(__func__);
     }
 }
@@ -74,6 +105,7 @@ extern "C" int APS5_VABI FT_Property_Set_nid_postfix(GuestLibrary* library, cons
         case PropertyType::Signed: return Write<FT_Int32>(host, moduleName, propertyName, value);
         case PropertyType::Boolean: return Write<FT_Bool>(host, moduleName, propertyName, value);
         case PropertyType::Darkening: return Write<DarkeningParameters>(host, moduleName, propertyName, value);
+        case PropertyType::IncreaseXHeight: return WriteIncreaseXHeight(host, moduleName, propertyName, value);
         default: NotImplemented_nid_no_patch(__func__);
     }
 }

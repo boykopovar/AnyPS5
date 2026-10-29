@@ -20,6 +20,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/SandboxCertificates.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Stdio.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libc/src/Rename.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/SyncOnAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp

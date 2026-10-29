@@ -485,7 +485,12 @@ def library_report(base, head):
         new_text, new_percent = library_progress(new)
         delta = "n/a"
         if old_percent is not None and new_percent is not None:
-            delta = f'{round(new_percent - old_percent, 2) or 0:+.2f} pp'
+            change = round(new_percent - old_percent, 2)
+            delta = f'{change or 0:+.2f} pp'
+            exact = exact_delta({"done": old["done"], "total": old["done"] + old["todo"]},
+                                {"done": new["done"], "total": new["done"] + new["todo"]}) if change == 0 else None
+            if exact:
+                delta = f"{small_delta(exact)} pp"
         rows.append(f"| {name} | {old_text} | {new_text} | {delta} |")
     if not rows:
         return []

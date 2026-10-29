@@ -248,7 +248,26 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("| libScePad | 1/3 (33.33%) | 2/3 (66.67%) | +33.33 pp |", progress.report(base, head))
         before = dict(self.report_library("libSceLarge", ["Ready"]), todo=100000)
         after = dict(before, todo=100001)
-        self.assertIn("| +0.00 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        self.assertIn("| -<0.0001 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        self.assertNotIn("-0.00 pp", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+
+    def test_report_shows_a_library_change_that_two_decimals_would_hide(self):
+        before = dict(self.report_library("libc", ["A"], ["T"]), done=1340, todo=11)
+        after = dict(self.report_library("libc", ["A", "B"], ["T"]), done=1341, todo=11)
+        self.assertIn("| libc | 1340/1351 (99.19%) | 1341/1352 (99.19%) | +0.0006 pp |",
+                      progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        same = dict(self.report_library("libc", ["B"], ["T"]), done=1340, todo=11)
+        self.assertIn("| +0.00 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(same)))
+
+    def test_report_compares_libraries_whose_counts_are_floats(self):
+        before = dict(self.report_library("libc", ["A"], ["T"]), done=1.0, todo=2.0)
+        after = dict(self.report_library("libc", ["A", "B"], ["T"]), done=2.0, todo=3.0)
+        report = progress.report(self.report_snapshot(before), self.report_snapshot(after))
+        self.assertIn("| libc | 1.0/3.0 (33.33%) | 2.0/5.0 (40.00%) | +6.67 pp |", report)
+        tiny_before = dict(before, done=1340.0, todo=11.0)
+        tiny_after = dict(after, done=1341.0, todo=11.0)
+        report = progress.report(self.report_snapshot(tiny_before), self.report_snapshot(tiny_after))
+        self.assertIn("| +0.00 pp |", report)
 
     def test_report_limits_library_rows(self):
         head = self.report_snapshot(*(self.report_library(f"libSce{i:03}", ["Ready"]) for i in range(103)))
