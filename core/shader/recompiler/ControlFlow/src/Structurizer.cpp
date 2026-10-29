@@ -2631,13 +2631,21 @@ void Structurizer::verifyReducibility(const ControlFlowGraph& graph) const {
 }
 
 bool Structurizer::hasStructuredConstructs(const ControlFlowGraph& graph) const {
+    std::vector<const BasicBlock*> loopHeaders;
+    for (const auto& block : graph.blocks) {
+        if (block.terminator.loopHeader) loopHeaders.push_back(&block);
+    }
+    const auto innermostLoop = [&](const ControlFlowGraph& analysis, std::uint32_t blockId) {
+        const BasicBlock* innermost = nullptr;
+        for (const auto* header : loopHeaders) {
+            if (analysis.Dominates(header->id, blockId) && !analysis.Dominates(header->terminator.mergeBlock, blockId) && (innermost == nullptr || analysis.Dominates(innermost->id, header->id))) innermost = header;
+        }
+        return innermost;
+    };
     for (const auto& block : graph.blocks) {
         const auto& terminator = block.terminator;
         if (terminator.kind != TerminatorKind::ConditionalBranch || terminator.loopHeader || terminator.mergeBlock != InvalidControlFlowId || terminator.trueBlock == terminator.falseBlock) continue;
-        const BasicBlock* loop = nullptr;
-        for (const auto& header : graph.blocks) {
-            if (header.terminator.loopHeader && graph.Dominates(header.id, block.id) && !graph.Dominates(header.terminator.mergeBlock, block.id) && (loop == nullptr || graph.Dominates(loop->id, header.id))) loop = &header;
-        }
+        const auto* loop = innermostLoop(graph, block.id);
         if (loop == nullptr || (terminator.trueBlock != loop->terminator.mergeBlock && terminator.trueBlock != loop->terminator.continueBlock && terminator.falseBlock != loop->terminator.mergeBlock && terminator.falseBlock != loop->terminator.continueBlock)) return false;
     }
     auto structural = graph;
@@ -2661,18 +2669,10 @@ bool Structurizer::hasStructuredConstructs(const ControlFlowGraph& graph) const 
     const auto inConstruct = [&](const BasicBlock& header, std::uint32_t blockId) {
         return inRegion(header, blockId) && !(header.terminator.loopHeader && inContinue(header, blockId));
     };
-    const auto innermostLoop = [&](std::uint32_t blockId) {
-        const BasicBlock* innermost = nullptr;
-        for (const auto& header : graph.blocks) {
-            if (header.terminator.loopHeader && inRegion(header, blockId) && (innermost == nullptr || structural.Dominates(innermost->id, header.id))) {
-                innermost = &header;
-            }
-        }
-        return innermost;
-    };
     const auto exitsLoop = [](const BasicBlock* loop, std::uint32_t target) {
         return loop != nullptr && (target == loop->terminator.mergeBlock || target == loop->terminator.continueBlock);
     };
+    const bool walkConstructs = constructsFollowDominance(structural);
     for (const auto& block : graph.blocks) {
         const auto& terminator = block.terminator;
         for (const auto successor : block.successors) {
@@ -2682,7 +2682,7 @@ bool Structurizer::hasStructuredConstructs(const ControlFlowGraph& graph) const 
             }
         }
         if (terminator.kind == TerminatorKind::ConditionalBranch && !terminator.loopHeader && terminator.mergeBlock == InvalidControlFlowId && terminator.trueBlock != terminator.falseBlock) {
-            const auto* loop = innermostLoop(block.id);
+            const auto* loop = innermostLoop(structural, block.id);
             if (!exitsLoop(loop, terminator.trueBlock) && !exitsLoop(loop, terminator.falseBlock)) {
                 return false;
             }
@@ -2696,8 +2696,8 @@ bool Structurizer::hasStructuredConstructs(const ControlFlowGraph& graph) const 
         if (terminator.loopHeader && (terminator.continueBlock == terminator.mergeBlock || !structural.Dominates(block.id, terminator.continueBlock))) {
             return false;
         }
-        const auto* loop = terminator.loopHeader ? &block : innermostLoop(block.id);
-        for (const auto& member : graph.blocks) {
+        const auto* loop = terminator.loopHeader ? &block : innermostLoop(structural, block.id);
+        const auto memberFits = [&](const BasicBlock& member) {
             if (inConstruct(block, member.id)) {
                 if (member.id != block.id && member.terminator.mergeBlock != InvalidControlFlowId && !inConstruct(block, member.terminator.mergeBlock)) {
                     return false;
@@ -2713,6 +2713,20 @@ bool Structurizer::hasStructuredConstructs(const ControlFlowGraph& graph) const 
                     return false;
                 }
             }
+            return true;
+        };
+        if (walkConstructs) {
+            auto members = dominatedBlocks(structural, block.id, terminator.mergeBlock);
+            if (terminator.loopHeader) {
+                const auto continueMembers = dominatedBlocks(structural, terminator.continueBlock);
+                members.insert(members.end(), continueMembers.begin(), continueMembers.end());
+                sortUnique(members);
+            }
+            if (!std::all_of(members.begin(), members.end(), [&](std::uint32_t memberId) { return memberFits(graph.FindBlock(memberId)); })) {
+                return false;
+            }
+        } else if (!std::all_of(graph.blocks.begin(), graph.blocks.end(), memberFits)) {
+            return false;
         }
         if (terminator.loopHeader) {
             const auto& predecessors = graph.FindBlock(terminator.continueBlock).predecessors;

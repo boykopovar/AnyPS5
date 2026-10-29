@@ -85,9 +85,9 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 280, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 288, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update the invocation encoder");
-static_assert(sizeof(RecompileResult) == 544, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 656, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
@@ -106,7 +106,7 @@ static_assert(sizeof(BindingAllocationResult) == 184, "BindingAllocationResult c
 static_assert(sizeof(CompiledBindingLayout) == 88, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
 static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update EncodePlan and DecodePlan");
-static_assert(sizeof(IrValue) == 128, "IrValue changed: update the plan value encoder");
+static_assert(sizeof(IrValue) == 136, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
 static_assert(sizeof(DescriptorSource) == 192, "DescriptorSource changed: update the plan encoder");
@@ -141,14 +141,14 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 43, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 45, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
 static_assert(fieldCount<IrResourcePlan>() == 24, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
-static_assert(fieldCount<MemoryInfo>() == 31, "MemoryInfo changed: update the plan encoder");
+static_assert(fieldCount<MemoryInfo>() == 32, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 3, "DescriptorSource changed: update the plan encoder");
 static_assert(fieldCount<TableColumn>() == 18, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
@@ -514,6 +514,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Values(std::span<const std::uint32_t>(result.spirv.Words()));
     writer.Value(result.bdaAbiVersion);
     writer.Value(result.windowLaneGuards);
+    writer.Value(result.descriptorFaults);
     writer.Value(result.memoryOffsetDword);
     writer.Value(result.shaderDataDwords);
     writer.Value(result.imageMetadataDword);
@@ -577,6 +578,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     result.spirv = reader.Spirv();
     reader.Value(result.bdaAbiVersion);
     reader.Value(result.windowLaneGuards);
+    reader.Value(result.descriptorFaults);
     reader.Value(result.memoryOffsetDword);
     reader.Value(result.shaderDataDwords);
     reader.Value(result.imageMetadataDword);
@@ -800,9 +802,11 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.flatLineCompatible);
         out.Value(image.flatVolumeLineCompatible);
         out.Value(image.dimensionQueryOnly);
+        out.Value(image.sampledOnly);
         out.Value(image.foldTexelOffsetsOnly);
         out.Value(image.convertedSamples);
         out.Value(image.remappedDepth1D);
+        out.Value(image.optionalDescriptor);
         out.Value(image.byElements);
         out.Value(image.byComponents);
         out.Value(image.packedFormat);
@@ -908,9 +912,11 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.flatLineCompatible);
         in.Value(image.flatVolumeLineCompatible);
         in.Value(image.dimensionQueryOnly);
+        in.Value(image.sampledOnly);
         in.Value(image.foldTexelOffsetsOnly);
         in.Value(image.convertedSamples);
         in.Value(image.remappedDepth1D);
+        in.Value(image.optionalDescriptor);
         in.Value(image.byElements);
         in.Value(image.byComponents);
         in.Value(image.packedFormat);
@@ -1038,6 +1044,7 @@ void encodeMemoryInfo(Writer& out, const MemoryInfo& memory) {
     out.Value(memory.gpuDescriptor);
     out.Value(memory.flushDenormals);
     out.Value(memory.flushDenormalResults);
+    out.Value(memory.descriptorWebArm);
 }
 
 void decodeMemoryInfo(Reader& in, MemoryInfo& memory) {
@@ -1072,6 +1079,7 @@ void decodeMemoryInfo(Reader& in, MemoryInfo& memory) {
     in.Value(memory.gpuDescriptor);
     in.Value(memory.flushDenormals);
     in.Value(memory.flushDenormalResults);
+    in.Value(memory.descriptorWebArm);
 }
 
 bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
@@ -1380,6 +1388,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_NO_RESULT_MEMO",
     "APS5_NO_TABLE_RESOLUTION_REUSE",
     "APS5_NO_TABLE_SNAPSHOT_REUSE",
+    "APS5_RESULT_MEMO_MB",
 };
 
 const std::vector<std::byte>& switchKey() {
@@ -1735,25 +1744,53 @@ private:
         }
     }
 
+    static std::optional<std::chrono::system_clock::time_point> lastWriteTime(const std::filesystem::path& path) {
+#ifdef _WIN32
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data)) return std::nullopt;
+        const auto ticks = static_cast<std::int64_t>((static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime);
+        const std::chrono::duration<std::int64_t, std::ratio<1, 10000000>> sinceEpoch(ticks - 116444736000000000LL);
+        return std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(sinceEpoch));
+#else
+        std::error_code error;
+        const auto written = std::filesystem::last_write_time(path, error);
+        if (error) return std::nullopt;
+        return std::chrono::time_point_cast<std::chrono::system_clock::duration>(std::chrono::file_clock::to_sys(written));
+#endif
+    }
+
+    static void refreshWriteTime(const std::filesystem::path& path) {
+#ifdef _WIN32
+        const HANDLE file = CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        FILETIME now{};
+        GetSystemTimePreciseAsFileTime(&now);
+        static_cast<void>(SetFileTime(file, nullptr, nullptr, &now));
+        CloseHandle(file);
+#else
+        std::error_code error;
+        std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now(), error);
+#endif
+    }
+
     void housekeeping() {
         std::error_code error;
         std::filesystem::create_directories(directory, error);
         const auto stamp = directory / "last-used";
         std::ofstream(stamp, std::ios::binary | std::ios::trunc).close();
-        std::filesystem::last_write_time(stamp, std::filesystem::file_time_type::clock::now(), error);
+        refreshWriteTime(stamp);
 #ifdef _WIN32
         auto nativeRoot = root;
         nativeRoot.make_preferred();
         if (nativeRoot.native().starts_with(L"\\\\?\\") || nativeRoot.native().starts_with(L"\\\\.\\")) return;
 #endif
-        const auto now = std::filesystem::file_time_type::clock::now();
+        const auto now = std::chrono::system_clock::now();
         for (std::filesystem::directory_iterator it(root, error), end; !error && it != end; it.increment(error)) {
             const auto name = it->path().filename().string();
             if (it->path() == directory || name.size() != 16 || name.find_first_not_of("0123456789abcdef") != std::string::npos || !it->is_directory(error)) continue;
-            std::error_code timeError;
-            auto used = std::filesystem::last_write_time(it->path() / "last-used", timeError);
-            if (timeError) used = std::filesystem::last_write_time(it->path(), timeError);
-            if (!timeError && now - used > std::chrono::hours(24 * 14)) {
+            auto used = lastWriteTime(it->path() / "last-used");
+            if (!used) used = lastWriteTime(it->path());
+            if (used && now - *used > std::chrono::hours(24 * 14)) {
                 std::error_code removeError;
                 std::filesystem::remove_all(it->path(), removeError);
             }
@@ -1761,9 +1798,8 @@ private:
         error.clear();
         for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end; it.increment(error)) {
             if (it->path().filename().string().find(".tmp.") == std::string::npos) continue;
-            std::error_code timeError;
-            const auto written = std::filesystem::last_write_time(it->path(), timeError);
-            if (!timeError && now - written > std::chrono::hours(1)) {
+            const auto written = lastWriteTime(it->path());
+            if (written && now - *written > std::chrono::hours(1)) {
                 std::error_code removeError;
                 std::filesystem::remove(it->path(), removeError);
             }

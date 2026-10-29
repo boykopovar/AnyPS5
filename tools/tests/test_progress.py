@@ -11,6 +11,33 @@ import progress
 
 
 class ProgressSnapshotTests(unittest.TestCase):
+    def test_library_counters_reject_invalid_types_and_negative_values(self):
+        for field in ("done", "todo"):
+            for value in (None, True, False, "1", 1.5, [], {}, -1, float("nan"), float("inf")):
+                with self.subTest(field=field, value=value):
+                    snapshot = self.snapshot()
+                    snapshot["libraries"]["groups"] = [{"name": "libExample", "done": 0, "todo": 0, field: value}]
+                    self.assert_rejected(snapshot, f"libraries.groups[0].{field} must be a non-negative integer")
+
+    def test_library_counter_validation_preserves_optional_and_large_counts(self):
+        groups = [{"name": "libLegacy"}, {"name": "libHalf", "done": 1},
+                  {"name": "libShared", "shared_sources": "libExample"},
+                  {"name": "libEmpty", "done": 0, "todo": 0},
+                  {"name": "libLarge", "done": 10**200, "todo": 10**200}]
+        snapshot = self.snapshot()
+        snapshot["libraries"]["groups"] = groups
+        with tempfile.TemporaryDirectory() as directory:
+            before, after = Path(directory) / "before.json", Path(directory) / "after.json"
+            before.write_text(json.dumps(self.snapshot()), encoding="utf-8")
+            after.write_text(json.dumps(snapshot), encoding="utf-8")
+            output = io.StringIO()
+            with patch("sys.stdout", output):
+                self.assertEqual(progress.main(["--compare", str(before), str(after)]), 0)
+            self.assertIn("Counts unavailable", output.getvalue())
+            self.assertIn("Shared sources", output.getvalue())
+            self.assertIn("No exports", output.getvalue())
+            self.assertIn("50.00%", output.getvalue())
+
     def snapshot(self):
         return {"libraries": {"percent": 0, "groups": []}, "shaders": {"percent": 0, "groups": []}}
 
@@ -106,6 +133,20 @@ class ProgressSnapshotTests(unittest.TestCase):
             self.assertEqual(stdout.getvalue(), expected)
 
 
+    def test_duplicate_names_are_rejected_within_each_section(self):
+        for section in ("libraries", "shaders"):
+            with self.subTest(section=section):
+                snapshot = self.snapshot()
+                snapshot[section]["groups"] = [{"name": "Repeated"}, {"name": "other"}, {"name": "Repeated"}]
+                self.assert_rejected(snapshot, section + ".groups[2].name duplicates 'Repeated'")
+
+    def test_group_names_are_case_sensitive_and_local_to_each_section(self):
+        snapshot = self.snapshot()
+        for section in ("libraries", "shaders"):
+            snapshot[section]["groups"] = [{"name": "same"}, {"name": "Same"}]
+        progress.validate_snapshot(snapshot)
+
+
 class ProgressTests(unittest.TestCase):
     def report_library(self, name, done=(), todo=(), **extra):
         return {"name": name, "label": name, "done": len(done), "todo": len(todo),
@@ -191,13 +232,56 @@ class ProgressTests(unittest.TestCase):
                                                           base["shaders"], head["shaders"])))
         self.assertNotIn("Changed libraries", report)
 
+    def test_report_shows_a_headline_change_that_two_decimals_would_hide(self):
+        before = dict(self.report_library("libScePad", ["A"], ["T"]), done=50000, todo=50001)
+        after = dict(self.report_library("libScePad", ["A", "B"], ["T"]), done=50001, todo=50000)
+        self.assertEqual(progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
+                                          self.report_snapshot(after)["libraries"])[0],
+                         "\U0001f4c8 **System libraries**: 50.0% (+0.001%, +1 implemented functions)")
+        reverted = progress.compare("System libraries", "Library", "functions", self.report_snapshot(after)["libraries"],
+                                    self.report_snapshot(before)["libraries"])[0]
+        self.assertTrue(reverted.startswith("\U0001f4c9 **System libraries**: 50.0% (-0.001%, "))
+
+    def test_report_keeps_a_zero_headline_change_when_the_ratio_is_unchanged(self):
+        before = dict(self.report_library("libScePad", ["A"], ["T"]), done=1, todo=1)
+        after = dict(self.report_library("libScePad", ["A", "B"], ["T", "U"]), done=2, todo=2)
+        headline = progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
+                                    self.report_snapshot(after)["libraries"])[0]
+        self.assertEqual(headline, "\u2796 **System libraries**: 50.0% (+0.0%, +1 implemented, +1 declared functions)")
+
+    def test_report_marks_a_headline_change_below_four_decimals(self):
+        before = dict(self.report_library("libScePad", ["A"], ["T"]), done=1, todo=10000000)
+        after = dict(self.report_library("libScePad", ["A", "B"], ["T"]), done=2, todo=10000000)
+        headline = progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
+                                    self.report_snapshot(after)["libraries"])[0]
+        self.assertIn("(+<0.0001%, +1 implemented functions)", headline)
+
     def test_report_rounds_percentage_point_change_without_negative_zero(self):
         base = self.report_snapshot(self.report_library("libScePad", ["Ready"], ["A", "B"]))
         head = self.report_snapshot(self.report_library("libScePad", ["Ready", "A"], ["B"]))
         self.assertIn("| libScePad | 1/3 (33.33%) | 2/3 (66.67%) | +33.33 pp |", progress.report(base, head))
         before = dict(self.report_library("libSceLarge", ["Ready"]), todo=100000)
         after = dict(before, todo=100001)
-        self.assertIn("| +0.00 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        self.assertIn("| -<0.0001 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        self.assertNotIn("-0.00 pp", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+
+    def test_report_shows_a_library_change_that_two_decimals_would_hide(self):
+        before = dict(self.report_library("libc", ["A"], ["T"]), done=1340, todo=11)
+        after = dict(self.report_library("libc", ["A", "B"], ["T"]), done=1341, todo=11)
+        self.assertIn("| libc | 1340/1351 (99.19%) | 1341/1352 (99.19%) | +0.0006 pp |",
+                      progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        same = dict(self.report_library("libc", ["B"], ["T"]), done=1340, todo=11)
+        self.assertIn("| +0.00 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(same)))
+
+    def test_report_compares_libraries_whose_counts_are_floats(self):
+        before = dict(self.report_library("libc", ["A"], ["T"]), done=1.0, todo=2.0)
+        after = dict(self.report_library("libc", ["A", "B"], ["T"]), done=2.0, todo=3.0)
+        report = progress.report(self.report_snapshot(before), self.report_snapshot(after))
+        self.assertIn("| libc | 1.0/3.0 (33.33%) | 2.0/5.0 (40.00%) | +6.67 pp |", report)
+        tiny_before = dict(before, done=1340.0, todo=11.0)
+        tiny_after = dict(after, done=1341.0, todo=11.0)
+        report = progress.report(self.report_snapshot(tiny_before), self.report_snapshot(tiny_after))
+        self.assertIn("| +0.00 pp |", report)
 
     def test_report_limits_library_rows(self):
         head = self.report_snapshot(*(self.report_library(f"libSce{i:03}", ["Ready"]) for i in range(103)))
@@ -454,6 +538,24 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(group["todo_names"], [])
             self.assertEqual(group["inert_names"], ["Real"])
 
+    def test_explicitly_exported_nid_no_patch_definitions_are_counted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Functions.cpp").write_text(
+                "int APS5_VABI Pending_nid_no_patch() { NotImplemented_nid_no_patch(__func__); }\n"
+                "int APS5_VABI Ready_nid_no_patch() { return 1; }\n"
+                "int APS5_VABI Helper_nid_no_patch() { NotImplemented_nid_no_patch(__func__); }\n"
+                "int APS5_VABI Cut_nid_no_patch_cut() { NotImplemented_nid_no_patch(__func__); }\n", encoding="utf-8")
+            (library / "Export.cpp").write_text(
+                'APS5_EXPORT("AAAAAAAAAAA", Pending_nid_no_patch);\n'
+                'APS5_EXPORT(\n    "_ZN3sce7Example5ReadyEv",\n    Ready_nid_no_patch);\n'
+                '// APS5_EXPORT("BBBBBBBBBBB", Helper_nid_no_patch);\n'
+                'const char* text = "APS5_EXPORT(\\"CCCCCCCCCCC\\", Cut_nid_no_patch_cut)";\n', encoding="utf-8")
+            group = progress.scan_library(library)
+            self.assertEqual(group["done_names"], ["Ready_nid_no_patch"])
+            self.assertEqual(group["todo_names"], ["Pending_nid_no_patch"])
+
     def test_empty_libraries(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -607,6 +709,31 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 2)
             self.assertIn(str(blocked), stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_aliased_reports_are_refused_and_left_unchanged(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir()
+            first, second = output / "progress.json", output / "progress.html"
+            first.write_text("json report", encoding="utf-8")
+            try:
+                second.hardlink_to(first)
+            except OSError:
+                self.skipTest("hard links are not available")
+            others = {name: output / name for name in ("badge-libraries.svg", "badge-shaders.svg", "progress.svg")}
+            for name, path in others.items():
+                path.write_text(name, encoding="utf-8")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_main([str(output)], libraries, shaders)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("progress.json and progress.html", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertEqual(first.read_text(encoding="utf-8"), "json report")
+            self.assertEqual(second.read_text(encoding="utf-8"), "json report")
+            for name, path in others.items():
+                self.assertEqual(path.read_text(encoding="utf-8"), name)
 
     def test_root_must_be_a_source_tree(self):
         with tempfile.TemporaryDirectory() as directory:

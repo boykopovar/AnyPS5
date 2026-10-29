@@ -76,6 +76,18 @@ static int APS5_VABI PrintList(const char* format, ...) {
     return result;
 }
 
+static void CheckIgnoredLengths() {
+    char output[96];
+    Require(snprintf_nid_postfix(output, sizeof(output), "%Ld|%Lx|%Lu|%Lo", -1985229329, 0x89abcdefu, 0x89abcdefu, 0x89abcdefu) == 43 &&
+        std::strcmp(output, "-1985229329|89abcdef|2309737967|21152746757") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "[%5Ld][%-8.3Lx]", 0x41424344, 0x41424344) == 22 && std::strcmp(output, "[1094861636][41424344]") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%hhc%Lc%zc|%hhs|%Ls|%zs", 0x44, 0x45, 0x46, "ab", "ab", "ab") == 12 && std::strcmp(output, "DEF|ab|ab|ab") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%hf|%llf|%ze|%ja", 1.5, 1.5, 1.5, 1.5) == 39 && std::strcmp(output, "1.500000|1.500000|1.500000e+00|0x1.8p+0") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%hp|%Lp", reinterpret_cast<void*>(0x1234), reinterpret_cast<void*>(0x1234)) == 9 && std::strcmp(output, "1234|1234") == 0);
+    struct { int count; int guard; } written = {-1, -1};
+    Require(snprintf_nid_postfix(output, sizeof(output), "a%Ln", &written.count) == 1 && written.count == 1 && written.guard == -1);
+}
+
 static void CheckSizeLimits() {
     using Formatter = int (APS5_VABI*)(char*, size_t, const char*, ...);
     for (const Formatter format : {&snprintf_nid_postfix, &FormatList}) {
@@ -540,4 +552,26 @@ static void CheckDecimalFloat() {
     }
 }
 
-int main() { CheckSizeLimits(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+static void CheckLongDoubleHexFloat() {
+    constexpr struct {
+        const char* format;
+        long double value;
+        const char* expected;
+    } cases[] = {
+        {"[%La]", 0.1L, "[0x1.999999999999999ap-4]"}, {"[%LA]", 1.0L, "[0X1P+0]"}, {"[%.3La]", 0.1L, "[0x1.99ap-4]"},
+        {"[%.0La]", 1.5L, "[0x2p+0]"}, {"[%#.0La]", 0.1L, "[0x2.p-4]"}, {"[%La]", 0.0L, "[0x0p+0]"}, {"[%La]", -0.0L, "[-0x0p+0]"},
+        {"[%La]", 0x1p-16445L, "[0x1p-16445]"}, {"[%La]", 0x1.fffffffffffffffep16383L, "[0x1.fffffffffffffffep+16383]"},
+        {"[%.15La]", 0x1.fffffffffffffffep0L, "[0x2.000000000000000p+0]"}, {"[%-+12.2La]", -2.0L, "[-0x1.00p+1  ]"},
+        {"[%010La]", 1.5L, "[0x001.8p+0]"}, {"[%.20La]", 0.1L, "[0x1.999999999999999a0000p-4]"},
+    };
+    for (const auto& item : cases) {
+        char buffer[64];
+        const int written = snprintf_nid_postfix(buffer, sizeof(buffer), item.format, item.value);
+        if (written != static_cast<int>(std::strlen(item.expected)) || std::strcmp(buffer, item.expected) != 0) {
+            std::fprintf(stderr, "%s of %La gave \"%s\", expected \"%s\"\n", item.format, item.value, buffer, item.expected);
+            Require(false);
+        }
+    }
+}
+
+int main() { CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

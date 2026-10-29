@@ -144,11 +144,18 @@ void verifyEmittedBarriers() {
     require(single.subgroupControl == 0 && single.subgroupMemory == 0, "with wave LDS memory barriers, a single-wave workgroup did not keep workgroup-scope barriers");
 }
 
+void verifyLdsLockFenceDrivers() {
+    for (const auto& item : Cases) {
+        require(AgcDriver::LdsLockFencesRequired(item.driver) == (item.driver == VK_DRIVER_ID_MOLTENVK), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected LDS lock fences only on MoltenVK");
+    }
+}
+
 }
 
 int main() {
     try {
         verifyDriverQuirk();
+        verifyLdsLockFenceDrivers();
         verifyEmittedBarriers();
         verifyLdsMemoryBarrierScope();
         std::puts("subgroup barrier tests passed");

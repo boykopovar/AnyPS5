@@ -1098,13 +1098,16 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
     for (std::uint32_t index = 0; index < program.instructions.size(); ++index) {
         const auto& instruction = program.instructions[index];
         const std::uint32_t nextProgramCounter = instructionEndProgramCounter(instruction);
+        const std::uint32_t followingProgramCounter = index + 1u < program.instructions.size() ? program.instructions[index + 1u].programCounter : endProgramCounter;
 
         if (IsDirectBranchOpcode(instruction.op)) {
             if (!isValidTarget(instruction.branchTarget, instructionProgramCounters, firstProgramCounter, endProgramCounter)) {
                 throw std::invalid_argument("branch at program counter " + toHexString(instruction.programCounter) + " targets invalid program counter " + toHexString(instruction.branchTarget));
             }
             labels.insert(instruction.branchTarget);
-            if (nextProgramCounter <= endProgramCounter) {
+            if (instruction.op == RdnaOpcode::SBranch) {
+                labels.insert(followingProgramCounter);
+            } else if (nextProgramCounter <= endProgramCounter) {
                 labels.insert(nextProgramCounter);
             }
         } else if (instruction.op == RdnaOpcode::SSetpcB64) {
@@ -1136,8 +1139,8 @@ std::vector<BasicBlock> GraphBuilder::splitIntoBlocks(const RdnaProgram& program
                     labels.insert(nextProgramCounter);
                 }
             }
-        } else if (instruction.op == RdnaOpcode::SEndpgm) {
-            labels.insert(nextProgramCounter);
+        } else if (instruction.op == RdnaOpcode::SEndpgm || instruction.op == RdnaOpcode::SCodeEnd) {
+            labels.insert(followingProgramCounter);
         }
     }
 
@@ -1182,7 +1185,7 @@ void GraphBuilder::linkBlocks(std::vector<BasicBlock>& blocks, const RdnaProgram
         const auto& last = program.instructions[block.instructionEnd - 1u];
         const std::uint32_t nextProgramCounter = instructionEndProgramCounter(last);
 
-        if (last.op == RdnaOpcode::SEndpgm) {
+        if (last.op == RdnaOpcode::SEndpgm || last.op == RdnaOpcode::SCodeEnd) {
             block.terminator.kind = TerminatorKind::Return;
         } else if (last.op == RdnaOpcode::SSetpcB64) {
             std::uint32_t target = 0;
@@ -1406,11 +1409,11 @@ std::vector<UserDataCall> FindUserDataCalls(const RdnaProgram& program, const Sw
             pair = source;
         } else {
             std::uint32_t low = 0, high = 0;
-            if (!findLastWriter(program, index, {source}, low) || !findLastWriter(program, index, {source + 1u}, high)) continue;
-            const auto first = std::min(low, high);
-            const bool sameBlock = std::none_of(labels.begin(), labels.end(), [&](std::uint32_t label) {
-                return label > program.instructions[first].programCounter && label <= instruction.programCounter;
-            });
+            bool reaches = findLastWriter(program, index, {source}, low) && findLastWriter(program, index, {source + 1u}, high) &&
+                std::none_of(labels.begin(), labels.end(), [&](std::uint32_t label) {
+                    return label > program.instructions[std::min(low, high)].programCounter && label <= instruction.programCounter;
+                });
+            if (!reaches) reaches = reachingWriter(program, index, {source}, low, swappc.waveSize) && reachingWriter(program, index, {source + 1u}, high, swappc.waveSize);
             const auto& lowWriter = program.instructions[low];
             const auto& highWriter = program.instructions[high];
             std::uint32_t from = NoScalarRegister;
@@ -1420,7 +1423,7 @@ std::vector<UserDataCall> FindUserDataCalls(const RdnaProgram& program, const Sw
                 from = scalarIndex(lowWriter.source0);
                 if (from != NoScalarRegister && !isScalar(highWriter.source0, from + 1u)) from = NoScalarRegister;
             }
-            if (!sameBlock || from == NoScalarRegister || from % 2u != 0u || !userData(from) || !userData(from + 1u) || !unchanged(from, low) || !unchanged(from + 1u, high)) continue;
+            if (!reaches || from == NoScalarRegister || from % 2u != 0u || !userData(from) || !userData(from + 1u) || !unchanged(from, low) || !unchanged(from + 1u, high)) continue;
             pair = from;
         }
         calls.push_back({instruction.programCounter, link, pair});
