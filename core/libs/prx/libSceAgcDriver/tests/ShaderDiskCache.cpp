@@ -351,6 +351,7 @@ CompiledVariant sampleVariant() {
     image.flatLineCompatible = false;
     image.flatVolumeLineCompatible = false;
     image.dimensionQueryOnly = false;
+    image.sampledOnly = false;
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
     image.optionalDescriptor = true;
@@ -524,6 +525,62 @@ std::vector<std::byte> packBytes(const std::vector<std::pair<std::vector<std::by
         at += entry.size();
     }
     return bytes;
+}
+
+void verifyPrebuiltPackOwnership(const std::filesystem::path& directory) {
+    using namespace ShaderRecompiler::ShaderDiskCache;
+    SampleRequest sample;
+    const auto key = sample.Key();
+    const auto variant = sampleVariant();
+    const auto path = directory / "ownership.pack";
+    require(WriteFileAtomically(path, packBytes({{key, EncodeEntry(key, variant)}})), "cannot write the ownership test pack");
+    CompiledVariant first, second;
+    PackLoadTimings timings;
+    const std::uint32_t* words = nullptr;
+    {
+        CachePack pack(path);
+        require(pack.Valid(), "the ownership test pack is invalid");
+        require(pack.Load(key, first, timings) == LoadStatus::Loaded, "cannot load the first packed variant");
+        require(pack.Load(key, second, timings) == LoadStatus::Loaded, "cannot load the second packed variant");
+        words = first.artifact.spirv.Words().data();
+        require(!first.artifact.spirv.empty() && words == second.artifact.spirv.Words().data(), "packed SPIR-V was copied instead of sharing its mapping");
+    }
+    requireSameVariant(variant, first, "packed variant outlives its pack");
+#ifdef _WIN32
+    MEMORY_BASIC_INFORMATION region{};
+    require(VirtualQuery(words, &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "packed SPIR-V lost its mapping after pack destruction");
+#endif
+    auto edited = first.artifact.spirv;
+    edited[0] ^= 1u;
+    require(edited.Words().data() != words && edited.Words()[0] != first.artifact.spirv.Words()[0], "editing packed SPIR-V modified the shared mapping");
+    first = {};
+    requireSameVariant(variant, second, "last packed variant retains its mapping");
+    std::vector<std::byte> published;
+    require(ReadWholeFile(path, published) && published == packBytes({{key, EncodeEntry(key, variant)}}), "editing packed SPIR-V modified the cache file");
+    second = {};
+#ifdef _WIN32
+    require(VirtualQuery(words, &region, sizeof(region)) == sizeof(region) && region.State == MEM_FREE, "the final packed variant did not release its mapping");
+#endif
+    const auto offset = sizeof(PackHeader) + sizeof(PackRecord);
+    published.insert(published.begin() + offset, std::byte{});
+    PackHeader header;
+    PackRecord record;
+    std::memcpy(&header, published.data(), sizeof(header));
+    std::memcpy(&record, published.data() + sizeof(header), sizeof(record));
+    ++header.fileBytes;
+    ++record.offset;
+    std::memcpy(published.data() + sizeof(header), &record, sizeof(record));
+    header.indexHash = ShaderRecompiler::HashBytes(std::span<const std::byte>(published).subspan(sizeof(header), sizeof(record)));
+    std::memcpy(published.data(), &header, sizeof(header));
+    require(WriteFileAtomically(path, published), "cannot publish an unaligned packed entry");
+    {
+        CachePack pack(path);
+        require(pack.Valid(), "an unaligned packed entry was rejected");
+        require(pack.Load(key, first, timings) == LoadStatus::Loaded && pack.Load(key, second, timings) == LoadStatus::Loaded, "an unaligned packed entry did not load");
+        require(first.artifact.spirv.Words().data() != second.artifact.spirv.Words().data(), "an unaligned packed module did not use aligned owned storage");
+    }
+    requireSameVariant(variant, first, "unaligned packed variant outlives its pack");
+    requireSameVariant(variant, second, "second unaligned packed variant outlives its pack");
 }
 
 void refreshIndexHash(std::vector<std::byte>& pack, std::size_t entries) {
@@ -780,6 +837,7 @@ void verifyKeySensitivity() {
     changes("exact robust loads", [](SampleRequest& sample) { sample.request.target.exactRobustLoads = true; });
     changes("wave LDS memory barriers", [](SampleRequest& sample) { sample.request.target.waveLdsMemoryBarriers = true; });
     changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
+    changes("LDS lock fences", [](SampleRequest& sample) { sample.request.target.ldsLockFences = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });
@@ -2539,6 +2597,13 @@ int main(int argc, char** argv) {
             ShaderDiskCache::Shutdown();
             require(ShaderDiskCache::Writers() == 0, "the housekeeping writer did not stop");
             std::cout << "housekeeping version " << directory.filename().string() << '\n';
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--prebuilt-pack-ownership") {
+            const auto directory = std::filesystem::temp_directory_path() / ("aps5-pack-ownership-" + std::to_string(std::random_device{}()));
+            std::filesystem::create_directories(directory);
+            verifyPrebuiltPackOwnership(directory);
+            std::filesystem::remove_all(directory);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--resource-plan-codec") {

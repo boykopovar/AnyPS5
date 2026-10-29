@@ -33,7 +33,7 @@ PROJECT = {
 
 
 @unittest.skipUnless(shutil.which("ninja") and (shutil.which("gcc") or shutil.which("cc")), "needs ninja and a C compiler")
-class SelectTests(unittest.TestCase):
+class SelectFixture(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory()
@@ -76,6 +76,7 @@ class SelectTests(unittest.TestCase):
                                check=True, capture_output=True, text=True).stdout
         return output, set(re.findall(r"Test +#\d+: (\S+)", shown))
 
+class SelectTests(SelectFixture):
     def test_header_selects_the_tests_of_its_executable(self):
         self.assertEqual(self.select("alpha/alpha.h")[1], {"alpha", "alpha_data", "script"})
 
@@ -101,6 +102,7 @@ class SelectTests(unittest.TestCase):
                 self.assertIsNone(selected)
                 self.assertIn(changed, output)
 
+class SelectGraphStateTests(SelectFixture):
     def test_changed_list_with_a_byte_order_mark_and_crlf_keeps_its_first_path(self):
         listed = self.build / "changed bom.txt"
         listed.write_bytes(b"\xef\xbb\xbfCMakeLists.txt\r\nalpha/alpha.h\r\n")
@@ -142,6 +144,7 @@ class SelectTests(unittest.TestCase):
         older.write_text(json.dumps(graph), encoding="utf-8")
         self.assertEqual(self.select("alpha/alpha.h", graph=older)[1], {"alpha", "alpha_data", "beta", "beta_setup", "script"})
 
+class SelectBuildTests(SelectFixture):
     def test_selected_target_skips_unselected_executables(self):
         subprocess.run(["ninja", "-C", str(self.build), "-t", "clean"], check=True, capture_output=True)
         self.select("alpha/main.c")
@@ -180,6 +183,7 @@ class SelectTests(unittest.TestCase):
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
 
+class SelectArgumentTests(SelectFixture):
     def test_script_test_builds_the_executable_it_gets_as_a_definition(self):
         cmake, script = self.source / "alpha/CMakeLists.txt", self.source / "data/run.cmake"
         original = cmake.read_text(encoding="utf-8")
@@ -224,6 +228,35 @@ class SelectTests(unittest.TestCase):
         finally:
             cmake.write_text(original, encoding="utf-8")
             script.unlink(missing_ok=True)
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+
+    def test_build_argument_inputs_select_their_consuming_tests(self):
+        cmake, source = self.source / "alpha/CMakeLists.txt", self.source / "alpha/tool.c"
+        header = self.source / "alpha/tool.h"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            source.write_text('#include "tool.h"\nint main(void) { return TOOL; }\n', encoding="utf-8")
+            header.write_text("#define TOOL 0\n", encoding="utf-8")
+            cmake.write_text(original + "add_executable(alpha_tool tool.c)\n"
+                                        "add_test(NAME alpha_tool_direct COMMAND alpha_tool)\n"
+                                        "add_test(NAME alpha_tool_argument COMMAND alpha_tests $<TARGET_FILE:alpha_tool>)\n"
+                                        "add_test(NAME alpha_tool_definition COMMAND alpha_tests -DTOOL=$<TARGET_FILE:alpha_tool>)\n"
+                                        "add_test(NAME alpha_not_built COMMAND alpha_tests ${CMAKE_BINARY_DIR}/missing.txt ${CMAKE_BINARY_DIR})\n",
+                             encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+            graph = self.build / "argument-graph.json"
+            self.tool("dump", self.build, graph)
+            for changed in ("alpha/tool.c", "alpha/tool.h"):
+                with self.subTest(changed=changed):
+                    self.assertEqual(self.select(changed, graph=graph)[1],
+                                     {"alpha_tool_direct", "alpha_tool_argument", "alpha_tool_definition", "script"})
+            self.assertEqual(self.select("data/input.txt", graph=graph)[1], {"alpha_data", "script"})
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            source.unlink(missing_ok=True)
+            header.unlink(missing_ok=True)
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
 
@@ -632,5 +665,35 @@ class MissingCommandTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class GraphClosureTests(unittest.TestCase):
+    def test_dangling_targets_fail_instead_of_selecting_no_tests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            graph = {"tests": {"unit": {"target": "unit", "registered": ["CMakeLists.txt"],
+                     "arguments": [], "sets": [], "requires": [], "depends": []}}, "closures": {}}
+            path = root / "graph.json"
+            path.write_text(json.dumps(graph), encoding="utf-8")
+            changed = root / "changed.txt"
+            changed.write_text("src/unit.cpp\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(select_tests.__file__)), "explain", str(path), str(changed)],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("unit", result.stderr)
+            self.assertIn("closure", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
+    def test_empty_closures_and_script_targets_remain_valid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "graph.json"
+            for target, closures in ((None, {}), ("unit", {"unit": []})):
+                with self.subTest(target=target):
+                    graph = {"tests": {"unit": {"target": target, "registered": [], "arguments": [],
+                             "sets": [], "requires": [], "depends": []}}, "closures": closures}
+                    path.write_text(json.dumps(graph), encoding="utf-8")
+                    self.assertEqual(select_tests.load_graph(path), graph)
+            path.write_text('{"tests": {}, "closures": {}}', encoding="utf-8")
+            self.assertEqual(select_tests.load_graph(path), {"tests": {}, "closures": {}})
+
+
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(defaultTest=os.environ.get("ANYPS5_SELECT_TEST_CLASS"))

@@ -1,6 +1,9 @@
 import argparse
 import fnmatch
+import os
 import re
+import secrets
+import stat
 import sys
 from pathlib import Path
 
@@ -31,6 +34,26 @@ def quote(value):
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$") + '"'
 
 
+def write_seed(path, text):
+    destination = path.resolve()
+    metadata = destination.stat() if destination.exists() else None
+    if metadata is not None and os.name == "nt" and metadata.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
+        raise PermissionError(f"Seed output is read-only: {path}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        candidate = destination.parent / (".configure-seed-" + secrets.token_hex(16))
+        with candidate.open("x", encoding="utf-8", newline="\n") as output:
+            temporary = candidate
+            if metadata is not None:
+                temporary.chmod(stat.S_IMODE(metadata.st_mode))
+            output.write(text)
+        os.replace(temporary, destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -54,9 +77,8 @@ def main(argv=None):
              if (not args.include or any(fnmatch.fnmatchcase(name, pattern) for pattern in args.include))
              and not any(fnmatch.fnmatchcase(name, pattern) for pattern in args.exclude)}
     try:
-        seed.parent.mkdir(parents=True, exist_ok=True)
-        seed.write_text("".join(f"set({quote(name)} {quote(value)} CACHE INTERNAL {quote(doc)})\n"
-                               for name, (value, doc) in sorted(found.items())), encoding="utf-8")
+        write_seed(seed, "".join(f"set({quote(name)} {quote(value)} CACHE INTERNAL {quote(doc)})\n"
+                                 for name, (value, doc) in sorted(found.items())))
     except OSError as error:
         parser.error(f"{seed}: {error}")
     print(f"{len(found)} check results")

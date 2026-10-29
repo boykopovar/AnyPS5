@@ -32,6 +32,9 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#endif
 
 namespace GuestAllocations {
 namespace {
@@ -522,6 +525,52 @@ bool GuestAllocationsForRegistered_nid_postfix(void*, const void* pointer, std::
     }
     if (any) visit(reinterpret_cast<const void*>(first), last - first);
     return any;
+}
+
+void GuestAllocationsGuestPages_nid_postfix(std::uintptr_t address, std::size_t bytes, std::size_t page, std::uintptr_t* first, std::uintptr_t* end) {
+    std::uintptr_t bias = 0;
+#ifdef __APPLE__
+    struct Search {
+        std::uintptr_t address;
+        std::uintptr_t hostPage;
+        std::uintptr_t bias;
+    } search{address, static_cast<std::uintptr_t>(::sysconf(_SC_PAGESIZE)), 0};
+    dl_iterate_phdr([](dl_phdr_info* image, std::size_t, void* data) {
+        auto& found = *static_cast<Search*>(data);
+        for (unsigned index = 0; index < image->dlpi_phnum; ++index) {
+            const auto& header = image->dlpi_phdr[index];
+            const auto segment = static_cast<std::uintptr_t>(image->dlpi_addr + header.p_vaddr);
+            const auto start = segment & ~(found.hostPage - 1);
+            const auto finish = (segment + header.p_memsz + found.hostPage - 1) & ~(found.hostPage - 1);
+            if (header.p_type == PT_LOAD && found.address >= start && found.address < finish) {
+                found.bias = static_cast<std::uintptr_t>(image->dlpi_addr);
+                return 1;
+            }
+        }
+        return 0;
+    }, &search);
+    bias = search.bias;
+#endif
+    const auto mask = static_cast<std::uintptr_t>(page - 1);
+    *first = bias + ((address - bias) & ~mask);
+    *end = bias + ((address + bytes - bias + mask) & ~mask);
+}
+
+void GuestAllocationsTrimToRegistered_nid_postfix(void*, std::size_t page, const void** pointer, std::size_t* bytes) {
+#ifdef __APPLE__
+    auto start = reinterpret_cast<std::uintptr_t>(*pointer);
+    const auto end = start + *bytes;
+    const auto& ranges = registry().ranges;
+    const auto following = ranges.upper_bound(start);
+    const bool startCovered = following != ranges.begin() && std::prev(following)->first + std::prev(following)->second->bytes > start;
+    if (!startCovered && following != ranges.end() && following->first < end && following->first - start < page) start = following->first;
+    *pointer = reinterpret_cast<const void*>(start);
+    *bytes = end - start;
+#else
+    static_cast<void>(page);
+    static_cast<void>(pointer);
+    static_cast<void>(bytes);
+#endif
 }
 
 bool GuestAllocationsCovers_nid_postfix(void*, const void* pointer, std::size_t bytes) {

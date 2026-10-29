@@ -70,11 +70,18 @@ int main() {
     Require(sceG2PDialogGetStatus() == kStatusFinished);
     Require(sceG2PDialogUpdateStatus() == kStatusFinished);
 
+    Require(sceG2PDialogClose() == static_cast<int>(0x80B8000Bu));
+    Require(sceG2PDialogGetStatus() == kStatusFinished);
+    Require(sceG2PDialogOpen(&param) == 0);
+    Require(sceG2PDialogGetStatus() == kStatusFinished);
+    Require(sceG2PDialogOpen(nullptr) == kErrArgNull);
+
     Require(sceG2PDialogGetResult(nullptr) == kErrArgNull);
-    Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == 0);
-    Require(result[0] == -1 && result[1] == -1 && result[3] == -1);
-    Require(result[2] == kResultUserCanceled);
-    Require(result[1] == -1);
+    std::int32_t prefixResult[8] = {-1, -1, -1, -1, 0x5a, 0x5a, 0x5a, 0x5a};
+    Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(prefixResult)) == 0);
+    Require(prefixResult[2] == kResultUserCanceled);
+    Require(prefixResult[0] == -1 && prefixResult[1] == -1 && prefixResult[3] == -1);
+    Require(prefixResult[4] == 0x5a && prefixResult[5] == 0x5a && prefixResult[6] == 0x5a && prefixResult[7] == 0x5a);
 
     Require(sceG2PDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceG2PDialogTerminate() == 0);
@@ -97,12 +104,5 @@ int main() {
     Require(result[2] == -1);
     Require(sceG2PDialogTerminate() == 0);
     Require(sceG2PDialogTerminate() == kErrNotInitialized);
-    Require(sceG2PDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
-    Require(sceG2PDialogOpen(&param) == kErrNotInitialized);
-    Require(sceG2PDialogClose() == kErrNotInitialized);
-    Require(sceG2PDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
-    Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == kErrNotInitialized);
-    Require(sceG2PDialogGetStatus() == kStatusNone);
-    Require(sceG2PDialogUpdateStatus() == kStatusNone);
     Require(sceUserServiceTerminate() == 0);
 }

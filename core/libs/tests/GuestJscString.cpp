@@ -94,15 +94,21 @@ static void Boundaries() {
 
 static void Invalid() {
     const auto* unavailable = reinterpret_cast<const std::uint16_t*>(std::uintptr_t{1});
-    for (const auto count : {static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) + 1,
-        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()), std::numeric_limits<std::size_t>::max()}) {
+    for (const auto count : {std::size_t{2147483636}, static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()),
+        static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) + 1,
+        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()), std::size_t{1} << 32,
+        std::numeric_limits<std::size_t>::max()}) {
         bool threw = false;
         try {
             JSStringCreateWithCharacters(unavailable, count);
-        } catch (const std::runtime_error&) {
+        } catch (const std::length_error&) {
             threw = true;
         }
         Require(threw);
+        auto* nullCharacters = JSStringCreateWithCharacters(nullptr, count);
+        Require(JSStringGetLength(nullCharacters) == 0 && JSStringGetCharactersPtr(nullCharacters) == nullptr);
+        Require(JSStringIsEqualToUTF8CString(nullCharacters, nullptr));
+        JSStringRelease(nullCharacters);
     }
     auto* empty = JSStringCreateWithUTF8CString("");
     Require(JSStringGetLength(empty) == 0);
@@ -132,6 +138,94 @@ static void Invalid() {
         JSStringRelease(string);
     }
     JSStringRelease(empty);
+}
+
+static void NullText() {
+    auto* nullText = JSStringCreateWithUTF8CString(nullptr);
+    Require(JSStringGetLength(nullText) == 0 && JSStringGetCharactersPtr(nullText) == nullptr);
+    Require(JSStringGetMaximumUTF8CStringSize(nullText) == 1);
+    char buffer = '!';
+    Require(JSStringGetUTF8CString(nullText, &buffer, 1) == 1 && buffer == '\0');
+    auto* malformed = JSStringCreateWithUTF8CString("\xFF");
+    auto* nullCharacters = JSStringCreateWithCharacters(nullptr, 0);
+    auto* empty = JSStringCreateWithUTF8CString("");
+    const std::array<std::uint16_t, 1> unit{'x'};
+    auto* emptyCharacters = JSStringCreateWithCharacters(unit.data(), 0);
+    auto* text = JSStringCreateWithUTF8CString("null");
+    Require(JSStringIsEqual(nullText, malformed) && JSStringIsEqual(nullText, nullCharacters));
+    Require(!JSStringIsEqual(nullText, empty) && !JSStringIsEqual(nullText, emptyCharacters));
+    Require(JSStringGetCharactersPtr(emptyCharacters) != nullptr && JSStringIsEqual(empty, emptyCharacters));
+    Require(JSStringIsEqualToUTF8CString(nullText, nullptr));
+    Require(JSStringIsEqualToUTF8CString(malformed, nullptr));
+    Require(JSStringIsEqualToUTF8CString(nullCharacters, nullptr));
+    Require(!JSStringIsEqualToUTF8CString(empty, nullptr));
+    Require(!JSStringIsEqualToUTF8CString(emptyCharacters, nullptr));
+    Require(!JSStringIsEqualToUTF8CString(text, nullptr));
+    Require(!JSStringIsEqualToUTF8CString(nullptr, nullptr));
+    Require(!JSStringIsEqualToUTF8CString(nullptr, ""));
+    Require(JSStringIsEqualToUTF8CString(nullText, "\xC0\x80"));
+    Require(!JSStringIsEqualToUTF8CString(nullText, ""));
+    for (auto* string : {nullText, malformed, nullCharacters, empty, emptyCharacters, text}) JSStringRelease(string);
+}
+
+template<typename Call> static bool Faults(Call call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+static void NullHandles() {
+    Require(Faults([] { JSStringRetain(nullptr); }));
+    Require(Faults([] { JSStringRelease(nullptr); }));
+    Require(Faults([] { JSStringGetMaximumUTF8CStringSize(nullptr); }));
+}
+
+static void References() {
+    auto* string = JSStringCreateWithUTF8CString("wrap");
+    Require(string->references.load() == 1);
+    Require(JSStringRetain(string) == string && string->references.load() == 2);
+    JSStringRelease(string);
+    Require(string->references.load() == 1);
+    string->references.store(std::numeric_limits<std::uint32_t>::max());
+    Require(JSStringRetain(string) == string && string->references.load() == 0);
+    JSStringRelease(string);
+    Require(string->references.load() == std::numeric_limits<std::uint32_t>::max());
+    Require(JSStringIsEqualToUTF8CString(string, "wrap"));
+    string->references.store(1);
+    JSStringRelease(string);
+}
+
+static void Limits() {
+    constexpr std::size_t utf8Limit = std::numeric_limits<std::int32_t>::max();
+    constexpr std::size_t utf16Limit = 2147483635;
+    for (const std::size_t length : {std::size_t{0}, std::size_t{1}, utf16Limit, utf16Limit + 1, utf8Limit}) {
+        Require(GuestJSStringValidLength<char8_t>(length));
+    }
+    for (const std::size_t length : {utf8Limit + 1, std::size_t{std::numeric_limits<std::uint32_t>::max()},
+        std::size_t{1} << 32, std::numeric_limits<std::size_t>::max()}) {
+        Require(!GuestJSStringValidLength<char8_t>(length));
+    }
+    for (const std::size_t length : {std::size_t{0}, std::size_t{1}, utf16Limit}) {
+        Require(GuestJSStringValidLength<char16_t>(length));
+    }
+    for (const std::size_t length : {utf16Limit + 1, utf8Limit, utf8Limit + 1, std::numeric_limits<std::size_t>::max()}) {
+        Require(!GuestJSStringValidLength<char16_t>(length));
+    }
+}
+
+static void MaximumSize() {
+    for (const auto* text : {"", "a", "\xC2\xA2", "\xE2\x82\xAC", "\xF0\x9F\x98\x80", "abc\xF0\x9F\x98\x80"}) {
+        auto* string = JSStringCreateWithUTF8CString(text);
+        Require(JSStringGetMaximumUTF8CStringSize(string) == JSStringGetLength(string) * 3 + 1);
+        JSStringRelease(string);
+    }
+    std::vector<std::uint16_t> units(1000, 'u');
+    auto* string = JSStringCreateWithCharacters(units.data(), units.size());
+    Require(JSStringGetMaximumUTF8CStringSize(string) == 3001);
+    JSStringRelease(string);
 }
 
 static void Ownership() {
@@ -166,5 +260,10 @@ int main() {
     Unicode();
     Boundaries();
     Invalid();
+    NullText();
+    NullHandles();
+    References();
+    Limits();
+    MaximumSize();
     Ownership();
 }
