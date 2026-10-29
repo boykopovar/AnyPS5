@@ -723,7 +723,9 @@ void RegisteredVertexWorkgroup(const ShaderRecompiler::SpirvTarget& target, bool
 
 void LazyRegistration() {
     using namespace NarrowConstantStoreFixture;
-    Require(std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr, "lazy preparation is not enabled");
+    const char* registrationBudget = std::getenv("APS5_REGISTRATION_PREPARE_COMMIT_GB");
+    const bool budgetOnly = std::getenv("APS5_LAZY_SHADER_PREPARE") == nullptr;
+    Require(!budgetOnly || (registrationBudget != nullptr && std::string_view(registrationBudget) == "0"), "lazy preparation is not enabled");
     struct Header {
         Shader shader{};
         std::array<ShaderRegister, 7> registers{};
@@ -741,15 +743,17 @@ void LazyRegistration() {
     header.specials.dispatch_modifier = 0x8000;
     header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, Threads}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 4}}};
     AgcDriverRegisterShader_nid_postfix(&header.shader);
-    ++header.registers[0].value;
-    ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "entry point is outside shader code");
-    --header.registers[0].value;
-    header.registers[2].value = 0;
-    ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "must be nonzero");
-    header.registers[2].value = Threads;
-    header.shader.num_sh_registers = 255;
-    ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "truncated shader metadata");
-    header.shader.num_sh_registers = header.registers.size();
+    if (!budgetOnly) {
+        ++header.registers[0].value;
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "entry point is outside shader code");
+        --header.registers[0].value;
+        header.registers[2].value = 0;
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "must be nonzero");
+        header.registers[2].value = Threads;
+        header.shader.num_sh_registers = 255;
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "truncated shader metadata");
+        header.shader.num_sh_registers = header.registers.size();
+    }
     const auto registered = [&] {
         const auto registry = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
         Require(registry != nullptr, "lazy registration published no shader registry");

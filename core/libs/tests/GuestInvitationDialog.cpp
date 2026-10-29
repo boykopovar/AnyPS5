@@ -142,6 +142,31 @@ void TestCanceled() {
     Require(sceInvitationDialogTerminate() == 0, "terminate again");
 }
 
+template <typename TCall>
+void RequireNotImplemented(TCall call, const char* message) {
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()).find("not implemented") != std::string::npos;
+    }
+    Require(threw, message);
+}
+
+void TestStatusAndPending() {
+    int callbackArg = 0;
+    Require(sceInvitationDialogGetStatus_nid_postfix() == StatusNone, "get status before initialization");
+    RequireNotImplemented([] { sceInvitationDialogOpenA_nid_postfix(); }, "openA is not implemented");
+    RequireNotImplemented([] { sceInvitationDialogGetResultA_nid_postfix(); }, "getResultA is not implemented");
+    Require(sceInvitationDialogInitialize() == 0, "initialize for status check");
+    Require(sceInvitationDialogGetStatus_nid_postfix() == StatusInitialized, "status after initialize");
+    const InvitationDialogParam send = MakeParam(ModeSend, &callbackArg);
+    Require(sceInvitationDialogOpen(&send) == 0, "open for status check");
+    Require(sceInvitationDialogGetStatus_nid_postfix() == StatusFinished, "status after open");
+    Require(sceInvitationDialogTerminate() == 0, "terminate after status check");
+    Require(sceInvitationDialogGetStatus_nid_postfix() == StatusNone, "status after terminate");
+}
+
 }
 
 int main() {
@@ -149,5 +174,6 @@ int main() {
     TestCommonDialogPreconditions();
     TestOpenChecks();
     TestCanceled();
+    TestStatusAndPending();
     return 0;
 }
