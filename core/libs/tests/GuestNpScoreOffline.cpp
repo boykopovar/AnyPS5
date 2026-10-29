@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -50,6 +51,10 @@ using WaitAsyncFn = int (APS5_VABI*)(int, int*);
 using SetTimeoutFn = int (APS5_VABI*)(int, int, int, int, int, int);
 using SetThreadParamFn = int (APS5_VABI*)(int, std::uint64_t);
 using CreateTitleCtxFn = int (APS5_VABI*)(const void*, const void*, const void*);
+using CensorFn = int (APS5_VABI*)(int, const char*, void*);
+using SanitizeFn = int (APS5_VABI*)(int, const char*, char*, void*);
+using RecordGameDataFn = int (APS5_VABI*)(int, std::uint32_t, std::int64_t, std::uint64_t, std::uint64_t, const void*, void*);
+using ChangeModeFn = int (APS5_VABI*)(int, std::uint32_t);
 
 template <typename Function>
 Function Resolve(const char* name) {
@@ -393,6 +398,60 @@ void CheckSettings() {
 
 }
 
+void CheckCommentsAndGameData() {
+    const auto censor = Resolve<CensorFn>("sceNpScoreCensorComment");
+    const auto censorAsync = Resolve<CensorFn>("sceNpScoreCensorCommentAsync");
+    const auto sanitize = Resolve<SanitizeFn>("sceNpScoreSanitizeComment");
+    const auto sanitizeAsync = Resolve<SanitizeFn>("sceNpScoreSanitizeCommentAsync");
+    const auto recordGameData = Resolve<RecordGameDataFn>("sceNpScoreRecordGameData");
+    const auto recordGameDataAsync = Resolve<RecordGameDataFn>("sceNpScoreRecordGameDataAsync");
+    const auto changeMode = Resolve<ChangeModeFn>("sceNpScoreChangeModeForOtherSaveDataOwners");
+    char longest[256];
+    std::memset(longest, 'a', 255);
+    longest[255] = '\0';
+    char tooLong[257];
+    std::memset(tooLong, 'a', 256);
+    tooLong[256] = '\0';
+    char sanitized[256];
+    std::memset(sanitized, 0xA5, sizeof(sanitized));
+    int option = 0;
+    const unsigned char data[16] = {};
+
+    for (const CensorFn call : {censor, censorAsync}) {
+        const int req = NewRequest();
+        Require(call(req, longest, &option) == InvalidArgument, "sceNpScoreCensorComment", "an option was taken");
+        Require(call(req + 100, nullptr, nullptr) == InsufficientArgument, "sceNpScoreCensorComment", "a null comment was not refused before the request lookup");
+        Require(call(req + 100, tooLong, nullptr) == InvalidId, "sceNpScoreCensorComment", "the request was not looked up before the length");
+        Require(call(req, tooLong, nullptr) == InvalidArgument, "sceNpScoreCensorComment", "a 256-character comment was taken");
+        Require(sceNpScorePollAsync(req, nullptr) == PollRunning, "sceNpScoreCensorComment", "a refused call finished the request");
+        CheckOffline("sceNpScoreCensorComment", call(req, longest, nullptr), req);
+        sceNpScoreDeleteRequest(req);
+    }
+    for (const SanitizeFn call : {sanitize, sanitizeAsync}) {
+        const int req = NewRequest();
+        Require(call(req, longest, sanitized, &option) == InvalidArgument, "sceNpScoreSanitizeComment", "an option was taken");
+        Require(call(req + 100, nullptr, sanitized, nullptr) == InsufficientArgument, "sceNpScoreSanitizeComment", "a null comment was not refused before the request lookup");
+        Require(call(req, tooLong, sanitized, nullptr) == InvalidArgument, "sceNpScoreSanitizeComment", "a 256-character comment was taken");
+        CheckOffline("sceNpScoreSanitizeComment", call(req, longest, nullptr, nullptr), req);
+        sceNpScoreDeleteRequest(req);
+    }
+    for (const unsigned char value : sanitized) Require(value == 0xA5, "sceNpScoreSanitizeComment", "the sanitized comment was written");
+    for (const RecordGameDataFn call : {recordGameData, recordGameDataAsync}) {
+        const int req = NewRequest();
+        Require(call(req, 1, 5, 16, 16, data, &option) == InvalidArgument, "sceNpScoreRecordGameData", "an option was taken");
+        Require(call(req + 100, 1, 5, 16, 16, nullptr, nullptr) == InsufficientArgument, "sceNpScoreRecordGameData", "null data was not refused before the request lookup");
+        Require(call(req + 100, 1, 5, 16, 16, data, nullptr) == InvalidId, "sceNpScoreRecordGameData", "an unknown request was taken");
+        CheckOffline("sceNpScoreRecordGameData", call(req, 1, 5, 4, 16, data, nullptr), req);
+        sceNpScoreDeleteRequest(req);
+    }
+    const int req = NewRequest();
+    Require(changeMode(req + 100, 4) == InvalidArgument && changeMode(req + 100, 0xFFFFFFFFu) == InvalidArgument, "sceNpScoreChangeModeForOtherSaveDataOwners", "a mode past 3 was not refused before the id");
+    Require(changeMode(req + 100, 3) == InvalidId, "sceNpScoreChangeModeForOtherSaveDataOwners", "an unknown id was taken");
+    Require(changeMode(context, 3) == 0 && changeMode(req, 0) == 0, "sceNpScoreChangeModeForOtherSaveDataOwners", "a title context or request was refused");
+    Require(sceNpScorePollAsync(req, nullptr) == PollRunning, "sceNpScoreChangeModeForOtherSaveDataOwners", "changing the mode finished the request");
+    sceNpScoreDeleteRequest(req);
+}
+
 int main() {
     std::memset(ranks, 0xA5, sizeof(ranks));
     std::memset(comments, 0xA5, sizeof(comments));
@@ -413,6 +472,7 @@ int main() {
     CheckContextsAndWaiting();
     CheckCrossSave();
     CheckSettings();
+    CheckCommentsAndGameData();
     Require(Untouched(), "libSceNpScoreRanking", "an output array was written");
     if (failures != 0) return 1;
     std::puts("NpScoreRanking offline tests passed");

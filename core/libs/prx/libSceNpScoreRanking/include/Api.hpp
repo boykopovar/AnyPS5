@@ -32,9 +32,9 @@ int APS5_VABI sceNpScorePollAsync(int reqId, int* result);
 int APS5_VABI sceNpScoreRecordScore(int reqId, std::uint32_t boardId, std::int64_t score, const void* scoreComment, const NpScoreGameInfo* gameInfo, std::uint32_t* tmpRank, const void* compareDate, void* option);
 int APS5_VABI sceNpScoreRecordScoreAsync(int reqId, std::uint32_t boardId, std::int64_t score, const void* scoreComment, const NpScoreGameInfo* gameInfo, std::uint32_t* tmpRank, const void* compareDate, void* option);
 
-int APS5_VABI sceNpScoreCensorComment();
-int APS5_VABI sceNpScoreCensorCommentAsync();
-int APS5_VABI sceNpScoreChangeModeForOtherSaveDataOwners();
+int APS5_VABI sceNpScoreCensorComment(int reqId, const char* comment, void* option);
+int APS5_VABI sceNpScoreCensorCommentAsync(int reqId, const char* comment, void* option);
+int APS5_VABI sceNpScoreChangeModeForOtherSaveDataOwners(int id, std::uint32_t mode);
 int APS5_VABI sceNpScoreCreateNpTitleCtxA(std::uint32_t serviceLabel, int selfId);
 int APS5_VABI sceNpScoreCreateTitleCtx(const void* titleId, const void* titleSecret, const void* selfNpId);
 int APS5_VABI sceNpScoreGetBoardInfoAsync(int reqId, std::uint32_t boardId, void* boardInfo, void* option);
@@ -60,10 +60,10 @@ int APS5_VABI sceNpScoreGetRankingByRangeA(int reqId, std::uint32_t boardId, std
 int APS5_VABI sceNpScoreGetRankingByRangeAAsync(int reqId, std::uint32_t boardId, std::uint32_t startSerialRank, void* rankArray, std::uint64_t rankArraySize, void* commentArray, std::uint64_t commentArraySize, void* infoArray, std::uint64_t infoArraySize, std::uint64_t arrayNum, void* lastSortDate, void* totalRecord, void* option);
 int APS5_VABI sceNpScoreGetRankingByRangeForCrossSave(int reqId, std::uint32_t boardId, std::uint32_t startSerialRank, void* rankArray, std::uint64_t rankArraySize, void* commentArray, std::uint64_t commentArraySize, void* infoArray, std::uint64_t infoArraySize, std::uint64_t arrayNum, void* lastSortDate, void* totalRecord, void* option);
 int APS5_VABI sceNpScoreGetRankingByRangeForCrossSaveAsync(int reqId, std::uint32_t boardId, std::uint32_t startSerialRank, void* rankArray, std::uint64_t rankArraySize, void* commentArray, std::uint64_t commentArraySize, void* infoArray, std::uint64_t infoArraySize, std::uint64_t arrayNum, void* lastSortDate, void* totalRecord, void* option);
-int APS5_VABI sceNpScoreRecordGameData();
-int APS5_VABI sceNpScoreRecordGameDataAsync();
-int APS5_VABI sceNpScoreSanitizeComment();
-int APS5_VABI sceNpScoreSanitizeCommentAsync();
+int APS5_VABI sceNpScoreRecordGameData(int reqId, std::uint32_t boardId, std::int64_t score, std::uint64_t totalSize, std::uint64_t sendSize, const void* data, void* option);
+int APS5_VABI sceNpScoreRecordGameDataAsync(int reqId, std::uint32_t boardId, std::int64_t score, std::uint64_t totalSize, std::uint64_t sendSize, const void* data, void* option);
+int APS5_VABI sceNpScoreSanitizeComment(int reqId, const char* comment, char* sanitizedComment, void* option);
+int APS5_VABI sceNpScoreSanitizeCommentAsync(int reqId, const char* comment, char* sanitizedComment, void* option);
 int APS5_VABI sceNpScoreSetPlayerCharacterId(int ctxId, int pcId);
 int APS5_VABI sceNpScoreSetThreadParam(int threadPriority, std::uint64_t cpuAffinityMask);
 int APS5_VABI sceNpScoreSetTimeout(int id, int resolveRetry, int resolveTimeout, int connTimeout, int sendTimeout, int recvTimeout);

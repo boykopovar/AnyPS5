@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -34,6 +35,8 @@ static constexpr std::uint64_t ACCOUNT_ID_SIZE = 8;
 static constexpr std::uint64_t NP_ID_PC_ID_SIZE = 44;
 static constexpr std::uint64_t ACCOUNT_ID_PC_ID_SIZE = 16;
 static constexpr std::uint64_t COMMENT_SIZE = 64;
+static constexpr std::size_t COMMENT_MAX_LENGTH = 255;
+static constexpr std::uint32_t SAVE_DATA_OWNER_MODE_MAX = 3;
 static constexpr std::uint64_t GAME_INFO_SIZE = 200;
 static constexpr std::uint64_t FRIEND_RANKING_OPTION_SIZE = 24;
 static constexpr int POLL_FINISHED = 0;
@@ -80,6 +83,26 @@ int Finish(int reqId, int error) {
 
 int Offline(int reqId) {
     return Finish(reqId, SCE_NP_ERROR_SIGNED_OUT);
+}
+
+bool KnownRequest(int reqId) {
+    std::lock_guard lock(scoreMutex);
+    return requests.contains(reqId);
+}
+
+int CheckComment(int reqId, const char* comment, void* option) {
+    if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!comment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    if (!KnownRequest(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    if (strnlen(comment, COMMENT_MAX_LENGTH + 1) > COMMENT_MAX_LENGTH) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    return Offline(reqId);
+}
+
+int RecordGameData(int reqId, const void* data, void* option) {
+    if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (!data) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    if (!KnownRequest(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    return Offline(reqId);
 }
 
 int RecordScore(int reqId, const NpScoreGameInfo* gameInfo, void* option) {
@@ -270,19 +293,18 @@ int APS5_VABI sceNpScoreRecordScoreAsync(int reqId, std::uint32_t boardId, std::
     return RecordScore(reqId, gameInfo, option);
 }
 
-int APS5_VABI sceNpScoreCensorComment(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpScoreCensorComment(int reqId, const char* comment, void* option) {
+    return CheckComment(reqId, comment, option);
 }
 
-int APS5_VABI sceNpScoreCensorCommentAsync(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpScoreCensorCommentAsync(int reqId, const char* comment, void* option) {
+    return CheckComment(reqId, comment, option);
 }
 
-int APS5_VABI sceNpScoreChangeModeForOtherSaveDataOwners(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpScoreChangeModeForOtherSaveDataOwners(int id, std::uint32_t mode) {
+    if (mode > SAVE_DATA_OWNER_MODE_MAX) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(scoreMutex);
+    return titleContexts.contains(id) || requests.contains(id) ? 0 : SCE_NP_COMMUNITY_ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceNpScoreCreateNpTitleCtxA(std::uint32_t serviceLabel, int selfId) {
@@ -462,24 +484,30 @@ int APS5_VABI sceNpScoreGetRankingByRangeForCrossSaveAsync(int reqId, std::uint3
     return GetRankingByRange(reqId, startSerialRank, rankArray, rankArraySize, commentArray, commentArraySize, infoArray, infoArraySize, arrayNum, option);
 }
 
-int APS5_VABI sceNpScoreRecordGameData(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpScoreRecordGameData(int reqId, std::uint32_t boardId, std::int64_t score, std::uint64_t totalSize, std::uint64_t sendSize, const void* data, void* option) {
+    (void)boardId;
+    (void)score;
+    (void)totalSize;
+    (void)sendSize;
+    return RecordGameData(reqId, data, option);
 }
 
-int APS5_VABI sceNpScoreRecordGameDataAsync(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpScoreRecordGameDataAsync(int reqId, std::uint32_t boardId, std::int64_t score, std::uint64_t totalSize, std::uint64_t sendSize, const void* data, void* option) {
+    (void)boardId;
+    (void)score;
+    (void)totalSize;
+    (void)sendSize;
+    return RecordGameData(reqId, data, option);
 }
 
-int APS5_VABI sceNpScoreSanitizeComment(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpScoreSanitizeComment(int reqId, const char* comment, char* sanitizedComment, void* option) {
+    (void)sanitizedComment;
+    return CheckComment(reqId, comment, option);
 }
 
-int APS5_VABI sceNpScoreSanitizeCommentAsync(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpScoreSanitizeCommentAsync(int reqId, const char* comment, char* sanitizedComment, void* option) {
+    (void)sanitizedComment;
+    return CheckComment(reqId, comment, option);
 }
 
 int APS5_VABI sceNpScoreSetPlayerCharacterId(int ctxId, int pcId) {
