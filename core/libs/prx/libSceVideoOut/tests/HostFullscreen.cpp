@@ -153,15 +153,19 @@ static void ParseTest() {
     Require(ParseHostFullscreenMode("windowed") == HostFullscreenMode::Windowed, "windowed was not windowed");
     Require(ParseHostFullscreenMode("1") == HostFullscreenMode::Borderless, "1 was not borderless");
     Require(ParseHostFullscreenMode("borderless") == HostFullscreenMode::Borderless, "borderless was not borderless");
-    for (const char* invalid : {"2", "true", "false", "off", "exclusive", "Borderless", "00", " 1", "1 ", "-1"}) {
-        bool thrown = false;
-        try {
-            ParseHostFullscreenMode(invalid);
-        } catch (const std::runtime_error& error) {
-            thrown = std::strstr(error.what(), "ANYPS5_FULLSCREEN") != nullptr;
-        }
-        Require(thrown, (std::string("invalid value did not throw naming the variable: ") + invalid).c_str());
+    for (const char* legacy : {"2", "true", "false", "yes", "on", "off", "exclusive", "Borderless", "00", " 1", "1 ", "-1"}) {
+        bool unrecognized = false;
+        Require(ParseHostFullscreenMode(legacy, &unrecognized) == HostFullscreenMode::Borderless, (std::string("a documented non-empty value stopped meaning fullscreen: ") + legacy).c_str());
+        Require(unrecognized, (std::string("a legacy value was not flagged: ") + legacy).c_str());
     }
+    for (const char* known : {"", "0", "windowed", "1", "borderless"}) {
+        bool unrecognized = true;
+        ParseHostFullscreenMode(known, &unrecognized);
+        Require(!unrecognized, (std::string("a recognised value was flagged: ") + known).c_str());
+    }
+    bool unrecognized = true;
+    ParseHostFullscreenMode(nullptr, &unrecognized);
+    Require(!unrecognized, "unset was flagged");
 }
 
 static bool Fullscreen(const DisplayWindow& window) {
@@ -187,22 +191,6 @@ static int WindowTest() {
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
         std::printf("skipped, no display or Vulkan device: SDL video driver: %s\n", SDL_GetError());
         return 77;
-    }
-    SDL_setenv("ANYPS5_FULLSCREEN", "exclusive", 1);
-    {
-        DisplayWindow window;
-        bool thrown = false;
-        try {
-            window.Ensure(640, 360);
-        } catch (const std::exception& error) {
-            thrown = std::strstr(error.what(), "ANYPS5_FULLSCREEN") != nullptr;
-            if (!thrown && std::strstr(error.what(), "ANYPS5") == nullptr) {
-                std::printf("skipped, no display or Vulkan device: %s\n", error.what());
-                SDL_QuitSubSystem(SDL_INIT_VIDEO);
-                return 77;
-            }
-        }
-        Require(thrown && window.Handle() == nullptr, "an invalid ANYPS5_FULLSCREEN did not stop window creation");
     }
     SDL_setenv("ANYPS5_FULLSCREEN", "windowed", 1);
     HostWindowSize windowed;
