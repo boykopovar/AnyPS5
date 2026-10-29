@@ -19,6 +19,7 @@ bool Filled(const char* buffer, std::size_t from, std::size_t to, char value) {
 }
 
 int main() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     char name[32];
     const std::size_t length = std::strlen(USER_SERVICE_INITIAL_USER_NAME);
 
@@ -42,4 +43,5 @@ int main() {
         Require(sceUserServiceGetUserName(user, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 }
