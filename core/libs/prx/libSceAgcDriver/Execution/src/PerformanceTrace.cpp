@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <mutex>
 #include <system_error>
@@ -421,6 +422,37 @@ void PerformanceTrace::StopOutput() {
     if (writer()) writer()->Stop();
     if (summaryWriter()) summaryWriter()->Stop();
     if (benchWriter()) benchWriter()->Stop();
+}
+
+}
+
+namespace AgcDriver {
+
+std::uint64_t HostMemoryMiB() {
+    try {
+        return memoryMiB();
+    } catch (const std::system_error&) {
+        return 0;
+    }
+}
+
+std::optional<std::uint64_t> HostMemoryLimitBytes() {
+#ifdef _WIN32
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION job{};
+    if (::QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &job, sizeof(job), nullptr) == 0) return std::nullopt;
+    std::optional<std::uint64_t> limit;
+    if ((job.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY) != 0) limit = job.JobMemoryLimit;
+    if ((job.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_PROCESS_MEMORY) != 0) limit = std::min<std::uint64_t>(limit.value_or(job.ProcessMemoryLimit), job.ProcessMemoryLimit);
+    return limit;
+#else
+    std::optional<std::uint64_t> limit;
+    for (const char* path : {"/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"}) {
+        std::ifstream file(path);
+        std::uint64_t value = 0;
+        if (file >> value) limit = std::min(limit.value_or(value), value);
+    }
+    return limit;
+#endif
 }
 
 }

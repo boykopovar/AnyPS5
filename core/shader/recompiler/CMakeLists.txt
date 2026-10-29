@@ -281,6 +281,7 @@ function(add_shader_recompiler target runtimeTarget)
             ResourceMaterializer::MaterializeNanoseconds
             ReleaseUndrawnResourcePlan
             ResourceMaterializer::SpecializationNanoseconds
+            ResultMemoBudgetFor
             RuntimeAbi::RequireVersion
             GcnGuestShaders
             SetGcnGuestShaders
@@ -290,6 +291,7 @@ function(add_shader_recompiler target runtimeTarget)
             RuntimeAbi::HeapCapacity
             SampledTextureNumericClass
             SetDebugProbeActive
+            SetResultMemoBudget
             ShaderCacheDirectory
             ShaderDiskCache::Shutdown
             ShaderStage

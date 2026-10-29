@@ -2110,6 +2110,11 @@ std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request
     return recompileReporting(request, [&] { return RecompileImpl(request, capture, memoHit); });
 }
 
+std::uint64_t ResultMemoBudgetFor(std::uint64_t hostBytes, std::optional<std::uint64_t> limitBytes) {
+    const auto available = limitBytes ? std::min(hostBytes, *limitBytes) : hostBytes;
+    return std::clamp<std::uint64_t>(available / 16u, 256ull << 20u, 4ull << 30u);
+}
+
 void SetResultMemoBudget(std::uint64_t bytes) {
     resultMemoBudgetBytes().store(bytes, std::memory_order_relaxed);
     if (bytes != 0 && resultMemoCounters().heldBytes.load(std::memory_order_relaxed) > bytes) trimResultMemo(bytes);

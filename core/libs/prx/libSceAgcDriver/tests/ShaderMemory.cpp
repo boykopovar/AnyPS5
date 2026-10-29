@@ -464,6 +464,21 @@ bool compileResultMemoPixel(std::uint32_t value) {
     return hit;
 }
 
+void verifyResultMemoBudgetSizing() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    require(ResultMemoBudgetFor(32u * GiB, std::nullopt) == 2u * GiB, "result memo budget sizing: 32 GiB of host memory did not give a 2 GiB budget");
+    require(ResultMemoBudgetFor(8u * GiB, std::nullopt) == 512ull << 20u, "result memo budget sizing: 8 GiB of host memory did not give a 512 MiB budget");
+    require(ResultMemoBudgetFor(4u * GiB, std::nullopt) == 256ull << 20u, "result memo budget sizing: 4 GiB of host memory did not land on the 256 MiB floor");
+    require(ResultMemoBudgetFor(2u * GiB, std::nullopt) == 256ull << 20u, "result memo budget sizing: 2 GiB of host memory went below the 256 MiB floor");
+    require(ResultMemoBudgetFor(64u * GiB, std::nullopt) == 4u * GiB, "result memo budget sizing: 64 GiB of host memory did not land on the 4 GiB ceiling");
+    require(ResultMemoBudgetFor(256u * GiB, std::nullopt) == 4u * GiB, "result memo budget sizing: 256 GiB of host memory went past the 4 GiB ceiling");
+    require(ResultMemoBudgetFor(0u, std::nullopt) == 256ull << 20u, "result memo budget sizing: an unknown host size did not keep the 256 MiB default");
+    require(ResultMemoBudgetFor(64u * GiB, 4u * GiB) == 256ull << 20u, "result memo budget sizing: a 4 GiB memory limit on a 64 GiB host was not honoured");
+    require(ResultMemoBudgetFor(32u * GiB, 16u * GiB) == 1u * GiB, "result memo budget sizing: a 16 GiB memory limit on a 32 GiB host did not give a 1 GiB budget");
+    require(ResultMemoBudgetFor(8u * GiB, 64u * GiB) == 512ull << 20u, "result memo budget sizing: a memory limit above physical memory raised the budget");
+}
+
 void verifyResultMemoBudgetThreads() {
     using namespace ShaderRecompiler;
     require(!compileResultMemoPixel(1u) && compileResultMemoPixel(1u), "result memo budget threads: the memo did not keep a result");
@@ -9386,6 +9401,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-masked") {
             verifyResultMemoBudgetMasked();
             std::cout << "The result memo budget counts and trims the masked table's entries\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-sizing") {
+            verifyResultMemoBudgetSizing();
+            std::cout << "The result memo budget is a sixteenth of the smaller of host memory and its limit, clamped to 256 MiB through 4 GiB\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-threads") {

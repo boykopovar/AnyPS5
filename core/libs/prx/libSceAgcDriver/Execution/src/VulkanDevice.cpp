@@ -3,6 +3,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
+#include "Recompiler.hpp"
 #include "BdaAbi.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
@@ -1288,6 +1290,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     APS5_LOG_OUT("Selected GPU name=%s vendor=0x%x device=0x%x subgroup=%u", state->properties.deviceName, state->properties.vendorID, state->properties.deviceID, state->subgroup.subgroupSize);
     state->InstanceFunction<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(selected, &state->memoryProperties);
     for (std::uint32_t i = 0; i < state->memoryProperties.memoryHeapCount; ++i) APS5_LOG_OUT("Memory heap %u size=%.1f MiB flags=0x%x", i, state->memoryProperties.memoryHeaps[i].size / 1048576.0, state->memoryProperties.memoryHeaps[i].flags);
+    if (std::getenv("APS5_RESULT_MEMO_MB") == nullptr) ShaderRecompiler::SetResultMemoBudget(ShaderRecompiler::ResultMemoBudgetFor(HostMemoryMiB() << 20u, HostMemoryLimitBytes()));
     for (std::uint32_t i = 0; i < state->memoryProperties.memoryTypeCount; ++i) APS5_LOG_OUT("Memory type %u heap=%u flags=0x%x", i, state->memoryProperties.memoryTypes[i].heapIndex, state->memoryProperties.memoryTypes[i].propertyFlags);
     std::uint32_t extensionCount = 0;
     const auto enumerateDeviceExtensions = state->InstanceFunction<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
