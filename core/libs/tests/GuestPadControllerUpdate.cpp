@@ -27,11 +27,14 @@ int main() {
     Require(scePadControllerUpdateIsReady(0, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadControllerUpdateGetStatus(0, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadControllerUpdateGetReconnectStatus(nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadInit_nid_postfix() == PAD_OK);
+    const int pad = scePadOpen_nid_postfix(0x10000000, 0, 0, nullptr);
+    Require(pad > 0);
     Require(scePadControllerUpdateStart(PAD_HANDLE, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadControllerUpdateSendData(0, nullptr) == PAD_ERROR_INVALID_ARG);
     for (int handle : {-1, 0, 2, 12345})
         Require(scePadControllerUpdateStart(handle, parameter) == PAD_ERROR_INVALID_HANDLE);
-    Require(scePadControllerUpdateStart(PAD_HANDLE, parameter) == PAD_ERROR_DEVICE_NOT_CONNECTED);
+    Require(scePadControllerUpdateStart(pad, parameter) == PAD_ERROR_DEVICE_NOT_CONNECTED);
     Require(scePadControllerUpdateSendData(0, data) == PAD_ERROR_DEVICE_NOT_CONNECTED);
     Require(scePadControllerUpdateResetController(0) == PAD_ERROR_DEVICE_NOT_CONNECTED);
     value = 1;
