@@ -111,8 +111,10 @@ if(BUILD_TESTING)
         "SDL video driver for VideoOut flip tests")
     add_test(NAME video_out_host_fullscreen_window COMMAND video_out_host_fullscreen_tests window)
     set_tests_properties(video_out_host_fullscreen_window PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
+    add_test(NAME video_out_host_fullscreen_failed_create COMMAND video_out_host_fullscreen_tests failedcreate)
+    set_tests_properties(video_out_host_fullscreen_failed_create PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
     if(WIN32)
-        set_tests_properties(video_out_host_fullscreen_window PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(video_out_host_fullscreen_window video_out_host_fullscreen_failed_create PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
