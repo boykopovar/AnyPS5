@@ -1184,7 +1184,7 @@ void ShaderStageTests() {
         fast.userConfig[0x25b] = 0x402;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(fast); }, "fast launch other than one vertex and one primitive per subgroup");
         fast.userConfig[0x25b] = 0x201;
-        for (const std::uint32_t type : {2u, 3u, 4u, 5u, 6u}) {
+        for (const std::uint32_t type : {2u, 3u, 4u, 5u, 6u, 21u}) {
             fast.userConfig[0x242] = type;
             const auto typed = AgcDriver::Graphics::DecodeState(fast);
             const auto& typedMesh = *typed.stages.mesh;
