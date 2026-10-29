@@ -401,7 +401,26 @@ private:
     std::vector<VkBufferImageCopy> CopyRegions(const std::vector<bool>* layers = nullptr) const;
     void upload(const std::vector<bool>* layers = nullptr);
     std::vector<bool> cpuUploadLayers(const std::vector<bool>& units) const;
-    void captureGuestBytes(const std::vector<bool>* layers);
+    void captureGuestBytes(const std::vector<bool>* layers, bool keepWritten = false);
+    bool keepWrittenSince(std::uint32_t unit);
+    enum class BaselineMiss : std::uint8_t {
+        None,
+        LeftWatchWhilePending,
+        SaveInFlight,
+        SavedBytesDropped,
+        NoUploadCopy,
+        UploadCopyDiffers,
+        NoUnwatchHash,
+        UnwatchUnproven,
+        UnwatchSawCpuWrites,
+        UnwatchWhileSaved,
+        HashDiffers,
+    };
+    static const char* BaselineMissText(BaselineMiss miss);
+    BaselineMiss baselineMiss(std::uint32_t unit) const;
+    std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit) const;
+    void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
+    void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
@@ -606,6 +625,14 @@ private:
     mutable std::array<ComparedRange, 4> comparedRanges{};
     mutable std::uint32_t nextComparedRange = 0;
     std::vector<std::byte> generationBaseline;
+    struct UnwatchHash {
+        std::array<std::uint64_t, 2> hash{};
+        std::uint64_t generation = 0;
+        BaselineMiss skipped = BaselineMiss::None;
+        std::uint64_t skippedGeneration = 0;
+    };
+    std::vector<UnwatchHash> unwatchHash;
+    std::vector<BaselineMiss> pendingMiss;
     // DCC keys the image content was uploaded under: a fast-cleared surface starts as its clear value.
     DccKeys uploadedKeys = DccKeys::Uncompressed;
     mutable DccKeys filledKeys = DccKeys::Uncompressed;
