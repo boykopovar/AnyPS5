@@ -1,5 +1,8 @@
+#include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libSceVideoOut/include/HostFullscreen.hpp"
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -161,7 +164,88 @@ static void ParseTest() {
     }
 }
 
-int main() {
+static bool Fullscreen(const DisplayWindow& window) {
+    return (SDL_GetWindowFlags(window.Handle()) & SDL_WINDOW_FULLSCREEN) != 0;
+}
+
+static bool Open(DisplayWindow& window) {
+    try {
+        window.Ensure(640, 360);
+    } catch (const std::exception& error) {
+        std::printf("skipped, no display or Vulkan device: %s\n", error.what());
+        return false;
+    }
+    return true;
+}
+
+static int WindowTest() {
+    const auto directory = std::filesystem::temp_directory_path() / "anyps5_host_fullscreen_window";
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory / "app0" / "sce_sys");
+    std::ofstream(directory / "app0" / "sce_sys" / "param.json") << R"({"titleId":"PPSA00000","localizedParameters":{"defaultLanguage":"en-US","en-US":{"titleName":"Fullscreen Test"}}})";
+    std::filesystem::current_path(directory);
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+        std::printf("skipped, no display or Vulkan device: SDL video driver: %s\n", SDL_GetError());
+        return 77;
+    }
+    SDL_setenv("ANYPS5_FULLSCREEN", "exclusive", 1);
+    {
+        DisplayWindow window;
+        bool thrown = false;
+        try {
+            window.Ensure(640, 360);
+        } catch (const std::exception& error) {
+            thrown = std::strstr(error.what(), "ANYPS5_FULLSCREEN") != nullptr;
+            if (!thrown && std::strstr(error.what(), "ANYPS5") == nullptr) {
+                std::printf("skipped, no display or Vulkan device: %s\n", error.what());
+                SDL_QuitSubSystem(SDL_INIT_VIDEO);
+                return 77;
+            }
+        }
+        Require(thrown && window.Handle() == nullptr, "an invalid ANYPS5_FULLSCREEN did not stop window creation");
+    }
+    SDL_setenv("ANYPS5_FULLSCREEN", "windowed", 1);
+    HostWindowSize windowed;
+    {
+        DisplayWindow window;
+        if (!Open(window)) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 77;
+        }
+        Require(!Fullscreen(window), "windowed mode opened fullscreen");
+        SDL_GetWindowSize(window.Handle(), &windowed.width, &windowed.height);
+        window.ToggleFullscreen();
+        Require(Fullscreen(window), "F11 did not enter fullscreen");
+        window.UpdateTitle();
+        window.ToggleFullscreen();
+        Require(!Fullscreen(window), "F11 did not leave fullscreen");
+        HostWindowSize back;
+        SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
+        Require(back == windowed, "leaving fullscreen did not restore the windowed size");
+    }
+    SDL_setenv("ANYPS5_FULLSCREEN", "borderless", 1);
+    {
+        DisplayWindow window;
+        if (!Open(window)) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 77;
+        }
+        Require(Fullscreen(window), "borderless mode did not open fullscreen");
+        window.ToggleFullscreen();
+        HostWindowSize back;
+        SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
+        Require(!Fullscreen(window) && back == windowed, "leaving a fullscreen start did not give the creation size");
+    }
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    std::filesystem::current_path(directory.parent_path());
+    std::filesystem::remove_all(directory);
+    return 0;
+}
+
+#undef main
+
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "window") == 0) return WindowTest();
     ParseTest();
     ToggleTest();
     RestoreSizeTest();
