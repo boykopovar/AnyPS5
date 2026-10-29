@@ -142,8 +142,7 @@ std::span<const std::uint32_t> PacketAt(std::span<const std::uint32_t> words, st
     if (IsFiller(header)) return words.subspan(at, 1);
     if (const auto type = header >> 30; type != 3) {
         char what[256];
-        std::snprintf(what, sizeof(what), "GnmDriver: unsupported PM4 packet type %u in the %s: header 0x%08x at dword %zu of %zu%s", type, stream, header, at, words.size(),
-            header == 1u ? " (a dword of 1 where a packet header was expected: a title store that landed on a rebuilt buffer; APS5_GNM_SUBMIT_WAIT_IDLE=1 keeps the queue ahead of it)" : "");
+        std::snprintf(what, sizeof(what), "GnmDriver: unsupported PM4 packet type %u in the %s: header 0x%08x at dword %zu of %zu", type, stream, header, at, words.size());
         throw std::runtime_error(what);
     }
     const std::size_t total = ((header >> 16) & 0x3fffu) + 2;
