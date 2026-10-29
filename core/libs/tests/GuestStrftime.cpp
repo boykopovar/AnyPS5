@@ -41,6 +41,12 @@ void CheckAsctime(const char* name, const GuestTm& time, const char* expected) {
         std::fprintf(stderr, "asctime %s: expected \"%s\", received \"%s\"\n", name, expected, result);
         correct = false;
     }
+    char buffer[26]{};
+    const char* reentrant = asctime_r_nid_postfix(&time, buffer);
+    if (reentrant != buffer || std::strcmp(buffer, expected) != 0) {
+        std::fprintf(stderr, "asctime_r %s: expected \"%s\", received \"%s\"\n", name, expected, buffer);
+        correct = false;
+    }
 }
 
 }
