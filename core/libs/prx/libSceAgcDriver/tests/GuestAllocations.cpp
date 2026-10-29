@@ -10,6 +10,7 @@
 #include <memory>
 #include <thread>
 #include <array>
+#include <span>
 #include <algorithm>
 #include <utility>
 #include <vector>
@@ -326,5 +327,36 @@ void RunUnmappedGapTests() {
     GuestArena::GuestArenaReset_nid_postfix(spare, page);
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(spareAddress, page);
     GuestArena::GuestArenaRelease_nid_postfix(spare, page);
+#endif
+}
+
+void RunVanishedPageReadTests() {
+#ifdef _WIN32
+    namespace GuestMemory = AgcDriver::GuestMemory;
+    Require(GuestArena::GuestArenaAvailable_nid_postfix(), "released-page read fixture needs the guest arena");
+    constexpr std::size_t page = 4096;
+    constexpr std::uint32_t ReadWriteProtection = 0x04;
+    auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * page, page));
+    const auto address = reinterpret_cast<std::uintptr_t>(block);
+    GuestArena::GuestArenaCommit_nid_postfix(block, page, ReadWriteProtection, page);
+    GuestArena::GuestArenaCommit_nid_postfix(block + page, page, ReadWriteProtection, page);
+    std::memset(block, 0x5a, 2 * page);
+    Require(GuestMemory::Accessible(block, 2 * page), "committed arena test pages are not readable");
+    GuestArena::GuestArenaReset_nid_postfix(block + page, page);
+    std::array<std::byte, 2 * page> read{};
+    read.fill(std::byte{0xff});
+    GuestMemory::ReadCommitted(address, read);
+    const auto filled = [](std::span<const std::byte> bytes, std::byte value) { return std::all_of(bytes.begin(), bytes.end(), [&](std::byte byte) { return byte == value; }); };
+    Require(filled(std::span(read).first(page), std::byte{0x5a}) && filled(std::span(read).subspan(page), std::byte{0}), "a committed read of a page released after it was checked did not read it as uncommitted");
+    std::array<std::byte, 2 * page> expected{};
+    std::fill(expected.begin(), expected.begin() + page, std::byte{0x5a});
+    std::fill(expected.begin() + page, expected.end(), std::byte{0x77});
+    Require(GuestMemory::EqualsCommitted(address, expected), "a committed compare of a page released after it was checked did not skip it");
+    expected[page - 1] = std::byte{0};
+    Require(!GuestMemory::EqualsCommitted(address, expected), "a committed compare missed a difference before a page released after it was checked");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 2 * page);
+    GuestArena::GuestArenaReset_nid_postfix(block, page);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 2 * page);
+    GuestArena::GuestArenaRelease_nid_postfix(block, 2 * page);
 #endif
 }

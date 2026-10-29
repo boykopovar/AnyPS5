@@ -150,7 +150,7 @@ void testPs4Buffers() {
     tiledChange.width = 64;
     tiledChange.height = 64;
     tiledChange.pixel_format = 0x8000000000000000ull;
-    check(expectFailure([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &tiledChange, nullptr); }).find("only supported for linear buffers") != std::string::npos, "a PS4 buffer set was changed to tiled");
+    check(expectFailure([&] { sceVideoOutSubmitChangeBufferAttribute2(handle, 0, &tiledChange, nullptr); }).find("only supported for linear and PS4 buffers") != std::string::npos, "a PS4 buffer set was changed to tiled");
     void* const odd[1] = {storage.data() + 65536 + 256};
     check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, odd, 1, &attribute); }).find("4 KiB alignment") != std::string::npos, "a PS4 buffer was accepted below 4 KiB alignment");
     void* const fourth[1] = {storage.data() + 65536};
@@ -432,7 +432,7 @@ void testControls() {
     const auto cfg = VideoOutDriver::Get().GetConfig(handle);
     check(sceVideoOutIsOutputSupported(handle, VIDEO_OUT_OUTPUT_MODE_DEFAULT, nullptr, nullptr, 0) == 1, "default output mode is unsupported");
     const int highFrameRate = sceVideoOutIsOutputSupported(handle, VIDEO_OUT_OUTPUT_MODE_119_88HZ, nullptr, nullptr, 0);
-    check(highFrameRate == 1 || highFrameRate == VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE, "unexpected high-frame-rate support result");
+    check(highFrameRate == 1 || highFrameRate == 0, "unexpected high-frame-rate support result");
     check(sceVideoOutConfigureOutput(handle, VIDEO_OUT_OUTPUT_MODE_119_88HZ, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE, "unavailable output mode was configured");
     check(sceVideoOutIsOutputSupported(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode is supported");
     check(sceVideoOutConfigureOutput(handle, 0xd000000aull, nullptr, nullptr, 0) == VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE, "unknown output mode was configured");
@@ -1050,6 +1050,56 @@ void testOneDevice() {
     check(next.Serial() == 2, "the GPU work and the flip used more than one device");
 }
 
+void testFreshHandleCalls() {
+    static_assert(sizeof(VideoOutFlipStatus) == 128);
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    std::array<std::byte, 128> raw;
+    raw.fill(std::byte{0xaa});
+    check(sceVideoOutGetFlipStatus(handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == 0, "the flip status of a fresh handle was not returned");
+    std::array<std::byte, 128> expected{};
+    std::fill_n(expected.begin() + 24, 8, std::byte{0xff});
+    std::fill_n(expected.begin() + 56, 4, std::byte{0xff});
+    check(raw == expected, "a fresh handle's flip status differs from the measured bytes");
+    check(sceVideoOutGetFlipStatus(handle, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a null flip status output was accepted");
+    check(sceVideoOutIsFlipPending(handle) == 0, "a fresh handle reported a pending flip");
+
+    const std::uint32_t image[64 * 64] = {};
+    check(sceVideoOutCursorEnable(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a cursor was enabled without an image address");
+    check(sceVideoOutCursorSetPosition(handle, 0, 100, 100) == 0, "the cursor position was refused");
+    check(sceVideoOutCursorSetImageAddress(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a null cursor image address was accepted");
+    check(sceVideoOutCursorDisable(handle, 0) == 0, "the cursor was not disabled");
+    check(sceVideoOutSetFlipMaster(handle, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a fresh handle was made flip master of handle 0");
+    check(sceVideoOutSetFlipMaster(handle, 1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a fresh handle was made flip master of handle 1");
+    check(sceVideoOutClearFlipMaster(handle) == static_cast<int>(0x8029001Cu), "a fresh handle's flip master was cleared");
+
+    std::vector<std::byte> allocation(65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBuffers buffer{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 64, 64, 0, 0, 0);
+    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffer registration failed");
+    check(expectFailure([&] { sceVideoOutSetFlipMaster(handle, 0); }).find("not implemented") != std::string::npos, "a handle with registered buffers was answered as a fresh one by SetFlipMaster");
+    check(expectFailure([&] { sceVideoOutClearFlipMaster(handle); }).find("not implemented") != std::string::npos, "a handle with registered buffers was answered as a fresh one by ClearFlipMaster");
+    check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
+    check(expectFailure([&] { sceVideoOutSetFlipMaster(handle, 0); }).find("not implemented") != std::string::npos, "a handle whose buffers were unregistered was answered as a fresh one by SetFlipMaster");
+    check(expectFailure([&] { sceVideoOutClearFlipMaster(handle); }).find("not implemented") != std::string::npos, "a handle whose buffers were unregistered was answered as a fresh one by ClearFlipMaster");
+
+    std::array<std::byte, 128> untouched;
+    untouched.fill(std::byte{0xaa});
+    check(sceVideoOutGetFlipStatus(-1, reinterpret_cast<VideoOutFlipStatus*>(untouched.data())) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's flip status was returned");
+    check(std::all_of(untouched.begin(), untouched.end(), [](std::byte value) { return value == std::byte{0xaa}; }), "an invalid handle's flip status wrote the output");
+    check(sceVideoOutIsFlipPending(-1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's pending flip was reported");
+    check(sceVideoOutCursorEnable(-1, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle was checked after the cursor image address");
+    check(sceVideoOutCursorEnable(-1, 0, image) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a cursor was enabled on an invalid handle");
+    check(sceVideoOutCursorSetPosition(-1, 0, 100, 100) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor was positioned");
+    check(sceVideoOutCursorSetImageAddress(-1, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor image was set");
+    check(sceVideoOutCursorDisable(-1, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor was disabled");
+    check(sceVideoOutSetFlipMaster(-1, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle was made flip master");
+    check(sceVideoOutClearFlipMaster(-1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's flip master was cleared");
+    check(sceVideoOutClose(handle) == 0, "the fresh handle was not closed");
+    LibcRunShutdown_nid_postfix();
+}
+
 void testOutputResolution() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
@@ -1127,7 +1177,11 @@ void testOutputResolutionOverride() {
 
 }
 
-int main(int argc, char** argv) {
+#ifdef __APPLE__
+extern "C" [[noreturn]] void Aps5StartGuest_nid_no_patch(void (*entry)(void*, void*), void* block);
+#endif
+
+int runTests(int argc, char** argv) {
     VideoOutTestEnvironment environment;
     try {
         if (argc == 2 && std::string(argv[1]) == "decode") testDecode();
@@ -1152,6 +1206,7 @@ int main(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "cpuflip") testCpuFlipOrder();
         else if (argc == 2 && std::string(argv[1]) == "resolution") testOutputResolution();
         else if (argc == 2 && std::string(argv[1]) == "resolution_override") testOutputResolutionOverride();
+        else if (argc == 2 && std::string(argv[1]) == "fresh") testFreshHandleCalls();
         else testLifetime(argc == 2 && std::string(argv[1]) == "reopen");
         std::puts("VideoOut flip tests passed");
         return 0;
@@ -1167,4 +1222,16 @@ int main(int argc, char** argv) {
         }
         return 1;
     }
+}
+
+int main(int argc, char** argv) {
+#ifdef __APPLE__
+    static int arguments;
+    static char** values;
+    arguments = argc;
+    values = argv;
+    Aps5StartGuest_nid_no_patch([](void*, void*) { std::exit(runTests(arguments, values)); }, nullptr);
+#else
+    return runTests(argc, argv);
+#endif
 }

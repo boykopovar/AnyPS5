@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
@@ -10,7 +11,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <thread>
@@ -57,6 +60,34 @@ std::shared_ptr<TimedWait::Condition> resolveCond(PthreadCond* cond, int* clockI
         return nullptr;
     if (clockId) *clockId = current->_clockid;
     return current->_cv;
+}
+
+std::mutex& WaiterMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::multimap<const TimedWait::Condition*, Pthread>& Waiters() {
+    static std::multimap<const TimedWait::Condition*, Pthread> waiters;
+    return waiters;
+}
+
+std::multimap<const TimedWait::Condition*, Pthread>::iterator AddWaiter(const TimedWait::Condition* condition) {
+    std::lock_guard lock(WaiterMutex());
+    return Waiters().emplace(condition, scePthreadSelf());
+}
+
+void RemoveWaiter(std::multimap<const TimedWait::Condition*, Pthread>::iterator waiter) {
+    std::lock_guard lock(WaiterMutex());
+    Waiters().erase(waiter);
+}
+
+bool IsWaiting(const TimedWait::Condition* condition, Pthread thread) {
+    std::lock_guard lock(WaiterMutex());
+    const auto [first, last] = Waiters().equal_range(condition);
+    for (auto waiter = first; waiter != last; ++waiter)
+        if (waiter->second == thread) return true;
+    return false;
 }
 
 int mutexOwnership(PthreadMutex* mutex, PthreadMutex* owned) {
@@ -113,7 +144,9 @@ int waitUntil(std::shared_ptr<TimedWait::Condition> condition, PthreadMutex* mut
         m->_owner.store(std::thread::id{}, std::memory_order_release);
         for (int level = 1; level < previousCount; ++level)
             m->_rmtx.unlock();
+        const auto waiter = AddWaiter(condition.get());
         timedOut = !ThreadCancel::Wait(*condition, lock, deadlineNanos);
+        RemoveWaiter(waiter);
         for (int level = 1; level < previousCount; ++level)
             m->_rmtx.lock();
         m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
@@ -124,7 +157,9 @@ int waitUntil(std::shared_ptr<TimedWait::Condition> condition, PthreadMutex* mut
     WakingLock<std::timed_mutex> waking{m, m->_mtx};
     std::unique_lock lock(waking, std::adopt_lock);
     m->_owner.store(std::thread::id{}, std::memory_order_release);
+    const auto waiter = AddWaiter(condition.get());
     timedOut = !ThreadCancel::Wait(*condition, lock, deadlineNanos);
+    RemoveWaiter(waiter);
     m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
     lock.release();
     return finishWait(condition, timedOut);
@@ -218,10 +253,11 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) {
 }
 
 int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) {
-    (void)thread;
     const auto resolved = resolveCond(cond);
-    if (!resolved)
+    if (!resolved || !thread)
         return SCE_KERNEL_ERROR_EINVAL;
+    if (!IsWaiting(resolved.get(), thread))
+        return SCE_KERNEL_ERROR_EPERM;
     resolved->NotifyAll();
     return 0;
 }

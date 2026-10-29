@@ -887,6 +887,14 @@ int APS5_VABI sceNpPollAsync(int req_id, int* result) {
     return NP_POLL_ASYNC_FINISHED;
 }
 
+int APS5_VABI sceNpWaitAsync(int req_id, int* result) {
+    if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(requestMutex);
+    if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
+    *result = SCE_NP_ERROR_SIGNED_OUT;
+    return 0;
+}
+
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata) {
     (void)callback;
     (void)userdata;

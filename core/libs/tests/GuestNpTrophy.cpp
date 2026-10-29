@@ -97,6 +97,18 @@ int main() {
     }
     Require(saved == 1, "unlock state saved for the user");
 
+    std::filesystem::create_directories(root / "_trophy/trophy00.1.tmp");
+    bool saveFailed = false;
+    try {
+        sceNpTrophyUnlockTrophy(context, handle, 0, &platinum);
+    } catch (const std::exception&) {
+        saveFailed = true;
+    }
+    std::filesystem::remove_all(root / "_trophy/trophy00.1.tmp");
+    Require(saveFailed, "an unlock whose state cannot be written reports the failure");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && flags[0] == 2u, "a failed save leaves the trophy locked");
+    Require(sceNpTrophyUnlockTrophy(context, handle, 0, &platinum) == 0, "the unlock succeeds once the state can be written");
+
     Require(sceNpTrophyCreateContext(&missing, 1, 1, 0) == 0, "context for a label without a package");
     Require(sceNpTrophyRegisterContext(missing, handle, 0) == TitleConfNotInstalled, "register without a trophy package");
     Require(sceNpTrophyCreateHandle(nullptr) == InvalidArgument, "null handle creation");

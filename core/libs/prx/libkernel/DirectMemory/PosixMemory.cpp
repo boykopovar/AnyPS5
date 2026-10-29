@@ -164,12 +164,11 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
 #ifndef _WIN32
         if (fixedAnonymous && !GuestArena::GuestArenaContains_nid_postfix(address, rounded)) return failed(GuestInvalid);
 #endif
-        const bool exclusive = fixedAnonymous && (mappingFlags & GuestMapExclusive) != 0;
-        const int placement = fixedAnonymous ? GuestMapFixed | (exclusive ? GuestMapNoOverwrite : 0) : 0;
+        const int placement = fixedAnonymous ? GuestMapFixed : 0;
         void* mapped = address;
         const auto alignment = !fixedAnonymous && (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
         try {
-            const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive, fixedAnonymous);
+            const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, false, fixedAnonymous);
             if (result != 0) return failed(result == SCE_KERNEL_ERROR_EINVAL ? GuestInvalid : GuestNoMemory);
             if (fixedAnonymous) ReleaseFlexibleMappingRange(start, rounded);
             return mapped;
@@ -252,9 +251,10 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
         return -1;
     };
     std::size_t rounded;
-    const auto start = reinterpret_cast<std::uintptr_t>(address);
-    if (!RoundLength(length, rounded) || start == 0 ||
-        (start & (PS5_PAGE_SIZE - 1)) != 0 ||
+    const auto offset = reinterpret_cast<std::uintptr_t>(address) & (PS5_PAGE_SIZE - 1);
+    const auto start = reinterpret_cast<std::uintptr_t>(address) - offset;
+    if (length == 0 || length > std::numeric_limits<std::size_t>::max() - offset ||
+        !RoundLength(length + offset, rounded) || start == 0 ||
         rounded > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
     try {

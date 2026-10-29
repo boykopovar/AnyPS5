@@ -139,6 +139,7 @@ struct VideoOutConfig {
     bool opened = false;
     bool closing = false;
     bool ps4 = false;
+    bool buffersEverRegistered = false;
     std::exception_ptr failure;
     std::stop_token shutdownToken = LibcShutdownToken_nid_postfix();
     int flipRate = 0;
