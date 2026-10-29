@@ -1504,12 +1504,16 @@ static void ResetBinary(CommonBinary* self) {
 }
 
 static int SetBinary(CommonBinary* self, const void* data, const std::uint64_t size) {
-    ResetBinary(self);
-    if (size == 0) return 0;
+    if (size == 0) {
+        ResetBinary(self);
+        return 0;
+    }
     if (data == nullptr) return BinaryInvalidArgument;
-    void* buffer = std::malloc(size);
+    if (size > SIZE_MAX) return BinaryOutOfMemory;
+    void* buffer = std::malloc(static_cast<std::size_t>(size));
     if (buffer == nullptr) return BinaryOutOfMemory;
-    std::memcpy(buffer, data, size);
+    std::memcpy(buffer, data, static_cast<std::size_t>(size));
+    std::free(self->buffer);
     self->buffer = buffer;
     self->size = size;
     return 0;
@@ -1518,11 +1522,16 @@ static int SetBinary(CommonBinary* self, const void* data, const std::uint64_t s
 static int AppendBinary(CommonBinary* self, const void* data, const std::uint64_t size) {
     if (size == 0) return 0;
     if (data == nullptr) return BinaryInvalidArgument;
-    void* buffer = std::realloc(self->buffer, self->size + size);
+    if (size > UINT64_MAX - self->size) return BinaryOutOfMemory;
+    const std::uint64_t total = self->size + size;
+    if (total > SIZE_MAX) return BinaryOutOfMemory;
+    auto* buffer = static_cast<std::uint8_t*>(std::malloc(static_cast<std::size_t>(total)));
     if (buffer == nullptr) return BinaryOutOfMemory;
-    std::memcpy(static_cast<std::uint8_t*>(buffer) + self->size, data, size);
+    if (self->size != 0) std::memcpy(buffer, self->buffer, static_cast<std::size_t>(self->size));
+    std::memcpy(buffer + static_cast<std::size_t>(self->size), data, static_cast<std::size_t>(size));
+    std::free(self->buffer);
     self->buffer = buffer;
-    self->size += size;
+    self->size = total;
     return 0;
 }
 
