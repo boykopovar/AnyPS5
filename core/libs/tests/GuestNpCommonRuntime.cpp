@@ -1,6 +1,7 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "SceTypes.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <array>
@@ -209,6 +210,7 @@ void TestObjects() {
         "a failed allocation returns null");
 }
 
+<<<<<<< HEAD
 void TestAllocatorEx() {
     NpMemoryHeap memoryHeap {};
     Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-test") == 0, "a memory heap is created");
@@ -242,6 +244,36 @@ void TestAllocatorEx() {
     Require(_sceNpAllocatorExStrndup(&failing, "abcdef", 3) == nullptr && record.size == 4, "a failed prefix duplicate returns null");
     _sceNpAllocatorExFree(&failing, record.block.data());
     Require(record.released == record.block.data(), "freeing goes through the allocator");
+=======
+void TestObjectsThroughStoredAllocator() {
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    NpAllocatorEx allocatorEx {allocator, 0x1234};
+    AllocatorRecord other {};
+    NpAllocator otherAllocator {RecordAllocate, nullptr, RecordRelease, &other};
+    NpAllocatorEx otherEx {otherAllocator, 0};
+
+    record.block.fill(0xAA);
+    void* object = _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(24, &allocatorEx);
+    Require(object == record.block.data() + 16 && record.size == 40, "an extended array is allocated behind the header");
+    Require(std::all_of(record.block.begin() + 8, record.block.begin() + 16, [](std::uint8_t b) { return b == 0xAA; }),
+        "the second half of the header is left as the allocator returned it");
+    _ZN3sce2np6ObjectdlEPvR16SceNpAllocatorEx(object, &otherEx);
+    Require(record.released == record.block.data() && other.released == nullptr, "delete with an extended allocator frees through the stored one");
+
+    record.released = nullptr;
+    _ZN3sce2np6ObjectdaEPvR14SceNpAllocator(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(8, &allocator), &otherAllocator);
+    Require(record.released == record.block.data() && other.released == nullptr, "delete[] with an allocator frees through the stored one");
+
+    record.released = nullptr;
+    _ZN3sce2np6ObjectdaEPvR16SceNpAllocatorEx(_ZN3sce2np6ObjectnwEmR16SceNpAllocatorEx(8, &allocatorEx), &otherEx);
+    Require(record.released == record.block.data() && other.released == nullptr, "delete[] with an extended allocator frees through the stored one");
+
+    record.fail = true;
+    Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
+        "a failed array allocation returns null");
+    Require(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(SIZE_MAX - 15, &allocator) == nullptr && record.size == 0, "the size plus the header wraps");
+>>>>>>> feat/np-object-operators
 }
 
 struct CalloutRecord {
@@ -524,7 +556,11 @@ int main() {
     TestThreads();
     TestHeaps();
     TestObjects();
+<<<<<<< HEAD
     TestAllocatorEx();
+=======
+    TestObjectsThroughStoredAllocator();
+>>>>>>> feat/np-object-operators
     TestBase64();
     TestNumbers();
     TestHexAndCopies();
