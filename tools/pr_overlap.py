@@ -546,7 +546,7 @@ def report(rows, blob, main_exports=None):
     if main_exports:
         if confirmed:
             lines.append("")
-        lines.append("Exports introduced here that may already be present in `main`:")
+        lines.append("Exports with a name or library/NID already present in `main`:")
         lines.append("")
         for name, finding in sorted(main_exports.items()):
             same_key = finding.get("same_key", set())
@@ -593,6 +593,11 @@ def main_export_findings(prs, current_exports):
     for number, pr in prs.items():
         added = pr.get("added_exports", {})
         removed = pr.get("removed_exports", {})
+        moved = {}
+        for (library, nid), removed_from in removed.items():
+            for name in removed_from:
+                canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                moved.setdefault(canonical, set()).add(library)
         names = {}
         for library, nid in added:
             added_names = {
@@ -605,10 +610,10 @@ def main_export_findings(prs, current_exports):
             }
             for canonical in added_names:
                 finding = names.setdefault(canonical, {"same_key": set(), "other_libraries": set()})
-                if (library, nid) in current_exports:
+                if (library, nid) in current_exports and (library, nid) not in removed:
                     finding["same_key"].add((library, nid))
                 if canonical not in removed_names:
-                    finding["other_libraries"].update(by_name.get(canonical, set()) - {library})
+                    finding["other_libraries"].update(by_name.get(canonical, set()) - {library} - moved.get(canonical, set()))
                 if not finding["same_key"] and not finding["other_libraries"]:
                     names.pop(canonical)
         if names:
