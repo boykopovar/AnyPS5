@@ -177,6 +177,45 @@ class UnwrapTest(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertFalse(output.exists())
 
+    def test_tls_layouts_the_relinker_rejects_are_refused(self):
+        cases = ((3, 0x20, 0x40, "segment 1 alignment is not a power of two"),
+                 (6, 0x20, 0x40, "segment 1 alignment is not a power of two"),
+                 (0x1001, 0x10, 0x20, "segment 1 alignment is not a power of two"),
+                 (8, 0x40, 0x20, "segment 1 file size exceeds memory size"),
+                 (0x4000, 0x10, 0x20, "segment 1 TLS alignment exceeds 8192"),
+                 (0x40, 0x10, 0x80000000, "segment 1 TLS memory size exceeds 0x7fff0000"))
+        for align, size, memory, message in cases:
+            with self.subTest(align=align, size=size, memory=memory):
+                segments = [default_segments()[0], (PT_TLS, 4, 0x1580, 0x1040, size, align)]
+                segments += default_segments()[1:]
+                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 0x28, memory)
+                source = Path(self.directory) / "input.self"
+                output = Path(self.directory) / "output.elf"
+                source.write_bytes(container)
+                result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"FAIL: {source}: {message}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(output.exists())
+                self.assertEqual(source.read_bytes(), container)
+
+    def test_tls_layouts_the_relinker_accepts_are_unwrapped(self):
+        for align, size, memory in ((0x40, 0x20, 0x40), (8, 0x10, 0x10), (0, 0x20, 0x40), (1, 0x20, 0x40),
+                                    (0x2000, 0x10, 0x20), (0x40, 0x10, 0x7FFF0000)):
+            with self.subTest(align=align, size=size, memory=memory):
+                segments = [default_segments()[0], (PT_TLS, 4, 0x1580, 0x1040, size, align)]
+                segments += default_segments()[1:]
+                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 0x28, memory)
+                result, output = self.convert(bytes(container))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                tls = [header for header in headers if header[0] == PT_TLS][0]
+                self.assertEqual((tls[5], tls[6], tls[7]), (size, memory, align))
+                self.assertEqual(data[tls[2]:tls[2] + tls[5]], pattern(9, 0x80)[0x40:0x40 + size])
+
     def test_huge_stale_offset_is_refused_instead_of_exhausting_memory(self):
         segments = default_segments()
         segments[2] = (PT_DYNAMIC, 6, 0x49000000001580, 0x1040, 0x10, 8)
@@ -189,6 +228,19 @@ class UnwrapTest(unittest.TestCase):
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("does not fit the file", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_many_load_segments_over_one_range_are_refused_instead_of_exhausting_memory(self):
+        segments = [(PT_LOAD, 5, 0x100000, 0x400000 + index * 0x400000, 0x200000, 1) for index in range(200)]
+        container = build_container(segments, [], {0x100000: bytes(0x200000)})
+        source = Path(self.directory) / "input.self"
+        output = Path(self.directory) / "output.elf"
+        source.write_bytes(container)
+        result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("bytes of output", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertFalse(output.exists())
 
@@ -894,6 +946,63 @@ class UnwrapTest(unittest.TestCase):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertFalse(output.exists())
 
+    def test_unsupported_inner_elf_versions_are_refused(self):
+        for identification in (0, 1, 2, 255):
+            for version in (0, 1, 2, 0x1000001, 0xFFFFFFFF):
+                if identification == version == 1:
+                    continue
+                with self.subTest(identification=identification, version=version):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    container[ELF_HEADER_OFFSET + 6] = identification
+                    struct.pack_into("<I", container, ELF_HEADER_OFFSET + 0x14, version)
+                    with self.assertRaises(unwrap_self.Refused) as refused:
+                        unwrap_self.parse_elf(container)
+                    self.assertEqual(str(refused.exception),
+                                     f"unsupported inner ELF version (identification {identification}, object {version})")
+
+    def test_unsupported_inner_elf_versions_preserve_output(self):
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        for identification, version in ((0, 1), (2, 1), (1, 0), (1, 2), (1, 0x1000001), (255, 0xFFFFFFFF)):
+            for previous in (None, b"previous output"):
+                with self.subTest(identification=identification, version=version, previous=previous):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads()))
+                    container[ELF_HEADER_OFFSET + 6] = identification
+                    struct.pack_into("<I", container, ELF_HEADER_OFFSET + 0x14, version)
+                    source.write_bytes(container)
+                    if previous is None:
+                        output.unlink(missing_ok=True)
+                    else:
+                        output.write_bytes(previous)
+                    before = set(directory.iterdir())
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(str(source), result.stderr)
+                    self.assertIn(f"unsupported inner ELF version (identification {identification}, object {version})", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertEqual(source.read_bytes(), container)
+                    self.assertEqual(set(directory.iterdir()), before)
+                    if previous is None:
+                        self.assertFalse(output.exists())
+                    else:
+                        self.assertEqual(output.read_bytes(), previous)
+
+    def test_current_elf_versions_preserve_the_separate_abi_version(self):
+        for magic in (SELF_MAGIC, unwrap_self.SELF_MAGIC_KERNEL):
+            for abi_version in (0, 1, 255):
+                with self.subTest(magic=magic, abi_version=abi_version):
+                    container = bytearray(build_container(default_segments(), default_records(), default_payloads(), magic=magic))
+                    container[ELF_HEADER_OFFSET + 8] = abi_version
+                    result, output = self.convert(container)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    data, headers = read_program_headers(output)
+                    self.assertEqual(data[6], 1)
+                    self.assertEqual(struct.unpack_from("<I", data, 0x14)[0], 1)
+                    self.assertEqual(data[8], abi_version)
+                    self.assertEqual(len(headers), len(default_segments()))
+                    self.assertEqual((Path(self.directory) / "input.self").read_bytes(), container)
+
     def test_a_container_whose_load_segments_look_encrypted_is_refused(self):
         random_like = bytes(range(256)) * 4
         segments = [(PT_LOAD, 1, 0x1234, 0x0, 0x400, PAGE), (PT_LOAD, 4, 0x1500, 0x1000, 0x400, PAGE)]
@@ -1286,6 +1395,35 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
         self.toolchain = self.root / "toolchain"
         self.toolchain.mkdir()
         self.module = self.root / "module.self"
+
+    def test_reference_timeouts_are_bounded_before_setup(self):
+        import run_job_manager_reference
+        cases = ((None, 20), ("0.001", 0.001), ("30", 30), ("nan", None), ("NaN", None),
+                 ("-nan", None), ("inf", None), ("-inf", None), ("0", None), ("-1", None), ("30.001", None))
+        for platform in ("linux", "win32"):
+            for number, (value, expected) in enumerate(cases):
+                with self.subTest(platform=platform, value=value):
+                    output = self.root / f"artifacts-{platform}-{number}"
+                    arguments = ["run_job_manager_reference.py", "--host", "--build", str(self.build),
+                                 "--relinker", str(self.relinker), "--toolchain", str(self.toolchain),
+                                 "--output", str(output)] + ([] if value is None else [f"--timeout={value}"])
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    with mock.patch.object(sys, "argv", arguments), mock.patch.object(sys, "platform", platform), \
+                            mock.patch.object(run_job_manager_reference, "run", return_value=0) as run, \
+                            contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                        if expected is None:
+                            with self.assertRaises(SystemExit) as stopped:
+                                run_job_manager_reference.main()
+                            self.assertEqual(stopped.exception.code, 2)
+                            self.assertIn("--timeout must be greater than zero and at most 30 seconds", stderr.getvalue())
+                            self.assertEqual(stdout.getvalue(), "")
+                            self.assertFalse(output.exists())
+                            run.assert_not_called()
+                        else:
+                            self.assertEqual(run_job_manager_reference.main(), 0)
+                            run.assert_called_once()
+                            self.assertEqual(run.call_args.args[0].timeout, expected)
+                            self.assertTrue(output.is_dir())
 
     def invoke(self, output):
         import run_job_manager_reference

@@ -143,6 +143,9 @@ static int MapFlags(int sceFlags) {
 #else
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/stat.h>
+#endif
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     return ::open(p.c_str(), nativeFlags, static_cast<mode_t>(mode));
 }
@@ -248,6 +251,16 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
 #endif
     }
     int fd = NativeOpen(native, MapFlags(flags), mode);
+#ifdef __APPLE__
+    if (fd >= 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == SCE_KERNEL_O_CREAT) {
+        struct stat opened{};
+        if (::fstat(fd, &opened) == 0 && S_ISDIR(opened.st_mode)) {
+            ::close(fd);
+            fd = -1;
+            errno = EISDIR;
+        }
+    }
+#endif
 #ifdef _WIN32
     if (fd < 0 && (errno != ENOENT || !native.has_filename())) {
         const int openError = errno;

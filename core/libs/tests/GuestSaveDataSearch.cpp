@@ -284,6 +284,14 @@ static void CheckNullArguments() {
     float progress = 0.0f;
     Require(sceSaveDataGetConvertProgress(&progress) == -2137063423, "uninitialized convert progress returns NOT_INITIALIZED");
     Require(sceSaveDataCheckIpmiIfSize() == 0, "sceSaveDataCheckIpmiIfSize succeeds");
+    Require(sceSaveDataDebug() == 0, "sceSaveDataDebug succeeds");
+    Require(sceSaveDataDebugCheckBackupData() == 0, "sceSaveDataDebugCheckBackupData succeeds");
+    Require(sceSaveDataDebugCleanMount() == 0, "sceSaveDataDebugCleanMount succeeds");
+    Require(sceSaveDataDebugCompiledSdkVersion() == 0, "sceSaveDataDebugCompiledSdkVersion succeeds");
+    Require(sceSaveDataDebugCreateSaveDataRoot() == 0, "sceSaveDataDebugCreateSaveDataRoot succeeds");
+    Require(sceSaveDataDebugProspero() == 0, "sceSaveDataDebugProspero succeeds");
+    Require(sceSaveDataDebugRemoveSaveDataRoot() == 0, "sceSaveDataDebugRemoveSaveDataRoot succeeds");
+    Require(sceSaveDataDebugTarget() == 0, "sceSaveDataDebugTarget succeeds");
 }
 
 static void BlockSize() {

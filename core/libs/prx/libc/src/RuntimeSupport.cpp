@@ -62,6 +62,11 @@ std::FILE* GuestStandardOutputFile_nid_no_patch() {
     return GetNativeStream(&_Stdout_nid_postfix);
 }
 
+std::FILE* GuestStandardOutputForWriting_nid_no_patch() {
+    auto* native = GetNativeStream(&_Stdout_nid_postfix);
+    return _Stdout_nid_postfix.SwitchToWriting() ? native : nullptr;
+}
+
 int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle) {
     std::lock_guard lock(g_exitMutex);
     g_exitDestructors.push_back({func, arg, dsoHandle});

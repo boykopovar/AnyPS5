@@ -85,7 +85,8 @@ public:
                         throw RelinkerException("Strict filter: relative relocation has a symbol", slot);
                 }
                 const auto target = read<std::uint64_t>(*rela + offset + 16);
-                if (input.ImportSlots.contains(slot) || !input.Pointers.emplace(slot, target).second)
+                const auto [recorded, inserted] = input.Pointers.emplace(slot, target);
+                if (input.ImportSlots.contains(slot) || (!inserted && recorded->second != target))
                     throw RelinkerException("Strict filter: overlapping pointer relocations", slot);
 
             }

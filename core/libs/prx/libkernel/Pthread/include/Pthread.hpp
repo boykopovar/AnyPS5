@@ -62,6 +62,8 @@ struct PthreadRwlockattrPrivate {
     int type;
 };
 
+inline PthreadRwlockattr const DESTROYED_RWLOCKATTR = reinterpret_cast<PthreadRwlockattr>(std::uintptr_t{1});
+
 struct PthreadRwlockPrivate {
     std::mutex _state;
     TimedWait::Condition _changed;
@@ -168,6 +170,7 @@ struct PthreadPrivate {
     std::atomic<bool> cancelPending{false};
     std::mutex cancelLock;
     TimedWait::Condition* cancelWait = nullptr;
+    bool cancelWaitExiting = false;
 
     explicit PthreadPrivate(const PthreadAttrPrivate* attr = nullptr);
     ~PthreadPrivate();

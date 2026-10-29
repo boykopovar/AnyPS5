@@ -551,7 +551,24 @@ void CheckPlusAndContentRestriction() {
     Require(SetContentRestriction(bad) == InvalidArgument, "sceNpSetContentRestriction must reject restrictions without an array");
 }
 
+static void APS5_VABI PremiumEvent(int, int, void*) {}
+
+static void CheckAccountQueriesAndPremiumCallback() {
+    std::uint8_t age = 0x5a;
+    Require(sceNpGetAccountAge(1, 0x10000, nullptr) == InvalidArgument, "sceNpGetAccountAge must reject a null age");
+    Require(sceNpGetAccountAge(1, 0x10000, &age) == SignedOut, "sceNpGetAccountAge must report the user as signed out");
+    Require(age == 0x5a, "sceNpGetAccountAge must leave the age untouched");
+    unsigned char language[8];
+    std::memset(language, 0x5a, sizeof(language));
+    Require(sceNpGetAccountLanguage2(1, 0x10000, language) == SignedOut, "sceNpGetAccountLanguage2 must report the user as signed out");
+    for (const unsigned char byte : language) Require(byte == 0x5a, "sceNpGetAccountLanguage2 must leave the language untouched");
+    Require(sceNpRegisterPremiumEventCallback(nullptr, nullptr) == InvalidArgument, "sceNpRegisterPremiumEventCallback must reject a null callback");
+    Require(sceNpRegisterPremiumEventCallback(reinterpret_cast<void*>(&PremiumEvent), nullptr) == 0, "registering a premium event callback");
+    Require(sceNpUnregisterPremiumEventCallback() == 0, "unregistering the premium event callback");
+}
+
 int main() {
+    CheckAccountQueriesAndPremiumCallback();
     CheckOnlineIdQueries();
     CheckUserIdQueries();
     CheckStateCallbacksA();
@@ -587,6 +604,9 @@ int main() {
     Require(sceNpGetOnlineId(0x10000, &onlineId) == SignedOut, "sceNpGetOnlineId must report the user as signed out");
     Require(std::memcmp(&onlineId, &untouchedOnlineId, sizeof(onlineId)) == 0, "sceNpGetOnlineId must leave the online id untouched");
     Require(sceNpGetOnlineId(0x10000, nullptr) == InvalidArgument, "sceNpGetOnlineId must reject a null online id");
+    std::uint64_t accountIdA = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceNpGetAccountIdA(0x10000, &accountIdA) == SignedOut, "sceNpGetAccountIdA must report the user as signed out");
+    Require(accountIdA == 0x5a5a5a5a5a5a5a5aull, "sceNpGetAccountIdA must leave the account id untouched");
     int userId = 0x5a5a;
     Require(sceNpGetUserIdByAccountId(0, &userId) == InvalidArgument, "sceNpGetUserIdByAccountId must reject account id 0");
     Require(sceNpGetUserIdByAccountId(0x1234, nullptr) == InvalidArgument, "sceNpGetUserIdByAccountId must reject a null output");
@@ -609,5 +629,19 @@ int main() {
         Require(std::string(error.what()) == "sceNpUnknown_WxLcN76q19o not implemented",
             "sceNpUnknown_WxLcN76q19o threw");
     }
+    std::uint32_t state = 0x5a5a;
+    Require(sceNpGetState(0x10000, &state) == 0 && state == StateSignedOut, "sceNpGetState must report the user as signed out");
+    Require(sceNpGetState(0x10000, nullptr) == InvalidArgument, "sceNpGetState must reject a null state");
+    bool hasSignedUp = true;
+    Require(sceNpHasSignedUp(0x10000, &hasSignedUp) == 0 && !hasSignedUp, "sceNpHasSignedUp must report no sign-up");
+    Require(sceNpHasSignedUp(0x10000, nullptr) == InvalidArgument, "sceNpHasSignedUp must reject a null output");
+    Require(sceNpCheckNpReachability(1, 0x10000) == SignedOut, "sceNpCheckNpReachability must report the user as signed out");
+    NpCheckPremiumParameter premiumParameter{};
+    NpCheckPremiumResult premiumResult{};
+    std::memset(&premiumResult, 0x5a, sizeof(premiumResult));
+    NpCheckPremiumResult untouchedPremiumResult{};
+    std::memset(&untouchedPremiumResult, 0x5a, sizeof(untouchedPremiumResult));
+    Require(sceNpCheckPremium(1, &premiumParameter, &premiumResult) == SignedOut, "sceNpCheckPremium must report the user as signed out");
+    Require(std::memcmp(&premiumResult, &untouchedPremiumResult, sizeof(premiumResult)) == 0, "sceNpCheckPremium must leave the result untouched");
     return 0;
 }

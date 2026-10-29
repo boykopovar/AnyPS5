@@ -257,6 +257,7 @@ static void FileFlagsRoundTrip() {
     RequireFailure(ioctl_nid_postfix(file, WindowSizeRequest, size), GuestEnotty);
     RequireMalformedRequestsFail(file);
     RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     Require(ThrowsWith([file] { int on = 1; ioctl_nid_postfix(file, AsyncRequest, &on); }, "ioctl: request 0x8004667D on a file is not implemented"));
 
     RequireFailure(fcntl_nid_postfix(file, DuplicateCommand, -1), GuestEinval);

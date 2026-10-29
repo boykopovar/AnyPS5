@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from test_macho_nids import build_dylib, exports_of, nid, PATCHER
 
@@ -439,6 +440,69 @@ class ExecutableImportTests(unittest.TestCase):
                 result = subprocess.run([str(PATCHER), *arguments, str(path)], capture_output=True, timeout=20)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(path.read_bytes(), image)
+
+
+@unittest.skipUnless(PATCHER is not None and PATCHER.is_file(), "nid_patcher executable required")
+class LibraryImportTests(unittest.TestCase):
+    def library(self, names):
+        image = ExecutableImportTests.pe(SimpleNamespace(names=names))
+        struct.pack_into("<IIHHIIIIIII", image, 0x600, 0, 0, 0, 0, 0x1446, 1, 1, 1, 0x1428, 0x142c, 0x1430)
+        struct.pack_into("<IIH", image, 0x628, 0x1000, 0x1432, 0)
+        image[0x632:0x643] = b"puts_nid_postfix\0"
+        image[0x646:0x64e] = b"lib.dll\0"
+        struct.pack_into("<II", image, 0x58 + 112, 0x1400, 80)
+        return image
+
+    def imports(self, image, count):
+        sections = [struct.unpack_from("<8sIIIIIIHHI", image, 0x58 + 240 + index * 40)
+                    for index in range(struct.unpack_from("<H", image, 0x46)[0])]
+        result = []
+        for index in range(count):
+            rva = struct.unpack_from("<Q", image, 576 + index * 8)[0]
+            self.assertEqual(rva, struct.unpack_from("<Q", image, 704 + index * 8)[0])
+            section = next(s for s in sections if s[2] <= rva < s[2] + s[3])
+            offset = section[4] + rva - section[2] + 2
+            result.append((rva, image[offset:image.index(0, offset)].decode()))
+        return result, len(sections)
+
+    def patch(self, image):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "library.dll"
+            path.write_bytes(image)
+            result = subprocess.run([str(PATCHER), "libtest", str(path)], capture_output=True, text=True, timeout=20)
+            return result, path.read_bytes()
+
+    def test_imports_longer_as_nids_move_to_a_new_section(self):
+        names = ["sceA", "sceNetRecv", "sceKernelLongerName", "plain"]
+        image = self.library(names)
+        before, _ = self.imports(image, len(names))
+        result, patched = self.patch(image)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        after, sections = self.imports(patched, len(names))
+        self.assertEqual([name for _, name in after], [nid("sceA"), nid("sceNetRecv"), nid("sceKernelLongerName"), "plain"])
+        self.assertEqual(sections, 2)
+        self.assertEqual([rva == old for (rva, _), (old, _) in zip(after, before)], [False, False, True, True])
+
+    def test_imports_that_fit_keep_the_section_layout(self):
+        names = ["sceKernelLongerName", "plain"]
+        result, patched = self.patch(self.library(names))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        after, sections = self.imports(patched, len(names))
+        self.assertEqual([name for _, name in after], [nid("sceKernelLongerName"), "plain"])
+        self.assertEqual(sections, 1)
+
+    def test_delay_loaded_imports_cannot_grow(self):
+        for names, accepted in ((["sceNetRecv"], False), (["sceKernelLongerName"], True)):
+            with self.subTest(names=names):
+                image = self.library(names)
+                struct.pack_into("<II", image, 0x58 + 112 + 13 * 8, 0x1500, 32)
+                result, patched = self.patch(image)
+                if accepted:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("delay-loaded", result.stdout + result.stderr)
+                    self.assertEqual(patched, image)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_conventions
 import stubgen
+from nid_names import compute_nid
 
 
 class StubgenTests(unittest.TestCase):
@@ -30,6 +31,29 @@ class StubgenTests(unittest.TestCase):
         code, _ = stubgen.generate("libkernel", ["AC1FtjqMCL0"], {})
         self.assertIn("APS5_VABI", code)
         self.assertIn("NotImplemented_nid_no_patch", code)
+
+    def test_unknown_exports_cannot_consume_verified_known_names(self):
+        known_name = "sceAmprUnknown00"
+        known_nid = compute_nid(known_name)
+        unknown_nid = "AAAAAAAAAAA"
+        for order in ((unknown_nid, known_nid), (known_nid, unknown_nid)):
+            with self.subTest(order=order):
+                code, debt = stubgen.generate("libSceAmpr", order, {known_nid: known_name})
+                self.assertIn("int APS5_VABI sceAmprUnknown00(void)", code)
+                self.assertIn('APS5_EXPORT("AAAAAAAAAAA", sceAmprUnknown01);', code)
+                self.assertIn("int APS5_VABI sceAmprUnknown01(void)", code)
+                self.assertIn("[sceAmprUnknown00]", debt)
+                self.assertIn("[AAAAAAAAAAA]", debt)
+                self.assertNotIn(f'APS5_EXPORT("{known_nid}", sceAmprUnknown', code)
+
+    def test_generate_preserves_single_pass_iterable_inputs(self):
+        known = "6OkOa1SOKuY"
+        db = {known: "sceAmprUnknown00"}
+        for values in (("AAAAAAAAAAA", known), (known, "AAAAAAAAAAA")):
+            expected = stubgen.generate("libSceAmpr", values, db)
+            for label, factory in (("iterator", iter), ("generator", lambda items: (nid for nid in items))):
+                with self.subTest(values=values, input=label):
+                    self.assertEqual(stubgen.generate("libSceAmpr", factory(values), db), expected)
 
     def test_prx_suffix_is_stripped_from_module_name(self):
         nids = ["AAAAAAAAAAA", "BBBBBBBBBBB"]
@@ -150,6 +174,43 @@ class StubGeneratorTests(unittest.TestCase):
             path.write_text('AAAAAAAAAAA\ninvalid"nid\n', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "invalid NID"):
                 stubgen.parse_nids(path)
+
+    def test_malformed_database_rows_are_rejected_with_location(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "names.txt"
+            cases = {
+                "missing name": "AAAAAAAAAAA\n",
+                "short NID": "AAAAAAAAAA sceShort\n",
+                "invalid NID": 'AAAAAAAA"AA sceQuoted\n',
+                "blank name after comment": "AAAAAAAAAAA # sceCommented\n",
+            }
+            for label, content in cases.items():
+                with self.subTest(label=label):
+                    path.write_text(content, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, r"names\.txt:1:"):
+                        stubgen.parse_db(path)
+
+    def test_valid_database_rows_are_parsed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "names.txt"
+            path.write_text("# comment\nAAAAAAAAAAA sceGood\n"
+                            "BBBBBBBBBBB sceOther # trailing note\n\n"
+                            "+CCCCCCCCCC scePlus\n", encoding="utf-8")
+            self.assertEqual(stubgen.parse_db(path),
+                             {"AAAAAAAAAAA": "sceGood", "BBBBBBBBBBB": "sceOther", "+CCCCCCCCCC": "scePlus"})
+
+    def test_malformed_database_reaches_the_cli_as_an_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nids, database = root / "nids.txt", root / "names.txt"
+            nids.write_text("AAAAAAAAAAA\n", encoding="utf-8")
+            database.write_text("AAAAAAAAAA sceShort\n", encoding="utf-8")
+            arguments = ["--module", "libSceExample", "--nids", str(nids), "--db", str(database)]
+            with contextlib.redirect_stderr(io.StringIO()) as output, \
+                    contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as error:
+                stubgen.main(arguments)
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("invalid NID", output.getvalue())
 
     def test_code_and_debt_outputs_cannot_overwrite_each_other(self):
         with tempfile.TemporaryDirectory() as directory:
