@@ -12,7 +12,6 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "prx/libSceHttp2/Transport.hpp"
 #include "prx/libSceNet/include/Net.hpp"
-#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libSceSsl/SslTypes.hpp"
 #include "SslCertificateFixture.hpp"
@@ -644,6 +643,7 @@ void AsyncBlockingWait(int ssl) {
     const auto expired = std::chrono::steady_clock::now();
     Require(sceHttp2WaitAsync(client.request, &early, &shortTimeout, nullptr) == static_cast<int>(0x817B1079), "expired wait reports the timeout");
     Require(std::chrono::steady_clock::now() - expired < std::chrono::milliseconds(200), "expired wait returned late");
+    Require(shortTimeout == 0, "expired wait clears the timeout");
     const auto started = std::chrono::steady_clock::now();
     uint32_t timeout = 0;
     Http2AsyncResult result{};
