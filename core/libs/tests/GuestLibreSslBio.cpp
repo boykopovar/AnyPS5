@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
@@ -544,6 +545,44 @@ void TestUnsupported() {
     Require(BIO_free_nid_postfix(bio) == 1, "free after method errors");
 }
 
+#ifndef ANYPS5_BIO_DYNAMIC
+void TestFileAndSocket() {
+    const BioMethod* fileMethod = BIO_s_file_nid_postfix();
+    Require(fileMethod && fileMethod->type == 0x402, "file BIO method descriptor");
+    Require(BIO_new_fp_nid_postfix(nullptr, 0) == nullptr, "reject null file BIO");
+    std::FILE* native = std::tmpfile();
+    Require(native != nullptr, "open temporary file for BIO");
+    FileStream stream(native);
+    Bio* file = BIO_new_fp_nid_postfix(&stream, 0);
+    Require(file && file->method == fileMethod && file->data == &stream, "file BIO guest stream");
+    Require(file->initialized && BIO_ctrl_nid_postfix(file, 8, 0, nullptr) == 0, "file BIO no-close flag");
+    Require(BIO_write_nid_postfix(file, "abc", 3) == 3, "write guest file through BIO");
+    Require(BIO_ctrl_nid_postfix(file, 11, 0, nullptr) == 1, "flush guest file through BIO");
+    Require(BIO_ctrl_nid_postfix(file, 1, 0, nullptr) == 1, "rewind guest file through BIO");
+    char buffer[8]{};
+    Require(file->method->read(file, buffer, 3) == 3 && std::memcmp(buffer, "abc", 3) == 0, "read guest file through BIO");
+    FileStream* queried = nullptr;
+    Require(BIO_ctrl_nid_postfix(file, 107, 0, &queried) == 1 && queried == &stream, "get guest file pointer");
+    Require(BIO_free_nid_postfix(file) == 1, "free BIO without closing file");
+    Require(fseek_nid_postfix(&stream, 0, SEEK_SET) == 0, "borrowed guest stream remains open");
+    Require(fclose_nid_postfix(&stream) == 0, "close borrowed guest stream");
+
+    std::FILE* ownedNative = std::tmpfile();
+    Require(ownedNative != nullptr, "open owned temporary BIO file");
+    FileStream owned(ownedNative);
+    Bio* ownedBio = BIO_new_fp_nid_postfix(&owned, 1);
+    Require(ownedBio && BIO_ctrl_nid_postfix(ownedBio, 8, 0, nullptr) == 1, "owned guest file BIO");
+    Require(BIO_free_nid_postfix(ownedBio) == 1 && !owned.IsOpen(), "owned BIO closes guest file");
+
+    Require(BIO_new_socket_nid_postfix(-1, 0) == nullptr, "reject negative guest socket");
+    Bio* socket = BIO_new_socket_nid_postfix(42, 0);
+    Require(socket && socket->initialized && socket->number == 42, "guest socket BIO descriptor");
+    Require(socket->method && socket->method->type == 0x405, "socket BIO method descriptor");
+    Require(BIO_ctrl_nid_postfix(socket, 8, 0, nullptr) == 0, "socket BIO no-close flag");
+    Require(BIO_free_nid_postfix(socket) == 1, "free unowned guest socket BIO");
+}
+#endif
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -563,6 +602,9 @@ int main(int argc, char** argv) {
     TestWriteBoundaries();
     TestDispatchAndReferences();
     TestUnsupported();
+#ifndef ANYPS5_BIO_DYNAMIC
+    TestFileAndSocket();
+#endif
     Require(allocations == 0, "BIO tests leaked guest heap storage");
     Require(ERR_get_error_nid_postfix() == 0, "BIO tests left an unexpected error");
 }

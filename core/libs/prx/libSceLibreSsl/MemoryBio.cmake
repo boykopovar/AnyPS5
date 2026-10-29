@@ -1,4 +1,5 @@
-target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/Bio.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/Bio.cpp ${CMAKE_CURRENT_LIST_DIR}/src/BioFileSocket.cpp)
+target_link_libraries(libSceLibreSsl PRIVATE libc libSceNet)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_bio_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslBio.cpp)

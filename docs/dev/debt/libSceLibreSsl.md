@@ -2,6 +2,8 @@
 
 ### Functional
 
+- `BIO_s_file`, `BIO_new_fp` and `BIO_new_socket` extend the guest-ABI-compatible memory BIO implementation from #9536 using guest libc `FileStream` and `libSceNet` descriptors. File and socket BIOs have not been compared against the firmware or exercised on a console. Socket retry flags, socket pending-byte queries and extended file/socket control commands are not implemented; unsupported method controls return 0. File and socket ownership follows the caller's close flag.
+
 - [SSL_select_next_proto](../../../core/libs/prx/libSceLibreSsl/src/ProtocolSelection.cpp) leaves empty lists, zero-length names and truncated encodings unsupported and throws instead of following the reported firmware behavior. Null outputs also throw; their firmware behavior is unmeasured. [Independent firmware 13.42 evidence](https://github.com/boykopovar/AnyPS5/pull/9785#issuecomment-6406712390) reports host-PC execution of `libSceLibreSsl.sprx` at `0xda6d0`, with matching six-argument valid-list selection, status, borrowed pointer and length. That report also observes negotiation of zero-length entries, unchecked fallback lengths and an empty-supported-list read; these paths remain unsupported here. Null outputs and console-hardware behavior remain unmeasured. The author-sourced signature and valid-list contract follow LibreSSL 3.4.1.
 
 ### Unknown function info
