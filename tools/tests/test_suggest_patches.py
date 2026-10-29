@@ -215,6 +215,40 @@ class PatchAdvisorTests(unittest.TestCase):
         self.assertIn("Catalog entry 1 ('loop-target.toml'): rejected", output.getvalue())
         run.assert_called_once()
 
+    def test_resolve_path_reports_symlink_loops(self):
+        first, second = self.root / "loop-first", self.root / "loop-second"
+        try:
+            first.symlink_to(second)
+            second.symlink_to(first)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(str(error))
+        with self.assertRaises(ValueError) as error:
+            suggest_patches.resolve_path(first)
+        self.assertRegex(str(error.exception), r"Symlink loop|Too many levels of symbolic links")
+
+    def test_cli_path_symlink_loops_are_reported_without_traceback(self):
+        first, second = self.root / "loop-first", self.root / "loop-second"
+        try:
+            first.symlink_to(second)
+            second.symlink_to(first)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(str(error))
+        tool = Path(suggest_patches.__file__)
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+        cases = (
+            ("catalog", ["--catalog", str(first), "--relinker", str(self.relinker)]),
+            ("module parent", ["--catalog", str(self.catalog), "--sce-module-path", str(first), "--relinker", str(self.relinker)]),
+        )
+        for label, arguments in cases:
+            with self.subTest(label=label):
+                result = subprocess.run(
+                    [sys.executable, str(tool), *arguments, "--param-json", str(self.param), "--input", str(self.input),
+                     "--module-dir", "Media/Modules"],
+                    capture_output=True, text=True, timeout=30, env=env)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertRegex(result.stderr, r"Symlink loop|Too many levels of symbolic links")
+
     @patch.object(suggest_patches.subprocess, "run")
     def test_relinker_timeout_is_not_a_recommendation(self, run):
         run.side_effect = subprocess.TimeoutExpired([str(self.relinker)], 7)
