@@ -61,7 +61,6 @@ alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
 };
 
-// Position from the buffer at offset 0, the layer from offset 28 into the render target index.
 alignas(256) constexpr std::array<std::uint32_t, 10> LayeredVertexCode{
     0xe0382000, 0x80000005, 0xe030201c, 0x80000405, 0xbf8c3f70, 0xf80000cf, 0x03020100, 0xf80008d4, 0x00040000, 0xbf810000,
 };
@@ -558,7 +557,6 @@ int OverdrawBenchmark() {
     return 0;
 }
 
-// A 2D array of 11_11_10 float slices of side x side texels with a chain of mips levels.
 struct ArrayShape {
     std::uint32_t side;
     std::uint32_t mips;
@@ -584,9 +582,6 @@ AgcDriver::Graphics::ColorTarget DecodeArrayTarget(const Block& block, const Arr
     return color;
 }
 
-// One full-screen triangle per layer of the view (or one triangle, no layer exported), blended into
-// mip `mip` of slices first..first + layers - 1: the drawn mip is whole tile blocks of one texel each, so
-// every word of its covered bytes in each viewed slice is blended and every other word of the array kept.
 void ArrayBlend(AgcDriver::VulkanDevice& device, Block& block, const ArrayShape& shape, std::uint32_t mip, std::uint32_t first, std::uint32_t layers, bool exportsLayer, const Case& draw, std::uint32_t seed, const std::string& what) {
     const auto color = DecodeArrayTarget(block, shape, mip, first, layers);
     const auto surface = AgcDriver::Graphics::ArraySurfaceForTarget(color);

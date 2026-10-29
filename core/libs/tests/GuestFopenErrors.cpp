@@ -7,7 +7,11 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace {
 
@@ -33,7 +37,17 @@ std::filesystem::path EnterFreshRoot() {
         ("anyps5-fopen-errors-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(root / "folder");
     std::filesystem::current_path(root);
+#ifdef _WIN32
+    if (CreateSymbolicLinkW(L"loop", L"loop", SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) == 0) {
+        Check(GetLastError() == ERROR_PRIVILEGE_NOT_HELD);
+        std::fprintf(stderr, "fopen error checks skipped: creating symbolic links needs Developer Mode or administrator rights\n");
+        std::filesystem::current_path(root.parent_path());
+        std::filesystem::remove_all(root);
+        std::exit(77);
+    }
+#else
     Check(::symlink("loop", "loop") == 0);
+#endif
     { std::ofstream file("plain.txt"); file << "plain"; }
     return root;
 }
@@ -123,6 +137,9 @@ int main() {
     CheckedOpen();
     CheckedReopen();
     std::error_code error;
+#ifdef _WIN32
+    DeleteFileW(L"loop");
+#endif
     std::filesystem::current_path(std::filesystem::temp_directory_path(), error);
     std::filesystem::remove_all(root, error);
     return 0;

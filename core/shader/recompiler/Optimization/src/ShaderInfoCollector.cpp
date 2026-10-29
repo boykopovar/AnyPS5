@@ -425,6 +425,7 @@ void CollectBuiltinInputs(const IrProgram& program, ShaderInfo& info) {
                     break;
                 case StageInputKind::BaryCoordSmooth:
                     AddInput(info, StageInputKind::BaryCoordSmooth, 0, 3, "gl_BaryCoordKHR");
+                    if (program.Metadata().barycentricBuiltinsUnnormalized) AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
                     break;
                 case StageInputKind::BaryCoordSmoothCenter:
                 case StageInputKind::BaryCoordSmoothSample:
@@ -563,7 +564,7 @@ void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
     ImageResource image;
     image.source = std::numeric_limits<std::uint32_t>::max();
     image.resourceClass = ImageResourceClass::Storage;
-    image.numericClass = IrTextureNumericClass::Uint;
+    image.numericClass = pixel.mergeBlend.enabled ? IrTextureNumericClass::Float : IrTextureNumericClass::Uint;
     image.dimension = pixel.mergeSamples > 1u ? RdnaImageDimension::Dim2DMsaa : pixel.mergeLayered ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
     image.read = true;
     image.written = true;

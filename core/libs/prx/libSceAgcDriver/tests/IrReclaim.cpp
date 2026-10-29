@@ -83,6 +83,29 @@ int main() {
         assigned = std::move(moved);
         if (value.Id() != id || value.ImmediateU32() != 42u || assigned.ReclaimUnusedValues() != 0u) throw std::runtime_error("move assignment invalidated a live allocation owner");
         if (assigned.CreateValue(IrOpcode::IAdd32, IrType::U32).Id() <= pinned.back()->Id()) throw std::runtime_error("a transferred allocation owner reused a value ID");
+        IrProgram operands;
+        auto& entry = operands.CreateBlock();
+        operands.SetEntryBlock(entry);
+        operands.BlockOrder().push_back(&entry);
+        IrBuilder wideBuilder(operands);
+        wideBuilder.SetInsertionPoint(entry);
+        std::vector<IrValue*> inputs;
+        for (std::uint32_t number = 0; number < 7u; ++number) inputs.push_back(&wideBuilder.Constant(300u + number));
+        auto& wide = wideBuilder.Emit(IrOpcode::ReferenceU32, IrType::Void, {inputs[0]});
+        for (std::size_t index = 1; index < inputs.size(); ++index) wide.AddArgument(inputs[index]);
+        if (wide.ArgumentCount() != inputs.size()) throw std::runtime_error("a value lost operands past its inline storage");
+        for (std::size_t index = 0; index < inputs.size(); ++index) {
+            if (wide.Argument(index) != inputs[index] || inputs[index]->UseCount() != 1u || inputs[index]->OperandUses().front().operand != index) throw std::runtime_error("an operand past the inline storage lost its value or its use");
+        }
+        wide.ReplaceArgument(5, inputs[0]);
+        if (wide.Argument(5) != inputs[0] || inputs[5]->HasUses() || inputs[0]->UseCount() != 2u) throw std::runtime_error("replacing an operand in grown storage left a stale use");
+        auto& detached = operands.CreateValue(IrOpcode::ReferenceU32, IrType::Void);
+        detached.SetDetachedOperands({inputs[1], inputs[2], inputs[3], inputs[4], inputs[6]}, {});
+        if (detached.ArgumentCount() != 5u || detached.Argument(0) != inputs[1] || detached.Argument(4) != inputs[6]) throw std::runtime_error("detached operands past the inline storage were not kept in order");
+        if (operands.ReclaimUnusedValues() != 2u) throw std::runtime_error("an unused value with grown operand storage or its dropped operand was not reclaimed");
+        for (std::size_t index = 0; index < inputs.size(); ++index) {
+            if (wide.Argument(index) != (index == 5u ? inputs[0] : inputs[index])) throw std::runtime_error("reclamation changed a live value's grown operands");
+        }
         std::puts("IR reclamation ownership tests passed");
         return 0;
     } catch (const std::exception& error) {

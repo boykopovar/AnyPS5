@@ -217,6 +217,7 @@ void RequireCaretSteps(const std::vector<Recorded>& events, uint32_t direction, 
 void CheckValidation() {
     Buffers buffers;
     Require(sceImeOpen_nid_postfix(nullptr, nullptr) == InvalidAddress, "null param");
+    Require(sceImeUpdate(nullptr) == InvalidHandler, "null handler");
     auto expect = [&](auto change, int error, const char* message) {
         Param param = MakeParam(buffers, 16);
         change(param);

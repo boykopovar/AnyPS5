@@ -1,4 +1,5 @@
 #include <relinker/guest/GuestImage.hpp>
+#include <relinker/analysis/RelativeJumpTables.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
@@ -243,7 +244,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         if (needed != 1) rejectSharedImport(base, Io::Utf8Path(inputPath));
         const auto found = exports.find(name);
-        if (!windows && found != exports.end()) {
+        const auto declared = windows || executableModules[offset / 24].empty() ? guestNames.end() : findGuest(executableModules[offset / 24]);
+        if (!windows && found != exports.end() && (declared == guestNames.end() || std::any_of(found->second.begin(), found->second.end(), [&](const auto& candidate) { return candidate.Provider == declared->second; }))) {
             rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, name);
             if (executableReferences[offset / 24] && found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
         }
@@ -326,11 +328,12 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     };
     if (!windows) {
         const auto executableExports = macos ? std::set<std::string>{} : ExportedNames(dynamic);
-        for (auto& image : images) {
+        for (std::size_t module = 0; module < images.size(); ++module) {
+            auto& image = images[module];
             for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
                 const auto& symbol = image.Symbols[index];
                 const bool exported = symbol.Section != 0 && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
-                if (((symbol.Section == 0 && !declaresHost(symbol.Library)) || exported) && exports.contains(symbol.Name)) rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, symbol.Name);
+                if (((symbol.Section == 0 && !declaresHost(symbol.Library) && !systemImports[module].contains(index)) || exported) && exports.contains(symbol.Name)) rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, symbol.Name);
             }
             if (!macos) BindNamedImportsByNid(image, executableExports);
         }
@@ -400,14 +403,26 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         if (!image.PatchedRanges.empty()) GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.RelaData = image.Dynamic.RelaData, .RelaPltData = image.Dynamic.RelaPltData});
         const bool sceImage = std::any_of(image.Headers.begin(), image.Headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x61000000; });
-        const auto unwindFunctions = sceImage ? UnusedNidFilter::ReadExceptionFunctions(image.Bytes, image.Headers, {}, {}) : std::vector<UnusedNidFilter::StrictCodeRegion>{};
+        const bool hasEhFrame = sceImage || std::any_of(image.Headers.begin(), image.Headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x6474e550; });
+        const auto unwindFunctions = hasEhFrame ? UnusedNidFilter::ReadExceptionFunctions(image.Bytes, image.Headers, {}, {}) : std::vector<UnusedNidFilter::StrictCodeRegion>{};
+        std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
+        for (const auto& function : unwindFunctions) unwindRanges.emplace_back(function.Begin, function.End);
+        std::sort(unwindRanges.begin(), unwindRanges.end());
         for (const auto& header : codeHeaders) {
             std::vector<std::uint8_t> code(image.Bytes.begin() + header.Offset, image.Bytes.begin() + header.Offset + header.FileSize);
             if (sceImage)
                 if (const auto end = FindSceCodeEnd(code, header.MappedAddress, unwindFunctions, image.Got, image.Dynamic.RelaPltData.size()))
                     code.resize(*end - header.MappedAddress);
-            const auto unwindRanges = sceImage ? SceUnwindRanges(code, header.MappedAddress, unwindFunctions) : std::vector<CodeRange>{};
-            for (const auto offset : syscallScanner.ScanCodeSectionForSyscalls(code, header.MappedAddress, code.size(), Io::Utf8Path(image.SourcePath), unwindRanges)) {
+            auto scanCode = code;
+            for (const auto& table : FindRelativeJumpTables(code, header.MappedAddress, unwindRanges)) {
+                if (table.Begin >= header.MappedAddress && table.End >= table.Begin) {
+                    const auto maskEnd = std::min<std::size_t>(table.End - header.MappedAddress, scanCode.size());
+                    const auto maskBegin = std::min<std::size_t>(table.Begin - header.MappedAddress, maskEnd);
+                    std::fill(scanCode.begin() + static_cast<std::ptrdiff_t>(maskBegin), scanCode.begin() + static_cast<std::ptrdiff_t>(maskEnd), std::uint8_t{0x90});
+                }
+            }
+            const auto scanUnwindRanges = sceImage ? SceUnwindRanges(code, header.MappedAddress, unwindFunctions) : std::vector<CodeRange>{};
+            for (const auto offset : syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges)) {
                 if (offset > code.size() || code.size() - offset < 2u)
                     throw Domain::RelinkerException("Syscall trap patch exceeds guest executable segment", header.MappedAddress + offset);
                 if (!image.PatchedRanges.empty()) {
@@ -476,4 +491,33 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     return artifacts;
 }
 
+
+std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules) {
+    std::map<std::size_t, std::string> sonames;
+    const auto soname = [&](std::size_t index) -> const std::string& {
+        const auto [found, inserted] = sonames.try_emplace(index);
+        if (inserted) found->second = GuestImageReader().Read(modules[index].Path, modules[index].Bytes, true).Soname;
+        return found->second;
+    };
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> skipped;
+    std::vector<bool> copies(modules.size());
+    for (std::size_t copy = 0; copy < modules.size(); ++copy) {
+        const auto& path = modules[copy].Path;
+        const auto name = Io::Utf8Path(path.filename());
+        for (std::size_t original = 0; original < modules.size(); ++original) {
+            const auto& kept = modules[original].Path;
+            const auto prefix = Io::Utf8Path(kept.filename());
+            if (kept.parent_path() != path.parent_path() || prefix.size() >= name.size() || !name.starts_with(prefix)) continue;
+            if (soname(copy).empty() || soname(copy) != soname(original)) continue;
+            copies[copy] = true;
+            skipped.emplace_back(path, kept);
+            break;
+        }
+    }
+    std::vector<GuestModuleInput> remaining;
+    for (std::size_t index = 0; index < modules.size(); ++index)
+        if (!copies[index]) remaining.push_back(std::move(modules[index]));
+    modules = std::move(remaining);
+    return skipped;
+}
 }
