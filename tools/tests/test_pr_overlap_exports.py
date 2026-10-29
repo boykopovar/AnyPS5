@@ -153,6 +153,22 @@ class ExportTests(unittest.TestCase):
         prs = {9: {"added_exports": {new: {"sem_setname"}}, "removed_exports": {old: {"sem_setname"}}}}
         self.assertEqual(pr_overlap.main_export_findings(prs, {old: {"sem_setname"}}), {})
 
+    def test_rewritten_export_does_not_hide_a_new_cross_library_duplicate(self):
+        nid = nid_names.compute_nid("sceKernelRead")
+        original = ("core/libs/prx/libkernel", nid)
+        other = ("core/libs/prx/libSceExample", nid)
+        prs = {9: {"added_exports": {
+            original: {"sceKernelRead_nid_postfix"},
+            other: {"sceKernelRead"}},
+            "removed_exports": {original: {"sceKernelRead_nid_postfix"}}}}
+        main = {original: {"sceKernelRead_nid_postfix"}}
+        self.assertEqual(pr_overlap.main_export_findings(prs, main), {
+            9: {"sceKernelRead": {
+                "same_key": set(),
+                "other_libraries": {"core/libs/prx/libkernel"},
+            }},
+        })
+
     def test_explicit_export_aliases_are_collected_by_library_and_nid(self):
         source = ('int APS5_VABI placeholder_nid_no_patch() {\n'
                   '    NotImplemented_nid_no_patch(__func__);\n'
