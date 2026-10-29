@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCESYSTEMSERVICE_DATETIMELOCALE_HPP
 #define CORE_LIBS_PRX_LIBSCESYSTEMSERVICE_DATETIMELOCALE_HPP
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -122,6 +123,43 @@ inline std::optional<int> TimeFormatOfLdml(std::string_view pattern) {
     });
     if (twelve == twentyFour) return std::nullopt;
     return twelve ? TIME_FORMAT_12HOUR : TIME_FORMAT_24HOUR;
+}
+
+enum class PatternSyntax { Strftime, Ldml };
+
+struct HostPatterns {
+    bool available = false;
+    PatternSyntax syntax = PatternSyntax::Strftime;
+    std::string date;
+    std::string time;
+    std::string source;
+};
+
+using HostPatternSource = std::function<HostPatterns()>;
+using Notice = std::function<void(const std::string&)>;
+
+inline int ResolveHostDateFormat(const HostPatterns& host, const Notice& notice) {
+    const std::string prefix = "ANYPS5_DATE_FORMAT=auto: ";
+    if (!host.available) {
+        notice(prefix + host.source + "; using day, month, year (1)");
+        return DATE_FORMAT_DDMMYYYY;
+    }
+    const auto format = host.syntax == PatternSyntax::Strftime ? DateFormatOfStrftime(host.date) : DateFormatOfLdml(host.date);
+    if (format) return *format;
+    notice(prefix + "the date pattern \"" + host.date + "\" of " + host.source + " has no console date format; using day, month, year (1)");
+    return DATE_FORMAT_DDMMYYYY;
+}
+
+inline int ResolveHostTimeFormat(const HostPatterns& host, const Notice& notice) {
+    const std::string prefix = "ANYPS5_TIME_FORMAT=auto: ";
+    if (!host.available) {
+        notice(prefix + host.source + "; using 24-hour (1)");
+        return TIME_FORMAT_24HOUR;
+    }
+    const auto format = host.syntax == PatternSyntax::Strftime ? TimeFormatOfStrftime(host.time) : TimeFormatOfLdml(host.time);
+    if (format) return *format;
+    notice(prefix + "the time pattern \"" + host.time + "\" of " + host.source + " has no console time format; using 24-hour (1)");
+    return TIME_FORMAT_24HOUR;
 }
 
 }
