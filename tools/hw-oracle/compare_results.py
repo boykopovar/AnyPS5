@@ -14,8 +14,16 @@ def integer(value, minimum, maximum):
 
 
 def read_report(path):
+    def unique_object(pairs):
+        result = {}
+        for name, value in pairs:
+            if name in result:
+                raise ValueError(f"{path}: duplicate JSON field: {name}")
+            result[name] = value
+        return result
+
     try:
-        report = json.loads(path.read_text(encoding="utf-8-sig"))
+        report = json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_object)
     except RecursionError as error:
         raise ValueError(f"{path}: JSON nested too deeply") from error
     if not isinstance(report, dict):

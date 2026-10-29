@@ -52,6 +52,23 @@ class CompareResultsTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
 
+    def test_duplicate_json_fields_are_rejected_at_each_object_level(self):
+        self.before.write_text(json.dumps(self.report), encoding="utf-8")
+        report = json.dumps(self.report)
+        duplicates = (
+            (report.replace('"rows":', '"rows": [{"input": [0, 0, 0, 0], "output": [1, 1]}], "rows":', 1), "rows"),
+            (report.replace('"ieee": 0', '"ieee": 1, "ieee": 0', 1), "ieee"),
+            (report.replace('"output": [0, 2147483648]', '"output": [1, 1], "output": [0, 2147483648]', 1), "output"),
+        )
+        for payload, field in duplicates:
+            with self.subTest(field=field):
+                self.after.write_text(payload, encoding="utf-8")
+                result = self.compare()
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"duplicate JSON field: {field}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
