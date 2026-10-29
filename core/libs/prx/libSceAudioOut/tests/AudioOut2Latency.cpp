@@ -85,6 +85,22 @@ void TestMasteringBeforeInitialize() {
     Require(sceAudioOut2MasteringSetParam(nullptr, 0, 2) == errorNotInitialized, "the AudioOut2 initialization check comes before the parameter checks");
 }
 
+void TestSystemBeforeInitialize() {
+    std::uint32_t loudness[2] = {1, 0};
+    const auto set = [](std::uint32_t id, void* data, std::size_t size) {
+        const AudioOut2SystemDebugStateParam param{id, 0, data, size};
+        return sceAudioOut2SetSystemDebugState(&param);
+    };
+    Require(set(1, loudness, 8) == errorNotInitialized, "a debug state before AudioOut2 initialization is refused");
+    Require(sceAudioOut2SetSystemDebugState(nullptr) == errorNotInitialized, "the AudioOut2 initialization check comes before the null debug state check");
+    Require(set(2, loudness, 8) == errorNotInitialized, "the AudioOut2 initialization check comes before the debug state id check");
+    Require(set(1, loudness, 4) == errorNotInitialized, "the AudioOut2 initialization check comes before the debug state size check");
+    Require(set(0x20, loudness, 4) == errorNotInitialized, "debug state id 0x20 of size 4 before AudioOut2 initialization is refused");
+    Require(set(1, nullptr, 8) == errorNotInitialized, "a loudness debug state without a param before AudioOut2 initialization is refused");
+    Require(sceAudioOut2EnableChat() == errorNotInitialized, "enabling chat before AudioOut2 initialization is refused");
+    Require(sceAudioOut2DisableChat() == errorNotInitialized, "disabling chat before AudioOut2 initialization is refused");
+}
+
 void TestMasteringInit() {
     const AudioOut2MasteringParamsHeader params{1u};
     AudioOut2MasteringStates storage{};
@@ -246,6 +262,7 @@ void TestLowLatencyService() {
 
 int main() {
     TestMasteringBeforeInitialize();
+    TestSystemBeforeInitialize();
     Require(sceAudioOut2Initialize() == 0, "initialization must succeed");
     Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004), "a second AudioOut2 initialization fails");
     Require(sceAudioOutInit() == 0, "the first legacy initialization succeeds after AudioOut2's");
