@@ -255,7 +255,14 @@ void check(const State& state, const Codegen::MulxOperands& operands, std::uint6
         const auto expected = reg == operands.HighDestination ? high : reg == operands.LowDestination ? low : state.Input[reg];
         require(state.Output[reg] == expected, "MULX changed an unrelated register or produced an incorrect result");
     }
-    require((state.Flags & 0x8D5u) == (state.InputFlags & 0x8D5u), "MULX changed arithmetic flags");
+    if ((state.Flags & 0x8D5u) != (state.InputFlags & 0x8D5u)) {
+        std::cerr << "MULX flags: wide=" << operands.Wide << " high=" << unsigned(operands.HighDestination)
+                  << " low=" << unsigned(operands.LowDestination) << " source=" << unsigned(operands.Source)
+                  << " memory=" << operands.Memory.has_value() << " expected=" << std::hex << state.InputFlags
+                  << " actual=" << state.Flags << " multiplicand=" << state.Input[2]
+                  << " operand=" << source << std::dec << '\n';
+        throw std::runtime_error("MULX changed arithmetic flags");
+    }
     for (const auto value : state.RedZone) require(value == Execution::kSentinel, "MULX overwrote the caller's red zone");
 }
 
