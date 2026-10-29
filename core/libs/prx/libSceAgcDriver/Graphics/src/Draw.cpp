@@ -1964,8 +1964,8 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
         writers->push_back(resources);
         GuestMemory::BreakProofs();
     } else if (completion) {
-        if (resources->Reusable()) recorder.OnComplete([resources] { resources->CheckFaults(); }, resources->StoresAtCompletion());
-        else recorder.OnComplete([resources] { resources->WriteBackBuffers(); }, resources->StoresAtCompletion());
+        if (resources->Reusable()) recorder.OnComplete([resources] { resources->CheckFaults(); }, resources->UpdatesGuestStateAtCompletion());
+        else recorder.OnComplete([resources] { resources->WriteBackBuffers(); }, resources->UpdatesGuestStateAtCompletion());
     }
     std::vector<bool> storeNow(residents.size(), false);
     for (std::size_t index = 0; index < residents.size(); ++index) {

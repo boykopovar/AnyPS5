@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -110,11 +111,10 @@ int main() {
                 return VulkanTestSkipped;
             }
             const std::uint32_t value = LabelValue;
+            const bool held = AgcDriver::Graphics::Recorder::PendingGuestStateCompletions() != 0 || AgcDriver::Graphics::Recorder::PendingCompletionStores() != 0;
             const int reason = device->WriteLabelOnGpu(AddressOf(const_cast<std::uint32_t*>(label)), std::as_bytes(std::span(&value, 1)), 1, 0);
-            if (reason != 0) {
-                std::printf("skipped, the label was not recorded on the GPU (reason %d)\n", reason);
-                return VulkanTestSkipped;
-            }
+            Require(reason == (held ? 5 : 0), "the label after the image copy took reason " + std::to_string(reason) + (held ? " while a completion that updates guest state was pending" : " while no completion was pending"));
+            std::printf("the label after the image copy was %s\n", held ? "stored at the reap" : "recorded on the GPU");
             device->SubmitRecorded(true);
         }
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);

@@ -521,7 +521,7 @@ std::atomic<std::uint64_t> publishGeneration{0};
 std::atomic<std::uint64_t> completionLabels{0};
 std::atomic<std::uint64_t> completionStores{0};
 std::atomic<std::uint64_t> writeBackCompletions{0};
-std::atomic<std::uint64_t> guestStoreCompletions{0};
+std::atomic<std::uint64_t> guestStateCompletions{0};
 std::atomic<std::uint64_t> completionStoresSkipped{0};
 std::atomic<std::uint64_t> completionStoresRun{0};
 // Write-backs noted over a tracked label dword (NoteWrittenBack): a CPU store over a GPU label.
@@ -1198,7 +1198,7 @@ Recorder::~Recorder() {
         completionLabels.store(0, std::memory_order_release);
         completionStores.store(0, std::memory_order_release);
         writeBackCompletions.store(0, std::memory_order_release);
-        guestStoreCompletions.store(0, std::memory_order_release);
+        guestStateCompletions.store(0, std::memory_order_release);
         workSinceSubmit.store(0, std::memory_order_release);
     }
     {
@@ -1281,8 +1281,8 @@ std::uint64_t Recorder::PendingWriteBackCompletions() {
     return writeBackCompletions.load(std::memory_order_acquire);
 }
 
-std::uint64_t Recorder::PendingGuestStoreCompletions() {
-    return guestStoreCompletions.load(std::memory_order_acquire);
+std::uint64_t Recorder::PendingGuestStateCompletions() {
+    return guestStateCompletions.load(std::memory_order_acquire);
 }
 
 std::uint64_t Recorder::RecordedWorkSinceSubmit() {
@@ -2971,14 +2971,14 @@ void Recorder::KeepHighestIndex(std::uint64_t address, std::size_t bytes, Snapsh
     }
 }
 
-void Recorder::OnComplete(std::function<void()> action, bool storesGuest) {
+void Recorder::OnComplete(std::function<void()> action, bool updatesGuestState) {
     ensureOpen();
     open->completions.push_back(std::move(action));
     ++open->writeBackCompletionCount;
     writeBackCompletions.fetch_add(1, std::memory_order_acq_rel);
-    if (!storesGuest) return;
-    ++open->guestStoreCompletionCount;
-    guestStoreCompletions.fetch_add(1, std::memory_order_acq_rel);
+    if (!updatesGuestState) return;
+    ++open->guestStateCompletionCount;
+    guestStateCompletions.fetch_add(1, std::memory_order_acq_rel);
 }
 
 bool Recorder::noteWrite(std::uint64_t address, std::size_t bytes, bool ownLabel, int value, std::int64_t word) {
@@ -4138,7 +4138,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
             if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
             if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);
             if (batch->writeBackCompletionCount != 0) writeBackCompletions.fetch_sub(batch->writeBackCompletionCount, std::memory_order_acq_rel);
-            if (batch->guestStoreCompletionCount != 0) guestStoreCompletions.fetch_sub(batch->guestStoreCompletionCount, std::memory_order_acq_rel);
+            if (batch->guestStateCompletionCount != 0) guestStateCompletions.fetch_sub(batch->guestStateCompletionCount, std::memory_order_acq_rel);
             // This also runs while the fence-failure throw unwinds: an allocation failure in the
             // rebuild keeps the previous snapshot, which is a superset (a stale entry only causes a
             // false hit, never a miss) rather than terminating.
@@ -4284,7 +4284,7 @@ void Recorder::discard(std::unique_ptr<Batch> batch) noexcept {
     if (batch->completionLabelCount != 0) completionLabels.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
     if (batch->completionStoreCount != 0) completionStores.fetch_sub(batch->completionStoreCount, std::memory_order_acq_rel);
     if (batch->writeBackCompletionCount != 0) writeBackCompletions.fetch_sub(batch->writeBackCompletionCount, std::memory_order_acq_rel);
-    if (batch->guestStoreCompletionCount != 0) guestStoreCompletions.fetch_sub(batch->guestStoreCompletionCount, std::memory_order_acq_rel);
+    if (batch->guestStateCompletionCount != 0) guestStateCompletions.fetch_sub(batch->guestStateCompletionCount, std::memory_order_acq_rel);
     if (activeRecorder == this) pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
     release(*batch);
     try {
