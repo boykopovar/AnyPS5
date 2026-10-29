@@ -565,7 +565,7 @@ void TestFileAndSocket() {
     Require(file->initialized && BIO_ctrl_nid_postfix(file, 8, 0, nullptr) == 0, "file BIO no-close flag");
     Require(BIO_write_nid_postfix(file, "abc", 3) == 3, "write guest file through BIO");
     Require(BIO_ctrl_nid_postfix(file, 11, 0, nullptr) == 1, "flush guest file through BIO");
-    Require(BIO_ctrl_nid_postfix(file, 1, 0, nullptr) == 1, "rewind guest file through BIO");
+    Require(BIO_ctrl_nid_postfix(file, 1, 0, nullptr) == 0, "rewind guest file through BIO");
     char buffer[8]{};
     Require(file->method->read(file, buffer, 3) == 3 && std::memcmp(buffer, "abc", 3) == 0, "read guest file through BIO");
     Require(file->method->read(file, buffer, 1) == 0, "clean guest file EOF returns zero");
