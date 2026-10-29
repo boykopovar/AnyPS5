@@ -1,4 +1,3 @@
-#include "prx/libSceSaveData/SaveDataCore.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceNpCommon/include/Api.hpp"
@@ -324,6 +323,10 @@ int APS5_VABI sceNpDeleteEventFlag(KernelEventFlag flag) {
 
 int APS5_VABI sceNpOpenEventFlag(KernelEventFlag* flag, const char* name) {
     return NpResult(sceKernelOpenEventFlag(flag, name));
+}
+
+int APS5_VABI sceNpCloseEventFlag(KernelEventFlag flag) {
+    return NpResult(sceKernelCloseEventFlag(flag));
 }
 
 int APS5_VABI sceNpSetEventFlag(KernelEventFlag flag, std::uint64_t pattern) {

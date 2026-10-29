@@ -18,6 +18,29 @@ static void Require(bool condition, const char* message) {
     }
 }
 
+static void CheckRetire() {
+    constexpr int rounds = 20000;
+    std::atomic<std::uintptr_t*> published{nullptr};
+    std::thread poster([&] {
+        for (int round = 0; round < rounds; ++round) {
+            published.wait(nullptr, std::memory_order_acquire);
+            std::uintptr_t* target = published.exchange(nullptr, std::memory_order_acq_rel);
+            Require(sem_post_nid_postfix(target) == 0, "post to a semaphore its waiter destroys must succeed");
+        }
+    });
+    for (int round = 0; round < rounds; ++round) {
+        std::uintptr_t slot = 0;
+        Require(sem_init_nid_postfix(&slot, 0, 0) == 0, "retired semaphore must initialize");
+        published.store(&slot, std::memory_order_release);
+        published.notify_one();
+        for (int spins = 0; sem_trywait_nid_postfix(&slot) != 0; ++spins) {
+            if (spins >= 4096) std::this_thread::yield();
+        }
+        Require(sem_destroy_nid_postfix(&slot) == 0, "semaphore must be destroyable once its count is taken");
+    }
+    poster.join();
+}
+
 int main(int argc, char** argv) {
     constexpr unsigned int maximum = 0x7fffffffu;
     std::uintptr_t sem = 0;
@@ -91,4 +114,5 @@ int main(int argc, char** argv) {
     Require(sem_timedwait_nid_postfix(&sem, &expiredTimeout) == -1 && *__error_nid_postfix() == 60, "blocked expired-timeout wait must report ETIMEDOUT");
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "failed timed waits must preserve the count");
     Require(sem_destroy_nid_postfix(&sem) == 0, "blocked semaphore destroy must succeed");
+    CheckRetire();
 }

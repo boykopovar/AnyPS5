@@ -30,7 +30,10 @@ constexpr int NpOutOfRange = static_cast<int>(0x8055800E);
 constexpr int NpInvalidArgument = static_cast<int>(0x80558009);
 constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
+constexpr int KernelNotPermitted = static_cast<int>(0x80020001);
+constexpr int KernelNoSuchObject = static_cast<int>(0x80020003);
 constexpr std::uint32_t EventFlagWaitAnd = 1;
+constexpr std::uint32_t EventFlagShared = 0x100;
 
 void Require(bool value, const char* message) {
     if (value) return;
@@ -65,6 +68,20 @@ void TestSemaphoresAndFlags() {
     Require(sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a clear event flag reports the busy error");
     Require(sceNpSetEventFlag(flag, 1) == 0 && sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == 0 && result == 1, "a set bit is polled");
     Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
+}
+
+void TestSharedEventFlags() {
+    KernelEventFlag creator {};
+    Require(sceNpCreateEventFlag(&creator, "NpSharedFlag", EventFlagShared, 0) == 0, "a shared event flag is created");
+    KernelEventFlag opened {};
+    Require(sceNpOpenEventFlag(&opened, "NpSharedFlag") == 0 && opened != creator, "the shared event flag is opened by name");
+    std::uint64_t result = 0;
+    Require(sceNpSetEventFlag(opened, 2) == 0 && sceNpPollEventFlag(creator, 2, EventFlagWaitAnd, &result) == 0 && result == 2,
+        "a bit set through the opened handle is polled through the creator");
+    Require(sceNpCloseEventFlag(creator) == KernelNotPermitted, "the creator handle is not closed");
+    Require(sceNpCloseEventFlag(opened) == 0, "the opened handle is closed");
+    Require(sceNpCloseEventFlag(opened) == KernelNoSuchObject, "a closed handle is gone");
+    Require(sceNpDeleteEventFlag(creator) == 0, "the creator deletes the shared event flag");
 }
 
 void TestThreads() {
@@ -242,6 +259,16 @@ void TestJsonText() {
     Require(sceNpUtilJsonEscape(escaped, sizeof(escaped), "yz", 2) == 0 && Equals(escaped, "xyz"), "escaping appends to the buffer");
     Require(sceNpUtilJsonEscape(escaped, 6, "a", 1) == NpUtilBufferTooSmall, "escaping needs room for one escape");
     Require(sceNpUtilJsonEscape(escaped, sizeof(escaped), nullptr, 1) == NpUtilInvalid, "escaping needs a source");
+    struct Guarded {
+        char buffer[16];
+        char canary[16];
+    } guarded{};
+    std::strcpy(guarded.buffer, "0123456789");
+    Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "\n\n\n", 3) == NpUtilBufferTooSmall && guarded.canary[0] == 0,
+        "escaping into a partly filled buffer counts the text already in it");
+    std::memset(guarded.buffer, 'x', sizeof(guarded.buffer));
+    Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "a", 1) == NpUtilBufferTooSmall && guarded.canary[0] == 0,
+        "escaping into a buffer without a terminator is refused");
 
     char text[32] = {};
     std::size_t length = 0;
@@ -254,6 +281,8 @@ void TestJsonText() {
         "a bad unicode escape is copied and reported");
     Require(sceNpUtilJsonUnescape(nullptr, sizeof(text), "abc", 3, &length) == 0 && length == 4, "a null buffer reports the size");
     Require(sceNpUtilJsonUnescape(text, 3, "abc", 3, &length) == NpUtilBufferTooSmall, "unescaping needs room for the terminator");
+    length = 0;
+    Require(sceNpUtilJsonUnescape(nullptr, 0, "abc", 3, &length) == 0 && length == 4, "a size query with no buffer and no size reports the size");
 
     char one[4] = {};
     std::size_t consumed = 0;
@@ -267,6 +296,8 @@ void TestJsonText() {
         "a cut UTF-8 character reports its full length");
     Require(sceNpUtilJsonGetOneChar(one, 1, "\xC3\xA9", 2, &length, &consumed) == NpUtilBufferTooSmall && length == 2,
         "a short buffer still reports the decoded size");
+    Require(sceNpUtilJsonGetOneChar(one, sizeof(one), "\\ud83dXXde00", 12, &length, &consumed) == NpUtilBufferTooSmall,
+        "a high surrogate without a second unicode escape is not combined");
 
     const char* character = nullptr;
     const char* japanese = "\xE6\x97\xA5" "a";
@@ -400,6 +431,7 @@ void TestHexAndCopies() {
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
+    TestSharedEventFlags();
     TestThreads();
     TestHeaps();
     TestBase64();

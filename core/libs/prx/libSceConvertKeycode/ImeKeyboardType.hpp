@@ -35,7 +35,7 @@ constexpr std::uint32_t LookUp(std::int32_t keyboardType, std::int32_t japaneseV
         constexpr std::uint32_t traditionalChinese[] = {26, 27, 28, 29, 39};
         return traditionalChineseVariant >= 0 && traditionalChineseVariant < 5 ? traditionalChinese[traditionalChineseVariant] : 0;
     }
-    const std::int32_t index = keyboardType - kFirstMappedType;
+    const std::int64_t index = std::int64_t{keyboardType} - kFirstMappedType;
     return index >= 0 && index < kMappedTypeCount ? kImeTypeByKeyboardType[index] : 0;
 }
 

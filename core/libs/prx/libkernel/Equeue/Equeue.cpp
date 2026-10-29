@@ -167,9 +167,28 @@ void KernelEqueuePrivate::MeasureFiles(std::unique_lock<std::mutex>& lock) {
     if (files.empty()) {
         return;
     }
-    lock.unlock();
     std::vector<UnreadFile> measured;
     measured.reserve(files.size());
+    m_measuring.reserve(m_measuring.size() + files.size());
+    struct Measuring {
+        KernelEqueuePrivate& queue;
+        std::unique_lock<std::mutex>& lock;
+        const std::vector<std::pair<int, std::shared_ptr<void>>>& files;
+        ~Measuring() {
+            if (!lock.owns_lock()) {
+                lock.lock();
+            }
+            for (const auto& [file, owner] : files) {
+                queue.m_measuring.erase(std::find(queue.m_measuring.begin(), queue.m_measuring.end(), file));
+            }
+            queue.m_measured.notify_all();
+        }
+    };
+    for (const auto& [file, owner] : files) {
+        m_measuring.push_back(file);
+    }
+    const Measuring measuring{*this, lock, files};
+    lock.unlock();
     for (const auto& [file, owner] : files) {
         measured.push_back(UnreadFileBytes(file));
     }
@@ -287,6 +306,10 @@ int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
         while (e.triggered && ret < num) {
             ev[ret++] = e.event;
             if ((e.event.flags & EV_ONESHOT) != 0) {
+                if (e.filter.deleteEventFunc != nullptr) {
+                    auto owner = e.filter.owner;
+                    e.filter.deleteEventFunc(m_handle, &e);
+                }
                 erase = true;
                 break;
             }
@@ -354,9 +377,7 @@ int KernelEqueuePrivate::CollectOncePerWait(KernelEvent* ev, int num) {
             e.event.data = 0;
         }
         const auto next = std::next(it);
-        if (e.triggered) {
-            requeued.splice(requeued.end(), m_events, it);
-        }
+        requeued.splice(requeued.end(), m_events, it);
         it = next;
     }
     m_events.splice(m_events.end(), requeued);
@@ -578,6 +599,14 @@ void KernelEqueuePrivate::RemoveDescriptorEvents(uintptr_t ident) {
         removed = true;
     }
     if (removed) {
+        WakePollers();
+    }
+    m_measured.wait(lock, [&] { return std::find(m_measuring.begin(), m_measuring.end(), static_cast<int>(ident)) == m_measuring.end(); });
+}
+
+void KernelEqueuePrivate::WakeReadWaiters(uintptr_t ident) {
+    std::unique_lock lock(m_mutex);
+    if (std::any_of(m_events.begin(), m_events.end(), [ident](const KernelEqueueEvent& event) { return event.event.ident == ident && event.event.filter == EVFILT_READ; })) {
         WakePollers();
     }
 }
@@ -881,8 +910,26 @@ KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t
     return event;
 }
 
+static std::mutex g_closeObserverMutex;
+static std::vector<void (*)(int)> g_closeObservers;
+
+extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor)) {
+    std::lock_guard lock(g_closeObserverMutex);
+    g_closeObservers.push_back(observer);
+}
+
+static void NotifyDescriptorCloseObservers(int descriptor) {
+    std::vector<void (*)(int)> observers;
+    {
+        std::lock_guard lock(g_closeObserverMutex);
+        observers = g_closeObservers;
+    }
+    for (const auto observer : observers) observer(descriptor);
+}
+
 void EqueueDescriptorClosed(int descriptor) {
     KqueueDescriptorClosed(descriptor);
+    NotifyDescriptorCloseObservers(descriptor);
     std::vector<KernelEqueueRef> owners;
     {
         std::unique_lock lock(g_equeueMutex);
@@ -892,5 +939,19 @@ void EqueueDescriptorClosed(int descriptor) {
     }
     for (const auto& owner : owners) {
         owner->RemoveDescriptorEvents(static_cast<uintptr_t>(descriptor));
+    }
+}
+
+void EqueueDescriptorReadShut(int descriptor) {
+    KqueueDescriptorReadShut(descriptor);
+    std::vector<KernelEqueueRef> owners;
+    {
+        std::unique_lock lock(g_equeueMutex);
+        for (const auto& [handle, owner] : g_equeues) {
+            owners.push_back(owner);
+        }
+    }
+    for (const auto& owner : owners) {
+        owner->WakeReadWaiters(static_cast<uintptr_t>(descriptor));
     }
 }

@@ -189,6 +189,8 @@ void CheckQueue() {
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, nullptr) == INVALID_PARAMETER, "both outputs null");
     std::uint32_t available = 0;
     Require(sceAudio3dPortGetQueueLevel(0, nullptr, &available) == 0 && available == 2, "level pointer is optional");
+    std::uint32_t level = 99;
+    Require(sceAudio3dPortGetQueueLevel(0, &level, nullptr) == 0 && level == 0, "available pointer is optional");
     RequireLevel(0, 2, "empty queue");
     Require(sceAudio3dPortPush(0, 1) == 0, "push of an empty queue");
     RequireLevel(0, 2, "empty push queues nothing");

@@ -2,7 +2,7 @@
 
 `tools/hw-oracle/` runs a few lines of RDNA assembly on a local AMD GPU, one input row per lane, and returns what the
 hardware computed. Use it to settle instruction semantics that the ISA documentation, LLVM or Mesa leave open, then pin the
-measured rows as expected values in `tests/execution/`.
+measured rows as expected values in `core/libs/prx/libSceAgcDriver/tests/execution/`.
 
 The PS5 GPU is gfx1013. Other RDNA2 GPUs (gfx103x) share the VALU, SALU, DS, MUBUF and MIMG encodings, apart from ops that
 exist only on gfx10.1 (`v_mad_legacy_f32`, `v_mac_legacy_f32`, `v_mul_lo_i32`, `s_dcache_discard`, ...). RDNA3 also runs
@@ -24,7 +24,7 @@ from the GPU (`HW_ORACLE_TARGET` overrides it).
 
 ### Windows
 
-- AMD's Windows driver, which installs the HIP runtime (`amdhip64_6.dll`) and the code object manager (`amd_comgr_2.dll`)
+- AMD's Windows driver, which installs the HIP runtime (`amdhip64_7.dll`, `amdhip64_6.dll` or `amdhip64.dll`) and the code object manager (`amd_comgr_3.dll`, `amd_comgr_2.dll` or `amd_comgr.dll`)
   in `System32`. ROCm, a C compiler, `clang` and `ld.lld` are not needed.
 - Python 3 from python.org or the Microsoft Store.
 

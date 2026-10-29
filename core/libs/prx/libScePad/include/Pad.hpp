@@ -29,6 +29,7 @@ constexpr int PAD_DEVICE_TYPE_DUAL_SHOCK_4 = 2;
 constexpr int PAD_DEVICE_TYPE_DUAL_SENSE = 3;
 constexpr int PAD_DEVICE_TYPE_DUAL_SENSE_EDGE = 4;
 
+constexpr int PAD_CONTROLLER_TYPE_UNKNOWN = 0;
 constexpr int PAD_CONTROLLER_TYPE_DUAL_SENSE = 2;
 
 constexpr int PAD_CONNECT_TYPE_UNREGISTERED = 0;

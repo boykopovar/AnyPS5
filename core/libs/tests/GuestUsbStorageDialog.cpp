@@ -45,8 +45,10 @@ int main() {
     result.result = kErrBusy;
 
     Require(sceUsbStorageDialogTerminate() == kErrNotInitialized);
+    Require(sceUsbStorageDialogOpen(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogOpen(&param) == kErrNotInitialized);
     Require(sceUsbStorageDialogClose() == kErrNotInitialized);
+    Require(sceUsbStorageDialogGetResult(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogGetResult(&result) == kErrNotInitialized);
     Require(sceUsbStorageDialogGetStatus() == kStatusNone);
     Require(sceUsbStorageDialogUpdateStatus() == kStatusNone);
@@ -92,6 +94,8 @@ int main() {
     Require(sceUsbStorageDialogClose() == kErrNotRunning);
     Require(sceUsbStorageDialogTerminate() == 0);
     Require(sceUsbStorageDialogTerminate() == kErrNotInitialized);
+    Require(sceUsbStorageDialogOpen(nullptr) == kErrArgNull);
+    Require(sceUsbStorageDialogGetResult(nullptr) == kErrArgNull);
     Require(sceUsbStorageDialogGetStatus() == kStatusNone);
 
     Require(sceUsbStorageDialogInitialize() == 0);

@@ -16,5 +16,8 @@ extern "C" void* APS5_VABI fdopendir_nid_postfix(int fd) {
         *__error_nid_postfix() = error == EBADF ? 9 : 20;
         return nullptr;
     }
-    return OpenDescriptorDirectory_nid_no_patch(path, fd, close_nid_postfix, GetDirectoryDescriptorPosition_nid_no_patch(fd));
+    const bool virtualDirectory = IsDirectoryDescriptor_nid_no_patch(fd) != 0;
+    return OpenDescriptorDirectory_nid_no_patch(path, fd, close_nid_postfix, GetDirectoryDescriptorPosition_nid_no_patch(fd),
+        virtualDirectory ? ReadDirectoryDescriptorCallback_nid_no_patch : nullptr,
+        virtualDirectory ? SeekDirectoryDescriptorCallback_nid_no_patch : nullptr);
 }
