@@ -101,27 +101,31 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
         errno = 22;
         return -1;
     }
+    if (const char16_t low = stream->TakeLowSurrogate(); low != 0) return low;
+    stream->NoteWideRead();
+    const auto invalid = [stream] {
+        errno = 86;
+        stream->SetError();
+        return -1;
+    };
     const int first = fgetc_nid_postfix(stream);
     if (first == -1) return -1;
     const unsigned char lead = static_cast<unsigned char>(first);
     if (lead < 0x80) return lead;
-    const std::size_t extra = lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
-    if (extra == 0) {
-        errno = 86;
-        stream->SetError();
-        return -1;
-    }
+    const std::size_t extra = lead >= 0xf8 ? 0 : lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
+    if (extra == 0) return invalid();
     std::uint32_t code = extra == 3 ? (lead & 0x07) : extra == 2 ? (lead & 0x0f) : (lead & 0x1f);
     for (std::size_t index = 0; index < extra; ++index) {
         const int next = fgetc_nid_postfix(stream);
-        if (next == -1 || (static_cast<unsigned char>(next) & 0xc0) != 0x80) {
-            errno = 86;
-            stream->SetError();
-            return -1;
-        }
+        if (next == -1 || (static_cast<unsigned char>(next) & 0xc0) != 0x80) return invalid();
         code = (code << 6) | (static_cast<unsigned char>(next) & 0x3f);
     }
-    return static_cast<std::int32_t>(code);
+    constexpr std::uint32_t smallest[] = {0, 0x80, 0x800, 0x10000};
+    if (code < smallest[extra] || code > 0x10ffff) return invalid();
+    if (code < 0x10000) return static_cast<std::int32_t>(code);
+    code -= 0x10000;
+    stream->SetLowSurrogate(static_cast<char16_t>(0xdc00 | (code & 0x3ff)));
+    return static_cast<std::int32_t>(0xd800 | (code >> 10));
 }
 
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
@@ -136,6 +140,7 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
     if (!stream->SwitchToReading()) return -1;
     const int result = std::ungetc(value, native);
     stream->SyncStatus();
+    if (result != -1) stream->NotePushback();
     return result;
 }
 int APS5_VABI getc_nid_postfix(FileStream* stream) { return fgetc_nid_postfix(stream); }

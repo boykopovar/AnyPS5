@@ -166,6 +166,21 @@ inline constexpr std::uint32_t One = 3u;
 
 }
 
+struct TargetBlend {
+    bool enabled = false;
+    bool snorm = false;
+    std::uint8_t colorSource = 0;
+    std::uint8_t colorDestination = 0;
+    std::uint8_t colorOperation = 0;
+    std::uint8_t alphaSource = 0;
+    std::uint8_t alphaDestination = 0;
+    std::uint8_t alphaOperation = 0;
+    std::uint8_t writeMask = 0;
+    std::array<std::uint32_t, 4> constants{};
+
+    bool operator==(const TargetBlend&) const = default;
+};
+
 struct TargetMerge {
     std::uint8_t target = 0;
     std::uint16_t mask = 0;
@@ -173,6 +188,7 @@ struct TargetMerge {
     std::array<std::uint32_t, 8> descriptor{};
     bool depthStencilWrites = false;
     bool depthStencilTests = false;
+    TargetBlend blend{};
 
     bool operator==(const TargetMerge&) const = default;
 };

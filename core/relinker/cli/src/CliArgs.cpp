@@ -140,11 +140,11 @@ Args ParseArgs(int argc, char* argv[]) {
             args.sceModulePath = argv[++i];
             sceModulePathSpecified = true;
         } else if (arg == "--exclude-sce-module") {
-            if (i + 1 >= argc)
+            if (i + 1 >= argc || std::string_view(argv[i + 1]).empty())
                 throw std::runtime_error("--exclude-sce-module requires a file name");
             args.excludedSceModules.insert(argv[++i]);
         } else if (arg == "--module-dir") {
-            if (i + 1 >= argc)
+            if (i + 1 >= argc || std::string_view(argv[i + 1]).empty())
                 throw std::runtime_error("--module-dir requires a directory");
             args.moduleDirectories.push_back(argv[++i]);
         } else if (arg == "--executable") {

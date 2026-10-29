@@ -173,6 +173,14 @@ struct FloatSpec {
     int precision = -1;
 };
 
+inline std::string ApplicableLength(const std::string& length, char conversion) {
+    if (std::strchr("diouxXn", conversion)) return length == "L" ? std::string() : length;
+    if (std::strchr("aAeEfFgG", conversion)) return length == "L" ? length : std::string();
+    if (conversion == 'c' || conversion == 's') return length == "l" ? length : std::string();
+    if (conversion == 'p') return std::string();
+    return length;
+}
+
 inline FloatSpec ParseFloatSpec(const std::string& spec) {
     FloatSpec result;
     std::size_t index = 1;
@@ -627,6 +635,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(PaddedStringSpec(spec), conversion == '%' ? "%" : text);
             continue;
         }
+        if (!secure) length = ApplicableLength(length, conversion);
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
         if (conversion == 'd' || conversion == 'i') {

@@ -20,6 +20,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/SandboxCertificates.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Stdio.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libc/src/Rename.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/SyncOnAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp
@@ -69,6 +70,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Process.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sandbox.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostCpu.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MimallocMacOs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SystemConfiguration.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Login.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Getlogin.cpp
@@ -1560,6 +1562,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_system_configuration PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    if(APPLE AND TARGET mimalloc)
+        add_test_executable(mimalloc_restart_tests ${LIBS_INCLUDE_DIR}/tests/MimallocRestart.cpp)
+        target_link_libraries(mimalloc_restart_tests PRIVATE libkernel libc)
+        add_custom_command(TARGET mimalloc_restart_tests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> $<TARGET_FILE_DIR:libkernel>/libmimalloc.dylib)
+        add_test(NAME mimalloc_restart_off COMMAND mimalloc_restart_tests off)
+        set_tests_properties(mimalloc_restart_off PROPERTIES ENVIRONMENT_MODIFICATION "APS5_MIMALLOC=unset:")
+        add_test(NAME mimalloc_restart_on COMMAND mimalloc_restart_tests on)
+        set_tests_properties(mimalloc_restart_on PROPERTIES ENVIRONMENT "APS5_MIMALLOC=1")
+        add_test(NAME mimalloc_restart_once COMMAND mimalloc_restart_tests once)
+        set_tests_properties(mimalloc_restart_once PROPERTIES ENVIRONMENT "APS5_MIMALLOC=1;APS5_MIMALLOC_RESTARTED=1")
+    endif()
     add_test_executable(guest_software_version_tests ${LIBS_INCLUDE_DIR}/tests/GuestSoftwareVersion.cpp)
     target_include_directories(guest_software_version_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_software_version_tests PRIVATE libkernel libc)
@@ -1752,9 +1766,11 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_kqueue_tests)
     add_test(NAME guest_kqueue COMMAND guest_kqueue_tests)
     set_tests_properties(guest_kqueue PROPERTIES TIMEOUT 20)
+    add_test(NAME guest_kqueue_cleared_race COMMAND guest_kqueue_tests cleared-race)
+    set_tests_properties(guest_kqueue_cleared_race PROPERTIES TIMEOUT 30)
     if(WIN32)
         target_link_libraries(guest_kqueue_tests PRIVATE advapi32)
-        set_tests_properties(guest_kqueue PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_kqueue guest_kqueue_cleared_race PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_socket_descriptors_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketDescriptors.cpp)

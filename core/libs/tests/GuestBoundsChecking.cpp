@@ -80,6 +80,9 @@ void CheckBsearch() {
     before = constraintCalls;
     Require(bsearch_s_nid_postfix(&key, values, 0, tooLarge, CompareInts, &calls) == nullptr, "bsearch_s accepted an oversized element");
     RequireViolation(before, "bsearch_s: bad argument", 22);
+    before = constraintCalls;
+    Require(bsearch_s_nid_postfix(&key, values, 7, 0, CompareInts, &calls) == nullptr, "bsearch_s accepted a zero element size");
+    RequireViolation(before, "bsearch_s: bad argument", 22);
 }
 
 void CheckWcstok() {

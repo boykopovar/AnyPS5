@@ -24,10 +24,15 @@
 #include <span>
 #include <string>
 
+static int SkipCode(bool required) {
+    if (required) std::printf("required lane: the skip above is a failure, the nonzero-lead CPU publish was not exercised\n");
+    return required ? 1 : VulkanTestSkipped;
+}
+
 #ifdef _WIN32
-int main() {
+int main(int argc, char** argv) {
     std::printf("skipped, udmabuf imports are Linux only\n");
-    return VulkanTestSkipped;
+    return SkipCode(argc > 1 && std::string(argv[1]) == "--require-cpu-lead");
 }
 #else
 namespace AgcDriver {
@@ -77,11 +82,6 @@ bool DmaBufImport(const AgcDriver::VulkanDevice& device, std::uint64_t address, 
     return import != nullptr && import->dmaBuf;
 }
 
-}
-
-static int SkipCode(bool required) {
-    if (required) std::printf("required lane: the skip above is a failure, the nonzero-lead CPU publish was not exercised\n");
-    return required ? 1 : VulkanTestSkipped;
 }
 
 int main(int argc, char** argv) {
