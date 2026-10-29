@@ -16,6 +16,18 @@ bool MouseIsOpen_nid_no_patch();
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+struct AbsoluteRecord {
+    std::uint64_t timestamp;
+    std::uint8_t connected;
+    std::uint8_t padding[3];
+    std::uint32_t buttons;
+    std::uint16_t x;
+    std::uint16_t y;
+    std::int32_t wheel;
+    std::int32_t tilt;
+    std::uint8_t reserved[12];
+};
+
 int main() {
     MouseData data[64]{};
     Require(!MouseIsOpen_nid_no_patch());
@@ -195,4 +207,22 @@ int main() {
     Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK);
     Require(!MouseIsOpen_nid_no_patch());
     Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 959, 539) == MOUSE_ERROR_INVALID_HANDLE);
+
+    using ReadAbsolute = int (APS5_VABI*)(std::int32_t, AbsoluteRecord*, std::int32_t);
+    const auto readAbsolute = reinterpret_cast<ReadAbsolute>(reinterpret_cast<void (*)()>(&sceMouseReadAbsolutePosition));
+    AbsoluteRecord absolute[MOUSE_MAX_DATA_NUM]{};
+    Require(sceMouseOpen(1, 0, 0, nullptr) == MOUSE_HANDLE);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 64) == 1);
+    Require(readAbsolute(MOUSE_HANDLE, absolute, MOUSE_MAX_DATA_NUM) == 1);
+    Require(sceMouseResetAbsolutePosition(MOUSE_HANDLE, 100, 100) == MOUSE_OK);
+    input.SetPresentation(3840, 2160, 1920, 1080);
+    event = {};
+    event.type = SDL_MOUSEMOTION;
+    event.motion.windowID = 7;
+    event.motion.xrel = 10;
+    event.motion.yrel = 5;
+    input.HandleEvent(event, 7);
+    Require(sceMouseRead(MOUSE_HANDLE, data, 1) == 1 && data[0].x_axis == 20 && data[0].y_axis == 10);
+    Require(readAbsolute(MOUSE_HANDLE, absolute, 1) == 1 && absolute[0].x == 110 && absolute[0].y == 105);
+    Require(sceMouseClose(MOUSE_HANDLE) == MOUSE_OK);
 }

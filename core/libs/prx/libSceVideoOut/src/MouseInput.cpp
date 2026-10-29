@@ -13,6 +13,8 @@ void MouseInput::HandleEvent(const SDL_Event& event, unsigned windowId) {
             if (event.motion.windowID != windowId || !focused) return;
             input.x = scaled(event.motion.xrel, scaleX, remainderX);
             input.y = scaled(event.motion.yrel, scaleY, remainderY);
+            input.countsX = event.motion.xrel;
+            input.countsY = event.motion.yrel;
             break;
         case SDL_MOUSEBUTTONDOWN:
         case SDL_MOUSEBUTTONUP:

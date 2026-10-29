@@ -8,6 +8,18 @@ set_target_properties(libSceMouse PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceMouse)
 
 if(BUILD_TESTING)
+    add_test_executable(mouse_absolute_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/MouseAbsolute.cpp)
+    target_include_directories(mouse_absolute_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(mouse_absolute_tests PRIVATE libSceMouse libkernel libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(mouse_absolute_tests)
+    add_test(NAME mouse_absolute_position COMMAND mouse_absolute_tests)
+    if(WIN32)
+        set_tests_properties(mouse_absolute_position PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMouse>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
     add_test_executable(mouse_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/Mouse.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/MouseInput.cpp
