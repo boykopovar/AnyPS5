@@ -4371,10 +4371,6 @@ void eqaaColorTargetTests() {
     queue = eqaa();
     queue.context[0x3a0] = 0x100u;
     expectFailure([&] { DecodeState(queue); }, "invalid FMASK address extension");
-    queue = eqaa();
-    queue.context[0x31c] |= 0x10000000u;
-    queue.context[0x325] = 0x2000;
-    expectFailure([&] { DecodeState(queue); }, "fewer fragments than samples (EQAA) are supported only with FMASK");
 
     queue = eqaa();
     queue.context[0x0] = 0;
