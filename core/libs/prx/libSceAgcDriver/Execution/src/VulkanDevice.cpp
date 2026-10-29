@@ -4283,6 +4283,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.partiallyBound = state->descriptorBindingPartiallyBound;
     context.variableDescriptorCount = state->descriptorBindingVariableDescriptorCount;
     context.sampledImageUpdateAfterBind = state->sampledImageUpdateAfterBind;
+    context.storageBufferUpdateAfterBind = state->storageBufferUpdateAfterBind;
     context.imageTableCapacity = ImageTableCapacity(context);
     context.samplerTableCapacity = SamplerTableCapacity(context);
     context.imageTableUpdateAfterBind = ImageTableUpdateAfterBind(context);
