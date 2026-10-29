@@ -108,7 +108,7 @@ void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
         state.module.AddFunction(spv::OpLoad, TypeU32(state), expected, pointer);
         EmitKillIfBoolFalse(state, Binary(state, spv::OpIEqual, TypeBool(state), masked, expected));
     }
-    state.module.AddFunction(spv::OpReturn);
+    EmitReturnReleasingScratch(state);
 }
 
 // The loop guard (see SpirvEmitterState::loopGuardLimit) at a branch that may leave a loop: counts the

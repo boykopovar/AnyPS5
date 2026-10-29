@@ -338,7 +338,10 @@ void DefineModule(SpirvEmitterState& state) {
     if (state.requirements.functionLds && !state.pixelFunctionLdsBuffer) {
         state.ldsVariable = state.module.AllocateId();
     }
-    if (state.requirements.functionScratch) {
+    if (ScratchPoolActive(state)) {
+        state.scratchPoolCandidateVariable = state.module.AllocateId();
+        state.scratchPoolWonVariable = state.module.AllocateId();
+    } else if (state.requirements.functionScratch) {
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.scratchVariable.at(half) = state.module.AllocateId();
         }
@@ -538,7 +541,10 @@ void DefineModule(SpirvEmitterState& state) {
     if (state.requirements.functionLds && !state.pixelFunctionLdsBuffer) {
         state.module.AddName(state.ldsVariable, "lds_dwords");
     }
-    if (state.requirements.functionScratch) {
+    if (ScratchPoolActive(state)) {
+        state.module.AddName(state.scratchPoolCandidateVariable, "scratch_pool_candidate");
+        state.module.AddName(state.scratchPoolWonVariable, "scratch_pool_won");
+    } else if (state.requirements.functionScratch) {
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
             state.module.AddName(state.scratchVariable.at(half), "scratch_dwords");
         }
