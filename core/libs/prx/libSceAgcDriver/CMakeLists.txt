@@ -3685,7 +3685,7 @@ if(BUILD_TESTING)
             set_tests_properties(agc_driver_frame_replay_concurrent agc_driver_frame_replay_rewind PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
-        foreach(mode IN ITEMS rewind_store rewind_copy rewind_compute rewind_release rewind_fill rewind_split wait_label gpu_store gpu_fill gpu_cleared fence_reuse busy_queue)
+        foreach(mode IN ITEMS rewind_store rewind_copy rewind_compute rewind_release rewind_fill rewind_split wait_label gpu_store gpu_fill gpu_restore_cached unwatched_start unwatched_late unwatched_shared gpu_cleared fence_reuse busy_queue)
             add_test(NAME agc_driver_frame_replay_${mode} COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> ${mode})
             set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES
                     ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-${mode}-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=2"

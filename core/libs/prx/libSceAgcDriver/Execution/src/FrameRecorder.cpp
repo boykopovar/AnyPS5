@@ -324,7 +324,7 @@ bool FrameRecorder::triggered() {
 void FrameRecorder::emitDelta() {
     std::vector<Span> spans;
     for (const auto& range : ranges) {
-        if (range.kind == FrameRangeKind::Watched || range.kind == FrameRangeKind::Unwatched) spans.push_back({range.address, range.bytes, generation});
+        if (range.readable && ((range.access & FrameRangeAccess::Writable) != 0 || range.kind == FrameRangeKind::Watched || range.kind == FrameRangeKind::Unwatched)) spans.push_back({range.address, range.bytes, generation});
     }
     const auto mark = GuestMemory::WriteGeneration();
     const auto added = newRanges();
@@ -405,24 +405,33 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
 
 void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added) {
     if (abandonIfDiskLow()) return;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
-    for (const auto& span : spans) {
-        GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written);
-        blocks.insert(blocks.end(), written.begin(), written.end());
-    }
     auto& driver = DriverDetail::Driver::Get();
     const struct Hold {
         DriverDetail::Driver& driver;
         ~Hold() { driver.ReleaseSettled(); }
     } hold{driver};
     auto [accepted, completed] = driver.SerialProgress();
-    if (completed < accepted && (!added.empty() || !blocks.empty())) {
+    if (completed < accepted && (!added.empty() || !spans.empty() || !hostPages.empty())) {
         if (!driver.WaitSettledFor(std::chrono::seconds(10))) {
             stop("stopped: the GPU work submitted before a memory delta neither finished nor waited for the title within 10 s");
             return;
         }
         std::tie(accepted, completed) = driver.SerialProgress();
+    }
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    for (const auto& span : spans) {
+        for (std::uint64_t offset = 0; offset < span.bytes;) {
+            const auto at = span.address + offset;
+            const auto bytes = static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, span.bytes - offset));
+            if (GuestMemory::Watched(at, bytes)) {
+                GuestMemory::CollectWrittenBlocks(at, bytes, span.since, written);
+                blocks.insert(blocks.end(), written.begin(), written.end());
+            } else {
+                blocks.emplace_back(at, at + bytes);
+            }
+            offset += bytes;
+        }
     }
     const auto group = deltaGroups + 1;
     bool any = false;
@@ -466,6 +475,17 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));
         readGuest(begin, bytes);
+        if (!GuestMemory::Watched(begin, bytes.size())) {
+            const auto key = std::pair{begin, static_cast<std::uint64_t>(bytes.size())};
+            if (accepted == completed) {
+                const auto sample = std::pair{contentHash(bytes), accepted};
+                const auto found = unwatchedHashes.find(key);
+                if (found != unwatchedHashes.end() && found->second == sample) continue;
+                unwatchedHashes[key] = sample;
+            } else {
+                unwatchedHashes.erase(key);
+            }
+        }
         writeTitleWords(begin);
     }
     if (!any) return;
