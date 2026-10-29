@@ -381,11 +381,12 @@ int FillModuleInfo(KernelModule handle, TInfo* info, bool titleOnly) {
 }
 
 int FillModuleList(KernelModule* handles, std::size_t count, std::size_t* actual, bool titleOnly) {
-    if (!handles || !actual) return SCE_KERNEL_ERROR_EFAULT;
+    if (!handles) return SCE_KERNEL_ERROR_EFAULT;
     auto images = GuestImages();
     if (titleOnly) std::erase_if(images, SystemImage);
     for (std::size_t i = 0; i < images.size() && i < count; ++i) handles[i] = ModuleIdForImage_nid_no_patch(images[i].native);
     if (images.size() > count) return SCE_KERNEL_ERROR_ENOMEM;
+    if (!actual) return SCE_KERNEL_ERROR_EFAULT;
     *actual = images.size();
     return 0;
 }

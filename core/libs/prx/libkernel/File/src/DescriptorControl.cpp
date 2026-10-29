@@ -45,6 +45,7 @@ constexpr int GuestEfault = 14;
 constexpr int GuestEinval = 22;
 constexpr int GuestEnotty = 25;
 constexpr int GuestEagain = 35;
+constexpr int GuestEopnotsupp = 45;
 constexpr int GuestEnolck = 77;
 constexpr int GuestEoverflow = 84;
 
@@ -400,6 +401,7 @@ void SetCloseOnExec(int fd, bool value) {
 }
 
 int RecordLock(int fd, int command, std::intptr_t argument) {
+    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const bool old = command <= OldSetLockWait;
     const int current = old ? command + (GetLock - OldGetLock) : command;
     const std::size_t size = old ? OldGuestLockSize : sizeof(GuestLock);
@@ -488,21 +490,20 @@ FcntlArgument FcntlArgumentOf(int command) {
 
 int Fcntl(int fd, int command, std::intptr_t argument) {
     switch (command) {
-        case DuplicateCommand:
-        case DuplicateCloseOnExec: {
+        case DuplicateCommand: {
             if (fd < 0) return Fail(GuestEbadf);
             if (static_cast<int>(argument) < 0) return Fail(GuestEinval);
             if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
-            const int duplicate = DuplicateFrom(fd, static_cast<int>(argument));
-            if (duplicate >= 0 && command == DuplicateCloseOnExec) SetCloseOnExec(duplicate, true);
-            return duplicate;
+            return DuplicateFrom(fd, static_cast<int>(argument));
         }
+        case DuplicateCloseOnExec:
+            if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
+            return Fail(GuestEopnotsupp);
         case DuplicateToCommand:
-        case DuplicateToCloseOnExec: {
-            const int duplicate = dup2_nid_postfix(fd, static_cast<int>(argument));
-            if (duplicate >= 0 && command == DuplicateToCloseOnExec) SetCloseOnExec(duplicate, true);
-            return duplicate;
-        }
+            return dup2_nid_postfix(fd, static_cast<int>(argument));
+        case DuplicateToCloseOnExec:
+            if (fd < 0 || !Classify(fd, "fcntl")) return Fail(GuestEbadf);
+            return DuplicateFrom(fd, 0);
         case GetDescriptorFlags: {
             if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
             std::lock_guard lock(g_mutex);
@@ -555,6 +556,7 @@ bool IoctlRequestMalformed(std::uint64_t request) {
 
 int Ioctl(int fd, std::uint64_t request, void* argument) {
     if (IoctlRequestMalformed(request)) return Fail(GuestEnotty);
+    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const auto command = static_cast<std::uint32_t>(request);
     const std::uint32_t length = (command >> 16) & 0x1fff;
     if ((command & RequestIn) && length != 0 && argument == nullptr) return Fail(GuestEfault);
@@ -565,18 +567,16 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         return 0;
     }
     if (command == NonblockingRequest) {
-        const bool enable = *static_cast<const int*>(argument) != 0;
-        return ChangeStatus(fd, *kind, Nonblocking, enable ? Nonblocking : 0, "ioctl");
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(GuestEfault);
+        return ChangeStatus(fd, *kind, Nonblocking, enable != 0 ? Nonblocking : 0, "ioctl");
     }
     if (command == ReadableRequest) {
         if (*kind == Kind::RandomDevice) return Fail(GuestEnotty);
         if (*kind != Kind::File && *kind != Kind::Pipe && *kind != Kind::Socket && *kind != Kind::ArchivedFile) Unsupported("ioctl", "FIONREAD", *kind, fd);
         const auto archived = File::ArchivedFileRemaining(fd);
         const int available = archived ? static_cast<int>(std::min<std::int64_t>(*archived, std::numeric_limits<int>::max())) : Readable(fd, *kind, "ioctl");
-        if (argument == nullptr) return Fail(GuestEfault);
-        const GuestArena::HostWrite destination(argument, sizeof(available));
-        if (!destination.Open()) return Fail(GuestEfault);
-        std::memcpy(argument, &available, sizeof(available));
+        if (!GuestCopyOut_nid_no_patch(argument, &available, sizeof(available))) return Fail(GuestEfault);
         return 0;
     }
     if (((command >> 8) & 0xff) == TerminalGroup) return Fail(GuestEnotty);
@@ -645,6 +645,11 @@ bool IsCharacterDevice(int fd) {
     struct stat status{};
     return ::fstat(fd, &status) == 0 && S_ISCHR(status.st_mode);
 #endif
+}
+
+bool GrantsAccess(int fd, bool write) {
+    const int access = AccessMode(fd, write ? "pwrite" : "pread");
+    return access == ReadWrite || access == (write ? WriteOnly : ReadOnly);
 }
 
 bool IsVnode(int fd) {

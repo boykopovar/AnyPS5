@@ -32,7 +32,7 @@ int APS5_VABI sceAudio3dAudioOutOpen(uint32_t portId, int userId, std::int32_t t
 int APS5_VABI sceAudio3dAudioOutClose(std::int32_t handle);
 int APS5_VABI sceAudio3dAudioOutOutput(std::int32_t handle, const void* ptr);
 int APS5_VABI sceAudio3dAudioOutOutputs(AudioOutOutputParam* param, uint32_t num);
-int APS5_VABI sceAudio3dStrError(void);
+const char* APS5_VABI sceAudio3dStrError(std::int32_t error);
 int APS5_VABI sceAudio3dPortOpenEx(void);
 int APS5_VABI sceAudio3dPortCreate(void);
 int APS5_VABI sceAudio3dPortDestroy(void);

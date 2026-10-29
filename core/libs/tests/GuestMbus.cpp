@@ -26,6 +26,11 @@ int main() {
     param.reserved = 1;
     Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "reserved field accepted");
     param.reserved = 0;
+    DeviceServiceThreadParam threadParam{};
+    threadParam.reserved = 1;
+    param.threadParam = &threadParam;
+    Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "threadParam reserved field accepted");
+    param.threadParam = nullptr;
     Require(sceDeviceServiceInitialize(3, &param) == 0, "default parameter initialization failed");
     Require(sceDeviceServiceInitialize(3, 0) == 0, "initialization failed");
     Require(sceDeviceServiceGetGeneration() == 0, "the device set started at another generation");

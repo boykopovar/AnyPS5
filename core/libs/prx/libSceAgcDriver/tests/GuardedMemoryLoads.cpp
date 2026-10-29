@@ -32,7 +32,7 @@ struct LoadCase {
     std::uint32_t components = 1;
 };
 
-std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint32_t offset, std::uint32_t records, bool robust, bool valid = true) {
+std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint32_t offset, std::uint32_t records, bool robust, bool exact = false, bool valid = true) {
     IrProgram program;
     program.SetWaveSize(32);
     program.Resources().stage = IrShaderStage::Compute;
@@ -100,6 +100,7 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
     target.spirvVersion = 0x00010300;
     target.subgroupSize = 32;
     target.robustBufferAccess2 = robust;
+    target.exactRobustLoads = exact;
     return SpirvEmitter().Emit(program, inputs, bindings, target);
 }
 
@@ -280,7 +281,7 @@ std::uint32_t ldsLength(const std::vector<std::uint32_t>& words) {
 }
 
 void expectReads(const LoadCase& test, bool robust, bool active, std::uint32_t offset, std::vector<std::uint32_t> expected, std::uint32_t records = 64, std::uint32_t misalignment = 0, bool valid = true) {
-    const auto module = emitLoad(test, active, offset, records, robust, valid);
+    const auto module = emitLoad(test, active, offset, records, robust, false, valid);
     const auto actual = AccessTrace(module, misalignment).Run();
     if (actual != expected) {
         std::string detail = std::string(robust ? "robust" : "plain") + " guest reads:";
@@ -351,6 +352,39 @@ int main() {
         expectReads(test, true, true, 8, {2, 2});
         expectReads(test, true, true, 8, {2, 3}, 64, 1);
         expectReads(test, true, true, 60, {Unreachable, Unreachable}, 64, 1);
+    });
+    run("exact robust loads read what the checked variant reads", [] {
+        const LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};
+        const auto effective = [](std::vector<std::uint32_t> reads) {
+            for (auto& index : reads) if (index >= 16u) index = Unreachable;
+            return reads;
+        };
+        unsigned compared = 0;
+        for (const bool active : {false, true}) {
+            for (const std::uint32_t offset : {0u, 4u, 8u, 52u, 56u, 60u, 64u, 68u, 4092u}) {
+                for (const std::uint32_t records : {32u, 64u, 128u}) {
+                    for (const std::uint32_t misalignment : {0u, 1u, 2u, 3u}) {
+                        for (const bool valid : {false, true}) {
+                            const auto checked = emitLoad(test, active, offset, records, true, false, valid);
+                            const auto exact = emitLoad(test, active, offset, records, true, true, valid);
+                            const auto expected = effective(AccessTrace(checked, misalignment).Run());
+                            const auto actual = effective(AccessTrace(exact, misalignment).Run());
+                            if (actual != expected) {
+                                std::string detail = "exact reads differ at offset " + std::to_string(offset) + " records " + std::to_string(records) + " misalignment " + std::to_string(misalignment) + " active " + std::to_string(active) + " valid " + std::to_string(valid) + ":";
+                                for (const auto index : actual) detail += " " + std::to_string(index);
+                                detail += "; checked:";
+                                for (const auto index : expected) detail += " " + std::to_string(index);
+                                throw std::runtime_error(detail);
+                            }
+                            ++compared;
+                        }
+                    }
+                }
+            }
+        }
+        require(compared == 2u * 9u * 3u * 4u * 2u, "exact robust loads: the comparison grid shrank");
+        const auto plain = emitLoad(test, true, 8, 64, false, true);
+        require(AccessTrace(plain, 0).Run() == std::vector<std::uint32_t>({2}), "exact request without robustBufferAccess2 changed the plain variant");
     });
     run("private scratch selection", [] {
         const LoadCase test{ResourceKind::Scratch, IrOpcode::LoadAddressU32, IrType::U32};

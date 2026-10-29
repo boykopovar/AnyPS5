@@ -182,7 +182,7 @@ int main() {
     FileStream written(std::tmpfile());
     Require(fwprintf_nid_postfix(&written, u"%d:%ls|", 7, u"été") == 6, "fwprintf counts wide characters");
     Require(PrintWide(&written, u"%5.1f", 2.25) == 5, "vfwprintf counts wide characters");
-    Require(Contents(written) == "7:\xc3\xa9t\xc3\xa9|  2.2", "the stream holds the formatted text");
+    Require(Contents(written) == "7:\xc3\xa9t\xc3\xa9|  2.3", "the stream holds the formatted text");
     written.Close();
 
     FileStream securePlain(std::tmpfile());

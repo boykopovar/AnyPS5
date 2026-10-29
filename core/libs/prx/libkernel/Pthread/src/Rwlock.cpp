@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/Rwlock.hpp"
@@ -17,6 +18,8 @@ static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = 0x8002003C;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 static constexpr int FIRST_STORED_RWLOCK_TYPE = 1;
 static constexpr int LAST_STORED_RWLOCK_TYPE = 2;
+static constexpr int POSIX_EINVAL = 22;
+static constexpr int POSIX_EAGAIN = 35;
 
 static PthreadRwlockPrivate* const DestroyedRwlock = reinterpret_cast<PthreadRwlockPrivate*>(std::uintptr_t{1});
 
@@ -169,6 +172,7 @@ int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) {
 
 int APS5_VABI scePthreadRwlockattrDestroy(PthreadRwlockattr* attr) {
     if (!attr || !*attr) throw std::runtime_error("scePthreadRwlockattrDestroy: null attr");
+    if (*attr == DESTROYED_RWLOCKATTR) throw std::runtime_error("scePthreadRwlockattrDestroy: destroyed attr");
     delete *attr;
     *attr = nullptr;
     return SCE_OK;
@@ -183,8 +187,21 @@ int APS5_VABI scePthreadRwlockattrInit(PthreadRwlockattr* attr) {
 }
 
 int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) {
-    if (!attr || !*attr || type < FIRST_STORED_RWLOCK_TYPE || type > LAST_STORED_RWLOCK_TYPE) return SCE_KERNEL_ERROR_EINVAL;
+    if (!attr || !*attr || *attr == DESTROYED_RWLOCKATTR || type < FIRST_STORED_RWLOCK_TYPE || type > LAST_STORED_RWLOCK_TYPE) return SCE_KERNEL_ERROR_EINVAL;
     (*attr)->type = type;
+    return SCE_OK;
+}
+
+int APS5_VABI pthread_rwlock_setname_np_nid_postfix(PthreadRwlock* rwlock, const char* name) {
+    if (!rwlock) throw std::runtime_error("pthread_rwlock_setname_np: null rwlock");
+    PthreadRwlock current = std::atomic_ref<PthreadRwlock>(*rwlock).load(std::memory_order_acquire);
+    if (current == nullptr) throw std::runtime_error("pthread_rwlock_setname_np: statically initialized rwlock");
+    if (current == DestroyedRwlock) throw std::runtime_error("pthread_rwlock_setname_np: destroyed rwlock");
+    std::lock_guard state(current->_state);
+    if (current->_named) return POSIX_EAGAIN;
+    if (!name) return POSIX_EINVAL;
+    current->_name = name;
+    current->_named = true;
     return SCE_OK;
 }
 
