@@ -10,6 +10,8 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
 #else
 #include <langinfo.h>
 #include <locale.h>
@@ -221,7 +223,7 @@ inline HostPatterns PosixHostPatterns(const Environment& environment, const Lang
     return host;
 }
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(__APPLE__)
 inline LangInfo ReadLangInfo(const std::string& name) {
     locale_t locale = newlocale(LC_TIME_MASK, name.c_str(), static_cast<locale_t>(nullptr));
     if (locale == static_cast<locale_t>(nullptr)) return {};
@@ -251,11 +253,39 @@ inline HostPatterns WindowsHostPatterns() {
     host.source = host.available ? "the Windows user locale" : "GetLocaleInfoEx gave no short date or time format for the Windows user locale";
     return host;
 }
+#elif defined(__APPLE__)
+inline std::string MacTemplatePattern(const char* text, CFLocaleRef locale) {
+    CFStringRef templateText = CFStringCreateWithCString(kCFAllocatorDefault, text, kCFStringEncodingUTF8);
+    if (templateText == nullptr) return {};
+    CFStringRef pattern = CFDateFormatterCreateDateFormatFromTemplate(kCFAllocatorDefault, templateText, 0, locale);
+    CFRelease(templateText);
+    if (pattern == nullptr) return {};
+    char buffer[256];
+    const bool copied = CFStringGetCString(pattern, buffer, sizeof(buffer), kCFStringEncodingUTF8);
+    CFRelease(pattern);
+    return copied ? std::string(buffer) : std::string();
+}
+
+inline HostPatterns MacHostPatterns() {
+    HostPatterns host;
+    host.syntax = PatternSyntax::Ldml;
+    CFLocaleRef locale = CFLocaleCopyCurrent();
+    if (locale != nullptr) {
+        host.date = MacTemplatePattern("yMd", locale);
+        host.time = MacTemplatePattern("jms", locale);
+        CFRelease(locale);
+    }
+    host.available = !host.date.empty() && !host.time.empty();
+    host.source = host.available ? "the macOS current locale" : "CFDateFormatter gave no date or time pattern for the macOS current locale";
+    return host;
+}
 #endif
 
 inline HostPatterns HostPatternsOfThisHost() {
 #if defined(_WIN32)
     return WindowsHostPatterns();
+#elif defined(__APPLE__)
+    return MacHostPatterns();
 #else
     return PosixHostPatterns([](const char* name) { return std::getenv(name); }, ReadLangInfo);
 #endif
