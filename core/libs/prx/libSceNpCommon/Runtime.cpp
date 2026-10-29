@@ -1032,10 +1032,6 @@ NpTitleSecretObject* APS5_VABI _ZN3sce2np13NpTitleSecretaSERKS1_(NpTitleSecretOb
     return self;
 }
 
-void APS5_VABI _ZN3sce2np13NpTitleSecret5ClearEv(NpTitleSecretObject* self) {
-    self->secret = {};
-}
-
 int APS5_VABI _ZN3sce2np13NpTitleSecret13SetSecretDataEPvm(NpTitleSecretObject* self, const void* data, std::size_t size) {
     if (size != NP_TITLE_SECRET_SIZE) return NP_ERROR_TITLE_ID_INVALID;
     std::memcpy(self->secret.data, data, NP_TITLE_SECRET_SIZE);

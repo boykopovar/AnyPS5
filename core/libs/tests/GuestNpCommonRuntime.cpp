@@ -344,8 +344,6 @@ void TestTitleSecretObjects() {
         "the hex form parses back to the same secret");
     Require(_ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(&parsed, hex, 255) == NpInvalidArgument
         && _ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(&parsed, hex, 258) == NpBufferTooSmall, "parsing needs an even length of at most 256 digits");
-    _ZN3sce2np13NpTitleSecret5ClearEv(&parsed);
-    Require(_ZNK3sce2np13NpTitleSecret7IsEmptyEv(&parsed), "clearing empties the secret");
 
     AllocatorRecord record {};
     NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};

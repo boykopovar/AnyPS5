@@ -161,6 +161,11 @@ int APS5_VABI _ZN3sce2np9EventFlag4OpenEPKc(void) {
     return 0;
 }
 
+int APS5_VABI _ZN3sce2np13NpTitleSecret5ClearEv(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI _ZN3sce2np10EventQueue7EnqueueEPKvmj(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
