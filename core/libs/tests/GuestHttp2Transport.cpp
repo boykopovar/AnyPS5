@@ -645,12 +645,11 @@ void AsyncBlockingWait(int ssl) {
     Require(std::chrono::steady_clock::now() - expired < std::chrono::milliseconds(200), "expired wait returned late");
     Require(shortTimeout == 0, "expired wait clears the timeout");
     const auto started = std::chrono::steady_clock::now();
-    uint32_t timeout = 0;
     Http2AsyncResult result{};
-    Require(sceHttp2WaitAsync(client.request, &result, &timeout, nullptr) == 0, "zero timeout waits for the completion");
+    Require(sceHttp2WaitAsync(client.request, &result, nullptr, nullptr) == 0, "null timeout waits for the completion");
     const auto elapsed = std::chrono::steady_clock::now() - started;
     release.join();
-    Require(elapsed >= std::chrono::milliseconds(200), "zero timeout returned before the completion");
+    Require(elapsed >= std::chrono::milliseconds(200), "null timeout returned before the completion");
     Require(result.req_id == client.request && result.result == 0 && result.event_type == 0, "async blocking result");
     queue.ExpectEvent();
     server.Join();

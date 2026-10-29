@@ -424,9 +424,10 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
         if (!handle) return ERROR_INVALID_ID;
         state = handle->async;
     }
+    if (timeout && *timeout == 0) NotImplemented_nid_no_patch(__func__);
     std::unique_lock lock(state->mutex);
     const auto available = [&] { return state->retired || !state->pending.empty(); };
-    if (timeout && *timeout != 0) {
+    if (timeout) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(*timeout);
         const bool ready = state->changed.wait_until(lock, deadline, available);
         const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - std::chrono::steady_clock::now());
