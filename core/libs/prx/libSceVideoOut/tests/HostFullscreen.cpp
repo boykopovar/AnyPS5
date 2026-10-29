@@ -216,9 +216,11 @@ static int WindowTest() {
         SDL_GetWindowSize(window.Handle(), &windowed.width, &windowed.height);
         window.ToggleFullscreen();
         Require(Fullscreen(window), "F11 did not enter fullscreen");
+        Require(SDL_ShowCursor(SDL_QUERY) == SDL_DISABLE, "the cursor stayed visible in fullscreen with no mouse open");
         window.UpdateTitle();
         window.ToggleFullscreen();
         Require(!Fullscreen(window), "F11 did not leave fullscreen");
+        Require(SDL_ShowCursor(SDL_QUERY) == SDL_ENABLE, "the cursor stayed hidden after leaving fullscreen");
         HostWindowSize back;
         SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
         Require(back == windowed, "leaving fullscreen did not restore the windowed size");
