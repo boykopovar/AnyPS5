@@ -1,5 +1,6 @@
 #include "prx/libSceNpMatching2/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,14 @@ constexpr int ContextMax = static_cast<int>(0x80550C04u);
 constexpr int ContextNotStarted = static_cast<int>(0x80550C08u);
 constexpr int InvalidArgument = static_cast<int>(0x80550C0Au);
 constexpr int InvalidContextId = static_cast<int>(0x80550C0Bu);
+constexpr int ContextNotFound = static_cast<int>(0x80550C06u);
+constexpr int InvalidServerId = static_cast<int>(0x80550C0Cu);
+constexpr int InvalidRoomId = static_cast<int>(0x80550C0Fu);
+constexpr int ServerNotAvailable = static_cast<int>(0x80550C28u);
+constexpr int SessionNotFound = static_cast<int>(0x80550C3Au);
+constexpr int SignalingContextNotFound = static_cast<int>(0x80550E05u);
+constexpr int SignalingInvalidArgument = static_cast<int>(0x80550E15u);
+constexpr int SignalingPeerNotFound = static_cast<int>(0x80550E19u);
 constexpr std::int32_t ConnStatusInactive = 0;
 constexpr std::int32_t StatusSentinel = 0x5A5A5A5A;
 constexpr std::uint32_t PeerAddrSentinel = 0xA5A5A5A5u;
@@ -39,6 +48,13 @@ void Require(bool value, const char* name, const char* what) {
 
 using CreateContextAFn = decltype(&sceNpMatching2CreateContextA);
 using RegisterLobbyCallbackFn = int (APS5_VABI*)(std::uint16_t, void*, void*);
+using RequestFn = int (APS5_VABI*)(std::uint16_t, const void*, const void*, std::uint32_t*);
+using GetServerIdFn = int (APS5_VABI*)(std::uint16_t, std::uint16_t*);
+using SlotMaskFn = int (APS5_VABI*)(std::uint16_t, std::uint64_t, std::uint64_t*);
+using WorldIdsFn = int (APS5_VABI*)(std::uint16_t, void*, std::uint64_t, void*);
+using ConnectionInfoFn = int (APS5_VABI*)(std::uint16_t, std::uint64_t, std::uint16_t, std::int32_t, void*);
+using GetPortFn = int (APS5_VABI*)(std::uint16_t*);
+using SetPortFn = int (APS5_VABI*)(std::uint16_t);
 
 template <typename Function>
 Function Resolve(const char* name) {
@@ -52,6 +68,95 @@ Function Resolve(const char* name) {
         std::abort();
     }
     return reinterpret_cast<Function>(symbol);
+}
+
+bool AcceptedRequestThrows(RequestFn request, std::uint16_t ctxId, const void* param, std::uint32_t* requestId) {
+    try {
+        request(ctxId, param, nullptr, requestId);
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()).find("not implemented") != std::string::npos;
+    }
+    return false;
+}
+
+void CheckOfflineRequests(CreateContextAFn createContextA) {
+    const auto getWorldInfoList = Resolve<RequestFn>("sceNpMatching2GetWorldInfoList");
+    const auto setUserInfo = Resolve<RequestFn>("sceNpMatching2SetUserInfo");
+    const auto setRoomDataExternal = Resolve<RequestFn>("sceNpMatching2SetRoomDataExternal");
+    const auto setRoomDataInternal = Resolve<RequestFn>("sceNpMatching2SetRoomDataInternal");
+    const auto getRoomDataInternal = Resolve<RequestFn>("sceNpMatching2GetRoomDataInternal");
+    const auto getPingInfo = Resolve<RequestFn>("sceNpMatching2SignalingGetPingInfo");
+    const auto leaveRoom = Resolve<RequestFn>("sceNpMatching2LeaveRoom");
+    const auto getServerId = Resolve<GetServerIdFn>("sceNpMatching2GetServerId");
+    const auto getSlotMask = Resolve<SlotMaskFn>("sceNpMatching2GetRoomJoinedSlotMaskLocal");
+    const auto getWorldIds = Resolve<WorldIdsFn>("sceNpMatching2GetWorldIdArrayForAllServers");
+    const auto getConnectionInfo = Resolve<ConnectionInfoFn>("sceNpMatching2SignalingGetConnectionInfo");
+    const auto getConnectionInfoA = Resolve<ConnectionInfoFn>("sceNpMatching2SignalingGetConnectionInfoA");
+    const auto getPort = Resolve<GetPortFn>("sceNpMatching2SignalingGetPort");
+    const auto setPort = Resolve<SetPortFn>("sceNpMatching2SignalingSetPort");
+    unsigned char serverRequest[32] = {1};
+    unsigned char roomRequest[64] = {5};
+    unsigned char zeroed[64] = {};
+    std::uint32_t requestId = 77;
+
+    Require(getWorldInfoList(1, serverRequest, nullptr, &requestId) == NotInitialized && requestId == 77, "sceNpMatching2GetWorldInfoList", "a request before initialization did not return NOT_INITIALIZED");
+    NpMatching2InitializeParameter init{};
+    init.size = 0x30;
+    NpMatching2CreateContextParameter create{};
+    create.size = 0x28;
+    NpMatching2CreateContextParameterA createA{1, 0, 0x10};
+    std::uint16_t context = 0;
+    std::uint16_t contextA = 0;
+    Require(sceNpMatching2Initialize(&init) == 0, "sceNpMatching2Initialize", "initializing for the requests failed");
+    Require(sceNpMatching2CreateContext(&create, &context) == 0 && context == 1, "sceNpMatching2CreateContext", "the request context is not id 1");
+    Require(createContextA(&createA, &contextA) == 0 && contextA == 0x102, "sceNpMatching2CreateContextA", "the request A context is not id 0x102");
+
+    Require(getWorldInfoList(context, nullptr, nullptr, &requestId) == InvalidArgument, "sceNpMatching2GetWorldInfoList", "a null request was taken");
+    Require(getWorldInfoList(context, serverRequest, nullptr, nullptr) == InvalidArgument, "sceNpMatching2GetWorldInfoList", "a null request id was taken");
+    for (const RequestFn request : {getWorldInfoList, setUserInfo}) {
+        Require(request(context, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "server id 0 did not return INVALID_SERVER_ID");
+        Require(request(99, zeroed, nullptr, &requestId) == InvalidServerId, "server request", "the server id was not checked before the context");
+        Require(request(99, serverRequest, nullptr, &requestId) == ContextNotFound && request(0, serverRequest, nullptr, &requestId) == ContextNotFound, "server request", "an unknown context did not return CONTEXT_NOT_FOUND");
+    }
+    for (const RequestFn request : {setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo, leaveRoom}) {
+        Require(request(context, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "room id 0 did not return INVALID_ROOM_ID");
+        Require(request(99, zeroed, nullptr, &requestId) == InvalidRoomId, "room request", "the room id was not checked before the context");
+        Require(request(99, roomRequest, nullptr, &requestId) == ContextNotFound, "room request", "an unknown context did not return CONTEXT_NOT_FOUND");
+    }
+    Require(requestId == 77, "request", "a refused request wrote a request id");
+    const RequestFn accepted[] = {getWorldInfoList, setUserInfo, setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo};
+    for (std::size_t index = 0; index < 6; ++index) {
+        const std::uint16_t target = index % 2 == 0 ? context : contextA;
+        const void* param = index < 2 ? static_cast<const void*>(serverRequest) : static_cast<const void*>(roomRequest);
+        Require(AcceptedRequestThrows(accepted[index], target, param, &requestId) && requestId == 77, "request", "a request that passed its checks did not stay unsupported");
+    }
+    Require(leaveRoom(context, roomRequest, nullptr, &requestId) == SessionNotFound && leaveRoom(contextA, roomRequest, nullptr, &requestId) == SessionNotFound && requestId == 77, "sceNpMatching2LeaveRoom", "leaving with no room joined did not return SESSION_NOT_FOUND");
+
+    std::uint16_t serverId = 0xA5A5;
+    Require(getServerId(99, nullptr) == InvalidArgument, "sceNpMatching2GetServerId", "a null output was not refused before the context");
+    Require(getServerId(99, &serverId) == ContextNotFound, "sceNpMatching2GetServerId", "an unknown context did not return CONTEXT_NOT_FOUND");
+    Require(getServerId(context, &serverId) == ContextNotStarted && getServerId(contextA, &serverId) == ContextNotStarted && serverId == 0xA5A5, "sceNpMatching2GetServerId", "a never-started context did not return CONTEXT_NOT_STARTED without writing");
+    std::uint64_t mask = 0xA5A5A5A5A5A5A5A5ull;
+    Require(getSlotMask(99, 5, nullptr) == InvalidArgument, "sceNpMatching2GetRoomJoinedSlotMaskLocal", "a null mask was not refused before the context");
+    Require(getSlotMask(context, 0, &mask) == InvalidServerId && getSlotMask(contextA, 0, &mask) == InvalidServerId, "sceNpMatching2GetRoomJoinedSlotMaskLocal", "room 0 did not return 0x80550C0C");
+    Require(getSlotMask(99, 0, &mask) == ContextNotFound, "sceNpMatching2GetRoomJoinedSlotMaskLocal", "room 0 was checked before the context");
+    Require(getSlotMask(99, 5, &mask) == ContextNotFound, "sceNpMatching2GetRoomJoinedSlotMaskLocal", "an unknown context did not return CONTEXT_NOT_FOUND");
+    Require(getSlotMask(context, 5, &mask) == ContextNotStarted && mask == 0xA5A5A5A5A5A5A5A5ull, "sceNpMatching2GetRoomJoinedSlotMaskLocal", "a never-started context did not return CONTEXT_NOT_STARTED without writing");
+    std::uint32_t worldIds[4] = {0xA5A5A5A5u, 0xA5A5A5A5u, 0xA5A5A5A5u, 0xA5A5A5A5u};
+    std::uint32_t worldIdCount = 0xA5A5A5A5u;
+    Require(getWorldIds(99, nullptr, 0, nullptr) == ContextNotFound, "sceNpMatching2GetWorldIdArrayForAllServers", "the context was not checked before the pointers");
+    Require(getWorldIds(context, nullptr, 0, nullptr) == InvalidArgument, "sceNpMatching2GetWorldIdArrayForAllServers", "null pointers were taken");
+    Require(getWorldIds(context, worldIds, 4, &worldIdCount) == ServerNotAvailable && worldIds[0] == 0xA5A5A5A5u && worldIdCount == 0xA5A5A5A5u, "sceNpMatching2GetWorldIdArrayForAllServers", "a never-started context did not return SERVER_NOT_AVAILABLE without writing");
+    unsigned char info[64] = {};
+    for (const ConnectionInfoFn connectionInfo : {getConnectionInfo, getConnectionInfoA}) {
+        Require(connectionInfo(99, 5, 1, 1, nullptr) == SignalingInvalidArgument, "connection info", "a null info was not refused with 0x80550E15 before the context");
+        Require(connectionInfo(99, 5, 1, 1, info) == SignalingContextNotFound, "connection info", "an unknown context did not return 0x80550E05");
+        Require(connectionInfo(context, 5, 1, 1, info) == SignalingPeerNotFound, "connection info", "a never-started context did not return 0x80550E19");
+    }
+    std::uint16_t port = 0xA5A5;
+    Require(getPort(&port) == 0 && port == 0, "sceNpMatching2SignalingGetPort", "the port did not start at 0");
+    Require(setPort(3659) == 0 && getPort(&port) == 0 && port == 3659, "sceNpMatching2SignalingSetPort", "the port that was set is not reported");
+    Require(sceNpMatching2Terminate() == 0, "sceNpMatching2Terminate", "terminating after the requests failed");
 }
 
 bool NullStatusThrows(std::uint16_t ctxId) {
@@ -188,6 +293,8 @@ int main() {
     Require(sceNpMatching2RegisterSignalingCallback(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterSignalingCallback", "a call after termination did not return NOT_INITIALIZED");
     Require(registerLobbyEvent(1, nullptr, nullptr) == NotInitialized, "sceNpMatching2RegisterLobbyEventCallback", "a call after termination did not return NOT_INITIALIZED");
     Require(createContextA(&createA, &created) == NotInitialized, "sceNpMatching2CreateContextA", "a call after termination did not return NOT_INITIALIZED");
+
+    CheckOfflineRequests(createContextA);
 
     if (failures != 0) return 1;
     std::puts("NpMatching2 offline tests passed");
