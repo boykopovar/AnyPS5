@@ -2,7 +2,11 @@
 
 ### Title comparison limitations
 
-- [Title ID and title secret comparisons](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) are reconstructed from firmware 13.60 disassembly: the title ID comparison reads 12 bytes from the first operand and from offset 8 in the second, and the title secret comparison reads 128 bytes from offset 8 in the first operand and from the second. Native invalid-pointer and unreadable-memory behavior has not been measured on a console. The host throws `std::runtime_error` for null, overflowing or unreadable guest ranges rather than returning an invented comparison result.
+These two exports were reconstructed from a **static reading of the disassembly** of `libSceNpCommon.sprx` from **PS5 firmware 13.60**, using **Ghidra 12.1.4** (module SHA-256: `AB696280CAF5CF465C62E00D1785FB4348B59A7E376D7C6802453419E5765CD0`). The observed ranges and offsets are from instruction-level inspection, not execution on a console.
+
+- [`_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE`](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `6jHOZ6fItFU`): compares **12 bytes** of the raw `SceNpTitleId` (first operand, offset 0) against **12 bytes** of `sce::np::NpTitleId` (second operand, offset 8), returning true when equal.
+- [`_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret`](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `7b5y1XSa+KQ`): compares **128 bytes** of `sce::np::NpTitleSecret` (first operand, offset 8) against **128 bytes** of the raw `SceNpTitleSecret` (second operand, offset 0), returning true when different.
+- **Unmeasured behavior:** Native null-pointer and unreadable-memory faults have not been measured on a PS5. The host checks guest reads through `GuestCopyIn_nid_no_patch` and throws `std::runtime_error` for null, overflowing or unreadable ranges. This is an emulator-side choice, not verified firmware behavior; a failed read must not silently return `false` (which would conflate an unreadable secret with an equal one).
 
 ### Unknown function info
 
