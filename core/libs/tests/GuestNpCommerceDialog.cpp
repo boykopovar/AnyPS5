@@ -195,7 +195,15 @@ int main() {
     Require(sceNpCommerceDialogUpdateStatus() == statusFinished);
     RequireCanceledResult(param2.userData, false);
     Require(sceNpCommerceDialogTerminate() == 0);
+    Require(sceNpCommerceDialogTerminate() == static_cast<int>(0x80B80003u));
+    Require(sceNpCommerceDialogClose() == static_cast<int>(0x80B80003u));
+    Require(sceNpCommerceDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceNpCommerceDialogOpen2(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceNpCommerceDialogOpen2(&param2) == static_cast<int>(0x80B80003u));
+    Require(sceNpCommerceDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceNpCommerceDialogGetResult(&result) == static_cast<int>(0x80B80003u));
     Require(sceNpCommerceDialogGetStatus() == statusNone);
+    Require(sceNpCommerceDialogUpdateStatus() == statusNone);
     Require(sceUserServiceTerminate() == 0);
     return 0;
 }

@@ -263,7 +263,7 @@ def check_export_list(patcher, directory):
 def check_refusals(patcher, directory):
     growing = [("_ab", 0, 0x100), ("_cd", 0, 0x108)]
     result, _ = patch(patcher, directory, "signed.dylib", build_dylib(growing, [], signed=True))
-    assert result.returncode != 0 and "signed Mach-O images cannot grow their export trie" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    assert result.returncode != 0 and "signed Mach-O images cannot grow linkedit data" in result.stdout + result.stderr, (result.stdout, result.stderr)
     result, _ = patch(patcher, directory, "opcodes.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [], bind_opcodes=True))
     assert result.returncode != 0 and "bind opcodes are not supported" in result.stdout + result.stderr, (result.stdout, result.stderr)
     result, _ = patch(patcher, directory, "long.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [("_sceXy", 1)]))

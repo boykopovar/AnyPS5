@@ -32,14 +32,17 @@ def high_refresh_limitation(output):
     return bool(reasons) and all(HIGH_REFRESH_LIMITATION.fullmatch(reason) for reason in reasons)
 
 
-def skips(path):
+def skips(path, require_tests=False):
     root = ET.parse(path).getroot()
     if root.tag not in ("testsuite", "testsuites"):
         raise ValueError(f"{path}: expected a JUnit testsuite or testsuites root, got {root.tag!r}")
+    found = False
     for case in root.iter("testcase"):
-        if case.get("status") == "disabled":
-            raise ValueError(f"{path}: testcase {case.get('name')!r} is disabled and was not run")
+        found = True
         skipped = case.find("skipped")
+        ctest_skip = skipped is not None and CTEST_SKIP_STATUS.fullmatch(skipped.get("message", "").strip())
+        if case.get("status") == "disabled" or (case.get("status") == "notrun" and not ctest_skip):
+            raise ValueError(f"{path}: testcase {case.get('name')!r} is {case.get('status')} and was not run")
         if skipped is None:
             continue
         name = case.get("name")
@@ -49,6 +52,8 @@ def skips(path):
                   if reason.strip() and not CTEST_SKIP_STATUS.fullmatch(reason.strip())]
         output += [case.findtext(channel) or "" for channel in ("system-out", "system-err")]
         yield name, "\n".join(output)
+    if require_tests and not found:
+        raise ValueError(f"{path}: report contains no testcases")
 
 
 def main(argv=None):
@@ -59,9 +64,10 @@ def main(argv=None):
     parser.add_argument("junit", type=Path, help="the file written by ctest --output-junit")
     parser.add_argument("--job", choices=("linux", "windows"), default="linux")
     parser.add_argument("--list", action="store_true", help="print the skipped tests and why the file says they skipped")
+    parser.add_argument("--require-tests", action="store_true", help="fail if the report contains no testcases")
     args = parser.parse_args(argv)
     try:
-        found = sorted(skips(args.junit))
+        found = sorted(skips(args.junit, require_tests=args.require_tests))
     except (OSError, ET.ParseError, ValueError) as error:
         parser.error(str(error))
     if args.list:

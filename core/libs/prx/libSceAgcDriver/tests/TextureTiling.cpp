@@ -1,4 +1,6 @@
 #include "GraphicsTests.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -424,26 +426,35 @@ void RunTextureTilingTests() {
         array.depthOrLastArray = 1536;
         array.baseArray = 1536;
         const auto layerBytes = DescribeSurface(array).layerBytes;
-        const auto window = ViewedArrayWindow(array);
+        const auto window = ViewedArrayWindow(array, false);
         Require(window.baseAddress == array.baseAddress + 1536ull * layerBytes && window.depthOrLastArray == 0 && window.baseArray == 0, "a sampled view of one slice at 1536 of an R_X array must start at that slice");
         Require(DescribeSurface(window).layerBytes == layerBytes && DescribeSurface(window).layers == 1, "a sampled array window must keep the slice layout");
 
         auto unaligned = array;
         unaligned.baseArray = 1530;
-        Require(ViewedArrayWindow(unaligned).baseAddress == array.baseAddress, "an R_X window at a slice the swizzle mixes in must keep the whole array");
+        const auto mixed = ViewedArrayWindow(unaligned, false);
+        Require(mixed.baseAddress == array.baseAddress + 1520ull * layerBytes && mixed.baseArray == 10 && mixed.depthOrLastArray == 16, "an R_X view at a slice the swizzle mixes in must start its window at the last slice before it with those bits clear");
+        auto low = array;
+        low.baseArray = 9;
+        Require(ViewedArrayWindow(low, false).baseAddress == array.baseAddress, "an R_X view below the first slice with those bits clear keeps the whole array");
 
         auto plain = array;
         plain.tileMode = TextureTileMode::kStandard64KB;
         plain.baseArray = 1530;
-        Require(ViewedArrayWindow(plain).baseAddress == array.baseAddress + 1530ull * DescribeSurface(plain).layerBytes && ViewedArrayWindow(plain).depthOrLastArray == 6, "a non-XOR window may start at any slice");
+        Require(ViewedArrayWindow(plain, false).baseAddress == array.baseAddress + 1530ull * DescribeSurface(plain).layerBytes && ViewedArrayWindow(plain, false).depthOrLastArray == 6, "a non-XOR window may start at any slice");
 
         auto fromZero = array;
         fromZero.baseArray = 0;
-        Require(ViewedArrayWindow(fromZero).baseAddress == array.baseAddress && ViewedArrayWindow(fromZero).depthOrLastArray == 1536, "a view from slice 0 keeps its descriptor");
+        Require(ViewedArrayWindow(fromZero, false).baseAddress == array.baseAddress && ViewedArrayWindow(fromZero, false).depthOrLastArray == 1536, "a view from slice 0 keeps its descriptor");
 
         auto compressed = array;
         compressed.dccAddress = 0x20000000ull;
-        Require(ViewedArrayWindow(compressed).baseAddress == array.baseAddress, "a view with DCC metadata keeps its descriptor");
+        Require(ViewedArrayWindow(compressed, false).baseAddress == array.baseAddress, "a view with DCC metadata keeps its descriptor");
+        const auto stored = ViewedArrayWindow(compressed, true);
+        Require(stored.baseAddress == window.baseAddress && stored.depthOrLastArray == 0 && stored.baseArray == 0 && stored.dccAddress == 0, "a view whose DCC keys read as stored is cut to its slices without metadata");
+        auto compressedFromZero = compressed;
+        compressedFromZero.baseArray = 0;
+        Require(ViewedArrayWindow(compressedFromZero, true).baseAddress == array.baseAddress && ViewedArrayWindow(compressedFromZero, true).dccAddress == compressed.dccAddress, "a view with DCC metadata from slice 0 keeps its descriptor");
 
         GuestTextureResource cube{};
         cube.baseAddress = 0x30000000ull;
@@ -455,13 +466,45 @@ void RunTextureTilingTests() {
         cube.tileMode = TextureTileMode::kStandard4KB;
         cube.depthOrLastArray = 7232;
         cube.baseArray = 7227;
-        const auto faces = ViewedArrayWindow(cube);
+        const auto faces = ViewedArrayWindow(cube, false);
         Require(faces.baseAddress == cube.baseAddress + 7227ull * DescribeSurface(cube).layerBytes && faces.depthOrLastArray == 5 && faces.baseArray == 0 && faces.dimension == TextureDimension::kCube, "a cube view of six faces at 7227 must start at its first face");
+
+        auto compressedVolume = cube;
+        compressedVolume.dimension = TextureDimension::k3D;
+        compressedVolume.baseArray = 0;
+        compressedVolume.dccAddress = 0x20000000ull;
+        Require(ViewedArrayWindow(compressedVolume, true).dccAddress == compressedVolume.dccAddress, "a volume with DCC metadata keeps its descriptor");
 
         auto volume = cube;
         volume.dimension = TextureDimension::k3D;
         volume.baseArray = 0;
-        Require(ViewedArrayWindow(volume).baseAddress == cube.baseAddress, "a volume keeps its descriptor");
+        Require(ViewedArrayWindow(volume, false).baseAddress == cube.baseAddress, "a volume keeps its descriptor");
+    }
+
+    {
+        const std::array<std::uint32_t, 8> words{0x027c0000u, 0xc1600000u, 0x00ffc0ffu, 0xd1800924u, 0x027cc27cu, 0xc1400000u, 0x00704018u, 0x91b00204u};
+        const auto view = DecodeTextureResource(words);
+        Require(view.baseAddress == 0x27c000000ull && view.dccAddress == 0x91b002040000ull && view.dimension == TextureDimension::k2DArray && view.baseArray == 636 && view.depthOrLastArray == 636 && view.width == 1024 && view.height == 1024 && view.format == 22, "the title's DCC array view decodes to slice 636 of 637");
+        const auto whole = DescribeSurface(view);
+        Require(whole.guestBytes == 2671771648ull, "the uncut DCC array view covers all 637 slices (" + std::to_string(whole.guestBytes) + " bytes)");
+        Require(TextureClearKeys(view, whole.guestBytes) == DccKeys::Uncompressed, "unreadable DCC keys of the uncut view read the texels as stored");
+        Require(ViewedArrayWindow(view, false).baseAddress == view.baseAddress, "a DCC view whose keys are not known to read as stored keeps its descriptor");
+        const auto window = ViewedArrayWindow(view, true);
+        const auto cut = DescribeSurface(window);
+        Require(window.baseAddress == view.baseAddress + whole.GuestLayerOffset(624) && window.dccAddress == 0 && window.baseArray == 12 && window.depthOrLastArray == 12, "the window of a stored-keys DCC view starts at the slice-swizzle boundary below its slice without metadata");
+        Require(cut.layers == 13 && cut.layerBytes == whole.layerBytes && window.baseAddress + cut.guestBytes == view.baseAddress + whole.guestBytes, "the window covers slices 624..636 (" + std::to_string(cut.guestBytes) + " bytes)");
+        for (std::uint32_t slice = 0; slice < cut.layers; ++slice) Require(window.baseAddress + cut.GuestLayerOffset(slice) == view.baseAddress + whole.GuestLayerOffset(624 + slice), "a window slice lies where the uncut surface keeps it");
+        const auto* equation = FindTextureSwizzleEquation(XorSwizzleMode(view.tileMode), 4);
+        const auto block = ThinBlockLayout(view.tileMode, 4);
+        Require(equation != nullptr && whole.mips.size() == 1 && !whole.mips[0].tail, "the title's DCC array is one untailed Z_X level");
+        const auto texel = [&](const GuestTextureResource& surface, const SurfaceGeometry& geometry, std::uint32_t x, std::uint32_t y, std::uint32_t slice) {
+            const auto& mip = geometry.mips[0];
+            return surface.baseAddress + geometry.GuestLayerOffset(slice) + mip.tiledOffset + (static_cast<std::uint64_t>(y / block[2]) * mip.blocksPerRow + x / block[1]) * block[0] + equationOffset(*equation, x, y, slice);
+        };
+        for (std::uint32_t y = 0; y < 1024; y += 7) {
+            for (std::uint32_t x = 0; x < 1024; x += 5) Require(texel(window, cut, x, y, window.baseArray) == texel(view, whole, x, y, view.baseArray), "a texel of the viewed slice detiles from the same guest byte in the window as in the uncut surface");
+        }
+        Require(TextureClearKeys(window, cut.guestBytes) == DccKeys::Uncompressed, "the window reads its texels as stored, as the uncut view does");
     }
 
     {

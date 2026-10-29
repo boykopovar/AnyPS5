@@ -15,7 +15,8 @@ extern "C" {
 
 int APS5_VABI sceAudioOut2InitializeEx(std::uint32_t param) {
     (void)param;
-    return sceAudioOut2Initialize();
+    AudioOut2MarkInitialized_nid_no_patch();
+    return 0;
 }
 
 int APS5_VABI sceAudioOut2Set3DLatency(int userId, std::uint32_t output) {

@@ -482,6 +482,10 @@ bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
     return false;
 }
 
+std::uint64_t DrawPipeline::HeldReadQueries() {
+    return heldReadQueries.load(std::memory_order_relaxed);
+}
+
 void DrawPipeline::ReleaseRunningReads() {
     std::lock_guard lock(mutex);
     if (!items.empty()) items.front().reads.clear();

@@ -624,6 +624,12 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
                            (op >= 0xaa && op <= 0xaf) || op == 0xd7))
         info.HasMemoryOperand = true;
 
+    if ((!twoByteOpcode && op == OneByteLea) || (twoByteOpcode && op == TwoByteNopModRm))
+        info.HasMemoryOperand = false;
+
+    if (!twoByteOpcode && (op == 0x6c || op == 0x6d || op == 0xaa || op == 0xab || op == 0xae || op == 0xaf))
+        info.SegmentPrefix = 0;
+
     info.FlowKind = ControlFlowKind::Sequential;
     return info;
 }

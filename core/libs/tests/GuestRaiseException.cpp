@@ -402,7 +402,7 @@ static void* APS5_VABI AddressWaking(void* arg) {
     auto& worker = *static_cast<Worker*>(arg);
     worker.id = std::this_thread::get_id();
     worker.started.store(true);
-    while (!worker.stop.load()) Require(sceKernelSyncOnAddressWake(&addressWord, 1) == 0);
+    while (!worker.stop.load()) Require(sceKernelSyncOnAddressWake(&addressWord, 1) >= 0);
     return nullptr;
 }
 

@@ -15,6 +15,9 @@
 
 static void Require(bool value) { if (!value) std::abort(); }
 
+static_assert(ImeKeyboardType::LookUp(INT32_MIN, 0, 0) == 0);
+static_assert(ImeKeyboardType::LookUp(INT32_MAX, 0, 0) == 0);
+
 static void SetLanguage(const char* value) {
 #ifdef _WIN32
     Require(_putenv_s("ANYPS5_LANGUAGE", value != nullptr ? value : "") == 0);

@@ -2,7 +2,7 @@
 
 ### Functional
 
-- [Content export sessions](../../../core/libs/prx/libSceContentExport/Export.cpp): the host has no media library, so `sceContentExportFromDataWithThumbnail` throws for a valid session without invoking data callbacks. Session allocation does not reproduce guest allocator calls, worker creation or their failure paths. `sceContentExportGetProgress` throws because an idle session returns either zero or an invalid-state error according to the caller's SDK compatibility mode, which is not available here. Initialization and session lookup still throw for some invalid inputs instead of reproducing the console's error precedence and legacy SDK behavior. Session IDs now use the lowest free slot in 0–9; exhaustion, termination with live sessions and cancellation before an export return the confirmed errors.
+- [Content export sessions](../../../core/libs/prx/libSceContentExport/Export.cpp): the host has no media library, so `sceContentExportFromDataWithThumbnail` goes through `NotImplemented_nid_no_patch` for a valid session without invoking data callbacks. Session allocation does not reproduce guest allocator calls, worker creation or their failure paths. `sceContentExportGetProgress` goes through `NotImplemented_nid_no_patch` because an idle session returns either zero or an invalid-state error according to the caller's SDK compatibility mode, which is not available here. Initialization and session lookup still throw for some invalid inputs instead of reproducing the console's error precedence and legacy SDK behavior. Session IDs now use the lowest free slot in 0–9; exhaustion, termination with live sessions and cancellation before an export return the confirmed errors.
 
 ### Unknown function info
 

@@ -320,8 +320,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::AppendU64(bytes, header.MemorySize);
         Io::AppendU64(bytes, header.Alignment);
     }
-    bytes[7] = 0;
-    bytes[8] = 0;
+    std::fill_n(bytes.begin() + 7, 9, std::uint8_t{0});
     Io::WriteU16(bytes, 16, 3);
     Io::WriteU64(bytes, 24, 0);
     Io::WriteU64(bytes, 32, phOffset);
