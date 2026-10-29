@@ -111,6 +111,35 @@ static std::string CaptureStderr(const std::function<void()>& action) {
     return output;
 }
 
+static void TestNotificationRequest() {
+    constexpr auto invalidArgument = static_cast<int>(0x80020016u);
+    constexpr auto badAddress = static_cast<int>(0x8002000eu);
+    constexpr auto notSupported = static_cast<int>(0x8002002du);
+    constexpr std::size_t requestSize = 3120;
+    constexpr std::size_t messageOffset = 45;
+    constexpr std::size_t messageCapacity = 1024;
+    std::array<unsigned char, requestSize> request{};
+    Require(sceKernelSendNotificationRequest(0, request.data(), requestSize - 1, 0) == invalidArgument);
+    Require(sceKernelSendNotificationRequest(0, request.data(), requestSize + 1, 0) == invalidArgument);
+    Require(sceKernelSendNotificationRequest(-1, request.data(), requestSize, 0) == invalidArgument);
+    Require(sceKernelSendNotificationRequest(0, nullptr, requestSize, 0) == badAddress);
+    Require(sceKernelSendNotificationRequest(1, request.data(), requestSize, 0) == notSupported);
+    Require(sceKernelSendNotificationRequest(0, request.data(), requestSize, 1) == notSupported);
+    std::int32_t type = 1;
+    std::memcpy(request.data(), &type, sizeof(type));
+    Require(sceKernelSendNotificationRequest(0, request.data(), requestSize, 0) == notSupported);
+    type = 0;
+    std::memcpy(request.data(), &type, sizeof(type));
+    request[messageOffset - 1] = 1;
+    Require(sceKernelSendNotificationRequest(0, request.data(), requestSize, 0) == notSupported);
+    request[messageOffset - 1] = 0;
+    std::memset(request.data() + messageOffset, 'a', messageCapacity);
+    Require(sceKernelSendNotificationRequest(0, request.data(), requestSize, 0) == invalidArgument);
+    const char message[] = "test notification";
+    std::memcpy(request.data() + messageOffset, message, sizeof(message));
+    Require(sceKernelSendNotificationRequest(0, request.data(), requestSize, 0) == 0);
+}
+
 static void TestParentTraversal() {
     const auto root = std::filesystem::path("anyps5-parent-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -423,6 +452,7 @@ static void TestMissingPathListsDirectoryOnce() {
 #endif
 
 int main() {
+    TestNotificationRequest();
     TestParentTraversal();
     TestRelinkedModuleNames();
     TestRelinkedModuleNameCase();
