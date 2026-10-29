@@ -1160,10 +1160,10 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
     Require(probe[0] == std::byte{0xa5}, "resident depth guard blocked an unrelated read");
     auto alias = target;
     alias.htileAddress += 65536u;
-    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "sample-preserving guest publication");
+    PublicationRefuses(format, [&] { DepthSurfaceView(context, alias); });
     alias = target;
     alias.htileDepthOnly = !target.htileDepthOnly;
-    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "sample-preserving guest publication");
+    PublicationRefuses(format, [&] { DepthSurfaceView(context, alias); });
     auto resource = DecodeTextureResource(words);
     for (std::uint32_t field = 0u; field < 18u; ++field) {
         auto changed = resource;
