@@ -1,0 +1,15 @@
+add_library(libSceAvSetting SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceAvSetting PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceAvSetting)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_avsetting_predicates_tests ${LIBS_INCLUDE_DIR}/tests/GuestAvSettingPredicates.cpp)
+    target_include_directories(guest_avsetting_predicates_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_avsetting_predicates_tests PRIVATE libSceAvSetting libc)
+    configure_windows_unwind(guest_avsetting_predicates_tests)
+    add_test(NAME guest_avsetting_predicates COMMAND guest_avsetting_predicates_tests)
+    if(WIN32)
+        set_tests_properties(guest_avsetting_predicates PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>")
+    endif()
+endif()
