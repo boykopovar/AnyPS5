@@ -127,7 +127,7 @@ void DisplayWindow::updateAspectRatio(std::uint32_t sourceWidth, std::uint32_t s
 
 void DisplayWindow::Destroy() noexcept {
     if (window == nullptr) return;
-    fullscreen->Release();
+    if (fullscreen) fullscreen->Release();
     fullscreen.reset();
     hostWindow.reset();
     removeSubclass();
@@ -140,7 +140,7 @@ SDL_Window* DisplayWindow::Handle() const {
 }
 
 void DisplayWindow::ToggleFullscreen() {
-    require(window != nullptr, "window must exist before toggling fullscreen");
+    require(window != nullptr && fullscreen != nullptr, "window must exist before toggling fullscreen");
     fullscreen->Toggle();
     fullscreen->Refresh(MouseIsOpen_nid_no_patch());
 }
@@ -176,7 +176,7 @@ void DisplayWindow::UpdateTitle() {
     char text[160];
     std::snprintf(text, sizeof(text), "%s | FPS: %.2f (%llu)", title.value, currentFps, static_cast<unsigned long long>(frameNum));
     SDL_SetWindowTitle(window, text);
-    fullscreen->Refresh(MouseIsOpen_nid_no_patch());
+    if (fullscreen) fullscreen->Refresh(MouseIsOpen_nid_no_patch());
     if (auto* telemetry = VideoOutTelemetry::Instance(); telemetry != nullptr && (frameNum == 1 || frameNum % 30 == 0)) telemetry->EmitPresent(frameNum, currentFps);
 }
 
