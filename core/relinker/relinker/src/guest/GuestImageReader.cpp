@@ -84,7 +84,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         }
     }
     if (!terminated) fail("Unterminated dynamic segment");
-    for (const auto unsupported : {15u, 16u, 17u, 18u, 19u, 22u}) {
+    for (const auto unsupported : {15u, 16u, 22u}) {
         if (tags.contains(unsupported)) fail("Unsupported dynamic tag " + std::to_string(unsupported));
     }
     if (tags.contains(30) && (tags.at(30) & ~(2ull | 8ull)) != 0) fail("Unsupported guest dynamic flags");
@@ -239,12 +239,13 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (size % 24 != 0) fail("Invalid relocation table size");
         return {table(addressTag, sceAddressTag, size), size};
     };
-    if (tags.contains(7) || tags.contains(0x6100002f)) {
+    if (tags.contains(17) || tags.contains(18) || tags.contains(19)) fail("DT_REL relocations are not supported");
+    if (tags.contains(7) || tags.contains(0x6100002f) || tags.contains(9) || tags.contains(0x61000033)) {
         if (get(9, 0x61000033) != 24) fail("Invalid RELA entry size");
     }
     const auto [relaOffset, relaSize] = relocationRange(7, 0x6100002f, 8, 0x61000031);
     const auto [pltOffset, pltSize] = relocationRange(23, 0x61000029, 2, 0x6100002d);
-    if (pltSize != 0 && get(20, 0x6100002b) != 7) fail("Unsupported PLT relocation format");
+    if ((pltSize != 0 || tags.contains(20) || tags.contains(0x6100002b)) && get(20, 0x6100002b) != 7) fail("Unsupported PLT relocation format");
     if (relaSize != 0 && pltSize != 0 && relaOffset < pltOffset + pltSize && pltOffset < relaOffset + relaSize
         && relaOffset % 24 != pltOffset % 24)
         fail("Unaligned overlapping relocation tables");

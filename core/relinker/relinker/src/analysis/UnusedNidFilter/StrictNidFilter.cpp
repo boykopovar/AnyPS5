@@ -41,6 +41,7 @@ public:
                     terminated = true;
                     break;
                 }
+                if (tag == 17 || tag == 18 || tag == 19) throw RelinkerException("Strict filter: DT_REL relocations are not supported");
                 if (tag == 1 || (tag >= 0x61000000 && tag != 0x6100002F && tag != 0x61000031 && tag != 0x61000033 && tag != 0x61000039 && tag != 0x6100003B && tag != 0x6100003F)) continue;
                 if (!tags.emplace(tag, read<std::uint64_t>(segment.Offset + offset + 8)).second)
                     throw RelinkerException("Strict filter: duplicate dynamic tag", segment.Offset + offset);
@@ -70,6 +71,8 @@ public:
         const auto rela = table(7, 0x6100002F);
         const auto relaSize = value(8, 0x61000031);
         if (rela.has_value() != relaSize.has_value()) throw RelinkerException("Strict filter: incomplete relocation table metadata");
+        if (const auto entrySize = value(9, 0x61000033); entrySize && *entrySize != 24)
+            throw RelinkerException("Strict filter: invalid RELA entry size");
         if (rela) {
             if (value(9, 0x61000033) != 24 || *relaSize % 24 != 0)
                 throw RelinkerException("Strict filter: invalid RELA entry size");
