@@ -8,7 +8,6 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -46,6 +45,32 @@ void applyAppIcon(SDL_Window* window) {
     SDL_FreeSurface(icon);
 }
 
+class SdlHostWindow final : public IHostFullscreenWindow {
+public:
+    explicit SdlHostWindow(SDL_Window* window) : window(window) {}
+
+    bool IsFullscreen() const override {
+        return (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+    }
+
+    void SetFullscreen(bool fullscreen) override {
+        require(SDL_SetWindowFullscreen(window, fullscreen ? static_cast<Uint32>(SDL_WINDOW_FULLSCREEN_DESKTOP) : 0u) == 0, SDL_GetError());
+    }
+
+    HostWindowSize Size() const override {
+        HostWindowSize size;
+        SDL_GetWindowSize(window, &size.width, &size.height);
+        return size;
+    }
+
+    void SetSize(HostWindowSize size) override {
+        SDL_SetWindowSize(window, size.width, size.height);
+    }
+
+private:
+    SDL_Window* window;
+};
+
 #ifdef _WIN32
 constexpr UINT_PTR DisplayWindowSubclassId = 0x41505335u;
 #endif
@@ -72,16 +97,19 @@ void DisplayWindow::create(std::uint32_t sourceWidth, std::uint32_t sourceHeight
     const auto boundsHeight = static_cast<std::uint32_t>(static_cast<std::uint64_t>(usable.h) * DisplayWindowInitialSizePercent / 100);
     const auto initialSize = AgcDriver::ComputeContainSize_nid_postfix(sourceWidth, sourceHeight, boundsWidth, boundsHeight, true);
     require(initialSize.width >= DisplayWindowMinimumWidth && initialSize.height >= DisplayWindowMinimumHeight, "initial window extent is smaller than the minimum");
+    const auto fullscreenMode = ParseHostFullscreenMode(std::getenv("ANYPS5_FULLSCREEN"));
     const auto title = GetAppTitle_nid_postfix();
     AgcDriverLockVulkanLoader_nid_postfix();
-    const char* fullscreen = std::getenv("ANYPS5_FULLSCREEN");
-    const Uint32 fullscreenFlag = fullscreen != nullptr && *fullscreen != '\0' && std::strcmp(fullscreen, "0") != 0 ? static_cast<Uint32>(SDL_WINDOW_FULLSCREEN_DESKTOP) : 0u;
+    const auto fullscreenFlag = fullscreenMode == HostFullscreenMode::Borderless ? static_cast<Uint32>(SDL_WINDOW_FULLSCREEN_DESKTOP) : 0u;
     window = SDL_CreateWindow(title.value, SDL_WINDOWPOS_CENTERED_DISPLAY(displayIndex), SDL_WINDOWPOS_CENTERED_DISPLAY(displayIndex), static_cast<int>(initialSize.width), static_cast<int>(initialSize.height), SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | fullscreenFlag);
     AgcDriverUnlockVulkanLoader_nid_postfix();
     require(window != nullptr, SDL_GetError());
     SDL_SetWindowMinimumSize(window, static_cast<int>(DisplayWindowMinimumWidth), static_cast<int>(DisplayWindowMinimumHeight));
     applyAppIcon(window);
     installSubclass();
+    hostWindow = std::make_unique<SdlHostWindow>(window);
+    fullscreen = std::make_unique<HostFullscreenState>(*hostWindow);
+    fullscreen->Adopt(fullscreenMode, HostWindowSize{static_cast<int>(initialSize.width), static_cast<int>(initialSize.height)});
 }
 
 void DisplayWindow::updateAspectRatio(std::uint32_t sourceWidth, std::uint32_t sourceHeight) {
@@ -91,6 +119,8 @@ void DisplayWindow::updateAspectRatio(std::uint32_t sourceWidth, std::uint32_t s
 
 void DisplayWindow::Destroy() noexcept {
     if (window == nullptr) return;
+    fullscreen.reset();
+    hostWindow.reset();
     removeSubclass();
     SDL_DestroyWindow(window);
     window = nullptr;
@@ -102,8 +132,7 @@ SDL_Window* DisplayWindow::Handle() const {
 
 void DisplayWindow::ToggleFullscreen() {
     require(window != nullptr, "window must exist before toggling fullscreen");
-    const auto flags = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0 ? 0u : static_cast<Uint32>(SDL_WINDOW_FULLSCREEN_DESKTOP);
-    require(SDL_SetWindowFullscreen(window, flags) == 0, SDL_GetError());
+    fullscreen->Toggle();
 }
 
 void DisplayWindow::DrawableSize(std::uint32_t& width, std::uint32_t& height) const {
