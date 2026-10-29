@@ -120,18 +120,45 @@ void deviceSelectionTests() {
     std::puts("sampled-cache device selection CPU tests passed");
 }
 
+VkPhysicalDeviceMemoryProperties SpillHeaps(std::uint64_t hostBytes) {
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    VkPhysicalDeviceMemoryProperties memory{};
+    memory.memoryHeapCount = hostBytes != 0 ? 2u : 1u;
+    memory.memoryHeaps[0] = {12u * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    memory.memoryHeaps[1] = {hostBytes, 0u};
+    return memory;
+}
+
 void spillTests() {
     constexpr std::uint64_t MiB = 1ull << 20u;
-    Require(SampledTextureSpill(0, true, false, false) == 0 && SampledTextureSpill(SampledSpillLimit, false, true, false) == 0, "a device without a host heap was given room for sampled textures past its share");
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    Require(SampledTextureSpill(0, true, false, 0) == 0 && SampledTextureSpill(SampledSpillLimit, false, true, 0) == 0 && SampledTextureSpill(SampledSpillLimit, false, false, 0) == 0, "a device with no ceiling was given room for sampled textures past its share");
     std::uint64_t spill = 0;
     for (std::uint64_t step = 1; step <= 8; ++step) {
-        spill = SampledTextureSpill(spill, true, false, true);
+        spill = SampledTextureSpill(spill, true, false, SampledSpillLimit);
         Require(spill == step * 256u * MiB, "after " + std::to_string(step) + " budget reads with a refused texture the room past the device's share is " + std::to_string(spill / MiB) + " MiB, not " + std::to_string(step * 256u) + " MiB");
     }
-    Require(SampledTextureSpill(spill, true, false, true) == 2048u * MiB, "the room past the device's share grew beyond 2 GiB");
-    Require(SampledTextureSpill(spill, false, false, true) == spill, "a budget read without a refused texture changed the room before the cache was quiet");
-    Require(SampledTextureSpill(spill, false, true, true) == spill - 256u * MiB, "a quiet budget read did not give back one step");
-    Require(SampledTextureSpill(100u * MiB, false, true, true) == 0, "a quiet budget read with less than a step left did not give back the rest");
+    Require(SampledTextureSpill(spill, true, false, SampledSpillLimit) == 2048u * MiB, "the room past the device's share grew beyond 2 GiB");
+    Require(SampledTextureSpill(spill, false, false, SampledSpillLimit) == spill, "a budget read without a refused texture changed the room before the cache was quiet");
+    Require(SampledTextureSpill(spill, false, true, SampledSpillLimit) == spill - 256u * MiB, "a quiet budget read did not give back one step");
+    Require(SampledTextureSpill(100u * MiB, false, true, SampledSpillLimit) == 0, "a quiet budget read with less than a step left did not give back the rest");
+    Require(SampledTextureSpill(1536u * MiB, true, false, 1536u * MiB) == 1536u * MiB, "the room grew past a 1536 MiB ceiling");
+    Require(SampledTextureSpill(2048u * MiB, false, false, 1536u * MiB) == 1536u * MiB, "room above a ceiling that fell was not brought down to it");
+    const auto ceiling = [](std::uint64_t hostBytes, std::uint64_t hostBudget, bool discrete) {
+        const auto memory = SpillHeaps(hostBytes);
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        reported.heapBudget[0] = 9u * GiB;
+        reported.heapBudget[1] = hostBudget;
+        return SampledSpillCeiling(memory, &reported, discrete);
+    };
+    Require(ceiling(22u * GiB, 22u * GiB, true) == SampledSpillLimit, "a discrete GPU with a 22 GiB host heap was not given the 2 GiB ceiling");
+    Require(ceiling(22u * GiB, 6u * GiB, true) == 1536u * MiB, "the ceiling of a host heap with a 6 GiB budget is " + std::to_string(ceiling(22u * GiB, 6u * GiB, true) / MiB) + " MiB, not a quarter of its budget (1536 MiB)");
+    Require(ceiling(6u * GiB, 0, true) == 1536u * MiB, "a host heap with no reported budget was not bounded by a quarter of its size");
+    Require(ceiling(6u * GiB + 100u * MiB, 0, true) == 1536u * MiB, "the ceiling was not rounded down to whole steps");
+    Require(ceiling(GiB - MiB, 0, true) == 0, "a host heap whose quarter is less than a step gave room");
+    Require(ceiling(22u * GiB, 22u * GiB, false) == 0, "a GPU that is not discrete (an integrated GPU's GTT heap) was given room past its share");
+    Require(ceiling(0, 0, true) == 0, "a device whose heaps are all device-local was given room past its share");
+    Require(SampledSpillCeiling(SpillHeaps(6u * GiB), nullptr, true) == 1536u * MiB, "without VK_EXT_memory_budget the ceiling did not come from the host heap's size");
     std::puts("sampled texture spill CPU tests passed");
 }
 
