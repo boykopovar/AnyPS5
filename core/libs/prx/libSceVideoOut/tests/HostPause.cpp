@@ -68,6 +68,14 @@ SDL_Event Key(unsigned windowId, SDL_Scancode key, bool down, bool repeat = fals
     return event;
 }
 
+SDL_Event Window(unsigned windowId, std::uint8_t kind) {
+    SDL_Event event{};
+    event.type = SDL_WINDOWEVENT;
+    event.window.windowID = windowId;
+    event.window.event = kind;
+    return event;
+}
+
 struct FakeClock {
     std::chrono::steady_clock::time_point now{std::chrono::seconds(100)};
     HostPause::Clock Get() { return [this] { return now; }; }
@@ -113,6 +121,47 @@ void NoKeyNoPause() {
     Require(!pause.Paused(), "a disabled pause is on");
 }
 
+void FocusRule() {
+    FakeClock clock;
+    HostPause pause({SDL_SCANCODE_UNKNOWN, true}, clock.Get());
+    Require(!pause.Paused(), "a focus rule starts paused");
+    auto change = pause.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_LOST), 3);
+    Require(change.changed && change.paused && pause.Paused(), "a focus loss does not pause");
+    Require(!pause.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_LOST), 3).changed, "a second focus loss changed the state");
+    clock.now += std::chrono::milliseconds(900);
+    change = pause.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_GAINED), 3);
+    Require(change.changed && !change.paused && !pause.Paused() && change.pausedFor == std::chrono::milliseconds(900), "regaining focus does not resume");
+    Require(pause.HandleEvent(Window(3, SDL_WINDOWEVENT_MINIMIZED), 3).paused, "a minimize does not pause");
+    Require(!pause.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_GAINED), 3).paused, "regaining focus after a minimize does not resume");
+}
+
+void FocusIgnored() {
+    FakeClock clock;
+    HostPause pause({SDL_SCANCODE_UNKNOWN, true}, clock.Get());
+    Require(!pause.HandleEvent(Window(4, SDL_WINDOWEVENT_FOCUS_LOST), 3).changed, "another window's focus loss paused");
+    Require(!pause.HandleEvent(Window(3, SDL_WINDOWEVENT_CLOSE), 3).changed, "a close paused");
+    Require(!pause.HandleEvent(Window(3, SDL_WINDOWEVENT_SHOWN), 3).changed, "a show paused");
+    pause.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_LOST), 3);
+    Require(!pause.HandleEvent(Window(4, SDL_WINDOWEVENT_FOCUS_GAINED), 3).changed && pause.Paused(), "another window's focus gain resumed");
+    HostPause off({SDL_SCANCODE_UNKNOWN, false}, clock.Get());
+    Require(!off.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_LOST), 3).changed && !off.Paused(), "a focus loss paused with the rule off");
+}
+
+void FocusAndKey() {
+    FakeClock clock;
+    HostPause pause({SDL_SCANCODE_F9, true}, clock.Get());
+    pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true), 3);
+    Require(pause.Paused(), "the key does not pause beside the focus rule");
+    Require(!pause.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_LOST), 3).changed, "a focus loss changed a key pause");
+    Require(!pause.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_GAINED), 3).changed && pause.Paused(), "regaining focus resumed a key pause");
+    Require(!pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true), 3).paused && !pause.Paused(), "the key does not resume after a focus round trip");
+    pause.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_LOST), 3);
+    pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true), 3);
+    Require(pause.Paused(), "the key press resumed while focus was lost");
+    Require(!pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true), 3).changed && pause.Paused(), "a second key press resumed while focus was lost");
+    Require(!pause.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_GAINED), 3).paused && !pause.Paused(), "regaining focus did not resume once the key was off");
+}
+
 }
 
 int main() {
@@ -122,6 +171,9 @@ int main() {
     KeyToggles();
     KeyIgnored();
     NoKeyNoPause();
+    FocusRule();
+    FocusIgnored();
+    FocusAndKey();
     std::puts("host pause: all checks passed");
     return 0;
 }
