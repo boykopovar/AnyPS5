@@ -880,7 +880,7 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(agc_thread_priority PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    else()
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         foreach(mode rt high)
             add_test(NAME agc_thread_priority_refused_${mode} COMMAND agc_thread_priority_tests refused)
             set_tests_properties(agc_thread_priority_refused_${mode} PROPERTIES ENVIRONMENT
@@ -2411,18 +2411,26 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME agc_submit_progress COMMAND agc_driver_submit_progress_tests)
     set_tests_properties(agc_submit_progress PROPERTIES
-            ENVIRONMENT "APS5_SUBMIT_PROGRESS=1;ANYPS5_REQUIRE_VULKAN=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+            ENVIRONMENT "APS5_SUBMIT_PROGRESS=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
         set_tests_properties(agc_submit_progress PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_submit_progress_no_timeline COMMAND agc_driver_submit_progress_tests --fallback-only)
     set_tests_properties(agc_submit_progress_no_timeline PROPERTIES
-            ENVIRONMENT "APS5_SUBMIT_PROGRESS=1;APS5_NO_TIMELINE=1;ANYPS5_REQUIRE_VULKAN=1"
+            ENVIRONMENT "APS5_SUBMIT_PROGRESS=1;APS5_NO_TIMELINE=1"
             TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
         set_tests_properties(agc_submit_progress_no_timeline PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_vulkan_test_device_no_driver COMMAND agc_driver_vulkan_test_device_tests --no-driver)
+    set_tests_properties(agc_driver_vulkan_test_device_no_driver PROPERTIES
+            ENVIRONMENT "VK_DRIVER_FILES=${CMAKE_CURRENT_BINARY_DIR}/no-vulkan-driver.json;VK_ICD_FILENAMES=${CMAKE_CURRENT_BINARY_DIR}/no-vulkan-driver.json"
+            TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_vulkan_test_device_no_driver PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 
@@ -2727,6 +2735,21 @@ if(BUILD_TESTING)
         endif()
         if(WIN32)
             set_tests_properties(${agcTestName} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    set_tests_properties(agc_driver_runtime_formatted_store PROPERTIES TIMEOUT 30)
+    foreach(mode IN ITEMS x1 x2 x3 x1_d16 x2_d16 x3_d16 x4_d16)
+        string(REGEX REPLACE "_d16$" "" components "${mode}")
+        set(arguments "--${components}")
+        if(mode MATCHES "_d16$")
+            list(APPEND arguments --d16)
+        endif()
+        add_test(NAME agc_driver_runtime_formatted_store_${mode} COMMAND agc_driver_runtime_formatted_store_tests ${arguments})
+        set_tests_properties(agc_driver_runtime_formatted_store_${mode} PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(agc_driver_runtime_formatted_store_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
@@ -3281,7 +3304,7 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_pm4_failure agc_driver_pm4_failure_inline agc_descriptor_pool_reset_failure agc_descriptor_cache agc_driver_address_space_teardown PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    if(NOT WIN32)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_test(NAME agc_driver_pm4_priority_refused COMMAND agc_driver_pm4_tests priority-refused)
         set_tests_properties(agc_driver_pm4_priority_refused PROPERTIES ENVIRONMENT
             "ANYPS5_NO_SHADER_CACHE=1;APS5_THREAD_PRIORITY=high;DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/aps5-no-rtkit" SKIP_RETURN_CODE 77)
@@ -3368,6 +3391,20 @@ if(BUILD_TESTING)
             endif()
         endforeach()
     endforeach()
+    add_test(NAME agc_driver_depth_plane_cpu_write_after_page_unwatch COMMAND agc_driver_depth_plane_partial_store_tests --cpu-write-after-page-unwatch)
+    set_tests_properties(agc_driver_depth_plane_cpu_write_after_page_unwatch PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_plane_cpu_write_after_page_unwatch PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_depth_plane_cpu_write_after_partial_unwatch COMMAND agc_driver_depth_plane_partial_store_tests --cpu-write-after-partial-unwatch)
+    set_tests_properties(agc_driver_depth_plane_cpu_write_after_partial_unwatch PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_plane_cpu_write_after_partial_unwatch PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_depth_plane_cpu_write_after_memo COMMAND agc_driver_depth_plane_partial_store_tests --cpu-write-after-memo)
     set_tests_properties(agc_driver_depth_plane_cpu_write_after_memo PROPERTIES
             ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

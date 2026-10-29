@@ -402,6 +402,30 @@ int APS5_VABI sceKernelIsDevKit(void) {
     return 0;
 }
 
+int APS5_VABI sceKernelIsGenuineCEX(void) {
+    return 1;
+}
+
+int APS5_VABI sceKernelIsGenuineDevKit(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelIsGenuineTestKit(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelIsTestKit(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelIsProspero(void) {
+    return 1;
+}
+
+int APS5_VABI sceKernelIsKratos(void) {
+    return 0;
+}
+
 int APS5_VABI get_authinfo_nid_postfix(int pid, KernelAuthInfo* info) {
     if (info == nullptr) return static_cast<int>(Fail(GuestEperm));
     if (pid != 0 && pid != getpid_nid_postfix()) return static_cast<int>(Fail(GuestEsrch));

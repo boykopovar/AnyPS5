@@ -25,7 +25,7 @@ def prepare_notes(source, body, full):
     paths = (source, body, full)
     for index, first in enumerate(paths):
         for second in paths[index + 1:]:
-            if first.resolve() == second.resolve() or (first.exists() and second.exists() and first.samefile(second)):
+            if os.path.realpath(first) == os.path.realpath(second) or (first.exists() and second.exists() and first.samefile(second)):
                 raise ValueError("Release note input and outputs must be distinct files")
     try:
         payload = json.loads(source.read_text(encoding="utf-8-sig"))
@@ -40,6 +40,10 @@ def prepare_notes(source, body, full):
     if len(body_text) > BODY_LIMIT:
         raise ValueError(f"Release notes body exceeds {BODY_LIMIT} characters after removing What's Changed")
     for destination in (body, full):
+        try:
+            destination.stat()
+        except FileNotFoundError:
+            pass
         if destination.is_dir():
             raise IsADirectoryError(str(destination))
         if os.name == "nt" and destination.exists() and destination.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:

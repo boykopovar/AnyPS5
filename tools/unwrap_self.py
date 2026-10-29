@@ -70,6 +70,8 @@ PHDR_NAMES = {
     0x6FFFFF01: "PT_OS_0x6fffff01",
 }
 
+PT_TLS = 7
+
 
 class Refused(Exception):
     pass
@@ -131,13 +133,18 @@ def parse_elf(data):
         offset = inner + program_offset + index * 56
         kind, flags, file_offset, vaddr, _, file_size, memory_size, alignment = struct.unpack_from(
             "<IIQQQQQQ", data, offset)
-        if kind == PT_LOAD:
+        if kind in (PT_LOAD, PT_TLS):
             if file_size > memory_size:
                 raise Refused("segment %d file size exceeds memory size" % index)
             if alignment and alignment & (alignment - 1):
                 raise Refused("segment %d alignment is not a power of two" % index)
-            if memory_size > (1 << 64) - vaddr:
-                raise Refused("segment %d memory range exceeds ELF64" % index)
+        if kind == PT_TLS:
+            if alignment > 8192:
+                raise Refused("segment %d TLS alignment exceeds 8192" % index)
+            if memory_size > 0x7FFF0000:
+                raise Refused("segment %d TLS memory size exceeds 0x7fff0000" % index)
+        if kind == PT_LOAD and memory_size > (1 << 64) - vaddr:
+            raise Refused("segment %d memory range exceeds ELF64" % index)
         headers.append({
             "index": index, "type": kind, "flags": flags, "offset": file_offset,
             "vaddr": vaddr, "size": file_size, "memory": memory_size,

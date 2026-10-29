@@ -255,9 +255,15 @@ static void CheckNetstat() {
     Require(sceNetShowRoute6() == 0);
     Require(Failed(sceNetShowNetstatWithMemory(-1), 9));
     Require(Failed(sceNetShowRouteWithMemory(-1), 9));
+    Require(Failed(sceNetShowIfconfigWithMemory(-1), 9));
+    Require(Failed(sceNetShowPolicyWithMemory(-1), 9));
+    Require(Failed(sceNetShowRoute6WithMemory(-1), 9));
     const int pool = sceNetPoolCreate("netstat", 4096, 0);
     Require(pool > 0);
     Require(sceNetShowRouteWithMemory(pool) == 0);
+    Require(sceNetShowIfconfigWithMemory(pool) == 0);
+    Require(sceNetShowPolicyWithMemory(pool) == 0);
+    Require(sceNetShowRoute6WithMemory(pool) == 0);
     const auto empty = CaptureNetstat(pool);
     Require(empty.find("bytes=4096 sockets=0") != std::string::npos);
     const int socket = sceNetSocket("netstat", 2, 1, 0);
@@ -279,6 +285,9 @@ static void CheckNetstat() {
     Require(sceNetPoolDestroy(pool) == 0);
     Require(Failed(sceNetShowNetstatWithMemory(pool), 9));
     Require(Failed(sceNetShowRouteWithMemory(pool), 9));
+    Require(Failed(sceNetShowIfconfigWithMemory(pool), 9));
+    Require(Failed(sceNetShowPolicyWithMemory(pool), 9));
+    Require(Failed(sceNetShowRoute6WithMemory(pool), 9));
 }
 
 static void CheckPoolStats() {
@@ -290,6 +299,22 @@ static void CheckPoolStats() {
     Require(Failed(sceNetGetMemoryPoolStats(pool, nullptr), 22));
     Require(sceNetPoolDestroy(pool) == 0);
     Require(Failed(sceNetGetMemoryPoolStats(pool, &stats), 9));
+}
+
+static void CheckStatisticsInfo() {
+    Require(Failed(sceNetGetStatisticsInfo(nullptr, 0), 14));
+    NetStatisticsInfo info;
+    std::memset(&info, 0xaa, sizeof(info));
+    Require(sceNetGetStatisticsInfo(&info, 0) == 0);
+    Require(sizeof(info) == 24);
+    Require(info.kernel_mem_free_size > 0 && info.kernel_mem_free_min > 0);
+    Require(info.libnet_mem_free_size > 0 && info.libnet_mem_free_min > 0);
+    Require(info.kernel_mem_free_min <= info.kernel_mem_free_size);
+    Require(info.libnet_mem_free_min <= info.libnet_mem_free_size);
+    Require(info.packet_count == 0 && info.packet_qos_count == 0);
+    NetStatisticsInfo again;
+    Require(sceNetGetStatisticsInfo(&again, 0x1234) == 0);
+    Require(std::memcmp(&again, &info, sizeof(info)) == 0);
 }
 
 static void CheckIfName() {
@@ -2160,6 +2185,7 @@ int main() {
     CheckEpollWritable();
     CheckSocketHostErrors();
     CheckPoolStats();
+    CheckStatisticsInfo();
     CheckIfName();
     CheckRandom();
     CheckByteOrderConversion();

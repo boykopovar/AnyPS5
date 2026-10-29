@@ -13,6 +13,87 @@ TOOL = ROOT / "tools/check_compile.py"
 
 
 class CheckCompileModeTests(unittest.TestCase):
+    def check_driver_queries(self, variants, compiler_names=("gcc", "clang")):
+        for compiler in self.compilers(compiler_names):
+            if compiler_names == ("gcc",):
+                identity = subprocess.run([compiler, "--version"], capture_output=True, text=True, check=False)
+                if "clang" in (identity.stdout + identity.stderr).lower():
+                    self.skipTest("requires GNU GCC driver information options")
+            for flags in variants:
+                for field in ("arguments", "command"):
+                    with self.subTest(compiler=compiler, flags=flags, field=field), tempfile.TemporaryDirectory(prefix="driver query ") as name:
+                        root = Path(name).resolve()
+                        build = root / "build"
+                        build.mkdir()
+                        source = root / "unit.c"
+                        source.write_text("int syntax_must_be_checked = ;\n", encoding="utf-8")
+                        ordinary = [compiler, "-c", str(source), "-o", str(build / "unit.o")]
+                        control = subprocess.run(ordinary, cwd=build, capture_output=True, text=True, check=False)
+                        self.assertNotEqual(control.returncode, 0)
+                        self.assertIn("syntax_must_be_checked", control.stderr)
+                        arguments = [compiler, *flags, *ordinary[1:]]
+                        bypass = subprocess.run(arguments, cwd=build, capture_output=True, text=True, check=False)
+                        self.assertEqual(bypass.returncode, 0, bypass.stderr)
+                        (build / "unit.o").write_bytes(b"preserved object")
+                        result = self.run_tool(root, build, source, arguments, field)
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertIn("bypasses compilation", result.stderr)
+                        self.assertNotIn("translation units compile", result.stdout)
+
+    def test_version_and_dry_run_modes_cannot_report_success(self):
+        self.check_driver_queries((("--version",), ("-###",)))
+
+    def test_driver_help_cannot_report_success(self):
+        self.check_driver_queries((("--help",),))
+
+    def test_clang_driver_only_and_hidden_queries_cannot_report_success(self):
+        if shutil.which("clang") is None:
+            self.skipTest("needs Clang")
+        self.check_driver_queries((("-fdriver-only",), ("--help-hidden",),
+                                   ("-ccc-print-phases",), ("-ccc-print-bindings",)), compiler_names=("clang",))
+
+    def test_clang_print_trace_still_checks_syntax(self):
+        if shutil.which("clang") is None:
+            self.skipTest("needs Clang")
+        self.check_modes((("-print-ivar-layout",),), compiler_names=("clang",))
+
+    def test_clang_supported_cpu_queries_cannot_report_success(self):
+        self.check_driver_queries((("--print-supported-cpus",), ("-print-supported-cpus",)), compiler_names=("clang",))
+
+    def test_clang_cpu_help_queries_cannot_report_success(self):
+        self.check_driver_queries((("-mcpu=help",), ("-mtune=help",)), compiler_names=("clang",))
+
+    def test_clang_target_cpu_options_still_check_syntax(self):
+        self.check_modes((("--target=aarch64", "-mcpu=generic", "-mtune=generic"),), compiler_names=("clang",))
+
+    def test_gcc_driver_queries_cannot_report_success(self):
+        self.check_driver_queries((("-dumpversion",), ("-dumpfullversion",), ("-dumpmachine",)), compiler_names=("gcc",))
+
+    def test_gcc_specs_and_target_help_cannot_report_success(self):
+        self.check_driver_queries((("-dumpspecs",), ("--target-help",)), compiler_names=("gcc",))
+
+    def test_gcc_print_queries_cannot_report_success(self):
+        self.check_driver_queries((("-print-search-dirs",), ("-print-file-name=libgcc.a",)), compiler_names=("gcc",))
+
+    def test_gcc_program_and_category_help_cannot_report_success(self):
+        self.check_driver_queries((("-print-prog-name=cc1",), ("--help=common",)), compiler_names=("gcc",))
+
+    def check_query_named_include_operands(self, names):
+        def configure(root, build, source):
+            for name in names:
+                (build / name).write_text("#define HEADER_PRESENT 1\n", encoding="utf-8")
+            return [], "#ifndef HEADER_PRESENT\n#error include operand was lost\n#endif\n", ""
+        self.check_modes(tuple(("-include", name) for name in names), configure=configure)
+
+    def test_query_named_include_operand_still_compiles(self):
+        self.check_query_named_include_operands(("--version",))
+
+    def test_supported_cpu_query_named_include_operands_still_compile(self):
+        self.check_query_named_include_operands(("--print-supported-cpus", "-print-supported-cpus"))
+
+    def test_cpu_help_query_named_include_operands_still_compile(self):
+        self.check_query_named_include_operands(("-mcpu=help", "-mtune=help"))
+
     def compilers(self, names=("gcc", "clang")):
         values = list(dict.fromkeys(value for value in map(shutil.which, names) if value))
         if not values:

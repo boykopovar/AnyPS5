@@ -17,6 +17,14 @@ DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
 PREPROCESSING = ("-E", "--preprocess", "-M", "--dependencies", "-MM", "--user-dependencies",
                  "-MG", "--print-missing-file-dependencies", "-P", "--no-line-commands",
                  "-C", "-CC", "-dM", "-dD", "-dI")
+DRIVER_QUERIES = ("--version", "--help", "-help", "--help-hidden", "--target-help", "-###", "-fdriver-only",
+                  "-dumpversion", "-dumpfullversion", "-dumpmachine", "-dumpspecs", "-ccc-print-phases", "-ccc-print-bindings",
+                  "-print-file-name", "-print-prog-name", "-print-search-dirs", "-print-libgcc-file-name", "-print-multiarch",
+                  "-print-multi-directory", "-print-multi-lib", "-print-multi-os-directory", "-print-sysroot",
+                  "-print-sysroot-headers-suffix", "-print-cxx-stdlib", "-print-cxx-stdlib-include-dirs",
+                  "-print-diagnostic-categories", "-print-diagnostic-options", "-print-effective-triple", "-print-enabled-extensions",
+                  "-print-library-module-manifest-path", "-print-multi-flags-experimental", "-print-resource-dir",
+                  "-print-rocm-search-dirs", "-print-runtime-dir", "-print-supported-cpus", "-print-supported-extensions", "-print-target-triple", "-print-targets")
 WITH_VALUE = ("-I", "-L", "-F", "-B", "-D", "-U", "-x", "-include", "--include", "-imacros", "--imacros",
               "--define-macro", "--undefine-macro", "-iquote", "-isystem", "-idirafter", "-iprefix",
               "-iwithprefix", "-iwithprefixbefore", "-isysroot", "--sysroot", "-target", "--target",
@@ -277,6 +285,11 @@ def syntax_arguments(arguments, directory, source):
         if not positional and (argument in (*DROP, *PREPROCESSING) or argument.startswith(("-MT", "-MF", "-MQ", "-MJ"))):
             index += 1
             continue
+        query, _, value = argument.partition("=")
+        if query.startswith("--print-"):
+            query = query[1:]
+        if not positional and (query in DRIVER_QUERIES or (query in ("-mcpu", "-mtune") and value == "help")):
+            raise ValueError(f"compiler option {argument} bypasses compilation")
         if positional or not argument.startswith("-"):
             candidate = Path(argument)
             if not candidate.is_absolute():

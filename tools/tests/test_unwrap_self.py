@@ -177,6 +177,45 @@ class UnwrapTest(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertFalse(output.exists())
 
+    def test_tls_layouts_the_relinker_rejects_are_refused(self):
+        cases = ((3, 0x20, 0x40, "segment 1 alignment is not a power of two"),
+                 (6, 0x20, 0x40, "segment 1 alignment is not a power of two"),
+                 (0x1001, 0x10, 0x20, "segment 1 alignment is not a power of two"),
+                 (8, 0x40, 0x20, "segment 1 file size exceeds memory size"),
+                 (0x4000, 0x10, 0x20, "segment 1 TLS alignment exceeds 8192"),
+                 (0x40, 0x10, 0x80000000, "segment 1 TLS memory size exceeds 0x7fff0000"))
+        for align, size, memory, message in cases:
+            with self.subTest(align=align, size=size, memory=memory):
+                segments = [default_segments()[0], (PT_TLS, 4, 0x1580, 0x1040, size, align)]
+                segments += default_segments()[1:]
+                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 0x28, memory)
+                source = Path(self.directory) / "input.self"
+                output = Path(self.directory) / "output.elf"
+                source.write_bytes(container)
+                result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), str(source), str(output)],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"FAIL: {source}: {message}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(output.exists())
+                self.assertEqual(source.read_bytes(), container)
+
+    def test_tls_layouts_the_relinker_accepts_are_unwrapped(self):
+        for align, size, memory in ((0x40, 0x20, 0x40), (8, 0x10, 0x10), (0, 0x20, 0x40), (1, 0x20, 0x40),
+                                    (0x2000, 0x10, 0x20), (0x40, 0x10, 0x7FFF0000)):
+            with self.subTest(align=align, size=size, memory=memory):
+                segments = [default_segments()[0], (PT_TLS, 4, 0x1580, 0x1040, size, align)]
+                segments += default_segments()[1:]
+                container = bytearray(build_container(segments, default_records(), default_payloads()))
+                struct.pack_into("<Q", container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 56 + 0x28, memory)
+                result, output = self.convert(bytes(container))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data, headers = read_program_headers(output)
+                tls = [header for header in headers if header[0] == PT_TLS][0]
+                self.assertEqual((tls[5], tls[6], tls[7]), (size, memory, align))
+                self.assertEqual(data[tls[2]:tls[2] + tls[5]], pattern(9, 0x80)[0x40:0x40 + size])
+
     def test_huge_stale_offset_is_refused_instead_of_exhausting_memory(self):
         segments = default_segments()
         segments[2] = (PT_DYNAMIC, 6, 0x49000000001580, 0x1040, 0x10, 8)

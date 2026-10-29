@@ -52,6 +52,7 @@ def built(build):
 
 
 def commands(content):
+    content = content.removeprefix("\ufeff")
     content = LEXICAL.sub(lambda match: re.sub(r"[^\n]", " ", match.group())
                           if match.group("comment") is not None else match.group(), content)
     code = LEXICAL.sub(lambda match: re.sub(r"[^\n]", "_", match.group()), content)

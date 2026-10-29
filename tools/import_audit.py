@@ -88,13 +88,11 @@ def elf_program_dynamic_symbols(path, data):
     if len(dynamic_segments) != 1:
         raise AuditError(f"{path}: expected one dynamic segment, found {len(dynamic_segments)}")
     _, _, dynamic_offset, _, _, dynamic_size, _, _ = dynamic_segments[0]
-    if dynamic_size % 16:
-        raise AuditError(f"{path}: dynamic segment size {dynamic_size} is not a multiple of 16")
     take(data, dynamic_offset, dynamic_size, path, "dynamic segment")
     dynamic = {}
     needed_offsets = []
     terminated = False
-    for position in range(0, dynamic_size, 16):
+    for position in range(0, dynamic_size - 15, 16):
         tag, value = unpack("<qQ", data, dynamic_offset + position, path, "dynamic entry")
         if tag == 0:
             terminated = True

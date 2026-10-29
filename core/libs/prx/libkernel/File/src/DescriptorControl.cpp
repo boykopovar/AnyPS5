@@ -567,8 +567,9 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         return 0;
     }
     if (command == NonblockingRequest) {
-        const bool enable = *static_cast<const int*>(argument) != 0;
-        return ChangeStatus(fd, *kind, Nonblocking, enable ? Nonblocking : 0, "ioctl");
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(GuestEfault);
+        return ChangeStatus(fd, *kind, Nonblocking, enable != 0 ? Nonblocking : 0, "ioctl");
     }
     if (command == ReadableRequest) {
         if (*kind == Kind::RandomDevice) return Fail(GuestEnotty);
