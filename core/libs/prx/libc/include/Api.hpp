@@ -15,7 +15,7 @@
 #include <future>
 #include <regex>
 
-#ifdef _LIBCPP_VERSION
+#if defined(_LIBCPP_VERSION) || defined(ANYPS5_GUEST_LIFTED)
 struct GuestExceptionPointer {
     void* object {};
     explicit GuestExceptionPointer(void* primary) noexcept : object(primary) {}
