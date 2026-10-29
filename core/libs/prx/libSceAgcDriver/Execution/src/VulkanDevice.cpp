@@ -378,12 +378,18 @@ struct ScratchPool {
     VkDescriptorSet set = VK_NULL_HANDLE;
     std::uint64_t slots = 0;
     std::uint64_t headerBytes = 0;
-    bool zeroed = false;
     ~ScratchPool() {
         buffer.reset();
         if (pool != VK_NULL_HANDLE) destroyPool(device, pool, nullptr);
     }
 };
+
+void ZeroScratchPoolHeader(const Graphics::Context& context, const ScratchPool& pool) {
+    Graphics::CommandBatch batch(context);
+    context.Resolved(&Graphics::DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(batch.Handle(), pool.buffer->Handle(), 0, pool.headerBytes, 0u);
+    Graphics::RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    batch.SubmitAndWait();
+}
 
 std::uint64_t ScratchPoolCapBytes() {
     static const std::uint64_t bytes = [] {
@@ -770,6 +776,7 @@ struct VulkanDevice::State {
         write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         write.pBufferInfo = &described;
         DeviceFunction<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(device, 1, &write, 0, nullptr);
+        ZeroScratchPoolHeader(context, *created);
         slot = created;
         return created;
     }
@@ -4296,6 +4303,13 @@ bool VulkanDevice::GraphicsPipelineLibraries() const {
     return state->graphicsPipelineLibrary;
 }
 
+std::pair<VkBuffer, std::uint64_t> VulkanDevice::scratchPoolHeader(const ShaderRecompiler::RecompileResult& shader) const {
+    std::lock_guard lock(state->scratchPoolsMutex);
+    const auto found = state->scratchPools.find(shader.Identity());
+    if (found == state->scratchPools.end() || found->second == nullptr) return {VK_NULL_HANDLE, 0};
+    return {found->second->buffer->Handle(), found->second->headerBytes};
+}
+
 Graphics::Context VulkanDevice::graphicsContext() const {
     static const bool noCache = std::getenv("APS5_NO_CONTEXT_CACHE") != nullptr;
     if (state->contextReady && !noCache) return state->context;
@@ -5357,6 +5371,11 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     if (recorder.HasQueuedKeyStores() && (resources.HoldsLease() || recorder.AnyQueuedKeyStore(touches))) recorder.FlushKeyStores();
     if (recorder.HasQueuedStores() && (resources.HoldsLease() || recorder.AnyQueuedStore(touches))) recorder.FlushStores();
     static_cast<void>(Graphics::StorageTexture::StoreDrawnLinearTouching("dispatch access", touches, resources.HoldsLease()));
+    std::shared_ptr<ScratchPool> pool;
+    if (const auto slotDwords = record.shader->program->scratchPoolSlotDwords; slotDwords != 0) {
+        const std::uint64_t groups = argumentImport != nullptr ? std::numeric_limits<std::uint64_t>::max() : static_cast<std::uint64_t>(record.x) * record.y * record.z;
+        pool = state->ScratchPoolFor(context, record.shader->program->Identity(), slotDwords, groups);
+    }
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
     recordStep(PhaseRecordCommands);
@@ -5458,14 +5477,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::WorkgroupMemoryDescriptorSet, 1, &memory->set, 0, nullptr);
         recorder.Keep(std::move(memory));
     }
-    if (const auto slotDwords = record.shader->program->scratchPoolSlotDwords; slotDwords != 0) {
-        const std::uint64_t groups = argumentImport != nullptr ? std::numeric_limits<std::uint64_t>::max() : static_cast<std::uint64_t>(record.x) * record.y * record.z;
-        auto pool = state->ScratchPoolFor(context, record.shader->program->Identity(), slotDwords, groups);
-        if (!pool->zeroed) {
-            context.Resolved(&Graphics::DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, pool->buffer->Handle(), 0, pool->headerBytes, 0u);
-            Graphics::RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-            pool->zeroed = true;
-        }
+    if (pool != nullptr) {
         context.Resolved(&Graphics::DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, record.objects->layout, ShaderRecompiler::ScratchPoolDescriptorSet, 1, &pool->set, 0, nullptr);
         recorder.Keep(std::move(pool));
     }
