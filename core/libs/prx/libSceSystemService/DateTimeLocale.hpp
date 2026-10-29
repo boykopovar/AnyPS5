@@ -7,6 +7,11 @@
 #include <string_view>
 #include <vector>
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+#include <langinfo.h>
+#include <locale.h>
+#endif
+
 namespace SystemServiceDateTime {
 
 constexpr int DATE_FORMAT_YYYYMMDD = 0;
@@ -161,6 +166,67 @@ inline int ResolveHostTimeFormat(const HostPatterns& host, const Notice& notice)
     notice(prefix + "the time pattern \"" + host.time + "\" of " + host.source + " has no console time format; using 24-hour (1)");
     return TIME_FORMAT_24HOUR;
 }
+
+struct LangInfo {
+    bool available = false;
+    std::string dateFormat;
+    std::string timeFormat;
+};
+
+using Environment = std::function<const char*(const char*)>;
+using LangInfoReader = std::function<LangInfo(const std::string&)>;
+
+namespace Detail {
+
+inline bool StartsWith(std::string_view text, std::string_view prefix) {
+    return text.size() >= prefix.size() && text.substr(0, prefix.size()) == prefix;
+}
+
+inline bool IsCLocaleName(std::string_view name) {
+    for (const std::string_view c : {std::string_view("C"), std::string_view("POSIX")}) {
+        if (name == c) return true;
+        if (StartsWith(name, c) && name.size() > c.size() && (name[c.size()] == '.' || name[c.size()] == '@')) return true;
+    }
+    return false;
+}
+
+}
+
+inline HostPatterns PosixHostPatterns(const Environment& environment, const LangInfoReader& read) {
+    HostPatterns host;
+    host.syntax = PatternSyntax::Strftime;
+    for (const char* variable : {"LC_ALL", "LC_TIME", "LANG"}) {
+        const char* value = environment(variable);
+        if (value == nullptr || value[0] == '\0') continue;
+        const std::string name = value;
+        if (Detail::IsCLocaleName(name)) {
+            host.source = std::string(variable) + " is \"" + name + "\", the C locale";
+            return host;
+        }
+        const LangInfo info = read(name);
+        if (!info.available) {
+            host.source = "the locale \"" + name + "\" from " + variable + " is not installed";
+            return host;
+        }
+        host.available = true;
+        host.date = info.dateFormat;
+        host.time = info.timeFormat;
+        host.source = "locale \"" + name + "\" (" + variable + ")";
+        return host;
+    }
+    host.source = "none of LC_ALL, LC_TIME and LANG is set";
+    return host;
+}
+
+#if !defined(_WIN32) && !defined(__APPLE__)
+inline LangInfo ReadLangInfo(const std::string& name) {
+    locale_t locale = newlocale(LC_TIME_MASK, name.c_str(), static_cast<locale_t>(nullptr));
+    if (locale == static_cast<locale_t>(nullptr)) return {};
+    LangInfo info{true, nl_langinfo_l(D_FMT, locale), nl_langinfo_l(T_FMT, locale)};
+    freelocale(locale);
+    return info;
+}
+#endif
 
 }
 
