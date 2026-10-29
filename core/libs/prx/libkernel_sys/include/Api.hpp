@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/KernelStatfs.hpp"
 #include "SceTypes.hpp"
 
 struct GuestAiocb {
@@ -106,7 +107,7 @@ int APS5_VABI get_page_table_stats_nid_postfix(void);
 int APS5_VABI get_sdk_compiled_version_nid_postfix(void);
 int APS5_VABI get_self_auth_info_nid_postfix(void);
 int APS5_VABI get_vm_map_timestamp_nid_postfix(void);
-int APS5_VABI getfsstat_nid_postfix(void);
+int APS5_VABI getfsstat_nid_postfix(KernelStatfs* buf, std::int64_t bufsize, int mode);
 int APS5_VABI ipmimgr_call_nid_postfix(void);
 int APS5_VABI is_in_sandbox_nid_postfix(void);
 int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len);

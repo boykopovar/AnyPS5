@@ -5,6 +5,7 @@
 #include <string>
 #include <filesystem>
 #include <vector>
+#include <utility>
 #include <cstdio>
 #include <cstdint>
 
@@ -45,6 +46,7 @@ extern "C" int RenameGuestPath_nid_no_patch(const char* from, const char* to);
 // directory instead of the run directory; the prefix matches whole path components only.
 extern "C" void AddPathAlias_nid_no_patch(const char* guestPrefix, const char* hostPath);
 extern "C" void RemovePathAlias_nid_no_patch(const char* guestPrefix);
+extern "C" std::vector<std::pair<std::string, std::string>> PathAliasEntries_nid_no_patch();
 using PathProvider = std::filesystem::path (*)(const std::filesystem::path& root);
 extern "C" void AddPathProvider_nid_no_patch(const char* guestPath, PathProvider provide);
 extern "C" void RecordWrittenPath_nid_no_patch(const std::filesystem::path& path);

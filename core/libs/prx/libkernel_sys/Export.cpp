@@ -31,11 +31,13 @@
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 
 #ifdef _WIN32
@@ -50,6 +52,8 @@
 #define SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE 0x2
 #endif
 #endif
+
+extern "C" int PosixStatfs_nid_no_patch(const char* path, KernelStatfs* buf);
 
 namespace {
 #ifdef _WIN32
@@ -446,6 +450,34 @@ int APS5_VABI setlogin_nid_postfix(const char* name) {
 
 int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     return _fstatfs_nid_postfix(d, buf);
+}
+
+int APS5_VABI getfsstat_nid_postfix(KernelStatfs* buf, std::int64_t bufsize, int mode) {
+    constexpr int GuestMntWait = 1;
+    constexpr int GuestMntNowait = 2;
+    if (bufsize < 0) return static_cast<int>(Fail(GuestEinval));
+    if (mode != GuestMntWait && mode != GuestMntNowait) return static_cast<int>(Fail(GuestEinval));
+    std::vector<std::string> mounts{"/"};
+    for (const auto& [prefix, host] : PathAliasEntries_nid_no_patch()) {
+        (void)host;
+        mounts.emplace_back("/" + prefix);
+    }
+    std::vector<KernelStatfs> filesystems;
+    filesystems.reserve(mounts.size());
+    for (const auto& guest : mounts) {
+        KernelStatfs fs{};
+        if (PosixStatfs_nid_no_patch(guest.c_str(), &fs) != 0) continue;
+        const auto length = std::min(guest.size(), sizeof(fs.f_mntonname) - 1);
+        std::memcpy(fs.f_mntonname, guest.data(), length);
+        filesystems.push_back(fs);
+    }
+    if (buf == nullptr || bufsize == 0) return static_cast<int>(filesystems.size());
+    const auto capacity = static_cast<std::uint64_t>(bufsize) / sizeof(KernelStatfs);
+    const auto count = std::min<std::uint64_t>(capacity, filesystems.size());
+    for (std::uint64_t index = 0; index < count; ++index) {
+        if (!GuestCopyOut_nid_no_patch(buf + index, &filesystems[index], sizeof(KernelStatfs))) return static_cast<int>(Fail(GuestEfault));
+    }
+    return static_cast<int>(count);
 }
 
 int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len) {

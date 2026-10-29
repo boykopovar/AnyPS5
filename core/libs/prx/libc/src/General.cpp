@@ -736,6 +736,12 @@ extern "C" void RemovePathAlias_nid_no_patch(const char* guestPrefix) {
     std::erase_if(aliases.entries, [&](const auto& entry) { return SameName(entry.first, prefix); });
 }
 
+extern "C" std::vector<std::pair<std::string, std::string>> PathAliasEntries_nid_no_patch() {
+    auto& aliases = Aliases();
+    std::lock_guard lock(aliases.mutex);
+    return aliases.entries;
+}
+
 extern "C" void RecordWrittenPath_nid_no_patch(const std::filesystem::path& path) {
     auto& registry = Written();
     std::lock_guard lock(registry.mutex);
