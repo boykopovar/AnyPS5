@@ -120,7 +120,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
     const char16_t* const start = format;
     std::string ascii;
     for (const char16_t* unit = format; *unit != 0; ++unit) ascii.push_back(*unit < 0x80 ? static_cast<char>(*unit) : '?');
-    args.Number(LibcDetail::NumberedArgumentClasses(ascii.c_str()));
+    args.Number(LibcDetail::NumberedArgumentClasses(ascii.c_str(), true));
     const auto position = [&] {
         const char* cursor = ascii.c_str() + (format - start);
         const std::size_t found = LibcDetail::ArgumentPosition(cursor);
@@ -228,16 +228,16 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
         } else if (conversion == u'p' && (length.empty() || length == "l")) {
             const std::string text = LibcDetail::FormatPointer(spec, args.Next<void*>());
             out.append(text.begin(), text.end());
-        } else if (conversion == u'c' || conversion == u'C') {
+        } else if (conversion == u'c') {
             const int value = args.Next<int>();
             std::u16string text;
-            if (conversion == u'C' || length == "l") text.push_back(static_cast<char16_t>(value));
+            if (length == "l") text.push_back(static_cast<char16_t>(value));
             else text.push_back(static_cast<char16_t>(static_cast<unsigned char>(value)));
             AppendPadded(out, text, left, width);
-        } else if (conversion == u's' || conversion == u'S') {
+        } else if (conversion == u's') {
             std::u16string text;
             const std::size_t limit = precision < 0 ? SIZE_MAX : static_cast<std::size_t>(precision);
-            if (conversion == u'S' || length == "l") {
+            if (length == "l") {
                 const char16_t* value = args.Next<const char16_t*>();
                 if (value == nullptr && secure) throw std::invalid_argument("Null string argument");
                 if (value == nullptr) value = u"(null)";
@@ -257,7 +257,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
-        } else if (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion))) {
+        } else if (conversion == u'S' || (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion)))) {
             std::u16string text = u"%";
             if (conversion != u'%') text.push_back(conversion);
             AppendPadded(out, text, left, width);
