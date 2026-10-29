@@ -257,6 +257,9 @@ static void FileFlagsRoundTrip() {
     RequireFailure(ioctl_nid_postfix(file, WindowSizeRequest, size), GuestEnotty);
     RequireMalformedRequestsFail(file);
     RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(file, ReadableRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(file, ReadableRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     Require(ThrowsWith([file] { int on = 1; ioctl_nid_postfix(file, AsyncRequest, &on); }, "ioctl: request 0x8004667D on a file is not implemented"));
 
     RequireFailure(fcntl_nid_postfix(file, DuplicateCommand, -1), GuestEinval);
@@ -473,6 +476,8 @@ static void PipeFlagsRoundTrip() {
     int readable = -1;
     Require(ioctl_nid_postfix(pipe[0], ReadableRequest, &readable) == 0 && readable == 3);
     Require(ioctl_nid_postfix(pipe[1], ReadableRequest, &readable) == 0 && readable == 0);
+    RequireFailure(ioctl_nid_postfix(pipe[0], ReadableRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(pipe[0], ReadableRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     Require(read_nid_postfix(pipe[0], buffer, sizeof(buffer)) == 3);
     RequireFailure(static_cast<int>(read_nid_postfix(pipe[0], buffer, sizeof(buffer))), GuestEagain);
 

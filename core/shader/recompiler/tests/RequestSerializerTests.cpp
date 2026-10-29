@@ -176,8 +176,26 @@ std::string EncodeBase64(const std::vector<std::uint8_t>& bytes) {
 
 }
 
+namespace {
+
+void VerifyTessellationInstancePatches() {
+    ShaderRecompiler::RecompileRequest request;
+    request.graphics.emplace();
+    request.graphics->draw.indexCount = 12u;
+    request.graphics->draw.instanceCount = 2u;
+    ShaderRecompiler::TessellationConfiguration configuration{};
+    configuration.inputControlPoints = 0u;
+    request.graphics->tessellation = configuration;
+    Require(ShaderRecompiler::TessellationInstancePatches(request) == 0u);
+    request.graphics->tessellation->inputControlPoints = 3u;
+    Require(ShaderRecompiler::TessellationInstancePatches(request) == 4u);
+}
+
+}
+
 int main() {
     VerifyMemoryView();
+    VerifyTessellationInstancePatches();
     const ShaderRecompiler::RequestSerializer serializer;
 
     const auto historical = serializer.Deserialize(kHistoricalVersion21);

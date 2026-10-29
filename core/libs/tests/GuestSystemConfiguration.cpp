@@ -1060,6 +1060,42 @@ static void CheckSysctlPointerFaults() {
     Require(sysctl_nid_postfix(arandom, 2, bytes, &length, nullptr, 0) == 0 && length == sizeof(bytes));
 }
 
+static void CheckSysconfMeasuredNames() {
+    struct Entry {
+        int name;
+        std::int64_t value;
+    };
+    static constexpr Entry constants[] = {
+        {6, 1}, {7, -1}, {8, 200112}, {9, 99}, {10, 2048}, {11, 99}, {12, 1000}, {13, 0}, {14, 32},
+        {15, 2048}, {16, 255}, {17, 199212}, {18, 200112}, {19, -1}, {20, 1}, {21, -1}, {22, 200112},
+        {23, -1}, {24, -1}, {25, 200112}, {28, 200112}, {29, 200112}, {30, -1}, {31, 200112}, {32, 200112},
+        {33, 200112}, {34, -1}, {35, 200112}, {36, 200112}, {37, 200112}, {38, 200112}, {39, 200112},
+        {40, -1}, {41, 200112}, {42, 16}, {43, 1024}, {44, 0}, {45, 2147483647}, {46, -1}, {48, 62},
+        {49, 30}, {50, 2147483647}, {51, 128}, {52, 32}, {59, -1}, {60, -1}, {61, -1}, {62, -1}, {63, -1},
+        {64, -1}, {65, 200112}, {66, 200112}, {67, -1}, {68, 200112}, {74, 200112}, {75, 64}, {76, 200112},
+        {77, 1}, {78, 1}, {79, 200112}, {80, 200112}, {81, -1}, {82, 200112}, {83, 200112}, {84, 200112},
+        {85, 4}, {86, 256}, {87, 200112}, {88, 200112}, {89, 200112}, {90, -1}, {91, -1}, {93, 16384},
+        {94, -1}, {95, 200112}, {96, 200112}, {97, -1}, {101, 255}, {102, -1}, {103, -1}, {104, -1},
+        {105, 1}, {106, -1}, {107, 64}, {108, -1}, {109, -1}, {110, -1}, {111, -1}, {112, -1}, {113, -1},
+        {114, -1}, {115, -1}, {118, 200112}, {119, 200112}, {120, 32}, {122, 8},
+        {1, 262144}, {3, 128}, {4, 1023}, {47, 16384}, {56, 1024}, {72, 255}, {73, 33},
+    };
+    for (const Entry& entry : constants) {
+        *__error_nid_postfix() = 77;
+        Require(sysconf_nid_postfix(entry.name) == entry.value);
+        Require(*__error_nid_postfix() == 77);
+    }
+    *__error_nid_postfix() = 77;
+    Require(sysconf_nid_postfix(27) == -1);
+    Require(*__error_nid_postfix() == 2);
+    static constexpr int rejected[] = {-1, 0, 53, 54, 55, 69, 70, 71, 92, 98, 99, 100, 116, 117, 123, 124, 125, 126, 127, 128, 129, 130, 150, 200, 201, 1000};
+    for (int name : rejected) {
+        *__error_nid_postfix() = 77;
+        Require(sysconf_nid_postfix(name) == -1);
+        Require(*__error_nid_postfix() == 22);
+    }
+}
+
 int main() {
     CheckUnknownRootsAndTopLevelNames();
     CheckProcessorCountSysctl();
@@ -1090,6 +1126,7 @@ int main() {
     CheckEnvSysctl();
     CheckPseudoRandomMibSysctl();
     CheckNameToMib();
+    CheckSysconfMeasuredNames();
     *__error_nid_postfix() = 13;
     Require(sysconf_nid_postfix(1) == 262144);
     Require(sysconf_nid_postfix(3) == 128);

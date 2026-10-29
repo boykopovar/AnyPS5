@@ -1,10 +1,12 @@
 #include "prx/libSceAgc/include/Agc.hpp"
 #include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
 #include "prx/libSceAgc/Patch/include/WaitRegMem.hpp"
+#include "prx/libSceAgc/Patch/include/IndirectRegisters.hpp"
 #include "prx/libSceAgc/Patch/include/Nop.hpp"
 #include "prx/libSceAgc/Patch/include/QueueEndOfPipeAction.hpp"
 #include "prx/libSceAgc/Misc/include/Suspend.hpp"
 #include "prx/libSceAgc/Misc/include/RegisterDefaults.hpp"
+#include "prx/libSceAgc/Patch/include/Jump.hpp"
 #include "prx/libSceAgc/Misc/include/PacketInfo.hpp"
 #include "prx/libSceAgc/Misc/include/Debug.hpp"
 #include "prx/libSceAgc/DcbState/include/Workload.hpp"
@@ -221,6 +223,24 @@ void testTagHeaders() {
     }
 }
 
+void testJumpTargetPatch() {
+    const auto target = [](std::uintptr_t address) { return reinterpret_cast<const volatile std::uint32_t*>(address); };
+    Storage storage;
+    auto* packet = sceAgcDcbJump(&storage.buffer, 1, 2, reinterpret_cast<const std::uint32_t*>(0x1000ull), 0x40);
+    check(sceAgcJumpPatchSetTarget_0300(packet, 1, target(0x123456789ab0u), 0x80) == 0, "jump target patch with a cache policy failed");
+    check(packet[1] == 0x56789ab0u && packet[2] == 0x1234u && packet[3] == 0x1f300080u, "jump target patch did not replace the address, size and cache policy only");
+    check(sceAgcJumpPatchSetTarget(packet, target(0x2000u), 0x10) == 0, "jump target patch failed");
+    check(packet[1] == 0x2000u && packet[2] == 0 && packet[3] == 0x1f300010u, "jump target patch without a cache policy changed it");
+    const auto before = storage.words;
+    expectFailure([&] { sceAgcJumpPatchSetTarget_0300(packet, 4, target(0x3000u), 1); });
+    expectFailure([&] { sceAgcJumpPatchSetTarget_0300(packet, 0, target(0x3002u), 1); });
+    expectFailure([&] { sceAgcJumpPatchSetTarget(packet, target(0x3000u), 0x100000u); });
+    packet[0] = Agc::Command::Header(0x3fu, 5);
+    expectFailure([&] { sceAgcJumpPatchSetTarget(packet, target(0x3000u), 1); });
+    packet[0] = before[0];
+    check(storage.words == before, "a refused jump target patch modified the packet");
+}
+
 void testMarkers() {
     Storage dcb;
     Storage acb;
@@ -263,6 +283,29 @@ void testMarkerSpans() {
     expectFailure([] { sceAgcAcbPushMarker(nullptr, reinterpret_cast<const char*>(std::uintptr_t{0x10}), 0); });
     expectFailure([] { sceAgcDcbSetMarkerSpan(nullptr, "frame", 5, 0); });
     expectFailure([&] { sceAgcDcbPushMarkerSpan(&dcb.buffer, nullptr, 4, 0); });
+}
+
+void testEndOfPipeAddressPatch() {
+    const auto label = [](std::uintptr_t address) { return reinterpret_cast<const volatile Label*>(address); };
+    std::array<std::uint32_t, 8> release{};
+    release[0] = Agc::Command::Header(0x49u, 8);
+    release[2] = 1u << 29u;
+    check(sceAgcQueueEndOfPipeActionPatchAddress(release.data(), label(0x123456789abcu)) == 0 && release[3] == 0x56789abcu && release[4] == 0x1234u, "RELEASE_MEM address patch mismatch");
+    release[2] = 2u << 29u;
+    const auto before = release;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(release.data(), label(0x123456789ab4u)); });
+    check(release == before, "a 64-bit RELEASE_MEM accepted a label that is not 8-byte aligned");
+    check(sceAgcQueueEndOfPipeActionPatchAddress(release.data(), label(0x123456789ab8u)) == 0 && release[3] == 0x56789ab8u, "64-bit RELEASE_MEM address patch mismatch");
+    std::array<std::uint32_t, 6> event{};
+    event[0] = Agc::Command::Header(0x47u, 6);
+    event[3] = (1u << 29u) | 0x00ab0000u;
+    check(sceAgcQueueEndOfPipeActionPatchAddress(event.data(), label(0x123456789abcu)) == 0 && event[2] == 0x56789abcu && event[3] == ((1u << 29u) | 0x00ab1234u), "EVENT_WRITE_EOP address patch did not keep the control bits");
+    const auto eventBefore = event;
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(event.data(), label(0x1000000000000u)); });
+    check(event == eventBefore, "an EVENT_WRITE_EOP accepted an address above 48 bits");
+    event[0] = Agc::Command::Header(0x47u, 5);
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(event.data(), label(0x1000u)); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(nullptr, label(0x1000u)); });
 }
 
 void testWorkloads() {
@@ -478,6 +521,44 @@ void testContextState() {
     check(invalid.buffer.cursor_up == growth.destination.words.data(), "failed reservation advanced cursor");
 }
 
+void testFlowPackets() {
+    const auto* target = reinterpret_cast<const std::uint32_t*>(0x123456789ab0ull);
+    Storage chained;
+    const auto* jump = sceAgcDcbJump(&chained.buffer, 1, 2, target, 0x40);
+    const std::array<std::uint32_t, 4> chainedExpected{0xc0023f00u, 0x56789ab0u, 0x1234u, 0x2f300040u};
+    check(jump == chained.words.data() && std::equal(chainedExpected.begin(), chainedExpected.end(), chained.words.begin()), "chained INDIRECT_BUFFER packet mismatch");
+    Storage called;
+    sceAgcDcbJump(&called.buffer, 0, 0, target, 0xfffffu);
+    check(called.words[3] == 0x0f2fffffu, "unchained INDIRECT_BUFFER control word mismatch");
+    Storage compute;
+    sceAgcAcbJump(&compute.buffer, 1, target, 0x10);
+    check(compute.words[0] == 0xc0023f00u && compute.words[3] == 0x1f300010u, "compute jumps did not chain");
+    Storage rejected;
+    rejected.words.fill(0xa5a5a5a5u);
+    const auto rejectedWords = rejected.words;
+    const auto* rejectedCursor = rejected.buffer.cursor_up;
+    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 2, 0, target, 1); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 0, 4, target, 1); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 0, 0, target, 0x100000u); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    expectFailure([&] { sceAgcAcbJump(&rejected.buffer, 0, reinterpret_cast<const std::uint32_t*>(0x1002ull), 1); });
+    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(sceAgcDcbJumpGetSize() == 16 && sceAgcAcbJumpGetSize() == 16, "jump packet sizes");
+    Storage stall;
+    sceAgcDcbStallCommandBufferParser(&stall.buffer);
+    check(stall.words[0] == 0xc0004200u && stall.words[1] == 0 && sceAgcDcbStallCommandBufferParserGetSize() == 8, "PFP_SYNC_ME packet mismatch");
+    Storage rendering;
+    sceAgcDcbWaitUntilSafeForRendering(&rendering.buffer, 7, 2);
+    const std::array<std::uint32_t, 4> renderingExpected{0xc0021018u, 7, 2, 0};
+    check(std::equal(renderingExpected.begin(), renderingExpected.end(), rendering.words.begin()), "rendering wait packet mismatch");
+    Storage reset;
+    sceAgcAcbResetQueue(&reset.buffer, 5, 9);
+    check(reset.words[0] == 0xc0001024u && reset.words[1] == 5 && reset.words[2] == 0, "compute queue reset packet mismatch");
+    expectFailure([&] { sceAgcAcbResetQueue(nullptr, 5, 9); });
+}
+
 void testFlip() {
     Storage storage;
     storage.words.fill(0xdeadbeefu);
@@ -528,6 +609,23 @@ void testRegisters() {
     expectFailure([&] { Agc::Command::PatchIndirectCount(packet, 0x63u, 1, __func__); });
     expectFailure([&] { Agc::Command::PatchIndirectAddress(packet, 0x64u, registers.data(), __func__); });
     check(storage.words == before, "invalid indirect patch modified memory");
+}
+
+void testIndirectRegisterPatches() {
+    using AddRegisters = int (APS5_VABI *)(std::uint32_t*, std::uint32_t);
+    const std::array<ShaderRegister, 2> registers{{{0x10, 7}, {0x11, 8}}};
+    const std::array<std::pair<std::uint32_t, AddRegisters>, 3> kinds{{{0x9fu, sceAgcSetCxRegIndirectPatchAddRegisters}, {0x63u, sceAgcSetShRegIndirectPatchAddRegisters}, {0x64u, sceAgcSetUcRegIndirectPatchAddRegisters}}};
+    for (std::size_t i = 0; i < kinds.size(); ++i) {
+        Storage storage;
+        auto* packet = Agc::Command::WriteIndirectRegisters(&storage.buffer, kinds[i].first, registers.data(), 2, __func__);
+        check(kinds[i].second(packet, 3) == 0 && packet[4] == 5, "indirect register patch did not add to the count");
+        check(kinds[i].second(packet, 0x3fffu - 5u) == 0 && packet[4] == 0x3fffu, "indirect register patch did not reach the largest count");
+        const auto before = storage.words;
+        expectFailure([&] { kinds[i].second(packet, 1); });
+        check(storage.words == before, "an overflowing indirect register patch modified the packet");
+        expectFailure([&] { kinds[(i + 1) % kinds.size()].second(packet, 1); });
+        check(storage.words == before, "an indirect register patch of another packet kind modified the packet");
+    }
 }
 
 void testRegisterRange() {
@@ -963,15 +1061,19 @@ int main(int argc, char** argv) {
         testIndexedIndirectDraws();
         testTagHeaders();
         testMarkers();
+        testJumpTargetPatch();
         testMarkerSpans();
         testWorkloads();
+        testEndOfPipeAddressPatch();
         testWorkloadStreams();
         testIndexBuffer();
         testIndexIndirectArgs();
         testIndirectBase();
         testContextState();
+        testFlowPackets();
         testFlip();
         testRegisters();
+        testIndirectRegisterPatches();
         testRegisterRange();
         testPacketPayloadAddress();
         testMemory();

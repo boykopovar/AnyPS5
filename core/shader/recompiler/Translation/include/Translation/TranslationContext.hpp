@@ -25,7 +25,6 @@ public:
     }
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
     void SetNativeFloat16(bool enabled) { nativeFloat16 = enabled; }
-    void SetWholeQuad(bool entered) { wholeQuad = entered; }
     void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
     void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
@@ -59,7 +58,6 @@ private:
     IrU32 applyBitSourceModifiers(const RdnaOperand& operand, IrU32 value);
     IrValue* readOperand(const RdnaOperand& operand, IrType type);
     IrU1 threadBit(const std::array<IrU32, 2>& mask);
-    IrU1 execLanes(const std::array<IrU32, 2>& mask);
     void writeRawU32(const RdnaOperand& operand, IrU32 value);
     IrF32 applyF32ResultModifiers(const RdnaOperand& operand, IrF32 value);
     IrF32 scaleF32Result(std::uint32_t omod, IrF32 value);
@@ -385,7 +383,6 @@ private:
     RoundingState rounding;
     bool ieeeMode = false;
     bool nativeFloat16 = false;
-    bool wholeQuad = false;
     IrBuilder ir;
     IrBlock& block;
     IrU1 instructionBranchCondition;

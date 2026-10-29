@@ -247,6 +247,7 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
 }
 
 static std::vector<float> prepareVibration(const Port& port, const void* data) {
+    checkedBufferSize(port.samplesNum, AUDIO_OUT2_PAD_CHANNELS, sizeof(float));
     std::vector<std::uint8_t> prepared;
     const auto* samples = prepareBuffer(port, data, prepared);
     std::vector<float> pad(static_cast<std::size_t>(port.samplesNum) * AUDIO_OUT2_PAD_CHANNELS, 0.0f);
@@ -333,6 +334,9 @@ static void paceVirtualPort(Port& port, bool hasData, std::unique_lock<std::mute
 }
 
 static void outputVirtualPort(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
+    if (data != nullptr) {
+        checkedBufferSize(port.samplesNum, static_cast<std::uint32_t>(port.channels), bytesPerSample(port.format));
+    }
     const auto pad = port.type == PORT_TYPE_VIBRATION && data != nullptr ? prepareVibration(port, data) : std::vector<float>{};
     paceVirtualPort(port, data != nullptr, lock);
     const auto source = static_cast<int>(&port - g_ports) + 1;
@@ -406,6 +410,7 @@ static std::atomic<bool> g_audioOut2Initialized{false};
 static std::atomic<bool> g_audioOutInitialized{false};
 static constexpr int SCE_AUDIO_OUT2_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80268004);
 static constexpr int SCE_AUDIO_OUT_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8026000e);
+static constexpr int SCE_AUDIO_OUT_ERROR_INVALID_FORMAT = static_cast<int>(0x80260007);
 
 bool AudioOut2IsInitialized_nid_no_patch() {
     return g_audioOut2Initialized.load();
@@ -454,7 +459,7 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
         case 6: format = Format::S16_8ChStd; break;
         case 7: format = Format::F32_8ChStd; break;
         default:
-            throw std::runtime_error("sceAudioOutOpen: unknown format param");
+            return SCE_AUDIO_OUT_ERROR_INVALID_FORMAT;
     }
 
     if (type == PORT_TYPE_VIBRATION && channelsForFormat(format) > 2) throw std::runtime_error("sceAudioOutOpen: vibration layouts above stereo are not implemented");

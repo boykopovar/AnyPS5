@@ -7,6 +7,10 @@
 - [sceGameLiveStreamingGetCurrentStatus2](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) - the supplied module confirms the 72-byte layout and inactive status (user -1, remaining bytes zero). Live service counters, active-user changes and broadcast-resolution conversion are unimplemented. In the 25 instructions after their one call, PPSA01494, PPSA30839 and PPSA31162 read `isOnAir` (the byte at 4) and `spectatorCounts` (the word at 8), so those two are the fields these titles act on; here they stay false and 0.
 - [sceGameLiveStreamingGetProgramInfo](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - the PS5 13.60 module clears the 0x134C-byte program info, asks the system service for its first 0xFD4 bytes and returns `0x80A00002` for a null pointer and `0x80A00004` before initialization. With nothing broadcast here the info stays zero, which assumes the service reports an empty program when nothing is on air; the field layout is unknown. Two titles (PPSA03001 at 0x1ad86b4, PPSA07426 at 0xe89594) disassembled for this entry pass the address of a stack buffer with no store into it between the start of the block and the call; for a result other than 0 they do not read it, for 0 they copy three text fields at offsets 0, 0x802 and 0xC03, and they do not tell `0x80A00002` from `0x80A00004`. The buffer size is not shown.
 
+### Silent stubs
+
+- [sceGameLiveStreamingPermitLiveStreaming](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) - this and fifteen related setting, feedback and message calls (see `Api.hpp`) validate their arguments and store nothing, as no broadcast is ever on air. The checks (not initialized, null pointers, feedback type 1-3, string lengths 240/720/45/360, at most 16 spoiler tags and 5 preset commands, zero reserved tails in the 224-byte spoiler tag, 228-byte preset command and camera setting) come from a report on #9524 that ran each function of the firmware 13.42 module with the service call stubbed. The order between argument checks, the camera setting size and the other struct fields are not measured, nor what the service returns after validation: the calls return 0 and queries report zero messages.
+
 ### Unknown function info
 
 - [sceGameLiveStreamingScreenInitialize](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
@@ -16,25 +20,9 @@
 - [sceGameLiveStreamingScreenConfigureSeparateMode](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingScreenOpenSeparateMode](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingScreenSetMode](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingPermitLiveStreaming](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingSetMaxBitrate](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingGetCurrentStatus](../../../core/libs/prx/libSceGameLiveStreaming/include/Api.hpp) - still throws; the meaning, division and SDK types of the first 12 bytes remain unknown. In the supplied `libSceGameLiveStreaming.sprx`, export `CoPMx369EqM` at 0x1810 takes one output pointer, clears 72 bytes, obtains service command 9's status, copies its first 12 bytes and clears bytes 0x0C..0x47. `GameLiveStreamingStatus` exposes this byte storage without assuming the `GetCurrentStatus2` field layout or SDK alignment. The decompiler's extra SIMD parameter is not an input: the assembly initializes the register before use.
-- [sceGameLiveStreamingEnableSocialFeedback](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingGetSocialFeedbackMessagesCount](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingGetSocialFeedbackMessages](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingPermitServerSideRecording](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingSetMetadata](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingSetSpoilerTag](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingClearSpoilerTag](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingSetPresetSocialFeedbackCommands](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingClearPresetSocialFeedbackCommands](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingSetPresetSocialFeedbackCommandsDescription](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingClearSocialFeedbackMessages](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingPostSocialMessage](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingSetCameraFrameSetting](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingSetServiceProviderPermission](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingSetDefaultServiceProviderPermission](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
-- [sceGameLiveStreamingSetInvitationSessionId](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingStartGenerateStandbyScreenResource](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingStopGenerateStandbyScreenResource](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature
 - [sceGameLiveStreamingRegisterCallback](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) (libSceGameLiveStreaming) - unknown signature

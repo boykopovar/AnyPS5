@@ -757,7 +757,7 @@ void verifyPlanConditionPruning() {
     require(plan.controlFlow[1].condition != nullptr && plan.controlFlow[2].condition != nullptr, "plan pruning: a condition the evaluator can read was dropped");
     const auto copiedLoad = std::ranges::find_if(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::LoadBufferU32; });
     require(copiedLoad != plan.valueStorage.end() && copiedLoad->ArgumentCount() == 0u, "plan pruning: the unevaluable load was not kept as a leaf");
-    require(std::ranges::all_of(plan.valueStorage, [](const IrValue& value) { return !value.HasUses() && value.OperandUses().empty() && value.Arguments().capacity() == value.ArgumentCount(); }), "plan compaction: a plan value keeps use lists or spare operand capacity");
+    require(std::ranges::all_of(plan.valueStorage, [](const IrValue& value) { return !value.HasUses() && value.OperandUses().empty() && value.Arguments().capacity() == std::max(value.ArgumentCount(), IrOperands::InlineCapacity); }), "plan compaction: a plan value keeps use lists or spare heap operand capacity");
     const std::array<std::uint32_t, 4> data{0x100u, 7u, static_cast<std::uint32_t>(wordAddress), static_cast<std::uint32_t>(wordAddress >> 32u)};
     SrtRuntime runtime{data};
     Detail::Evaluator evaluator(plan, runtime);
@@ -2581,6 +2581,80 @@ void ProtectTablePage(std::uintptr_t page, std::uint32_t protection) {
 #endif
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(page, 4096u);
 }
+
+void verifyRegionMerge(bool strided = false, bool benchmark = false) {
+    using namespace ShaderRecompiler;
+    constexpr std::size_t SlotBytes = 8192;
+    constexpr std::size_t TableBytes = 4096;
+    const std::size_t stride = strided ? 64u : 32u;
+    constexpr std::size_t MaximumBlocks = 64;
+    constexpr std::size_t Bytes = (MaximumBlocks + 8u) * SlotBytes;
+    auto* heap = AllocateWatchedTable(Bytes);
+    struct Release {
+        void* pointer;
+        ~Release() { GuestArena::GuestArenaRelease_nid_postfix(pointer, Bytes); }
+    } release{heap};
+    std::vector<TableGuest> guests(MaximumBlocks);
+    std::vector<std::array<std::uint32_t, 2>> userData(MaximumBlocks);
+    for (std::size_t block = 0; block < MaximumBlocks; ++block) {
+        auto* table = heap + block * SlotBytes / sizeof(std::uint32_t);
+        for (std::size_t record = 0; record < TableBytes / stride; ++record) {
+            const auto words = TableT(reinterpret_cast<const void*>(0x100000000ull + record * 256u), TableFormat8888UNorm, TableType2D, 1u);
+            std::copy(words.begin(), words.end(), table + record * stride / sizeof(std::uint32_t));
+        }
+        FillTableSrt(guests[block], table, stride, TableBytes / stride);
+        userData[block] = TableUserData(guests[block]);
+    }
+    const bool watched = AgcDriver::GuestMemory::CollectWrites(reinterpret_cast<std::uintptr_t>(heap), Bytes) != 0u;
+    for (const std::size_t count : {0u, 1u, 2u, 3u, 7u, 8u, 16u, 64u}) {
+        std::vector<MemoryRegion> initial;
+        for (std::size_t block = 0; block <= count; ++block) {
+            for (std::size_t offset = TableBytes; offset < SlotBytes; offset += 64u) {
+                auto* word = heap + (block * SlotBytes + offset) / sizeof(std::uint32_t);
+                *word = static_cast<std::uint32_t>(block * SlotBytes + offset);
+                initial.push_back({reinterpret_cast<std::uintptr_t>(word), std::as_bytes(std::span(word, 1))});
+            }
+        }
+        AgcDriver::ShaderMemory memory(initial);
+        for (std::size_t position = 0; position < count; ++position) {
+            const auto block = (position * (count > 1u ? count - 1u : 1u)) % count;
+            const auto request = TableRequest(TableWholeCode, userData[block]);
+            {
+                AgcDriver::ShaderMemory warm({});
+                static_cast<void>(warm.Capture(request));
+            }
+            static_cast<void>(memory.Capture(request));
+        }
+        if (watched) require(memory.SuppliedBlocks().size() == count, "region merge: the fixture did not retain every shared table");
+        const auto verify = [&](const std::vector<MemoryRegion>& regions, bool recent) {
+            for (std::size_t index = 0; index < regions.size(); ++index) {
+                const auto& region = regions[index];
+                require(index == 0u || regions[index - 1u].guestAddress + regions[index - 1u].bytes.size() <= region.guestAddress, "region merge: regions were reordered or duplicated");
+                require(std::memcmp(region.bytes.data(), reinterpret_cast<const void*>(region.guestAddress), region.bytes.size()) == 0, "region merge: collected words changed");
+            }
+            for (std::size_t block = 0; block < count; ++block) {
+                for (std::size_t record = 0; record < TableBytes / stride; ++record) require(TableCovered(regions, heap + (block * SlotBytes + record * stride) / sizeof(std::uint32_t), 32u), "region merge: a shared table record was omitted");
+            }
+            for (const auto& entry : initial) require(TableCovered(regions, reinterpret_cast<const std::uint32_t*>(entry.guestAddress), entry.bytes.size()) != recent, "region merge: initial-region visibility changed");
+        };
+        const auto regions = memory.Regions();
+        verify(regions, false);
+        verify(memory.TakeRecentRegions(), true);
+        require(memory.TakeRecentRegions().empty(), "region merge: recent regions were not reset");
+        verify(memory.Regions(), false);
+        if (!strided && benchmark) {
+            constexpr std::size_t Iterations = 1000;
+            std::size_t total = 0;
+            const auto started = std::chrono::steady_clock::now();
+            for (std::size_t iteration = 0; iteration < Iterations; ++iteration) total += memory.Regions().size();
+            const auto elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count();
+            require(total == Iterations * regions.size(), "region merge: repeated collection changed coverage");
+            std::printf("region-merge blocks=%zu regions=%zu iterations=%zu us_per_call=%.3f\n", count, regions.size(), Iterations, elapsed / Iterations);
+        }
+    }
+    std::puts("region merge: mixed initial, captured and shared regions retain order, coverage and recent-read semantics");
+}
+
 
 void verifyTableSnapshotReuse() {
     using namespace ShaderRecompiler;
@@ -6216,6 +6290,30 @@ void verifyPixelRequestSerialization() {
         depthTestingMerge.context.pixel->targetMerge.depthStencilTests = true;
         RecompileCacheKey::Build(depthTestingMerge, replayKey);
         require(key != replayKey, "the merge draw's depth or stencil tests did not change the static shader identity");
+        auto blending = request;
+        blending.context.pixel->targetMerge.blend = {true, false, 6u, 7u, 0u, 1u, 0u, 0u, 0xfu, {}};
+        RecompileCacheKey::Build(blending, replayKey);
+        require(key != replayKey && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(blending), "an unclamped color target blend did not change the static shader identity");
+        const auto blendKey = replayKey;
+        for (const auto change : {0, 1, 2, 3, 4, 5, 6, 7, 8}) {
+            auto other = blending;
+            auto& blend = other.context.pixel->targetMerge.blend;
+            if (change == 0) blend.snorm = true;
+            if (change == 1) blend.colorSource = 2u;
+            if (change == 2) blend.colorDestination = 2u;
+            if (change == 3) blend.colorOperation = 1u;
+            if (change == 4) blend.alphaSource = 2u;
+            if (change == 5) blend.alphaDestination = 2u;
+            if (change == 6) blend.alphaOperation = 1u;
+            if (change == 7) blend.writeMask = 0x5u;
+            if (change == 8) blend.constants[2] = 0x3f800000u;
+            RecompileCacheKey::Build(other, replayKey);
+            require(blendKey != replayKey, "a field of the unclamped color target blend did not change the static shader identity");
+        }
+        auto disabled = blending;
+        disabled.context.pixel->targetMerge.blend.enabled = false;
+        RecompileCacheKey::Build(disabled, replayKey);
+        require(key == replayKey && RecompileCacheKey::ContextHash(request) == RecompileCacheKey::ContextHash(disabled), "a disabled color target blend changed the static shader identity");
         auto withoutMerge = request;
         withoutMerge.context.pixel->targetMerge = {};
         RecompileCacheKey::Build(withoutMerge, replayKey);
@@ -6229,6 +6327,17 @@ void verifyPixelRequestSerialization() {
         RecompileCacheKey::Build(withoutStencilRef, replayKey);
         require(key != replayKey && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(withoutStencilRef), "the stencil reference export did not change the static shader identity");
     }
+    auto blendedDepth = request;
+    blendedDepth.context.pixel = pixel;
+    blendedDepth.context.pixel->depthExportEnable = true;
+    blendedDepth.context.pixel->depthExportMin = -0.25f;
+    blendedDepth.context.pixel->depthExportMax = 0.75f;
+    blendedDepth.context.pixel->targetMerge.blend = {true, true, 6u, 7u, 1u, 2u, 3u, 4u, 0xau, {0x3f800000u, 0x40000000u, 0x40400000u, 0x40800000u}};
+    const auto blendedReplay = serializer.Deserialize(serializer.Serialize(blendedDepth));
+    require(blendedReplay.request.context.pixel.has_value() && fields(*blendedReplay.request.context.pixel) == fields(*blendedDepth.context.pixel), "a pixel request with a target blend and depth export bounds lost pixel fields in serialization");
+    require(blendedReplay.request.context.pixel->targetMerge.blend == blendedDepth.context.pixel->targetMerge.blend, "the target blend did not round-trip beside the depth export bounds");
+    require(blendedReplay.request.context.pixel->depthExportMin == -0.25f && blendedReplay.request.context.pixel->depthExportMax == 0.75f, "the depth export bounds did not round-trip beside the target blend");
+    require(blendedReplay.request.context.vertex.has_value() && blendedReplay.request.context.vertex->fetchAttribReg == 17u && blendedReplay.request.context.memory.size() == 1u && blendedReplay.request.context.memory[0].guestAddress == 0x60000u, "a target blend with depth export bounds displaced the following guest context");
     request.context.pixel.reset();
     request.shader.stage = ShaderStage::Vertex;
     const auto withoutPixel = serializer.Deserialize(serializer.Serialize(request));
@@ -6646,6 +6755,15 @@ void verifyVertexInfoVersion19() {
     const auto mergingBytes = decodeBase64(serializer.Serialize(merging));
     require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 40 bytes the version 46 pixel info adds after the sample order");
     require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerge == merging.context.pixel->targetMerge, "a serialized request lost its color target merge");
+    auto blendMerging = pixel;
+    blendMerging.context.pixel->targetMerge = {1u, 0xffffu, 1u, {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, true, false, {true, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {0x3fc00000u, 0xbe800000u, 0x3f000000u, 0x40000000u}}};
+    const auto blendMergingBytes = decodeBase64(serializer.Serialize(blendMerging));
+    constexpr std::size_t blendPayloadBytes = 24u;
+    require(blendMergingBytes.size() == plainPixel.size() + blendPayloadBytes && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, blendMergingBytes.begin()) && blendMergingBytes[mergeOffset] == 1u && blendMergingBytes[mergeOffset + 1] == 0xffu && blendMergingBytes[mergeOffset + 2] == 0xffu && blendMergingBytes[mergeOffset + 3] == 0x01u && blendMergingBytes[mergeOffset + 4] == 0x00u, "a color target blend is not flagged in the merge mask word, or changed the bytes before the merge");
+    require(serializer.Deserialize(serializer.Serialize(blendMerging)).request.context.pixel->targetMerge == blendMerging.context.pixel->targetMerge, "a serialized request lost its color target blend");
+    auto disabledBlend = merging;
+    disabledBlend.context.pixel->targetMerge.blend = {false, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {1u, 2u, 3u, 4u}};
+    require(serializer.Serialize(disabledBlend) == serializer.Serialize(merging), "a disabled color target blend changed the serialized request");
     // A version 43 request: no color target merge, and no fused arithmetic flag, pixel function LDS flag, storage size or barycentric built-ins flag at the end.
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
         require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");
@@ -8828,6 +8946,33 @@ void verifyGuardedNullPointers() {
     }
     root[4] = 1u;
 
+    auto belowCode = branchCode;
+    belowCode[12] = 0xfa1ffffcu;
+    belowCode.push_back(0xbf810000u);
+    NestedRequest below(belowCode, root.data());
+    point(payloadAddress + 4u);
+    AgcDriver::ShaderMemory belowMemory({});
+    const auto belowValid = belowMemory.Capture(below.request);
+    require(belowValid->snapshot.srtPoison.empty() && belowValid->snapshot.flattenedSrt.at(belowValid->plan->guardedSrtSlots.at(0)) == payload, "guarded pointer: a read below a mapped nested pointer does not hold its word");
+    for (const auto condition : {1u, 0u}) {
+        point(0u);
+        root[4] = condition;
+        below.request.context.memory = {};
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(below.request);
+        const auto& poison = capture->snapshot.srtPoison;
+        require(poison.size() == condition, "guarded pointer: a read below a null nested pointer was poisoned on a path that skips it, or not poisoned on one that takes it");
+        if (condition != 0u) {
+            require(poison[0].pc == 0x2cu && poison[0].address == 0xfffffffffffcu && slotPc(*capture->plan, poison[0].slot) == 0x2cu, "guarded pointer: a read below a null nested pointer was not poisoned at its pc and wrapped address");
+            require(GuardRecords(*capture), "guarded pointer: the poison record of a read below a null pointer is not where the guard reads it");
+        }
+        const auto regions = memory.Regions();
+        below.request.context.memory = regions;
+        const auto result = Recompile(below.request, *capture);
+        require(result->poisonedSrtReads == condition && faultBinding(*result), "guarded pointer: a read below a null pointer does not report through the fault buffer");
+    }
+    root[4] = 1u;
+
     NestedRequest chain(chainCode, root.data());
     point(unmapped);
     AgcDriver::ShaderMemory chainMemory({});
@@ -9051,6 +9196,27 @@ void verifyCubeDepthCompareMode() {
     const auto modes = ResourceMaterializer::RuntimeImageModes(image);
     const auto selected = ResourceMaterializer::RuntimeImageMode(image, descriptor, modes);
     require(modes[selected].cube && (modes[selected].emulatedCompare & EmulatedCompare::Enabled) != 0u, "cube color comparison did not select its emulated runtime mode");
+}
+
+void verifyShortCubeMode() {
+    using namespace ShaderRecompiler;
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2DArray;
+    DescriptorValue descriptor{{0x02143930u, 71u << 20u, 0u, 0xb1b00facu, 4u, 0u, 0u, 0u}, 8u};
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].cube, "a sampled cube with five slices did not select a cube runtime mode");
+    image.sampledOnly = false;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)); }, "fewer than six slices is implemented only for sampling", "a loaded cube with five slices was accepted");
+    for (const auto range : {0u, 5u, 5u | (5u << 16u), 6u}) {
+        descriptor.dwords[4] = range;
+        require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].cube, "a loaded cube with six faces or more was rejected");
+    }
+    image.sampledOnly = true;
+    image.resourceClass = ImageResourceClass::Storage;
+    image.written = true;
+    descriptor.dwords[4] = 3u | (1u << 16u);
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, ResourceMaterializer::RuntimeImageModes(image))); }, "fewer than six slices is implemented only for sampling", "a stored cube with three slices was accepted");
 }
 
 void verifyVolumeArrayLoadMode() {
@@ -9323,6 +9489,11 @@ int main(int argc, char** argv) {
             std::cout << "The result memo budget counts and trims the masked table's entries\n";
             return 0;
         }
+        if (argc == 2 && (std::string_view(argv[1]) == "--region-merge" || std::string_view(argv[1]) == "--region-merge-bench")) {
+            verifyRegionMerge(false, std::string_view(argv[1]) == "--region-merge-bench");
+            verifyRegionMerge(true);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-threads") {
             verifyResultMemoBudgetThreads();
             std::cout << "The result memo ends within its byte budget when results are inserted during a trim\n";
@@ -9477,6 +9648,7 @@ int main(int argc, char** argv) {
         verifyGuardedNullPointers();
         verifyFmaskImageMode();
         verifyCubeDepthCompareMode();
+        verifyShortCubeMode();
         verifyVolumeArrayLoadMode();
         verifyArrayVolumeStoreMode();
         verifyMultisamplePlaneReadMode();

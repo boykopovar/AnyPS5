@@ -770,6 +770,20 @@ if __name__ == "__main__":
     parser.add_argument("--body", help="file with the pull request description to check")
     parser.add_argument("--event", default=os.environ.get("GITHUB_EVENT_PATH"), help="GitHub event JSON (set in CI)")
     args = parser.parse_args()
+    event = {}
+    if args.event:
+        try:
+            event = json.loads(Path(args.event).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            parser.error(f"--event {args.event}: {error}")
+        if not isinstance(event, dict):
+            parser.error(f"--event {args.event}: not a JSON object")
+    body = ""
+    if args.body:
+        try:
+            body = Path(args.body).read_text(encoding="utf-8-sig")
+        except (OSError, ValueError) as error:
+            parser.error(f"--body {args.body}: {error}")
     check = Check(args.base, args.head)
     check.code()
     check.build()
@@ -780,9 +794,9 @@ if __name__ == "__main__":
     check.workflows()
     check.commits()
     check.env_reference()
-    pr = json.load(open(args.event, encoding="utf-8")).get("pull_request") if args.event else None
+    pr = event.get("pull_request")
     if pr:
         check.pull_request(pr["title"], pr["body"])
     elif args.title is not None or args.body:
-        check.pull_request(args.title or "", open(args.body, encoding="utf-8-sig").read() if args.body else "")
+        check.pull_request(args.title or "", body)
     raise SystemExit(output(check, os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")))

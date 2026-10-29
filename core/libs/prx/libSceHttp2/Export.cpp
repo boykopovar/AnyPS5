@@ -200,7 +200,8 @@ int APS5_VABI sceHttp2GetStatusCode(int req_id, int* status_code) {
 }
 
 int APS5_VABI sceHttp2Init(int libnet_mem_id, int libssl_ctx_id, size_t pool_size, int max_concurrent_request) {
-    if (max_concurrent_request <= 0) NotImplemented_nid_no_patch(__func__);
+    if (max_concurrent_request == 0) return ERROR_INVALID_VALUE;
+    if (max_concurrent_request < 0) NotImplemented_nid_no_patch(__func__);
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_handlesMutex);
     Http2Handle handle{Http2Kind::Context, 0, pool_size};
@@ -311,7 +312,7 @@ int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t ssl_flags) {
 }
 
 int APS5_VABI sceHttp2SetMinSslVersion(int id, uint32_t ssl_version) {
-    return Update(id, __func__, [&](auto&) { NotImplemented_nid_no_patch("sceHttp2SetMinSslVersion"); });
+    return Update(id, __func__, [&](auto&) { if (ssl_version < 2 || ssl_version > 5) NotImplemented_nid_no_patch("sceHttp2SetMinSslVersion"); });
 }
 
 int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
@@ -337,11 +338,12 @@ int APS5_VABI sceHttp2AbortRequest(int req_id) {
 int APS5_VABI sceHttp2GetMemoryPoolStats(int lib_http2_ctx_id, Http2MemoryPoolStats* stats) {
     if (stats == nullptr) return ERROR_NULL_POINTER;
     std::lock_guard lock(g_handlesMutex);
-    if (!FindHandle(lib_http2_ctx_id, Http2Kind::Context)) {
+    const auto* context = FindHandle(lib_http2_ctx_id, Http2Kind::Context);
+    if (!context) {
         std::memset(stats, 0, sizeof(*stats));
         return ERROR_INVALID_ID;
     }
-    NotImplemented_nid_no_patch(__func__);
+    *stats = {context->poolSize, 0, 0, 0};
     return 0;
 }
 

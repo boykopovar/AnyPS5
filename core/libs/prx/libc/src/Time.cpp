@@ -275,8 +275,10 @@ void addNumber(FormatBuffer& buffer, std::int64_t value, int modulus, const char
 }
 
 const char* tableName(int index, const char* const* names, const char* const* shortNames, int count) {
-    if (index < 0) return shortNames[0];
-    return index < count ? names[index] : "";
+    const auto field = static_cast<std::int32_t>(static_cast<std::uint32_t>(index) * 2u + (names == shortNames ? 0u : 1u));
+    if (field < 0) return shortNames[0];
+    if (field >= 2 * count) return "";
+    return field % 2 == 0 ? shortNames[field / 2] : names[field / 2];
 }
 
 int twoDigitYear(std::int64_t year) {

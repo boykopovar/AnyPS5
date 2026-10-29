@@ -1193,7 +1193,6 @@ int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, i
     return 0;
 #else
     if ((flags & 3) != 1) throw std::system_error(ENOTSUP, std::generic_category(), "map file: a private file mapping is not mapped from the file on Windows");
-    if ((prot & PROT_EXEC) != 0) throw std::system_error(ENOTSUP, std::generic_category(), "map file: an executable shared file mapping is not implemented on Windows");
     const HANDLE file = WindowsDescriptorHandle_nid_no_patch(descriptor);
     LARGE_INTEGER fileBytes{};
     if (!GetFileSizeEx(file, &fileBytes)) throw std::system_error(EBADF, std::generic_category(), "map file: read the file size");
@@ -1201,12 +1200,18 @@ int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, i
     if (offset + len >= fileEnd + PS5_PAGE_SIZE) throw std::system_error(ENOTSUP, std::generic_category(), "map file: a shared mapping of a whole page past the end of the file is not implemented on Windows");
     const int access = WindowsDescriptorAccess_nid_no_patch(file, descriptor, "mmap");
     if (access == 1) throw std::system_error(ENOTSUP, std::generic_category(), "map file: a shared mapping of a write-only descriptor is not implemented on Windows");
-    const DWORD viewProtection = access == 2 ? PAGE_READWRITE : PAGE_READONLY;
-    const HANDLE section = CreateFileMappingW(file, nullptr, viewProtection, 0, 0, nullptr);
-    if (section == nullptr) {
+    if (access == 0 && (prot & PROT_WRITE) != 0) throw std::system_error(EACCES, std::generic_category(), "map file: a writable shared mapping of a read-only descriptor");
+    const bool execute = (prot & PROT_EXEC) != 0;
+    const DWORD viewProtection = execute ? (access == 2 ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ) : (access == 2 ? PAGE_READWRITE : PAGE_READONLY);
+    const HANDLE source = execute ? ReOpenFile(file, GENERIC_READ | GENERIC_EXECUTE | (access == 2 ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0) : file;
+    if (source == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
-        throw std::system_error(error == ERROR_ACCESS_DENIED ? EACCES : EIO, std::generic_category(), "map file: create the file section");
+        throw std::system_error(error == ERROR_ACCESS_DENIED ? EACCES : EIO, std::generic_category(), "map file: reopen the file with execute access");
     }
+    const HANDLE section = CreateFileMappingW(source, nullptr, viewProtection, 0, 0, nullptr);
+    const DWORD sectionError = GetLastError();
+    if (source != file) CloseHandle(source);
+    if (section == nullptr) throw std::system_error(sectionError == ERROR_ACCESS_DENIED ? EACCES : EIO, std::generic_category(), "map file: create the file section");
     GuestAllocations::Mutation mutation;
     const int placementFlags = flags & (GuestMapFixedFlag | 0x80 | 0x400000);
     flags = PlaceHintInReservation(*addr, len, placementFlags);

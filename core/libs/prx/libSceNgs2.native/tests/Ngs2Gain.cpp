@@ -121,19 +121,27 @@ static void TestEightChannels() {
 
 static void TestVoicesAndPause() {
     GainGraph graph(1, 2);
+    graph.Set({0}, 0);
+    graph.Set({0}, 1);
+    ExpectConstant(graph.Render(64), {0});
     graph.Set({8}, 0);
     graph.Set({-4}, 1);
-    ExpectChannels(graph.Render(), {{0, 0.25f, 0.5f, 0.75f, 1, 1.25f, 1.5f, 1.75f}});
-    ExpectConstant(graph.Render(), {2});
+    auto out = graph.Render(64);
+    for (std::uint32_t i = 0; i < 64; ++i) Require(out[i] == 2.0f * i / 64);
+    ExpectConstant(graph.Render(64), {2});
     Event(graph.voices[0], SCE_NGS2_VOICE_EVENT_PAUSE);
     graph.Set({16}, 0);
-    ExpectConstant(graph.Render(), {-2});
+    out = graph.Render(64);
+    for (std::uint32_t i = 0; i < 64; ++i) Require(out[i] == (4.0f + 4.0f * i / 64) * (1.0f - static_cast<float>(i) / 64) - 2.0f);
+    ExpectConstant(graph.Render(64), {-2});
     Event(graph.voices[0], SCE_NGS2_VOICE_EVENT_RESUME);
-    ExpectChannels(graph.Render(), {{2, 2.5f, 3, 3.5f, 4, 4.5f, 5, 5.5f}});
-    ExpectConstant(graph.Render(), {6});
+    out = graph.Render(64);
+    for (std::uint32_t i = 0; i < 64; ++i) Require(out[i] == 8.0f * i / 64 - 2.0f);
+    ExpectConstant(graph.Render(64), {6});
     graph.Set({-12}, 1);
-    ExpectChannels(graph.Render(), {{6, 5.5f, 5, 4.5f, 4, 3.5f, 3, 2.5f}});
-    ExpectConstant(graph.Render(), {2});
+    out = graph.Render(64);
+    for (std::uint32_t i = 0; i < 64; ++i) Require(out[i] == 6.0f - 4.0f * i / 64);
+    ExpectConstant(graph.Render(64), {2});
 }
 
 static void TestGrainChanges() {
