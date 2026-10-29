@@ -336,6 +336,69 @@ void TestAllocatorExRecorded() {
         "the limit bounds the read of an unterminated buffer");
 }
 
+void TestRingBuf() {
+    constexpr int NoSpace = static_cast<int>(0x80559E0A);
+    constexpr int NoData = static_cast<int>(0x80559E0B);
+    std::uint8_t storage[8];
+    NpRingBuf ring {};
+    _ZN3sce2np7RingBufC1Ev(&ring);
+    const void* const* ringVtable = ring.vtable;
+
+    Require(ring.buf == nullptr && ring.bufSize == 0 && _ZNK3sce2np7RingBuf6IsFullEv(&ring), "a new ring buffer is empty and full");
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&ring, storage, sizeof(storage)) == 0 && _ZNK3sce2np7RingBuf7IsEmptyEv(&ring)
+            && _ZNK3sce2np7RingBuf11GetFreeSizeEv(&ring) == 8,
+        "a ring buffer takes the caller's storage");
+    Require(_ZN3sce2np7RingBuf5WriteEPKvm(&ring, "abcdef", 6) == 0 && _ZN3sce2np7RingBuf5WriteEPKvm(&ring, "xyz", 3) == NoSpace
+            && _ZNK3sce2np7RingBuf11GetDataSizeEv(&ring) == 6,
+        "a write that does not fit is refused whole");
+    char out[16] = {};
+    Require(_ZN3sce2np7RingBuf4ReadEPvm(&ring, out, 4) == 0 && std::memcmp(out, "abcd", 4) == 0, "data is read in order");
+    Require(_ZN3sce2np7RingBuf5WriteEPKvm(&ring, "ghijk", 5) == 0 && _ZNK3sce2np7RingBuf11GetDataSizeEv(&ring) == 7
+            && std::memcmp(storage, "ijkdefgh", 8) == 0,
+        "a write wraps around the end of the storage");
+    Require(_ZN3sce2np7RingBuf4PeekEmPvm(&ring, 3, out, 4) == 0 && std::memcmp(out, "hijk", 4) == 0 && _ZNK3sce2np7RingBuf11GetDataSizeEv(&ring) == 7,
+        "peeking across the wrap leaves the data in place");
+    Require(_ZN3sce2np7RingBuf4PeekEmPvm(&ring, 4, out, 4) == NoSpace, "a peek past the data is refused");
+    Require(_ZN3sce2np7RingBuf4ReadEPvm(&ring, out, 8) == NoData && _ZN3sce2np7RingBuf4ReadEPvm(&ring, nullptr, 2) == 0
+            && _ZN3sce2np7RingBuf4ReadEPvm(&ring, out, 5) == 0 && std::memcmp(out, "ghijk", 5) == 0 && _ZNK3sce2np7RingBuf7IsEmptyEv(&ring),
+        "a read past the data is refused and a null buffer skips the data");
+    std::size_t blockSize = 0;
+    auto* block = static_cast<std::uint8_t*>(_ZN3sce2np7RingBuf16CheckoutForWriteEPm(&ring, &blockSize));
+    Require(block == storage && blockSize == 8, "an empty ring buffer hands out its whole storage for writing");
+    std::memcpy(block, "AB", 2);
+    _ZN3sce2np7RingBuf15CheckinForWriteEm(&ring, 2);
+    block = static_cast<std::uint8_t*>(_ZN3sce2np7RingBuf15CheckoutForReadEPm(&ring, &blockSize));
+    Require(block == storage && blockSize == 2 && block[1] == 'B', "the written block is handed out for reading");
+    _ZN3sce2np7RingBuf14CheckinForReadEm(&ring, 2);
+    Require(_ZN3sce2np7RingBuf15CheckoutForReadEPm(&ring, &blockSize) == nullptr && _ZNK3sce2np7RingBuf7IsEmptyEv(&ring), "nothing is left to read");
+    _ZN3sce2np7RingBuf7DestroyEv(&ring);
+    Require(ring.buf == nullptr && ring.vtable == ringVtable, "destroying detaches the storage");
+
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-test") == 0, "a memory heap is created");
+    NpAllocatorEx heapAllocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1234, &heapAllocator);
+    AllocatorRecord record {};
+    NpAllocator objectAllocator {RecordAllocate, nullptr, RecordRelease, &record};
+    auto* memory = static_cast<NpRingBufMemory*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpRingBufMemory), &objectAllocator));
+    _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(memory, &heapAllocator);
+
+    Require(!_ZN3sce2np13RingBufMemory6IsInitEv(memory) && memory->allocator == &heapAllocator && memory->ringBuf.vtable != ringVtable,
+        "a memory ring buffer keeps its allocator");
+    Require(_ZN3sce2np13RingBufMemory4InitEm(memory, 4) == 0 && _ZN3sce2np13RingBufMemory6IsInitEv(memory), "a memory ring buffer allocates its storage");
+    Require(_ZN3sce2np7RingBuf5WriteEPKvm(&memory->ringBuf, "abc", 3) == 0 && _ZN3sce2np7RingBuf4ReadEPvm(&memory->ringBuf, out, 2) == 0
+            && _ZN3sce2np7RingBuf5WriteEPKvm(&memory->ringBuf, "de", 2) == 0,
+        "a memory ring buffer wraps like a plain one");
+    Require(_ZN3sce2np13RingBufMemory6ExpandEm(memory, 4) == 0 && memory->ringBuf.bufSize == 8 && _ZN3sce2np7RingBuf5WriteEPKvm(&memory->ringBuf, "fgh", 3) == 0
+            && _ZN3sce2np7RingBuf4ReadEPvm(&memory->ringBuf, out, 6) == 0 && std::memcmp(out, "cdefgh", 6) == 0,
+        "expanding moves the wrapped data and keeps its order");
+    using Destructor = void (APS5_VABI*)(NpRingBufMemory*);
+    reinterpret_cast<Destructor>(memory->ringBuf.vtable[1])(memory);
+
+    Require(record.released == record.block.data(), "the deleting destructor frees the object through its allocator");
+    sceNpMemoryHeapDestroy(&memoryHeap);
+}
+
 struct CalloutRecord {
     std::atomic<int> order {0};
     std::atomic<int> first {0};
@@ -619,6 +682,7 @@ int main() {
     TestAllocatorEx();
     TestObjectsThroughStoredAllocator();
     TestAllocatorExRecorded();
+    TestRingBuf();
     TestBase64();
     TestNumbers();
     TestHexAndCopies();
