@@ -248,6 +248,7 @@ struct Tickets {
     std::condition_variable changed;
     std::array<std::uint64_t, 16> issued{};
     std::array<std::uint64_t, 16> completed{};
+    std::vector<std::uint64_t> waited;
     int timedOut = 0;
     int ready = 0;
 };
@@ -257,6 +258,7 @@ public:
     TicketWait(std::shared_ptr<Tickets> tickets, std::uint32_t index, std::uint64_t ticket) : tickets(std::move(tickets)), index(index), ticket(ticket) {}
     void Wait() override {
         std::unique_lock lock(tickets->mutex);
+        tickets->waited.push_back(ticket);
         if (!tickets->changed.wait_for(lock, std::chrono::seconds(3), [&] { return tickets->completed[index] >= ticket; })) ++tickets->timedOut;
     }
 private:
@@ -327,14 +329,19 @@ void RewrittenWaitBeforeOwnFlip(const GuestBlock& block) {
     const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - opened).count();
     int timedOut = 0;
     int ready = 0;
+    std::vector<std::uint64_t> waited;
     {
         std::lock_guard lock(output->tickets->mutex);
         timedOut = output->tickets->timedOut;
         ready = output->tickets->ready;
+        waited = output->tickets->waited;
     }
     AgcDriverUnregisterVideoOutput_nid_postfix(Handle, output);
     Require(timedOut == 0, "a rendering wait written into an indirect buffer after its submission waited for the flip after that buffer in the same submission (" + std::to_string(took) + " ms, timed out after 3 s)");
     Require(ready == 2, "the two flips did not complete: " + std::to_string(ready) + " completed");
+    std::string tickets;
+    for (const auto ticket : waited) tickets += (tickets.empty() ? "" : ", ") + std::to_string(ticket);
+    Require(waited == std::vector<std::uint64_t>{0, 1}, "the rendering waits did not wait for the first submission's ticket 0 and then the rewritten wait's ticket 1 of the first flip; they waited for {" + tickets + "}");
 }
 
 int main() {
