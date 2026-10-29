@@ -294,6 +294,44 @@ void CheckPosixLauncher() {
     Require(!std::filesystem::exists(directory / "record"));
     std::filesystem::remove_all(directory);
 }
+
+std::size_t CountStarted(const std::filesystem::path& directory) {
+    std::size_t count = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(directory))
+        if (entry.path().filename().string().rfind("started.", 0) == 0) ++count;
+    return count;
+}
+
+void CheckPosixOutstandingBound() {
+    const auto directory = MakeScratchDirectory();
+    const auto opener = directory / "blocking.sh";
+    {
+        std::ofstream script(opener);
+        script << "#!/bin/sh\ntouch \"" << directory.string() << "/started.$$\"\nwhile [ ! -e \"" << directory.string()
+               << "/release\" ]; do sleep 0.05; done\n";
+    }
+    std::filesystem::permissions(opener, std::filesystem::perms::owner_all);
+    HostBrowserLauncher launcher(opener.string());
+    Require(HOST_BROWSER_MAX_OPENERS == 2);
+    Require(launcher.Launch("https://example.com/1"));
+    Require(launcher.Launch("https://example.com/2"));
+    for (int index = 0; index < 20; ++index) Require(!launcher.Launch("https://example.com/3"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(CountStarted(directory) == 2);
+
+    { std::ofstream release(directory / "release"); }
+    bool recovered = false;
+    for (int attempt = 0; attempt < 500 && !recovered; ++attempt) {
+        recovered = launcher.Launch("https://example.com/4");
+        if (!recovered) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    Require(recovered);
+    for (int attempt = 0; attempt < 500 && CountStarted(directory) < 3; ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    Require(CountStarted(directory) == 3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::filesystem::remove_all(directory);
+}
+
 #endif
 
 void CheckConfirmationText() {
@@ -482,6 +520,7 @@ int main() {
 #endif
 #ifndef _WIN32
     CheckPosixLauncher();
+    CheckPosixOutstandingBound();
 #endif
     return 0;
 }
