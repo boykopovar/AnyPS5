@@ -1,17 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <source_location>
-
-extern "C" {
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-int APS5_VABI msync_nid_postfix(void*, std::size_t, int);
-int APS5_VABI sceKernelReserveVirtualRange(void**, std::size_t, int, std::size_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 constexpr std::size_t Page = 0x4000;

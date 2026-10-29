@@ -1,17 +1,15 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
-
-extern "C" int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLuminance* luminance);
-extern "C" int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, std::size_t bufSize);
-extern "C" int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* arguments, const void* param);
-extern "C" int APS5_VABI sceSystemServiceAddLocalProcessForPsmKit(const char* path, const char* const* arguments, const void* param);
-extern "C" int APS5_VABI sceSystemServiceKillLocalProcessForPsmKit(int handle);
 
 namespace {
 
@@ -40,28 +38,56 @@ bool LaunchAppThrows(const char* titleId, const char* const* arguments, const vo
 
 }
 
-extern "C" int APS5_VABI sceSystemServicePowerTick(void);
-extern "C" int APS5_VABI sceSystemServiceIsBgmPlaying(void);
-extern "C" int APS5_VABI sceShellCoreUtilIsBgmPlaying(void);
-extern "C" int APS5_VABI sceSystemServiceReportAbnormalTermination(const void* info);
-extern "C" int APS5_VABI sceSystemServiceDisableMusicPlayer(void);
-extern "C" int APS5_VABI sceSystemServiceReenableMusicPlayer(void);
-extern "C" int APS5_VABI sceSystemServiceDisableMediaPlay(void);
-extern "C" int APS5_VABI sceSystemServiceReenableMediaPlay(void);
-extern "C" int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri);
-extern "C" int APS5_VABI sceSystemServiceShowControllerSettings(void);
-extern "C" int APS5_VABI sceSystemServiceShowDisplaySafeAreaSettings(void);
-extern "C" int APS5_VABI sceSystemServiceOpenChallengeActivity(void);
-extern "C" int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status);
-extern "C" int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAreaInfo* info);
-extern "C" int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool* value);
-extern "C" int APS5_VABI sceSystemServiceSetNoticeScreenSkipFlag(void);
-extern "C" int APS5_VABI sceSystemServiceDisableNoticeScreenSkipFlagAutoSet(void);
-extern "C" int APS5_VABI sceSystemServiceHideSplashScreen(void);
-extern "C" int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent* event);
-extern "C" void APS5_VABI sceSystemServiceInitializePlayerDialogParam(SystemServicePlayerDialogParam* param);
-
 namespace {
+
+template<typename TList>
+void TestBigAppList(TList list) {
+    const int runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    constexpr std::int32_t Sentinel = 0x5a5a5a5a;
+    for (const std::uint32_t capacity : {1u, 4u}) {
+        std::int32_t appIds[4] = {Sentinel, Sentinel, Sentinel, Sentinel};
+        std::uint32_t count = 0xdeadbeefu;
+        Require(list(appIds, capacity, &count) == SYSTEM_SERVICE_OK);
+        Require(count == 1 && appIds[0] == runningAppId);
+        for (std::size_t index = 1; index < 4; ++index) Require(appIds[index] == Sentinel);
+    }
+    std::int32_t appIds[2] = {Sentinel, Sentinel};
+    std::uint32_t count = 0xdeadbeefu;
+    Require(list(nullptr, 2, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(list(appIds, 2, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(list(nullptr, 0, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(appIds[0] == Sentinel && appIds[1] == Sentinel && count == 0xdeadbeefu);
+}
+
+template<typename TValue, typename TQuery>
+void TestRunningAppAnswer(TQuery query, TValue expected, TValue sentinel, int nullOutputResult) {
+    const std::int32_t runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    TValue value = sentinel;
+    Require(query(runningAppId, &value) == SYSTEM_SERVICE_OK && value == expected);
+    Require(query(runningAppId, nullptr) == nullOutputResult);
+    for (const std::int32_t other : {runningAppId + 1, runningAppId - 1, -1, std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::max()}) {
+        Require(query(other, nullptr) == nullOutputResult);
+    }
+}
+
+void TestRunningAppUser() {
+    constexpr std::int32_t Sentinel = 0x5a5a5a5a;
+    TestRunningAppAnswer<std::int32_t>(sceLncUtilGetAppLaunchedUser, USER_SERVICE_INITIAL_USER_ID, Sentinel, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    TestRunningAppAnswer<std::int32_t>(sceSystemServiceGetAppLaunchedUser, USER_SERVICE_INITIAL_USER_ID, Sentinel, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    TestRunningAppAnswer<std::int32_t>(sceShellCoreUtilGetUserFocus, USER_SERVICE_INITIAL_USER_ID, Sentinel, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+void TestRunningAppState() {
+    TestRunningAppAnswer<bool>(sceLncUtilIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    TestRunningAppAnswer<bool>(sceSystemServiceIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    TestRunningAppAnswer<bool>(sceLncUtilIsSpeculativeLaunch, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+void TestRunningBigApp() {
+    Require(sceLncUtilGetAppIdOfRunningBigApp() == sceSystemServiceGetAppIdOfRunningBigApp());
+    TestBigAppList(sceLncUtilGetAppIdListOfBigApp);
+    TestBigAppList(sceSystemServiceGetAppIdListOfBigApp);
+}
 
 void TestPlayerDialogParam() {
     alignas(8) unsigned char buffer[0x100];
@@ -78,6 +104,8 @@ void TestPlayerDialogParam() {
         threw = true;
     }
     Require(threw);
+    Require(sceSystemServiceLaunchPlayerDialog(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceLaunchPlayerDialog(buffer) == SYSTEM_SERVICE_OK);
 }
 
 }
@@ -176,5 +204,8 @@ int main() {
     SystemServiceEvent event;
     event.event_type = 7;
     Require(sceSystemServiceReceiveEvent(&event) == SYSTEM_SERVICE_ERROR_NO_EVENT);
+    TestRunningBigApp();
+    TestRunningAppUser();
+    TestRunningAppState();
     TestPlayerDialogParam();
 }

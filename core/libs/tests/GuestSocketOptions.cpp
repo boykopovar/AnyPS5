@@ -1,25 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI setsockopt_nid_postfix(int, int, int, const void*, std::uint32_t);
-int APS5_VABI getsockopt_nid_postfix(int, int, int, void*, std::uint32_t*);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI poll_nid_postfix(void*, std::uint32_t, int);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 
@@ -50,12 +36,6 @@ constexpr int ErrorBadDescriptor = 9;
 struct Linger {
     std::int32_t enabled;
     std::int32_t seconds;
-};
-
-struct PollDescriptor {
-    std::int32_t descriptor;
-    std::int16_t events;
-    std::int16_t revents;
 };
 
 void Require(bool condition, const char* what) {
@@ -99,7 +79,7 @@ std::array<std::uint8_t, 16> Listen(int* listener) {
 }
 
 void WaitUntilSettled(int descriptor) {
-    PollDescriptor entry{descriptor, 0x1 | 0x4, 0};
+    GuestPollDescriptor entry{descriptor, 0x1 | 0x4, 0};
     Require(poll_nid_postfix(&entry, 1, 6000) == 1, "the nonblocking connect did not settle within 6 s");
 }
 
@@ -171,6 +151,13 @@ void BooleanOptionsReportTheirBit() {
         std::uint32_t size = sizeof(value);
         Require(getsockopt_nid_postfix(stream, SolSocket, option, &value, &size) == -1 && *__error_nid_postfix() == ErrorNoProtocolOption, "SO_NO_OFFLOAD and SO_NO_DDP are accepted but cannot be read");
     }
+    for (const int descriptor : {stream, datagram})
+        for (const int setting : {5, 0}) {
+            Require(SetFails(descriptor, SolSocket, 0x1000, &setting, sizeof(setting), ErrorInvalid), "SO_ACCEPTFILTER on a socket that is not listening must fail with EINVAL (22)");
+            std::uint64_t filter = 0xbbbbbbbbbbbbbbbbull;
+            std::uint32_t size = sizeof(filter);
+            Require(getsockopt_nid_postfix(descriptor, SolSocket, 0x1000, &filter, &size) == -1 && *__error_nid_postfix() == ErrorInvalid && filter == 0xbbbbbbbbbbbbbbbbull, "getsockopt of SO_ACCEPTFILTER on a socket that is not listening must fail with EINVAL (22)");
+        }
     const unsigned char narrowFlag = 1;
     Require(SetFails(stream, SolSocket, SoDebug, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
@@ -337,6 +324,11 @@ void IpLevelFollowsThePs5() {
     size = sizeof(value);
     Require(getsockopt_nid_postfix(datagram, 99, 1, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "an unknown level must fail with EINVAL (22)");
     Require(SetFails(datagram, 99, 1, &value, sizeof(value), ErrorInvalid), "setsockopt at an unknown level must fail with EINVAL (22)");
+    for (const int option : {7, 20, 65}) {
+        Require(GetIp(datagram, option) == 0, "a receive option starts off");
+        Require(SetIp(datagram, option, 5) && GetIp(datagram, option) == 1, "a receive option reads back as 1");
+        Require(SetIp(datagram, option, 0) && GetIp(datagram, option) == 0, "a receive option turns off");
+    }
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(datagram6) == 0, "close failed");
 }
 

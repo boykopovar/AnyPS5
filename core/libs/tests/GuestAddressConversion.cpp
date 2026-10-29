@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
@@ -5,17 +7,6 @@
 #include <cstring>
 #include <stdexcept>
 
-extern "C" {
-int APS5_VABI __inet_pton_nid_postfix(int, const char*, void*);
-const char* APS5_VABI __inet_ntop_nid_postfix(int, const void*, char*, std::uint32_t);
-int APS5_VABI inet_pton_nid_postfix(int, const char*, void*);
-const char* APS5_VABI inet_ntop_nid_postfix(int, const void*, char*, std::uint32_t);
-int* APS5_VABI __error_nid_postfix();
-std::uint32_t APS5_VABI htonl_nid_postfix(std::uint32_t);
-std::uint32_t APS5_VABI ntohl_nid_postfix(std::uint32_t);
-std::uint16_t APS5_VABI htons_nid_postfix(std::uint16_t);
-std::uint16_t APS5_VABI ntohs_nid_postfix(std::uint16_t);
-}
 static void Require(bool value) { if (!value) std::abort(); }
 
 using Ntop = const char* (APS5_VABI *)(int, const void*, char*, std::uint32_t);
@@ -470,6 +461,7 @@ static void CheckConsolePton() {
         *__error_nid_postfix() = 0;
         const int result = sample.plain ? inet_pton_nid_postfix(sample.family, sample.text, destination)
                                         : __inet_pton_nid_postfix(sample.family, sample.text, destination);
+
         Require(result == sample.result);
         Require(*__error_nid_postfix() == sample.error);
         Require(SameBytes(destination, sample.bytes));
@@ -484,6 +476,7 @@ static void CheckConsoleNtop() {
         *__error_nid_postfix() = 0;
         const char* result = sample.plain ? inet_ntop_nid_postfix(sample.family, source, Wide, sample.size)
                                           : __inet_ntop_nid_postfix(sample.family, source, Wide, sample.size);
+
         Require(result == (sample.succeeds ? Wide : nullptr));
         Require(*__error_nid_postfix() == sample.error);
         Require(SameBytes(Wide, sample.bytes));

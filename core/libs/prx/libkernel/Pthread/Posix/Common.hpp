@@ -1,3 +1,4 @@
+#include "prx/libkernel/Time/include/Time.hpp"
 #ifndef CORE_LIBS_PRX_LIBKERNEL_PTHREAD_POSIX_COMMON_HPP
 #define CORE_LIBS_PRX_LIBKERNEL_PTHREAD_POSIX_COMMON_HPP
 
@@ -5,8 +6,6 @@
 #include <chrono>
 #include <limits>
 #include "SceTypes.hpp"
-
-extern "C" int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
 
 namespace PosixThread {
 
@@ -29,6 +28,7 @@ inline bool RelativeMicroseconds(int clockId, const KernelTimespec* abstime, Ker
     if (!abstime || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000) return false;
     KernelTimespec now{};
     clock_gettime_nid_postfix(clockId, &now);
+
     constexpr auto maximum = std::numeric_limits<KernelUseconds>::max();
     if (abstime->tv_sec < now.tv_sec - 1) {
         *usec = 0;

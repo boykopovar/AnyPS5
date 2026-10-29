@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
@@ -18,8 +19,7 @@
 #endif
 
 extern "C" {
-FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode, FileStream* stream);
-int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream);
+
 extern FileStream* __stdoutp_nid_postfix;
 }
 

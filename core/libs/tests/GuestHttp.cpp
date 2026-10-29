@@ -1,54 +1,20 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
 #include <array>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <clocale>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <string>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sceHttpUriParse(SceHttpUriElement*, const char*, void*, std::size_t*, std::size_t);
-int APS5_VABI sceHttpUriCopy(SceHttpUriElement*, const SceHttpUriElement*, void*, std::size_t, std::size_t*);
-int APS5_VABI sceHttpUriMerge(char*, const char*, const char*, std::size_t*, std::size_t, std::uint32_t);
-int APS5_VABI sceHttpSetInflateGZIPEnabled(int, int);
-int APS5_VABI sceHttpSetRequestStatusCallback(int, void (APS5_VABI *)(int, int, void*), void*);
-int APS5_VABI sceHttpSendRequest(int, const void*, std::size_t);
-int APS5_VABI sceHttpUriBuild(char*, std::size_t*, std::size_t, const SceHttpUriElement*, std::uint32_t);
-int APS5_VABI sceHttpUriEscape(char*, std::size_t*, std::size_t, const char*);
-int APS5_VABI sceHttpUriUnescape(char*, std::size_t*, std::size_t, const char*);
-int APS5_VABI sceHttpUriSweepPath(char*, const char*, std::size_t);
-int APS5_VABI sceHttpCreateEpoll(int, HttpEpollHandle*);
-int APS5_VABI sceHttpDestroyEpoll(int, HttpEpollHandle);
-int APS5_VABI sceHttpWaitRequest(HttpEpollHandle, HttpNBEvent*, int, int);
-int APS5_VABI sceHttpAbortWaitRequest(HttpEpollHandle);
-int APS5_VABI sceHttpInit_nid_postfix(int, int, std::uint64_t);
-int APS5_VABI sceHttpTerm_nid_postfix(int);
-int APS5_VABI sceHttpAuthCacheFlush(int);
-int APS5_VABI sceHttpCookieFlush(int);
-int APS5_VABI sceHttpGetMemoryPoolStats(int, void*);
-int APS5_VABI sceHttpReadData(int, void*, std::size_t);
-int APS5_VABI sceHttpCreateRequest2(int, const char*, const char*, std::uint64_t);
-int APS5_VABI sceHttpsEnableOption(int, std::uint32_t);
-int APS5_VABI sceHttpsLoadCert(int, int, void*, void*, void*);
-int APS5_VABI sceHttpGetLastErrno(int, int*);
-int APS5_VABI sceHttpSetResponseHeaderMaxSize(int, std::uint64_t);
-int APS5_VABI sceHttpSetRecvBlockSize(int, std::uint32_t);
-int APS5_VABI sceHttpRedirectCacheFlush(int);
-int APS5_VABI sceHttpsUnloadCert(int);
-int APS5_VABI sceHttpsSetSslVersion(int, int);
-int APS5_VABI sceHttpsGetSslError(int, int*, std::uint32_t*);
-int APS5_VABI sceHttpSetRedirectCallback(int, HttpRedirectCallback, void*);
-int APS5_VABI sceHttpSetCookieRecvCallback(int, HttpCookieRecvCallback, void*);
-int APS5_VABI sceHttpSetAuthInfoCallback(int, HttpAuthInfoCallback, void*);
-int APS5_VABI sceHttpParseStatusLine(const char*, std::size_t, std::int32_t*, std::int32_t*, std::int32_t*, const char**, std::size_t*);
-}
 
 alignas(16) static std::array<std::byte, 0x40> processParameters{};
 
@@ -56,12 +22,8 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Equal(const char* left, const char* right) { return std::strcmp(left, right) == 0; }
 
-struct HttpPoolStats {
-    std::size_t poolSize;
-    std::size_t maxInuseSize;
-    std::size_t currentInuseSize;
-};
-static_assert(sizeof(HttpPoolStats) == 24);
+
+static_assert(sizeof(HttpMemoryPoolStats) == 24);
 
 template <typename TCall>
 static bool Throws(TCall call) {
@@ -74,20 +36,20 @@ static bool Throws(TCall call) {
 }
 
 static void CheckPoolStatsRejected(int id, int expected) {
-    unsigned char buffer[sizeof(HttpPoolStats) + 16];
+    alignas(HttpMemoryPoolStats) unsigned char buffer[sizeof(HttpMemoryPoolStats) + 16];
     std::memset(buffer, 0x5a, sizeof(buffer));
-    Require(sceHttpGetMemoryPoolStats(id, buffer) == expected);
+    Require(sceHttpGetMemoryPoolStats(id, reinterpret_cast<HttpMemoryPoolStats*>(buffer)) == expected);
     for (unsigned char byte : buffer) Require(byte == 0x5a);
 }
 
 static void CheckPoolStats(int id, std::size_t poolSize) {
-    unsigned char buffer[sizeof(HttpPoolStats) + 16];
+    alignas(HttpMemoryPoolStats) unsigned char buffer[sizeof(HttpMemoryPoolStats) + 16];
     std::memset(buffer, 0x5a, sizeof(buffer));
-    Require(sceHttpGetMemoryPoolStats(id, buffer) == 0);
-    HttpPoolStats stats;
+    Require(sceHttpGetMemoryPoolStats(id, reinterpret_cast<HttpMemoryPoolStats*>(buffer)) == 0);
+    HttpMemoryPoolStats stats;
     std::memcpy(&stats, buffer, sizeof(stats));
     Require(stats.poolSize == poolSize);
-    Require(stats.maxInuseSize == 0 && stats.currentInuseSize == 0);
+    Require(stats.peakUsedSize == 0 && stats.usedSize == 0);
     for (std::size_t i = sizeof(stats); i < sizeof(buffer); ++i) Require(buffer[i] == 0x5a);
 }
 
@@ -454,7 +416,47 @@ static void APS5_VABI RequestStatusCallback(int, int, void* argument) {
     ++*static_cast<int*>(argument);
 }
 
-int main() {
+static void CheckCaList() {
+    constexpr int invalidValue = static_cast<int>(0x804311FE);
+    int certificate = 0;
+    HttpsCaList list{&certificate, 7};
+    Require(sceHttpsGetCaList(1, nullptr) == invalidValue);
+    Require(sceHttpsGetCaList(1, &list) == 0 && list.certs == nullptr && list.certsNum == 0);
+    list = {&certificate, 7};
+    Require(sceHttpsFreeCaList(1, nullptr) == invalidValue);
+    Require(sceHttpsFreeCaList(1, &list) == 0 && list.certs == nullptr && list.certsNum == 0);
+}
+
+static int CheckUriLocales() {
+    const std::string previousCtype = std::setlocale(LC_CTYPE, nullptr);
+    bool exercised = false;
+#ifdef _WIN32
+    const char* locales[] = {".1252"};
+#else
+    const char* locales[] = {"en_US.ISO8859-1", "en_US.iso88591", "en_US.UTF-8"};
+#endif
+    for (const char* locale : locales) {
+        if (!std::setlocale(LC_CTYPE, locale)) continue;
+        CheckUriEscapeBytes();
+        CheckUriParseCharacters();
+        const bool classifiesHighByte = std::isalpha(static_cast<unsigned char>(0xE9)) != 0;
+        exercised |= classifiesHighByte;
+        std::printf("URI locale checks: %s; classifies 0xE9 as alphabetic: %s\n", locale, classifiesHighByte ? "yes" : "no");
+    }
+    Require(std::setlocale(LC_CTYPE, previousCtype.c_str()) != nullptr);
+#ifdef _WIN32
+    Require(exercised);
+#endif
+    if (!exercised) {
+        std::fputs("SKIP: URI locale regression requires a Latin-1 locale that classifies 0xE9 as alphabetic.\n", stderr);
+        return 77;
+    }
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--uri-locale") == 0) return CheckUriLocales();
+    Require(argc == 1);
     const std::uint64_t processSize = processParameters.size();
     const std::uint32_t processMagic = 0x4942524f;
     std::uint32_t sdkVersion = 0x1000000;
@@ -462,6 +464,7 @@ int main() {
     std::memcpy(processParameters.data() + 8, &processMagic, sizeof(processMagic));
     std::memcpy(processParameters.data() + 16, &sdkVersion, sizeof(sdkVersion));
     Require(ProcessParametersFixture::Install(processParameters.data(), processParameters.size()));
+    CheckCaList();
     for (const std::uint32_t version : {0u, 0xffffffu, 0x1000000u}) {
         std::memcpy(processParameters.data() + 16, &version, sizeof(version));
         for (unsigned value = 1; value < 256; ++value) {
@@ -593,17 +596,6 @@ int main() {
     Require(std::setlocale(LC_CTYPE, "C") != nullptr);
     CheckUriEscapeBytes();
     CheckUriParseCharacters();
-#ifdef _WIN32
-    Require(std::setlocale(LC_CTYPE, ".1252") != nullptr);
-    CheckUriEscapeBytes();
-    CheckUriParseCharacters();
-#else
-    for (const char* locale : {"en_US.ISO8859-1", "en_US.iso88591", "en_US.UTF-8"}) {
-        if (!std::setlocale(LC_CTYPE, locale)) continue;
-        CheckUriEscapeBytes();
-        CheckUriParseCharacters();
-    }
-#endif
     Require(std::setlocale(LC_CTYPE, previousCtype.c_str()) != nullptr);
 
     constexpr const char* unescapeCases[][2] = {

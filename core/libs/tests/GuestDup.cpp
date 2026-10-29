@@ -1,24 +1,12 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <climits>
 #include <cstdint>
 #include <initializer_list>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI close_nid_postfix(int);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -200,6 +188,8 @@ static void DuplicatesShareStatusFlags() {
     Require(pipe_nid_postfix(pipe) == 0);
     Require(pipe_nid_postfix(other) == 0);
     Require(fcntl_nid_postfix(pipe[0], SetDescriptorFlags, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fcntl_nid_postfix(pipe[0], 0, INT_MAX) == -1 && *__error_nid_postfix() == 22);
     const int duplicate = dup_nid_postfix(pipe[0]);
     Require(duplicate >= 0);
     Require(fcntl_nid_postfix(duplicate, GetDescriptorFlags) == 0);

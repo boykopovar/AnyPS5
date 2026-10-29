@@ -10,6 +10,7 @@ add_library(libSceAudioOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2User.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2Mastering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2System.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/InventoryExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Unimplemented.cpp
 )
 
@@ -43,6 +44,21 @@ if(BUILD_TESTING)
         set_tests_properties(${vibrationDeviceTest} PROPERTIES TIMEOUT 5)
         if(WIN32)
             set_tests_properties(${vibrationDeviceTest} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+
+    add_test_executable(audio_out_default_open_tests tests/AudioOutDefaultOpen.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp)
+    target_compile_definitions(audio_out_default_open_tests PRIVATE SDL_MAIN_HANDLED)
+    target_include_directories(audio_out_default_open_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_link_libraries(audio_out_default_open_tests PRIVATE libc libkernel libScePad)
+    configure_windows_unwind(audio_out_default_open_tests)
+    foreach(defaultOpenMode IN ITEMS zero_default wasapi_zero_default no_endpoint positive unknown)
+        set(defaultOpenTest "audio_out_default_open_${defaultOpenMode}")
+        add_test(NAME ${defaultOpenTest} COMMAND audio_out_default_open_tests ${defaultOpenMode})
+        set_tests_properties(${defaultOpenTest} PROPERTIES TIMEOUT 5)
+        if(WIN32)
+            set_tests_properties(${defaultOpenTest} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
@@ -224,7 +240,8 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
     add_test_executable(audio_out2_timing_tests tests/AudioOut2Timing.cpp)
-    target_include_directories(audio_out2_timing_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_include_directories(audio_out2_timing_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_compile_definitions(audio_out2_timing_tests PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(audio_out2_timing_tests PRIVATE libSceAudioOut libc)
     configure_windows_unwind(audio_out2_timing_tests)
     add_test(NAME audio_out2_timing COMMAND audio_out2_timing_tests)

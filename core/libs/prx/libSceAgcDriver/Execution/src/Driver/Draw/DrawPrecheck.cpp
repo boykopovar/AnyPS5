@@ -42,7 +42,7 @@ bool Driver::drawPrecheck() {
     return precheck;
 }
 
-std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const Submission& submission, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect) {
+std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect) {
     if (!drawParameters.indirect && !drawParameters.indexed && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
     if (const auto pass = Graphics::DecodeColorMetadataPass(queue)) {
         require(!drawParameters.indirect, "indirect CB metadata passes are unsupported");
@@ -77,7 +77,7 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
     if (const auto copy = Graphics::DecodeDepthCopyPass(queue)) {
         require(!drawParameters.indirect, "indirect DB depth copies are unsupported");
         auto copyDraw = DepthCopyDraw(queue, *copy);
-        return draw(copyDraw, packet, submission, rejected);
+        return draw(copyDraw, packet, submission, packetOffset, rejected);
     }
     if (Graphics::DepthResummarizeDrawsNothing(queue)) return DrawVerdict::Nothing;
     rejected = Graphics::DepthMaintenanceRejection(queue);
@@ -103,9 +103,8 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
             const auto type = primitive == queue.userConfig.end() ? 0u : primitive->second & 0x3fu;
             const bool strip = type == 3 || type == 5 || type == 6 || type == 21;
             const bool list = type == 1 || type == 2 || type == 4;
-            const auto restartDevice = device.Load();
-            if (!strip && !(list && restartDevice != nullptr && restartDevice->PrimitiveListRestart())) {
-                rejected = "AGC graphics: primitive restart is only supported for strips, and for lists with VK_EXT_primitive_topology_list_restart";
+            if (!strip && !list) {
+                rejected = "AGC graphics: primitive restart is only supported for strips and lists";
                 return DrawVerdict::Rejected;
             }
             if (resetIndex == queue.context.end() || (resetIndex->second & allOnes) != allOnes) {

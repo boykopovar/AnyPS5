@@ -1,3 +1,4 @@
+#include "prx/libSceCustomMusicCore/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

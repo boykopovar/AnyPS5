@@ -1,12 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
-extern "C" int APS5_VABI sceKernelSyncOnAddressWake(void* address, std::int32_t count);
 
 namespace {
 

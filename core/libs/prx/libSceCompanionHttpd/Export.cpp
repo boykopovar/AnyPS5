@@ -1,3 +1,4 @@
+#include "prx/libSceCompanionHttpd/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -15,16 +16,7 @@ constexpr int CompanionHttpdErrorAlreadyStarted = static_cast<int>(0x80E4000Au);
 constexpr int CompanionHttpdErrorNotStarted = static_cast<int>(0x80E4000Bu);
 constexpr int CompanionHttpdErrorAlreadyRegistered = static_cast<int>(0x80E4000Cu);
 
-struct CompanionHttpdOptParam {
-    std::uint64_t reserved;
-    void* workMemory;
-    std::uint64_t workMemorySize;
-    std::uint8_t settings[0x40];
-    const void* temporaryMountPoint;
-};
 static_assert(sizeof(CompanionHttpdOptParam) == 0x60);
-
-using CompanionHttpdRequestCallback = int (*)(int, int, const void*, void*, void*);
 
 struct CompanionHttpdState {
     std::mutex mutex;

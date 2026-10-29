@@ -1,3 +1,5 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
@@ -9,34 +11,7 @@
 #include <string>
 #include <thread>
 
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const char*, std::int64_t);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
-int APS5_VABI sceKernelAddReadEvent(KernelEqueue eq, int fd, std::size_t size, void* udata);
-int APS5_VABI sceKernelDeleteReadEvent(KernelEqueue eq, int fd);
-int APS5_VABI sceKernelAddWriteEvent(KernelEqueue eq, int fd, std::size_t size, void* udata);
-int APS5_VABI sceKernelDeleteWriteEvent(KernelEqueue eq, int fd);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
-static constexpr int SCE_KERNEL_ERROR_EBADF = static_cast<int>(0x80020009);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003c);
 static constexpr int EVFILT_READ = -1;
 static constexpr int EVFILT_WRITE = -2;
 static constexpr std::uint16_t EV_EOF = 0x8000;
@@ -174,10 +149,42 @@ static void CloseWhileWaitingOnFile() {
     Require(std::filesystem::remove(path));
 }
 
+static void Dup2OntoWatchedFile() {
+    const std::string path = "anyps5-equeue-dup2-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int created = open_nid_postfix(path.c_str(), 0x0002 | 0x0200, 0644);
+    Require(created >= 0);
+    Require(close_nid_postfix(created) == 0);
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "dup2") == SCE_OK);
+    std::atomic<bool> stop{false};
+    std::thread waiter([eq, &stop] {
+        const KernelUseconds timeout = 1000;
+        std::array<KernelEvent, 4> events{};
+        int count = 0;
+        while (!stop.load()) {
+            Require(sceKernelWaitEqueue(eq, events.data(), events.size(), &count, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT);
+        }
+    });
+    for (int i = 0; i < 2000; ++i) {
+        const int watched = open_nid_postfix(path.c_str(), 0x0002, 0);
+        const int replacement = open_nid_postfix(path.c_str(), 0x0002, 0);
+        Require(watched >= 0 && replacement >= 0);
+        Require(sceKernelAddReadEvent(eq, watched, 0, nullptr) == SCE_OK);
+        Require(dup2_nid_postfix(replacement, watched) == watched);
+        Require(close_nid_postfix(replacement) == 0);
+        Require(close_nid_postfix(watched) == 0);
+    }
+    stop.store(true);
+    waiter.join();
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    Require(std::filesystem::remove(path));
+}
+
 int main() {
     PipeReadEvents();
     RegularFileEvents();
     CloseWhileWaitingOnFile();
+    Dup2OntoWatchedFile();
     const int listener = socket_nid_postfix(2, 1, 6);
     Require(listener >= 0);
     std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};

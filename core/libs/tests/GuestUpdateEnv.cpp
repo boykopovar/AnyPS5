@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <barrier>
@@ -24,8 +25,7 @@ struct Environment {
 };
 static_assert(sizeof(Environment)==32 && offsetof(Environment,mxcsr)==28);
 using UpdateEnvironment=int (APS5_VABI*)(const Environment*);
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI fegetenv_nid_postfix(Environment*);
+
 UpdateEnvironment updateEnvironment;
 
 void Require(bool condition,const char* message) {
@@ -42,6 +42,13 @@ void Write(const Environment& value) {
     _mm_setcsr(value.mxcsr);
 }
 bool Same(const Environment& a,const Environment& b){return a.x87==b.x87 && a.mxcsr==b.mxcsr;}
+bool HostKeepsSseTraps() {
+    const unsigned saved=_mm_getcsr();
+    _mm_setcsr(saved&~(0x01u<<7));
+    const bool kept=(_mm_getcsr()&(0x01u<<7))==0;
+    _mm_setcsr(saved);
+    return kept;
+}
 void Matrix() {
     const auto original=Read();
     auto clean=original;
@@ -100,9 +107,11 @@ void TagsAndPointers() {
     const auto after=Read();
     Write(original);
     Require(result==0 && Same(after,desired),"nonempty x87 tag/TOP and instruction pointer restored");
-    Environment saved;
-    Require(fegetenv_nid_postfix(&saved)==0,"save using existing guest fegetenv");
+    GuestFloatingPointEnvironment guestSaved;
+    Require(fegetenv_nid_postfix(&guestSaved)==0,"save using existing guest fegetenv");
     asm volatile("fninit" : : : "st","st(1)","st(2)","st(3)","st(4)","st(5)","st(6)","st(7)");
+    Environment saved;
+    std::memcpy(&saved, &guestSaved, sizeof(saved));
     Require(updateEnvironment(&saved)==0,"restore guest fegetenv output");
     const auto restored=Read();
     Write(original);
@@ -166,12 +175,12 @@ void BoundsAndErrors() {
     Write(entry);
 }
 
-
 void MasksAndThreads() {
     const auto original=Read();
     auto clean=original;
     clean.x87[0]|=0x3f; clean.x87[1]&=~0xffu;
     clean.mxcsr=(clean.mxcsr&~0x3fu)|(0x3f<<7);
+    const bool sseKept=HostKeepsSseTraps();
     for(unsigned a=0;a<64;++a) for(unsigned b=0;b<64;++b) {
         auto desired=clean;
         desired.x87[0]=(desired.x87[0]&~0x3fu)|a;
@@ -179,7 +188,9 @@ void MasksAndThreads() {
         Write(clean);
         Require(updateEnvironment(&desired)==0,"independent exception masks");
         const auto actual=Read(); Write(clean);
-        Require(Same(actual,desired),"exception masks preserved");
+        auto expected=desired;
+        if(!sseKept) expected.mxcsr|=0x3fu<<7;
+        Require(Same(actual,expected),"exception masks preserved");
     }
     alignas(16) std::array<std::uint32_t,128> state;
     asm volatile("fxsave %0" : "=m"(state));
@@ -230,6 +241,7 @@ void Trap(int){std::_Exit(entered?0:1);}
 #endif
 void Pending(unsigned bit,unsigned source) {
     Require(bit<6 && source<3,"trap arguments");
+    if(!HostKeepsSseTraps()) { std::fprintf(stderr,"feupdateenv: the host keeps no unmasked floating-point exception\n"); std::exit(77); }
 #ifdef _WIN32
     constexpr DWORD codes[]{EXCEPTION_FLT_INVALID_OPERATION,EXCEPTION_FLT_DENORMAL_OPERAND,EXCEPTION_FLT_DIVIDE_BY_ZERO,EXCEPTION_FLT_OVERFLOW,EXCEPTION_FLT_UNDERFLOW,EXCEPTION_FLT_INEXACT_RESULT};
     expectedFlag=1u<<bit;expectedException=codes[bit];
@@ -252,6 +264,23 @@ void Pending(unsigned bit,unsigned source) {
     Require(false,"enabled pending exception did not trap during feupdateenv");
 }
 
+void DefaultEnvironment(const Environment* fallback) {
+    Require(fallback!=nullptr,"__fe_dfl_env is missing");
+    constexpr unsigned char measured[32]{0x7f,0x03,0xff,0xff,0x00,0x00,0xff,0xff,0xff,0xff,0xff,0xff,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0xff,0xff,0xc0,0x9f,0x00,0x00};
+    Require(std::memcmp(fallback,measured,sizeof(measured))==0,"__fe_dfl_env bytes");
+    const auto original=Read();
+    auto disturbed=original;
+    disturbed.x87[0]=(disturbed.x87[0]&~0xf3fu)|0xc00u|0x3fu;
+    disturbed.x87[1]&=~0xffu;
+    disturbed.mxcsr=(disturbed.mxcsr&~0x7fffu)|0x6000u|(0x3f<<7);
+    Write(disturbed);
+    Require(updateEnvironment(fallback)==0,"feupdateenv(__fe_dfl_env) result");
+    const auto restored=Read();
+    Require((restored.x87[0]&0xffffu)==0x037fu,"__fe_dfl_env x87 control");
+    Require((restored.x87[1]&0x3fu)==0 && restored.mxcsr==0x9fc0u,"__fe_dfl_env leaves no flags when none were pending");
+    Write(original);
+}
+
 int main(int argc,char** argv) {
     Require(argc==2 || argc==4,"expected libc path and optional trap bit/source");
 #ifdef _WIN32
@@ -264,8 +293,16 @@ int main(int argc,char** argv) {
     updateEnvironment=reinterpret_cast<UpdateEnvironment>(dlsym(library,"feupdateenv_nid_postfix"));
 #endif
     Require(updateEnvironment!=nullptr,"export is missing");
+#ifdef __APPLE__
+    { const std::invalid_argument first("feupdateenv"); }
+#endif
+#ifdef _WIN32
+    const auto fallback=reinterpret_cast<const Environment*>(GetProcAddress(library,"__fe_dfl_env_nid_postfix"));
+#else
+    const auto fallback=static_cast<const Environment*>(dlsym(library,"__fe_dfl_env_nid_postfix"));
+#endif
     if(argc==4) Pending(static_cast<unsigned>(std::atoi(argv[2])),static_cast<unsigned>(std::atoi(argv[3])));
-    Matrix(); TagsAndPointers(); BoundsAndErrors(); MasksAndThreads();
+    Matrix(); TagsAndPointers(); BoundsAndErrors(); MasksAndThreads(); DefaultEnvironment(fallback);
 #ifdef _WIN32
     Require(FreeLibrary(library)!=0,"release library lookup handle");
 #else

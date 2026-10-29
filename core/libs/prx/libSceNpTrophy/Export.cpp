@@ -1,3 +1,5 @@
+#include <stdexcept>
+#include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -12,11 +14,13 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
 constexpr int NP_TROPHY_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80551604u);
 constexpr int NP_TROPHY_ERROR_INSUFFICIENT_BUFFER = static_cast<int>(0x80551605u);
+constexpr int NP_TROPHY_ERROR_ABORT = static_cast<int>(0x80551607u);
 constexpr int NP_TROPHY_ERROR_INVALID_HANDLE = static_cast<int>(0x80551608u);
 constexpr int NP_TROPHY_ERROR_INVALID_CONTEXT = static_cast<int>(0x80551609u);
 constexpr int NP_TROPHY_ERROR_INVALID_TROPHY_ID = static_cast<int>(0x8055160au);
@@ -30,87 +34,24 @@ constexpr int NP_TROPHY_ERROR_INVALID_TRP_FILE_FORMAT = static_cast<int>(0x80551
 constexpr int NP_TROPHY_ERROR_TROPHY_NOT_UNLOCKED = static_cast<int>(0x8055161au);
 constexpr int NP_TROPHY_ERROR_TITLE_CONF_NOT_INSTALLED = static_cast<int>(0x80551626u);
 constexpr int NP_TROPHY_INVALID_ID = -1;
-constexpr int NP_TROPHY_NUM_MAX = 128;
+
 constexpr int NP_TROPHY_GRADE_UNKNOWN = 0;
 constexpr int NP_TROPHY_BASE_GAME_GROUP_ID = -1;
 constexpr std::uint32_t TrpMagic = 0xdca24d00u;
 constexpr std::size_t TrpHeaderBytes = 0x60;
 constexpr std::size_t TrpEntryBytes = 0x40;
 
-struct GameDetails {
-    std::uint64_t size;
-    std::uint32_t numGroups;
-    std::uint32_t numTrophies;
-    std::uint32_t numPlatinum;
-    std::uint32_t numGold;
-    std::uint32_t numSilver;
-    std::uint32_t numBronze;
-    char title[128];
-    char description[1024];
-};
 static_assert(sizeof(GameDetails) == 0x4a0);
 
-struct GameData {
-    std::uint64_t size;
-    std::uint32_t unlockedTrophies;
-    std::uint32_t unlockedPlatinum;
-    std::uint32_t unlockedGold;
-    std::uint32_t unlockedSilver;
-    std::uint32_t unlockedBronze;
-    std::uint32_t progressPercentage;
-};
 static_assert(sizeof(GameData) == 0x20);
 
-struct GroupDetails {
-    std::uint64_t size;
-    std::int32_t groupId;
-    std::uint32_t numTrophies;
-    std::uint32_t numPlatinum;
-    std::uint32_t numGold;
-    std::uint32_t numSilver;
-    std::uint32_t numBronze;
-    char title[128];
-    char description[1024];
-};
 static_assert(sizeof(GroupDetails) == 0x4a0);
 
-struct GroupData {
-    std::uint64_t size;
-    std::int32_t groupId;
-    std::uint32_t unlockedTrophies;
-    std::uint32_t unlockedPlatinum;
-    std::uint32_t unlockedGold;
-    std::uint32_t unlockedSilver;
-    std::uint32_t unlockedBronze;
-    std::uint32_t progressPercentage;
-    std::uint8_t reserved[4];
-};
 static_assert(sizeof(GroupData) == 0x28);
 
-struct TrophyDetails {
-    std::uint64_t size;
-    std::int32_t trophyId;
-    std::int32_t trophyGrade;
-    std::int32_t groupId;
-    bool hidden;
-    std::uint8_t reserved[3];
-    char name[128];
-    char description[1024];
-};
 static_assert(sizeof(TrophyDetails) == 0x498);
 
-struct TrophyData {
-    std::uint64_t size;
-    std::int32_t trophyId;
-    bool unlocked;
-    std::uint8_t reserved[3];
-    std::uint64_t timestamp;
-};
 static_assert(sizeof(TrophyData) == 0x18);
-
-struct TrophyFlagArray {
-    std::uint32_t bits[NP_TROPHY_NUM_MAX / 32];
-};
 
 struct TrpEntry {
     std::uint64_t offset;
@@ -131,6 +72,7 @@ struct Context {
 std::mutex g_mutex;
 std::map<int, Context> g_contexts;
 std::set<int> g_handles;
+std::set<int> g_abortedHandles;
 int g_nextContext = 1;
 int g_nextHandle = 1;
 
@@ -167,12 +109,19 @@ void LoadState(Context& context) {
     }
 }
 
-void SaveState(const Context& context) {
+void SaveState(const Context& context, const std::set<int>& unlocked) {
     std::filesystem::create_directories(context.state.parent_path());
     const auto temporary = context.state.string() + ".tmp";
     {
         std::ofstream file(temporary, std::ios::trunc);
-        for (const auto id : context.unlocked) file << id << '\n';
+        for (const auto id : unlocked) file << id << '\n';
+        file.flush();
+        if (!file) {
+            file.close();
+            std::error_code removeError;
+            std::filesystem::remove(temporary, removeError);
+            throw std::runtime_error("sceNpTrophy: cannot write the unlock state " + temporary);
+        }
     }
     std::filesystem::rename(temporary, context.state);
 }
@@ -185,6 +134,11 @@ int Lookup(int contextId, int handle, Context*& context) {
     if (!g_handles.contains(handle)) return NP_TROPHY_ERROR_INVALID_HANDLE;
     context = &found->second;
     return 0;
+}
+
+int LookupLive(int contextId, int handle, Context*& context) {
+    if (const int error = Lookup(contextId, handle, context)) return error;
+    return g_abortedHandles.contains(handle) ? NP_TROPHY_ERROR_ABORT : 0;
 }
 
 int Groups(const Context& context) {
@@ -212,6 +166,8 @@ int CopyIcon(const Context& context, const std::string& name, void* buffer, std:
     if (*size < entry->second.size) return NP_TROPHY_ERROR_INSUFFICIENT_BUFFER;
     std::ifstream file(context.package, std::ios::binary);
     file.seekg(static_cast<std::streamoff>(entry->second.offset));
+    const GuestArena::HostWrite destination(buffer, entry->second.size);
+    if (!destination.Open()) throw std::runtime_error("sceNpTrophy: the icon buffer is not writable");
     if (!file.read(static_cast<char*>(buffer), static_cast<std::streamsize>(entry->second.size))) return NP_TROPHY_ERROR_INVALID_TRP_FILE_FORMAT;
     *size = entry->second.size;
     return 0;
@@ -249,14 +205,22 @@ int APS5_VABI sceNpTrophyCreateHandle(int* handle) {
 
 int APS5_VABI sceNpTrophyDestroyHandle(int handle) {
     std::lock_guard lock(g_mutex);
+    g_abortedHandles.erase(handle);
     return g_handles.erase(handle) == 1 ? 0 : NP_TROPHY_ERROR_INVALID_HANDLE;
+}
+
+int APS5_VABI sceNpTrophyAbortHandle(int handle) {
+    std::lock_guard lock(g_mutex);
+    if (!g_handles.contains(handle)) return NP_TROPHY_ERROR_INVALID_HANDLE;
+    g_abortedHandles.insert(handle);
+    return 0;
 }
 
 int APS5_VABI sceNpTrophyRegisterContext(int contextId, int handle, std::uint64_t options) {
     if (options != 0) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (context->registered) return NP_TROPHY_ERROR_ALREADY_REGISTERED;
     char name[32];
     std::snprintf(name, sizeof(name), "trophy%02u.trp", context->serviceLabel);
@@ -282,7 +246,7 @@ int APS5_VABI sceNpTrophyGetTrophyUnlockState(int contextId, int handle, TrophyF
     if (!flags || !count) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     std::memset(flags, 0, sizeof(*flags));
     for (const auto id : context->unlocked) flags->bits[id >> 5] |= 1u << (id & 31);
@@ -294,12 +258,14 @@ int APS5_VABI sceNpTrophyUnlockTrophy(int contextId, int handle, int trophyId, i
     if (!platinumId) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (context->unlocked.contains(trophyId)) return NP_TROPHY_ERROR_TROPHY_ALREADY_UNLOCKED;
-    context->unlocked.insert(trophyId);
-    SaveState(*context);
+    auto updated = context->unlocked;
+    updated.insert(trophyId);
+    SaveState(*context, updated);
+    context->unlocked = std::move(updated);
     *platinumId = NP_TROPHY_INVALID_ID;
     return 0;
 }
@@ -308,7 +274,7 @@ int APS5_VABI sceNpTrophyGetGameIcon(int contextId, int handle, void* buffer, st
     if (!size) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     return CopyIcon(*context, "ICON0.PNG", buffer, size);
 }
@@ -317,7 +283,7 @@ int APS5_VABI sceNpTrophyGetGroupIcon(int contextId, int handle, int groupId, vo
     if (!size) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (groupId < 0) return NP_TROPHY_ERROR_INVALID_GROUP_ID;
     char icon[16];
@@ -329,7 +295,7 @@ int APS5_VABI sceNpTrophyGetTrophyIcon(int contextId, int handle, int trophyId, 
     if (!size) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (!context->unlocked.contains(trophyId)) return NP_TROPHY_ERROR_TROPHY_NOT_UNLOCKED;
@@ -343,7 +309,7 @@ int APS5_VABI sceNpTrophyGetGameInfo(int contextId, int handle, GameDetails* det
     if ((details && details->size != sizeof(GameDetails)) || (data && data->size != sizeof(GameData))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (details) {
         std::memset(reinterpret_cast<std::uint8_t*>(details) + sizeof(details->size), 0, sizeof(GameDetails) - sizeof(details->size));
@@ -363,7 +329,7 @@ int APS5_VABI sceNpTrophyGetGroupInfo(int contextId, int handle, int groupId, Gr
     if ((details && details->size != sizeof(GroupDetails)) || (data && data->size != sizeof(GroupData))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (groupId != NP_TROPHY_BASE_GAME_GROUP_ID) {
         if (groupId < 0 || groupId >= Groups(*context)) return NP_TROPHY_ERROR_INVALID_GROUP_ID;
@@ -388,7 +354,7 @@ int APS5_VABI sceNpTrophyGetTrophyInfo(int contextId, int handle, int trophyId, 
     if ((details && details->size != sizeof(TrophyDetails)) || (data && data->size != sizeof(TrophyData))) return NP_TROPHY_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_mutex);
     Context* context = nullptr;
-    if (const int error = Lookup(contextId, handle, context)) return error;
+    if (const int error = LookupLive(contextId, handle, context)) return error;
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (Groups(*context) != 0) NotImplemented_nid_no_patch(__func__);
@@ -403,6 +369,421 @@ int APS5_VABI sceNpTrophyGetTrophyInfo(int contextId, int handle, int trophyId, 
         data->trophyId = trophyId;
         data->unlocked = context->unlocked.contains(trophyId);
     }
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyCaptureScreenshot(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophyDetails(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophyFlagArray(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophyGroupArray(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophyGroupDetails(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophySetInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophySetInfoInGroup(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophySetVersion(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigGetTrophyTitleDetails(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyConfigHasGroupFeature(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyGroupArrayGetNum(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntAbortHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntCheckNetSyncTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntCreateHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntDestroyHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntGetLocalTrophySummary(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntGetProgress(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntGetRunningTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntGetRunningTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntGetTrpIconByUri(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntNetSyncTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyIntNetSyncTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyNumInfoGetTotal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySetInfoGetTrophyFlagArray(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySetInfoGetTrophyNum(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophyShowTrophyList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemAbortHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemBuildGroupIconUri(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemBuildNetTrophyIconUri(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemBuildTitleIconUri(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemBuildTrophyIconUri(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCheckCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCheckNetSyncTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCheckRecoveryRequired(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCloseStorage(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCreateContext(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemCreateHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDbgCtl(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDebugLockTrophy(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDebugUnlockTrophy(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDestroyContext(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDestroyHandle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemDestroyTrophyConfig(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetDbgParam(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetDbgParamInt(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetGroupIcon(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetLocalTrophySummary(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetNextTitleFileEntryStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetProgress(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTitleFileStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTitleIcon(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTitleSyncStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTrophyConfig(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTrophyData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTrophyGroupData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTrophyIcon(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetTrophyTitleData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetUserFileInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemGetUserFileStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemIsServerAvailable(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemNetSyncTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemNetSyncTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemOpenStorage(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemPerformRecovery(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemRegisterTitleSyncedCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemRegisterTitleUpdateCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemRemoveAll(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemRemoveTitleData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemRemoveUserData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemSetDbgParam(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemSetDbgParamInt(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemUnregisterTitleSyncedCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemUnregisterTitleUpdateCallback(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapDebugLockTrophy(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapDebugUnlockTrophy(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDetails(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetPlayedTrophyTitles(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTitleDetails(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDetailsArray(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyTitleIdsByNpTitleId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapRemoveAll(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapRemoveTitleData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapRemoveUserData(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

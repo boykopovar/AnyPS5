@@ -1,21 +1,15 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <thread>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI scePthreadKeyDelete(PthreadKey key);
-void* APS5_VABI scePthreadGetspecific(PthreadKey key);
-int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
-int APS5_VABI pthread_key_create_nid_postfix(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI pthread_key_delete_nid_postfix(PthreadKey key);
-}
+#include <vector>
 
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
+static constexpr int POSIX_EINVAL = 22;
+static constexpr int POSIX_EAGAIN = 35;
+static constexpr std::size_t POSIX_THREAD_KEYS_MAX = 128;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -63,6 +57,25 @@ static void* APS5_VABI HoldAcrossReuse(void*) {
     return nullptr;
 }
 
+static void Exhaust() {
+    std::vector<PthreadKey> keys;
+    PthreadKey key = 0;
+    int result = 0;
+    while (keys.size() < 100000 && (result = pthread_key_create_nid_postfix(&key, nullptr)) == 0) keys.push_back(key);
+    Require(result == POSIX_EAGAIN && keys.size() >= POSIX_THREAD_KEYS_MAX);
+    Require(scePthreadKeyCreate(&key, nullptr) == SCE_KERNEL_ERROR_EAGAIN);
+    const PthreadKey freed = keys.back();
+    keys.pop_back();
+    Require(pthread_key_delete_nid_postfix(freed) == 0);
+    Require(pthread_key_delete_nid_postfix(freed) == POSIX_EINVAL);
+    Require(pthread_key_create_nid_postfix(&key, nullptr) == 0);
+    keys.push_back(key);
+    Require(pthread_key_create_nid_postfix(&key, nullptr) == POSIX_EAGAIN);
+    for (const PthreadKey created : keys) Require(pthread_key_delete_nid_postfix(created) == 0);
+    Require(pthread_key_create_nid_postfix(&key, nullptr) == 0);
+    Require(pthread_key_delete_nid_postfix(key) == 0);
+}
+
 int main() {
     PthreadKey posixKey = 0;
     Require(pthread_key_create_nid_postfix(&posixKey, nullptr) == 0 && posixKey != 0);
@@ -107,4 +120,5 @@ int main() {
     stage = 2;
     Require(scePthreadJoin(thread, nullptr) == SCE_OK);
     Require(scePthreadGetspecific(sharedKey) == nullptr);
+    Exhaust();
 }

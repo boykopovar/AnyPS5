@@ -1,3 +1,5 @@
+#include "prx/libSceNpSignaling/include/InventoryExports.hpp"
+#include "prx/libSceNpSignaling/include/Api.hpp"
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -161,9 +163,76 @@ int APS5_VABI sceNpSignalingTerminateConnection(int ctxId, int connId) {
     return SCE_NP_SIGNALING_ERROR_CONN_NOT_FOUND;
 }
 
-int APS5_VABI sceNpSignalingDeactivateConnection(void) {
+int APS5_VABI sceNpSignalingDeactivateConnection(int ctxId, int connId) {
+    (void)connId;
+    std::lock_guard lock(signalingMutex);
+    if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!FindContext(ctxId)) return SCE_NP_SIGNALING_ERROR_CTX_NOT_FOUND;
+    return SCE_NP_SIGNALING_ERROR_CONN_NOT_FOUND;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceNpSignalingActivateConnectionA() {
     NotImplemented_nid_no_patch(__func__);
-    return 0;
+}
+
+int APS5_VABI sceNpSignalingCancelPeerNetInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingCreateContextA() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetConnectionFromNpId() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetConnectionFromPeerAddressA() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetConnectionFromPeerAddress() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetConnectionInfoA() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetConnectionStatistics() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetConnectionStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetContextOption() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetLocalNetInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetMemoryInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetPeerNetInfoA() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetPeerNetInfoResult() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSignalingGetPeerNetInfo() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

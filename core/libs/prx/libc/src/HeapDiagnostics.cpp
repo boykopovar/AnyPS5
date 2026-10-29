@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
 #include <array>
@@ -76,13 +78,15 @@ void APS5_VABI sceLibcInternalHeapErrorReportForGame_nid_postfix(void* heap, voi
     const auto* state = static_cast<const char*>(heap);
     std::uint32_t number = 0;
     std::memcpy(&number, state + MspaceNumberOffset, sizeof(number));
-    std::FILE* output = GuestStandardOutputFile_nid_no_patch();
-    std::fprintf(output, "[SceLibc] A heap error is detected.\n[SceLibc] -- Mspace Name --\n[SceLibc] %s", state + MspaceNameOffset);
-    if (number != 0) std::fprintf(output, " (%2u)", number);
-    std::fputc('\n', output);
-    if (error == SegmentOutOfRange) std::fprintf(output, "[SceLibc] -- Error reason --\n[SceLibc] segment out of range.\n");
-    std::fprintf(output, "[SceLibc] pid:<0x%lx> tid:<0x%lx>\n", CurrentProcessId(), CurrentThreadId());
-    std::fflush(output);
+    if (_Stdout_nid_postfix.IsOpen()) {
+        std::FILE* output = GuestStandardOutputFile_nid_no_patch();
+        std::fprintf(output, "[SceLibc] A heap error is detected.\n[SceLibc] -- Mspace Name --\n[SceLibc] %s", state + MspaceNameOffset);
+        if (number != 0) std::fprintf(output, " (%2u)", number);
+        std::fputc('\n', output);
+        if (error == SegmentOutOfRange) std::fprintf(output, "[SceLibc] -- Error reason --\n[SceLibc] segment out of range.\n");
+        std::fprintf(output, "[SceLibc] pid:<0x%lx> tid:<0x%lx>\n", CurrentProcessId(), CurrentThreadId());
+        std::fflush(output);
+    }
     std::fprintf(stderr, "[libc] heap error 0x%x: heap %p, block %p, reported from guest 0x%llx\n", error, heap, block,
         static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(__builtin_return_address(0))));
 }

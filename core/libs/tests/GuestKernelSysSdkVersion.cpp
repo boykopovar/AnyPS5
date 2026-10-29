@@ -1,3 +1,4 @@
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -7,8 +8,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version);
 
 namespace {
 

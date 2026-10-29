@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "nid/Sha1.hpp"
@@ -21,19 +23,6 @@
 #include <barrier>
 #include <algorithm>
 
-extern "C" {
-int APS5_VABI shm_open_nid_postfix(const char*, int, int);
-int APS5_VABI shm_unlink_nid_postfix(const char*);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-int APS5_VABI fchmod_nid_postfix(int, int);
-std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int, const void*, std::size_t, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 constexpr int ReadOnly = 0;
@@ -120,6 +109,34 @@ void VerifyUntrackedDescriptor(int descriptor) {
     Require(::_close(untracked) == 0, "closing the untracked descriptor failed");
     Require(!classified, "an untracked descriptor entered the named shared-memory path");
     Require(!File::IsSharedMemoryDescriptor_nid_no_patch(untracked), "a closed untracked descriptor was classified as shared memory");
+}
+
+void VerifyAnonymousDescriptorClassification() {
+    const int descriptor = shm_open_nid_postfix(reinterpret_cast<const char*>(1), ReadWrite, 0600);
+    Require(descriptor >= 0 && File::IsSharedMemoryDescriptor_nid_no_patch(descriptor),
+            "anonymous shared memory was not recognized");
+    *__error_nid_postfix() = 0;
+    Require(fchflags_nid_postfix(descriptor, 0) == -1 && *__error_nid_postfix() == 22,
+            "fchflags did not reject an anonymous shared-memory descriptor");
+    const int duplicate = dup_nid_postfix(descriptor);
+    Require(duplicate >= 0 && File::IsSharedMemoryDescriptor_nid_no_patch(duplicate),
+            "duplicating an anonymous shared-memory descriptor lost its classification");
+    Require(close_nid_postfix(descriptor) == 0, "closing the original anonymous descriptor failed");
+    Require(!File::IsSharedMemoryDescriptor_nid_no_patch(descriptor),
+            "the closed anonymous descriptor remained classified as shared memory");
+    const int reusedOriginal = ::_open("NUL", _O_RDONLY | _O_BINARY);
+    Require(reusedOriginal == descriptor && !File::IsSharedMemoryDescriptor_nid_no_patch(reusedOriginal),
+            "reusing the original descriptor retained its shared-memory classification");
+    Require(File::IsSharedMemoryDescriptor_nid_no_patch(duplicate),
+            "closing the original anonymous descriptor invalidated its duplicate");
+    Require(close_nid_postfix(duplicate) == 0, "closing the anonymous descriptor duplicate failed");
+    Require(!File::IsSharedMemoryDescriptor_nid_no_patch(duplicate),
+            "the closed anonymous descriptor duplicate remained classified as shared memory");
+    const int reusedDuplicate = ::_open("NUL", _O_RDONLY | _O_BINARY);
+    Require(reusedDuplicate == duplicate && !File::IsSharedMemoryDescriptor_nid_no_patch(reusedDuplicate),
+            "reusing the duplicate descriptor retained its shared-memory classification");
+    Require(close_nid_postfix(reusedOriginal) == 0, "closing the reused original descriptor failed");
+    Require(close_nid_postfix(reusedDuplicate) == 0, "closing the reused duplicate descriptor failed");
 }
 
 void VerifyConcurrentDescriptorReuse(const std::string& name) {
@@ -224,6 +241,7 @@ void VerifyResizeReadPosition(const std::string& name) {
 }
 
 void Run() {
+    VerifyAnonymousDescriptorClassification();
     const std::string base = "/anyps5-windows-named-" + std::to_string(::GetCurrentProcessId()) + "-" + std::to_string(::GetTickCount64());
     const std::string name = base + "-lifecycle";
     Require(shm_unlink_nid_postfix(name.c_str()) == -1 && *__error_nid_postfix() == 2,

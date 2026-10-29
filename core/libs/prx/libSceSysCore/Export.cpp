@@ -1,11 +1,8 @@
+#include "prx/libSceSysCore/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct ApplicationInfo {
-    std::byte data[152];
-};
 
 static_assert(sizeof(ApplicationInfo) == 152);
 

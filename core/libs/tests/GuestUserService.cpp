@@ -7,31 +7,6 @@
 #include <string>
 #include <utility>
 
-extern "C" {
-int APS5_VABI sceUserServiceGetInitialUser(int* user_id);
-int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets);
-int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number);
-int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* value);
-int APS5_VABI sceUserServiceGetForegroundUser(int* user_id);
-int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdList* user_id_list);
-int APS5_VABI sceUserServiceGetUserColor(int user_id, int* color);
-int APS5_VABI sceUserServiceGetKeyboardType(int user_id, std::int32_t* type);
-int APS5_VABI sceUserServiceGetJapaneseInputType(int user_id, std::int32_t* type);
-int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, std::int32_t* type);
-int APS5_VABI sceUserServiceGetNpAccountId(int user_id, std::uint64_t* account_id);
-int APS5_VABI sceUserServiceGetAgeLevel(int user_id, std::uint32_t* age_level);
-int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable();
-int APS5_VABI sceUserServiceGetAccessibilityPressAndHoldDelay(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetAccessibilityTriggerEffect(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetAccessibilityVibration(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetAccessibilityZoom();
-int APS5_VABI sceUserServiceGetAccessibilityZoomEnabled(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetAccessibilityZoomFollowFocus(int user_id, std::int32_t* value);
-int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, std::size_t size);
-int APS5_VABI sceUserServiceGetUserNumber(int user_id, std::int32_t* number);
-}
-
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
@@ -58,6 +33,10 @@ int main() {
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID, &privacy) == USER_SERVICE_OK);
     Require(privacy == 0);
+    privacy = -1;
+    Require(sceUserServiceGetPlatformPrivacyWs1(123, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(privacy == -1);
+    Require(sceUserServiceGetPlatformPrivacyWs1(123, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
 
     int foreground = -1;
     Require(sceUserServiceGetForegroundUser(&foreground) == USER_SERVICE_OK);
@@ -132,6 +111,10 @@ int main() {
         Require(sceUserServiceGetAgeLevel(user_id, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
         Require(age_level == 0x5a5a5a5au);
         Require(sceUserServiceGetAgeLevel(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        privacy = 0x5a5a;
+        Require(sceUserServiceGetPlatformPrivacyWs1(user_id, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(privacy == 0x5a5a);
+        Require(sceUserServiceGetPlatformPrivacyWs1(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     }
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID, &age_level) == USER_SERVICE_OK);
     Require(age_level == 0xffffffffu);
@@ -167,9 +150,10 @@ int main() {
     presets.difficulty = 0x5a;
     Require(sceUserServiceGetGamePresets(0, &presets) == USER_SERVICE_ERROR_INVALID_ARGUMENT && presets.difficulty == 0x5a);
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, &presets) == USER_SERVICE_OK && presets.difficulty == 0);
+    std::int32_t accessibilityValue = 0;
     bool threwKeyremap = false;
     try {
-        sceUserServiceGetAccessibilityKeyremapEnable();
+        sceUserServiceGetAccessibilityKeyremapEnable(USER_SERVICE_INITIAL_USER_ID, &accessibilityValue);
     } catch (const std::runtime_error&) {
         threwKeyremap = true;
     }
@@ -177,7 +161,7 @@ int main() {
 
     bool threwZoom = false;
     try {
-        sceUserServiceGetAccessibilityZoom();
+        sceUserServiceGetAccessibilityZoom(USER_SERVICE_INITIAL_USER_ID, &accessibilityValue);
     } catch (const std::runtime_error&) {
         threwZoom = true;
     }
@@ -203,6 +187,19 @@ int main() {
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + 1, &color) == USER_SERVICE_OK);
     Require(color == 1);
 
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    privacy = 0x5a5a;
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(privacy == 0x5a5a);
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    for (const Setting& setting : settings) {
+        std::int32_t value = 0x5a5a5a5a;
+        Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(value == 0x5a5a5a5a);
+        Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    }
+
     UserServiceSetUserConnected_nid_postfix(1, true);
     Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
     Require(registered.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
@@ -210,10 +207,34 @@ int main() {
     for (int i = 2; i < 16; ++i) {
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
     }
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_OK);
+    Require(age_level == 0xffffffffu);
+    privacy = 0x5a5a;
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_OK);
+    Require(privacy == 0);
+    for (const Setting& setting : settings) {
+        std::int32_t value = 0x5a5a5a5a;
+        Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_OK);
+        Require(value == setting.value);
+    }
+
     UserServiceSetUserConnected_nid_postfix(1, false);
     Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
     Require(registered.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
     for (int i = 1; i < 16; ++i) {
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
+    }
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    privacy = 0x5a5a;
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(privacy == 0x5a5a);
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    for (const Setting& setting : settings) {
+        std::int32_t value = 0x5a5a5a5a;
+        Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(value == 0x5a5a5a5a);
+        Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     }
 }

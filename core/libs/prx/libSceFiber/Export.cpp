@@ -1,3 +1,4 @@
+#include "prx/libSceFiber/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -20,6 +21,9 @@
 #else
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#endif
 #endif
 
 static constexpr int32_t SCE_OK = 0;
@@ -41,8 +45,6 @@ static constexpr std::uint32_t FIBER_FLAG_CONTEXT_SIZE_CHECK = 0x10;
 static constexpr std::uint32_t FIBER_FLAG_SET_FPU_REGISTERS = 0x100;
 static constexpr std::uint32_t FIBER_DEFAULT_MXCSR = 0x9fc0;
 static constexpr std::uint16_t FIBER_DEFAULT_FPU_CONTROL = 0x037f;
-
-using GuestFiberEntry = FiberEntry;
 
 // A fiber that is switching away stays Suspending until its context is saved; whoever runs next
 // on that host thread publishes Suspended. Fibers migrate between threads, so a resumer must never
@@ -107,14 +109,17 @@ static bool TraceFibers() {
 static void CompletePendingSuspend() {
     auto& thread = ThreadState();
     if (thread.pendingSuspend) {
-        thread.pendingSuspend->state.store(FiberState::Suspended, std::memory_order_release);
+        auto* fiber = thread.pendingSuspend;
+        const auto state = fiber->context ? FiberState::Suspended : FiberState::Idle;
+        if (!fiber->context) fiber->savedStack = nullptr;
+        fiber->state.store(state, std::memory_order_release);
         thread.pendingSuspend = nullptr;
     }
 }
 
 #ifdef _WIN32
 
-extern "C" void Aps5FiberSwitchStack_nid_no_patch(void** save, void* load);
+extern "C" void Aps5FiberSwitchStack_nid_no_patch(void** save, void** load, Fiber* start);
 extern "C" void Aps5FiberTrampoline_nid_no_patch();
 
 asm(R"(
@@ -144,7 +149,12 @@ Aps5FiberSwitchStack_nid_no_patch:
     stmxcsr 0xa0(%rsp)
     fnstcw 0xa4(%rsp)
     mov %rsp, (%rcx)
-    mov %rdx, %rsp
+    mov (%rdx), %rsp
+    test %r8, %r8
+    jz 1f
+    mov %r8, %r12
+    jmp Aps5FiberTrampoline_nid_no_patch
+1:
     movaps 0x00(%rsp), %xmm6
     movaps 0x10(%rsp), %xmm7
     movaps 0x20(%rsp), %xmm8
@@ -215,7 +225,7 @@ static void UnpinStack(const void* context, std::uint64_t bytes) {
 
 #else
 
-extern "C" void Aps5FiberSwitchStack_nid_no_patch(void** save, void* load);
+extern "C" void Aps5FiberSwitchStack_nid_no_patch(void** save, void** load, Fiber* start);
 extern "C" void Aps5FiberTrampoline_nid_no_patch();
 
 asm(".text\n"
@@ -230,7 +240,12 @@ asm(".text\n"
     stmxcsr 0(%rsp)
     fnstcw 4(%rsp)
     mov %rsp, (%rdi)
-    mov %rsi, %rsp
+    mov (%rsi), %rsp
+    test %rdx, %rdx
+    jz 1f
+    mov %rdx, %r12
+    jmp )" APS5_ASM_SYMBOL("Aps5FiberTrampoline_nid_no_patch") R"(
+1:
     ldmxcsr 0(%rsp)
     fldcw 4(%rsp)
     add $8, %rsp
@@ -267,9 +282,19 @@ static StackBounds CurrentBounds() {
 
 static void SetBounds(const StackBounds&) {}
 
+#ifdef __APPLE__
+static void PinStack(const void* context, std::uint64_t bytes) {
+    GuestWriteWatch::GuestWriteWatchBeginHostWrite_nid_postfix(context, static_cast<std::size_t>(bytes));
+}
+
+static void UnpinStack(const void* context, std::uint64_t bytes) {
+    GuestWriteWatch::GuestWriteWatchEndHostWrite_nid_postfix(context, static_cast<std::size_t>(bytes));
+}
+#else
 static void PinStack(const void*, std::uint64_t) {}
 
 static void UnpinStack(const void*, std::uint64_t) {}
+#endif
 
 #endif
 
@@ -338,6 +363,7 @@ static std::uint8_t* StackTop(const Fiber* fiber) {
 }
 
 static std::uint64_t* SizedWindow(const Fiber* fiber) {
+    if (!fiber->context) return nullptr;
     return reinterpret_cast<std::uint64_t*>(StackTop(fiber) - fiber->contextSize);
 }
 
@@ -363,6 +389,10 @@ static Fiber* AsFiber(FiberObject* object) {
 
 extern "C" [[noreturn]] void Aps5FiberMain_nid_no_patch(Fiber* fiber) {
     CompletePendingSuspend();
+    if (!fiber->context && fiber->setFpuRegisters) {
+        _mm_setcsr(FIBER_DEFAULT_MXCSR);
+        asm volatile("fldcw %0" : : "m"(FIBER_DEFAULT_FPU_CONTROL));
+    }
     fiber->entry(fiber->argOnInitialize, ThreadState().transfer);
     throw std::runtime_error(std::string("sceFiber: entry function of fiber '") + fiber->name + "' returned");
 }
@@ -393,13 +423,7 @@ static bool AcquireForResume(Fiber* target) {
         }
         if (state != FiberState::Idle && state != FiberState::Suspended) return false;
         if (target->state.compare_exchange_weak(state, FiberState::Running, std::memory_order_acq_rel)) {
-            if (state == FiberState::Idle) {
-                if (!target->context) {
-                    target->state.store(FiberState::Idle, std::memory_order_release);
-                    throw std::runtime_error(std::string("sceFiber: fiber '") + target->name + "' has no context; running a fiber on the stack of its caller is not supported");
-                }
-                PrepareInitialStack(target);
-            }
+            if (state == FiberState::Idle && target->context) PrepareInitialStack(target);
             return true;
         }
     }
@@ -447,7 +471,7 @@ static int32_t AcquireWithContext(Fiber* target, void* addr_context, uint64_t si
 
 static void Resume(Fiber* target, void** save, std::uint64_t argOnRun) {
     const auto* frame = static_cast<const InitialFrame*>(target->savedStack);
-    if (frame->returnAddress == 0) {
+    if (target->context && frame->returnAddress == 0) {
         std::fprintf(stderr, "[fiber] resuming '%s' with a wiped context: saved=%p context=%p size=0x%llx\n", target->name, target->savedStack,
                      static_cast<void*>(target->context), static_cast<unsigned long long>(target->contextSize));
         const auto* words = static_cast<const std::uint64_t*>(target->savedStack);
@@ -457,8 +481,8 @@ static void Resume(Fiber* target, void** save, std::uint64_t argOnRun) {
     }
     ThreadState().current = target;
     ThreadState().transfer = argOnRun;
-    SetBounds(FiberBounds(target));
-    Aps5FiberSwitchStack_nid_no_patch(save, target->savedStack);
+    SetBounds(target->context ? FiberBounds(target) : ThreadState().threadBounds);
+    Aps5FiberSwitchStack_nid_no_patch(save, target->context ? &target->savedStack : &ThreadState().threadStack, target->context ? nullptr : target);
 }
 
 static int32_t InitializeFiber(FiberObject* object, const char* name, GuestFiberEntry entry, uint64_t arg_on_initialize, void* addr_context, uint64_t size_context, uint32_t flags) {
@@ -559,7 +583,7 @@ int32_t APS5_VABI sceFiberReturnToThread(uint64_t arg_on_return, uint64_t* arg_o
     ThreadState().current = nullptr;
     ThreadState().transfer = arg_on_return;
     SetBounds(ThreadState().threadBounds);
-    Aps5FiberSwitchStack_nid_no_patch(&self->savedStack, ThreadState().threadStack);
+    Aps5FiberSwitchStack_nid_no_patch(&self->savedStack, &ThreadState().threadStack, nullptr);
     CompletePendingSuspend();
     if (arg_on_run) *arg_on_run = ThreadState().transfer;
     return SCE_OK;
@@ -582,7 +606,7 @@ int32_t APS5_VABI sceFiberGetInfo(FiberObject* object, FiberInfo* fiber_info) {
     fiber_info->size_context = fiber->contextSize;
     std::memcpy(fiber_info->name, fiber->name, sizeof(fiber_info->name));
     fiber_info->size_context_margin = static_cast<uint64_t>(-1);
-    if (fiber->contextSizeCheck) {
+    if (fiber->contextSizeCheck && fiber->context) {
         const auto* words = SizedWindow(fiber);
         const auto* end = words + fiber->contextSize / sizeof(std::uint64_t);
         fiber_info->size_context_margin = static_cast<uint64_t>(std::find_if(words, end, [](std::uint64_t word) { return word != FIBER_CONTEXT_FILL; }) - words) * sizeof(std::uint64_t);
