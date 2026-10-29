@@ -159,11 +159,16 @@ public:
 
     void WaitForFlipRoom() override {
         std::unique_lock queueLock(queue->mutex);
-        const bool room = queue->changed.WaitUntil(queueLock, TimedWait::DeadlineNanos(FLIP_ROOM_WAIT_MICROS), [&] {
-            return queue->failure || queue->stopping || cfg->shutdownToken.stop_requested() || queue->reservations.load() < VIDEO_OUT_FLIP_QUEUE_CAPACITY;
-        });
-        if (queue->failure) std::rethrow_exception(queue->failure);
-        if (queue->stopping || cfg->shutdownToken.stop_requested()) throw ProcessShutdown{};
+        bool room = false;
+        for (;;) {
+            const auto holdEpoch = queue->hold.Epoch();
+            room = queue->changed.WaitUntil(queueLock, TimedWait::DeadlineNanos(FLIP_ROOM_WAIT_MICROS), [&] {
+                return queue->failure || queue->stopping || cfg->shutdownToken.stop_requested() || queue->reservations.load() < VIDEO_OUT_FLIP_QUEUE_CAPACITY;
+            });
+            if (queue->failure) std::rethrow_exception(queue->failure);
+            if (queue->stopping || cfg->shutdownToken.stop_requested()) throw ProcessShutdown{};
+            if (room || !queue->hold.Overlapped(holdEpoch)) break;
+        }
         require(room, "flip queue stayed full for 60 s: the presenter is not completing flips");
     }
 
