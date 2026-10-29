@@ -60,6 +60,26 @@ AudioPropagation::Attribute Attribute(const void* value, std::size_t size) {
     return attribute;
 }
 
+struct ReportProbe {
+    std::uint32_t calls = 0;
+    bool fieldsMatch = false;
+    int integerArgument = 0;
+    const char* stringArgument = nullptr;
+    double floatingArgument = 0.0;
+};
+
+void APS5_VABI CaptureReport(const AudioPropagation::ReportInfo* report, void* userData) {
+    auto& probe = *static_cast<ReportProbe*>(userData);
+    ++probe.calls;
+    probe.fieldsMatch = report && report->size == sizeof(*report) && report->handle == 0x1234 &&
+        report->category == 0 && report->result == -7 && report->operation == 9 &&
+        report->function && std::strcmp(report->function, "sceAudioPropagationTest") == 0 &&
+        report->format && std::strcmp(report->format, "%d %s %f") == 0;
+    std::memcpy(&probe.integerArgument, report->arguments.overflowArguments, sizeof(probe.integerArgument));
+    std::memcpy(&probe.stringArgument, static_cast<const std::byte*>(report->arguments.overflowArguments) + sizeof(std::uint64_t), sizeof(probe.stringArgument));
+    std::memcpy(&probe.floatingArgument, static_cast<const std::byte*>(report->arguments.savedRegisters) + 48, sizeof(probe.floatingArgument));
+}
+
 }
 
 int main() {
@@ -124,6 +144,23 @@ int main() {
     memory.size_cpu_mem = required;
     Require(sceAudioPropagationSystemCreate(&options, &memory, &system) == 0, "create failed");
     Require(system == reinterpret_cast<std::uintptr_t>(arena), "system handle is not its memory");
+    AudioPropagation::SystemInfo systemInfo{};
+    systemInfo.reserved44 = 0xdeadbeef;
+    Require(sceAudioPropagationSystemQueryInfo(system, &systemInfo, sizeof(systemInfo)) == 0, "system query info failed");
+    Require(systemInfo.cpuMemory == arena && systemInfo.cpuMemorySize == memory.size_cpu_mem && systemInfo.index == 0, "system query info memory or index");
+    Require(systemInfo.frameSamples == options.frameSamples && systemInfo.parameter24 == 1 && systemInfo.maxSources == options.maxSources, "system query info options");
+    Require(systemInfo.maxMaterials == options.maxMaterials && systemInfo.pathCapacityPerSource == 6 && systemInfo.propagationSpeed == options.propagationSpeed, "system query info capacities");
+    Require(systemInfo.reserved44 == 0xdeadbeef, "system query info overwrote reserved output");
+    Require(sceAudioPropagationSystemQueryInfo(system, &systemInfo, sizeof(systemInfo) - 1) == AudioPropagation::ErrorInvalidHandle, "system query info accepted wrong size");
+    Require(sceAudioPropagationSystemQueryInfo(system, nullptr, sizeof(systemInfo)) == AudioPropagation::ErrorInvalidHandle, "system query info accepted null output");
+    Require(sceAudioPropagationSystemLock(system) == 0, "system lock failed");
+    Require(sceAudioPropagationSystemUnlock(system) == 0, "system unlock failed");
+    Require(sceAudioPropagationSystemLock(system + 16) == AudioPropagation::ErrorInvalidHandle, "invalid system lock result");
+    Require(sceAudioPropagationSystemUnlock(system + 16) == AudioPropagation::ErrorInvalidHandle, "invalid system unlock result");
+    Require(sceAudioPropagationSystemEnumHandles(nullptr, 0) == 1, "system handle count");
+    Require(sceAudioPropagationSystemEnumHandles(nullptr, 1) == AudioPropagation::ErrorInvalidArgument, "null handle array with capacity");
+    AudioPropagationHandle enumerated[2]{};
+    Require(sceAudioPropagationSystemEnumHandles(enumerated, 1) == 1 && enumerated[0] == system, "single system enumeration");
     AudioPropagationHandle twice = 0;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemCreate(&options, &memory, &twice); }, "second system in the same memory");
 
@@ -236,6 +273,9 @@ int main() {
     otherMemory.p_cpu_mem = otherArena;
     AudioPropagationHandle otherSystem = 0;
     Require(sceAudioPropagationSystemCreate(&options, &otherMemory, &otherSystem) == 0, "second system create failed");
+    AudioPropagationHandle enumeratedSystems[2]{};
+    Require(sceAudioPropagationSystemEnumHandles(enumeratedSystems, 2) == 2 && enumeratedSystems[0] == otherSystem && enumeratedSystems[1] == system, "system enumeration is not newest first");
+    Require(sceAudioPropagationSystemQueryInfo(otherSystem, &systemInfo, sizeof(systemInfo)) == 0 && systemInfo.index == 1, "second system slot index");
     AudioPropagationHandle otherSource = 0;
     Require(sceAudioPropagationSourceCreate(otherSystem, &otherSource) == 0, "second system source create failed");
     AudioPropagationHandle foreignRoom = 0;
@@ -354,6 +394,7 @@ int main() {
     reset();
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceRender(system, infos, 2); }, "render of a destroyed source");
     Require(sceAudioPropagationSystemDestroy(otherSystem) == 0, "second system destroy failed");
+    Require(sceAudioPropagationSystemEnumHandles(enumeratedSystems, 2) == 1 && enumeratedSystems[0] == system, "destroyed system remained enumerated");
 
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationRoomDestroy(system, source); }, "room destroy of a source");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceDestroy(system + 16, source); }, "source destroy with another system");
@@ -380,9 +421,25 @@ int main() {
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSourceDestroy(system, lateSource); }, "orphan destroyed twice");
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemDestroy(system); }, "destroy twice");
     Require(sceAudioPropagationSystemCreate(&options, &memory, &system) == 0, "memory reuse after destroy failed");
+    Require(sceAudioPropagationSystemQueryInfo(system, &systemInfo, sizeof(systemInfo)) == 0 && systemInfo.index == 0, "system slot was not reused");
     Require(sceAudioPropagationSystemDestroy(system) == 0, "second destroy failed");
 
-    RequireThrows<std::runtime_error>([&] { sceAudioPropagationSystemLock(0); }, "system lock throw");
+    Require(sceAudioPropagationSystemLock(0) == AudioPropagation::ErrorInvalidHandle, "system lock invalid handle");
+
+    ReportProbe probe{};
+    AudioPropagation::ReportRegistration* registration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(2, CaptureReport, &probe, &registration) == -4, "invalid report category");
+    Require(sceAudioPropagationReportRegisterHandler(0, nullptr, &probe, &registration) == -2, "null report handler");
+    Require(sceAudioPropagationReportRegisterHandler(0, CaptureReport, &probe, &registration) == 0 && registration, "report handler registration");
+    Require(sceAudioPropagationReportApi(0, 0x1234, -7, 9, "sceAudioPropagationTest", "%d %s %f", 42, "ok", 3.25) == 0, "report dispatch");
+    Require(probe.calls == 1 && probe.fieldsMatch && probe.integerArgument == 42 && std::strcmp(probe.stringArgument, "ok") == 0 && probe.floatingArgument == 3.25, "report info or va_list capture");
+    Require(sceAudioPropagationReportUnregisterHandler(registration) == 0, "report handler unregister");
+    Require(sceAudioPropagationReportUnregisterHandler(registration) == -1, "duplicate report handler unregister");
+    Require(sceAudioPropagationReportUnregisterHandler(nullptr) == -1, "null report registration");
+    AudioPropagation::ReportRegistration* registrations[8]{};
+    for (auto& slot : registrations) Require(sceAudioPropagationReportRegisterHandler(1, CaptureReport, &probe, &slot) == 0 && slot, "report category slot allocation");
+    Require(sceAudioPropagationReportRegisterHandler(1, CaptureReport, &probe, nullptr) == -3, "report category capacity");
+    for (auto* slot : registrations) Require(sceAudioPropagationReportUnregisterHandler(slot) == 0, "report category slot release");
 
     Require(Resolve("sceAudioPropagationSystemCreate") != nullptr && Resolve("sceAudioPropagationSourceSetAudioPath") != nullptr, "export lookup");
     for (const char* name : {"sceAudioPropagationAudioPathInit", "sceAudioPropagationAudioPathPointInit", "sceAudioPropagationMaterialInit", "sceAudioPropagationPortalSettingsInit", "sceAudioPropagationRayInit", "sceAudioPropagationSourceRenderInfoInit", "sceAudioPropagationSourceSetAudioPathsParamInit", "sceAudioPropagationSystemMemoryInit", "sceAudioPropagationSystemOptionInit", "sceAudioPropagationSystem"}) {
