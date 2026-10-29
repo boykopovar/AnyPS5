@@ -54,6 +54,50 @@ class RegistrationTests(unittest.TestCase):
                     (Path(directory) / "CMakeLists.txt").write_bytes(content.encode())
                     self.assertEqual(check_test_registration.run_scripts(Path(directory), ["CMakeLists.txt"]), {actual})
 
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ctest") and shutil.which("ninja"),
+                         "CMake, CTest and Ninja are required")
+    def test_bom_bearing_included_cmake_matches_cmake_and_ctest_oracle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CMakeLists.txt").write_text(
+                'cmake_minimum_required(VERSION 3.20)\n'
+                'project(oracle NONE)\n'
+                'enable_testing()\n'
+                f'set(Python3_EXECUTABLE [=[{sys.executable}]=])\n'
+                'include(RegisterTests.cmake)\n',
+                encoding="utf-8")
+            (root / "RegisterTests.cmake").write_bytes(
+                'add_test(NAME example COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_example.py")\n'
+                .encode("utf-8-sig"))
+            (root / "tools/tests").mkdir(parents=True)
+            (root / "tools/tests/test_example.py").write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build"), "-G", "Ninja"],
+                           capture_output=True, text=True, check=True)
+            ctest = subprocess.run(["ctest", "--test-dir", str(root / "build"), "-V"],
+                                   capture_output=True, text=True, check=True)
+            self.assertIn("1/1 Test #1: example", ctest.stdout)
+            self.assertEqual(
+                check_test_registration.run_scripts(root, ["CMakeLists.txt", "RegisterTests.cmake"]),
+                {"tools/tests/test_example.py"})
+
+    def test_commands_recognizes_first_command_with_initial_utf8_bom(self):
+        cases = (
+            ('\ufeffadd_test("case" "\ufeffvalue" [=[\ufeffbracket]=])\n',
+             [("add_test", ["case", "\ufeffvalue", "\ufeffbracket"])]),
+            ('\ufeffsubdirs("nested" [=[\ufeffpath]=])\n',
+             [("subdirs", ["nested", "\ufeffpath"])]),
+            ('\ufeffset_tests_properties("case" PROPERTIES DISABLED TRUE)\n',
+             [("set_tests_properties", ["case", "PROPERTIES", "DISABLED", "TRUE"])]),
+        )
+        for content, expected in cases:
+            with self.subTest(command=expected[0][0]):
+                self.assertEqual(list(check_test_registration.commands(content)), expected)
+
+    def test_commands_preserves_utf8_bom_inside_literals(self):
+        content = 'add_test("case" "\ufeffvalue" [=[\ufeffbracket]=])\n'
+        self.assertEqual(list(check_test_registration.commands(content)),
+                         [("add_test", ["case", "\ufeffvalue", "\ufeffbracket"])])
+
     def test_literal_escaped_newline_and_bracket_continuation_are_preserved(self):
         quoted = r'add_test("real" "a\nb")' + '\n'
         bracket = 'add_test("real" [=[a' + '\\' + '\n' + 'b]=])\n'
@@ -382,10 +426,39 @@ class ScriptRegistrationTests(unittest.TestCase):
             "core/relinker/CMakeLists.txt": "if(WIN32)\n    add_test(NAME a COMMAND ${Python3_EXECUTABLE}\n        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_a.py)\nendif()\n",
             "core/relinker/relinker/tests/test_a.py": ""}), [])
 
+    def test_cmake_test_names_do_not_register_scripts(self):
+        for command in ('add_test(NAME test_a.py COMMAND python helper.py)',
+                        'add_test(test_a.py python helper.py)'):
+            with self.subTest(command=command):
+                self.assertEqual(self.unrun({"CMakeLists.txt": command, "test_a.py": ""}), ["test_a.py"])
+
+    def test_cmake_test_options_do_not_register_scripts(self):
+        for option in ("CONFIGURATIONS", "WORKING_DIRECTORY", "BUILD_DEPENDS"):
+            for command in (f'add_test(NAME a {option} test_a.py COMMAND python helper.py)',
+                            f'add_test(NAME a COMMAND python helper.py {option} test_a.py)'):
+                with self.subTest(command=command):
+                    self.assertEqual(self.unrun({"CMakeLists.txt": command, "test_a.py": ""}), ["test_a.py"])
+
+    def test_cmake_command_scripts_remain_registered(self):
+        commands = ('add_test(a python test_a.py)',
+                    'add_test(NAME a CONFIGURATIONS Debug COMMAND python test_a.py)',
+                    'add_test(NAME a WORKING_DIRECTORY work COMMAND python test_a.py)',
+                    'add_test(NAME a COMMAND python test_a.py CONFIGURATIONS Debug)',
+                    'add_test(NAME a COMMAND python test_a.py COMMAND_EXPAND_LISTS)',
+                    'add_test(NAME a COMMAND test_a.py WORKING_DIRECTORY work)')
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertEqual(self.unrun({"CMakeLists.txt": command, "test_a.py": ""}), [])
+
     def test_script_in_bracket_argument_with_initial_newline_is_registered(self):
         self.assertEqual(self.unrun({
             "CMakeLists.txt": "add_test(NAME a COMMAND python [=[\ntools/tests/test_a.py]=])\n",
             "tools/tests/test_a.py": ""}), [])
+
+    def test_script_registered_by_bom_bearing_cmake_module_runs(self):
+        self.assertEqual(self.unrun({
+            "cmake/RegisterTests.cmake": "\ufeffadd_test(NAME example COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_example.py)\n",
+            "tools/tests/test_example.py": ""}), [])
 
     def test_unregistered_script_is_reported(self):
         self.assertEqual(self.unrun({

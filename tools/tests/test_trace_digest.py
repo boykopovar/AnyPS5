@@ -991,7 +991,7 @@ class IntervalDigestTests(unittest.TestCase):
     def test_bom_encoded_intervals_load(self):
         with tempfile.TemporaryDirectory() as directory:
             intervals_file = Path(directory) / "intervals.jsonl"
-            intervals_file.write_bytes(b"\xef\xbb\xbf" + json.dumps({"interval_start_s": 0.0, "interval_end_s": 10.0, "presents": 600}).encode("utf-8") + b"\n")
+            intervals_file.write_bytes(b"\xef\xbb\xbf" + json.dumps(interval_line(0.0, 10.0, 20.0, 5.0, presents=600)).encode("utf-8") + b"\n")
             loaded = trace_digest.load_intervals(intervals_file)
             self.assertEqual(len(loaded), 1)
             self.assertEqual(loaded[0]["interval_start_s"], 0.0)
@@ -1031,5 +1031,62 @@ class IntervalDigestTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class IntervalSchemaTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "summary.jsonl"
+
+    def write(self, record):
+        self.path.write_text("\n" + json.dumps(SUMMARY) + "\n\n" + json.dumps(record) + "\n", encoding="utf-8")
+
+    def test_invalid_interval_fields_report_physical_line_numbers(self):
+        baseline = interval_line(0, 1, 20, 1)
+        changes = [("interval_start_s", value) for value in (-1, True, "0", None, float("nan"), float("inf"), 10**400)]
+        changes += [("interval_end_s", -1), ("interval_start_s", 2)]
+        changes += [("presents", value) for value in (-1, True, 1.5, "1", None)]
+        changes += [("frame_ms", value) for value in (None, [], {"p50": 1})]
+        changes += [("gpu_busy_ms_per_present", value) for value in (-1, False, "1", float("inf"))]
+        changes += [("worker_busy_pct", value) for value in ([], None, {"worker": "busy"}, {"worker": -1})]
+        changes += [("top_phases_ms_per_frame", value) for value in ([], {"phase": True}, {"phase": float("nan")})]
+        changes += [("trace_dropped", value) for value in (None, 0, "false")]
+        for field, value in changes:
+            with self.subTest(field=field, value=value):
+                self.write({**baseline, field: value})
+                with self.assertRaisesRegex(ValueError, r"summary\.jsonl:4:"):
+                    trace_digest.load_intervals(self.path)
+
+    def test_invalid_percentile_values_are_rejected(self):
+        for field in ("p50", "p90", "p99", "max"):
+            for value in (True, -1, "bad", float("nan")):
+                with self.subTest(field=field, value=value):
+                    record = interval_line(0, 1, 20, 1)
+                    record["frame_ms"][field] = value
+                    self.write(record)
+                    with self.assertRaisesRegex(ValueError, r"summary\.jsonl:4:"):
+                        trace_digest.load_intervals(self.path)
+
+    def test_json_and_markdown_reject_bad_intervals_without_tracebacks(self):
+        self.write(interval_line(0, 1, 20, 1, presents=-1))
+        for options in ([], ["--json"]):
+            result = subprocess.run([sys.executable, trace_digest.__file__, str(self.path), *options],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("summary.jsonl:4:", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
+
+    def test_zero_frame_intervals_optional_maps_and_large_worker_percentages_remain_valid(self):
+        record = interval_line(0, 0, 0, 0, presents=0, frame_ms=dict(p50=0, p90=0, p99=0, max=0), worker_busy_pct={"worker": 125.0})
+        record.pop("top_phases_ms_per_frame", None)
+        record.pop("trace_dropped", None)
+        self.write(record)
+        loaded = trace_digest.load_intervals(self.path)
+        self.assertEqual(loaded, [record])
+        digest = trace_digest.digest_intervals(loaded)
+        self.assertEqual(digest["intervals"][0]["busiest_worker"]["pct"], 125)
+        self.assertIn("0-0", trace_digest.markdown_intervals(digest))
+
+
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(defaultTest=os.environ.get("TRACE_DIGEST_TEST"))

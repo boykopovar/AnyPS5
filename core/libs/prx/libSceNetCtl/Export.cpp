@@ -116,6 +116,7 @@ static std::mutex g_callbackLock;
 static CallbackSlot g_callbacks[MAX_CALLBACKS] = {};
 static CallbackSlot g_callbacksV6[MAX_CALLBACKS] = {};
 static CallbackSlot g_callbacksNpToolkit[MAX_CALLBACKS] = {};
+static CallbackSlot g_callbacksForLib[MAX_CALLBACKS] = {};
 
 static int RegisterCallback(CallbackSlot (&callbacks)[MAX_CALLBACKS], NetCtlCallback func, void* arg, int* cid) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
@@ -822,6 +823,15 @@ static NetCtlNatInfo DiscoverNatInfo(in_addr localAddress) {
     return result;
 }
 
+extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::uint32_t* netmask, std::uint32_t* mtu) {
+    HostIpv4Interface host;
+    if (!FindHostIpv4Interface(host)) return false;
+    *address = host.address.s_addr;
+    *netmask = host.netmask.s_addr;
+    *mtu = host.mtu;
+    return true;
+}
+
 static void WriteInfoWord(NetCtlInfo* info, std::uint32_t value) {
     std::memcpy(info->opaque, &value, sizeof(value));
 }
@@ -1045,8 +1055,7 @@ int APS5_VABI sceNetCtlRegisterCallbackIpcInt(NetCtlCallback callback, void* arg
 }
 
 int APS5_VABI sceNetCtlRegisterCallbackForLibIpcInt(NetCtlCallback callback, void* argument, int* callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return RegisterCallback(g_callbacksForLib, callback, argument, callbackId);
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackForNpToolkit(int callbackId) {
@@ -1058,8 +1067,7 @@ int APS5_VABI sceNetCtlUnregisterCallbackIpcInt(int callbackId) {
 }
 
 int APS5_VABI sceNetCtlUnregisterCallbackForLibIpcInt(int callbackId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return UnregisterCallback(g_callbacksForLib, callbackId);
 }
 
 int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void) {
@@ -1067,8 +1075,7 @@ int APS5_VABI sceNetCtlCheckCallbackForNpToolkit(void) {
 }
 
 int APS5_VABI sceNetCtlCheckCallbackForLibIpcInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return CheckCallbacks(g_callbacksForLib);
 }
 
 int APS5_VABI sceNetCtlClearEventIpcInt(int event) {

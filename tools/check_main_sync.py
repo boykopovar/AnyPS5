@@ -129,7 +129,7 @@ def main(argv=None):
                         break
         base = resolve_base(args.repo, args.base)
         data = report(args.repo, base, args.head)
-    except RuntimeError as error:
+    except (RuntimeError, OSError) as error:
         parser.error(str(error))
     print(render(data))
     if data["conflicts"] or (args.strict and data["behind"]):

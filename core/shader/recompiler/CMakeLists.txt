@@ -174,7 +174,7 @@ function(add_shader_recompiler target runtimeTarget)
 
     target_compile_features(${target} PUBLIC cxx_std_20)
     if(WIN32)
-        target_compile_options(${target} PRIVATE "SHELL:-include ${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostStandardStreams.hpp")
+        target_compile_options(${target} PRIVATE "SHELL:-include \"${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostStandardStreams.hpp\"")
     endif()
 
     if(ANYPS5_ENABLE_SPIRV_TOOLS)

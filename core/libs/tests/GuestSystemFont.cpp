@@ -290,6 +290,24 @@ static void CheckGlyphImages(FontHandle font, FontRenderer renderer) {
     Require(sceFontDeleteGlyph(nullptr, &glyph) == SCE_FONT_OK && glyph == nullptr);
 }
 
+struct ParsedText {
+    const char* text;
+    std::size_t at;
+    FontHandle font;
+};
+
+static std::int32_t APS5_VABI ParseText(FontTextSource* source, void** order, FontTextParseResult* result) {
+    auto* parsed = static_cast<ParsedText*>(source->textObject);
+    *order = const_cast<char*>(parsed->text + parsed->at);
+    if (parsed->text[parsed->at] == 0) {
+        result->Terminate.terminateCode = 0;
+        return 0;
+    }
+    result->FontCode.font = parsed->font;
+    result->FontCode.code = static_cast<unsigned char>(parsed->text[parsed->at++]);
+    return 1;
+}
+
 int main() {
     constexpr std::uint32_t EuropeanLight = 0x180700C3u;
     constexpr std::uint32_t EuropeanBold = 0x180700C7u;
@@ -351,6 +369,29 @@ int main() {
     Require(sceFontGetCharGlyphMetrics(font, 'B', &metrics) == SCE_FONT_ERROR_NO_SUPPORT_GLYPH);
     FontHorizontalLayout layout{};
     Require(sceFontGetHorizontalLayout(font, &layout) == SCE_FONT_OK && layout.baselineOffset > 0.0f && layout.lineAdvance >= layout.baselineOffset);
+
+    ParsedText parsed{"AA", 0, font};
+    FontTextSource source{};
+    Require(sceFontTextSourceInit(&source, parsed.text, 2, ParseText, &parsed) == SCE_FONT_OK);
+    FontString string = nullptr;
+    Require(sceFontCreateString(&memory, &source, nullptr, &string) == SCE_FONT_OK && string != nullptr);
+    std::uint32_t characterCount = 0;
+    FontTextCharacter* characters = sceFontStringRefersTextCharacters(string, &characterCount);
+    Require(characters != nullptr && characterCount == 2);
+    FontWriting writing{};
+    Require(sceFontWritingInit(&writing, string, characters) == SCE_FONT_OK);
+    const FontWritingStep* step = sceFontWritingRefersRenderStep(&writing);
+    Require(step != nullptr);
+    const FontWritingStep first = *step;
+    step = sceFontWritingRefersRenderStep(&writing);
+    Require(step != nullptr);
+    const FontWritingStep second = *step;
+    Require(first.x == 0.0f && first.y == 0.0f && first.advanceX == 70.0f && first.advanceY == 0.0f);
+    Require(second.x == 70.0f && second.y == 0.0f && second.advanceX == 70.0f && second.advanceY == 0.0f);
+    Require(first.GlyphMetrics.width == 50.0f && first.GlyphMetrics.height == 70.0f);
+    Require(second.GlyphMetrics.width == 50.0f && second.GlyphMetrics.height == 70.0f);
+    Require(second.GlyphMetrics.Vertical.advance == 100.0f);
+    Require(sceFontDestroyString(&string) == SCE_FONT_OK);
 
     FontHandle again = nullptr;
     Require(sceFontOpenFontSet(library, EuropeanBold, 2, nullptr, &again) == SCE_FONT_OK && again != font);

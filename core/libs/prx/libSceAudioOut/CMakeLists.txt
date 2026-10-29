@@ -10,6 +10,7 @@ add_library(libSceAudioOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2User.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2Mastering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2System.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/InventoryExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Unimplemented.cpp
 )
 
@@ -239,7 +240,8 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
     add_test_executable(audio_out2_timing_tests tests/AudioOut2Timing.cpp)
-    target_include_directories(audio_out2_timing_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_include_directories(audio_out2_timing_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_compile_definitions(audio_out2_timing_tests PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(audio_out2_timing_tests PRIVATE libSceAudioOut libc)
     configure_windows_unwind(audio_out2_timing_tests)
     add_test(NAME audio_out2_timing COMMAND audio_out2_timing_tests)
