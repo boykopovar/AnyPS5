@@ -209,6 +209,41 @@ void TestObjects() {
         "a failed allocation returns null");
 }
 
+void TestAllocatorEx() {
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-test") == 0, "a memory heap is created");
+    NpAllocatorEx allocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1234, &allocator);
+
+    Require(_sceNpAllocatorExConvertAllocator(&allocator) == &allocator.allocator, "the extended allocator converts to its allocator");
+    auto* block = static_cast<std::uint8_t*>(_sceNpAllocatorExMalloc(&allocator, 16));
+    Require(block != nullptr, "the extended allocator hands out memory");
+    block[15] = 0x5A;
+    block = static_cast<std::uint8_t*>(_sceNpAllocatorExRealloc(&allocator, block, 128));
+    Require(block != nullptr && block[15] == 0x5A, "reallocation keeps the contents");
+    _sceNpAllocatorExFree(&allocator, block);
+    char* copy = _sceNpAllocatorExStrdup(&allocator, "np-common");
+
+    Require(copy != nullptr && std::strcmp(copy, "np-common") == 0, "a string is duplicated");
+    _sceNpAllocatorExFree(&allocator, copy);
+    copy = _sceNpAllocatorExStrndup(&allocator, "np-common", 2);
+    Require(copy != nullptr && std::strcmp(copy, "np") == 0, "a duplicated prefix is terminated");
+    _sceNpAllocatorExFree(&allocator, copy);
+    copy = _sceNpAllocatorExStrndup(&allocator, "np", 16);
+
+    Require(copy != nullptr && std::strcmp(copy, "np") == 0, "a short string is duplicated whole");
+    _sceNpAllocatorExFree(&allocator, copy);
+    sceNpMemoryHeapDestroy(&memoryHeap);
+    AllocatorRecord record {};
+    record.fail = true;
+    NpAllocatorEx failing {{RecordAllocate, nullptr, RecordRelease, &record}, 0};
+
+    Require(_sceNpAllocatorExStrdup(&failing, "abc") == nullptr && record.size == 4, "a failed duplicate returns null after asking for the string and its terminator");
+    Require(_sceNpAllocatorExStrndup(&failing, "abcdef", 3) == nullptr && record.size == 4, "a failed prefix duplicate returns null");
+    _sceNpAllocatorExFree(&failing, record.block.data());
+    Require(record.released == record.block.data(), "freeing goes through the allocator");
+}
+
 struct CalloutRecord {
     std::atomic<int> order {0};
     std::atomic<int> first {0};
@@ -489,6 +524,7 @@ int main() {
     TestThreads();
     TestHeaps();
     TestObjects();
+    TestAllocatorEx();
     TestBase64();
     TestNumbers();
     TestHexAndCopies();
