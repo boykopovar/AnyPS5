@@ -546,10 +546,16 @@ def report(rows, blob, main_exports=None):
     if main_exports:
         if confirmed:
             lines.append("")
-        lines.append("Functions introduced here that are already exported by another library in `main`:")
+        lines.append("Exports introduced here that may already be present in `main`:")
         lines.append("")
-        lines.extend(f"- {code_span(name)} (also exported by {cell(libraries)})"
-                     for name, libraries in sorted(main_exports.items()))
+        for name, finding in sorted(main_exports.items()):
+            same_key = finding.get("same_key", set())
+            other_libraries = finding.get("other_libraries", set())
+            if same_key:
+                details = ", ".join(f"{library} ({nid})" for library, nid in sorted(same_key))
+                lines.append(f"- {code_span(name)} (same library/NID already present: {details})")
+            if other_libraries:
+                lines.append(f"- {code_span(name)} (also exported by another library in `main`: {cell(other_libraries)}; may be intentional)")
     if uncompared:
         if confirmed:
             lines.append("")
@@ -597,10 +603,14 @@ def main_export_findings(prs, current_exports):
                 NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
                 for name in removed.get((library, nid), ())
             }
-            for canonical in added_names - removed_names:
-                existing = by_name.get(canonical, set()) - {library}
-                if existing:
-                    names.setdefault(canonical, set()).update(existing)
+            for canonical in added_names:
+                finding = names.setdefault(canonical, {"same_key": set(), "other_libraries": set()})
+                if (library, nid) in current_exports:
+                    finding["same_key"].add((library, nid))
+                if canonical not in removed_names:
+                    finding["other_libraries"].update(by_name.get(canonical, set()) - {library})
+                if not finding["same_key"] and not finding["other_libraries"]:
+                    names.pop(canonical)
         if names:
             findings[number] = names
     return findings
