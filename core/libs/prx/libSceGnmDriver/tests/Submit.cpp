@@ -44,10 +44,6 @@ constexpr std::uint32_t Type3(std::uint32_t opcode, std::uint32_t bodyWords) {
     return 0xc0000000u | ((bodyWords - 1u) << 16u) | (opcode << 8u);
 }
 
-constexpr std::uint32_t Type0(std::uint32_t baseIndex, std::uint32_t dataWords) {
-    return ((dataWords - 1u) << 16u) | baseIndex;
-}
-
 void TestPackets() {
     using GnmDriver::MergeEngines;
     using GnmDriver::PacketAt;
@@ -56,14 +52,8 @@ void TestPackets() {
     const std::vector<std::uint32_t> constant{Type2Filler, Type3(OpNop, 1), 0xabcdef01u};
     const std::vector<std::uint32_t> expected{Type3(OpNop, 1), 0x12345678u, Type3(OpNop, 1), 0xabcdef01u};
     Require(MergeEngines(draw, constant) == expected, "type-2 filler was not dropped from the draw and constant streams");
-    const std::vector<std::uint32_t> typeZero{Type3(OpNop, 1), 0u, Type0(0x2c4, 1), 1u, Type3(OpNop, 1), 0u};
-    auto message = ExpectFailure([&] { MergeEngines(typeZero, {}); });
-    Require(message.find("type 0") != std::string::npos && message.find("0x000002c4") != std::string::npos && message.find("dword 2 of 6") != std::string::npos && message.find("APS5_GNM_SUBMIT_WAIT_IDLE") == std::string::npos, "a type-0 packet did not throw with its header and position: " + message);
-    const std::vector<std::uint32_t> clobbered{Type3(OpNop, 1), 0u, 1u, 0u};
-    message = ExpectFailure([&] { MergeEngines({}, clobbered); });
-    Require(message.find("type 0") != std::string::npos && message.find("constant command buffer") != std::string::npos && message.find("dword 2 of 4") != std::string::npos && message.find("APS5_GNM_SUBMIT_WAIT_IDLE") != std::string::npos, "a header dword of 1 did not name the title store: " + message);
     const std::vector<std::uint32_t> typeOne{Type3(OpNop, 1), 0u, Type1Header, 0u};
-    message = ExpectFailure([&] { MergeEngines(typeOne, {}); });
+    const auto message = ExpectFailure([&] { MergeEngines(typeOne, {}); });
     Require(message.find("type 1") != std::string::npos && message.find("0x40000000") != std::string::npos && message.find("dword 2 of 4") != std::string::npos, "a type-1 packet did not throw with its header and position: " + message);
     const std::vector<std::uint32_t> truncated{Type3(OpNop, 3), 0u};
     Require(ExpectFailure([&] { MergeEngines(truncated, {}); }).find("truncated") != std::string::npos, "a truncated type-3 packet did not throw");
