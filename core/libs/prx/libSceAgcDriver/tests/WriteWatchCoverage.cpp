@@ -99,6 +99,17 @@ int main() {
         coverage.Exclude(base + block, block, 43);
         require(coverage.Restore(base + block - page, 2 * page, 42), "a newer boundary page was not restored");
         require(coverage.Covers(base + block - page, page) && !coverage.Covers(base + block, page), "a stale boundary mapping erased a newer neighbouring exclusion");
+        constexpr std::size_t tail = 0xc4000;
+        coverage.Initialize(base, 14 * block);
+        coverage.Exclude(base, tail, 50);
+        require(coverage.Restore(base, tail, 51), "an import ending inside a block did not restore its pages");
+        require(coverage.Covers(base, tail) && coverage.Covers(base + 12 * block, tail - 12 * block), "an import ending inside a block is not watched");
+        require(!coverage.Covers(base, tail + 1) && !coverage.Covers(base + tail - 1, 2) && !coverage.Covers(base + tail, page) && !coverage.Covers(base, 13 * block), "a range past an import ending inside a block is watched");
+        require(coverage.Covers(base + tail - page, page) && !coverage.Covers(base + 13 * block - page, page) && coverage.Covers(base + 13 * block, block), "an import ending inside a block changed the pages after it");
+        coverage.Initialize(base, 14 * block);
+        coverage.Exclude(base + page, tail, 60);
+        require(coverage.Restore(base + page, tail, 61) && coverage.Covers(base + page, tail), "an import starting and ending inside blocks is not watched");
+        require(!coverage.Covers(base, page) && !coverage.Covers(base, tail) && !coverage.Covers(base + page + tail, page) && !coverage.Covers(base + page, tail + 1), "an import starting and ending inside blocks watched pages outside it");
         std::cout << "write watch coverage passed\n";
         return 0;
     } catch (const std::exception& error) {

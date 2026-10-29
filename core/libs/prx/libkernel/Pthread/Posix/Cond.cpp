@@ -1,5 +1,7 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libc/include/General.hpp"
 #include "Common.hpp"
 #include <cstdint>
 #include <stdexcept>
@@ -51,6 +53,10 @@ int APS5_VABI pthread_cond_wait_nid_postfix(PthreadCond* cond, PthreadMutex* mut
     return toPosix(scePthreadCondWait(cond, mutex));
 }
 
+int APS5_VABI pthread_cond_setname_np_nid_postfix(PthreadCond* cond, const char* name) {
+    return toPosix(CondOperations::SetName(cond, name));
+}
+
 int APS5_VABI pthread_condattr_destroy_nid_postfix(PthreadCondattr* attr) {
     if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
     return toPosix(scePthreadCondattrDestroy(attr));
@@ -66,6 +72,13 @@ int APS5_VABI pthread_condattr_setclock_nid_postfix(PthreadCondattr* attr, Kerne
     return toPosix(scePthreadCondattrSetclock(attr, clock_id));
 }
 
+int APS5_VABI pthread_condattr_getclock_nid_postfix(const PthreadCondattr* attr, KernelClockid* clockId) {
+    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
+    if (!clockId) NotImplemented_nid_no_patch(__func__);
+    *clockId = (*attr)->_clockid;
+    return 0;
+}
+
 int APS5_VABI pthread_condattr_setpshared_nid_postfix(PthreadCondattr* attr, int pshared) {
     if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
     if (pshared != POSIX_PROCESS_PRIVATE) return PosixThread::GUEST_EINVAL;
@@ -78,6 +91,18 @@ int APS5_VABI pthread_condattr_getpshared_nid_postfix(const PthreadCondattr* att
     if (!pshared) throw std::runtime_error("pthread_condattr_getpshared: null pshared");
     *pshared = (*attr)->_pshared;
     return 0;
+}
+
+int APS5_VABI pthread_cond_signalto_np_nid_postfix(PthreadCond* cond, Pthread thread) {
+    return toPosix(scePthreadCondSignalto(cond, thread));
+}
+
+int APS5_VABI scePthreadCondattrSetpshared(PthreadCondattr* attr, int pshared) {
+    return PosixThread::ToSce(pthread_condattr_setpshared_nid_postfix(attr, pshared));
+}
+
+int APS5_VABI scePthreadCondattrGetpshared(const PthreadCondattr* attr, int* pshared) {
+    return PosixThread::ToSce(pthread_condattr_getpshared_nid_postfix(attr, pshared));
 }
 
 }

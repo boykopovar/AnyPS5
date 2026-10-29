@@ -1,5 +1,6 @@
 #include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <relinker/parsing/ElfReader.hpp>
+#include <relinker/parsing/RelrRelocations.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <unordered_map>
 #include <cstring>
@@ -155,7 +156,8 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
             sceTableBase = read64(elfBytes, phPos + 8);
         }
     }
-    for (const auto& header : ElfReader(elfBytes).ReadProgramHeaders()) {
+    const auto headers = ElfReader(elfBytes).ReadProgramHeaders();
+    for (const auto& header : headers) {
         if (header.Type != PT_LOAD) continue;
         loads.push_back({header.MappedAddress, header.Offset, header.FileSize});
     }
@@ -175,7 +177,6 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
         std::uint64_t segOff = read64(elfBytes, phPos + 8);
         std::uint64_t segSz = read64(elfBytes, phPos + 32);
         if (segOff > elfBytes.size() || segSz > elfBytes.size() - segOff) throw RelinkerException("PT_DYNAMIC segment out of bounds");
-        if (segSz % 16 != 0) throw RelinkerException("Invalid dynamic segment size", segOff);
 
         std::optional<VirtualAddress> relaVa;
         std::optional<std::uint64_t> relaSz;
@@ -190,6 +191,7 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
         bool hasSysvPltrelsz = false;
         bool hasOsPltrelsz = false;
         bool terminated = false;
+        std::vector<Domain::DynamicTag> relrTags;
 
         for (std::uint64_t off = 0; off <= segSz && segSz - off >= 16; off += 16) {
             std::size_t pos = static_cast<std::size_t>(segOff + off);
@@ -200,6 +202,7 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
                 terminated = true;
                 break;
             }
+            if (tag == DT_RELR || tag == DT_RELRSZ || tag == DT_RELRENT) relrTags.push_back({tag, val});
             if (tag == DT_RELA) {
                 if (hasOsRela) throw RelinkerException("Both DT_OS_ and DT_ variants present for DT_RELA");
                 if (hasSysvRela && relaVa.value() != val) throw RelinkerException("Conflicting duplicate DT_RELA tags");
@@ -266,6 +269,13 @@ std::unique_ptr<IRelativeRelocationIndex> BuildRelativeRelocationIndex(
             collectRelativeEntries(elfBytes, loads, *relaVa, *relaSz, hasOsRela, sceTableBase, targets);
         if (jmprelVa.has_value())
             collectRelativeEntries(elfBytes, loads, *jmprelVa, *pltrelsz, hasOsJmprel, sceTableBase, targets);
+        for (const auto& [target, addend] : ReadRelrRelocations(elfBytes, headers, relrTags)) {
+            if (addend > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                throw RelinkerException("Relative relocation target address is negative", target);
+            const auto [found, inserted] = targets.emplace(target, addend);
+            if (!inserted && found->second != addend)
+                throw RelinkerException("Conflicting relative relocation targets for slot", target);
+        }
     }
 
     return std::make_unique<RelativeRelocationIndex>(std::move(targets));

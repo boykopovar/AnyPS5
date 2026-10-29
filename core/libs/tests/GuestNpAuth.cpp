@@ -1,25 +1,9 @@
+#include "prx/libSceNpAuth/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceNpAuthAbortRequest(int req_id);
-int APS5_VABI sceNpAuthCreateAsyncRequest(const void* param);
-int APS5_VABI sceNpAuthCreateRequest(void);
-int APS5_VABI sceNpAuthDeleteRequest(int req_id);
-int APS5_VABI sceNpAuthGetAuthorizationCode(int req_id, const void* param, void* auth_code);
-int APS5_VABI sceNpAuthGetAuthorizationCodeA(int req_id, const void* param, void* auth_code, int* issuer_id);
-int APS5_VABI sceNpAuthGetAuthorizationCodeV3(int req_id, const void* param, void* auth_code, int* issuer_id);
-int APS5_VABI sceNpAuthGetAuthorizedAppCode(std::int32_t, const NpAuthAuthorizedAppCodeParameter*, char*, std::int32_t*, bool*);
-int APS5_VABI sceNpAuthGetIdToken(int req_id, const void* param, void* id_token);
-int APS5_VABI sceNpAuthGetIdTokenA(int req_id, const void* param, void* id_token);
-int APS5_VABI sceNpAuthGetIdTokenV3(int req_id, const void* param, void* id_token);
-int APS5_VABI sceNpAuthPollAsync(int req_id, int* result);
-int APS5_VABI sceNpAuthSetTimeout(int req_id, int resolve_retry, uint32_t resolve_timeout, uint32_t connect_timeout, uint32_t send_timeout, uint32_t receive_timeout);
-int APS5_VABI sceNpAuthWaitAsync(int req_id, int* result);
-}
 
 static void Require(bool condition) {
     if (!condition) {

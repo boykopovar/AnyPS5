@@ -173,6 +173,21 @@ std::string formatHex64(std::uint64_t value) {
     return stream.str();
 }
 
+bool carriesMemoryInfo(IrOpcode opcode) {
+    return opcode == IrOpcode::ReadConstBuffer || AddressOpcodeInfoOf(opcode).access != AddressAccess::None || BufferComponentCount(opcode) != 0u || SharedComponentCount(opcode) != 0u || ImageOpcodeInfoOf(opcode).access != ImageAccess::None;
+}
+
+std::string memoryToString(const IrProgram& program, const IrValue& inst) {
+    const auto flags = inst.Flags<MemoryFlags>();
+    const auto& memoryInfo = program.Resources().memoryInfo;
+    if (flags.index >= memoryInfo.size()) {
+        return " [pc=" + formatHex32(flags.pc) + " mem=?]";
+    }
+    std::ostringstream stream;
+    stream << " [pc=" << formatHex32(flags.pc) << " off=0x" << std::hex << memoryInfo[flags.index].offset << "]";
+    return stream.str();
+}
+
 std::string valueToString(const std::map<const IrValue*, std::size_t>& ids, const IrValue* value) {
     if (value == nullptr) {
         return "<null>";
@@ -291,7 +306,8 @@ void IrProgram::SetWaveSize(std::uint32_t waveSize) {
 }
 
 IrBlock& IrProgram::CreateBlock() {
-    auto block = std::make_unique<IrBlock>(nextBlockId);
+    if (instructionNodes == nullptr) instructionNodes = std::make_shared<std::pmr::unsynchronized_pool_resource>();
+    auto block = std::make_unique<IrBlock>(nextBlockId, instructionNodes);
     nextBlockId++;
     IrBlock& created = *block;
     blocks.push_back(std::move(block));
@@ -404,7 +420,11 @@ std::string ProgramToString(const IrProgram& program) {
                     text += valueToString(ids, inst->Argument(index));
                 }
             }
-            text += " (" + TypeToString(inst->Type()) + "; uses=" + std::to_string(inst->UseCount()) + ")\n";
+            text += " (" + TypeToString(inst->Type()) + "; uses=" + std::to_string(inst->UseCount()) + ")";
+            if (carriesMemoryInfo(inst->Opcode())) {
+                text += memoryToString(program, *inst);
+            }
+            text += "\n";
         }
     }
     return text;
@@ -586,11 +606,11 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             if (fixedSignature && inst->ArgumentCount() != IrOpcodeOperandCount(inst->Opcode())) {
                 fail(std::string(IrOpcodeName(inst->Opcode())) + " has " + std::to_string(inst->ArgumentCount()) + " arguments, expected " + std::to_string(IrOpcodeOperandCount(inst->Opcode())));
             }
+            if (carriesMemoryInfo(inst->Opcode()) && inst->Flags<MemoryFlags>().index >= program.Resources().memoryInfo.size()) {
+                fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
+            }
             if (inst->Opcode() == IrOpcode::ReadConstBuffer) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (memory.kind != ResourceKind::ScalarBuffer) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid scalar-memory resource kind");
@@ -603,9 +623,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto addressInfo = AddressOpcodeInfoOf(inst->Opcode());
             if (addressInfo.access != AddressAccess::None) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (!IsAddressResourceKind(memory.kind) || (memory.kind == ResourceKind::ScalarAddress && inst->Opcode() != IrOpcode::LoadAddressU32)) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid address resource kind");
@@ -620,9 +637,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto bufferComponents = BufferComponentCount(inst->Opcode());
             if (bufferComponents != 0u) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (memory.kind != ResourceKind::Buffer && memory.kind != ResourceKind::ScalarBuffer) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has a non-buffer resource kind");
@@ -637,9 +651,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto sharedComponents = SharedComponentCount(inst->Opcode());
             if (sharedComponents != 0u) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if ((memory.kind != ResourceKind::Lds && memory.kind != ResourceKind::Gds) || memory.resource != 0u || memory.sampler != 0u || memory.componentCount == 0u || memory.componentIndex >= memory.componentCount) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has invalid shared-memory metadata");
@@ -657,9 +668,6 @@ void ValidateProgram(const IrProgram& program, bool requireSsa) {
             const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
             if (imageInfo.access != ImageAccess::None) {
                 const auto memoryIndex = inst->Flags<MemoryFlags>().index;
-                if (memoryIndex >= program.Resources().memoryInfo.size()) {
-                    fail(std::string(IrOpcodeName(inst->Opcode())) + " has an invalid memory-info index");
-                }
                 const auto& memory = program.Resources().memoryInfo[memoryIndex];
                 if (memory.kind != ResourceKind::Image || imageInfo.resourceClass == ImageResourceClass::None) {
                     fail(std::string(IrOpcodeName(inst->Opcode())) + " has invalid image-memory metadata");

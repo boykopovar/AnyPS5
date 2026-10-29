@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "SceTypes.hpp"
 
 #include <algorithm>
@@ -16,18 +17,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam*);
-int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam*, void*, std::size_t, AudioOut2ContextHandle*);
-int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle, std::uint32_t);
-int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle, const AudioOut2PortParam*, AudioOut2PortHandle*);
-int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle);
-int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle, const AudioOut2Attribute*, std::uint32_t);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -286,6 +275,28 @@ void TestRenderingSizedByLevelStaysWithinQueueDepth() {
     RequirePlayed(played, order);
 }
 
+void TestBufferReusedAcrossPortsKeepsEachPortsGrain(bool advanced) {
+    const auto voice = Grain(0.01f);
+    const std::vector<float> silence(voice.size(), 0.0f);
+    auto shared = voice;
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        AudioOut2PortParam portParams{};
+        portParams.port_type = portTypeMain;
+        portParams.data_format = formatStereoFloat;
+        portParams.sampling_freq = frequency;
+        AudioOut2PortHandle other = 0;
+        Require(sceAudioOut2PortCreate(context, &portParams, &other) == 0);
+        SetData(port, shared.data());
+        shared = silence;
+        SetData(other, shared.data());
+        if (advanced) Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        SetData(port, nullptr);
+        SetData(other, nullptr);
+    }, advanced);
+    RequirePlayed(played, {&voice});
+}
+
 }
 
 int main() {
@@ -299,5 +310,7 @@ int main() {
     TestAdvancingPortWithoutNewBufferPlaysSilence();
     TestRewrittenBufferRepeats();
     TestRenderingSizedByLevelStaysWithinQueueDepth();
+    TestBufferReusedAcrossPortsKeepsEachPortsGrain(false);
+    TestBufferReusedAcrossPortsKeepsEachPortsGrain(true);
     return 0;
 }

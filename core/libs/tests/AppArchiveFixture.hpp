@@ -20,8 +20,11 @@ inline std::vector<char> Pattern(std::size_t size) {
 }
 
 inline std::filesystem::path EnterFreshRoot(const char* name) {
-    const auto root = std::filesystem::temp_directory_path() /
-        (std::string(name) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::path root;
+    do {
+        root = std::filesystem::temp_directory_path() /
+            (std::string(name) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    } while (!std::filesystem::create_directory(root));
     std::filesystem::create_directories(root / "app0" / "sce_sys");
     std::filesystem::current_path(root);
     return std::filesystem::canonical(root);

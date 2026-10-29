@@ -276,10 +276,19 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.meshPerVertexLocations = target.meshPerVertexLocations;
     state.float16DenormPreserve = target.float16DenormPreserve;
     state.robustBufferAccess2 = target.robustBufferAccess2;
+    state.exactRobustLoads = target.robustBufferAccess2 && target.exactRobustLoads;
     state.float32FlushToZero = target.float32FlushToZero;
     state.waveLdsMemoryBarriers = target.waveLdsMemoryBarriers;
     state.float32DenormPreserve = target.float32DenormPreserve;
+    state.fusedExactArithmetic = target.fusedExactArithmetic;
+    state.deviceScopeLdsMemoryBarriers = target.deviceScopeLdsMemoryBarriers;
+    state.ldsLockFences = target.ldsLockFences;
     state.hostSubgroupSize = target.subgroupSize;
+    if (target.largePixelFunctionLdsBuffer && program.Resources().stage == IrShaderStage::Pixel && state.requirements.functionLds && state.requirements.functionLdsDwords > target.pixelFunctionStorageDwords) {
+        state.pixelFunctionLdsBuffer = true;
+        state.requirements.subgroupLocalInvocationId = true;
+        state.requirements.subgroupBallot = true;
+    }
     if (state.requirements.ldsLock && LdsInDeviceMemory(state) && std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) != target.supportedCapabilities.end()) {
         state.requirements.ldsLock = false;
         state.requirements.ldsBufferInt64Atomics = true;
@@ -318,7 +327,10 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
-    if (info != nullptr) info->fullSubgroups = state.spannedWave;
+    if (info != nullptr) {
+        info->fullSubgroups = state.spannedWave;
+        info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
+    }
     return state.module.Finalize();
 }
 

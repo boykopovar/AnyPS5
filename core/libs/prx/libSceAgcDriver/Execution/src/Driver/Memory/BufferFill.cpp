@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/BufferFill.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DwordPatternFill.hpp"
@@ -186,7 +187,7 @@ void Driver::fillClearCount(const Graphics::StorageTexture::FillCoverage& covera
     if (!profile) return;
     using FillCover = Graphics::StorageTexture::FillCover;
     static constexpr std::array<const char*, 8> names{"none", "exact", "inside", "around", "straddle", "several", "keys", "layer"};
-    static std::mutex countsMutex;
+    static AgcDriver::Mutex countsMutex;
     static std::array<std::uint64_t, 8> counts{}, coverBytes{};
     static std::map<std::uint32_t, std::uint64_t> coveredFormats;
     static std::map<std::string, std::uint64_t> refusals;
@@ -299,7 +300,7 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         if ((packet[4] & 0x20u) != 0) {
             for (std::uint32_t axis = 0; axis < 3; ++axis) {
                 const auto threads = std::max(readRegister(queue.shader, 0x207 + axis) & 0xffffu, 1u);
-                groups[axis] = (groups[axis] + threads - 1) / threads;
+                groups[axis] = ThreadDimensionGroups(groups[axis], threads);
             }
         }
         if (groups[1] != 1 || groups[2] != 1) return false;

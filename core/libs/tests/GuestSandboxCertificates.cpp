@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
@@ -7,16 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-extern "C" {
-const char* APS5_VABI sceKernelGetFsSandboxRandomWord();
-int APS5_VABI sceKernelOpen(const char*, int, unsigned short);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-int APS5_VABI sceKernelStat(const char*, FileStat*);
-void* APS5_VABI fopen_nid_postfix(const char*, const char*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, void*);
-int APS5_VABI fclose_nid_postfix(void*);
-}
+
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "Sandbox certificates check failed at line %d\n", line);
@@ -37,7 +31,7 @@ static std::string ReadKernel(const std::string& path) {
     return text;
 }
 static std::string ReadStream(const std::string& path) {
-    void* stream = fopen_nid_postfix(path.c_str(), "rb");
+    FileStream* stream = fopen_nid_postfix(path.c_str(), "rb");
     Require(stream != nullptr);
     std::string text;
     char buffer[4096];

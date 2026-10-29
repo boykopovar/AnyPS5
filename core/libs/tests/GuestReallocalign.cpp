@@ -1,14 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
-
-extern "C" {
-void* APS5_VABI reallocalign_nid_postfix(void*, std::size_t, std::size_t);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 
@@ -30,12 +26,28 @@ int main() {
     auto* shrunk = static_cast<unsigned char*>(reallocalign_nid_postfix(grown, 16, 16));
     Require(shrunk != nullptr && (reinterpret_cast<std::uintptr_t>(shrunk) % 16) == 0);
     for (int index = 0; index < 16; ++index) Require(shrunk[index] == 0x5a);
-    *__error_nid_postfix() = 0;
-    Require(reallocalign_nid_postfix(shrunk, 16, 0) == nullptr && *__error_nid_postfix() == 22);
-    *__error_nid_postfix() = 0;
-    Require(reallocalign_nid_postfix(shrunk, 16, 3) == nullptr && *__error_nid_postfix() == 22);
-    *__error_nid_postfix() = 0;
-    Require(reallocalign_nid_postfix(shrunk, std::numeric_limits<std::size_t>::max(), 16) == nullptr && *__error_nid_postfix() == 12);
+    shrunk = static_cast<unsigned char*>(reallocalign_nid_postfix(shrunk, 16, 0));
+    Require(shrunk != nullptr && (reinterpret_cast<std::uintptr_t>(shrunk) % 32) == 0);
     for (int index = 0; index < 16; ++index) Require(shrunk[index] == 0x5a);
-    Require(reallocalign_nid_postfix(shrunk, 0, 16) == nullptr);
+    shrunk = static_cast<unsigned char*>(reallocalign_nid_postfix(shrunk, 40, 100));
+    Require(shrunk != nullptr && (reinterpret_cast<std::uintptr_t>(shrunk) % 128) == 0);
+    for (int index = 0; index < 16; ++index) Require(shrunk[index] == 0x5a);
+    constexpr std::size_t max = std::numeric_limits<std::size_t>::max();
+    *__error_nid_postfix() = 77;
+    Require(reallocalign_nid_postfix(shrunk, max, 16) == nullptr && *__error_nid_postfix() == 77);
+    Require(reallocalign_nid_postfix(shrunk, max - 0x1008f, 16) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 77;
+    Require(reallocalign_nid_postfix(shrunk, max - 0x110ae, 4096) == nullptr && *__error_nid_postfix() == 77);
+    Require(reallocalign_nid_postfix(shrunk, max - 0x110af, 4096) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 77;
+    Require(reallocalign_nid_postfix(shrunk, 16, std::size_t{1} << 63) == nullptr && *__error_nid_postfix() == 77);
+    for (int index = 0; index < 16; ++index) Require(shrunk[index] == 0x5a);
+    Require(reallocalign_nid_postfix(shrunk, 0, 16) == shrunk && malloc_usable_size_nid_postfix(shrunk) == 0);
+    free_nid_postfix(shrunk);
+
+    void* empty = reallocalign_nid_postfix(nullptr, 0, 0);
+    Require(empty != nullptr);
+    free_nid_postfix(empty);
+
+    return 0;
 }

@@ -1,6 +1,17 @@
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || (defined(__APPLE__) && defined(__x86_64__))
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <cerrno>
+#include <csignal>
+#include <ctime>
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <pthread.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #else
 #include <cerrno>
 #include <csignal>
@@ -14,15 +25,21 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 extern "C" void CallTraceEnter_nid_no_patch();
 
@@ -71,9 +88,46 @@ bool Selected(std::string_view library) {
     return false;
 }
 
+bool WriteCallCounts(const std::filesystem::path& path) {
+    const std::size_t recorded = g_recordCount.load(std::memory_order_acquire);
+    const ImportRecord* records = g_records.load(std::memory_order_acquire);
+    std::vector<std::pair<std::uint64_t, const ImportRecord*>> called;
+    for (std::size_t index = 0; index < recorded; ++index) {
+        const std::uint64_t calls = records[index].calls.load(std::memory_order_relaxed);
+        if (calls != 0) called.emplace_back(calls, &records[index]);
+    }
+    std::stable_sort(called.begin(), called.end(), [](const auto& left, const auto& right) { return left.first > right.first; });
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    for (const auto& [calls, record] : called) file << calls << ' ' << record->library << ' ' << record->name << '\n';
+    file.flush();
+    return static_cast<bool>(file);
+}
+
+void StartCallCountWriter() {
+#ifdef _WIN32
+    const wchar_t* value = _wgetenv(L"APS5_TRACE_CALLS_FILE");
+    if (value == nullptr || *value == L'\0') return;
+    std::filesystem::path path(value);
+#else
+    const char* value = std::getenv("APS5_TRACE_CALLS_FILE");
+    if (value == nullptr || *value == '\0') return;
+    std::filesystem::path path(value);
+#endif
+    std::thread([path = std::move(path)] {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(10));
+            WriteCallCounts(path);
+        }
+    }).detach();
+}
+
 std::uint64_t CurrentThread() {
 #ifdef _WIN32
     return GetCurrentThreadId();
+#elif defined(__APPLE__)
+    std::uint64_t thread = 0;
+    pthread_threadid_np(nullptr, &thread);
+    return thread;
 #else
     return static_cast<std::uint64_t>(gettid());
 #endif
@@ -88,6 +142,22 @@ void MapThunkArea() {
     const DWORD code = GetLastError();
     CloseHandle(section);
     if (g_writable == nullptr || g_executable == nullptr) throw std::system_error(static_cast<int>(code), std::system_category(), "call trace: MapViewOfFile");
+}
+#elif defined(__APPLE__)
+void MapThunkArea() {
+    void* writable = mmap(nullptr, ThunkAreaBytes, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    if (writable == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "call trace: mmap");
+    mach_vm_address_t executable = 0;
+    vm_prot_t current = VM_PROT_NONE;
+    vm_prot_t maximum = VM_PROT_NONE;
+    const kern_return_t remapped = mach_vm_remap(mach_task_self(), &executable, ThunkAreaBytes, 0, VM_FLAGS_ANYWHERE, mach_task_self(), reinterpret_cast<mach_vm_address_t>(writable), false, &current, &maximum, VM_INHERIT_NONE);
+    if (remapped != KERN_SUCCESS || mach_vm_protect(mach_task_self(), executable, ThunkAreaBytes, false, VM_PROT_READ | VM_PROT_EXECUTE) != KERN_SUCCESS) {
+        if (remapped == KERN_SUCCESS) mach_vm_deallocate(mach_task_self(), executable, ThunkAreaBytes);
+        munmap(writable, ThunkAreaBytes);
+        throw std::system_error(remapped == KERN_SUCCESS ? KERN_PROTECTION_FAILURE : remapped, std::system_category(), "call trace: mach_vm_remap");
+    }
+    g_writable = static_cast<std::uint8_t*>(writable);
+    g_executable = reinterpret_cast<std::uint8_t*>(executable);
 }
 #else
 void MapThunkArea() {
@@ -108,7 +178,9 @@ void MapThunkArea() {
     g_writable = static_cast<std::uint8_t*>(writable);
     g_executable = static_cast<std::uint8_t*>(executable);
 }
+#endif
 
+#ifndef _WIN32
 struct ModuleSegment {
     std::uint64_t start;
     std::uint64_t end;
@@ -128,6 +200,42 @@ std::atomic<bool> g_reporting{false};
 std::atomic<bool> g_reported{false};
 unsigned long long g_moduleChanges = ~0ull;
 
+#if defined(__APPLE__)
+void SnapshotModules() {
+    const auto images = _dyld_image_count();
+    unsigned long long changes = images;
+    for (std::uint32_t index = 0; index < images; ++index)
+        changes = changes * 131u + reinterpret_cast<unsigned long long>(_dyld_get_image_header(index));
+    if (changes == g_moduleChanges) return;
+    g_moduleChanges = changes;
+    auto* map = new ModuleMap{};
+    for (std::uint32_t index = 0; index < images && map->count < std::size(map->segments); ++index) {
+        const auto* header = reinterpret_cast<const mach_header_64*>(_dyld_get_image_header(index));
+        if (header == nullptr || header->magic != MH_MAGIC_64) continue;
+        const char* path = _dyld_get_image_name(index);
+        if (path == nullptr || *path == '\0') path = getprogname();
+        const char* slash = std::strrchr(path, '/');
+        const char* name = slash == nullptr ? path : slash + 1;
+        const auto slide = static_cast<std::uint64_t>(_dyld_get_image_vmaddr_slide(index));
+        const auto base = reinterpret_cast<std::uint64_t>(header);
+        auto* command = reinterpret_cast<const load_command*>(header + 1);
+        for (std::uint32_t commandIndex = 0; commandIndex < header->ncmds && map->count < std::size(map->segments); ++commandIndex) {
+            if (command->cmd == LC_SEGMENT_64) {
+                const auto* segment = reinterpret_cast<const segment_command_64*>(command);
+                if (segment->vmsize != 0 && (segment->initprot & VM_PROT_EXECUTE) != 0) {
+                    auto& recorded = map->segments[map->count++];
+                    recorded.base = base;
+                    recorded.start = segment->vmaddr + slide;
+                    recorded.end = recorded.start + segment->vmsize;
+                    std::strncpy(recorded.name, name, sizeof(recorded.name) - 1);
+                }
+            }
+            command = reinterpret_cast<const load_command*>(reinterpret_cast<const std::uint8_t*>(command) + command->cmdsize);
+        }
+    }
+    g_modules.store(map, std::memory_order_release);
+}
+#else
 void SnapshotModules() {
     unsigned long long changes = 0;
     dl_iterate_phdr([](dl_phdr_info* info, std::size_t, void* data) {
@@ -159,6 +267,7 @@ void SnapshotModules() {
     }, map);
     g_modules.store(map, std::memory_order_release);
 }
+#endif
 
 class ReportLine {
 public:
@@ -331,11 +440,12 @@ void* TraceImport_nid_no_patch(void* target, const char* name, const char* libra
         MapThunkArea();
         g_records.store(new ImportRecord[RecordCapacity], std::memory_order_release);
         g_ring.store(new RingSlot[RingCapacity], std::memory_order_release);
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
         InstallAbortReport();
 #endif
+        StartCallCountWriter();
     }
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     SnapshotModules();
 #endif
     if (const auto existing = g_thunkByTarget.find(target); existing != g_thunkByTarget.end()) return existing->second;
@@ -386,6 +496,11 @@ std::size_t CopyThreadCallTrace_nid_no_patch(std::uint64_t thread, CallTraceEntr
     return count;
 }
 
+bool WriteCallCounts_nid_no_patch(const char* path) {
+    if (path == nullptr || *path == '\0') return false;
+    return WriteCallCounts(std::filesystem::path(reinterpret_cast<const char8_t*>(path)));
+}
+
 std::size_t CopyCallCounts_nid_no_patch(CallTraceCount* entries, std::size_t capacity, std::uint64_t* total) {
     if (total != nullptr) *total = g_sequence.load(std::memory_order_acquire);
     if (entries == nullptr || capacity == 0) return 0;
@@ -430,7 +545,7 @@ asm(".text\n"
     "    movdqu %xmm7, 112(%rsp)\n"
     "    mov %r11, %rdi\n"
     "    mov 200(%rsp), %rsi\n"
-    "    call CallTraceRecord_nid_no_patch\n"
+    "    call " APS5_ASM_SYMBOL("CallTraceRecord_nid_no_patch") "\n"
     "    movdqu 0(%rsp), %xmm0\n"
     "    movdqu 16(%rsp), %xmm1\n"
     "    movdqu 32(%rsp), %xmm2\n"
