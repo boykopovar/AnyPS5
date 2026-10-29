@@ -17,7 +17,9 @@ int APS5_VABI FileWrite(Bio* bio, const char* data, int size) {
 
 int APS5_VABI FileRead(Bio* bio, char* data, int size) {
     if (!bio->data || size < 0 || (size && !data)) return -1;
-    return static_cast<int>(fread_nid_postfix(data, 1, static_cast<std::size_t>(size), static_cast<FileStream*>(bio->data)));
+    auto* stream = static_cast<FileStream*>(bio->data);
+    const auto count = fread_nid_postfix(data, 1, static_cast<std::size_t>(size), stream);
+    return size > 0 && count == 0 && ferror_nid_postfix(stream) != 0 ? -1 : static_cast<int>(count);
 }
 
 int APS5_VABI FilePuts(Bio* bio, const char* data) {
@@ -44,7 +46,7 @@ std::int64_t APS5_VABI FileControl(Bio* bio, int command, std::int64_t argument,
     auto* stream = static_cast<FileStream*>(bio->data);
     switch (command) {
     case 1:
-        return stream && fseek_nid_postfix(stream, 0, SEEK_SET) == 0;
+        return stream ? fseek_nid_postfix(stream, 0, SEEK_SET) : -1;
     case 2:
         return stream ? feof_nid_postfix(stream) : 1;
     case 8:
