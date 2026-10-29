@@ -409,6 +409,7 @@ int APS5_VABI vasprintf_nid_postfix(char** destination, const char* format, VaLi
 int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
+    if (!stream->SwitchToWriting()) return -1;
 #ifdef _WIN32
     std::string buffer;
     const int count = LibcDetail::FormatWindows(nullptr, 0, format, args, &buffer);
@@ -661,6 +662,7 @@ static int WriteSecure(FileStream* stream, const char* format, const void* args)
     if (stream == nullptr || format == nullptr || args == nullptr) return -1;
     if (!stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
+    if (!stream->SwitchToWriting()) return -1;
     std::string text;
     int count;
     try {
@@ -714,6 +716,7 @@ int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* form
 }
 
 int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
+    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
     const int result = LibcDetail::PrintWindows(format, args);
@@ -754,6 +757,7 @@ int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* form
 }
 
 int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
+    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     std::va_list args;
     va_start(args, format);
     const int result = RequiresGuestFormatting(format) ? LibcDetail::PrintWindows(format, args) : std::vfprintf(GuestStandardOutputFile_nid_no_patch(), format, args);
@@ -766,6 +770,7 @@ int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
 int APS5_VABI puts_nid_postfix(const char* s) {
     if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(&_Stdout_nid_postfix);
+    if (!_Stdout_nid_postfix.SwitchToWriting()) return EOF;
     if (std::fputs(s, native) < 0 || std::fputc('\n', native) == EOF) return EOF;
     return 0;
 }

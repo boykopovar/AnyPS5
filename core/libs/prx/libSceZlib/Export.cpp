@@ -1,8 +1,7 @@
 #include "prx/libSceZlib/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "zlib.h"
-#include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <limits>
@@ -33,7 +32,7 @@ std::uint64_t nextId = 1;
 std::uint64_t session = 0;
 std::unordered_map<std::uint64_t, InflateResult> results;
 std::deque<std::uint64_t> completed;
-std::condition_variable completion;
+TimedWait::Condition completion;
 
 } // namespace
 
@@ -55,7 +54,7 @@ std::int32_t APS5_VABI sceZlibFinalize() {
     completed.clear();
     initialized = false;
     ++session;
-    completion.notify_all();
+    completion.NotifyAll();
     return 0;
 }
 
@@ -82,7 +81,7 @@ std::int32_t APS5_VABI sceZlibInflate(const void* source, std::uint32_t sourceLe
     const std::uint64_t id = nextId++;
     results[id] = InflateResult{produced, status};
     completed.push_back(id);
-    completion.notify_one();
+    completion.NotifyOne();
     *requestId = id;
     return 0;
 }
@@ -93,8 +92,8 @@ std::int32_t APS5_VABI sceZlibWaitForDone(std::uint64_t* requestId, std::uint32_
     if (!requestId) return INVALID_ARGUMENT;
     const std::uint64_t waitSession = session;
     const auto finished = [waitSession] { return !completed.empty() || session != waitSession; };
-    if (!timeout) completion.wait(lock, finished);
-    else if (!completion.wait_for(lock, std::chrono::microseconds(*timeout), finished)) return TIMED_OUT;
+    if (!timeout) completion.Wait(lock, finished);
+    else if (!completion.WaitUntil(lock, TimedWait::DeadlineNanos(*timeout), finished)) return TIMED_OUT;
     if (session != waitSession) throw std::runtime_error("sceZlibWaitForDone: finalization during a wait semantics unknown");
     *requestId = completed.front();
     completed.pop_front();

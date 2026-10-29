@@ -132,7 +132,7 @@ def main():
         parser.error("The reference adapter supports Windows and Linux")
     if sys.platform == "win32" and args.toolchain is None:
         parser.error("--toolchain is required on Windows")
-    if args.timeout <= 0 or args.timeout > 30:
+    if not 0 < args.timeout <= 30:
         parser.error("--timeout must be greater than zero and at most 30 seconds")
     try:
         for name in ("build", "relinker", "toolchain", "module"):

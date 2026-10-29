@@ -93,6 +93,7 @@ struct Ngs2Port {
     Ngs2Voice* dest = nullptr;
     float volume = 1.0f;
     std::int32_t matrix = -1;
+    std::uint32_t destInput = 0;
 };
 
 struct Ngs2UserFx2 {
@@ -111,6 +112,8 @@ struct Ngs2VoiceCustomUserFx {
 struct Ngs2VoiceCustomGain {
     std::array<float, SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS> current{};
     std::array<float, SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS> target{};
+    bool configured = false;
+    bool lifecycleUnknown = false;
 };
 
 struct Ngs2Voice {
@@ -147,6 +150,12 @@ struct Ngs2Voice {
     std::array<std::uintptr_t, 3> userFxData{};
     std::uint32_t userFxFlags = 0;
     std::vector<float> samples;
+    std::vector<std::vector<float>> customBuffers;
+    std::vector<std::vector<float>> peakMeterHistory;
+    std::uint32_t peakMeterMode = 0;
+    std::uint32_t peakMeterCount = 0;
+    std::uint32_t peakMeterCursor = 0;
+    float peakHeight = 0.0f;
     bool rendering = false;
     bool rendered = false;
     bool hasSamples = false;
@@ -155,6 +164,8 @@ struct Ngs2Voice {
     void ResetSetup();
     const std::uint8_t* WaveformData() const;
     std::uint32_t InputChannels() const { return inputChannels != 0 ? inputChannels : channels; }
+    std::vector<float>& Samples(std::uint32_t buffer) { return buffer == 0 ? samples : customBuffers.at(buffer - 1); }
+    const std::vector<float>& Samples(std::uint32_t buffer) const { return buffer == 0 ? samples : customBuffers.at(buffer - 1); }
 };
 
 struct Ngs2Rack {
@@ -167,6 +178,7 @@ struct Ngs2Rack {
     std::uint32_t maxGrainSamples = 0;
     std::uint32_t maxChannelWorks = 0;
     std::uint32_t maxInputs = 0;
+    std::uint32_t peakMeterBlocks = 8;
     std::uintptr_t userData = 0;
     Ngs2ContextBufferInfo bufferInfo{};
     Ngs2BufferAllocator allocator{};
@@ -175,6 +187,7 @@ struct Ngs2Rack {
     std::vector<std::vector<std::uint8_t>> userFxCommon;
     std::vector<std::uint32_t> customModuleIds;
     std::vector<Ngs2CustomModuleInfo> customModules;
+    std::vector<std::uint32_t> customPortBuffers;
     std::thread::id lockOwner{};
     std::uint32_t lockDepth = 0;
 };
@@ -193,6 +206,7 @@ struct Ngs2System {
 std::string Ngs2Hex(std::uint32_t value);
 std::size_t Ngs2PcmSampleBytes(std::uint32_t waveformType);
 void Ngs2ReadPcmFrame(std::uint32_t waveformType, std::uint32_t channels, const std::uint8_t* frame, float* output);
+void Ngs2UpdatePeakMeter(Ngs2Voice& voice, std::uint32_t grain);
 const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block);
 std::recursive_mutex& Ngs2Mutex();
 
@@ -243,6 +257,7 @@ bool Ngs2FinishBlock(Ngs2Voice& voice);
 int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option, std::uint32_t maxInputs);
 void Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option);
 void Ngs2CleanupUserFx(Ngs2Rack& rack);
+int Ngs2ApplyCustomGainParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 void Ngs2SetReverbParams(Ngs2Voice& voice, const Ngs2ReverbI3DL2Param& params);

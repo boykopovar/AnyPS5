@@ -360,6 +360,23 @@ void BusyRetireOutlivesALaterBatch() {
     Expect(!Live(retired), "the dropped import outlived every batch of its hold");
 }
 
+void RecentImportFollowsReplacement() {
+    Heap heap;
+    ActiveRecorder active;
+    const auto context = mockContext();
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto* first = HostImportFor(context, heap.Address(), 4096);
+    Expect(first != nullptr, "the first range was not imported");
+    if (first == nullptr) return;
+    Expect(HostImportFor(context, heap.Address(), 4096) == first, "a repeated lookup did not find the same import");
+    const auto retired = first->buffer;
+    heap.Grow();
+    const auto* grown = HostImportFor(context, heap.Address(RangeBytes), 4096);
+    Expect(grown != nullptr && grown->buffer != retired, "the grown run was not imported as a new import");
+    if (grown == nullptr) return;
+    Expect(HostImportFor(context, heap.Address(), 4096) == grown, "a lookup after the replacement served the retired import instead of the one that replaced it");
+}
+
 }
 
 int main() {
@@ -374,6 +391,7 @@ int main() {
         IdleRetireOutlivesTheHold();
         BusyRetireOutlivesALaterBatch();
         AgcDriver::Tests::RunHostImportFailureTests(mockContext(), false);
+        RecentImportFollowsReplacement();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

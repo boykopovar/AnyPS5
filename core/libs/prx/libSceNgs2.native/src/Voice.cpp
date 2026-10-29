@@ -32,6 +32,10 @@ static void SendEvent(Ngs2Voice& voice, std::uint32_t eventId) {
 }
 
 void Ngs2Voice::SetEvent(std::uint32_t eventId) {
+    if (state != Ngs2PlayState::Empty &&
+        (eventId == SCE_NGS2_VOICE_EVENT_STOP || eventId == SCE_NGS2_VOICE_EVENT_STOP_IMM || eventId == SCE_NGS2_VOICE_EVENT_KILL)) {
+        for (auto& gain : customGain) if (gain.configured) gain.lifecycleUnknown = true;
+    }
     switch (eventId) {
         case SCE_NGS2_VOICE_EVENT_PLAY:
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
@@ -59,6 +63,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
 }
 
 void Ngs2Voice::ResetSetup() {
+    for (auto& gain : customGain) if (gain.configured) gain.lifecycleUnknown = true;
     ++waveformRevision;
     SetEvent(SCE_NGS2_VOICE_EVENT_STOP_IMM);
     std::fill(ports.begin(), ports.end(), Ngs2Port{});
@@ -84,6 +89,11 @@ void Ngs2Voice::ResetSetup() {
     callback = nullptr;
     callbackData = 0;
     callbackFlags = 0;
+    peakMeterHistory.clear();
+    peakMeterMode = 0;
+    peakMeterCount = 0;
+    peakMeterCursor = 0;
+    peakHeight = 0.0f;
 }
 
 const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block) {
@@ -130,13 +140,15 @@ static void SetPortMatrix(Ngs2Voice& voice, std::uint32_t port, std::int32_t mat
 
 static void Patch(Ngs2Voice& voice, const Ngs2VoicePatchParam& patch) {
     auto& port = PortAt(voice, patch.port);
-    if (patch.dest_input_id != 0) throw std::runtime_error("NGS2: voice input " + std::to_string(patch.dest_input_id) + " is not implemented");
     if (patch.dest_handle == 0) {
+        if (patch.dest_input_id != 0) throw std::runtime_error("NGS2: a disconnected port with a nonzero input id is not implemented");
         port.dest = nullptr;
+        port.destInput = 0;
         return;
     }
     auto* dest = Ngs2FindVoice(patch.dest_handle);
     if (dest == nullptr) {
+        if (patch.dest_input_id != 0) throw std::runtime_error("NGS2: a rack destination with a nonzero input id is not implemented");
         auto* rack = Ngs2FindRack(patch.dest_handle);
         if (rack != nullptr && !rack->voices.empty()) dest = &rack->voices.front();
     }
@@ -144,7 +156,12 @@ static void Patch(Ngs2Voice& voice, const Ngs2VoicePatchParam& patch) {
         dest->rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
         APS5_INVALID_ARG_EX;
     }
+    if (patch.dest_input_id != 0 &&
+        (dest->rack->rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || patch.dest_input_id >= dest->rack->maxInputs)) {
+        throw std::runtime_error("NGS2: voice input " + std::to_string(patch.dest_input_id) + " is not implemented for this rack");
+    }
     port.dest = dest;
+    port.destInput = patch.dest_input_id;
 }
 
 static void ApplyCommonParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
@@ -310,6 +327,17 @@ void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
     filter.a2 = (1.0 - alpha) * inverseA0;
 }
 
+static void SetPeakMeter(Ngs2Voice& voice, std::uint32_t detectType) {
+    if (detectType > 2) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE};
+    if (voice.peakMeterMode != detectType) {
+        voice.peakMeterHistory.clear();
+        voice.peakMeterCount = 0;
+        voice.peakMeterCursor = 0;
+        voice.peakHeight = 0.0f;
+    }
+    voice.peakMeterMode = detectType;
+}
+
 static void ApplySamplerParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     switch (param.id) {
         case SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP:
@@ -334,6 +362,7 @@ static void ApplySamplerParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& para
             break;
         }
         case SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER: Ngs2SetFilter(voice, ParamAs<Ngs2SamplerVoiceFilterParam>(param)); break;
+        case SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER: SetPeakMeter(voice, ParamAs<Ngs2VoicePeakMeterParam>(param).detect_type); break;
         default: throw std::runtime_error("NGS2: sampler voice param " + Ngs2Hex(param.id) + " is not implemented");
     }
 }
@@ -359,6 +388,10 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         case SCE_NGS2_RACK_ID_SAMPLER:
         case SCE_NGS2_RACK_ID_CUSTOM_SAMPLER: ApplySamplerParam(voice, param); return;
         case SCE_NGS2_RACK_ID_SUBMIXER:
+            if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER) {
+                SetPeakMeter(voice, ParamAs<Ngs2VoicePeakMeterParam>(param).detect_type);
+                return;
+            }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX) {
                 const auto& fx = ParamAs<Ngs2SubmixerVoiceUserFxParam>(param);
                 voice.userFxHandler = fx.handler;
@@ -421,7 +454,12 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
     auto& voice = *found;
     try {
         for (const auto* param = param_list;; param = reinterpret_cast<const Ngs2VoiceParamHeader*>(reinterpret_cast<const std::uint8_t*>(param) + param->next)) {
-            ApplyParam(voice, *param);
+            if ((param->id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN) {
+                const auto result = Ngs2ApplyCustomGainParam(voice, *param);
+                if (result != SCE_NGS2_OK) return result;
+            } else {
+                ApplyParam(voice, *param);
+            }
             if (param->next == 0) break;
         }
     } catch (const Ngs2ReturnCode& result) {
@@ -472,6 +510,7 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             sampler = {};
             sampler.voice_state.state_flags = voice.stateFlags;
             sampler.envelope_height = 1.0f;
+            sampler.peak_height = voice.peakHeight;
             sampler.num_decoded_samples = voice.decodedSamples;
             sampler.decoded_data_size = voice.decodedBytes;
             sampler.user_data = voice.blocks.empty() ? 0 : voice.blocks.front().info.user_data;
@@ -489,6 +528,7 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             auto& submixer = *reinterpret_cast<Ngs2SubmixerVoiceState*>(state);
             submixer = {};
             submixer.voice_state.state_flags = voice.stateFlags;
+            submixer.peak_height = voice.peakHeight;
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_CUSTOM_SAMPLER: {
@@ -521,6 +561,7 @@ int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t voice_handle, uint32_t port, Ngs
     info->matrix_id = source.matrix;
     info->volume = source.volume;
     info->dest_handle = reinterpret_cast<Ngs2Handle>(source.dest);
+    info->dest_input_id = source.destInput;
     return SCE_NGS2_OK;
 }
 

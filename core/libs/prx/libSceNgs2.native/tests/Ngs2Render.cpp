@@ -70,6 +70,7 @@ static void TestErrorsAndInfo() {
     named.rack_option.max_ports = 2;
     named.max_channels = 2;
     named.max_inputs = 3;
+    named.num_peak_meter_blocks = 8;
     Ngs2ContextBufferInfo namedQuery{};
     Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SUBMIXER, &named.rack_option, &namedQuery) == SCE_NGS2_OK);
     const auto namedBuffer = Buffer(namedQuery);
@@ -544,6 +545,202 @@ static void TestPcmCallbackSetup() {
             Require(state.waveform_data == callback.pcm.data() + Grain * channels);
             Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
         }
+    }
+}
+
+static void TestPeakMeter() {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 2);
+
+    const auto submixerRack = CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER);
+    const auto submixer = Voice(submixerRack);
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 2, 0});
+    Patch(submixer, master);
+    Event(submixer, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    const std::vector<std::int16_t> pcm(Grain, 16384);
+    uintptr_t samplerRack = 0;
+    const auto sampler = Sampler(system, pcm, 8, &samplerRack);
+    Patch(sampler, submixer);
+    const float levels[2] = {1.0f, 1.0f};
+    Control(sampler, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, 2, levels});
+    Control(sampler, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    const auto render = [&system] {
+        std::vector<float> out(Grain * 2, -1.0f);
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 2};
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    };
+
+    Ngs2VoicePeakMeterParam peak{{}, 1, 0};
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER, peak);
+    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER, peak);
+    render();
+    Ngs2SubmixerVoiceState submixerState{};
+    Require(sceNgs2VoiceGetState(submixer, &submixerState.voice_state, sizeof(submixerState)) == SCE_NGS2_OK);
+    Require(submixerState.peak_height == 0.5f);
+    Ngs2SamplerVoiceState samplerState{};
+    Require(sceNgs2VoiceGetState(sampler, &samplerState.voice_state, sizeof(samplerState)) == SCE_NGS2_OK);
+    Require(samplerState.peak_height == 0.5f);
+
+    peak.detect_type = 2;
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER, peak);
+    render();
+    Require(sceNgs2VoiceGetState(submixer, &submixerState.voice_state, sizeof(submixerState)) == SCE_NGS2_OK);
+    Require(submixerState.peak_height == 0.5f);
+
+    peak.detect_type = 0;
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER, peak);
+    render();
+    Require(sceNgs2VoiceGetState(submixer, &submixerState.voice_state, sizeof(submixerState)) == SCE_NGS2_OK);
+    Require(submixerState.peak_height == 0.0f);
+
+    peak.detect_type = 3;
+    peak.header = {sizeof(peak), 0, SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER};
+    Require(sceNgs2VoiceControl(submixer, &peak.header) == SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE);
+
+    Ngs2SubmixerRackOption invalid{};
+    invalid.rack_option.size = sizeof(invalid);
+    invalid.rack_option.max_grain_samples = 256;
+    invalid.rack_option.max_voices = 1;
+    invalid.max_channels = 2;
+    invalid.max_inputs = 1;
+    std::vector<std::uint64_t> storage(512);
+    Ngs2ContextBufferInfo buffer{};
+    buffer.host_buffer = storage.data();
+    buffer.host_buffer_size = storage.size() * sizeof(std::uint64_t);
+    uintptr_t rejectedRack = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, &invalid.rack_option, &buffer, &rejectedRack) == SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS);
+    invalid.num_peak_meter_blocks = 257;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, &invalid.rack_option, &buffer, &rejectedRack) == SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS);
+    invalid.num_peak_meter_blocks = 8;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, &invalid.rack_option, &buffer, &rejectedRack) == SCE_NGS2_OK);
+    Require(sceNgs2RackDestroy(rejectedRack, nullptr) == SCE_NGS2_OK);
+
+    Ngs2SamplerRackOption invalidSampler{};
+    invalidSampler.rack_option.size = sizeof(invalidSampler);
+    invalidSampler.rack_option.max_grain_samples = 256;
+    invalidSampler.rack_option.max_voices = 1;
+    invalidSampler.max_channel_works = 1;
+    uintptr_t rejectedSampler = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SAMPLER, &invalidSampler.rack_option, &buffer, &rejectedSampler) == SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS);
+    invalidSampler.num_peak_meter_blocks = 8;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SAMPLER, &invalidSampler.rack_option, &buffer, &rejectedSampler) == SCE_NGS2_OK);
+    Require(sceNgs2RackDestroy(rejectedSampler, nullptr) == SCE_NGS2_OK);
+
+    Require(sceNgs2RackDestroy(samplerRack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2RackDestroy(submixerRack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestPeakMeterHistory() {
+    const auto samplerFor = [](uintptr_t system, std::uint32_t blocks, const std::vector<std::int16_t>& pcm) {
+        Ngs2SamplerRackOption option{};
+        option.rack_option.size = sizeof(option);
+        option.rack_option.max_grain_samples = 512;
+        option.rack_option.max_voices = 1;
+        option.rack_option.max_matrices = 1;
+        option.rack_option.max_ports = 8;
+        option.max_channel_works = 1;
+        option.max_codec_caches = 1;
+        option.max_waveform_blocks = 4;
+        option.max_envelope_points = 1;
+        option.max_filters = 1;
+        option.max_atrac9_decoders = 1;
+        option.max_atrac9_channel_works = 1;
+        option.num_peak_meter_blocks = blocks;
+        Ngs2ContextBufferInfo query{};
+        Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SAMPLER, &option.rack_option, &query) == SCE_NGS2_OK);
+        const auto buffer = Buffer(query);
+        uintptr_t rack = 0;
+        Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SAMPLER, &option.rack_option, &buffer, &rack) == SCE_NGS2_OK && rack != 0);
+        const auto voice = Voice(rack);
+        Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+        const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(pcm.size()), 0, 0x55};
+        Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
+        return voice;
+    };
+
+    std::vector<std::int16_t> pcm;
+    for (int gain = 0; gain < 3; gain++) {
+        for (std::uint32_t i = 0; i < Grain; i++) pcm.push_back(static_cast<std::int16_t>(16384 >> gain));
+    }
+
+    {
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, 1);
+        const auto sampler = samplerFor(system, 2, pcm);
+        Patch(sampler, master);
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER, Ngs2VoicePeakMeterParam{{}, 2, 0});
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        Ngs2SamplerVoiceState state{};
+        const auto height = [&sampler, &state] {
+            Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+            return state.peak_height;
+        };
+        RenderI16(system);
+        Require(Near(height(), 0.5f));
+        RenderI16(system);
+        Require(Near(height(), std::sqrt(2.5f / 16.0f)));
+        RenderI16(system);
+        Require(Near(height(), std::sqrt(0.625f / 16.0f)));
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+
+    {
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, 1);
+        const auto sampler = samplerFor(system, 2, pcm);
+        Patch(sampler, master);
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER, Ngs2VoicePeakMeterParam{{}, 1, 0});
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        Ngs2SamplerVoiceState state{};
+        const auto height = [&sampler, &state] {
+            Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+            return state.peak_height;
+        };
+        RenderI16(system);
+        Require(height() == 0.5f);
+        RenderI16(system);
+        Require(height() == 0.5f);
+        RenderI16(system);
+        Require(height() == 0.25f);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+
+    {
+        std::vector<std::int16_t> half(Grain, 0);
+        for (std::uint32_t i = 0; i < Grain / 2; i++) half[i] = static_cast<std::int16_t>(16384);
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, 1);
+        const auto sampler = samplerFor(system, 2, half);
+        Patch(sampler, master);
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER, Ngs2VoicePeakMeterParam{{}, 2, 0});
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        Ngs2SamplerVoiceState state{};
+        const auto height = [&sampler, &state] {
+            Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+            return state.peak_height;
+        };
+        RenderI16(system);
+        Require(Near(height(), std::sqrt(0.125f)));
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+        Require(height() == 0.0f);
+        const Ngs2WaveformBlock block{0, half.size() * sizeof(std::int16_t), 0, 0, Grain, 0, 0x55};
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, half.data(), 0, 1, &block});
+        Patch(sampler, master);
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        RenderI16(system);
+        Require(height() == 0.0f);
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, half.data(), 0, 1, &block});
+        Patch(sampler, master);
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER, Ngs2VoicePeakMeterParam{{}, 2, 0});
+        RenderI16(system);
+        Require(Near(height(), std::sqrt(0.125f)));
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
     }
 }
 
@@ -1796,6 +1993,8 @@ int main() {
     TestPan();
     TestPanExplicitAnglesAndNanDistance();
     TestPitchAndRepeat();
+    TestPeakMeter();
+    TestPeakMeterHistory();
     TestSubmixerMatrix();
     TestReverb();
     TestReverbSetup();
