@@ -45,6 +45,7 @@ std::array<bool, PAD_MAX_CONTROLLERS> g_everOpened{false};
 bool g_remoteOpened = false;
 std::array<int, PAD_SPECIAL_HANDLE_COUNT> g_specialUsers{};
 std::atomic_bool g_initialized{false};
+std::atomic_bool g_bondUpdateInitialized{false};
 
 bool SpecialHandle(int handle) {
     const int slot = handle - PAD_SPECIAL_HANDLE;
@@ -1160,43 +1161,56 @@ int APS5_VABI scePadSetMuteLed(std::int32_t handle, std::uint32_t mode) {
 }
 
 int APS5_VABI scePadBondUpdateInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    g_bondUpdateInitialized.store(true, std::memory_order_release);
+    return PAD_OK;
 }
 
 int APS5_VABI scePadBondUpdateIsReady(std::int32_t deviceId, std::int32_t* ready) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)deviceId;
+    if (!g_bondUpdateInitialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (ready == nullptr) return PAD_ERROR_INVALID_ARG;
+    *ready = 0;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadBondUpdateStart(std::int32_t handle, const PadUpdateParameter* parameter) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_bondUpdateInitialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (parameter == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
 
 int APS5_VABI scePadBondUpdateGetStatus(std::int32_t deviceId, std::int32_t* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)deviceId;
+    if (!g_bondUpdateInitialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    *status = 0;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadBondUpdateSendData(std::int32_t deviceId, const PadUpdateData* data) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)deviceId;
+    if (!g_bondUpdateInitialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (data == nullptr) return PAD_ERROR_INVALID_ARG;
+    return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
 
 int APS5_VABI scePadBondUpdateResetBond(std::int32_t deviceId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)deviceId;
+    if (!g_bondUpdateInitialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
 
 int APS5_VABI scePadBondUpdateGetReconnectStatus(std::int32_t* status) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_bondUpdateInitialized.load(std::memory_order_acquire)) return PAD_ERROR_NOT_INITIALIZED;
+    if (status == nullptr) return PAD_ERROR_INVALID_ARG;
+    *status = 0;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadBondUpdateTerm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    g_bondUpdateInitialized = false;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadControllerUpdateInit(void) {
