@@ -3191,7 +3191,10 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS
     return TransactionNotStarted;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBase14getHeaderValueEPKcRNS2_12IntrusivePtrINS2_6StringEEE() {
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBase14getHeaderValueEPKcRNS2_12IntrusivePtrINS2_6StringEEE(const CommonResponseHeaderBase* self, const char* name, IntrusivePtr* value) {
+    (void)name;
+    (void)value;
+    if (self->headers == nullptr) return ParameterBodyMissing;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -3285,6 +3288,25 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_18ResponseHeaderB
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_18ResponseHeaderBaseEEptEv(const IntrusivePtr* self) {
     return self->object;
+}
+
+static_assert(sizeof(CommonResponseHeaderBase) == 0x10 && offsetof(CommonResponseHeaderBase, headers) == 0x08);
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBaseC1Ev(CommonResponseHeaderBase* self) {
+    self->referenceCount = 0;
+    self->headers = nullptr;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBaseC2Ev(CommonResponseHeaderBase* self) {
+    _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBaseC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBaseD1Ev(CommonResponseHeaderBase* self) {
+    (void)self;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common18ResponseHeaderBaseD2Ev(CommonResponseHeaderBase* self) {
+    (void)self;
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6StringEE3getEv(const IntrusivePtr* self) {
