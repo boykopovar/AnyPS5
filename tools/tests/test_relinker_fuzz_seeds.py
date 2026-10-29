@@ -34,6 +34,15 @@ class RelinkerFuzzSeedsTests(unittest.TestCase):
                 self.assertIn(data[0], relinker_fuzz_seeds.SELECTORS)
                 self.assertGreaterEqual(len(data), 65)
 
+    def test_creates_nested_parent_directories_and_writes_seeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "nested" / "deep" / "seeds"
+            code, stdout, stderr = self.run_main(output)
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertTrue(output.is_dir())
+            self.assertGreater(len(list(output.iterdir())), 0)
+
     def test_rejects_existing_file_output(self):
         with tempfile.TemporaryDirectory() as directory:
             existing = Path(directory) / "existing.bin"
