@@ -49,7 +49,9 @@ int main() {
     Require(sceNpWebApi2AddWebTraceTag(request, "trace-tag-1") == 0);
     Require(sceNpWebApi2AddWebTraceTag(request, nullptr) == static_cast<int>(0x80553402));
     Require(sceNpWebApi2DeleteRequest(request) == 0);
+    Require(sceNpWebApi2Terminate(-1) == invalidContext);
     Require(sceNpWebApi2Terminate(context) == 0);
+    Require(sceNpWebApi2Terminate(context) == invalidContext);
     Require(sceNpWebApi2GetMemoryPoolStats(context, &stats) == invalidContext);
     Require(sceNpWebApi2PushEventAbortHandle(context, handle) == invalidContext);
     Require(sceNpWebApi2PushEventSetHandleTimeout(context, handle, 30000) == invalidContext);
