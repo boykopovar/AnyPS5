@@ -1710,9 +1710,8 @@ int APS5_VABI sceKernelSetVmContainer(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelSettimeofday(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelSettimeofday(const KernelTimeval* tv, const KernelTimezone* tz) {
+    return settimeofday_nid_postfix(tv, tz) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 }
 
 int APS5_VABI sceKernelSflashGetWritePrio(void) {

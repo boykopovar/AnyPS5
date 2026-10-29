@@ -2582,6 +2582,80 @@ void ProtectTablePage(std::uintptr_t page, std::uint32_t protection) {
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(page, 4096u);
 }
 
+void verifyRegionMerge(bool strided = false, bool benchmark = false) {
+    using namespace ShaderRecompiler;
+    constexpr std::size_t SlotBytes = 8192;
+    constexpr std::size_t TableBytes = 4096;
+    const std::size_t stride = strided ? 64u : 32u;
+    constexpr std::size_t MaximumBlocks = 64;
+    constexpr std::size_t Bytes = (MaximumBlocks + 8u) * SlotBytes;
+    auto* heap = AllocateWatchedTable(Bytes);
+    struct Release {
+        void* pointer;
+        ~Release() { GuestArena::GuestArenaRelease_nid_postfix(pointer, Bytes); }
+    } release{heap};
+    std::vector<TableGuest> guests(MaximumBlocks);
+    std::vector<std::array<std::uint32_t, 2>> userData(MaximumBlocks);
+    for (std::size_t block = 0; block < MaximumBlocks; ++block) {
+        auto* table = heap + block * SlotBytes / sizeof(std::uint32_t);
+        for (std::size_t record = 0; record < TableBytes / stride; ++record) {
+            const auto words = TableT(reinterpret_cast<const void*>(0x100000000ull + record * 256u), TableFormat8888UNorm, TableType2D, 1u);
+            std::copy(words.begin(), words.end(), table + record * stride / sizeof(std::uint32_t));
+        }
+        FillTableSrt(guests[block], table, stride, TableBytes / stride);
+        userData[block] = TableUserData(guests[block]);
+    }
+    const bool watched = AgcDriver::GuestMemory::CollectWrites(reinterpret_cast<std::uintptr_t>(heap), Bytes) != 0u;
+    for (const std::size_t count : {0u, 1u, 2u, 3u, 7u, 8u, 16u, 64u}) {
+        std::vector<MemoryRegion> initial;
+        for (std::size_t block = 0; block <= count; ++block) {
+            for (std::size_t offset = TableBytes; offset < SlotBytes; offset += 64u) {
+                auto* word = heap + (block * SlotBytes + offset) / sizeof(std::uint32_t);
+                *word = static_cast<std::uint32_t>(block * SlotBytes + offset);
+                initial.push_back({reinterpret_cast<std::uintptr_t>(word), std::as_bytes(std::span(word, 1))});
+            }
+        }
+        AgcDriver::ShaderMemory memory(initial);
+        for (std::size_t position = 0; position < count; ++position) {
+            const auto block = (position * (count > 1u ? count - 1u : 1u)) % count;
+            const auto request = TableRequest(TableWholeCode, userData[block]);
+            {
+                AgcDriver::ShaderMemory warm({});
+                static_cast<void>(warm.Capture(request));
+            }
+            static_cast<void>(memory.Capture(request));
+        }
+        if (watched) require(memory.SuppliedBlocks().size() == count, "region merge: the fixture did not retain every shared table");
+        const auto verify = [&](const std::vector<MemoryRegion>& regions, bool recent) {
+            for (std::size_t index = 0; index < regions.size(); ++index) {
+                const auto& region = regions[index];
+                require(index == 0u || regions[index - 1u].guestAddress + regions[index - 1u].bytes.size() <= region.guestAddress, "region merge: regions were reordered or duplicated");
+                require(std::memcmp(region.bytes.data(), reinterpret_cast<const void*>(region.guestAddress), region.bytes.size()) == 0, "region merge: collected words changed");
+            }
+            for (std::size_t block = 0; block < count; ++block) {
+                for (std::size_t record = 0; record < TableBytes / stride; ++record) require(TableCovered(regions, heap + (block * SlotBytes + record * stride) / sizeof(std::uint32_t), 32u), "region merge: a shared table record was omitted");
+            }
+            for (const auto& entry : initial) require(TableCovered(regions, reinterpret_cast<const std::uint32_t*>(entry.guestAddress), entry.bytes.size()) != recent, "region merge: initial-region visibility changed");
+        };
+        const auto regions = memory.Regions();
+        verify(regions, false);
+        verify(memory.TakeRecentRegions(), true);
+        require(memory.TakeRecentRegions().empty(), "region merge: recent regions were not reset");
+        verify(memory.Regions(), false);
+        if (!strided && benchmark) {
+            constexpr std::size_t Iterations = 1000;
+            std::size_t total = 0;
+            const auto started = std::chrono::steady_clock::now();
+            for (std::size_t iteration = 0; iteration < Iterations; ++iteration) total += memory.Regions().size();
+            const auto elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count();
+            require(total == Iterations * regions.size(), "region merge: repeated collection changed coverage");
+            std::printf("region-merge blocks=%zu regions=%zu iterations=%zu us_per_call=%.3f\n", count, regions.size(), Iterations, elapsed / Iterations);
+        }
+    }
+    std::puts("region merge: mixed initial, captured and shared regions retain order, coverage and recent-read semantics");
+}
+
+
 void verifyTableSnapshotReuse() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -8872,6 +8946,33 @@ void verifyGuardedNullPointers() {
     }
     root[4] = 1u;
 
+    auto belowCode = branchCode;
+    belowCode[12] = 0xfa1ffffcu;
+    belowCode.push_back(0xbf810000u);
+    NestedRequest below(belowCode, root.data());
+    point(payloadAddress + 4u);
+    AgcDriver::ShaderMemory belowMemory({});
+    const auto belowValid = belowMemory.Capture(below.request);
+    require(belowValid->snapshot.srtPoison.empty() && belowValid->snapshot.flattenedSrt.at(belowValid->plan->guardedSrtSlots.at(0)) == payload, "guarded pointer: a read below a mapped nested pointer does not hold its word");
+    for (const auto condition : {1u, 0u}) {
+        point(0u);
+        root[4] = condition;
+        below.request.context.memory = {};
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(below.request);
+        const auto& poison = capture->snapshot.srtPoison;
+        require(poison.size() == condition, "guarded pointer: a read below a null nested pointer was poisoned on a path that skips it, or not poisoned on one that takes it");
+        if (condition != 0u) {
+            require(poison[0].pc == 0x2cu && poison[0].address == 0xfffffffffffcu && slotPc(*capture->plan, poison[0].slot) == 0x2cu, "guarded pointer: a read below a null nested pointer was not poisoned at its pc and wrapped address");
+            require(GuardRecords(*capture), "guarded pointer: the poison record of a read below a null pointer is not where the guard reads it");
+        }
+        const auto regions = memory.Regions();
+        below.request.context.memory = regions;
+        const auto result = Recompile(below.request, *capture);
+        require(result->poisonedSrtReads == condition && faultBinding(*result), "guarded pointer: a read below a null pointer does not report through the fault buffer");
+    }
+    root[4] = 1u;
+
     NestedRequest chain(chainCode, root.data());
     point(unmapped);
     AgcDriver::ShaderMemory chainMemory({});
@@ -9386,6 +9487,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-masked") {
             verifyResultMemoBudgetMasked();
             std::cout << "The result memo budget counts and trims the masked table's entries\n";
+            return 0;
+        }
+        if (argc == 2 && (std::string_view(argv[1]) == "--region-merge" || std::string_view(argv[1]) == "--region-merge-bench")) {
+            verifyRegionMerge(false, std::string_view(argv[1]) == "--region-merge-bench");
+            verifyRegionMerge(true);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-threads") {

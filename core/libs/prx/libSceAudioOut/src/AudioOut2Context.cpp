@@ -19,6 +19,7 @@
 #include "AudioOutShutdown.hpp"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "prx/libScePad/include/PadRumbleIntensity.hpp"
 
 using Clock = std::chrono::steady_clock;
 
@@ -203,7 +204,7 @@ static void UpdatePadDevice(AudioOut2Context& context, Clock::time_point now) {
 }
 
 static void QueuePadGrain(AudioOut2Context& context) {
-    AudioOut2WritePadFrames(context.padMix.data(), context.padLayout, context.padFrames.data(), context.grain);
+    AudioOut2WritePadFrames(context.padMix.data(), context.padLayout, context.padFrames.data(), context.grain, Pad::RumblePercent());
     const auto frameBytes = static_cast<std::uint32_t>(context.padLayout.channels * sizeof(float));
     const auto grainBytes = context.grain * frameBytes;
     const auto cushionBytes = CUSHION_MS * (AUDIO_OUT2_SAMPLE_RATE / 1000) * frameBytes;
