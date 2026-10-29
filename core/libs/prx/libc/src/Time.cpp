@@ -598,7 +598,7 @@ size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* 
 }
 
 char* APS5_VABI asctime_r_nid_postfix(const GuestTm* timeptr, char* buffer) {
-    if (buffer == nullptr) return nullptr;
+    if (buffer == nullptr) throw std::invalid_argument("asctime_r: null buffer");
     if (timeptr == nullptr) {
         errno = EINVAL;
         std::memcpy(buffer, "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));

@@ -503,7 +503,13 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(asctime_r_nid_postfix(nullptr, asctimeBuffer) == asctimeBuffer && std::strcmp(asctimeBuffer, "??? ??? ?? ??:??:?? ????\n") == 0
         && *__error_nid_postfix() == 22, "asctime_r of a null time did not report it");
-    Require(asctime_r_nid_postfix(&roundTrip, nullptr) == nullptr, "asctime_r accepted a null buffer");
+    bool nullBufferThrew = false;
+    try {
+        asctime_r_nid_postfix(&roundTrip, nullptr);
+    } catch (const std::invalid_argument&) {
+        nullBufferThrew = true;
+    }
+    Require(nullBufferThrew, "asctime_r accepted a null buffer");
     {
         std::barrier finish(3);
         std::array<const char*, 2> texts{};
