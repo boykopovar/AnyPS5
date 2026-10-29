@@ -1,5 +1,6 @@
 #include "prx/libSceSystemService/DateTimeLocale.hpp"
 #include <cstdio>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -230,6 +231,97 @@ void RequireNoticeText() {
     Require(notices[3] == "ANYPS5_TIME_FORMAT=auto: the time pattern \"%p %T\" of test host has no console time format; using 24-hour (1)", "unmapped time notice: " + notices[3]);
 }
 
+struct FakeLocale {
+    const char* name;
+    const char* date;
+    const char* time;
+};
+
+constexpr FakeLocale FakeLocales[] = {
+    {"en_US.UTF-8", "%m/%d/%Y", "%r"},
+    {"en_GB.UTF-8", "%d/%m/%y", "%T"},
+    {"de_DE.UTF-8", "%d.%m.%Y", "%T"},
+    {"fr_FR.UTF-8", "%d/%m/%Y", "%T"},
+    {"hu_HU.UTF-8", "%Y-%m-%d", "%H:%M:%S"},
+    {"sv_SE.UTF-8", "%Y-%m-%d", "%H:%M:%S"},
+    {"ja_JP.UTF-8", "%Y\xE5\xB9\xB4%m\xE6\x9C\x88%d\xE6\x97\xA5", "%H\xE6\x99\x82%M\xE5\x88\x86%S\xE7\xA7\x92"},
+    {"ko_KR.UTF-8", "%Y\xEB\x85\x84 %m\xEC\x9B\x94 %d\xEC\x9D\xBC", "%H\xEC\x8B\x9C %M\xEB\xB6\x84 %S\xEC\xB4\x88"},
+    {"en_CA.UTF-8", "%Y-%m-%d", "%r"},
+};
+
+SystemServiceDateTime::HostPatterns PosixHost(const std::map<std::string, std::string>& variables) {
+    return SystemServiceDateTime::PosixHostPatterns(
+        [&variables](const char* name) -> const char* {
+            const auto found = variables.find(name);
+            return found == variables.end() ? nullptr : found->second.c_str();
+        },
+        [](const std::string& name) {
+            SystemServiceDateTime::LangInfo info;
+            for (const auto& fake : FakeLocales) {
+                if (name != fake.name) continue;
+                info.available = true;
+                info.dateFormat = fake.date;
+                info.timeFormat = fake.time;
+            }
+            return info;
+        });
+}
+
+void RequirePosixPick(const std::map<std::string, std::string>& variables, int date, int time, const std::string& what) {
+    const auto host = PosixHost(variables);
+    Require(host.available, what + ": available (" + host.source + ")");
+    std::vector<std::string> notices;
+    const auto notice = [&notices](const std::string& line) { notices.push_back(line); };
+    Require(SystemServiceDateTime::ResolveHostDateFormat(host, notice) == date, what + ": date format");
+    Require(SystemServiceDateTime::ResolveHostTimeFormat(host, notice) == time, what + ": time format");
+    Require(notices.empty(), what + ": no notice");
+}
+
+void RequirePosixUnavailable(const std::map<std::string, std::string>& variables, const std::string& source, const std::string& what) {
+    const auto host = PosixHost(variables);
+    Require(!host.available, what + ": unavailable");
+    Require(host.source == source, what + ": source \"" + host.source + "\", expected \"" + source + "\"");
+}
+
+void RequirePosixSource() {
+    using namespace SystemServiceDateTime;
+    RequirePosixPick({{"LANG", "en_US.UTF-8"}}, DATE_FORMAT_MMDDYYYY, TIME_FORMAT_12HOUR, "en_US");
+    RequirePosixPick({{"LANG", "en_GB.UTF-8"}}, DATE_FORMAT_DDMMYYYY, TIME_FORMAT_24HOUR, "en_GB");
+    RequirePosixPick({{"LANG", "de_DE.UTF-8"}}, DATE_FORMAT_DDMMYYYY, TIME_FORMAT_24HOUR, "de_DE");
+    RequirePosixPick({{"LANG", "fr_FR.UTF-8"}}, DATE_FORMAT_DDMMYYYY, TIME_FORMAT_24HOUR, "fr_FR");
+    RequirePosixPick({{"LANG", "hu_HU.UTF-8"}}, DATE_FORMAT_YYYYMMDD, TIME_FORMAT_24HOUR, "hu_HU");
+    RequirePosixPick({{"LANG", "sv_SE.UTF-8"}}, DATE_FORMAT_YYYYMMDD, TIME_FORMAT_24HOUR, "sv_SE");
+    RequirePosixPick({{"LANG", "ja_JP.UTF-8"}}, DATE_FORMAT_YYYYMMDD, TIME_FORMAT_24HOUR, "ja_JP");
+    RequirePosixPick({{"LANG", "ko_KR.UTF-8"}}, DATE_FORMAT_YYYYMMDD, TIME_FORMAT_24HOUR, "ko_KR");
+    RequirePosixPick({{"LANG", "en_CA.UTF-8"}}, DATE_FORMAT_YYYYMMDD, TIME_FORMAT_12HOUR, "en_CA mixes year-first dates with a 12-hour clock");
+    RequirePosixPick({{"LC_ALL", "de_DE.UTF-8"}, {"LC_TIME", "en_US.UTF-8"}, {"LANG", "ja_JP.UTF-8"}}, DATE_FORMAT_DDMMYYYY, TIME_FORMAT_24HOUR, "LC_ALL wins");
+    RequirePosixPick({{"LC_TIME", "en_US.UTF-8"}, {"LANG", "ja_JP.UTF-8"}}, DATE_FORMAT_MMDDYYYY, TIME_FORMAT_12HOUR, "LC_TIME beats LANG");
+    RequirePosixPick({{"LC_ALL", ""}, {"LC_TIME", ""}, {"LANG", "en_US.UTF-8"}}, DATE_FORMAT_MMDDYYYY, TIME_FORMAT_12HOUR, "empty LC_ALL and LC_TIME are skipped");
+    RequirePosixPick({{"LC_MESSAGES", "ja_JP.UTF-8"}, {"LANGUAGE", "ja"}, {"LANG", "en_GB.UTF-8"}}, DATE_FORMAT_DDMMYYYY, TIME_FORMAT_24HOUR, "other variables are ignored");
+    RequirePosixUnavailable({}, "none of LC_ALL, LC_TIME and LANG is set", "nothing set");
+    RequirePosixUnavailable({{"LANG", ""}}, "none of LC_ALL, LC_TIME and LANG is set", "empty LANG");
+    RequirePosixUnavailable({{"LANG", "C"}}, "LANG is \"C\", the C locale", "C");
+    RequirePosixUnavailable({{"LANG", "POSIX"}}, "LANG is \"POSIX\", the C locale", "POSIX");
+    RequirePosixUnavailable({{"LANG", "C.UTF-8"}}, "LANG is \"C.UTF-8\", the C locale", "C.UTF-8");
+    RequirePosixUnavailable({{"LC_ALL", "C"}, {"LANG", "de_DE.UTF-8"}}, "LC_ALL is \"C\", the C locale", "LC_ALL C beats LANG");
+    RequirePosixUnavailable({{"LC_TIME", "POSIX.UTF-8"}, {"LANG", "de_DE.UTF-8"}}, "LC_TIME is \"POSIX.UTF-8\", the C locale", "POSIX codeset");
+    RequirePosixUnavailable({{"LANG", "C@x"}}, "LANG is \"C@x\", the C locale", "C with a modifier");
+    RequirePosixUnavailable({{"LANG", "xx_YY.UTF-8"}}, "the locale \"xx_YY.UTF-8\" from LANG is not installed", "unknown locale");
+    RequirePosixUnavailable({{"LC_TIME", "xx_YY"}, {"LANG", "de_DE.UTF-8"}}, "the locale \"xx_YY\" from LC_TIME is not installed", "unknown LC_TIME is not skipped");
+    RequirePosixUnavailable({{"LANG", "Cx"}}, "the locale \"Cx\" from LANG is not installed", "C prefix without a separator");
+    RequirePosixUnavailable({{"LANG", "POSIXLY"}}, "the locale \"POSIXLY\" from LANG is not installed", "POSIX prefix without a separator");
+}
+
+#if !defined(_WIN32) && !defined(__APPLE__)
+void RequireRealLangInfo() {
+    const auto c = SystemServiceDateTime::ReadLangInfo("C");
+    Require(c.available, "the C locale reads");
+    Require(c.dateFormat == "%m/%d/%y", "C D_FMT is " + c.dateFormat);
+    Require(c.timeFormat == "%H:%M:%S", "C T_FMT is " + c.timeFormat);
+    Require(!SystemServiceDateTime::ReadLangInfo("no_SUCH_locale.nothing").available, "an unknown locale does not read");
+}
+#endif
+
 }
 
 int main() {
@@ -243,6 +335,10 @@ int main() {
     RequireLdmlTimesWithoutConsoleFormat();
     RequireResolver();
     RequireNoticeText();
+    RequirePosixSource();
+#if !defined(_WIN32) && !defined(__APPLE__)
+    RequireRealLangInfo();
+#endif
     if (failures != 0) return 1;
     std::puts("system service date and time locale: all checks passed");
     return 0;
