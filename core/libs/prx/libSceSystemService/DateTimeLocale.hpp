@@ -1,13 +1,16 @@
 #ifndef CORE_LIBS_PRX_LIBSCESYSTEMSERVICE_DATETIMELOCALE_HPP
 #define CORE_LIBS_PRX_LIBSCESYSTEMSERVICE_DATETIMELOCALE_HPP
 
+#include <cstdlib>
 #include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#if !defined(_WIN32) && !defined(__APPLE__)
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <langinfo.h>
 #include <locale.h>
 #endif
@@ -218,7 +221,7 @@ inline HostPatterns PosixHostPatterns(const Environment& environment, const Lang
     return host;
 }
 
-#if !defined(_WIN32) && !defined(__APPLE__)
+#if !defined(_WIN32)
 inline LangInfo ReadLangInfo(const std::string& name) {
     locale_t locale = newlocale(LC_TIME_MASK, name.c_str(), static_cast<locale_t>(nullptr));
     if (locale == static_cast<locale_t>(nullptr)) return {};
@@ -227,6 +230,36 @@ inline LangInfo ReadLangInfo(const std::string& name) {
     return info;
 }
 #endif
+
+#if defined(_WIN32)
+inline std::string WindowsLocaleText(LCTYPE type) {
+    wchar_t wide[160];
+    const int wideLength = GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, type, wide, static_cast<int>(sizeof(wide) / sizeof(wide[0])));
+    if (wideLength <= 1) return {};
+    char narrow[480];
+    const int narrowLength = WideCharToMultiByte(CP_UTF8, 0, wide, wideLength - 1, narrow, static_cast<int>(sizeof(narrow)), nullptr, nullptr);
+    if (narrowLength <= 0) return {};
+    return std::string(narrow, static_cast<std::size_t>(narrowLength));
+}
+
+inline HostPatterns WindowsHostPatterns() {
+    HostPatterns host;
+    host.syntax = PatternSyntax::Ldml;
+    host.date = WindowsLocaleText(LOCALE_SSHORTDATE);
+    host.time = WindowsLocaleText(LOCALE_STIMEFORMAT);
+    host.available = !host.date.empty() && !host.time.empty();
+    host.source = host.available ? "the Windows user locale" : "GetLocaleInfoEx gave no short date or time format for the Windows user locale";
+    return host;
+}
+#endif
+
+inline HostPatterns HostPatternsOfThisHost() {
+#if defined(_WIN32)
+    return WindowsHostPatterns();
+#else
+    return PosixHostPatterns([](const char* name) { return std::getenv(name); }, ReadLangInfo);
+#endif
+}
 
 }
 
