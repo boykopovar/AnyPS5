@@ -173,6 +173,16 @@ std::int64_t DescriptorLowWater(const KernelEvent& change) {
     return change.data;
 }
 
+void RejectEdgeWriteMark(const KernelEvent& change, std::int64_t lowWater) {
+    if (change.filter != EVFILT_WRITE || lowWater <= 1) {
+        return;
+    }
+    const int family = GuestSockets::Family(static_cast<int>(change.ident));
+    if ((family == 2 || family == 28) && GuestSockets::Type(static_cast<int>(change.ident)) == 1) {
+        NotImplemented_nid_no_patch("kevent: EV_CLEAR EVFILT_WRITE with NOTE_LOWAT above 1 on a TCP socket");
+    }
+}
+
 int AddStandardInputKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
     KernelEqueueEvent event{};
     event.event = change;
@@ -323,6 +333,9 @@ int AddDescriptorKnote(const KernelEqueueRef& queue, KernelEvent& change, std::u
         return GUEST_EPIPE;
     }
     const auto lowWater = DescriptorLowWater(change);
+    if ((flags & EV_CLEAR) != 0) {
+        RejectEdgeWriteMark(change, lowWater);
+    }
     auto event = EqueueDescriptorEvent(descriptor, change.filter, flags, change.udata);
     event.lowWater = lowWater;
     if ((flags & EV_CLEAR) != 0) {
@@ -442,6 +455,9 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
         RequireVnodeNotes(change.fflags);
     }
     return GuestErrno(queue->EditEvent(change.ident, change.filter, [&change, descriptor, lowWater](KernelEqueueEvent& event) {
+        if (event.filter.pollFunc == PollEdge) {
+            RejectEdgeWriteMark(change, lowWater);
+        }
         event.event.udata = change.udata;
         if (descriptor) {
             event.lowWater = lowWater;
