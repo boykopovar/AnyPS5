@@ -1,6 +1,8 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceNet/include/Net.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
+#include <cerrno>
 #include <climits>
 #include <cstdio>
 #include <cstring>
@@ -19,7 +21,13 @@ int APS5_VABI FileRead(Bio* bio, char* data, int size) {
     if (!bio->data || size < 0 || (size && !data)) return -1;
     auto* stream = static_cast<FileStream*>(bio->data);
     const auto count = fread_nid_postfix(data, 1, static_cast<std::size_t>(size), stream);
-    return size > 0 && count == 0 && ferror_nid_postfix(stream) != 0 ? -1 : static_cast<int>(count);
+    const int readError = errno;
+    if (size > 0 && count == 0 && ferror_nid_postfix(stream) != 0) {
+        LibreSslPutError_nid_no_patch(2, 0, readError, __FILE__, __LINE__);
+        LibreSslPutError_nid_no_patch(32, 0, 2, __FILE__, __LINE__);
+        return -1;
+    }
+    return static_cast<int>(count);
 }
 
 int APS5_VABI FilePuts(Bio* bio, const char* data) {
