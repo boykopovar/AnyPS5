@@ -392,7 +392,6 @@ public:
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
     VkDeviceSize AllocationBytes() const { return memoryBytes; }
     bool AnyLayerPending() const;
-    void SupersedeHandedOver();
 
 private:
     std::atomic<std::uint64_t> provedEpoch{0};

@@ -2268,7 +2268,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         const auto keysStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         keys = handOverKeys.has_value() ? *handOverKeys : ProvedKeys();
         if (profile && descriptor.dccAddress != 0) LookupOutcomes::Add(LookupOutcomes::DccScan, keysStart);
-        if (keys != uploadedKeys || handOverKeys.has_value()) {
+        if (keys != uploadedKeys) {
             changed.assign(trackedLayers, true);
             unchanged = false;
             keysChanged = true;
@@ -5760,10 +5760,6 @@ std::optional<DccKeys> StorageTexture::clearHandOver() {
 
 bool StorageTexture::AnyLayerPending() const {
     return anyLayerPending();
-}
-
-void StorageTexture::SupersedeHandedOver() {
-    if (!handedOver.empty() || !handedUnits.empty()) supersedeHandedOver(0, trackedLayers);
 }
 
 void StorageTexture::supersedeHandedOver(std::uint32_t first, std::uint32_t count) {

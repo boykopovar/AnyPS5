@@ -836,10 +836,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             // (filled and uploaded on the CPU, then replaced by a view once results are pending: two
             // 4K uploads per clear at the movie stage) serves the surface otherwise, as before.
             auto candidate = sampledStorageSource(context, resource, guestBytes);
-            if (candidate != nullptr && candidate->Descriptor().dccAddress == resource.dccAddress) {
-                candidate->SupersedeHandedOver();
-                source = std::move(candidate);
-            }
+            if (candidate != nullptr && candidate->Descriptor().dccAddress == resource.dccAddress) source = std::move(candidate);
         }
         scanned.reset();
         // The lookup's Refresh may have flushed another image's results over the memory (which

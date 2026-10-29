@@ -11337,7 +11337,10 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
                 words[7] = static_cast<std::uint32_t>(meta >> 8u);
                 const auto sampled = CachedSampledTexture(context, words);
                 Require(sampled != nullptr && sampled->ViewsStorageImage() && sampled->SharedStorageSource() == imageB, where + ": B sampled under clear keys did not view B's cleared storage image");
-                if (on && watched) Require(std::all_of(memory, memory + 2 * 65536, [](std::uint8_t value) { return value == 0x55; }), where + ": sampling B stored A's results over B");
+                if (on && watched) {
+                    Require(std::all_of(memory, memory + 2 * 65536, [](std::uint8_t value) { return value == 0x55; }), where + ": sampling B stored A's results over B");
+                    Require(filled(readMemory(address, 65536), red), where + ": reading A's memory after B was sampled, before B wrote, did not see A's results");
+                }
             }
             draw(imageB, {{0.0f, 1.0f, 0.0f, 1.0f}});
             Require(StorageTexture::FlushPending(address, bytes, nullptr, "clear-key hand-over test", PublishScope::Whole), where + ": nothing was pending at the end");
@@ -11367,7 +11370,8 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
             Require(on.handOvers == 0, name + ": results were handed over in memory the write tracker does not watch");
             continue;
         }
-        if (order == Order::Superseded || order == Order::SampledClear) Require(on.superseded == 2, name + ": B's results did not drop A's two units under B (dropped " + std::to_string(on.superseded) + ")");
+        if (order == Order::Superseded) Require(on.superseded == 2, name + ": B's results did not drop A's two units under B (dropped " + std::to_string(on.superseded) + ")");
+        if (order == Order::SampledClear && watched) Require(on.superseded == 1, name + ": B's write did not drop only A's remaining unit after the sample-time read (dropped " + std::to_string(on.superseded) + ")");
         if (order == Order::ReadFirst) Require(on.superseded <= 1, name + ": a unit stored by the read was dropped again");
     }
     std::cout << what << ": ok\n";
