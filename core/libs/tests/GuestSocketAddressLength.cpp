@@ -86,6 +86,17 @@ void LongAddressesAndOtherFamiliesFail() {
         Require(Fails(bind_nid_postfix(datagram, address.data(), 16), ErrorAddressFamilyNotSupported), "bind of another family on an AF_INET socket must fail with EAFNOSUPPORT (47)");
     }
     address[1] = 28;
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    Require(stream >= 0, "socket failed");
+    for (const int socket : {datagram, stream}) {
+        for (const std::uint32_t length : {10u, 28u}) {
+            Require(Fails(bind_nid_postfix(socket, address.data(), length), ErrorInvalid), "bind on an AF_INET socket checks the length before the family");
+            Require(Fails(connect_nid_postfix(socket, address.data(), length), ErrorInvalid), "connect on an AF_INET socket checks the length before the family");
+        }
+        Require(Fails(bind_nid_postfix(socket, address.data(), 16), ErrorAddressFamilyNotSupported), "bind of AF_INET6 with the AF_INET length fails with EAFNOSUPPORT (47)");
+        Require(Fails(connect_nid_postfix(socket, address.data(), 16), ErrorAddressFamilyNotSupported), "connect of AF_INET6 with the AF_INET length fails with EAFNOSUPPORT (47)");
+    }
+    Require(close_nid_postfix(stream) == 0, "close failed");
     Require(Fails(sendto_nid_postfix(datagram, "x", 1, 0, address.data(), 28), ErrorInvalid), "sendto checks the length before the family");
     Require(Fails(sendto_nid_postfix(datagram, "x", 1, 0, address.data(), 16), ErrorAddressFamilyNotSupported), "sendto of another family fails with EAFNOSUPPORT (47)");
     address[1] = 2;

@@ -11,4 +11,5 @@
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
+#include "prx/libkernel/Socket/include/SocketOptions.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"

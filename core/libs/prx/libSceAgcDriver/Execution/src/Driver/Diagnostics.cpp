@@ -88,16 +88,36 @@ bool SkipRefusedDraws() {
     return skip;
 }
 
+namespace {
+
+struct RefusedShaders {
+    std::mutex mutex;
+    std::set<std::uint64_t> reported;
+};
+
+RefusedShaders& refusedShaders() {
+    static RefusedShaders shaders;
+    return shaders;
+}
+
+}
+
 void ReportRefusedDraw(const RefusedDraw& refused) {
-    static std::mutex reportedMutex;
-    static std::set<std::uint64_t> reported;
+    auto& shaders = refusedShaders();
     {
-        std::lock_guard lock(reportedMutex);
-        if (!reported.insert(refused.address).second) return;
+        std::lock_guard lock(shaders.mutex);
+        if (!shaders.reported.insert(refused.address).second) return;
     }
     const std::string_view what = refused.what();
     const auto line = what.substr(0, what.find('\n'));
     std::fprintf(stderr, "[gpu] APS5_SKIP_REFUSED_DRAWS: skipping the draws that use shader 0x%llx: %.*s\n", static_cast<unsigned long long>(refused.address), static_cast<int>(line.size()), line.data());
+}
+
+std::optional<std::size_t> RefusedShaderCount() {
+    if (!SkipRefusedDraws()) return std::nullopt;
+    auto& shaders = refusedShaders();
+    std::lock_guard lock(shaders.mutex);
+    return shaders.reported.size();
 }
 
 void require(bool condition, const char* reason) {

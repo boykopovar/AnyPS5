@@ -61,6 +61,7 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
     check(units.size() == PictureHashes.size(), "unexpected access unit count");
     std::vector<std::uint64_t> hashes;
     std::vector<std::uint64_t> timestamps;
+    std::vector<std::uint64_t> attachments;
     const auto collect = [&](PictureInfo& picture) {
         if (!picture.isValid) return;
         check(picture.framePitch == Pitch && picture.frameHeight == PictureHeight, "unexpected picture geometry");
@@ -69,6 +70,7 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
         check(picture.codec.avc.frameCropTopOffset == cropTop && picture.codec.avc.frameCropBottomOffset == cropBottom, "unexpected crop");
         hashes.push_back(hashNv12(session.buffer.data(), Pitch, PictureHeight));
         timestamps.push_back(picture.ptsData);
+        attachments.push_back(picture.attachedData);
     };
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
         const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
@@ -90,6 +92,7 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
         check(hashes[index] == PictureHashes[index], "picture " + std::to_string(index) + " differs from the reference");
         const auto unit = DisplayOrderUnits[index];
         check(timestamps[index] == 1000 + unit, "pictures out of display order");
+        check(attachments[index] == 0xa0 + unit, "picture attachment out of display order");
     }
 }
 

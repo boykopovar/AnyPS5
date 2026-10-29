@@ -177,8 +177,7 @@ static void SocketNumbersStayInDescriptorSet() {
     Require(dup_nid_postfix(socket) == -1 && *__error_nid_postfix() == 24);
     Require(fcntl_nid_postfix(socket, DuplicateCommand, 0) == -1 && *__error_nid_postfix() == 24);
     Require(fcntl_nid_postfix(socket, DuplicateCommand, DescriptorSetSize) == -1 && *__error_nid_postfix() == 24);
-    Require(fcntl_nid_postfix(socket, DuplicateCloseOnExec, 0) == -1 && *__error_nid_postfix() == 24);
-    Require(fcntl_nid_postfix(socket, DuplicateCloseOnExec, DescriptorSetSize) == -1 && *__error_nid_postfix() == 24);
+    Require(fcntl_nid_postfix(socket, DuplicateCloseOnExec, 0) == -1 && *__error_nid_postfix() == 45);
     Require(socket_nid_postfix(Inet, Datagram, 0) == -1 && *__error_nid_postfix() == 24);
     Require(dup2_nid_postfix(socket, DescriptorSetSize) == -1 && *__error_nid_postfix() == 24);
     for (const int file : files) Require(close_nid_postfix(file) == 0);

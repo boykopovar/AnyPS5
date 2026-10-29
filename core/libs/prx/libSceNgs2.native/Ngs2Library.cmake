@@ -4,14 +4,19 @@ function(add_sce_ngs2_library target)
             ${ngs2Dir}/src/Atrac9.cpp
             ${ngs2Dir}/src/Custom.cpp
             ${ngs2Dir}/src/Geom.cpp
+            ${ngs2Dir}/src/Jobs.cpp
             ${ngs2Dir}/src/Pan.cpp
             ${ngs2Dir}/src/Pcm.cpp
+            ${ngs2Dir}/src/PitchShift.cpp
             ${ngs2Dir}/src/Rack.cpp
             ${ngs2Dir}/src/Render.cpp
             ${ngs2Dir}/src/Reverb.cpp
+            ${ngs2Dir}/src/Sampler.cpp
             ${ngs2Dir}/src/System.cpp
             ${ngs2Dir}/src/Voice.cpp
     )
+    set_property(SOURCE ${ngs2Dir}/src/PitchShift.cpp ${ngs2Dir}/src/Sampler.cpp PROPERTY COMPILE_OPTIONS
+        "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-ffp-contract=off>;$<$<CXX_COMPILER_ID:MSVC>:/fp:strict>")
     target_include_directories(${target} PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/LibAtrac9/C/src)
     target_link_libraries(${target} PRIVATE atrac9 libc libkernel)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
