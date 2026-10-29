@@ -312,6 +312,58 @@ void TestJsonText() {
     Require(sceNpUtilHttpUrlEncode(url, 3, "@", 1, &length) == NpUtilBufferTooSmall, "encoding needs room for the terminator");
 }
 
+void TestXmlText() {
+    char escaped[64] = {};
+    std::size_t length = 0;
+    const char* special = "a\"&'<>b";
+    const char* specialEscaped = "a&quot;&amp;&apos;&lt;&gt;b";
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), special, std::strlen(special), &length) == 0 && Equals(escaped, specialEscaped)
+            && length == std::strlen(specialEscaped) + 1,
+        "xml escaping replaces the five special characters and counts the terminator");
+    length = 0;
+    Require(sceNpUtilXmlEscape(nullptr, 0, special, std::strlen(special), &length) == 0 && length == std::strlen(specialEscaped) + 1,
+        "xml escaping without a buffer only measures");
+    const char* text = "\t\n\r \xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80";
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), text, std::strlen(text), &length) == 0 && Equals(escaped, text) && length == std::strlen(text) + 1,
+        "xml escaping copies whitespace and UTF-8 sequences");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "a\x01", 2, &length) == NpUtilInvalidCharacter, "xml escaping refuses control characters");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\x7F", 1, &length) == NpUtilInvalidCharacter, "xml escaping refuses DEL");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\0", 1, &length) == NpUtilInvalidCharacter, "xml escaping refuses a NUL byte");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\x80", 1, &length) == NpUtilInvalidCharacter, "xml escaping refuses a lone continuation byte");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xC1\xBF", 2, &length) == NpUtilInvalidCharacter, "xml escaping refuses an overlong lead byte");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xC3(", 2, &length) == NpUtilInvalidCharacter, "xml escaping refuses a broken sequence");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xF8\x80\x80\x80", 4, &length) == NpUtilInvalidCharacter, "xml escaping refuses a five-byte lead");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xC3\xA9", 1, &length) == 0 && Equals(escaped, "\xC3\xA9") && length == 3,
+        "a sequence that starts inside the source is copied whole");
+    Require(sceNpUtilXmlEscape(escaped, 5, "&", 1, &length) == NpUtilBufferTooSmall, "an entity must fit whole");
+    Require(sceNpUtilXmlEscape(escaped, 5, "abcde", 5, &length) == NpUtilBufferTooSmall, "the terminator must fit");
+    Require(sceNpUtilXmlEscape(escaped, 6, "abcde", 5, &length) == 0 && Equals(escaped, "abcde"), "a buffer of the measured size is enough");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), nullptr, 1, &length) == NpUtilInvalid, "xml escaping needs a source");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "a", 0, &length) == NpUtilInvalid, "xml escaping needs a source length");
+    Require(sceNpUtilXmlEscape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml escaping needs a buffer or a length");
+
+    char unescaped[64] = {};
+    const char* entities = "x&lt;&gt;&amp;&quot;&apos;y";
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), entities, std::strlen(entities), &length) == 0 && Equals(unescaped, "x<>&\"'y")
+            && length == 8,
+        "xml unescaping replaces the five entities and counts the terminator");
+    length = 0;
+    Require(sceNpUtilXmlUnescape(nullptr, 0, entities, std::strlen(entities), &length) == 0 && length == 8, "xml unescaping without a buffer only measures");
+    const char* others = "&nbsp;&amp&#65;&";
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), others, std::strlen(others), &length) == 0 && Equals(unescaped, others),
+        "other ampersands are copied");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "a\0b", 3, &length) == 0 && unescaped[0] == 'a' && unescaped[1] == '\0'
+            && unescaped[2] == 'b' && unescaped[3] == '\0' && length == 4,
+        "xml unescaping copies every other byte");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "&amp;", 1, &length) == 0 && Equals(unescaped, "&") && length == 2,
+        "an entity that starts inside the source is read whole");
+    Require(sceNpUtilXmlUnescape(unescaped, 3, "&lt;ab", 6, &length) == NpUtilBufferTooSmall, "each character must leave room for the terminator");
+    Require(sceNpUtilXmlUnescape(unescaped, 3, "&lt;a", 5, &length) == 0 && Equals(unescaped, "<a"), "a buffer of the measured size is enough");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), nullptr, 1, &length) == NpUtilInvalid, "xml unescaping needs a source");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "a", 0, &length) == NpUtilInvalid, "xml unescaping needs a source length");
+    Require(sceNpUtilXmlUnescape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml unescaping needs a buffer or a length");
+}
+
 void TestTitleIds() {
     NpTitleIdParts parts {{'A', 'B', 'C', 'D', '1', '2', '3', '4', '5'}, 0, 7};
     char titleId[13] = {};
@@ -441,6 +493,7 @@ int main() {
     TestIds();
     TestLanguagesAndDebugIds();
     TestJsonText();
+    TestXmlText();
     TestTitleIds();
     std::puts("guest np common runtime: PASS");
 }
