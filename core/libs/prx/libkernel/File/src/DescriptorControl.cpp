@@ -567,7 +567,7 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         SetCloseOnExec(fd, command == CloseOnExecRequest);
         return 0;
     }
-    if (IsKqueueDescriptor(fd)) return Fail(GuestEnotty);
+    if (IsKqueueDescriptor_nid_no_patch(fd)) return Fail(GuestEnotty);
     if (command == NonblockingRequest) {
         int enable = 0;
         if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(GuestEfault);
