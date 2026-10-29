@@ -704,6 +704,23 @@ char* APS5_VABI strnstr_nid_postfix(const char* haystack, const char* needle, si
     return nullptr;
 }
 
+char* APS5_VABI strcasestr_nid_postfix(const char* haystack, const char* needle) {
+    char c = *needle++;
+    if (c != '\0') {
+        c = static_cast<char>(tolower_nid_postfix(static_cast<unsigned char>(c)));
+        const size_t len = std::strlen(needle);
+        do {
+            char sc = 0;
+            do {
+                sc = *haystack++;
+                if (sc == '\0') return nullptr;
+            } while (static_cast<char>(tolower_nid_postfix(static_cast<unsigned char>(sc))) != c);
+        } while (strncasecmp_nid_postfix(haystack, needle, len) != 0);
+        --haystack;
+    }
+    return const_cast<char*>(haystack);
+}
+
 unsigned long long APS5_VABI _Stoull_nid_postfix(const char* str, char** endptr, int base) {
     if (RejectIntegerBase_nid_no_patch(str, endptr, base, false) || StopAtPrefixLetter_nid_no_patch(str, endptr, base)) return 0;
     return ParseInteger<unsigned long long>(str, endptr, base, std::strtoull);

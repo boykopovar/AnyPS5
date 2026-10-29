@@ -144,6 +144,18 @@ static void CheckBoundsCheckedFunctions() {
     Require(strnstr_nid_postfix("haystack", "st", 4) == nullptr);
     const char haystack[] = "haystack";
     Require(strnstr_nid_postfix(haystack, "st", 6) == haystack + 3);
+    Require(strcasestr_nid_postfix(haystack, "") == haystack);
+    const char empty[] = "";
+    Require(strcasestr_nid_postfix(empty, "") == empty);
+    Require(strcasestr_nid_postfix(empty, "needle") == nullptr);
+    Require(strcasestr_nid_postfix(haystack, "needle") == nullptr);
+    Require(strcasestr_nid_postfix(haystack, "haystackextra") == nullptr);
+    Require(strcasestr_nid_postfix(haystack, "STACK") == haystack + 3);
+    Require(strcasestr_nid_postfix(haystack, "HaY") == haystack);
+    Require(strcasestr_nid_postfix(haystack, "sTaCk") == haystack + 3);
+    const char repeated[] = "abABCabc";
+    Require(strcasestr_nid_postfix(repeated, "abc") == repeated + 2);
+    Require(strcasestr_nid_postfix(repeated, "ABC") == repeated + 2);
     char formatted[8];
     Require(snprintf_s_nid_postfix(formatted, sizeof(formatted), "%d-%s", 42, "x") == 4 && std::strcmp(formatted, "42-x") == 0);
 }

@@ -1026,6 +1026,7 @@ int APS5_VABI memcpy_s_nid_postfix(void* dest, size_t destsz, const void* src, s
 int APS5_VABI memmove_s_nid_postfix(void* dest, size_t destsz, const void* src, size_t count);
 int APS5_VABI memset_s_nid_postfix(void* dest, size_t destsz, int value, size_t count);
 char* APS5_VABI strnstr_nid_postfix(const char* haystack, const char* needle, size_t length);
+char* APS5_VABI strcasestr_nid_postfix(const char* haystack, const char* needle);
 unsigned long long APS5_VABI _Stoull_nid_postfix(const char* str, char** endptr, int base);
 size_t APS5_VABI wcslen_nid_postfix(const char16_t* s);
 size_t APS5_VABI wcsnlen_s_nid_postfix(const char16_t* s, size_t maxlen);
