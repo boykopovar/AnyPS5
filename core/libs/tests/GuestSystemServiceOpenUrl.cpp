@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/HostUrl.hpp"
 #include "prx/libSceSystemService/HostUrlPolicy.hpp"
 #include "prx/libSceSystemService/HostUrlBackends.hpp"
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -292,6 +293,37 @@ void CheckPosixLauncher() {
 }
 #endif
 
+void CheckConfirmationText() {
+    const std::string url = "https://example.com/" + std::string(500, 'a') + "?q=1";
+    const std::string text = HostConfirmationText(url);
+    std::size_t lineLength = 0;
+    std::size_t longest = 0;
+    for (const char value : text) {
+        if (value == '\n') {
+            longest = std::max(longest, lineLength);
+            lineLength = 0;
+        } else {
+            ++lineLength;
+        }
+    }
+    Require(longest <= 96);
+    std::string stripped;
+    for (const char value : text)
+        if (value != '\n') stripped += value;
+    Require(stripped.find(url) != std::string::npos);
+    Require(HostConfirmationText("https://example.com/").find("https://example.com/") != std::string::npos);
+}
+
+#ifdef __linux__
+void CheckConfirmationWithoutDisplay() {
+    SetEnvironment("DISPLAY", nullptr);
+    SetEnvironment("WAYLAND_DISPLAY", nullptr);
+    SetEnvironment("SDL_VIDEODRIVER", nullptr);
+    HostMessageBoxConfirmation confirmation;
+    Require(!confirmation.Confirm("https://example.com/"));
+}
+#endif
+
 }
 
 int main() {
@@ -305,6 +337,10 @@ int main() {
     CheckLength();
     CheckMode();
     CheckPolicy();
+    CheckConfirmationText();
+#ifdef __linux__
+    CheckConfirmationWithoutDisplay();
+#endif
 #ifndef _WIN32
     CheckPosixLauncher();
 #endif
