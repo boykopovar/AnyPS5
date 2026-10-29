@@ -54,10 +54,6 @@ void VisitPatternLetters(std::string_view pattern, Visitor&& visit) {
     for (std::size_t index = 0; index < pattern.size();) {
         const char letter = pattern[index];
         if (letter == '\'') {
-            if (index + 1 < pattern.size() && pattern[index + 1] == '\'') {
-                index += 2;
-                continue;
-            }
             quoted = !quoted;
             ++index;
             continue;
