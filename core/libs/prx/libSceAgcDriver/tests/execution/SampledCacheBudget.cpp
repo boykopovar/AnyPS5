@@ -464,6 +464,23 @@ std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Bl
     return std::make_shared<ShaderResources>(context, shader);
 }
 
+ShaderRecompiler::RecompileResult StorageImageProgram(std::uint64_t address) {
+    ShaderRecompiler::DescriptorBinding binding{};
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    binding.descriptorSet = 0;
+    binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
+    binding.count = 1;
+    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    binding.imageWritten.assign(1, false);
+    binding.imageSamplers.assign(1, 0u);
+    const auto words = Descriptor(address);
+    binding.guestDescriptor.assign(words.begin(), words.end());
+    ShaderRecompiler::RecompileResult program;
+    program.bindings.push_back(std::move(binding));
+    return program;
+}
+
 void recorderEvictionTests(const Context& context, const Block& block) {
     auto& cache = SharedResourceCache();
     cache.Clear();
@@ -1231,7 +1248,8 @@ bool hasHostMemoryType(const VkPhysicalDeviceMemoryProperties& memory) {
 bool recoveryTests(Context context, const std::string& mode) {
     const bool recent = mode == "recover-sampled-recent" || mode == "recover-sampled-recent-noroom";
     const bool storageRecent = mode == "recover-storage-recent" || mode == "recover-storage-recent-noroom";
-    if ((recent || storageRecent) && !hasHostMemoryType(context.memory)) {
+    const bool storageAged = mode == "recover-storage-aged" || mode == "recover-storage-hit" || mode == "recover-storage-repeat" || mode == "recover-storage-proved";
+    if ((recent || storageRecent || storageAged) && !hasHostMemoryType(context.memory)) {
         std::puts("skipped, the device has no memory type outside its device-local heaps for a texture to fall back to");
         return false;
     }
@@ -1281,6 +1299,65 @@ bool recoveryTests(Context context, const std::string& mode) {
         } else {
             Require(made != nullptr && !StorageImageCached(context, kept) && recovery.released == allocated, "with no room past the device's share, sampled allocation recovery did not evict the storage image of the current present");
             Require(recovery.hostAllocations == 0, "the texture whose device allocation failed went to host memory although the recovery released enough");
+        }
+    } else if (storageAged) {
+        context.discreteGpu = true;
+        context.memoryProperties2 = &ReportBudget;
+        recovery.memory = context.memory;
+        recovery.deviceLocalOnly = true;
+        Recorder::CountPresent();
+        Require(ReadBudget(context) == ExpectedBudget(context), "the recovery fixture's first budget read already had room past the device's share");
+        SetSampledSpillForTest(SampledSpillStep);
+        const bool proved = mode == "recover-storage-proved";
+        std::optional<WatchedSurface> watched;
+        if (proved) watched.emplace(context);
+        const auto address = watched.has_value() ? watched->Address() : block.Surface(0);
+        const auto resource = Resource(address);
+        auto image = CachedStorageSurface(context, resource);
+        const auto program = StorageImageProgram(address);
+        const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+        std::optional<PlaceholderImages> placeholders;
+        std::shared_ptr<ShaderResources> resources;
+        if (proved) {
+            placeholders.emplace(context);
+            context.placeholderImages = &*placeholders;
+            resources = std::make_shared<ShaderResources>(context, shader);
+            Require(resources->Revalidate(shader), "the storage image descriptor set did not prove current");
+        }
+        Require(TextureCacheUsage().sampledEntries == 0 && TextureCacheUsage().storageBytes != 0, "the aged storage image fixture needs one cached storage image and no sampled texture");
+        Recorder::CountPresent();
+        Recorder::CountPresent();
+        const char* via = "nothing";
+        if (mode == "recover-storage-hit") {
+            via = "a storage cache hit";
+            Require(CachedStorageSurface(context, resource) == image, "the second lookup of the storage surface was not a cache hit");
+        } else if (mode == "recover-storage-repeat") {
+            via = "RepeatStorageSurface";
+            Require(RepeatStorageSurface(context, resource, image) == image, "RepeatStorageSurface did not return the cached storage image");
+        } else if (proved) {
+            via = "a fast proof of a descriptor set over it";
+            ShaderResources::ProofReport report{};
+            Require(resources->Revalidate(shader, &report), "the storage image descriptor set did not prove current");
+            if (report.path != ShaderResources::ProofPath::Fast) {
+                SetSampledSpillForTest(0);
+                std::puts("skipped, the storage image descriptor set took the full walk here, so StorageImagesCached is not reached");
+                return false;
+            }
+        }
+        const auto allocated = image->AllocationBytes();
+        const auto* kept = image.get();
+        image.reset();
+        recovery.pressure = true;
+        auto made = Sampled(context, block.Surface(2));
+        recovery.pressure = false;
+        const bool cached = StorageImageCached(context, kept);
+        SetSampledSpillForTest(0);
+        if (mode == "recover-storage-aged") {
+            Require(made != nullptr && !cached && recovery.released == allocated, "with room past the device's share, the recovery kept a storage image last used two presents earlier");
+            Require(recovery.hostAllocations == 0, "the texture whose device allocation failed went to host memory although the recovery released enough");
+        } else {
+            Require(made != nullptr && cached, std::string("the recovery evicted a storage image used in the current present through ") + via + ", while the sampled cache had room past the device's share");
+            Require(recovery.hostAllocations == 1, "the texture whose device allocation failed was not placed in host memory");
         }
     } else if (recent || mode == "recover-sampled-recent-device") {
         const bool hostHeap = mode != "recover-sampled-recent-device";
@@ -1369,7 +1446,7 @@ bool recoveryTests(Context context, const std::string& mode) {
         Require(!source->Dirty(), "pending storage results could not be stored after memory recovery");
     }
     Require(recovery.requests == 1 && recovery.failures >= 1 && recovery.failures <= 2, "image allocation recovery was skipped or retried without a bound");
-    const char* label = storage ? "storage" : mode == "recover-srgb" ? "sRGB" : mode == "recover-repack" ? "repacked" : mode == "recover-sampled-recent" ? "recent sampled (host heap, room past the device's share)" : mode == "recover-sampled-recent-noroom" ? "recent sampled (host heap, no room)" : mode == "recover-sampled-recent-device" ? "recent sampled (no host heap)" : mode == "recover-storage-recent" ? "recent storage (host heap, room past the device's share)" : mode == "recover-storage-recent-noroom" ? "recent storage (host heap, no room)" : "sampled";
+    const char* label = storage ? "storage" : mode == "recover-srgb" ? "sRGB" : mode == "recover-repack" ? "repacked" : mode == "recover-sampled-recent" ? "recent sampled (host heap, room past the device's share)" : mode == "recover-sampled-recent-noroom" ? "recent sampled (host heap, no room)" : mode == "recover-sampled-recent-device" ? "recent sampled (no host heap)" : mode == "recover-storage-recent" ? "recent storage (host heap, room past the device's share)" : mode == "recover-storage-recent-noroom" ? "recent storage (host heap, no room)" : mode == "recover-storage-aged" ? "aged storage (host heap, room past the device's share)" : mode == "recover-storage-hit" ? "storage used through a cache hit" : mode == "recover-storage-repeat" ? "storage used through RepeatStorageSurface" : mode == "recover-storage-proved" ? "storage used through a fast proof" : "sampled";
     std::printf("%s image allocation recovered after %u injected failures: %llu bytes released\n", label, recovery.failures, static_cast<unsigned long long>(recovery.released));
     return true;
 }
@@ -1474,7 +1551,7 @@ int main(int argc, char** argv) {
         }
         const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
         const bool disableStorageImageMultisample = mode == "without-storage-image-multisample";
-        const bool recent = mode == "recover-sampled-recent" || mode == "recover-sampled-recent-noroom" || mode == "recover-sampled-recent-device" || mode == "recover-storage-recent" || mode == "recover-storage-recent-noroom";
+        const bool recent = mode == "recover-sampled-recent" || mode == "recover-sampled-recent-noroom" || mode == "recover-sampled-recent-device" || mode == "recover-storage-recent" || mode == "recover-storage-recent-noroom" || mode == "recover-storage-aged" || mode == "recover-storage-hit" || mode == "recover-storage-repeat" || mode == "recover-storage-proved";
         const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack" || recent;
         const bool growth = mode == "spill-growth";
         const bool reported = memory || recent || growth;
