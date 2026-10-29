@@ -520,6 +520,16 @@ static void CheckTimePutVtableObject() {
     }
 }
 
+static void CheckTimePutWideVtableObject() {
+    Require(sizeof(_ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix) == kTimePutWideVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
+}
+
 static void CheckNumPutVtableObject() {
     Require(sizeof(_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kNumPutCharVtableSlots * sizeof(std::uintptr_t));
     for (std::uintptr_t& slot : _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
@@ -587,6 +597,7 @@ int main() {
     CheckNumPutVtableObject();
     CheckCtypeVtableObject();
     CheckTimePutVtableObject();
+    CheckTimePutWideVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
