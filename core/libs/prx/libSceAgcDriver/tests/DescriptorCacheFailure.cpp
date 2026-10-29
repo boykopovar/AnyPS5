@@ -100,7 +100,10 @@ Context TestContext() {
     Context context{};
     context.deviceProc = Resolve;
     context.limits.maxPerStageResources = 128;
+    context.limits.maxPerStageDescriptorStorageBuffers = 128;
     context.limits.maxDescriptorSetStorageBuffers = 4096;
+    context.storageBufferUpdateAfterBind = true;
+    context.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 128;
     context.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 128;
     context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 4096;
     return context;
