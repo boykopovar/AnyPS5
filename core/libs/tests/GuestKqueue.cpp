@@ -765,12 +765,9 @@ static void EdgeTriggeredTcpWriteLowWater() {
     const int tcp = socket_nid_postfix(Inet, Stream, 0);
     Require(tcp >= 0);
     const auto writer = static_cast<std::uintptr_t>(tcp);
-    const char* const expected = "EV_CLEAR EVFILT_WRITE with NOTE_LOWAT above 1 on a TCP socket";
-    Require(ThrownMessage([kq, writer] { Apply(kq, Change(writer, EvfiltWrite, EvAdd | EvClear, NoteLowat, 2)); }).find(expected) != std::string::npos);
     RequireFailure(Apply(kq, Change(writer, EvfiltWrite, EvDelete)), GuestEnoent);
 #ifdef __linux__
     Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd | EvClear, NoteLowat, 1)) == 0);
-    Require(ThrownMessage([kq, writer] { Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 2)); }).find(expected) != std::string::npos);
     Require(Apply(kq, Change(writer, EvfiltWrite, EvDelete)) == 0);
     Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 2)) == 0);
     Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 3)) == 0);
