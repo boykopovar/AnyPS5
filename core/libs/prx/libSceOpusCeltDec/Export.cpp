@@ -1,3 +1,4 @@
+#include "prx/libSceOpusCeltDec/include/InventoryExports.hpp"
 #include "prx/libSceOpusCeltDec/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceOpusDec/include/OpusDecoder.hpp"
@@ -51,6 +52,14 @@ int APS5_VABI sceOpusCeltDecDecodeFloatWithPriority(void* state, const std::uint
 
 int APS5_VABI sceOpusCeltDecDecodeWithPriority(void* state, const std::uint8_t* data, int bytes, std::int16_t* pcm, int capacity, int priority) {
     return OpusDecodeVariant(library, ErrorBase, state, data, bytes, pcm, capacity, priority, false);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceOpusCeltDecGetAjmContext() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }
