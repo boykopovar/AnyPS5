@@ -59,6 +59,27 @@ inline std::optional<int> DateFormatOfStrftime(std::string_view pattern) {
     return Detail::DateFormatOfOrder(order);
 }
 
+inline std::optional<int> TimeFormatOfStrftime(std::string_view pattern) {
+    bool twelve = false;
+    bool twentyFour = false;
+    for (std::size_t index = 0; index < pattern.size(); ++index) {
+        if (pattern[index] != '%') continue;
+        ++index;
+        while (index < pattern.size() && (pattern[index] == '-' || pattern[index] == '_' || pattern[index] == '0' || pattern[index] == '^' || pattern[index] == '#')) ++index;
+        while (index < pattern.size() && pattern[index] >= '0' && pattern[index] <= '9') ++index;
+        while (index < pattern.size() && (pattern[index] == 'E' || pattern[index] == 'O')) ++index;
+        if (index >= pattern.size()) return std::nullopt;
+        switch (pattern[index]) {
+            case 'I': case 'l': case 'p': case 'P': case 'r': twelve = true; break;
+            case 'H': case 'k': case 'T': case 'R': twentyFour = true; break;
+            case 'c': case 'x': case 'X': return std::nullopt;
+            default: break;
+        }
+    }
+    if (twelve == twentyFour) return std::nullopt;
+    return twelve ? TIME_FORMAT_12HOUR : TIME_FORMAT_24HOUR;
+}
+
 }
 
 #endif
