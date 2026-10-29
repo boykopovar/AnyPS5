@@ -288,7 +288,29 @@ int main() {
         const auto movedRefusal = GuardRefusal(movedFmask.Address(), 256u);
         Require(movedRefusal.find("the FMASK of EQAA color target") != std::string::npos, "a read of the FMASK base the EQAA target was last drawn with was not refused by name: " + movedRefusal);
         Require(GuardRefusal(eqaaFmask.Address(), 256u).empty(), "the FMASK base the EQAA target was drawn with before is still guarded");
-        std::printf("EQAA color target tests passed: 4-sample 2-fragment draws resolve like 4x MSAA (%zu bytes), %td quarter-coverage channels, FMASK guarded at the base of the last draw\n", eqaaTexels.size(), quarter);
+
+        Block keptColor(static_cast<std::size_t>(MsaaBytes));
+        {
+            Block removedFmask(BlockBytes);
+            Draw(*device, DecodeTarget(keptColor, &removedFmask, CompressedUnorm8x4Info, EqaaAttrib), Lower, red);
+            device->WaitIdle();
+            Require(!GuardRefusal(keptColor.Address(), 1u).empty(), "the color plane of an EQAA target drawn for the FMASK removal is not guarded");
+        }
+        Require(GuardRefusal(keptColor.Address(), static_cast<std::size_t>(EqaaBytes)).empty(), "removing only the FMASK allocation of an EQAA target left its color plane guarded");
+        Block redrawnFmask(BlockBytes);
+        Draw(*device, DecodeTarget(keptColor, &redrawnFmask, CompressedUnorm8x4Info, EqaaAttrib), Lower, red);
+        device->WaitIdle();
+        Require(!GuardRefusal(keptColor.Address(), 1u).empty() && GuardRefusal(redrawnFmask.Address(), 256u).find("the FMASK of EQAA color target") != std::string::npos, "the draw after the FMASK removal did not guard a new EQAA target");
+
+        Block keptFmask(BlockBytes);
+        {
+            Block removedColor(static_cast<std::size_t>(MsaaBytes));
+            Draw(*device, DecodeTarget(removedColor, &keptFmask, CompressedUnorm8x4Info, EqaaAttrib), Lower, red);
+            device->WaitIdle();
+            Require(!GuardRefusal(keptFmask.Address(), 256u).empty(), "the FMASK of an EQAA target drawn for the color removal is not guarded");
+        }
+        Require(GuardRefusal(keptFmask.Address(), 256u).empty(), "removing only the color allocation of an EQAA target left its FMASK guarded");
+        std::printf("EQAA color target tests passed: 4-sample 2-fragment draws resolve like 4x MSAA (%zu bytes), %td quarter-coverage channels, FMASK guarded at the base of the last draw, either plane's removal retires both\n", eqaaTexels.size(), quarter);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
