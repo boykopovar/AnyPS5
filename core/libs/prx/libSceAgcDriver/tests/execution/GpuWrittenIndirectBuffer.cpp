@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -18,12 +19,15 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -239,6 +243,100 @@ void Run(const GuestBlock& block, std::uint32_t marker, bool conditional) {
 
 }
 
+struct Tickets {
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::array<std::uint64_t, 16> issued{};
+    std::array<std::uint64_t, 16> completed{};
+    int timedOut = 0;
+    int ready = 0;
+};
+
+class TicketWait final : public AgcDriver::IRenderingWait {
+public:
+    TicketWait(std::shared_ptr<Tickets> tickets, std::uint32_t index, std::uint64_t ticket) : tickets(std::move(tickets)), index(index), ticket(ticket) {}
+    void Wait() override {
+        std::unique_lock lock(tickets->mutex);
+        if (!tickets->changed.wait_for(lock, std::chrono::seconds(3), [&] { return tickets->completed[index] >= ticket; })) ++tickets->timedOut;
+    }
+private:
+    std::shared_ptr<Tickets> tickets;
+    std::uint32_t index;
+    std::uint64_t ticket;
+};
+
+class TicketFlip final : public AgcDriver::IFlipRequest {
+public:
+    TicketFlip(std::shared_ptr<Tickets> tickets, std::uint32_t index, std::uint64_t ticket) : tickets(std::move(tickets)), index(index), ticket(ticket) {}
+    void GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>&) override {
+        {
+            std::lock_guard lock(tickets->mutex);
+            tickets->completed[index] = std::max(tickets->completed[index], ticket);
+            ++tickets->ready;
+        }
+        tickets->changed.notify_all();
+    }
+    void Fail(std::exception_ptr) noexcept override {}
+private:
+    std::shared_ptr<Tickets> tickets;
+    std::uint32_t index;
+    std::uint64_t ticket;
+};
+
+class TicketOutput final : public AgcDriver::IVideoOutput {
+public:
+    std::shared_ptr<Tickets> tickets = std::make_shared<Tickets>();
+    std::shared_ptr<AgcDriver::IRenderingWait> CaptureRenderingWait(std::uint32_t index) override {
+        std::lock_guard lock(tickets->mutex);
+        return std::make_shared<TicketWait>(tickets, index, tickets->issued.at(index));
+    }
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo& info) override {
+        std::lock_guard lock(tickets->mutex);
+        return std::make_shared<TicketFlip>(tickets, info.index, ++tickets->issued.at(info.index));
+    }
+    void Fail(std::exception_ptr) noexcept override {}
+};
+
+void RewrittenWaitBeforeOwnFlip(const GuestBlock& block) {
+    constexpr std::uint32_t Handle = 7;
+    const std::array<std::uint32_t, 4> renderingWait{0xc0021018u, Handle, 0, 0};
+    const std::array<std::uint32_t, 6> flip{0xc004105cu, Handle, 0, 1, 0, 0};
+    auto output = std::make_shared<TicketOutput>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+    std::vector<std::uint32_t> first(renderingWait.begin(), renderingWait.end());
+    first.insert(first.end(), flip.begin(), flip.end());
+    Packet firstDcb{first.data(), static_cast<std::uint32_t>(first.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&firstDcb) == 0, "GPU-written indirect buffer: the first flip submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    std::array<std::uint32_t, CommandWords> fillers{};
+    fillers.fill(Filler);
+    std::memcpy(block.Bytes(CommandsOffset), fillers.data(), sizeof(fillers));
+    Store(block, GateOffset, 0);
+    const auto commands = block.At(CommandsOffset);
+    const auto gate = block.At(GateOffset);
+    auto second = Pm4(0x3c, {0x13, Low(gate), High(gate), 1, 0xffffffffu, 0x19});
+    const auto branch = Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0});
+    second.insert(second.end(), branch.begin(), branch.end());
+    second.insert(second.end(), flip.begin(), flip.end());
+    Packet secondDcb{second.data(), static_cast<std::uint32_t>(second.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&secondDcb) == 0, "GPU-written indirect buffer: the second flip submission failed");
+    std::memcpy(block.Bytes(CommandsOffset), renderingWait.data(), sizeof(renderingWait));
+    const auto opened = std::chrono::steady_clock::now();
+    Store(block, GateOffset, 1);
+    AgcDriverWaitIdle_nid_postfix();
+    const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - opened).count();
+    int timedOut = 0;
+    int ready = 0;
+    {
+        std::lock_guard lock(output->tickets->mutex);
+        timedOut = output->tickets->timedOut;
+        ready = output->tickets->ready;
+    }
+    AgcDriverUnregisterVideoOutput_nid_postfix(Handle, output);
+    Require(timedOut == 0, "a rendering wait written into an indirect buffer after its submission waited for the flip after that buffer in the same submission (" + std::to_string(took) + " ms, timed out after 3 s)");
+    Require(ready == 2, "the two flips did not complete: " + std::to_string(ready) + " completed");
+}
+
 int main() {
     try {
         {
@@ -252,6 +350,7 @@ int main() {
         HeldWaitAfterRewrite(block);
         NestedRewrite(block, 0x5eed0003u);
         InvalidRewrite(block);
+        RewrittenWaitBeforeOwnFlip(block);
         AgcDriverShutdown_nid_postfix();
         std::puts("GPU-written indirect buffer: indirect buffers run what the dispatch before them wrote");
         return 0;

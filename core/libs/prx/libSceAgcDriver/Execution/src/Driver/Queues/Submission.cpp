@@ -299,9 +299,10 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
             if (packet[0] == FlipPacketHeader) return false;
             if (EopRelease(std::span(expanded.commands).subspan(cursor)) && eopFlips.contains(packet[7])) return false;
             if (packet[0] != RenderingWaitPacketHeader) continue;
-            const auto prepared = submission.preparedWaits.find({packet[1], packet[2]});
-            if (prepared == submission.preparedWaits.end()) {
-                renderingWaitTargets.emplace(packet[1], packet[2]);
+            const std::pair<std::uint32_t, std::uint32_t> target{packet[1], packet[2]};
+            const auto prepared = segment.waits != nullptr ? segment.waits->find(target) : Submission::PreparedWaits::const_iterator{};
+            if (segment.waits == nullptr || prepared == segment.waits->end()) {
+                renderingWaitTargets.insert(target);
                 return false;
             }
             expanded.renderingWaits.emplace(cursor, prepared->second);
@@ -331,8 +332,8 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
     }
     submission.heldAtSubmit = std::move(held);
     std::vector<Submission::IndirectSegment> segments(submission.indirectSegments.begin(), submission.indirectSegments.begin() + static_cast<std::ptrdiff_t>(index));
-    for (const auto& nested : expanded.indirectSegments) segments.push_back({segment.start + nested.start, nested.target, nested.words});
-    for (auto later = submission.indirectSegments.begin() + static_cast<std::ptrdiff_t>(index) + 1; later != submission.indirectSegments.end(); ++later) segments.push_back({moved(later->start), later->target, later->words});
+    for (const auto& nested : expanded.indirectSegments) segments.push_back({segment.start + nested.start, nested.target, nested.words, segment.waits});
+    for (auto later = submission.indirectSegments.begin() + static_cast<std::ptrdiff_t>(index) + 1; later != submission.indirectSegments.end(); ++later) segments.push_back({moved(later->start), later->target, later->words, later->waits});
     std::ranges::sort(segments, {}, &Submission::IndirectSegment::start);
     submission.indirectSegments = std::move(segments);
     std::set<std::uint64_t> written;
@@ -421,7 +422,21 @@ void Driver::releaseFlipHold() {
 
 void Driver::reserveOutputs(Submission& submission) {
     std::set<std::uint32_t> eopTokens;
+    const auto prepare = [&](Submission::IndirectSegment& segment) {
+        auto waits = std::make_shared<Submission::PreparedWaits>();
+        for (const auto& target : renderingWaitTargets) {
+            const auto output = outputs.find(target.first);
+            if (output == outputs.end()) continue;
+            try {
+                if (auto wait = output->second->CaptureRenderingWait(target.second)) waits->emplace(target, std::move(wait));
+            } catch (const std::exception&) {
+            }
+        }
+        segment.waits = std::move(waits);
+    };
+    std::size_t nextSegment = 0;
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
+        while (nextSegment < submission.indirectSegments.size() && submission.indirectSegments[nextSegment].start <= cursor) prepare(submission.indirectSegments[nextSegment++]);
         const auto* words = submission.commands.data() + cursor;
         if (words[0] == RenderingWaitPacketHeader) {
             const auto output = outputs.find(words[1]);
@@ -452,15 +467,6 @@ void Driver::reserveOutputs(Submission& submission) {
         cursor += Pm4::PacketWords(words[0]);
     }
     for (const auto token : eopTokens) eopFlips.erase(token);
-    if (submission.indirectSegments.empty()) return;
-    for (const auto& target : renderingWaitTargets) {
-        const auto output = outputs.find(target.first);
-        if (output == outputs.end()) continue;
-        try {
-            if (auto wait = output->second->CaptureRenderingWait(target.second)) submission.preparedWaits.emplace(target, std::move(wait));
-        } catch (const std::exception&) {
-        }
-    }
 }
 
 void Driver::executeRewindTail(const Submission& stalled) {
