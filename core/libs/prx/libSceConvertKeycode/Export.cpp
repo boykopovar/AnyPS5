@@ -1,12 +1,19 @@
+#include "prx/libSceConvertKeycode/include/Api.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
 #include "SceTypes.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceConvertKeycode/ImeKeyboardType.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include <string_view>
 
 namespace {
 constexpr int kErrInvalidAddress = static_cast<int>(0x80BC0031u);
-constexpr int kErrInvalidUserId = static_cast<int>(0x80BC0010u);
 constexpr std::array<std::uint16_t, 256> BaseVirtualKeys = {
     255, 255, 255, 255, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
     77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 49, 50,
@@ -2295,7 +2302,6 @@ constexpr std::array<char16_t, 27> KoreanFinal = {
     12593, 12594, 12595, 12596, 12597, 12598, 12599, 12601, 12602, 12603, 12604, 12605, 12606, 12607, 12608, 12609, 12610, 12612, 12613, 12614, 12615, 12616, 12618, 12619, 12620, 12621, 12622
 };
 
-
 std::size_t CharacterLayout(std::uint32_t type, std::uint32_t state) {
     constexpr std::array<std::uint8_t, 39> layouts = {18, 7, 0, 1, 14, 8, 29, 17, 9, 25, 24, 23, 10, 11, 16, 26, 27, 12, 1, 19, 28, 3, 3, 1, 1, 1, 1, 1, 1, 1, 14, 32, 14, 34, 35, 36, 37, 1, 1};
     const bool imeMode = (state & 0x4000000u) != 0;
@@ -2393,14 +2399,26 @@ char16_t ConvertCharacter(std::uint16_t keycode, std::uint32_t state, std::uint3
     }
     return character;
 }
+bool Ps4Client() {
+    try {
+        const auto titleId = GetAppTitleId_nid_postfix();
+        return ImeKeyboardType::IsPs4TitleId(std::string_view(titleId.value, strnlen(titleId.value, sizeof(titleId.value))));
+    } catch (const std::runtime_error&) {
+        return false;
+    } catch (const std::length_error&) {
+        return false;
+    }
+}
 }  // namespace
 
 extern "C" {
 
 int APS5_VABI sceConvertKeycodeGetImeKeyboardType(int32_t userId, uint32_t* type) {
- if (type == nullptr) return kErrInvalidAddress;
- if (userId < 0) return kErrInvalidUserId;
- throw std::runtime_error("sceConvertKeycodeGetImeKeyboardType: user keyboard language and variant are unavailable");
+    const bool ps4Client = Ps4Client();
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t sdkVersion;
+    std::memcpy(&sdkVersion, process + 16, sizeof(sdkVersion));
+    return ImeKeyboardType::Resolve(userId, type, sdkVersion, ps4Client, sceUserServiceGetKeyboardType, sceUserServiceGetJapaneseInputType, sceUserServiceGetTraditionalChineseInputType);
 }
 int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t keycode, std::uint32_t keyboardType, std::uint16_t* virtualKeycode) {
     if (virtualKeycode == nullptr) return kErrInvalidAddress;

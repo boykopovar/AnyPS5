@@ -1,3 +1,4 @@
+#include "prx/libSceErrorDialog/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>

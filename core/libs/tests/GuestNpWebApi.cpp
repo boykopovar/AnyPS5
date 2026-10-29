@@ -1,4 +1,5 @@
 #include "ProcessParametersFixture.hpp"
+#include "prx/libSceNpWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -6,39 +7,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-struct ContentParameter {
-    std::uint64_t contentLength;
-    const char* contentType;
-    std::uint8_t reserved[16];
-};
-
-extern "C" {
-int APS5_VABI sceNpWebApiInitialize(int libHttpCtxId, std::size_t poolSize);
-int APS5_VABI sceNpWebApiTerminate(int libCtxId);
-int APS5_VABI sceNpWebApiCreateHandle(int libCtxId);
-int APS5_VABI sceNpWebApiDeleteHandle(int libCtxId, int handleId);
-int APS5_VABI sceNpWebApiCreatePushEventFilter(int libCtxId, const void* filterParam, std::size_t filterParamNum);
-int APS5_VABI sceNpWebApiDeletePushEventFilter(int libCtxId, int filterId);
-int APS5_VABI sceNpWebApiCreateServicePushEventFilter(int libCtxId, int handleId, const char* npServiceName, unsigned npServiceLabel, const void* filterParam, std::size_t filterParamNum);
-int APS5_VABI sceNpWebApiDeleteServicePushEventFilter(int libCtxId, int filterId);
-int APS5_VABI sceNpWebApiCreateContext(int libCtxId, const void* onlineId);
-int APS5_VABI sceNpWebApiDeleteContext(int titleUserCtxId);
-int APS5_VABI sceNpWebApiCreateRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, const ContentParameter* contentParameter, std::int64_t* requestId);
-int APS5_VABI sceNpWebApiDeleteRequest(std::int64_t requestId);
-int APS5_VABI sceNpWebApiAbortRequest(std::int64_t requestId);
-int APS5_VABI sceNpWebApiSendRequest(std::int64_t requestId, const void* data, std::size_t dataSize);
-int APS5_VABI sceNpWebApiRegisterPushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg);
-int APS5_VABI sceNpWebApiRegisterServicePushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg);
-int APS5_VABI sceNpWebApiUnregisterPushEventCallback(int titleUserCtxId, int callbackId);
-int APS5_VABI sceNpWebApiUnregisterServicePushEventCallback(int titleUserCtxId, int callbackId);
-int APS5_VABI sceNpWebApiCreateContextA(int libCtxId, int userId);
-int APS5_VABI sceNpWebApiGetMemoryPoolStats(int libCtxId, std::size_t* stats);
-int APS5_VABI sceNpWebApiCreateExtdPushEventFilter(int libCtxId, int handleId, const char* npServiceName, unsigned npServiceLabel, const void* filterParam, std::size_t filterParamNum);
-int APS5_VABI sceNpWebApiDeleteExtdPushEventFilter(int libCtxId, int filterId);
-int APS5_VABI sceNpWebApiRegisterExtdPushEventCallbackA(int titleUserCtxId, int filterId, const void* callback, void* userArg);
-int APS5_VABI sceNpWebApiUnregisterExtdPushEventCallback(int titleUserCtxId, int callbackId);
-}
 
 namespace {
 
@@ -148,6 +116,7 @@ void TestUserContexts() {
     Require(sceNpWebApiCreateContext(context, onlineId) == UserContextAlreadyExist, "a second user context for the same user");
 
     Require(sceNpWebApiDeleteContext(user + 1) == UserContextNotFound, "delete an unknown user context");
+    Require(sceNpWebApiDeleteContext(-1) == LibContextNotFound, "delete user context -1");
     Require(sceNpWebApiDeleteContext((other << 16) | 1) == LibContextNotFound, "delete a user context of a terminated library context");
     Require(sceNpWebApiDeleteContext(user) == 0, "delete the user context");
     Require(sceNpWebApiDeleteContext(user) == UserContextNotFound, "user context deleted twice");
@@ -169,17 +138,18 @@ void TestRequests() {
     std::int64_t request = 0;
     Require(sceNpWebApiCreateRequest(user, nullptr, "/path", MethodGet, nullptr, &request) == InvalidArgument, "request without an API group");
     Require(sceNpWebApiCreateRequest(user, "group", nullptr, MethodGet, nullptr, &request) == InvalidArgument, "request without a path");
-    const ContentParameter untyped{sizeof(body), nullptr, {}};
+    const NpWebApiContentParameter untyped{sizeof(body), nullptr, {}};
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content without a type");
     Require(sceNpWebApiCreateRequest(0, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content is checked before the user context");
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPatch, nullptr, &request) == InvalidArgument, "PATCH with SDK 2.50 or later");
     Require(sceNpWebApiCreateRequest(user + 1, "group", "/path", MethodGet, nullptr, &request) == UserContextNotFound, "request of an unknown user context");
     Require(sceNpWebApiCreateRequest(0, "group", "/path", MethodGet, nullptr, &request) == LibContextNotFound, "request of user context 0");
+    Require(sceNpWebApiCreateRequest(-1, "group", "/path", MethodGet, nullptr, &request) == LibContextNotFound, "request of user context -1");
     Require(request == 0, "a failed request leaves the id alone");
 
-    const ContentParameter empty{0, nullptr, {}};
+    const NpWebApiContentParameter empty{0, nullptr, {}};
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, &empty, nullptr) == 0, "empty content without a type and no id output");
-    const ContentParameter typed{sizeof(body), "application/json", {}};
+    const NpWebApiContentParameter typed{sizeof(body), "application/json", {}};
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPost, &typed, &request) == 0, "create a request");
     Require(static_cast<int>(request >> 32) == user && (request & 0xffffffff) != 0, "request id holds its user context");
     std::int64_t second = 0;
@@ -192,6 +162,8 @@ void TestRequests() {
     Require(sceNpWebApiSendRequest(1, nullptr, 0) == LibContextNotFound, "send a request of library context 0");
 
     Require(sceNpWebApiAbortRequest(request + 0x10000) == RequestNotFound, "abort an unknown request");
+    Require(sceNpWebApiAbortRequest(-1) == LibContextNotFound, "abort request -1");
+    Require(sceNpWebApiDeleteRequest(-1) == LibContextNotFound, "delete request -1");
     Require(sceNpWebApiAbortRequest(request) == 0, "abort the request");
     Require(sceNpWebApiAbortRequest(request) == 0, "abort the request twice");
     Require(sceNpWebApiSendRequest(request, body, sizeof(body)) == Aborted, "send an aborted request");
@@ -238,9 +210,9 @@ void TestPushEventCallbacks() {
 void TestConsoleMeasuredExports() {
     const int context = sceNpWebApiInitialize(1, 0x10000);
     Require(context > 0, "library context for the console-measured exports");
-    std::size_t stats[3] = {1, 1, 1};
-    Require(sceNpWebApiGetMemoryPoolStats(context, stats) == 0 && stats[0] == 0x10000 && stats[1] == 0 && stats[2] == 0, "memory pool stats of a fresh context");
-    Require(sceNpWebApiGetMemoryPoolStats(0x7fff + 1, stats) == LibContextNotFound, "memory pool stats of an unknown context");
+    NpWebApiMemoryPoolStats stats{1, 1, 1};
+    Require(sceNpWebApiGetMemoryPoolStats(context, &stats) == 0 && stats.poolSize == 0x10000 && stats.maxInuseSize == 0 && stats.currentInuseSize == 0, "memory pool stats of a fresh context");
+    Require(sceNpWebApiGetMemoryPoolStats(0x7fff + 1, &stats) == LibContextNotFound, "memory pool stats of an unknown context");
     Require(sceNpWebApiGetMemoryPoolStats(context, nullptr) == InvalidArgument, "memory pool stats without a buffer");
 
     Require(sceNpWebApiCreateContextA(context, -1) == InvalidArgument, "user context for a negative user");

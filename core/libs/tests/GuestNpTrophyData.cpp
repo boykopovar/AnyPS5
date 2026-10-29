@@ -1,7 +1,10 @@
+#include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -17,25 +20,8 @@
 struct NpUniversalDataSystemEvent;
 struct NpUniversalDataSystemEventPropertyObject;
 
-extern "C" {
-int APS5_VABI sceNpUniversalDataSystemCreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemRegisterContext(int, int, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemCreateHandle(int*);
-int APS5_VABI sceNpUniversalDataSystemCreateEvent(const char*, const NpUniversalDataSystemEventPropertyObject*, NpUniversalDataSystemEvent**, NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEvent(NpUniversalDataSystemEvent*);
-int APS5_VABI sceNpUniversalDataSystemPostEvent(int, int, const void*, uint64_t);
-int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyObject(NpUniversalDataSystemEventPropertyObject**);
-int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyObject(NpUniversalDataSystemEventPropertyObject*);
-int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt32(NpUniversalDataSystemEventPropertyObject*, const char*, int32_t);
-int APS5_VABI sceNpTrophy2CreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
-int APS5_VABI sceNpTrophy2GetGroupInfo(int, int, int, NpTrophy2GroupDetails*, NpTrophy2GroupData*);
-int APS5_VABI sceNpTrophy2GetGroupInfoArray(int, int, uint32_t, uint32_t, NpTrophy2GroupDetails*, NpTrophy2GroupData*, uint32_t*);
-int APS5_VABI sceNpTrophy2GetTrophyInfo(int, int, int, NpTrophy2Details*, NpTrophy2Data*);
-int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int, int, uint32_t, uint32_t, NpTrophy2Details*, NpTrophy2Data*, uint32_t*);
-}
-
 static constexpr int InitialUser = 0x10000000;
+static constexpr int InvalidTrophyId = static_cast<int>(0x8055390Au);
 
 static const char TropConf[] = R"({"defaultLanguage":"en-US","trophies":[
     {"id":"0","grade":"P"},
@@ -168,8 +154,18 @@ static void ReportTrophyData(int context) {
     Require(details.trophy_grade == 1 && std::strcmp(details.name, "All of them") == 0, "the platinum is not reported");
     const auto steps = Trophy(context, 5, &details);
     Require(details.target.type == 1 && details.target.value == 5 && !steps.unlocked && steps.progress.type == 1 && steps.progress.value == 0, "the progressive trophy does not report its target");
-    NpTrophy2Data unknown{};
-    Require(ThrowsInvalidArgument([context, &unknown] { sceNpTrophy2GetTrophyInfo(context, 1, 99, nullptr, &unknown); }), "a trophy that is not in the package was reported");
+    const auto untouched = [](const void* bytes, std::size_t size) {
+        const auto* first = static_cast<const unsigned char*>(bytes);
+        return std::all_of(first, first + size, [](unsigned char byte) { return byte == 0x5a; });
+    };
+    for (const int unknownId : {8, 99, -1}) {
+        NpTrophy2Details unknownDetails{};
+        NpTrophy2Data unknown{};
+        std::memset(&unknownDetails, 0x5a, sizeof(unknownDetails));
+        std::memset(&unknown, 0x5a, sizeof(unknown));
+        Require(sceNpTrophy2GetTrophyInfo(context, 1, unknownId, &unknownDetails, &unknown) == InvalidTrophyId, "a trophy that is not in the package did not return the invalid trophy id error");
+        Require(untouched(&unknownDetails, sizeof(unknownDetails)) && untouched(&unknown, sizeof(unknown)), "a trophy that is not in the package wrote its details or data");
+    }
 
     std::vector<NpTrophy2Details> list(10);
     std::vector<NpTrophy2Data> listed(10);
@@ -227,6 +223,11 @@ static void ReportPlaceholders() {
     }
 }
 
+static void ReportExportLinked() {
+    auto* volatile linked = &sceNpUniversalDataSystemIntInitialize;
+    Require(linked != nullptr, "sceNpUniversalDataSystemIntInitialize is not linked");
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-data-" + std::to_string(std::random_device{}()));
@@ -240,6 +241,7 @@ int main() {
     ReportTrophyData(context);
     PostUnlocks(context);
     ReportPlaceholders();
+    ReportExportLinked();
 
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);

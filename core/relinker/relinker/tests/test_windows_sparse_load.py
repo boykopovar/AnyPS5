@@ -10,10 +10,11 @@ import tempfile
 from test_linux_load_alignment import PT_LOAD, fixture
 from test_windows_bss import LOAD_RVA, SECTION_ALIGNMENT, sections
 
-FAR_ADDRESS = 0x7FE00000
+FAR_ADDRESS = 0x76F00000
 RUNNABLE_FAR_ADDRESS = 0x4000000
 ENTRY = 0x10
 PEAK_MEMORY_LIMIT = 512 << 20
+WINDOWS_IMAGE_LIMIT = 0x77000000
 
 
 def sparse_fixture(far_address=FAR_ADDRESS):
@@ -54,6 +55,24 @@ def main():
         assert raw_size == 0 and raw == 0 and rva + virtual_size <= LOAD_RVA + FAR_ADDRESS, gap
         far = next(section for section in table if section[2] == LOAD_RVA + FAR_ADDRESS)
         assert far[1] == 0x1000, far
+        limit_address = WINDOWS_IMAGE_LIMIT - (image_size - FAR_ADDRESS)
+        limit = work / "limit.elf"
+        limit.write_bytes(sparse_fixture(limit_address))
+        limit_output = work / "limit.exe"
+        result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(limit), str(limit_output)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        limit_size = sections(limit_output.read_bytes())[1]
+        assert limit_size == WINDOWS_IMAGE_LIMIT, hex(limit_size)
+        if os.name == "nt":
+            executed = subprocess.run([str(limit_output)], capture_output=True, text=True, timeout=20)
+            assert executed.returncode == 42, f"exit code {executed.returncode:#x}"
+        over = work / "over.elf"
+        over.write_bytes(sparse_fixture(limit_address + 0x1000))
+        over_output = work / "over.exe"
+        result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(over), str(over_output)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 2 and "Windows image size limit" in result.stderr and not over_output.exists(), result
         if os.name == "nt":
             runnable = work / "runnable.elf"
             runnable.write_bytes(sparse_fixture(RUNNABLE_FAR_ADDRESS))

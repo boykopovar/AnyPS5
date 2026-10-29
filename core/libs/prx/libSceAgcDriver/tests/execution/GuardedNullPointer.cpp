@@ -270,7 +270,7 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     Require(!Faulted(someLanes), "guarded pointer: a mapped pointer under EXEC faulted:\n" + someLanes.log);
     RequireWords(someLanes, 5u, Payload, "guarded pointer: a mapped pointer read under EXEC");
     const auto noLanes = Run(device, ExecCode, 0u, 0u);
-    Require(!Faulted(noLanes) && noLanes.poisoned == 1u, "guarded pointer: a null pointer read skipped by s_cbranch_execz faulted:\n" + noLanes.log);
+    Require(!Faulted(noLanes) && noLanes.poisoned == 0u && noLanes.cacheable, "guarded pointer: a null pointer read skipped by s_cbranch_execz under an EXEC decided empty at capture faulted, was poisoned or left the caches:\n" + noLanes.log);
     RequireWords(noLanes, 0u, 0u, "guarded pointer: a read skipped by s_cbranch_execz");
     const auto oneLane = Run(device, ExecCode, 0u, 1u);
     Require(Faulted(oneLane) && oneLane.log.find(Fault(0u, 0x34u)) != std::string::npos, "guarded pointer: a null pointer read with one EXEC lane did not fault:\n" + oneLane.log);

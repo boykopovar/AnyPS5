@@ -935,6 +935,23 @@ RdnaInstruction DecodeRdnaFlat(std::uint32_t programCounter, std::span<const std
         instruction.sourceCount = 1;
         return instruction;
     }
+    if (seg == 1u) {
+        const RdnaOperand zero = scalarSource(128u);
+        instruction.source0 = saddr == 0x7Du ? vectorRegister(addr) : zero;
+        instruction.source1 = zero;
+        if (saddr != 0x7Du && saddr != 0x7Fu) {
+            instruction.source1 = scalarSource(saddr);
+            if (instruction.source1.kind != RdnaOperandKind::ScalarRegister &&
+                instruction.source1.kind != RdnaOperandKind::VccLo &&
+                instruction.source1.kind != RdnaOperandKind::VccHi &&
+                instruction.source1.kind != RdnaOperandKind::M0 &&
+                instruction.source1.kind != RdnaOperandKind::ExecLo) {
+                throw std::runtime_error("FLAT scratch scalar offset register is unsupported");
+            }
+        }
+        instruction.sourceCount = 2;
+        return instruction;
+    }
     instruction.source0 = vectorRegister(addr);
     if (seg == 0u || saddr == 0x7Du || saddr == 0x7Fu) {
         if (addr == 255u) {

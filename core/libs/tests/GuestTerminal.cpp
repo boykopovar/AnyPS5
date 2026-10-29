@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
 #include <cstdint>
@@ -7,24 +9,6 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-int APS5_VABI tcgetattr_nid_postfix(int, void*);
-int APS5_VABI tcsetattr_nid_postfix(int, int, const void*);
-int APS5_VABI tcsendbreak_nid_postfix(int, int);
-int APS5_VABI tcdrain_nid_postfix(int);
-int APS5_VABI tcflush_nid_postfix(int, int);
-int APS5_VABI tcflow_nid_postfix(int, int);
-int APS5_VABI tcgetpgrp_nid_postfix(int);
-int APS5_VABI tcsetpgrp_nid_postfix(int, int);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI socketpair_nid_postfix(int, int, int, int*);
-int APS5_VABI mkdir_nid_postfix(const char*, unsigned short);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Check(bool value, int line) {
     if (!value) {

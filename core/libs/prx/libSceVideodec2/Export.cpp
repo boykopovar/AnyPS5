@@ -1,3 +1,5 @@
+#include "prx/libSceVideodec2/include/Api.hpp"
+#include "prx/libSceVideodec2/include/PictureMetadata.hpp"
 #include <array>
 #include <span>
 #include <cstdint>
@@ -9,11 +11,14 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 #include <cerrno>
 #include <limits>
 #include <stdexcept>
 #include "prx/libc/include/General.hpp"
+#include "HevcMetadata.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -24,6 +29,12 @@ extern "C" {
 
 namespace {
 
+using namespace SceVideodec2;
+using SceVideodec2::Internal::Crop;
+using SceVideodec2::Internal::PictureHeader;
+
+struct UnsupportedHevcMetadata {};
+
 constexpr std::uint64_t WorkMemoryBytes = 1u << 20u;
 constexpr std::uint32_t PitchAlignment = 256;
 constexpr std::uint32_t HeightAlignment = 32;
@@ -32,110 +43,16 @@ constexpr std::uint32_t CodecHevc = 974921;
 constexpr std::uint32_t CodecVp9 = 2382845;
 constexpr int Videodec2ErrorAccessUnitSize = static_cast<int>(0x811D010Du);
 constexpr int Videodec2ErrorAccessUnitPointer = static_cast<int>(0x811D010Eu);
-
-struct ComputeMemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-};
-
-struct ComputeConfigInfo {
-    std::uint64_t thisSize;
-    std::uint16_t computePipeId;
-    std::uint16_t computeQueueId;
-    bool checkMemoryType;
-};
-
-struct DecoderConfigInfo {
-    std::uint64_t thisSize;
-    std::uint32_t resourceType;
-    std::uint32_t codecType;
-    std::uint32_t profile;
-    std::uint32_t maxLevel;
-    std::int32_t maxFrameWidth;
-    std::int32_t maxFrameHeight;
-    std::int32_t maxDpbFrameCount;
-    std::uint32_t decodePipelineDepth;
-};
-
-struct DecoderMemoryInfo {
-    std::uint64_t thisSize;
-    std::uint64_t cpuMemorySize;
-    void* cpuMemory;
-    std::uint64_t gpuMemorySize;
-    void* gpuMemory;
-    std::uint64_t cpuGpuMemorySize;
-    void* cpuGpuMemory;
-    std::uint64_t maxFrameBufferSize;
-    std::uint32_t frameBufferAlignment;
-};
-
-struct InputData {
-    std::uint64_t thisSize;
-    const std::uint8_t* auData;
-    std::uint64_t auSize;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-};
-
-struct FrameBuffer {
-    std::uint64_t thisSize;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-    bool isAccepted;
-};
-
-struct OutputInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    bool isErrorFrame;
-    std::uint8_t pictureCount;
-    std::uint32_t codecType;
-    std::uint32_t frameWidth;
-    std::uint32_t framePitch;
-    std::uint32_t frameHeight;
-    void* frameBuffer;
-    std::uint64_t frameBufferSize;
-    std::uint32_t frameFormat;
-    std::uint32_t framePitchInBytes;
-};
-
-struct AvcPictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint8_t idrPictureFlag;
-    std::uint8_t profileIdc;
-    std::uint8_t levelIdc;
-    std::uint32_t picWidthInLumaSamples;
-    std::uint32_t picHeightInLumaSamples;
-};
-
-struct Vp9PictureInfo {
-    std::uint64_t thisSize;
-    bool isValid;
-    std::uint64_t ptsData;
-    std::uint64_t dtsData;
-    std::uint64_t attachedData;
-    std::uint32_t profile;
-    std::uint32_t level;
-    std::uint32_t keyFrameFlag;
-    std::uint32_t intraOnly;
-    std::uint8_t bitDepth;
-    std::uint8_t colorRange;
-    std::uint32_t colorSpace;
-    std::uint32_t numFrames;
-    std::uint32_t frameWidth;
-    std::uint32_t frameHeight;
-    std::uint32_t renderWidth;
-    std::uint32_t renderHeight;
-};
+constexpr int Videodec2ErrorStructureSize = static_cast<int>(0x811D0101u);
+constexpr int Videodec2ErrorArgumentPointer = static_cast<int>(0x811D0102u);
+constexpr int Videodec2ErrorFrameBufferSize = static_cast<int>(0x811D0106u);
+constexpr int Videodec2ErrorFrameBufferPointer = static_cast<int>(0x811D0107u);
+constexpr int Videodec2ErrorFrameBufferAlignment = static_cast<int>(0x811D0108u);
+constexpr int Videodec2ErrorPictureCount = static_cast<int>(0x811D010Fu);
 
 static_assert(sizeof(Vp9PictureInfo) == 88);
 static_assert(offsetof(Vp9PictureInfo, colorSpace) == 60);
+static_assert(sizeof(OutputInfo) == 0x38 && offsetof(OutputInfo, isDiscardedFrame) == 0xb && offsetof(OutputInfo, codecType) == 0xc && offsetof(OutputInfo, frameBuffer) == 0x20);
 
 class Vp9Bits {
 public:
@@ -269,13 +186,6 @@ std::vector<Vp9Unit> ParseVp9Packet(std::span<const std::uint8_t> bytes, std::ar
     return result;
 }
 
-struct Crop {
-    std::uint32_t left = 0;
-    std::uint32_t right = 0;
-    std::uint32_t top = 0;
-    std::uint32_t bottom = 0;
-};
-
 struct Picture {
     std::uint64_t pts = 0;
     std::uint64_t dts = 0;
@@ -283,6 +193,9 @@ struct Picture {
     bool idr = false;
     Vp9PictureInfo vp9{};
     Crop crop{};
+    bool hevcIdr = false;
+    std::uint8_t bitDepthMinus8 = 0;
+    Videodec2Hevc::Metadata hevc;
 };
 
 struct FrameDeleter {
@@ -312,6 +225,7 @@ struct Decoder {
     bool flushing = false;
     std::array<Vp9PictureInfo, 8> vp9References{};
     Vp9PictureInfo vp9Colors{};
+    Videodec2Hevc::State hevc;
 
     ~Decoder() {
         sws_freeContext(scaler);
@@ -437,6 +351,16 @@ bool CarriesAvcSlice(const std::vector<std::uint8_t>& unit) {
     return false;
 }
 
+bool StartsHevcIdr(const std::vector<std::uint8_t>& unit) {
+    for (std::size_t index = 0; index + 3 < unit.size(); ++index) {
+        if (unit[index] != 0 || unit[index + 1] != 0 || unit[index + 2] != 1) continue;
+        const auto type = (unit[index + 3] >> 1u) & 0x3fu;
+        if (type < 32) return type == 19 || type == 20;
+        index += 2;
+    }
+    return false;
+}
+
 void Receive(Decoder& decoder) {
     for (;;) {
         FramePointer frame(av_frame_alloc());
@@ -526,11 +450,13 @@ void EmitDecoded(std::uint64_t handle, Decoder& decoder, FrameBuffer* frame, Out
     if (decoder.context->profile > 0) decoder.profile = static_cast<std::uint32_t>(decoder.context->profile) & 0xffu;
     if (decoder.context->level > 0) decoder.level = static_cast<std::uint32_t>(decoder.context->level);
     if (!WriteNv12(decoder, *picture, static_cast<std::uint8_t*>(frame->frameBuffer), frame->frameBufferSize)) throw std::runtime_error("Videodec2: NV12 conversion failed");
+    timestamps.bitDepthMinus8 = decoder.sampleBytes == 2 ? 2 : 0;
     const auto pitch = PitchBytes(decoder.width, decoder.sampleBytes);
     frame->isAccepted = true;
     output->isValid = true;
     output->isErrorFrame = false;
     output->pictureCount = 1;
+    output->isDiscardedFrame = false;
     output->frameWidth = decoder.width;
     output->framePitch = pitch / decoder.sampleBytes;
     output->frameHeight = decoder.height;
@@ -618,6 +544,7 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
     const Picture picture{input->ptsData, input->dtsData, input->attachedData};
     if (decoder.flushing) {
         avcodec_flush_buffers(decoder.context);
+        decoder.hevc.afterEnd = true;
         decoder.flushing = false;
     }
     if (input->auSize > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) throw std::runtime_error("Videodec2: invalid access unit");
@@ -664,7 +591,15 @@ int APS5_VABI sceVideodec2Decode_nid_postfix(std::uint64_t handle, const InputDa
     std::memcpy(packet->data + decoder.parameterSets.size(), unit->data(), unit->size());
     decoder.parameterSets.clear();
     packet->pts = decoder.nextKey;
-    decoder.inputs.emplace(decoder.nextKey++, picture);
+    auto tagged = picture;
+    tagged.hevcIdr = decoder.codec == CodecHevc && StartsHevcIdr(*unit);
+    if (decoder.codec == CodecHevc) {
+        tagged.hevc = Videodec2Hevc::Parse_nid_no_patch(decoder.hevc, *unit);
+        tagged.hevc.info.ptsData = picture.pts;
+        tagged.hevc.info.dtsData = picture.dts;
+        tagged.hevc.info.attachedData = picture.attached;
+    }
+    decoder.inputs.emplace(decoder.nextKey++, tagged);
     Send(decoder, packet);
     EmitDecoded(handle, decoder, frame, output);
     return 0;
@@ -676,7 +611,7 @@ int APS5_VABI sceVideodec2Flush_nid_postfix(std::uint64_t handle, FrameBuffer* f
     if (!found) throw std::runtime_error("Videodec2: invalid decoder handle");
     auto& decoder = *found;
     std::lock_guard guard(decoder.mutex);
-    if (!decoder.flushing) {
+    if (!decoder.flushing && decoder.ready.empty() && !decoder.inputs.empty()) {
         Send(decoder, nullptr);
         decoder.flushing = true;
     }
@@ -697,6 +632,7 @@ int APS5_VABI sceVideodec2Reset_nid_postfix(std::uint64_t handle) {
         std::erase_if(pictureOwners, [handle](const auto& owner) { return owner.second == handle; });
     }
     avcodec_flush_buffers(decoder.context);
+    decoder.hevc.afterEnd = true;
     decoder.ready.clear();
     decoder.inputs.clear();
     decoder.parameterSets.clear();
@@ -704,9 +640,50 @@ int APS5_VABI sceVideodec2Reset_nid_postfix(std::uint64_t handle) {
     return 0;
 }
 
-int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo* output, AvcPictureInfo* first, void* second) {
-    (void)second;
-    if (!output || !first) throw std::runtime_error("Videodec2: invalid argument pointer");
+static std::uint64_t PictureInfoSize(const void* info) {
+    std::uint64_t size = 0;
+    std::memcpy(&size, info, sizeof(size));
+    return size;
+}
+
+static bool PictureInfoSizeSupported(const void* info) {
+    switch (PictureInfoSize(info)) {
+    case 0x58:
+    case 0x68:
+    case 0x78:
+    case 0x88:
+    case 0xa8:
+    case 0xb8: return true;
+    default: return false;
+    }
+}
+
+static int PictureArguments(const OutputInfo* output, void* first, void* second) {
+    if (!first) return Videodec2ErrorArgumentPointer;
+    auto* firstValidity = static_cast<std::uint8_t*>(first) + 8;
+    GuestArena::HostWrite firstAccess(firstValidity, sizeof(std::uint32_t));
+    if (!firstAccess.Open()) throw UnsupportedHevcMetadata{};
+    std::optional<GuestArena::HostWrite> secondAccess;
+    if (second) {
+        secondAccess.emplace(static_cast<std::uint8_t*>(second) + 8, sizeof(std::uint32_t));
+        if (!secondAccess->Open()) throw UnsupportedHevcMetadata{};
+    }
+    std::memset(firstValidity, 0, sizeof(std::uint32_t));
+    if (second) std::memset(static_cast<std::uint8_t*>(second) + 8, 0, sizeof(std::uint32_t));
+    if (!output) return Videodec2ErrorArgumentPointer;
+    if (output->thisSize != 0x30 && output->thisSize != 0x38) return Videodec2ErrorStructureSize;
+    if ((reinterpret_cast<std::uintptr_t>(output->frameBuffer) & 0xffu) != 0) return Videodec2ErrorFrameBufferAlignment;
+    if (!output->frameBuffer) return Videodec2ErrorFrameBufferPointer;
+    if (output->pictureCount != 1 && output->pictureCount != 2) return Videodec2ErrorPictureCount;
+    if (output->frameBufferSize <= std::uint64_t{output->pictureCount} * 0x400u) return Videodec2ErrorFrameBufferSize;
+    if (!PictureInfoSizeSupported(first) || (output->pictureCount == 2 && second && !PictureInfoSizeSupported(second))) return Videodec2ErrorStructureSize;
+    return 0;
+}
+
+static int GetPictureInfo(const OutputInfo* output, void* first, void* second) {
+    const int result = PictureArguments(output, first, second);
+    if (result != 0) return result;
+    if (output->pictureCount != 1) throw UnsupportedHevcMetadata{};
     const auto owner = [output]() -> std::uint64_t {
         std::lock_guard guard(lock);
         const auto found = pictureOwners.find(output->frameBuffer);
@@ -718,73 +695,72 @@ int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo* output, A
         std::lock_guard guard(decoder->mutex);
         if (owner() != handle) continue;
         const auto found = decoder->pictures.find(output->frameBuffer);
-        if (found == decoder->pictures.end()) throw std::runtime_error("Videodec2: owned picture is missing");
-        if (decoder->codec == CodecVp9) {
-            auto* info = reinterpret_cast<Vp9PictureInfo*>(first);
-            if (!Fits(info, sizeof(Vp9PictureInfo))) throw std::runtime_error("Videodec2: VP9 picture structure is too small");
-            const auto size = info->thisSize;
-            *info = found->second.vp9;
-            info->thisSize = size;
+        if (found == decoder->pictures.end()) throw UnsupportedHevcMetadata{};
+        const auto size = PictureInfoSize(first);
+        if (decoder->codec == CodecVp9 && size == sizeof(Vp9PictureInfo)) {
+            GuestArena::HostWrite access(first, sizeof(Vp9PictureInfo));
+            if (!access.Open()) throw UnsupportedHevcMetadata{};
+            std::memcpy(first, &found->second.vp9, sizeof(Vp9PictureInfo));
+            std::memcpy(first, &size, sizeof(size));
             return 0;
         }
-        if (decoder->codec != CodecAvc) throw std::runtime_error("Videodec2: picture info is only implemented for H.264 and VP9");
-        const auto& picture = found->second;
-        first->isValid = true;
-        first->ptsData = picture.pts;
-        first->dtsData = picture.dts;
-        first->attachedData = picture.attached;
-        if (Fits(first, offsetof(AvcPictureInfo, picHeightInLumaSamples) + 4)) {
-            first->idrPictureFlag = picture.idr ? 1 : 0;
-            first->profileIdc = static_cast<std::uint8_t>(decoder->profile);
-            first->levelIdc = static_cast<std::uint8_t>(decoder->level);
-            first->picWidthInLumaSamples = output->frameWidth;
-            first->picHeightInLumaSamples = output->frameHeight;
+        if (decoder->codec == CodecHevc && size == sizeof(Videodec2Hevc::PictureInfo)) {
+            if (!found->second.hevc.unsupported.empty()) throw UnsupportedHevcMetadata{};
+            GuestArena::HostWrite access(first, sizeof(Videodec2Hevc::PictureInfo));
+            if (!access.Open()) throw UnsupportedHevcMetadata{};
+            std::memcpy(first, &found->second.hevc.info, sizeof(Videodec2Hevc::PictureInfo));
+            std::memcpy(first, &size, sizeof(size));
+            return 0;
         }
-        return 0;
+        throw UnsupportedHevcMetadata{};
     }
-    first->isValid = false;
-    return 0;
+    throw UnsupportedHevcMetadata{};
+}
+
+int APS5_VABI sceVideodec2GetPictureInfo_nid_postfix(const OutputInfo* output, AvcPictureInfo* first, void* second) {
+    try { return GetPictureInfo(output, first, second); }
+    catch (const UnsupportedHevcMetadata&) { NotImplemented_nid_no_patch(__func__); }
 }
 
 int APS5_VABI sceVideodec2GetAvcPictureInfo_nid_postfix(const OutputInfo* output, AvcPictureInfo* first, AvcPictureInfo* second) {
-    return sceVideodec2GetPictureInfo_nid_postfix(output, first, second);
+    try { return GetPictureInfo(output, first, second); }
+    catch (const UnsupportedHevcMetadata&) { NotImplemented_nid_no_patch(__func__); }
+}
+
+int APS5_VABI sceVideodec2GetHevcPictureInfo_nid_postfix(const OutputInfo* output, Videodec2Hevc::PictureInfo* info) {
+    try { return GetPictureInfo(output, info, nullptr); }
+    catch (const UnsupportedHevcMetadata&) { NotImplemented_nid_no_patch(__func__); }
 }
 
 int APS5_VABI sceVideodec2GetVp9PictureInfo_nid_postfix(const OutputInfo* output, Vp9PictureInfo* info) {
-    if (!output || !info) throw std::runtime_error("Videodec2: invalid VP9 picture argument");
-    if (!Fits(output, offsetof(OutputInfo, frameBuffer) + sizeof(output->frameBuffer)) || !Fits(info, sizeof(Vp9PictureInfo)))
-        throw std::runtime_error("Videodec2: VP9 picture structure is too small");
-    const auto owner = [output]() -> std::uint64_t {
-        std::lock_guard guard(lock);
-        const auto found = pictureOwners.find(output->frameBuffer);
-        return found != pictureOwners.end() ? found->second : 0;
-    };
-    for (auto handle = owner(); handle != 0; handle = owner()) {
-        const auto decoder = FindDecoder(handle);
-        if (!decoder) continue;
-        std::lock_guard guard(decoder->mutex);
-        if (owner() != handle) continue;
-        const auto found = decoder->pictures.find(output->frameBuffer);
-        if (found == decoder->pictures.end()) throw std::runtime_error("Videodec2: owned VP9 picture is missing");
-        if (decoder->codec != CodecVp9) throw std::runtime_error("Videodec2: VP9 info requested for another codec");
-        const auto size = info->thisSize;
-        *info = found->second.vp9;
-        info->thisSize = size;
-        return 0;
-    }
-    info->isValid = false;
-    return 0;
+    try { return GetPictureInfo(output, info, nullptr); }
+    catch (const UnsupportedHevcMetadata&) { NotImplemented_nid_no_patch(__func__); }
 }
 
-void Videodec2PictureCrop_nid_no_patch(std::uint64_t handle, const void* frameBuffer, Crop* crop) {
-    if (!crop) throw std::runtime_error("Videodec2: invalid argument pointer");
+void Videodec2PictureHeader_nid_no_patch(std::uint64_t handle, const void* frameBuffer, PictureHeader* header) {
+    if (!header) throw std::runtime_error("Videodec2: invalid argument pointer");
     const auto found = FindDecoder(handle);
     if (!found) throw std::runtime_error("Videodec2: invalid decoder handle");
     auto& decoder = *found;
     std::lock_guard guard(decoder.mutex);
     const auto picture = decoder.pictures.find(frameBuffer);
     if (picture == decoder.pictures.end()) throw std::runtime_error("Videodec2: unknown frame buffer");
-    *crop = picture->second.crop;
+    const auto& stored = picture->second;
+    *header = {stored.pts, stored.dts, stored.attached, stored.idr, stored.hevcIdr, decoder.profile, decoder.level, stored.crop, stored.bitDepthMinus8};
+}
+
+void Videodec2Vp9PictureInfo_nid_no_patch(std::uint64_t handle, const void* frameBuffer, Vp9PictureInfo* info) {
+    if (!info) throw std::runtime_error("Videodec2: invalid argument pointer");
+    const auto found = FindDecoder(handle);
+    if (!found) throw std::runtime_error("Videodec2: invalid decoder handle");
+    auto& decoder = *found;
+    std::lock_guard guard(decoder.mutex);
+    if (decoder.codec != CodecVp9) throw std::runtime_error("Videodec2: VP9 picture info requested for another codec");
+    const auto picture = decoder.pictures.find(frameBuffer);
+    if (picture == decoder.pictures.end()) throw std::runtime_error("Videodec2: unknown frame buffer");
+    auto snapshot = picture->second.vp9;
+    snapshot.thisSize = sizeof(*info);
+    *info = snapshot;
 }
 
 }

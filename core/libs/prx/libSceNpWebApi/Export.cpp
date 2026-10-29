@@ -1,3 +1,4 @@
+#include "prx/libSceNpWebApi/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
@@ -35,20 +36,6 @@ static constexpr std::uint32_t SCE_NP_INVALID_SERVICE_LABEL = 0xFFFFFFFF;
 static constexpr std::uint32_t SDK_VERSION_1_00 = 0x01000000;
 static constexpr std::uint32_t SDK_VERSION_2_00 = 0x02000000;
 static constexpr std::uint32_t SDK_VERSION_2_50 = 0x02500000;
-
-struct NpWebApiContentParameter {
-    std::uint64_t contentLength;
-    const char* contentType;
-    std::uint8_t reserved[16];
-};
-
-static_assert(sizeof(NpWebApiContentParameter) == 32);
-
-struct NpWebApiMemoryPoolStats {
-    std::size_t poolSize;
-    std::size_t maxInuseSize;
-    std::size_t currentInuseSize;
-};
 
 namespace {
 
@@ -264,7 +251,7 @@ int APS5_VABI sceNpWebApiGetHttpResponseHeaderValueLength() {
     return 0;
 }
 
-int APS5_VABI sceNpWebApiGetHttpStatusCode() {
+int APS5_VABI sceNpWebApiGetHttpStatusCode(std::int64_t requestId, int* statusCode) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -289,7 +276,7 @@ int APS5_VABI sceNpWebApiInitialize(int libHttpCtxId, std::size_t poolSize) {
     return SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_MAX;
 }
 
-int APS5_VABI sceNpWebApiReadData() {
+int APS5_VABI sceNpWebApiReadData(std::int64_t requestId, void* data, std::size_t size) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

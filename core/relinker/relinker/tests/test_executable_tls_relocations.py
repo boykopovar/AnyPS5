@@ -3,7 +3,10 @@ has them in its GOT. The Linux ELF keeps them dynamic and symbolless, with the v
 TLS block as the addend, for the dynamic loader to resolve against where it puts the block; a named one
 against a defined STT_TLS symbol is folded the same way, and one against an import stays named, typed
 STT_TLS. The Windows and macOS images resolve TPOFF64 and DTPOFF64 statically against their block,
-AlignUp(p_memsz, p_align) below the thread pointer, and reject what they cannot express."""
+AlignUp(p_memsz, p_align) below the thread pointer, and reject what they cannot express. Every target
+rejects the link-time types GOT32, PLT32, GOTPCREL, 32S, GOTPCRELX and REX_GOTPCRELX, which glibc's
+ld.so does not apply; the Windows and macOS images also reject other types they cannot apply, such as
+PC32 and 32. Every target rejects a non-TLS relocation against an STT_TLS symbol, defined or imported."""
 
 from pathlib import Path
 import struct
@@ -18,35 +21,54 @@ from test_tls_function_coverage import pe_bytes_at
 PT_LOAD = 1
 PT_TLS = 7
 DTPMOD64, DTPOFF64, TPOFF64, TPOFF32 = 16, 17, 18, 23
+LINK_TIME = {3: "got32", 4: "plt32", 9: "gotpcrel", 11: "32s", 41: "gotpcrelx", 42: "rex-gotpcrelx"}
+TARGETS = {(): "linux", ("--lazy-binding",): "lazy", ("--windows",): "windows", ("--macos",): "macos"}
 TLS_MEMSZ, TLS_ALIGN = 0x24, 16
 TLS_BLOCK = 0x30
 DEFAULT_BASE = 0x400000
-STRINGS = b"\0Tls\0Data\0ImportedTls\0"
+STRINGS = b"\0Tls\0Data\0ImportedTls\0Function\0libFunction.prx\0"
 TLS_NAME, DATA_NAME, IMPORT_NAME = 1, 5, 10
+FUNCTION_NAME, LIBRARY_NAME = 22, 31
 
-NULL, TLS_SYMBOL, DATA_SYMBOL, IMPORTED = 0, 1, 2, 3
+NULL, TLS_SYMBOL, DATA_SYMBOL, IMPORTED, FUNCTION = 0, 1, 2, 3, 4
 
 
-def image(relocations, tls=True, symbol_bytes=None):
-    """The load-alignment fixture with a writable segment (vaddr 0x1000) holding a GOT and an 8-byte
-    TLS template, a symbol table and the given (offset, type, symbol, addend) relocations."""
+def image(relocations, tls=True, symbol_bytes=None, tls_memsz=TLS_MEMSZ):
+    """The load-alignment fixture with a writable segment (vaddr 0x1000) holding a GOT and a PT_TLS of
+    tls_memsz bytes with an up to 8-byte template, a symbol table and the given (offset, type, symbol,
+    addend) relocations."""
     data = fixture()
     struct.pack_into("<Q", data, 24, 0x200)
     data[0x4200:0x4206] = b"\xb8\x2a\x00\x00\x00\xc3"
     struct.pack_into("<IIQQQQQQ", data, 64 + 2 * 56, PT_LOAD, 6, 0x5000, 0x1000, 0x1000, 0x1000, 0x1000, 0x4000)
     if tls:
-        struct.pack_into("<IIQQQQQQ", data, 64 + 3 * 56, PT_TLS, 4, 0x5800, 0x1800, 0x1800, 8, TLS_MEMSZ, TLS_ALIGN)
+        struct.pack_into("<IIQQQQQQ", data, 64 + 3 * 56, PT_TLS, 4, 0x5800, 0x1800, 0x1800, min(8, tls_memsz), tls_memsz, TLS_ALIGN)
     data[0x5800:0x5808] = bytes(range(1, 9))
     data[0x4600:0x4600 + len(STRINGS)] = STRINGS
     struct.pack_into("<IBBHQQ", data, 0x4900 + TLS_SYMBOL * 24, TLS_NAME, 0x16, 0, 1, 0x10, 4)
     struct.pack_into("<IBBHQQ", data, 0x4900 + DATA_SYMBOL * 24, DATA_NAME, 0x11, 0, 1, 0x1100, 8)
     struct.pack_into("<IBBHQQ", data, 0x4900 + IMPORTED * 24, IMPORT_NAME, 0x16, 0, 0, 0, 0)
+    struct.pack_into("<IBBHQQ", data, 0x4900 + FUNCTION * 24, FUNCTION_NAME, 0x12, 0, 0, 0, 0)
     for index, (offset, kind, symbol, addend) in enumerate(relocations):
         struct.pack_into("<QQq", data, 0x4700 + index * 24, offset, symbol << 32 | kind, addend)
     tags = [(5, 0x600), (10, len(STRINGS)), (6, 0x900), (11, 24), (7, 0x700), (8, len(relocations) * 24), (9, 24), (0, 0)]
     if symbol_bytes is not None:
         tags.insert(-1, (0x6100003F, symbol_bytes))
     struct.pack_into("<IIQQQQQQ", data, 120, 2, 6, 0x4800, 0x800, 0x800, len(tags) * 16, len(tags) * 16, 8)
+    for index, tag in enumerate(tags):
+        struct.pack_into("<qQ", data, 0x4800 + index * 16, *tag)
+    return data
+
+
+def needing(data):
+    """The image with DT_NEEDED libFunction.prx first in its dynamic table, which the Windows entry stub
+    requires to bind imports."""
+    tags = [(1, LIBRARY_NAME)]
+    for position in range(0x4800, 0x4900, 16):
+        tags.append(struct.unpack_from("<qQ", data, position))
+        if tags[-1][0] == 0:
+            break
+    struct.pack_into("<QQ", data, 120 + 32, len(tags) * 16, len(tags) * 16)
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", data, 0x4800 + index * 16, *tag)
     return data
@@ -101,6 +123,25 @@ def macho_bytes_at(data, address, size):
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-exec-tls-") as directory:
+        for section in (1, 0xff00, 0xfff1, 0xfff2, 0xffff):
+            for binding in (0, 1):
+                for kind in (DTPMOD64, DTPOFF64, TPOFF64):
+                    for flags, target in TARGETS.items():
+                        data = image([(0x1000, kind, TLS_SYMBOL, 0)])
+                        struct.pack_into("<BBH", data, 0x4900 + TLS_SYMBOL * 24 + 4, binding << 4 | 6, 0, section)
+                        name = f"tls-section-{target}-{section}-{binding}-{kind}"
+                        result, output = relink(relinker, directory, name, data, *flags)
+                        if section == 1 and kind == DTPMOD64 and target in ("windows", "macos"):
+                            assert result.returncode == 2 and "DTPMOD64 relocation is not supported" in result.stderr, (
+                                name, result.returncode, result.stderr)
+                            assert not output.exists(), name
+                        elif section == 1:
+                            assert result.returncode == 0 and output.exists(), (name, result.stderr)
+                        else:
+                            assert result.returncode == 2 and "Unsupported executable TLS symbol section" in result.stderr, (
+                                name, result.returncode, result.stderr)
+                            assert not output.exists(), name
+
         local = [(0x1000, TPOFF64, NULL, 4), (0x1008, DTPOFF64, NULL, 8), (0x1010, TPOFF64, TLS_SYMBOL, 2)]
         result, output = relink(relinker, directory, "linux", image(local + [(0x1018, DTPMOD64, NULL, 0),
                                                                               (0x1020, TPOFF64, IMPORTED, 0)]))
@@ -113,6 +154,18 @@ def main():
                        (DEFAULT_BASE + 0x1020, TPOFF64, "ImportedTls", 6, 0)], relocations
         assert any(struct.unpack_from("<I", elf, 64 + index * 56)[0] == PT_TLS
                    for index in range(struct.unpack_from("<H", elf, 0x38)[0])), "PT_TLS must be kept"
+
+        for value, size in ((TLS_MEMSZ - 4, 4), (TLS_MEMSZ, 0), (TLS_MEMSZ + 1, 0), (TLS_MEMSZ - 1, 2), (0xffffffffffffffff, 1)):
+            for flags, target in TARGETS.items():
+                data = image([(0x1000, TPOFF64, TLS_SYMBOL, 0)])
+                struct.pack_into("<QQ", data, 0x4900 + TLS_SYMBOL * 24 + 8, value, size)
+                result, output = relink(relinker, directory, f"tls-bounds-{target}-{value}-{size}", data, *flags)
+                if value <= TLS_MEMSZ and size <= TLS_MEMSZ - value:
+                    assert result.returncode == 0 and output.exists(), (target, value, size, result.stderr)
+                else:
+                    assert result.returncode == 2 and "TLS symbol exceeds TLS segment" in result.stderr, (
+                        target, value, size, result.returncode, result.stderr)
+                    assert not output.exists()
 
         result, output = relink(relinker, directory, "windows", image(local), "--windows")
         assert result.returncode == 0, (result.stdout, result.stderr)
@@ -135,20 +188,73 @@ def main():
                     name, result.returncode, result.stdout, result.stderr)
                 assert not output.exists(), name
 
+        non_tls = "FAIL: Non-TLS relocation names an STT_TLS symbol (offset 0x4700)"
+        for kind in (1, 2, 6, 10):
+            for symbol in (TLS_SYMBOL, IMPORTED):
+                for flags, target in TARGETS.items():
+                    name = f"{target}-non-tls-{kind}-{symbol}"
+                    data = image([(0x1000, kind, symbol, 0)], symbol_bytes=96)
+                    result, output = relink(relinker, directory, name, data, *flags)
+                    assert result.returncode == 2 and non_tls in result.stderr, (name, result.returncode, result.stderr)
+                    assert not output.exists(), name
+            data = image([(0x1000, kind, DATA_SYMBOL, 0)], symbol_bytes=96)
+            result, output = relink(relinker, directory, f"non-tls-{kind}-data", data)
+            assert result.returncode == 0 and output.exists(), (kind, result.returncode, result.stderr)
+
+        bound = "Runtime-bound executable TLS template relocation is not supported"
+        for target, kind in ((0x1800, 1), (0x1800, 6), (0x1804, 1), (0x17fc, 6)):
+            data = needing(image([(target, kind, FUNCTION, 0)], symbol_bytes=120))
+            for flags in (("--windows",), ("--windows", "--lazy-binding")):
+                name = f"template-import-{target:x}-{kind}-{len(flags)}"
+                result, output = relink(relinker, directory, name, data, *flags)
+                assert result.returncode == 2 and f"FAIL: {bound} (offset {target:#x})" in result.stderr, (
+                    name, result.returncode, result.stderr)
+                assert not output.exists(), name
+            for flags, label in (((), "linux"), (("--lazy-binding",), "lazy"), (("--macos",), "macos")):
+                name = f"template-import-{target:x}-{kind}-{label}"
+                result, output = relink(relinker, directory, name, data, *flags)
+                assert result.returncode == 0 and output.exists(), (name, result.returncode, result.stderr)
+        for target in (0x1100, 0x17f8, 0x1808):
+            data = needing(image([(target, 1, FUNCTION, 0)], symbol_bytes=120))
+            for flags in (("--windows",), ("--windows", "--lazy-binding")):
+                name = f"outside-template-import-{target:x}-{len(flags)}"
+                result, output = relink(relinker, directory, name, data, *flags)
+                assert result.returncode == 0 and output.exists(), (name, result.returncode, result.stderr)
+
         failures = [
             ("tpoff32", [(0x1000, TPOFF32, NULL, 0)], True, (), "Unsupported relocation type 0x17"),
+            ("tpoff32-invalid-sym", [(0x1000, TPOFF32, 0x1234, 0)], True, (), "Unsupported relocation type 0x17"),
+            ("unknown-reloc-invalid-sym", [(0x1000, 0x99, 0x1234, 0)], True, (), "Unsupported relocation type 0x99"),
             ("not-tls-symbol", [(0x1000, TPOFF64, DATA_SYMBOL, 0)], True, (), "not STT_TLS"),
-            ("no-tls-segment", [(0x1000, TPOFF64, NULL, 0)], False, (), "without a PT_TLS segment"),
+            ("no-tls-segment", [(0x1000, TPOFF64, NULL, 0)], False, (), "without a non-empty PT_TLS segment"),
             ("dtpmod-addend", [(0x1000, DTPMOD64, NULL, 1)], True, (), "DTPMOD64 relocation has a nonzero addend"),
             ("windows-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--windows",), "DTPMOD64 relocation is not supported"),
             ("windows-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--windows",), "Imported TLS relocation"),
+            ("windows-pc32", [(0x1000, 2, NULL, 0)], True, ("--windows",), "Relocation type 2 is not supported for this target"),
+            ("windows-32", [(0x1000, 10, NULL, 0)], True, ("--windows",), "Relocation type 10 is not supported for this target"),
+            ("macos-pc32", [(0x1000, 2, NULL, 0)], True, ("--macos",), "Relocation type 2 is not supported for this target"),
+            ("macos-32", [(0x1000, 10, NULL, 0)], True, ("--macos",), "Relocation type 10 is not supported for this target"),
             ("macos-dtpmod", [(0x1000, DTPMOD64, NULL, 0)], True, ("--macos",), "DTPMOD64 relocation is not supported"),
             ("macos-import", [(0x1000, TPOFF64, IMPORTED, 0)], True, ("--macos",), "Imported TLS relocation"),
-        ]
+        ] + [(f"{target}-{name}", [(0x1000, kind, NULL, 0)], True, flags, f"Unsupported relocation type {kind:#x} (offset 0x4700)")
+             for kind, name in LINK_TIME.items() for flags, target in TARGETS.items()]
         for name, relocations, has_tls, flags, error in failures:
             result, output = relink(relinker, directory, name, image(relocations, has_tls), *flags)
             assert result.returncode == 2 and error in result.stderr, (name, result.returncode, result.stderr)
             assert not output.exists(), name
+
+        empty_tls = "FAIL: TLS relocation in an executable without a non-empty PT_TLS segment (offset 0x4700)"
+        for kind, addend in ((TPOFF64, 4), (DTPOFF64, 4), (DTPMOD64, 0)):
+            for symbol in (NULL, TLS_SYMBOL):
+                for flags, target in TARGETS.items():
+                    name = f"{target}-empty-tls-{kind}-{symbol}"
+                    data = image([(0x1000, kind, symbol, addend)], tls_memsz=0)
+                    result, output = relink(relinker, directory, name, data, *flags)
+                    assert result.returncode == 2 and empty_tls in result.stderr, (name, result.returncode, result.stderr)
+                    assert not output.exists(), name
+
+        result, output = relink(relinker, directory, "linux-empty-tls-import", image([(0x1000, TPOFF64, IMPORTED, 0)], tls_memsz=0))
+        assert result.returncode == 0 and output.exists(), (result.stdout, result.stderr)
     print("Executable TLS relocation test passed")
 
 

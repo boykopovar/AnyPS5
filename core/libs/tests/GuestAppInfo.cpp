@@ -1,3 +1,5 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -7,16 +9,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceKernelGetAppInfo(int pid, void* info);
-int APS5_VABI getpid_nid_postfix(void);
-int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid);
-int APS5_VABI sceKernelCreateUuidV4(std::uint8_t* uuid);
-}
-
-static constexpr int SCE_KERNEL_ERROR_EPERM = static_cast<int>(0x80020001);
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 
 static void Require(bool value) { if (!value) std::abort(); }
 

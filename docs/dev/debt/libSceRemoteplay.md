@@ -1,6 +1,19 @@
 # libSceRemoteplay technical debt
 
+### Silent stubs
+
+- [sceRemoteplayGetConnectionStatus, sceRemoteplayInitialize, sceRemoteplayTerminate](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - `sceRemoteplayGetConnectionStatus` reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID; `sceRemoteplayInitialize` and `sceRemoteplayTerminate` perform no remote play session setup or teardown
+
 ### Unknown function info
+
+- [libSceRemoteplay additional exports](../../../core/libs/prx/libSceRemoteplay/Export.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `sceRemoteplayIsRemoteViewering` | `PBhv2eFxDDs` |
+| `sceRemoteplayNotifyCanWakeup` | `KHxNaWydXss` |
+| `sceRemoteplayRegistCallback` | `pv4ZWTRweyI` |
+| `sceRemoteplayUnregistCallback` | `BHUdZh6st9c` |
 
 - [sceRemoteplayApprove](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - declared without parameters, signature unknown; name from the PS5 3.20 export inventory (DNNDHH/PS5-3.20_Libs)
 - [sceRemoteplayClearAllRegistData](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - declared without parameters, signature unknown; name from the PS5 3.20 export inventory (DNNDHH/PS5-3.20_Libs)

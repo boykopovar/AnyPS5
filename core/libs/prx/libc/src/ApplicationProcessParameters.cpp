@@ -10,7 +10,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include <dlfcn.h>
 #endif
@@ -52,6 +52,11 @@ bool ApplicationGuestHeapApi_nid_no_patch(void** api) {
 #endif
 }
 
+const void* ApplicationEmptyProcessParameters_nid_no_patch() {
+    alignas(16) static const std::byte empty[0x40] = {};
+    return empty;
+}
+
 const void* ApplicationProcessParameters_nid_no_patch() {
 #ifdef _WIN32
     const auto* image = reinterpret_cast<const std::byte*>(GetModuleHandleW(nullptr));
@@ -63,21 +68,27 @@ const void* ApplicationProcessParameters_nid_no_patch() {
     const auto* sections = IMAGE_FIRST_SECTION(nt);
     const auto imageSize = nt->OptionalHeader.SizeOfImage;
     const void* result = nullptr;
+    bool found = false;
     for (unsigned index = 0; index < nt->FileHeader.NumberOfSections; ++index) {
         const auto& section = sections[index];
         if (std::memcmp(section.Name, ".procpar", 8) != 0) continue;
-        if (result != nullptr) throw std::runtime_error("application heap: duplicate process metadata");
+        if (found) throw std::runtime_error("application heap: duplicate process metadata");
+        found = true;
         if (section.Misc.VirtualSize != 8 || section.VirtualAddress > imageSize || 8 > imageSize - section.VirtualAddress) throw std::runtime_error("application heap: invalid process metadata section");
         std::uint32_t address;
         std::uint32_t size;
         std::memcpy(&address, image + section.VirtualAddress, sizeof(address));
         std::memcpy(&size, image + section.VirtualAddress + 4, sizeof(size));
+        if (address == 0 && size == 0) {
+            result = ApplicationEmptyProcessParameters_nid_no_patch();
+            continue;
+        }
         if (size < 0x40 || address > imageSize || size > imageSize - address) throw std::runtime_error("application heap: process parameters exceed the image");
         result = image + address;
     }
-    if (result == nullptr) throw std::runtime_error("application heap: process metadata is missing; relink the executable");
+    if (!found) throw std::runtime_error("application heap: process metadata is missing; relink the executable");
     return result;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__APPLE__)
     struct Search {
         const void* parameters = nullptr;
         bool invalid = false;

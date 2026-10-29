@@ -384,7 +384,7 @@ std::optional<std::pair<std::uint32_t, std::uint32_t>> storedLaneFunction(const 
     bool function = false;
     for (std::size_t offset = 5; offset < words.size(); offset += words[offset] >> spv::WordCountShift) {
         const auto opcode = static_cast<spv::Op>(words[offset] & spv::OpCodeMask);
-        const auto* operands = &words[offset + 1];
+        const auto* operands = words.data() + offset + 1;
         if (opcode == spv::OpFunction) function = true;
         if (opcode == spv::OpConstant) values[operands[1]] = {0u, operands[2]};
         if (opcode == spv::OpVariable && operands[2] == spv::StorageClassInput) inputs.insert(operands[1]);
@@ -396,6 +396,7 @@ std::optional<std::pair<std::uint32_t, std::uint32_t>> storedLaneFunction(const 
         switch (opcode) {
         case spv::OpFunction:
         case spv::OpLabel:
+        case spv::OpVariable:
         case spv::OpReturn:
         case spv::OpFunctionEnd:
             break;
@@ -936,6 +937,95 @@ OpStore %slot2 %second
     check(opcodeCount(acrossCall, spv::OpGroupNonUniformBallot) == 2, "a ballot was shared across a function call");
 }
 
+std::string privateTableModuleSource(const std::string& body, bool functionTable = false) {
+    const std::string storage = functionTable ? "Function" : "Private";
+    const std::string globalTable = functionTable ? "" : "%table = OpVariable %tableArray Private %initial\n";
+    const std::string localTable = functionTable ? "%table = OpVariable %tableArray Function %initial\n" : "";
+    return R"(OpCapability Shader
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main" %index
+OpExecutionMode %main LocalSize 8 1 1
+OpDecorate %index BuiltIn LocalInvocationIndex
+%void = OpTypeVoid
+%bool = OpTypeBool
+%uint = OpTypeInt 32 0
+%false = OpConstantFalse %bool
+%zero = OpConstant %uint 0
+%one = OpConstant %uint 1
+%three = OpConstant %uint 3
+%sixteen = OpConstant %uint 16
+%twenty = OpConstant %uint 20
+%thirty = OpConstant %uint 30
+%array = OpTypeArray %uint %three
+%initial = OpConstantComposite %array %sixteen %twenty %thirty
+%input = OpTypePointer Input %uint
+%tableArray = OpTypePointer )" + storage + R"( %array
+%tableElement = OpTypePointer )" + storage + R"( %uint
+%private = OpTypePointer Private %uint
+%function = OpTypeFunction %void
+%index = OpVariable %input Input
+)" + globalTable + R"(%output = OpVariable %private Private
+%main = OpFunction %void None %function
+%entry = OpLabel
+)" + localTable + R"(%lane = OpLoad %uint %index
+)" + body + R"(OpReturn
+OpFunctionEnd
+)";
+}
+
+void testSpecializedPrivateCompositeTableLoad() {
+    for (const bool functionTable : {false, true}) {
+        for (const bool inBounds : {false, true}) {
+            const auto accessName = inBounds ? "OpInBoundsAccessChain" : "OpAccessChain";
+            const auto accessOp = inBounds ? spv::OpInBoundsAccessChain : spv::OpAccessChain;
+            const std::string label = std::string(accessName) + (functionTable ? " (Function)" : " (Private)");
+            try {
+                const auto folded = assemble(privateTableModuleSource(
+                    "%rawCond = OpUGreaterThan %bool %lane %zero\n"
+                    "%cond = OpLogicalOr %bool %rawCond %false\n"
+                    "%baseOffset = OpIAdd %uint %one %one\n"
+                    "%offset = OpSelect %uint %cond %baseOffset %baseOffset\n"
+                    "%element = " + std::string(accessName) + " %tableElement %table %offset\n"
+                    "%loaded = OpLoad %uint %element\n"
+                    "%sum = OpIAdd %uint %lane %loaded\n"
+                    "OpStore %output %sum\n", functionTable));
+                static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(folded, Vulkan11, Spirv13, false, false));
+                const auto specializedFolded = ShaderRecompiler::SpecializeSpirv(folded);
+                static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(specializedFolded, Vulkan11, Spirv13, false, false));
+                check(opcodeCount(specializedFolded, accessOp) == 0u, label + ": constant-index table access chain was not removed");
+                check(opcodeCount(specializedFolded, spv::OpLogicalOr) == 0u, label + ": right-false OpLogicalOr was not simplified");
+                check(opcodeCount(specializedFolded, spv::OpSelect) == 0u, label + ": identical-arm OpSelect was not simplified");
+                check(opcodeCount(specializedFolded, spv::OpLoad) == 1u, label + ": constant-index table load was not folded");
+                check(storedLaneFunction(specializedFolded) == std::optional<std::pair<std::uint32_t, std::uint32_t>>({1u, 30u}), label + ": constant-index table load folded to the wrong value");
+
+                const auto dynamic = assemble(privateTableModuleSource(
+                    "%element = " + std::string(accessName) + " %tableElement %table %lane\n"
+                    "%loaded = OpLoad %uint %element\n"
+                    "OpStore %output %loaded\n", functionTable));
+                static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(dynamic, Vulkan11, Spirv13, false, false));
+                const auto specializedDynamic = ShaderRecompiler::SpecializeSpirv(dynamic);
+                static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(specializedDynamic, Vulkan11, Spirv13, false, false));
+                check(opcodeCount(specializedDynamic, accessOp) == 1u, label + ": dynamic-index table access chain was removed");
+                check(opcodeCount(specializedDynamic, spv::OpLoad) == 2u, label + ": dynamic-index table load was folded");
+
+                const auto mutated = assemble(privateTableModuleSource(
+                    "%writeElement = " + std::string(accessName) + " %tableElement %table %zero\n"
+                    "OpStore %writeElement %lane\n"
+                    "%readElement = " + std::string(accessName) + " %tableElement %table %one\n"
+                    "%loaded = OpLoad %uint %readElement\n"
+                    "OpStore %output %loaded\n", functionTable));
+                static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(mutated, Vulkan11, Spirv13, false, false));
+                const auto specializedMutated = ShaderRecompiler::SpecializeSpirv(mutated);
+                static_cast<void>(ShaderRecompiler::ValidateAndOptimizeSpirv(specializedMutated, Vulkan11, Spirv13, false, false));
+                check(opcodeCount(specializedMutated, accessOp) == 2u, label + ": mutated table access chain was removed");
+                check(opcodeCount(specializedMutated, spv::OpLoad) == 2u, label + ": mutated table load was folded despite a store through an access chain");
+            } catch (const std::exception& error) {
+                check(false, label + " table specialization: " + error.what());
+            }
+        }
+    }
+}
+
 }
 
 int main() {
@@ -953,6 +1043,7 @@ int main() {
     testFoldedConstantUsedByUndecodedInstructionIsKept();
     testSharedConstantsAreNotCopiedForUndecodedUsers();
     testSharedBooleanConstantsKeepTheirValues();
+    testSpecializedPrivateCompositeTableLoad();
     testBallotsMergedIntoOneBlockShareOneBallot(optimizationEnabled);
     if (failures != 0) {
         std::fprintf(stderr, "%d optimizer check(s) failed\n", failures);
@@ -961,3 +1052,4 @@ int main() {
     std::puts("SPIR-V optimizer checks passed");
     return 0;
 }
+

@@ -1,3 +1,4 @@
+#include "prx/libSceAudiodec/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cmath>
@@ -7,15 +8,6 @@
 #include <numbers>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-std::int32_t APS5_VABI sceAudiodecInitLibrary(std::uint32_t);
-std::int32_t APS5_VABI sceAudiodecTermLibrary(std::uint32_t);
-std::int32_t APS5_VABI sceAudiodecCreateDecoder(AudiodecCtrl*, std::uint32_t);
-std::int32_t APS5_VABI sceAudiodecDeleteDecoder(std::int32_t);
-std::int32_t APS5_VABI sceAudiodecDecode(std::int32_t, AudiodecCtrl*);
-std::int32_t APS5_VABI sceAudiodecClearContext(std::int32_t);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -205,6 +197,8 @@ constexpr std::int32_t errorArg = static_cast<std::int32_t>(0x807F0002);
 constexpr std::int32_t errorInvalidParamSize = static_cast<std::int32_t>(0x807F0004);
 constexpr std::int32_t errorInvalidBsiInfoSize = static_cast<std::int32_t>(0x807F0005);
 constexpr std::int32_t errorInvalidCtrlPointer = static_cast<std::int32_t>(0x807F0008);
+constexpr std::int32_t errorInvalidParamPointer = static_cast<std::int32_t>(0x807F0009);
+constexpr std::int32_t errorInvalidBsiInfoPointer = static_cast<std::int32_t>(0x807F000A);
 constexpr std::int32_t errorInvalidAuInfoPointer = static_cast<std::int32_t>(0x807F000B);
 constexpr std::int32_t errorInvalidHandle = static_cast<std::int32_t>(0x807F000F);
 constexpr std::int32_t errorInvalidWordLength = static_cast<std::int32_t>(0x807F0010);
@@ -377,8 +371,16 @@ void TestAt9() {
 }
 
 int main() {
+    Require(sceAudiodecInitLibrary(0) == errorInvalidType);
     Require(sceAudiodecInitLibrary(4) == errorInvalidType);
     Require(sceAudiodecTermLibrary(0) == errorInvalidType);
+    Require(sceAudiodecTermLibrary(4) == errorInvalidType);
+    Require(sceAudiodecDeleteDecoder(0) == errorInvalidHandle);
+    Require(sceAudiodecDeleteDecoder(-1) == errorInvalidHandle);
+    Require(sceAudiodecClearContext(0) == errorInvalidHandle);
+    Require(sceAudiodecClearContext(-1) == errorInvalidHandle);
+    Require(sceAudiodecDecode(0, nullptr) == errorInvalidHandle);
+    Require(sceAudiodecDecode(-1, nullptr) == errorInvalidHandle);
 
     AudiodecParamMp3 mp3{sizeof(mp3), 1};
     AudiodecMp3Info mp3Info{};
@@ -387,6 +389,11 @@ int main() {
     Require(sceAudiodecCreateDecoder(&ctrl, 2) == errorArg);
     for (std::uint32_t type = 1; type <= 3; ++type) Require(sceAudiodecInitLibrary(type) == 0);
     Require(sceAudiodecCreateDecoder(nullptr, 2) == errorInvalidCtrlPointer);
+    AudiodecCtrl nullParamCtrl{nullptr, &mp3Info, nullptr, nullptr};
+    Require(sceAudiodecCreateDecoder(&nullParamCtrl, 2) == errorInvalidParamPointer);
+    AudiodecCtrl nullBsiCtrl{&mp3, nullptr, nullptr, nullptr};
+    Require(sceAudiodecCreateDecoder(&nullBsiCtrl, 2) == errorInvalidBsiInfoPointer);
+    Require(sceAudiodecCreateDecoder(&ctrl, 0) == errorInvalidType);
     Require(sceAudiodecCreateDecoder(&ctrl, 5) == errorInvalidType);
     mp3.ui_size = 12;
     Require(sceAudiodecCreateDecoder(&ctrl, 2) == errorInvalidParamSize);
@@ -448,6 +455,9 @@ int main() {
     const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 2);
     Require(handle > 0);
     Streams streams;
+    Require(sceAudiodecDecode(handle, nullptr) == errorInvalidCtrlPointer);
+    Require(sceAudiodecDecode(handle, &nullParamCtrl) == errorInvalidParamPointer);
+    Require(sceAudiodecDecode(handle, &nullBsiCtrl) == errorInvalidBsiInfoPointer);
     Require(sceAudiodecDecode(handle, &ctrl) == errorInvalidAuInfoPointer);
     Require(Decode(handle, ctrl, streams, MP3_MONO, 0) == errorInvalidAuSize);
     Require(Decode(handle, ctrl, streams, MP3_MONO, sizeof(MP3_MONO), 0) == errorInvalidPcmSize);

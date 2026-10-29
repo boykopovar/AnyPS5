@@ -6,6 +6,8 @@
 #endif
 #include <vulkan/vulkan.h>
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -13,6 +15,17 @@
 #include <vector>
 
 namespace AgcDriver {
+
+struct DeviceDiagnostics {
+    bool config = false;
+    bool checkpoints = false;
+    VkDeviceDiagnosticsConfigFlagsNV flags = 0;
+};
+
+inline DeviceDiagnostics ChooseDeviceDiagnostics(bool requested, bool configSupported, bool checkpointsSupported) {
+    if (!requested || !configSupported) return {};
+    return {true, checkpointsSupported, VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_ERROR_REPORTING_BIT_NV};
+}
 
 inline const char* DeviceFaultAddressKind(VkDeviceFaultAddressTypeEXT type) {
     switch (type) {
@@ -73,6 +86,62 @@ inline std::vector<std::string> DeviceFaultReport(VkDevice device, PFN_vkGetDevi
     }
     return lines;
 }
+
+class BufferMarkerLog {
+public:
+    static constexpr std::uint32_t Capacity = 4096;
+    static constexpr std::uint32_t Listed = 8;
+
+    std::uint32_t Next(std::uint64_t program) {
+        std::uint32_t id = 0;
+        while (id == 0) id = next.fetch_add(1, std::memory_order_relaxed) + 1;
+        auto& slot = slots[id % Capacity];
+        slot.program.store(program, std::memory_order_relaxed);
+        slot.id.store(id, std::memory_order_release);
+        return id;
+    }
+
+    std::vector<std::string> Report(std::uint32_t reached, std::uint32_t finished) const {
+        std::vector<std::string> lines;
+        if (reached == 0 && finished == 0) {
+            lines.emplace_back("[device-fault] no buffer marker reached");
+            return lines;
+        }
+        lines.push_back(Line("last dispatch reached", reached));
+        if (finished == 0) lines.emplace_back("[device-fault] no dispatch finished");
+        else lines.push_back(Line("last dispatch finished", finished));
+        const std::uint32_t pending = reached - finished;
+        if (pending == 0 || pending > Capacity) return lines;
+        const auto listed = std::min(pending, Listed);
+        for (std::uint32_t i = 1; i <= listed; ++i) lines.push_back(Line("unfinished dispatch", finished + i));
+        if (pending > listed) {
+            char line[96];
+            std::snprintf(line, sizeof(line), "[device-fault] %u more unfinished dispatches", pending - listed);
+            lines.emplace_back(line);
+        }
+        return lines;
+    }
+
+private:
+    struct Slot {
+        std::atomic<std::uint32_t> id{0};
+        std::atomic<std::uint64_t> program{0};
+    };
+
+    std::string Line(const char* what, std::uint32_t id) const {
+        char line[128];
+        const auto& slot = slots[id % Capacity];
+        if (id != 0 && slot.id.load(std::memory_order_acquire) == id) {
+            std::snprintf(line, sizeof(line), "[device-fault] %s: marker %u, program 0x%llx", what, id, static_cast<unsigned long long>(slot.program.load(std::memory_order_relaxed)));
+        } else {
+            std::snprintf(line, sizeof(line), "[device-fault] %s: marker %u, program not in the log", what, id);
+        }
+        return line;
+    }
+
+    std::atomic<std::uint32_t> next{0};
+    std::array<Slot, Capacity> slots{};
+};
 
 }
 

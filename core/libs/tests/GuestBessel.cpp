@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <bit>
 #include <cerrno>
@@ -9,16 +10,6 @@
 #include <cstdlib>
 #include <iterator>
 #include <limits>
-
-extern "C" {
-double APS5_VABI j0_nid_postfix(double);
-double APS5_VABI j1_nid_postfix(double);
-double APS5_VABI jn_nid_postfix(int, double);
-double APS5_VABI y0_nid_postfix(double);
-double APS5_VABI y1_nid_postfix(double);
-double APS5_VABI yn_nid_postfix(int, double);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -96,8 +87,33 @@ static void CheckSecondKind() {
         y0_nid_postfix(input);
         y1_nid_postfix(input);
         yn_nid_postfix(3, input);
+
         Require(std::fetestexcept(FE_DIVBYZERO | FE_INVALID) == 0);
     }
+}
+
+static void CheckFloatSecondKindZero() {
+    const char* names[] = {"y0f", "y1f", "ynf"};
+    for (int function = 0; function < 3; ++function) {
+        for (const int order : {INT_MIN, -3, -2, -1, 0, 1, 2, 3, INT_MAX}) {
+            for (const float input : {0.0f, -0.0f}) {
+                for (const int flags : {0, FE_INEXACT, FE_DIVBYZERO}) {
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    std::feraiseexcept(flags);
+                    const int expectedFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    *__error_nid_postfix() = 12345;
+                    const float result = function == 0 ? y0f_nid_postfix(input) : function == 1 ? y1f_nid_postfix(input) : ynf_nid_postfix(order, input);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    if (std::bit_cast<std::uint32_t>(result) != 0xff800000u || actualFlags != expectedFlags || *__error_nid_postfix() != 12345) {
+                        std::fprintf(stderr, "Guest %s(%d, %08x): result %08x, flags %x, expected %x, errno %d\n", names[function], order,
+                                     std::bit_cast<std::uint32_t>(input), std::bit_cast<std::uint32_t>(result), actualFlags, expectedFlags, *__error_nid_postfix());
+                        std::abort();
+                    }
+                }
+            }
+        }
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
 }
 
 static void CheckIntegerOrders() {
@@ -181,6 +197,7 @@ static void CheckValues() {
 int main() {
     CheckFirstKind();
     CheckSecondKind();
+    CheckFloatSecondKindZero();
     CheckIntegerOrders();
     CheckValues();
     return 0;
