@@ -8,7 +8,9 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 
 namespace {

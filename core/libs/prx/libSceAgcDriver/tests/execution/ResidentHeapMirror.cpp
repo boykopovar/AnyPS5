@@ -15,6 +15,10 @@
 #else
 #include <sys/mman.h>
 #endif
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -25,6 +29,14 @@
 #include <span>
 #include <string>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -87,7 +99,13 @@ public:
         GuestArena::GuestArenaCommit_nid_postfix(raw, bytes, PAGE_READWRITE, bytes);
         base = static_cast<std::uint8_t*>(raw);
 #else
+#ifdef __APPLE__
+        mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(at);
+        raw = at == nullptr ? mmap(nullptr, bytes + Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0)
+                            : (mach_vm_allocate(mach_task_self(), &address, bytes + Block, VM_FLAGS_FIXED) == KERN_SUCCESS ? reinterpret_cast<void*>(address) : MAP_FAILED);
+#else
         raw = mmap(at, bytes + Block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | (at != nullptr ? MAP_FIXED_NOREPLACE : 0), -1, 0);
+#endif
         Require(raw != MAP_FAILED && (at == nullptr || raw == at), "resident heap mirror: cannot map the guest heap");
         base = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(raw) + Block - 1) / Block * Block);
 #endif
@@ -377,11 +395,18 @@ int main() {
             std::puts("skipped, no guest write watch: heap mirrors need one");
             return VulkanTestSkipped;
         }
-        ResidentTests(*device);
-        ReusedAddressTests(*device);
-        JoinedImportTests(*device);
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        const bool sparse = context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased;
+        if (sparse) {
+            ResidentTests(*device);
+            ReusedAddressTests(*device);
+            JoinedImportTests(*device);
+        } else {
+            std::puts("the device has no sparseBinding, sparseResidencyBuffer and sparseResidencyAliased, so every heap mirror is a whole copy; the resident heap mirror tests are skipped");
+        }
         CopiedTests(*device);
         for (const bool copied : {false, true}) {
+            if (!copied && !sparse) continue;
             for (const bool readFirst : {false, true}) PartialImportTests(*device, copied, readFirst);
         }
         std::puts("resident heap mirror tests passed");

@@ -10,7 +10,6 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
-#include <stdexcept>
 
 extern "C" void APS5_VABI ignore_handler_s_nid_postfix(const char* message, void* pointer, int error) {
     SonyIgnoreHandlerS(message, pointer, error);
@@ -41,8 +40,7 @@ extern "C" int APS5_VABI wcscpy_s_nid_postfix(std::uint16_t* dest, std::size_t s
 namespace {
 
 std::size_t ReadErrorMessage(int error, char (&message)[128]) {
-    const int result = strerror_r_nid_postfix(error, message, sizeof(message));
-    if (result != 0 && result != 22) throw std::runtime_error("strerror_s: error message exceeds internal buffer");
+    strerror_r_nid_postfix(error, message, sizeof(message));
     return std::strlen(message);
 }
 
@@ -81,5 +79,5 @@ extern "C" int APS5_VABI strerror_s_nid_postfix(char* buffer, std::size_t capaci
     std::memcpy(buffer, message, capacity - 1);
     buffer[capacity - 1] = '\0';
     if (capacity > 3) std::memcpy(buffer + capacity - 4, "...", 3);
-    return 34;
+    return 0;
 }

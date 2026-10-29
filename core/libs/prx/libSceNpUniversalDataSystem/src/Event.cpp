@@ -5,8 +5,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
-#include <mutex>
-#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -22,13 +20,6 @@ Uds::Owned<NpUniversalDataSystemEvent>& events() {
     return registry;
 }
 
-bool firstProgress(std::int32_t trophyId) {
-    static std::mutex mutex;
-    static std::set<std::int32_t> logged;
-    std::lock_guard lock(mutex);
-    return logged.insert(trophyId).second;
-}
-
 void ignore(const NpUniversalDataSystemEvent& event, int context, const std::string& reason) {
     std::fprintf(stderr, "[trophy] ignored %s posted to context %d: %s\n", Uds::Describe(event).c_str(), context, reason.c_str());
 }
@@ -39,13 +30,11 @@ void post(const NpUniversalDataSystemEvent& event, int context) {
     const auto trophy = Uds::RecognizeTrophyEvent(event);
     switch (trophy.kind) {
     case Uds::TrophyEventKind::None:
+    case Uds::TrophyEventKind::Progress:
         if (const auto owner = Uds::FindContext(context)) NpTrophy2ApplyEvent_nid_no_patch(owner->userId, owner->serviceLabel, Uds::StatEvent(event));
         return;
     case Uds::TrophyEventKind::Malformed:
         ignore(event, context, trophy.problem);
-        return;
-    case Uds::TrophyEventKind::Progress:
-        if (firstProgress(trophy.trophyId)) ignore(event, context, "trophy progress is not recorded");
         return;
     case Uds::TrophyEventKind::Unlock:
         if (const auto owner = Uds::FindContext(context)) NpTrophy2RecordUnlock_nid_no_patch(owner->userId, owner->serviceLabel, trophy.trophyId);

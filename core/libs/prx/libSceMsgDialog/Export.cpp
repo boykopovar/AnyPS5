@@ -1,7 +1,4 @@
 #include "prx/libSceMsgDialog/include/Api.hpp"
-// libSceMsgDialog: message dialog state machine (NONE -> INITIALIZED -> RUNNING -> FINISHED) without a visible dialog.
-// The dialog "closes" with the affirmative button after a couple of status polls, so a title waiting for the user
-// never blocks. The message text is logged for the first calls.
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -40,8 +37,8 @@ constexpr int kButtonTypeNone = 2;
 constexpr int kButtonTypeOkCancel = 3;
 constexpr int kButtonTypeYesNoFocusNo = 4;
 
-constexpr int kButtonIdOk = 1;   // OK / YES / BUTTON1
-constexpr int kButtonIdNo = 2;   // NO / BUTTON2
+constexpr int kButtonIdOk = 1;
+constexpr int kButtonIdNo = 2;
 
 std::mutex g_lock;
 int g_status = kStatusNone;
@@ -63,8 +60,6 @@ bool Readable(const void* p, std::size_t n) {
 #endif
 }
 
-// Best-effort inspection of SceMsgDialogParam: { SceCommonDialogBaseParam base (0x30); size_t size; int mode (0x38);
-// UserMessageParam* userMsg (0x40); ProgressBarParam* progress (0x48); SystemMessageParam* system (0x50); ... }.
 void Inspect(const void* param) {
     const std::uint8_t* bytes = static_cast<const std::uint8_t*>(param);
     g_mode = kModeUserMsg;
@@ -94,7 +89,6 @@ int Poll() {
     if (g_status == kStatusRunning) {
         bool done = false;
         if (g_mode == kModeProgressBar) {
-            // Progress dialogs are ended by the title (sceMsgDialogClose); the cap only prevents a wait without end.
             done = std::chrono::steady_clock::now() - g_openedAt > std::chrono::seconds(30);
         } else {
             done = --g_pollsLeft <= 0;
@@ -103,7 +97,7 @@ int Poll() {
     }
     return g_status;
 }
-}  // namespace
+}
 
 extern "C" {
 
@@ -123,7 +117,6 @@ int APS5_VABI sceMsgDialogOpen(const void* param) {
  if (param == nullptr) return kErrArgNull;
  std::lock_guard g(g_lock);
  if (g_status == kStatusRunning) return kErrBusy;
- // A title that skipped sceMsgDialogInitialize still gets its dialog (and its FINISHED status).
  Inspect(param);
  g_pollsLeft = 2;
  g_openedAt = std::chrono::steady_clock::now();

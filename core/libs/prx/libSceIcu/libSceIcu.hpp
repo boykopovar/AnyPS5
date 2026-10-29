@@ -6,3 +6,6 @@
 #include "Numeric.hpp"
 #include "Set.hpp"
 #include "Version.hpp"
+#include "CString.hpp"
+#include "Space.hpp"
+#include "Unescape.hpp"

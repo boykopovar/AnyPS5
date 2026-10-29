@@ -20,6 +20,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             if (header.Flags == 0) continue;
             header.Flags |= 4;
         }
+        if (header.Type == 7) header.Alignment = std::max<std::uint64_t>(header.Alignment, 1);
         headers.push_back(header);
     }
     if (std::none_of(headers.begin(), headers.end(), [&](const auto& header) { return header.Type == PT_GNU_STACK; }))
@@ -320,8 +321,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::AppendU64(bytes, header.MemorySize);
         Io::AppendU64(bytes, header.Alignment);
     }
-    bytes[7] = 0;
-    bytes[8] = 0;
+    std::fill_n(bytes.begin() + 7, 9, std::uint8_t{0});
     Io::WriteU16(bytes, 16, 3);
     Io::WriteU64(bytes, 24, 0);
     Io::WriteU64(bytes, 32, phOffset);

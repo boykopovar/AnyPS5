@@ -3,6 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#ifdef __APPLE__
+#include <initializer_list>
+#endif
 #include <cstring>
 #include <stdexcept>
 
@@ -66,6 +69,24 @@ int main() {
     Require(sceNpWebApi2IntInitialize2(&args2) == invalidArgument && sceNpWebApi2IntInitialize2(nullptr) == invalidArgument);
     const int presence = sceNpWebApi2InitializeForPresence(1, 0x2000);
     Require(presence > 0 && sceNpWebApi2GetMemoryPoolStats(presence, &stats) == 0 && stats.pool_size == 0x2000);
+    constexpr int unavailable = static_cast<int>(0x80553406);
+    const int multipartUser = sceNpWebApi2CreateUserContext(presence, 1);
+    std::int64_t multipart = 0;
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, nullptr, "/v1/files", "POST", &multipart) == invalidArgument);
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", nullptr, "POST", &multipart) == invalidArgument);
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", nullptr, &multipart) == invalidArgument);
+    Require(multipart == 0);
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", &multipart) == 0 && multipart > 0);
+    std::int64_t nextMultipart = 0;
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", &nextMultipart) == 0 && nextMultipart > multipart);
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", nullptr) == 0);
+    unsigned char part[4]{1, 2, 3, 4};
+    Require(sceNpWebApi2SendMultipartRequest(multipart, 0, part, sizeof(part), nullptr) == invalidArgument);
+    Require(sceNpWebApi2SendMultipartRequest(multipart, -1, part, sizeof(part), nullptr) == invalidArgument);
+    Require(sceNpWebApi2SendMultipartRequest(multipart, 1, nullptr, sizeof(part), nullptr) == invalidArgument);
+    Require(sceNpWebApi2SendMultipartRequest(multipart, 1, part, 0, nullptr) == invalidArgument);
+    Require(sceNpWebApi2SendMultipartRequest(multipart, 1, part, sizeof(part), nullptr) == unavailable);
+    Require(sceNpWebApi2DeleteRequest(multipart) == 0 && sceNpWebApi2DeleteRequest(nextMultipart) == 0);
     for (const int created : {internal, internal2, presence}) {
         Require(sceNpWebApi2Terminate(created) == 0);
         Require(sceNpWebApi2GetMemoryPoolStats(created, &stats) == invalidContext);
