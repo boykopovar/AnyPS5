@@ -10,7 +10,6 @@
 #include <cstring>
 #include <mutex>
 #include <memory>
-#include <shared_mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -69,7 +68,7 @@ struct Registry {
     std::unordered_map<AudioPropagationHandle, Object> orphans;
     std::unordered_map<AudioPropagationHandle, std::array<AudioPropagationHandle, MaxPaths>> sourcePaths;
     std::unordered_map<AudioPropagationHandle, PathState> paths;
-    std::shared_mutex reportMutex;
+    std::recursive_mutex reportMutex;
     std::array<std::array<ReportRegistration, 8>, 2> reportHandlers{};
     AudioPropagationHandle next = 1;
 };
@@ -222,6 +221,13 @@ std::int32_t APS5_VABI sceAudioPropagationSystemCreate(const SystemOptions* opti
 
 std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle system) {
     auto& state = registry();
+    std::shared_ptr<std::mutex> systemLock;
+    {
+        std::lock_guard lock(state.mutex);
+        requireSystem(state, system, __func__);
+        systemLock = state.systemLocks.at(system);
+    }
+    std::lock_guard systemGuard(*systemLock);
     std::lock_guard lock(state.mutex);
     requireSystem(state, system, __func__);
     std::erase_if(state.paths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
@@ -473,22 +479,11 @@ int APS5_VABI sceAudioPropagationReportApi(std::uint32_t category, AudioPropagat
     require(category < 2, __func__);
 
 #ifdef _WIN32
-    alignas(16) std::array<std::byte, 176> registerSaveArea;
-    const auto* stackFrame = static_cast<const std::byte*>(__builtin_frame_address(0));
-    auto* savedRegisters = registerSaveArea.data();
-    asm volatile(
-        "movdqu %%xmm0, 48(%0)\n\t"
-        "movdqu %%xmm1, 64(%0)\n\t"
-        "movdqu %%xmm2, 80(%0)\n\t"
-        "movdqu %%xmm3, 96(%0)\n\t"
-        "movdqu %%xmm4, 112(%0)\n\t"
-        "movdqu %%xmm5, 128(%0)\n\t"
-        "movdqu %%xmm6, 144(%0)\n\t"
-        "movdqu %%xmm7, 160(%0)\n\t"
-        :
-        : "r"(savedRegisters)
-        : "memory");
-    std::memset(savedRegisters, 0, 48);
+    __builtin_sysv_va_list arguments;
+    __builtin_sysv_va_start(arguments, format);
+#else
+    std::va_list arguments;
+    va_start(arguments, format);
 #endif
 
     ReportInfo info{};
@@ -499,25 +494,21 @@ int APS5_VABI sceAudioPropagationReportApi(std::uint32_t category, AudioPropagat
     info.operation = operation;
     info.function = function;
     info.format = format;
-
-#ifdef _WIN32
-    info.arguments = ReportArguments{48, 48, const_cast<std::byte*>(stackFrame + 16), savedRegisters};
-#else
-    std::va_list arguments;
-    va_start(arguments, format);
     static_assert(sizeof(arguments) == sizeof(info.arguments));
     std::memcpy(&info.arguments, &arguments, sizeof(info.arguments));
-#endif
-    std::array<ReportRegistration, 8> handlers;
+
+    auto& state = registry();
     {
-        auto& state = registry();
-        std::shared_lock lock(state.reportMutex);
-        handlers = state.reportHandlers[category];
+        std::lock_guard lock(state.reportMutex);
+        for (const auto& registration : state.reportHandlers[category]) {
+            const auto handler = registration.handler;
+            const auto userData = registration.userData;
+            if (handler) handler(&info, userData);
+        }
     }
-    for (const auto& registration : handlers) {
-        if (registration.handler) registration.handler(&info, registration.userData);
-    }
-#ifndef _WIN32
+#ifdef _WIN32
+    __builtin_sysv_va_end(arguments);
+#else
     va_end(arguments);
 #endif
     return 0;
@@ -543,6 +534,14 @@ int APS5_VABI sceAudioPropagationSystemLock(AudioPropagationHandle system) {
         systemLock = found->second;
     }
     systemLock->lock();
+    {
+        std::lock_guard lock(state.mutex);
+        const auto found = state.systemLocks.find(system);
+        if (found == state.systemLocks.end() || found->second != systemLock || !liveSystem(state, system)) {
+            systemLock->unlock();
+            return ErrorInvalidHandle;
+        }
+    }
     return 0;
 }
 

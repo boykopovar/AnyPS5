@@ -1,7 +1,10 @@
 #include "prx/libSceAudioPropagation/include/Api.hpp"
 #include "prx/libSceAudioPropagation/AudioPropagation.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <thread>
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
@@ -78,6 +81,30 @@ void APS5_VABI CaptureReport(const AudioPropagation::ReportInfo* report, void* u
     std::memcpy(&probe.integerArgument, report->arguments.overflowArguments, sizeof(probe.integerArgument));
     std::memcpy(&probe.stringArgument, static_cast<const std::byte*>(report->arguments.overflowArguments) + sizeof(std::uint64_t), sizeof(probe.stringArgument));
     std::memcpy(&probe.floatingArgument, static_cast<const std::byte*>(report->arguments.savedRegisters) + 48, sizeof(probe.floatingArgument));
+}
+
+struct SelfUnregisterProbe {
+    AudioPropagation::ReportRegistration* registration = nullptr;
+    std::uint32_t calls = 0;
+};
+
+void APS5_VABI SelfUnregisterReport(const AudioPropagation::ReportInfo*, void* userData) {
+    auto& probe = *static_cast<SelfUnregisterProbe*>(userData);
+    ++probe.calls;
+    Require(sceAudioPropagationReportUnregisterHandler(probe.registration) == 0, "report self-unregister failed");
+}
+
+struct BlockingReportProbe {
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    std::atomic<std::uint32_t> calls{0};
+};
+
+void APS5_VABI BlockingReport(const AudioPropagation::ReportInfo*, void* userData) {
+    auto& probe = *static_cast<BlockingReportProbe*>(userData);
+    probe.calls.fetch_add(1, std::memory_order_relaxed);
+    probe.entered.store(true, std::memory_order_release);
+    while (!probe.release.load(std::memory_order_acquire)) std::this_thread::yield();
 }
 
 }
@@ -422,7 +449,20 @@ int main() {
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemDestroy(system); }, "destroy twice");
     Require(sceAudioPropagationSystemCreate(&options, &memory, &system) == 0, "memory reuse after destroy failed");
     Require(sceAudioPropagationSystemQueryInfo(system, &systemInfo, sizeof(systemInfo)) == 0 && systemInfo.index == 0, "system slot was not reused");
-    Require(sceAudioPropagationSystemDestroy(system) == 0, "second destroy failed");
+    Require(sceAudioPropagationSystemLock(system) == 0, "system lock before destroy failed");
+    std::atomic<bool> destroyStarted{false};
+    std::atomic<bool> destroyFinished{false};
+    std::thread destroyThread([&] {
+        destroyStarted.store(true, std::memory_order_release);
+        Require(sceAudioPropagationSystemDestroy(system) == 0, "concurrent system destroy failed");
+        destroyFinished.store(true, std::memory_order_release);
+    });
+    while (!destroyStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    Require(!destroyFinished.load(std::memory_order_acquire), "system destroy ignored the held lock");
+    Require(sceAudioPropagationSystemUnlock(system) == 0, "system unlock before destroy failed");
+    destroyThread.join();
+    Require(destroyFinished.load(std::memory_order_acquire), "system destroy did not finish");
 
     Require(sceAudioPropagationSystemLock(0) == AudioPropagation::ErrorInvalidHandle, "system lock invalid handle");
 
@@ -440,6 +480,34 @@ int main() {
     for (auto& slot : registrations) Require(sceAudioPropagationReportRegisterHandler(1, CaptureReport, &probe, &slot) == 0 && slot, "report category slot allocation");
     Require(sceAudioPropagationReportRegisterHandler(1, CaptureReport, &probe, nullptr) == -3, "report category capacity");
     for (auto* slot : registrations) Require(sceAudioPropagationReportUnregisterHandler(slot) == 0, "report category slot release");
+
+    SelfUnregisterProbe selfUnregister{};
+    Require(sceAudioPropagationReportRegisterHandler(0, SelfUnregisterReport, &selfUnregister, &selfUnregister.registration) == 0, "self-unregister handler registration");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "test", "") == 0 && selfUnregister.calls == 1, "self-unregister callback dispatch");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "test", "") == 0 && selfUnregister.calls == 1, "self-unregistered callback still dispatched");
+
+    BlockingReportProbe blocking{};
+    AudioPropagation::ReportRegistration* blockingRegistration = nullptr;
+    Require(sceAudioPropagationReportRegisterHandler(0, BlockingReport, &blocking, &blockingRegistration) == 0, "blocking handler registration");
+    std::thread reportThread([&] {
+        Require(sceAudioPropagationReportApi(0, 0, 0, 0, "test", "") == 0, "blocking report dispatch");
+    });
+    while (!blocking.entered.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::atomic<bool> unregisterStarted{false};
+    std::atomic<bool> unregisterFinished{false};
+    std::thread unregisterThread([&] {
+        unregisterStarted.store(true, std::memory_order_release);
+        Require(sceAudioPropagationReportUnregisterHandler(blockingRegistration) == 0, "concurrent report unregister failed");
+        unregisterFinished.store(true, std::memory_order_release);
+    });
+    while (!unregisterStarted.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    Require(!unregisterFinished.load(std::memory_order_acquire), "handler unregistered before in-flight callback completed");
+    blocking.release.store(true, std::memory_order_release);
+    reportThread.join();
+    unregisterThread.join();
+    Require(unregisterFinished.load(std::memory_order_acquire), "handler unregistration did not finish");
+    Require(sceAudioPropagationReportApi(0, 0, 0, 0, "test", "") == 0 && blocking.calls.load() == 1, "unregistered handler dispatched again");
 
     Require(Resolve("sceAudioPropagationSystemCreate") != nullptr && Resolve("sceAudioPropagationSourceSetAudioPath") != nullptr, "export lookup");
     for (const char* name : {"sceAudioPropagationAudioPathInit", "sceAudioPropagationAudioPathPointInit", "sceAudioPropagationMaterialInit", "sceAudioPropagationPortalSettingsInit", "sceAudioPropagationRayInit", "sceAudioPropagationSourceRenderInfoInit", "sceAudioPropagationSourceSetAudioPathsParamInit", "sceAudioPropagationSystemMemoryInit", "sceAudioPropagationSystemOptionInit", "sceAudioPropagationSystem"}) {
