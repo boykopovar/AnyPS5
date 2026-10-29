@@ -4,6 +4,8 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <iterator>
+#include <limits>
+#include <stdexcept>
 
 #include <cstdint>
 #include <cstddef>
@@ -12,10 +14,16 @@
 
 int AgcDriver::SubmitMany(std::uint32_t* const* addresses, const std::uint32_t* sizes, std::uint32_t count, std::uint32_t queue) {
     if (count == 0) return 0;
+    if (count > std::numeric_limits<std::uint32_t>::max() / sizeof(std::uint32_t*)) {
+        throw std::runtime_error("AGC driver: multi-submit count overflow");
+    }
     if (!addresses || !sizes) throw std::runtime_error("AGC driver: null multi-submit arrays");
     AgcDriver::GuestMemory::CheckRange(addresses, count * sizeof(*addresses), alignof(std::uint32_t*));
     AgcDriver::GuestMemory::CheckRange(sizes, count * sizeof(*sizes), alignof(std::uint32_t));
     for (std::uint32_t i = 0; i < count; ++i) {
+        if (sizes[i] != 0 && addresses[i] == nullptr) {
+            throw std::runtime_error("AGC driver: null multi-submit command buffer");
+        }
         const Packet packet{addresses[i], sizes[i], 0, {}};
         AgcDriver::Submit(&packet, queue);
     }

@@ -6,6 +6,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include <algorithm>
 #include <limits>
@@ -19,7 +20,6 @@
 #include <unistd.h>
 #elif defined(_WIN32)
 #include "prx/libc/include/WindowsDescriptor.hpp"
-#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
 #endif
 
@@ -164,12 +164,11 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
 #ifndef _WIN32
         if (fixedAnonymous && !GuestArena::GuestArenaContains_nid_postfix(address, rounded)) return failed(GuestInvalid);
 #endif
-        const bool exclusive = fixedAnonymous && (mappingFlags & GuestMapExclusive) != 0;
-        const int placement = fixedAnonymous ? GuestMapFixed | (exclusive ? GuestMapNoOverwrite : 0) : 0;
+        const int placement = fixedAnonymous ? GuestMapFixed : 0;
         void* mapped = address;
         const auto alignment = !fixedAnonymous && (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
         try {
-            const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, exclusive, fixedAnonymous);
+            const auto result = DoMapAnon(&mapped, rounded, protection, placement, alignment, false, fixedAnonymous);
             if (result != 0) return failed(result == SCE_KERNEL_ERROR_EINVAL ? GuestInvalid : GuestNoMemory);
             if (fixedAnonymous) ReleaseFlexibleMappingRange(start, rounded);
             return mapped;
@@ -188,6 +187,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         (mappingFlags & ~(GuestShared | GuestPrivate | GuestMapFixed | GuestMapNoOverwrite | GuestMapNoCoalesce)) != 0)
         return failed(GuestNotSupported);
     if (descriptor < 0) return failed(GuestBadDescriptor);
+    if (File::IsVirtualDirectoryDescriptor(descriptor)) return failed(GuestNotSupported);
     File::RefuseArchivedFile(descriptor, "mmap");
     if (offset < 0 || (static_cast<std::uint64_t>(offset) & (PS5_PAGE_SIZE - 1)) != 0 ||
         rounded > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) ||
@@ -251,9 +251,10 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
         return -1;
     };
     std::size_t rounded;
-    const auto start = reinterpret_cast<std::uintptr_t>(address);
-    if (!RoundLength(length, rounded) || start == 0 ||
-        (start & (PS5_PAGE_SIZE - 1)) != 0 ||
+    const auto offset = reinterpret_cast<std::uintptr_t>(address) & (PS5_PAGE_SIZE - 1);
+    const auto start = reinterpret_cast<std::uintptr_t>(address) - offset;
+    if (length == 0 || length > std::numeric_limits<std::size_t>::max() - offset ||
+        !RoundLength(length + offset, rounded) || start == 0 ||
         rounded > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
     try {

@@ -8,6 +8,7 @@
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <charconv>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,11 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+extern char** environ;
+#endif
+#ifdef __linux__
+#include "prx/libc/include/specifics/linux/HostMapping.hpp"
+#include <sys/uio.h>
 #endif
 
 namespace AgcDriver {
@@ -87,6 +93,39 @@ std::uint64_t pointer(const void* value) {
 std::uint64_t flipValue(std::int64_t value) {
     return static_cast<std::uint64_t>(value);
 }
+
+#ifdef __linux__
+std::uint32_t windowsProtection(const HostMapping::Mapping& mapping) {
+    if (mapping.executable) return mapping.writable ? 0x40u : mapping.readable ? 0x20u : 0x10u;
+    if (mapping.writable) return 0x04u;
+    return mapping.readable ? 0x02u : 0x01u;
+}
+
+bool pageReadable(std::uint64_t address) {
+    char byte = 0;
+    iovec local{&byte, 1};
+    iovec remote{reinterpret_cast<void*>(static_cast<std::uintptr_t>(address)), 1};
+    const auto read = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
+    if (read == 1) return true;
+    if (read < 0 && errno == EFAULT) return false;
+    throw std::runtime_error(std::string("frame capture: cannot probe a file mapping with process_vm_readv: ") + (read < 0 ? std::strerror(errno) : "nothing was read"));
+}
+
+std::uint64_t fileBackedEnd(const HostMapping::Mapping& mapping) {
+    if (mapping.inode == 0 || !mapping.readable) return mapping.end;
+    const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
+    if (pageReadable(mapping.end - page)) return mapping.end;
+    if (!pageReadable(mapping.start)) return mapping.start;
+    std::uint64_t readable = 0;
+    std::uint64_t unreadable = (mapping.end - mapping.start) / page - 1;
+    while (unreadable - readable > 1) {
+        const auto middle = readable + (unreadable - readable) / 2;
+        if (pageReadable(mapping.start + middle * page)) readable = middle;
+        else unreadable = middle;
+    }
+    return mapping.start + unreadable * page;
+}
+#endif
 
 std::uint64_t contentHash(std::span<const std::byte> bytes) {
     std::uint64_t hash = 0xcbf29ce484222325ull;
@@ -163,20 +202,20 @@ void FrameRecorder::UnregisterVideoOutput(std::uint32_t handle) {
     record(std::move(call), true);
 }
 
-void FrameRecorder::Submit(const Packet& packet, std::uint32_t queue) {
+void FrameRecorder::Submit(const Packet& packet, std::uint32_t queue, const std::function<void()>& accept) {
     auto call = make(FrameCallKind::Submit);
     call.queue = queue;
     call.address = pointer(packet.addr);
     call.size = packet.dw_num;
     call.flags = packet.flags;
-    record(std::move(call), false);
+    record(std::move(call), false, {}, accept);
 }
 
-void FrameRecorder::Flip(const FlipInfo& info) {
+void FrameRecorder::Flip(const FlipInfo& info, const std::function<void()>& accept) {
     auto call = make(FrameCallKind::Flip);
     call.cpuFlip = true;
     call.values = {info.handle, flipValue(info.index), info.mode, flipValue(info.argument)};
-    record(std::move(call), false);
+    record(std::move(call), false, {}, accept);
 }
 
 void FrameRecorder::ReserveEopFlip(const FlipInfo& info, std::uint32_t token) {
@@ -198,8 +237,8 @@ void FrameRecorder::ReserveEopFlip(const FlipInfo& info, std::uint32_t token) {
     ++recordedCalls;
 }
 
-void FrameRecorder::Suspend() {
-    record(make(FrameCallKind::Suspend), false);
+void FrameRecorder::Suspend(const std::function<void()>& accept) {
+    record(make(FrameCallKind::Suspend), false, {}, accept);
 }
 
 void FrameRecorder::PresentBuffer(const DisplayBuffer& buffer) {
@@ -236,8 +275,13 @@ void FrameRecorder::writeReferenceFrames() {
     }
 }
 
-void FrameRecorder::record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders) {
+void FrameRecorder::record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders, const std::function<void()>& accept) {
     std::lock_guard lock(mutex);
+    recordLocked(std::move(call), prologueCall, shaders);
+    if (accept) accept();
+}
+
+void FrameRecorder::recordLocked(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders) {
     if (state == State::Waiting) {
         if (!prologueCall) return;
         call.ordinal = ++ordinal;
@@ -360,10 +404,23 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
 
 void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added) {
     if (abandonIfDiskLow()) return;
-    const auto [accepted, completed] = DriverDetail::Driver::Get().SerialProgress();
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    for (const auto& span : spans) {
+        GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written);
+        blocks.insert(blocks.end(), written.begin(), written.end());
+    }
+    auto& driver = DriverDetail::Driver::Get();
+    auto [accepted, completed] = driver.SerialProgress();
+    if (completed < accepted && (!added.empty() || !blocks.empty())) {
+        if (!driver.WaitIdleFor(std::chrono::seconds(10))) {
+            stop("stopped: the GPU work submitted before a memory delta did not finish within 10 s");
+            return;
+        }
+        std::tie(accepted, completed) = driver.SerialProgress();
+    }
     const auto group = deltaGroups + 1;
     bool any = false;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
     std::vector<std::byte> bytes;
     for (const auto& range : added) {
         writer->WriteRange(range.address, range.bytes, range.kind, range.protection, range.access);
@@ -397,15 +454,12 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
         deltaBytes += bytes.size();
         any = true;
     }
-    for (const auto& span : spans) {
-        GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written);
-        for (const auto& [begin, end] : written) {
-            bytes.resize(static_cast<std::size_t>(end - begin));
-            GuestMemory::ReadCommittedUnsynced(begin, bytes);
-            writer->WriteDelta(group, completed, begin, bytes);
-            deltaBytes += bytes.size();
-            any = true;
-        }
+    for (const auto& [begin, end] : blocks) {
+        bytes.resize(static_cast<std::size_t>(end - begin));
+        GuestMemory::ReadCommittedUnsynced(begin, bytes);
+        writer->WriteDelta(group, completed, begin, bytes);
+        deltaBytes += bytes.size();
+        any = true;
     }
     if (!any) return;
     deltaGroups = group;
@@ -436,8 +490,13 @@ bool FrameRecorder::abandonIfDiskLow() {
     std::error_code error;
     const auto space = std::filesystem::space(directory, error);
     if (error || space.available >= MinimumFreeBytes) return false;
-    warnings.push_back("stopped: less than 4 GiB free on the capture volume");
-    std::fprintf(stderr, "[frame-capture] stopped: less than 4 GiB free on the capture volume\n");
+    stop("stopped: less than 4 GiB free on the capture volume");
+    return true;
+}
+
+void FrameRecorder::stop(const char* reason) {
+    warnings.push_back(reason);
+    std::fprintf(stderr, "[frame-capture] %s\n", reason);
     try {
         writer->Finish(header());
     } catch (const std::exception& failure) {
@@ -445,7 +504,6 @@ bool FrameRecorder::abandonIfDiskLow() {
     }
     writer.reset();
     state = State::Done;
-    return true;
 }
 
 void FrameRecorder::start() {
@@ -459,6 +517,7 @@ void FrameRecorder::start() {
         }
         return;
     }
+    if (!GuestMemory::WriteWatched()) throw std::runtime_error("frame capture: the guest write watch is unavailable, so CPU stores during the frames cannot be recorded");
     startedAt = std::chrono::steady_clock::now();
     startBoundary = boundaries;
     allocationsGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
@@ -578,8 +637,46 @@ std::vector<FrameRecorder::Range> FrameRecorder::committedRanges() {
         }
     }
     return result;
+#elif defined(__linux__)
+    std::uintptr_t base = 0;
+    std::size_t size = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&base, &size);
+    if (size == 0) throw std::runtime_error("frame capture: the guest arena is not reserved");
+    std::vector<Range> result;
+    for (const auto& allocation : GuestAllocations::GuestAllocationsAcquireAll_nid_postfix()) {
+        if (!allocation->readable) continue;
+        const auto first = allocation->address;
+        const auto end = first + allocation->bytes;
+        const bool host = first < base || end > base + size;
+        const auto access = FrameRangeAccess::Readable | (allocation->writable ? FrameRangeAccess::Writable : 0u) | (allocation->gpu ? FrameRangeAccess::Gpu : 0u);
+        HostMapping::Walk(first, end, "frame capture", [&](const HostMapping::Mapping& mapping) {
+            if (!mapping.readable && !mapping.writable && !mapping.executable) return;
+            const auto add = [&](std::uint64_t address, std::uint64_t regionEnd, bool readable) {
+                if (address >= regionEnd) return;
+                Range range;
+                range.address = address;
+                range.bytes = regionEnd - address;
+                range.protection = windowsProtection(mapping);
+                range.access = access;
+                range.readable = readable;
+                if (host) range.kind = FrameRangeKind::Host;
+                else if (GuestMemory::Watched(range.address, static_cast<std::size_t>(range.bytes))) range.kind = FrameRangeKind::Watched;
+                else if (!mapping.shared && mapping.inode == 0) range.kind = FrameRangeKind::Unwatched;
+                else range.kind = FrameRangeKind::Section;
+                auto& last = result.empty() ? range : result.back();
+                if (!result.empty() && last.address + last.bytes == range.address && last.kind == range.kind && last.protection == range.protection && last.readable == range.readable && last.access == range.access) last.bytes += range.bytes;
+                else result.push_back(range);
+            };
+            const auto address = std::max<std::uint64_t>(first, mapping.start);
+            const auto regionEnd = std::min<std::uint64_t>(end, mapping.end);
+            const auto backed = std::clamp(fileBackedEnd(mapping), address, regionEnd);
+            add(address, backed, mapping.readable);
+            add(backed, regionEnd, false);
+        });
+    }
+    return result;
 #else
-    throw std::runtime_error("frame capture: guest memory capture is implemented on Windows only");
+    throw std::runtime_error("frame capture: guest memory capture is implemented on Windows and Linux only");
 #endif
 }
 

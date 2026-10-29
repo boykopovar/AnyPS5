@@ -7,6 +7,7 @@
 static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr int NotSignedIn = static_cast<int>(0x80552907);
+static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
 using Object = int (APS5_VABI*)(void*);
 using Call = int (APS5_VABI*)();
@@ -99,6 +100,62 @@ static const RequestFlow flows[] = {
     },
 };
 
+using Lifecycle = void (APS5_VABI*)(void*);
+using Finish = int (APS5_VABI*)(void*);
+using Identifier = std::int64_t (APS5_VABI*)();
+
+struct TransactionLifecycle {
+    Lifecycle construct;
+    Lifecycle destroy;
+    Finish finish;
+};
+
+static const TransactionLifecycle lifecycles[] = {
+    {
+        _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev,
+        _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev,
+        _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv,
+    },
+    {
+        _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev,
+        _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev,
+        _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv,
+    },
+};
+
+static const Call aborts[] = {
+    _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS2_18ResponseHeaderBaseEEEE5abortEv,
+    _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V129GetPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv,
+    _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V130PostPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv,
+    _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V150PostPlayerSessionsSessionIdInvitationsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv,
+    _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V152PostPlayerSessionsSessionIdMemberPlayersResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv,
+    _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V161PostPlayerSessionsSessionIdJoinableSpecifiedUsersResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv,
+};
+
+static const Identifier identifiers[] = {
+    _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS2_18ResponseHeaderBaseEEEE5getIdEv,
+    _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V129GetPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv,
+    _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V130PostPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv,
+    _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V152PostPlayerSessionsSessionIdMemberPlayersResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv,
+    _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V161PostPlayerSessionsSessionIdJoinableSpecifiedUsersResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv,
+};
+
+static void TestNeverStartedTransactions() {
+    for (const auto& lifecycle : lifecycles) {
+        alignas(16) unsigned char transaction[0x20];
+        std::memset(transaction, 0x5a, sizeof(transaction));
+        lifecycle.construct(transaction);
+        for (std::size_t index = 0; index < sizeof(transaction); ++index)
+            Require(transaction[index] == (index < 0x10 ? 0 : 0x5a));
+        Require(lifecycle.finish(transaction) == TransactionNotStarted);
+        lifecycle.destroy(transaction);
+        for (std::size_t index = 0; index < sizeof(transaction); ++index)
+            Require(transaction[index] == (index < 0x10 ? 0 : 0x5a));
+    }
+    for (const Call abort : aborts) Require(abort() == TransactionNotStarted);
+    for (const Identifier identifier : identifiers) Require(identifier() == 0);
+}
+
 static void TestRequestFlow(const RequestFlow& flow) {
     alignas(16) unsigned char transaction[0x100];
     alignas(16) unsigned char parameter[0x100];
@@ -113,7 +170,7 @@ static void TestRequestFlow(const RequestFlow& flow) {
     Require(flow.call() == NotSignedIn);
     Require(flow.start() == NotSignedIn);
     Require(flow.getResponseHeaders() == NotSignedIn);
-    Require(flow.finish() == 0);
+    Require(flow.finish() == TransactionNotStarted);
     Require(flow.terminate() == 0);
     Require(flow.parameterDestroy(parameter) == 0);
     Require(flow.transactionDestroy(transaction) == 0);
@@ -122,5 +179,6 @@ static void TestRequestFlow(const RequestFlow& flow) {
 int main() {
     for (const auto& flow : flows) TestRequestFlow(flow);
     Require(_ZN3sce2Np9CppWebApi15ProfanityFilter2V226WebApiFilterRequestFactory6createEPNS1_6Common10LibContextEPKcPNS5_12IntrusivePtrINS3_19WebApiFilterRequestEEE() == NotSignedIn);
+    TestNeverStartedTransactions();
     return 0;
 }
