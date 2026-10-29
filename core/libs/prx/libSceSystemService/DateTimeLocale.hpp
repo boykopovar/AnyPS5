@@ -113,6 +113,17 @@ inline std::optional<int> DateFormatOfLdml(std::string_view pattern) {
     return Detail::DateFormatOfOrder(order);
 }
 
+inline std::optional<int> TimeFormatOfLdml(std::string_view pattern) {
+    bool twelve = false;
+    bool twentyFour = false;
+    Detail::VisitPatternLetters(pattern, [&](char letter, std::size_t) {
+        if (letter == 'h' || letter == 'K' || letter == 'a' || letter == 't') twelve = true;
+        else if (letter == 'H' || letter == 'k') twentyFour = true;
+    });
+    if (twelve == twentyFour) return std::nullopt;
+    return twelve ? TIME_FORMAT_12HOUR : TIME_FORMAT_24HOUR;
+}
+
 }
 
 #endif
