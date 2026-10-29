@@ -206,6 +206,13 @@ static void CheckMinElementVector(MinElementFunction function, bool isSigned,
     Require(function(values.data(), values.data(), isSigned) == values.data());
 }
 
+template<typename TValue>
+static void CheckMinElementTail(MinElementFunction function, bool isSigned, TValue fill, TValue minimum) {
+    std::vector<TValue> values(64 / sizeof(TValue) + 3, fill);
+    values.back() = minimum;
+    Require(function(values.data(), values.data() + values.size(), isSigned) == &values.back());
+}
+
 static void CheckVectorizedHelpers() {
     CheckFindCountVector<std::uint8_t>(__std_find_trivial_1_nid_postfix, __std_count_trivial_1_nid_postfix);
     CheckFindCountVector<std::uint16_t>(__std_find_trivial_2_nid_postfix, __std_count_trivial_2_nid_postfix);
@@ -217,6 +224,8 @@ static void CheckVectorizedHelpers() {
     CheckMinElementVector<std::uint8_t>(__std_min_element_1_nid_postfix, false, 250, 2, Length);
     CheckMinElementVector<std::int16_t>(__std_min_element_2_nid_postfix, true, 30000, -42, Length);
     CheckMinElementVector<std::uint16_t>(__std_min_element_2_nid_postfix, false, UINT16_MAX, 2, Length);
+    CheckMinElementTail<std::int8_t>(__std_min_element_1_nid_postfix, true, 20, -5);
+    CheckMinElementTail<std::uint16_t>(__std_min_element_2_nid_postfix, false, UINT16_MAX, 2);
 }
 
 static void CheckSignedMax64Value() {
