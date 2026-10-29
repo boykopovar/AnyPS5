@@ -610,13 +610,6 @@ std::optional<std::uint32_t> largestDeviceLocalHeap(const VkPhysicalDeviceMemory
     return heap;
 }
 
-bool hasHostHeap(const VkPhysicalDeviceMemoryProperties& memory) {
-    for (std::uint32_t i = 0; i < std::min<std::uint32_t>(memory.memoryHeapCount, VK_MAX_MEMORY_HEAPS); ++i) {
-        if ((memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return true;
-    }
-    return false;
-}
-
 std::atomic<std::uint64_t> budgetOverride{0};
 
 std::uint64_t forcedCacheBudget() {
@@ -673,7 +666,7 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     cache.uncachedSeen = cache.uncachedTotal;
     if (thrashed || cache.spill == 0) cache.spillQuietSince = now;
     const bool quiet = now - cache.spillQuietSince >= std::chrono::seconds(10) && cache.bytes + 2u * SampledSpillStep <= device + cache.spill;
-    cache.spill = SampledTextureSpill(cache.spill, thrashed, quiet, hasHostHeap(context.memory));
+    cache.spill = SampledTextureSpill(cache.spill, thrashed, quiet, SampledSpillCeiling(context.memory, &reported, context.discreteGpu));
     const auto budget = device + cache.spill;
     const bool fresh = cache.budgetDevice != context.physical;
     const auto storageLimit = storageBudget(context);
@@ -1361,11 +1354,19 @@ std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memor
     return std::min<std::uint64_t>(StorageTextureCeiling(memory, reported), std::max<std::uint64_t>(512ull << 20u, budget > reserved ? budget - reserved : 0u));
 }
 
-std::uint64_t SampledTextureSpill(std::uint64_t spill, bool thrashed, bool quiet, bool hostHeap) {
-    if (!hostHeap) return 0;
-    if (thrashed) return std::min(spill + SampledSpillStep, SampledSpillLimit);
-    if (quiet) return spill - std::min(spill, SampledSpillStep);
-    return spill;
+std::uint64_t SampledSpillCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, bool discreteGpu) {
+    if (!discreteGpu) return 0;
+    std::uint64_t host = 0;
+    for (std::uint32_t i = 0; i < std::min<std::uint32_t>(memory.memoryHeapCount, VK_MAX_MEMORY_HEAPS); ++i) {
+        if ((memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) continue;
+        host = std::max<std::uint64_t>(host, reported != nullptr && reported->heapBudget[i] != 0 ? reported->heapBudget[i] : memory.memoryHeaps[i].size);
+    }
+    return std::min(SampledSpillLimit, host / 4u / SampledSpillStep * SampledSpillStep);
+}
+
+std::uint64_t SampledTextureSpill(std::uint64_t spill, bool thrashed, bool quiet, std::uint64_t ceiling) {
+    const auto next = thrashed ? spill + SampledSpillStep : quiet ? spill - std::min(spill, SampledSpillStep) : spill;
+    return std::min(next, ceiling);
 }
 
 std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes, std::uint64_t storageBytes) {
