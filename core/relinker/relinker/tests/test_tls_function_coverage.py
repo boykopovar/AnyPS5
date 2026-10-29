@@ -577,7 +577,8 @@ def main():
                 for transfer in ("table", "register", "memory"):
                     convert(metadata + "-" + transfer, make_image(transfer, metadata))
                 convert(metadata + "-truncated", make_image("register", metadata, 0x46), "Code analysis:")
-                convert(metadata + "-outside", make_image("register", metadata, 0x1000), "Code analysis: function exceeds executable segment")
+                outside_error = "Strict filter: FDE function range outside text segment" if metadata == "unwind" else "Code analysis: function exceeds executable segment"
+                convert(metadata + "-outside", make_image("register", metadata, 0x1000), outside_error)
             for first, second in ((0x47, 0x51), (0x51, 0x47), (0, 0x51), (0x51, 0)):
                 convert(f"symbol-alias-{first:x}-{second:x}",
                         add_alias(make_image("register", "symbol", first), second))
