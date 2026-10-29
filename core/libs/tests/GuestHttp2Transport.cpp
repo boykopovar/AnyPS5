@@ -51,7 +51,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, CloseHandshake, AlertHandshake, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, CloseHandshake, AlertHandshake, Expired, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 
 class Server {
@@ -64,9 +64,11 @@ public:
         mbedtls_pk_init(&key);
         mbedtls_ssl_config_init(&config);
         Require(mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, nullptr, 0) == 0, "server RNG");
-        Require(mbedtls_x509_crt_parse(&certificate, reinterpret_cast<const unsigned char*>(ServerPem), sizeof(ServerPem)) == 0, "server cert");
-        Require(mbedtls_pk_parse_key(&key, reinterpret_cast<const unsigned char*>(ServerKey), sizeof(ServerKey), nullptr, 0,
-            mbedtls_ctr_drbg_random, &random) == 0, "server key");
+        const bool expired = mode == Mode::Expired;
+        Require(mbedtls_x509_crt_parse(&certificate, reinterpret_cast<const unsigned char*>(expired ? ExpiredServerPem : ServerPem),
+            expired ? sizeof(ExpiredServerPem) : sizeof(ServerPem)) == 0, "server cert");
+        Require(mbedtls_pk_parse_key(&key, reinterpret_cast<const unsigned char*>(expired ? ExpiredServerKey : ServerKey),
+            expired ? sizeof(ExpiredServerKey) : sizeof(ServerKey), nullptr, 0, mbedtls_ctr_drbg_random, &random) == 0, "server key");
         Require(mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) == 0, "server TLS");
         mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &random);
         Require(mbedtls_ssl_conf_own_cert(&config, &certificate, &key) == 0, "server identity");
@@ -394,11 +396,11 @@ void AfterFailedSend(const Client& client, int expected) {
     Require(sceHttp2SendRequest(client.request, nullptr, 0) == expected, "another send repeats the failure");
 }
 
-void Handshake(int ssl, Mode mode, int expected, bool verifyName = false) {
+void Handshake(int ssl, Mode mode, int expected, std::uint32_t enable = 0) {
     std::fprintf(stderr, "HTTP2 handshake failure scenario %d\n", static_cast<int>(mode));
     Server server(mode);
     Client client(ssl);
-    if (verifyName) Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "enable numeric host name rejection");
+    if (enable) Require(sceHttp2SslEnableOption(client.tmpl, enable) == 0, "enable certificate check");
     client.Create(server.Url());
     Require(sceHttp2SendRequest(client.request, nullptr, 0) == expected, "handshake failure result");
     AfterFailedSend(client, expected);
@@ -582,9 +584,10 @@ int main(int argc, char** argv) {
         Require(argc == 1, "test arguments");
         for (const auto mode : {Mode::Normal, Mode::Large, Mode::NoLength, Mode::Head, Mode::NotFound, Mode::Redirect, Mode::Auth, Mode::Informational}) Success(ssl, mode);
         for (const auto mode : {Mode::NoAlpn, Mode::Reset, Mode::Truncate, Mode::Redirect, Mode::Auth}) Failure(ssl, mode);
-        Handshake(ssl, Mode::Normal, static_cast<int>(0x8095f00b), true);
+        Handshake(ssl, Mode::Normal, static_cast<int>(0x8095f00b), 0x4);
         Handshake(ssl, Mode::CloseHandshake, static_cast<int>(0x8095170d));
         Handshake(ssl, Mode::AlertHandshake, static_cast<int>(0x8095f010));
+        Handshake(ssl, Mode::Expired, static_cast<int>(0x8095f00d), 0x8);
         for (const auto mode : {Mode::StallHandshake, Mode::StallHeaders, Mode::StallBody, Mode::StallUpload}) {
             Deadline(ssl, mode, false);
             Deadline(ssl, mode, true);
