@@ -99,6 +99,51 @@ void RequireStrftimeTimesWithoutConsoleFormat() {
     RequireTime("%d/%m/%Y", std::nullopt);
 }
 
+void RequireLdmlDate(const char* pattern, std::optional<int> expected) {
+    const auto actual = SystemServiceDateTime::DateFormatOfLdml(pattern);
+    Require(actual == expected, std::string("pattern date \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
+}
+
+void RequireLdmlDates() {
+    using namespace SystemServiceDateTime;
+    RequireLdmlDate("M/d/yyyy", DATE_FORMAT_MMDDYYYY);
+    RequireLdmlDate("M/d/yy", DATE_FORMAT_MMDDYYYY);
+    RequireLdmlDate("MM/dd/y", DATE_FORMAT_MMDDYYYY);
+    RequireLdmlDate("dd/MM/yyyy", DATE_FORMAT_DDMMYYYY);
+    RequireLdmlDate("d/M/yyyy", DATE_FORMAT_DDMMYYYY);
+    RequireLdmlDate("dd.MM.y", DATE_FORMAT_DDMMYYYY);
+    RequireLdmlDate("yyyy-MM-dd", DATE_FORMAT_YYYYMMDD);
+    RequireLdmlDate("yyyy/MM/dd", DATE_FORMAT_YYYYMMDD);
+    RequireLdmlDate("y. MM. dd.", DATE_FORMAT_YYYYMMDD);
+    RequireLdmlDate("yyyy. MM. dd.", DATE_FORMAT_YYYYMMDD);
+    RequireLdmlDate("yyyy'\xE5\xB9\xB4'M'\xE6\x9C\x88'd'\xE6\x97\xA5'", DATE_FORMAT_YYYYMMDD);
+    RequireLdmlDate("d MMM y", DATE_FORMAT_DDMMYYYY);
+    RequireLdmlDate("MMM d, y", DATE_FORMAT_MMDDYYYY);
+    RequireLdmlDate("LLLL d y", DATE_FORMAT_MMDDYYYY);
+    RequireLdmlDate("dddd, d MMMM yyyy", DATE_FORMAT_DDMMYYYY);
+    RequireLdmlDate("ddd dd/MM/yyyy", DATE_FORMAT_DDMMYYYY);
+    RequireLdmlDate("EEE, d/M/y", DATE_FORMAT_DDMMYYYY);
+    RequireLdmlDate("'de' dd 'de' MM 'de' yyyy", DATE_FORMAT_DDMMYYYY);
+    RequireLdmlDate("dd/MM/yyyy g", DATE_FORMAT_DDMMYYYY);
+    RequireLdmlDate("dd''MM''yyyy", DATE_FORMAT_DDMMYYYY);
+}
+
+void RequireLdmlDatesWithoutConsoleFormat() {
+    RequireLdmlDate("yyyy/dd/MM", std::nullopt);
+    RequireLdmlDate("d/yyyy/M", std::nullopt);
+    RequireLdmlDate("M/yyyy/d", std::nullopt);
+    RequireLdmlDate("M/d", std::nullopt);
+    RequireLdmlDate("MMMM yyyy", std::nullopt);
+    RequireLdmlDate("dd/dd/yyyy", std::nullopt);
+    RequireLdmlDate("dd/MM/yyyy yyyy", std::nullopt);
+    RequireLdmlDate("dddd", std::nullopt);
+    RequireLdmlDate("YYYY-MM-dd", std::nullopt);
+    RequireLdmlDate("'dd/MM/yyyy'", std::nullopt);
+    RequireLdmlDate("dd/MM/'yyyy", std::nullopt);
+    RequireLdmlDate("", std::nullopt);
+    RequireLdmlDate("%d/%m/%Y", std::nullopt);
+}
+
 }
 
 int main() {
@@ -106,6 +151,8 @@ int main() {
     RequireStrftimeDatesWithoutConsoleFormat();
     RequireStrftimeTimes();
     RequireStrftimeTimesWithoutConsoleFormat();
+    RequireLdmlDates();
+    RequireLdmlDatesWithoutConsoleFormat();
     if (failures != 0) return 1;
     std::puts("system service date and time locale: all checks passed");
     return 0;
