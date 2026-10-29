@@ -282,6 +282,16 @@ static void CheckNullArguments() {
     Require(sceSaveDataDirNameSearch2(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearch2");
     cond.order = 2;
     Require(sceSaveDataDirNameSearch2(&cond, &result) == SaveDataErrorParameter, "invalid order must be rejected in sceSaveDataDirNameSearch2");
+    char unterminatedPattern[sizeof(SceSaveDataDirName::data)];
+    std::memset(unterminatedPattern, 'a', sizeof(unterminatedPattern));
+    SaveDataDirNameSearchCond unterminatedCond{};
+    unterminatedCond.user_id = 1;
+    unterminatedCond.dir_name = reinterpret_cast<const SceSaveDataDirName*>(unterminatedPattern);
+    Require(sceSaveDataDirNameSearch(&unterminatedCond, &result) == SaveDataErrorParameter, "unterminated dir_name in sceSaveDataDirNameSearch returns PARAMETER");
+    Require(sceSaveDataDirNameSearch2(&unterminatedCond, &result) == SaveDataErrorParameter, "unterminated dir_name in sceSaveDataDirNameSearch2 returns PARAMETER");
+    unterminatedPattern[sizeof(unterminatedPattern) - 1] = '\0';
+    Require(sceSaveDataDirNameSearch(&unterminatedCond, &result) == 0, "a dir_name ending in its last byte is accepted by sceSaveDataDirNameSearch");
+    Require(sceSaveDataDirNameSearch2(&unterminatedCond, &result) == 0, "a dir_name ending in its last byte is accepted by sceSaveDataDirNameSearch2");
     Require(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress returns PARAMETER in sceSaveDataGetConvertProgress");
     float progress = 0.0f;
     Require(sceSaveDataGetConvertProgress(&progress) == -2137063423, "uninitialized convert progress returns NOT_INITIALIZED");
