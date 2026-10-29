@@ -1,4 +1,4 @@
-#include "prx/libSceGnmDriver/include/CommandStream.hpp"
+#include "prx/libSceGnmDriver/libSceGnmDriver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "SceTypes.hpp"
@@ -19,9 +19,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-extern "C" int APS5_VABI sceGnmSubmitCommandBuffers(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes);
-extern "C" int APS5_VABI sceGnmSubmitDone();
 
 namespace {
 

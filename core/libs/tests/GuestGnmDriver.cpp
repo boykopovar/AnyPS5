@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceGnmDriver/libSceGnmDriver.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
 #include <cstdint>
@@ -8,18 +9,6 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-std::uint32_t APS5_VABI sceGnmDrawInitDefaultHardwareState175(std::uint32_t* cmd, std::uint32_t size);
-std::uint32_t APS5_VABI sceGnmDispatchInitDefaultHardwareState(std::uint32_t* cmd, std::uint32_t size);
-int APS5_VABI sceGnmSetCsShader(std::uint32_t* cmd, std::uint32_t size, const std::uint32_t* regs);
-int APS5_VABI sceGnmInsertPushMarker(std::uint32_t* cmd, std::uint32_t size, const char* marker);
-int APS5_VABI sceGnmInsertPopMarker(std::uint32_t* cmd, std::uint32_t size);
-int APS5_VABI sceGnmSubmitCommandBuffers(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes);
-int APS5_VABI sceGnmSubmitAndFlipCommandBuffers(std::uint32_t count, std::uint32_t* const* dcbs, const std::uint32_t* dcbBytes, std::uint32_t* const* ccbs, const std::uint32_t* ccbBytes,
-    std::uint32_t handle, std::uint32_t index, std::uint32_t flipMode, std::int64_t flipArg);
-int APS5_VABI sceGnmSubmitDone();
-}
 
 namespace {
 

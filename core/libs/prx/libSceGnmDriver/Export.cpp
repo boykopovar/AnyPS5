@@ -1,3 +1,4 @@
+#include "prx/libSceGnmDriver/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
