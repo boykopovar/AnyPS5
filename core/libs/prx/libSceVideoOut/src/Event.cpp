@@ -88,9 +88,7 @@ static int registerVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind,
 }
 
 static int deleteVideoOutEvent(int handle, KernelEqueue eq, int16_t eventKind) {
-    if (!VideoOutDriver::Get().IsOpen(handle)) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
-    }
+    if (!VideoOutDriver::Get().HasConfig(handle)) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     if (eq == 0 || !EqueuePin_nid_postfix(eq)) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE");
     }
