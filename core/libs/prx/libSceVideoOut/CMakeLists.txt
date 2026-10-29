@@ -179,6 +179,12 @@ if(BUILD_TESTING)
         set_tests_properties(video_out_flip_unavailable PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME video_out_flip_host_pause COMMAND video_out_flip_tests hostpause)
+    set_tests_properties(video_out_flip_host_pause PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};ANYPS5_PAUSE_KEY=F9")
+    if(WIN32)
+        set_tests_properties(video_out_flip_host_pause PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 if(BUILD_TESTING AND NOT WIN32)
