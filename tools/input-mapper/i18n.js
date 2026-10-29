@@ -1367,11 +1367,11 @@ export function diagnostic(locale, message) {
         .replace(/duplicate (.+) will be omitted\./gu, 'den dubbla bindningen $1 utelämnas.')
         .replace(' controls ', ' styr ')
         .replaceAll(' (built-in)', ' (inbyggd)')
+        .replace('Composition and dead keys are ambiguous. Select an SDL key from the list.', 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.')
         .replaceAll(' and ', ' och ')
         .replace('Expected Action = TYPE:VALUE.', 'Förväntat format: Action = TYPE:VALUE.')
         .replace('Duplicate binding ignored.', 'Dubblettbindning ignorerades.')
-        .replace('This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Den här fysiska tangenten kan inte fångas i det aktuella INI-formatet. Välj en SDL-tangent i listan.')
-        .replace('Composition and dead keys are ambiguous. Select an SDL key from the list.', 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.');
+        .replace('This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'Den här fysiska tangenten kan inte fångas i det aktuella INI-formatet. Välj en SDL-tangent i listan.');
     if (locale !== 'ar-EG') return message;
     return message
         .replace('Configuration must be a list of bindings.', 'الإعدادات لازم تكون قائمة روابط أزرار.')
@@ -1383,11 +1383,11 @@ export function diagnostic(locale, message) {
         .replace(/duplicate (.+) will be omitted\./gu, 'الربط $1 متكرر وهيتحفظ مرة واحدة.')
         .replace(' controls ', ' بيشغّل ')
         .replaceAll(' (built-in)', ' (افتراضي)')
+        .replace('Composition and dead keys are ambiguous. Select an SDL key from the list.', 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.')
         .replaceAll(' and ', ' و ')
         .replace('Expected Action = TYPE:VALUE.', 'الصيغة المطلوبة: Action = TYPE:VALUE.')
         .replace('Duplicate binding ignored.', 'الربط المتكرر تم تجاهله.')
-        .replace('This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'الزرار ده مينفعش يتسجل بالصيغة الحالية لملف INI. اختار زرار SDL من القائمة.')
-        .replace('Composition and dead keys are ambiguous. Select an SDL key from the list.', 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.');
+        .replace('This physical key cannot be captured in the current INI format. Select an SDL key from the list.', 'الزرار ده مينفعش يتسجل بالصيغة الحالية لملف INI. اختار زرار SDL من القائمة.');
 }
 
 export function initialLocale(savedLocale) {

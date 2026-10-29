@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {diagnostic, initialLocale, locales, messages, translate} from '../i18n.js';
+import {captureKey} from '../capture.js';
 import {parseIni, serialize} from '../validation.js';
 
 test('every selectable language supplies the main interface and every FAQ', () => {
@@ -38,4 +39,10 @@ test('translated diagnostics retain action tokens and unknown technical details'
     assert.equal(diagnostic('ar-EG', 'Unexpected diagnostic'), 'Unexpected diagnostic');
     assert.equal(diagnostic('sv', 'Unexpected diagnostic'), 'Unexpected diagnostic');
     assert.equal(diagnostic('fr', 'Cross: Unknown or empty KEY value.'), 'Cross: Unknown or empty KEY value.');
+});
+
+test('capture diagnostics are fully translated', () => {
+    const message = captureKey({key: 'Dead', code: 'BracketRight'}).error;
+    assert.equal(diagnostic('sv', message), 'Döda tangenter och kombinationstangenter är tvetydiga. Välj en SDL-tangent i listan.');
+    assert.equal(diagnostic('ar-EG', message), 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.');
 });
