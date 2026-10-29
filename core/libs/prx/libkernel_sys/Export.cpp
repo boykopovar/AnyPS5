@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstdarg>
 #include <cstdint>
 #include <cstddef>
@@ -31,6 +32,7 @@
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
@@ -713,6 +715,24 @@ int APS5_VABI settimeofday_nid_postfix(const KernelTimeval* tv, const KernelTime
     return SetTimeOfDay_nid_no_patch(tv, tz);
 }
 
+std::int64_t APS5_VABI pwrite_nid_postfix(int fd, const void* buffer, std::size_t count, std::int64_t offset) {
+    return pwrite_nid_disambig1_nid_postfix(fd, buffer, count, offset);
+}
+
+int APS5_VABI futimesat_nid_postfix(int fd, const char* path, const KernelTimeval* times) {
+    if (times != nullptr && (times[0].tv_usec < 0 || times[0].tv_usec >= 1000000 || times[1].tv_usec < 0 || times[1].tv_usec >= 1000000))
+        return static_cast<int>(Fail(GuestEinval));
+    std::string copy;
+    if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
+    std::filesystem::path native;
+    if (const int error = ResolveAtPath(fd, path, native)) return static_cast<int>(Fail(error));
+    if (File::SetPathTimes(native, times) != 0) {
+        const int error = errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno;
+        return static_cast<int>(Fail(GuestError(std::error_code(error, std::generic_category()))));
+    }
+    return 0;
+}
+
 int APS5_VABI chroot_nid_postfix(const char* path) {
     std::string copy;
     if (const int error = CopyPath(path, copy)) return static_cast<int>(Fail(error));
@@ -769,11 +789,7 @@ int APS5_VABI kldsym_nid_postfix(int fileid, int cmd, void* data) {
     throw std::runtime_error("kldsym: looking up the symbol " + name + " in every kernel module is not supported");
 }
 
-int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
-    std::string targetCopy, createdCopy;
-    if (const int error = CopyPath(target, targetCopy)) return static_cast<int>(Fail(error));
-    if (const int error = CopyPath(created, createdCopy)) return static_cast<int>(Fail(error));
-    const std::filesystem::path contents(target);
+static int CreateNativeSymbolicLink(const std::filesystem::path& contents, const std::filesystem::path& native) {
     if (contents.has_root_name() || contents.has_root_directory()) {
         NotImplemented_nid_no_patch("symlink: absolute targets");
         return -1;
@@ -784,8 +800,6 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
             return -1;
         }
     }
-    std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(created, native)) return static_cast<int>(Fail(error));
     std::error_code error;
 #ifdef _WIN32
     if (GetFileAttributesW(native.wstring().c_str()) != INVALID_FILE_ATTRIBUTES) return static_cast<int>(Fail(GuestEexist));
@@ -813,6 +827,24 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
 #endif
     RecordWrittenPath_nid_no_patch(native);
     return 0;
+}
+
+int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
+    std::string targetCopy, createdCopy;
+    if (const int error = CopyPath(target, targetCopy)) return static_cast<int>(Fail(error));
+    if (const int error = CopyPath(created, createdCopy)) return static_cast<int>(Fail(error));
+    std::filesystem::path native;
+    if (const int error = ResolvePathError_nid_no_patch(created, native)) return static_cast<int>(Fail(error));
+    return CreateNativeSymbolicLink(std::filesystem::path(target), native);
+}
+
+int APS5_VABI symlinkat_nid_postfix(const char* target, int fd, const char* path) {
+    std::string targetCopy, pathCopy;
+    if (const int error = CopyPath(target, targetCopy)) return static_cast<int>(Fail(error));
+    if (const int error = CopyPath(path, pathCopy)) return static_cast<int>(Fail(error));
+    std::filesystem::path native;
+    if (const int error = ResolveAtPath(fd, path, native)) return static_cast<int>(Fail(error));
+    return CreateNativeSymbolicLink(std::filesystem::path(target), native);
 }
 
 int APS5_VABI openat_nid_postfix(int fd, const char* path, int flags, ...) {

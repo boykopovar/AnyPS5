@@ -65,11 +65,6 @@ int APS5_VABI dynlib_get_obj_member_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI futimesat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI get_module_info_list_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -347,11 +342,6 @@ int APS5_VABI pthread_switch_delete_np_nid_postfix(void) {
 }
 
 int APS5_VABI ptrace_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pwrite_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2149,11 +2139,6 @@ int APS5_VABI statfs_nid_postfix(void) {
 }
 
 int APS5_VABI swapon_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI symlinkat_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

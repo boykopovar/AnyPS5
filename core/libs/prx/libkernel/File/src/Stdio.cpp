@@ -737,6 +737,10 @@ static int SetFileFlags(const char* function, const std::string& target, std::ui
     return 0;
 }
 
+int File::SetPathTimes(const std::filesystem::path& path, const KernelTimeval* times) {
+    return NativeUtimes(path, times);
+}
+
 extern "C" {
 
 int APS5_VABI chmod_nid_postfix(const char* path, int mode) {

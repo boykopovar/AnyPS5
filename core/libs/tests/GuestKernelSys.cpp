@@ -899,6 +899,45 @@ void CheckUnsupportedPathconf(F fn, int descriptor) {
         Require(fn(descriptor, name) == -1 && Error() == 45);
 }
 
+void PosixFileOperationTests(const std::filesystem::path& root) {
+    const auto path = root / "positioned-write.txt";
+    { std::ofstream output(path); output << "abcdef"; }
+    const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(directory >= 0);
+    const int file = open_nid_postfix(path.string().c_str(), SCE_KERNEL_O_RDWR, 0);
+    Require(file >= 0);
+    Require(sceKernelLseek(file, 1, 0) == 1);
+    Require(pwrite_nid_postfix(file, "XY", 2, 2) == 2);
+    char bytes[6]{};
+    Require(sceKernelRead(file, bytes, 1) == 1 && bytes[0] == 'b');
+    Require(sceKernelLseek(file, 0, 0) == 0);
+    Require(sceKernelRead(file, bytes, 6) == 6 && std::string(bytes, 6) == "abXYef");
+    Require(pwrite_nid_postfix(file, nullptr, 1, 0) == -1 && Error() == 14);
+    Require(pwrite_nid_postfix(-1, "x", 1, 0) == -1 && Error() == 9);
+    Require(sceKernelClose(file) == 0);
+    Require(futimesat_nid_postfix(directory, "positioned-write.txt", nullptr) == 0);
+    const KernelTimeval invalid[2]{{0, 0}, {0, 1000000}};
+    Require(futimesat_nid_postfix(directory, "positioned-write.txt", invalid) == -1 && Error() == 22);
+    Require(futimesat_nid_postfix(directory, "missing.txt", nullptr) == -1 && Error() == 2);
+    Require(futimesat_nid_postfix(-1, "positioned-write.txt", nullptr) == -1 && Error() == 9);
+    const auto guestAbsoluteMissing = (std::filesystem::path("/") / root.filename() / "missing.txt").string();
+    Require(futimesat_nid_postfix(-1, guestAbsoluteMissing.c_str(), nullptr) == -1 && Error() == 2);
+    Require(symlinkat_nid_postfix("positioned-write.txt", directory, "positioned-write.link") == 0);
+#ifdef _WIN32
+    const auto linkAttributes = GetFileAttributesW((root / "positioned-write.link").c_str());
+    Require(linkAttributes != INVALID_FILE_ATTRIBUTES && (linkAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
+#else
+    Require(std::filesystem::is_symlink(std::filesystem::symlink_status(root / "positioned-write.link")));
+#endif
+    char linkTarget[64]{};
+    const auto targetLength = readlinkat_nid_postfix(directory, "positioned-write.link", linkTarget, sizeof(linkTarget));
+    Require(targetLength == 20 && std::string(linkTarget, static_cast<std::size_t>(targetLength)) == "positioned-write.txt");
+    Require(symlinkat_nid_postfix("positioned-write.txt", directory, "positioned-write.link") == -1 && Error() == 17);
+    Require(symlinkat_nid_postfix("positioned-write.txt", -1, "bad.link") == -1 && Error() == 9);
+    Require(symlinkat_nid_postfix("positioned-write.txt", directory, "missing/child.link") == -1 && Error() == 2);
+    Require(sceKernelClose(directory) == 0);
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -924,6 +963,7 @@ int main() {
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
+    PosixFileOperationTests(root);
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);
     const auto file = (root / "file.txt").string();

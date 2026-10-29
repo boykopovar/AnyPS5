@@ -35,6 +35,7 @@ namespace File {
 #ifdef _WIN32
 std::optional<std::filesystem::path> WindowsDescriptorPath_nid_no_patch(int descriptor);
 #endif
+int SetPathTimes(const std::filesystem::path& path, const KernelTimeval* times);
 int HostStandardError();
 [[nodiscard]] std::unique_lock<std::mutex> LockPositionedTransfer(int descriptor);
 void SharePositionedTransfer(int from, int to);
