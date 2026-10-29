@@ -19,6 +19,39 @@ MODES = dict(ieee=0, denorm32=0, denorm16=3, dx10_clamp=1, round32=0, round16=0,
 
 
 class CompareResultsTests(unittest.TestCase):
+    def test_utf8_bom_and_crlf_keep_identical_and_different_results(self):
+        for before_encoding, after_encoding in (("utf-8-sig", "utf-8"), ("utf-8", "utf-8-sig"), ("utf-8-sig", "utf-8-sig")):
+            for different in (False, True):
+                with self.subTest(before=before_encoding, after=after_encoding, different=different):
+                    after = copy.deepcopy(self.report)
+                    if different:
+                        after["rows"][0]["output"][0] ^= 1
+                    self.before.write_bytes(json.dumps(self.report, indent=2).replace("\n", "\r\n").encode(before_encoding))
+                    self.after.write_bytes(json.dumps(after, indent=2).replace("\n", "\r\n").encode(after_encoding))
+                    result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, int(different), result.stdout + result.stderr)
+                    self.assertEqual(result.stderr, "")
+
+    def test_deeply_nested_json_is_an_invalid_report_not_a_difference(self):
+        self.before.write_text(json.dumps(self.report), encoding="utf-8")
+        self.after.write_text("[" * 200000, encoding="utf-8")
+        result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("nested too deeply", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_bom_does_not_hide_invalid_json_or_invalid_reports(self):
+        self.before.write_text(json.dumps(self.report), encoding="utf-8")
+        for payload in ("{", "[]", '{"schema_version": 2}'):
+            with self.subTest(payload=payload):
+                self.after.write_text(payload, encoding="utf-8-sig")
+                result = subprocess.run([sys.executable, str(SCRIPT), str(self.before), str(self.after)],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

@@ -290,6 +290,7 @@ struct RegisterPthreadOnLoad {
         RegisterPthreadCreate_nid_no_patch(reinterpret_cast<PthreadCreateFn_nid_no_patch>(pthread_create_nid_postfix));
         RegisterPthreadJoin_nid_no_patch(reinterpret_cast<PthreadJoinFn_nid_no_patch>(pthread_join_nid_postfix));
         RegisterPthreadDetach_nid_no_patch(reinterpret_cast<PthreadDetachFn_nid_no_patch>(pthread_detach_nid_postfix));
+        RegisterProcessorCount_nid_no_patch(static_cast<unsigned>(std::popcount(DEFAULT_THREAD_AFFINITY)));
         static const ThreadForwards_nid_no_patch forwards{
             reinterpret_cast<decltype(forwards.once)>(scePthreadOnce),
             reinterpret_cast<decltype(forwards.keyCreate)>(scePthreadKeyCreate),

@@ -306,7 +306,8 @@ void IrProgram::SetWaveSize(std::uint32_t waveSize) {
 }
 
 IrBlock& IrProgram::CreateBlock() {
-    auto block = std::make_unique<IrBlock>(nextBlockId);
+    if (instructionNodes == nullptr) instructionNodes = std::make_shared<std::pmr::unsynchronized_pool_resource>();
+    auto block = std::make_unique<IrBlock>(nextBlockId, instructionNodes);
     nextBlockId++;
     IrBlock& created = *block;
     blocks.push_back(std::move(block));
