@@ -18,6 +18,8 @@
 
 namespace {
 
+constexpr size_t RsizeMax = (size_t{1} << 61) - 1;
+
 int CompareUnits(char16_t left, char16_t right) {
     return left < right ? -1 : 1;
 }
@@ -588,9 +590,12 @@ int APS5_VABI strcoll_nid_postfix(const char* s1, const char* s2) {
 int APS5_VABI strncpy_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
     if (!dest || destsz == 0) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
+    if (destsz > RsizeMax) return GuestEinval;
+    if (count > RsizeMax) {
+        dest[0] = '\0';
+        return GuestEinval;
+    }
     if (!src) {
         dest[0] = '\0';
         return GuestEinval;
@@ -613,15 +618,14 @@ int APS5_VABI strncpy_s_nid_postfix(char* dest, size_t destsz, const char* src, 
 }
 
 int APS5_VABI strcpy_s_nid_postfix(char* dest, size_t destsz, const char* src) {
-    return strncpy_s_nid_postfix(dest, destsz, src, static_cast<size_t>(-1));
+    return strncpy_s_nid_postfix(dest, destsz, src, RsizeMax);
 }
 
 int APS5_VABI strncat_s_nid_postfix(char* dest, size_t destsz, const char* src, size_t count) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
     if (!dest || destsz == 0) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
+    if (destsz > RsizeMax) return GuestEinval;
     size_t used = 0;
     while (used < destsz && dest[used] != '\0') ++used;
     if (used == destsz || !src) {
@@ -652,9 +656,8 @@ int APS5_VABI strcat_s_nid_postfix(char* dest, size_t destsz, const char* src) {
 int APS5_VABI memcpy_s_nid_postfix(void* dest, size_t destsz, const void* src, size_t count) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
     if (!dest) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
+    if (destsz > RsizeMax) return GuestEinval;
     if (!src || count > destsz) {
         std::memset(dest, 0, destsz);
         return src ? GuestErange : GuestEinval;
@@ -673,9 +676,8 @@ int APS5_VABI memcpy_s_nid_postfix(void* dest, size_t destsz, const void* src, s
 int APS5_VABI memmove_s_nid_postfix(void* dest, size_t destsz, const void* src, size_t count) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
     if (!dest) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
+    if (destsz > RsizeMax) return GuestEinval;
     if (!src || count > destsz) {
         std::memset(dest, 0, destsz);
         return src ? GuestErange : GuestEinval;
@@ -686,8 +688,8 @@ int APS5_VABI memmove_s_nid_postfix(void* dest, size_t destsz, const void* src, 
 
 int APS5_VABI memset_s_nid_postfix(void* dest, size_t destsz, int value, size_t count) {
     constexpr int GuestEinval = 22;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
-    if (!dest || destsz > RsizeMax || count > RsizeMax) return GuestEinval;
+    constexpr size_t MemsetSizeMax = SIZE_MAX >> 1;
+    if (!dest || destsz > MemsetSizeMax || count > MemsetSizeMax) return GuestEinval;
     const auto length = count > destsz ? destsz : count;
     auto* bytes = static_cast<volatile unsigned char*>(dest);
     for (size_t index = 0; index < length; ++index) bytes[index] = static_cast<unsigned char>(value);
@@ -908,9 +910,8 @@ char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** contex
 int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
     if (!dest) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
+    if (destsz > RsizeMax) return GuestEinval;
     if (!src || count > destsz) {
         wmemset_nid_postfix(dest, 0, destsz);
 
@@ -931,9 +932,8 @@ int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_
 int APS5_VABI wmemmove_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
     if (!dest) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
+    if (destsz > RsizeMax) return GuestEinval;
     if (!src || count > destsz) {
         wmemset_nid_postfix(dest, 0, destsz);
 
@@ -946,9 +946,8 @@ int APS5_VABI wmemmove_s_nid_postfix(char16_t* dest, size_t destsz, const char16
 int APS5_VABI wcsncpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
     if (!dest || destsz == 0) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
+    if (destsz > RsizeMax) return GuestEinval;
     if (!src) {
         dest[0] = 0;
         return GuestEinval;
@@ -982,9 +981,8 @@ char16_t* APS5_VABI wcsncat_nid_postfix(char16_t* dest, const char16_t* src, siz
 int APS5_VABI wcsncat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count) {
     constexpr int GuestEinval = 22;
     constexpr int GuestErange = 34;
-    constexpr size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
     if (!dest || destsz == 0) return GuestEinval;
-    if (destsz > RsizeMax) return GuestErange;
+    if (destsz > RsizeMax) return GuestEinval;
     size_t used = 0;
     while (used < destsz && dest[used] != 0) ++used;
     if (used == destsz || !src) {

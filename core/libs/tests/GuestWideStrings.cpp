@@ -132,7 +132,7 @@ int main() {
     wmemset_nid_postfix(memBuf, u'Z', 16);
 
     require(wmemcpy_s_nid_postfix(memBuf, 4, u"12345", 5) == 34 && memBuf[0] == 0 && memBuf[3] == 0);
-    require(wmemcpy_s_nid_postfix(memBuf, ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, u"a", 1) == 34);
+    require(wmemcpy_s_nid_postfix(memBuf, 0x2000000000000000, u"a", 1) == 22);
     wmemcpy_s_nid_postfix(memBuf, 16, u"abcdefgh", 8);
 
     require(wmemcpy_s_nid_postfix(memBuf + 2, 8, memBuf, 4) == 22 && memBuf[2] == 0);
@@ -145,7 +145,7 @@ int main() {
     require(wmemmove_s_nid_postfix(nullptr, 16, memBuf, 3) == 22);
     require(wmemmove_s_nid_postfix(memBuf, 16, nullptr, 3) == 22 && memBuf[0] == 0);
     require(wmemmove_s_nid_postfix(memBuf, 4, u"12345", 5) == 34 && memBuf[0] == 0);
-    require(wmemmove_s_nid_postfix(memBuf, ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, u"a", 1) == 34);
+    require(wmemmove_s_nid_postfix(memBuf, 0x2000000000000000, u"a", 1) == 22);
 
     char16_t strBuf[16];
     require(wcsncpy_s_nid_postfix(strBuf, 16, u"hello", 5) == 0 && same(strBuf, u"hello", 6));
@@ -159,7 +159,7 @@ int main() {
     require(wcsncpy_s_nid_postfix(strBuf, 4, u"hello", 5) == 34 && strBuf[0] == 0);
     strBuf[0] = u'X';
     require(wcsncpy_s_nid_postfix(strBuf, 5, u"hello", 5) == 34 && strBuf[0] == 0);
-    require(wcsncpy_s_nid_postfix(strBuf, ((SIZE_MAX >> 1) / sizeof(char16_t)) + 1, u"a", 1) == 34);
+    require(wcsncpy_s_nid_postfix(strBuf, 0x2000000000000000, u"a", 1) == 22);
     wcsncpy_s_nid_postfix(strBuf, 16, u"abcdef", 6);
 
     require(wcsncpy_s_nid_postfix(strBuf + 1, 10, strBuf, 3) == 22 && strBuf[1] == 0);
