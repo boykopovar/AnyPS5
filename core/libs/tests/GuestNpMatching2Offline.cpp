@@ -167,10 +167,12 @@ int main() {
     createA.size = 0x10;
     Require(createContextA(&createA, nullptr) == InvalidArgument, "sceNpMatching2CreateContextA", "a null output was taken");
     Require(created == 77, "sceNpMatching2CreateContextA", "a refused call wrote the context id");
-    Require(createContextA(&createA, &created) == 0 && created == 2, "sceNpMatching2CreateContextA", "the freed context id 2 was not handed out");
+    Require(createContextA(&createA, &created) == 0 && created == 0x102, "sceNpMatching2CreateContextA", "the freed slot 2 was not handed out as A context 0x102");
     created = 77;
     Require(createContextA(&createA, &created) == ContextMax && created == 77, "sceNpMatching2CreateContextA", "an eleventh context did not return CONTEXT_MAX");
-    Require(sceNpMatching2ContextStop(2) == ContextNotStarted, "sceNpMatching2CreateContextA", "the context it created is not a regular context");
+    Require(sceNpMatching2ContextStop(0x102) == ContextNotStarted, "sceNpMatching2CreateContextA", "the context it created is not a regular context");
+    Require(sceNpMatching2DestroyContext(0x102) == 0, "sceNpMatching2CreateContextA", "the A context was not destroyed");
+    Require(sceNpMatching2CreateContext(&create, &created) == 0 && created == 2, "sceNpMatching2CreateContextA", "destroying the A context did not free slot 2");
     Require(sceNpMatching2SetDefaultRequestOptParam(99, nullptr) == InvalidArgument, "sceNpMatching2SetDefaultRequestOptParam", "a null option was not refused before the context");
     Require(sceNpMatching2SetDefaultRequestOptParam(99, requestOpt) == InvalidContextId, "sceNpMatching2SetDefaultRequestOptParam", "an unknown context was taken");
     Require(sceNpMatching2SetDefaultRequestOptParam(1, requestOpt) == 0, "sceNpMatching2SetDefaultRequestOptParam", "setting the default option failed");
