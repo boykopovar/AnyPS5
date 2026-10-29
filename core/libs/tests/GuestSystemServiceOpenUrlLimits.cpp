@@ -100,10 +100,56 @@ void CheckNever() {
     Require(confirmation.Count() == 0 && launcher.Count() == 0);
 }
 
+void CheckRateCap() {
+    FakeClock clock;
+    for (const OpenUrlMode mode : {OpenUrlMode::Ask, OpenUrlMode::Always}) {
+        OpenUrlGate gate(clock);
+        CountingLauncher launcher;
+        CountingConfirmation confirmation;
+        for (std::size_t index = 0; index < OPEN_URL_MAX_ATTEMPTS; ++index) {
+            Require(gate.Run(mode, "https://example.com/" + std::to_string(index), launcher, confirmation) == OpenUrlGateOutcome::Launched);
+            clock.Advance(std::chrono::seconds(1));
+        }
+        for (int index = 0; index < 1000; ++index)
+            Require(gate.Run(mode, index % 2 == 0 ? "https://example.com/same" : "https://example.org/" + std::to_string(index), launcher, confirmation) ==
+                    OpenUrlGateOutcome::Limited);
+        Require(launcher.Count() == OPEN_URL_MAX_ATTEMPTS);
+        Require(confirmation.Count() == (mode == OpenUrlMode::Ask ? OPEN_URL_MAX_ATTEMPTS : 0));
+
+        clock.Advance(OPEN_URL_WINDOW - std::chrono::seconds(OPEN_URL_MAX_ATTEMPTS) - std::chrono::seconds(1));
+        Require(gate.Run(mode, "https://example.com/late", launcher, confirmation) == OpenUrlGateOutcome::Limited);
+        clock.Advance(std::chrono::seconds(1));
+        Require(gate.Run(mode, "https://example.com/recovered", launcher, confirmation) == OpenUrlGateOutcome::Launched);
+        Require(launcher.Count() == OPEN_URL_MAX_ATTEMPTS + 1);
+        Require(gate.Run(mode, "https://example.com/again", launcher, confirmation) == OpenUrlGateOutcome::Limited);
+        clock.Advance(std::chrono::seconds(1));
+        Require(gate.Run(mode, "https://example.com/again", launcher, confirmation) == OpenUrlGateOutcome::Launched);
+        Require(gate.Run(mode, "https://example.com/again2", launcher, confirmation) == OpenUrlGateOutcome::Limited);
+        clock.Advance(OPEN_URL_WINDOW);
+    }
+}
+
+void CheckRejectedAndFailedCount() {
+    FakeClock clock;
+    OpenUrlGate gate(clock);
+    CountingLauncher launcher;
+    CountingConfirmation confirmation;
+    for (int index = 0; index < 50; ++index)
+        Require(gate.Run(OpenUrlMode::Always, "https://u:p@example.com/", launcher, confirmation) == OpenUrlGateOutcome::Rejected);
+    Require(launcher.Count() == 0);
+    launcher.result = false;
+    for (std::size_t index = 0; index < OPEN_URL_MAX_ATTEMPTS; ++index)
+        Require(gate.Run(OpenUrlMode::Always, "https://example.com/", launcher, confirmation) == OpenUrlGateOutcome::Failed);
+    Require(gate.Run(OpenUrlMode::Always, "https://example.com/", launcher, confirmation) == OpenUrlGateOutcome::Limited);
+    Require(launcher.Count() == OPEN_URL_MAX_ATTEMPTS);
+}
+
 }
 
 int main() {
     CheckBusy();
     CheckNever();
+    CheckRateCap();
+    CheckRejectedAndFailedCount();
     return 0;
 }
