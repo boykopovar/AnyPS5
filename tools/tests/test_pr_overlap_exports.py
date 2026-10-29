@@ -104,13 +104,31 @@ class ExportTests(unittest.TestCase):
         findings = pr_overlap.main_export_findings(prs, main)
         rows = {9: {"added": set()}}
         report = pr_overlap.report(rows, "https://example.invalid/blob/base", findings[9])
-        self.assertIn("already exported by another library in `main`", report)
+        self.assertIn("also exported by another library in `main`", report)
         self.assertIn("`FT_Stroker_New`", report)
         self.assertIn("libSceFreeType", report)
         self.assertNotIn("PR 0", report)
         self.assertNotIn("PR 9", report)
         self.assertNotIn("Already on `main` |", report)
         self.assertEqual(rows, {9: {"added": set()}})
+
+    def test_same_library_and_nid_already_on_main_is_reported(self):
+        nid = nid_names.compute_nid("sceKernelRead")
+        prs = {9: {"added_exports": {
+            ("core/libs/prx/libkernel", nid): {"sceKernelRead"}},
+            "removed_exports": {}}}
+        main = {("core/libs/prx/libkernel", nid): {"sceKernelRead_nid_postfix"}}
+        findings = pr_overlap.main_export_findings(prs, main)
+        self.assertEqual(findings[9], {
+            "sceKernelRead": {
+                "same_key": {("core/libs/prx/libkernel", nid)},
+                "other_libraries": set(),
+            },
+        })
+        report = pr_overlap.report({9: {"added": set()}}, "https://example.invalid/blob/base", findings[9])
+        self.assertIn("same library/NID already present", report)
+        self.assertIn("libkernel", report)
+        self.assertIn(nid, report)
 
     def test_same_function_name_in_only_the_same_library_is_not_a_cross_library_duplicate(self):
         first_nid = nid_names.compute_nid("FT_Stroker_New")
