@@ -603,6 +603,12 @@ int APS5_VABI getpid_nid_postfix(void) {
     return static_cast<int>(pid);
 }
 
+int APS5_VABI sceKernelGetProcessAbiType(int pid) {
+    if (pid == -1 || pid == getpid_nid_postfix()) return 1;
+    if (pid == 0) return 0;
+    throw std::runtime_error("sceKernelGetProcessAbiType: unsupported process id " + std::to_string(pid));
+}
+
 int APS5_VABI getsid_nid_postfix(int pid) {
     const int self = getpid_nid_postfix();
     if (pid == 0 || pid == self) return self;

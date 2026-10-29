@@ -123,11 +123,6 @@ int APS5_VABI sceKernelPrintBacktraceWithModuleInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetProcessAbiType() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 }
 
 extern "C" {
