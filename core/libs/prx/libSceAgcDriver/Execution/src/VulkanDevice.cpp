@@ -498,6 +498,7 @@ struct VulkanDevice::State {
     bool textureCompressionBC = false;
     bool samplerFilterMinmax = false;
     bool nonSeamlessCubeMap = false;
+    bool samplerMirrorClampToEdge = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
     VkSampleCountFlags truncatedCoverageSampleCounts = 0;
     bool mixedAttachmentSamples = false;
@@ -1697,6 +1698,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     nonSeamlessCubeFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NON_SEAMLESS_CUBE_MAP_FEATURES_EXT};
     nonSeamlessCubeFeatures.nonSeamlessCubeMap = VK_TRUE;
+    if (hasExtension(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME)) {
+        state->samplerMirrorClampToEdge = true;
+        deviceExtensions.push_back(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
+    }
     VkPhysicalDeviceCoverageReductionModeFeaturesNV coverageReductionFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COVERAGE_REDUCTION_MODE_FEATURES_NV};
     if (hasExtension(VK_NV_FRAMEBUFFER_MIXED_SAMPLES_EXTENSION_NAME) && hasExtension(VK_NV_COVERAGE_REDUCTION_MODE_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &coverageReductionFeatures};
@@ -4244,6 +4249,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.depthBiasClamp = state->depthBiasClamp;
     context.samplerFilterMinmax = state->samplerFilterMinmax;
     context.nonSeamlessCubeMap = state->nonSeamlessCubeMap;
+    context.samplerMirrorClampToEdge = state->samplerMirrorClampToEdge;
     context.mergedCoverageSampleCounts = state->mergedCoverageSampleCounts;
     context.truncatedCoverageSampleCounts = state->truncatedCoverageSampleCounts;
     context.mixedAttachmentSamples = state->mixedAttachmentSamples;
