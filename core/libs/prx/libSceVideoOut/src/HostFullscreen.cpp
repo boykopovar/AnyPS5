@@ -37,8 +37,11 @@ void HostFullscreenState::Refresh(bool titleReadsMouse) {
     cursorHidden = hide;
 }
 
-void HostFullscreenState::Release() {
+void HostFullscreenState::Release() noexcept {
     if (!cursorHidden) return;
-    window.ShowCursor(true);
     cursorHidden = false;
+    try {
+        window.ShowCursor(true);
+    } catch (...) {
+    }
 }

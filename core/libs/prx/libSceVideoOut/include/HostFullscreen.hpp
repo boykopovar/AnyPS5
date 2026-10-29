@@ -34,7 +34,7 @@ public:
     void Adopt(HostFullscreenMode mode, HostWindowSize windowedSize);
     void Toggle();
     void Refresh(bool titleReadsMouse);
-    void Release();
+    void Release() noexcept;
 
 private:
     IHostFullscreenWindow& window;
