@@ -593,21 +593,21 @@ __complex__ long double APS5_VABI conjl_nid_postfix(__complex__ long double z) {
 
 __complex__ double APS5_VABI cproj_nid_postfix(__complex__ double z) {
     if (std::isinf(__real__ z) || std::isinf(__imag__ z)) {
-        return MakeComplex(INFINITY, std::copysign(0.0, __imag__ z));
+        return MakeComplex(static_cast<double>(INFINITY), std::copysign(0.0, __imag__ z));
     }
     return z;
 }
 
 __complex__ float APS5_VABI cprojf_nid_postfix(__complex__ float z) {
     if (std::isinf(__real__ z) || std::isinf(__imag__ z)) {
-        return MakeComplex(INFINITY, std::copysign(0.0f, __imag__ z));
+        return MakeComplex(static_cast<float>(INFINITY), std::copysign(0.0f, __imag__ z));
     }
     return z;
 }
 
 __complex__ long double APS5_VABI cprojl_nid_postfix(__complex__ long double z) {
     if (std::isinf(__real__ z) || std::isinf(__imag__ z)) {
-        return MakeComplex(INFINITY, std::copysign(0.0L, __imag__ z));
+        return MakeComplex(static_cast<long double>(INFINITY), std::copysign(0.0L, __imag__ z));
     }
     return z;
 }
