@@ -22,6 +22,9 @@ struct ImeKeyCell {
 struct ImeKeyboardView {
     std::u16string text;
     std::size_t caret = 0;
+    std::u16string preedit;
+    std::size_t preeditCursor = 0;
+    std::size_t preeditSelection = 0;
     std::uint8_t rows = 0;
     std::uint8_t columns = 0;
     std::vector<ImeKeyCell> keys;

@@ -65,6 +65,15 @@ std::optional<std::uint32_t> configuredResolution() {
     return resolutionIndex(width, height);
 }
 
+bool readHostClipboard(std::string& text) {
+    if (SDL_HasClipboardText() != SDL_TRUE) return false;
+    char* raw = SDL_GetClipboardText();
+    if (raw == nullptr) return false;
+    text.assign(raw);
+    SDL_free(raw);
+    return true;
+}
+
 std::vector<const char*> windowExtensions(SDL_Window* window) {
     return OnMainThread([&] {
         unsigned extensionCount = 0;
@@ -715,6 +724,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             mouseInput.emplace();
             keyboardInput.emplace();
             imeTextInput.emplace();
+            imeTextInput->SetClipboardProvider(&readHostClipboard);
         });
         while (!token.stop_requested()) {
             {

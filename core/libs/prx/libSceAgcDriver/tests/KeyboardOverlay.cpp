@@ -296,6 +296,95 @@ void caretTests() {
     std::printf("caret: one bar per field, after its character, the text scrolled to keep it in the 44-character field\n");
 }
 
+ImeKeyboardView composing(const std::u16string& text, std::size_t caret, const std::u16string& preedit, std::size_t cursor, std::size_t selection) {
+    ImeKeyboardView view = viewOf(ImeDialog::PadKeyboardOpen({}), text, caret);
+    view.preedit = preedit;
+    view.preeditCursor = cursor;
+    view.preeditSelection = selection;
+    return view;
+}
+
+bool sameRects(const std::vector<OverlayRect>& left, const std::vector<OverlayRect>& right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        if (left[i].x != right[i].x || left[i].y != right[i].y || left[i].width != right[i].width || left[i].height != right[i].height || left[i].color != right[i].color) return false;
+    }
+    return true;
+}
+
+OverlayRect underline(const OverlayLayout& layout, std::size_t column, std::int32_t rows, OverlayColor color) {
+    const auto scale = layout.scale;
+    const auto x = KeyboardMetrics::Padding + KeyboardMetrics::FieldInset + static_cast<std::int32_t>(column) * KeyboardMetrics::Advance;
+    const auto y = KeyboardMetrics::Padding + KeyboardMetrics::FieldInset + KeyboardMetrics::GlyphHeight;
+    return {layout.bounds.x + x * scale, layout.bounds.y + y * scale, KeyboardMetrics::Advance * scale, rows * scale, colorOf(color)};
+}
+
+std::vector<OverlayRect> without(const std::vector<OverlayRect>& rects, const std::vector<OverlayRect>& removed) {
+    std::vector<OverlayRect> kept;
+    for (const auto& rect : rects) {
+        bool drop = false;
+        for (const auto& gone : removed) {
+            if (rect.x == gone.x && rect.y == gone.y && rect.width == gone.width && rect.height == gone.height && rect.color == gone.color) drop = true;
+        }
+        if (!drop) kept.push_back(rect);
+    }
+    return kept;
+}
+
+void compositionTests() {
+    const VkExtent2D extent{1280, 720};
+    const auto plain = AgcDriver::LayOutKeyboard(composing(u"ab", 1, u"", 0, 0), extent);
+    const auto ignored = AgcDriver::LayOutKeyboard(composing(u"ab", 1, u"", 3, 2), extent);
+    require(sameRects(plain.rects, ignored.rects), "a cursor and a selection with no composition changed the layout");
+    const auto baseline = AgcDriver::LayOutKeyboard(viewOf(ImeDialog::PadKeyboardOpen({}), u"ab", 1), extent);
+    require(sameRects(plain.rects, baseline.rects), "a view with an empty composition does not lay out as before");
+
+    const auto inserted = AgcDriver::LayOutKeyboard(composing(u"ab", 1, u"X", 1, 0), extent);
+    const auto flat = AgcDriver::LayOutKeyboard(viewOf(ImeDialog::PadKeyboardOpen({}), u"aXb", 2), extent);
+    const auto extra = std::vector<OverlayRect>{underline(inserted, 1, 1, OverlayColor::Accent)};
+    require(inserted.rects.size() == flat.rects.size() + 1, "a one-character composition adds " + std::to_string(inserted.rects.size() - flat.rects.size()) + " rectangles, not one underline");
+    require(sameRects(without(inserted.rects, extra), flat.rects), "the composition is not drawn between the text before and after the caret, or its caret is not after it");
+
+    const auto selected = AgcDriver::LayOutKeyboard(composing(u"", 0, u"abc", 1, 1), extent);
+    const auto flatSelected = AgcDriver::LayOutKeyboard(viewOf(ImeDialog::PadKeyboardOpen({}), u"abc", 1), extent);
+    const std::vector<OverlayRect> marks{underline(selected, 0, 1, OverlayColor::Accent), underline(selected, 1, 2, OverlayColor::Text), underline(selected, 2, 1, OverlayColor::Accent)};
+    require(sameRects(without(selected.rects, marks), flatSelected.rects), "the selected segment is not the second character underlined twice in the text colour");
+    require(selected.rects.size() == flatSelected.rects.size() + 3, "a three-character composition does not add three underlines");
+
+    const auto pair = AgcDriver::LayOutKeyboard(composing(u"", 0, u"a\U0001F600b", 3, 0), extent);
+    const auto flatPair = AgcDriver::LayOutKeyboard(viewOf(ImeDialog::PadKeyboardOpen({}), u"a\U0001F600b", 3), extent);
+    const std::vector<OverlayRect> pairMarks{underline(pair, 0, 1, OverlayColor::Accent), underline(pair, 1, 1, OverlayColor::Accent), underline(pair, 2, 1, OverlayColor::Accent)};
+    require(sameRects(without(pair.rects, pairMarks), flatPair.rects), "a surrogate pair in the composition is not one character");
+
+    require(!AgcDriver::KeyboardHasGlyph(0x3053), "the overlay font gained a hiragana glyph; the composition test below assumes none");
+    const auto cjk = AgcDriver::LayOutKeyboard(composing(u"", 0, u"\u3053", 1, 0), extent);
+    const auto box = AgcDriver::LayOutKeyboard(viewOf(ImeDialog::PadKeyboardOpen({}), u"\uFFFD", 1), extent);
+    require(cjk.rects.size() == box.rects.size() + 1, "a character the font lacks does not draw as the replacement box");
+
+    std::u16string text(60, u'a');
+    const auto scrolled = AgcDriver::LayOutKeyboard(composing(text, 60, u"xyz", 3, 0), extent);
+    const auto scale = scrolled.scale;
+    const OverlayRect field{scrolled.bounds.x + KeyboardMetrics::Padding * scale, scrolled.bounds.y + KeyboardMetrics::Padding * scale, (scrolled.bounds.width / scale - 2 * KeyboardMetrics::Padding) * scale, KeyboardMetrics::FieldHeight * scale, 0};
+    for (const auto& rect : scrolled.rects) {
+        if (rect.color == colorOf(OverlayColor::Accent) && rect.width == scale && contains(field, rect)) {
+            const auto column = (rect.x + scale - field.x) / scale - KeyboardMetrics::FieldInset;
+            require(column == 44 * KeyboardMetrics::Advance, "a composition past the field does not keep the caret at the right edge");
+        }
+    }
+    require(inside(scrolled, field, OverlayColor::Accent) == 1 + 3, "a long composition does not draw one caret and three underlines");
+
+    for (const auto& bad : {composing(u"ab", 1, u"x", 2, 0), composing(u"ab", 1, u"xy", 1, 2), composing(u"ab", 1, u"x", 0, 5)}) {
+        bool threw = false;
+        try {
+            static_cast<void>(AgcDriver::LayOutKeyboard(bad, extent));
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        require(threw, "a composition cursor or selection past its text is laid out");
+    }
+    std::printf("composition: laid out between the text around the caret, underlined, selection marked, cursor kept in view, bad offsets rejected\n");
+}
+
 double linear(double encoded) {
     return encoded <= 0.04045 ? encoded / 12.92 : std::pow((encoded + 0.055) / 1.055, 2.4);
 }
@@ -356,6 +445,7 @@ int main() {
         labelTests();
         fallbackTests();
         caretTests();
+        compositionTests();
         paletteTests();
         systemOverlayTests();
         std::cout << "keyboard overlay tests passed\n";

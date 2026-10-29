@@ -371,7 +371,20 @@ OverlayLayout LayOutKeyboard(const ImeKeyboardView& view, VkExtent2D extent) {
     const auto inner = gridWidth(view);
     rect(KeyboardMetrics::Padding, KeyboardMetrics::Padding, inner, KeyboardMetrics::FieldHeight, OverlayColor::Field);
     std::size_t caret = 0;
-    const auto characters = decode(view.text, view.caret, &caret);
+    auto characters = decode(view.text, view.caret, &caret);
+    std::vector<std::uint8_t> marks(characters.size(), 0);
+    if (!view.preedit.empty()) {
+        Graphics::Require(view.preeditCursor <= view.preedit.size() && view.preeditSelection <= view.preedit.size() - view.preeditCursor, "the system keyboard composition cursor is past its text");
+        std::size_t cursor = 0;
+        std::size_t selectionEnd = 0;
+        const auto composed = decode(view.preedit, view.preeditCursor, &cursor);
+        decode(view.preedit, view.preeditCursor + view.preeditSelection, &selectionEnd);
+        std::vector<std::uint8_t> composedMarks(composed.size(), KeyboardCompositionMark);
+        std::fill(composedMarks.begin() + static_cast<std::ptrdiff_t>(cursor), composedMarks.begin() + static_cast<std::ptrdiff_t>(selectionEnd), KeyboardSelectionMark);
+        characters.insert(characters.begin() + static_cast<std::ptrdiff_t>(caret), composed.begin(), composed.end());
+        marks.insert(marks.begin() + static_cast<std::ptrdiff_t>(caret), composedMarks.begin(), composedMarks.end());
+        caret += cursor;
+    }
     const auto textLeft = KeyboardMetrics::Padding + KeyboardMetrics::FieldInset;
     const auto textTop = KeyboardMetrics::Padding + KeyboardMetrics::FieldInset;
     const auto visible = static_cast<std::size_t>((inner - 2 * KeyboardMetrics::FieldInset + 1) / KeyboardMetrics::Advance);
@@ -380,6 +393,8 @@ OverlayLayout LayOutKeyboard(const ImeKeyboardView& view, VkExtent2D extent) {
     for (auto index = first; index < last; ++index) {
         const auto column = static_cast<std::int32_t>(index - first);
         glyph(layout, KeyboardGlyph(characters[index]), left + (textLeft + column * KeyboardMetrics::Advance) * scale, top + textTop * scale, scale, OverlayColor::Text);
+        if (marks[index] == KeyboardCompositionMark) rect(textLeft + column * KeyboardMetrics::Advance, textTop + KeyboardMetrics::GlyphHeight, KeyboardMetrics::Advance, 1, OverlayColor::Accent);
+        else if (marks[index] == KeyboardSelectionMark) rect(textLeft + column * KeyboardMetrics::Advance, textTop + KeyboardMetrics::GlyphHeight, KeyboardMetrics::Advance, 2, OverlayColor::Text);
     }
     rect(textLeft + static_cast<std::int32_t>(caret - first) * KeyboardMetrics::Advance - 1, KeyboardMetrics::Padding + 1, 1, KeyboardMetrics::FieldHeight - 2, OverlayColor::Accent);
     for (const auto& key : view.keys) {

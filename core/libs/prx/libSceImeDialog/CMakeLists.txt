@@ -22,4 +22,35 @@ if(BUILD_TESTING)
         set_tests_properties(guest_ime_dialog PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeDialog>")
     endif()
+
+    add_test_executable(guest_ime_dialog_composition_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeDialogComposition.cpp)
+    target_include_directories(guest_ime_dialog_composition_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_dialog_composition_tests PRIVATE libSceImeDialog libSceIme libc)
+    configure_windows_unwind(guest_ime_dialog_composition_tests)
+    add_test(NAME guest_ime_dialog_composition COMMAND guest_ime_dialog_composition_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_dialog_composition PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeDialog>")
+    endif()
+
+    add_test_executable(guest_ime_dialog_paste_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeDialogPaste.cpp)
+    target_include_directories(guest_ime_dialog_paste_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_dialog_paste_tests PRIVATE libSceImeDialog libSceIme libc)
+    configure_windows_unwind(guest_ime_dialog_paste_tests)
+    add_test(NAME guest_ime_dialog_paste COMMAND guest_ime_dialog_paste_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_dialog_paste PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeDialog>")
+    endif()
+
+    add_test_executable(guest_ime_text_input_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeTextInput.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/ImeTextInput.cpp)
+    target_include_directories(guest_ime_text_input_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_link_libraries(guest_ime_text_input_tests PRIVATE libSceImeDialog libSceIme libc)
+    configure_windows_unwind(guest_ime_text_input_tests)
+    add_test(NAME guest_ime_text_input COMMAND guest_ime_text_input_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_text_input PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceImeDialog>")
+    endif()
 endif()
