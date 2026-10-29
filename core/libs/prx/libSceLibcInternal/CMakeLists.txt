@@ -2,6 +2,7 @@ add_library(libSceLibcInternal SHARED EXCLUDE_FROM_ALL Export.cpp FileTime.cpp G
 target_include_directories(libSceLibcInternal PRIVATE ${LIBS_INCLUDE_DIR})
 set_source_files_properties(UserContext.cpp PROPERTIES COMPILE_OPTIONS -fno-omit-frame-pointer)
 target_link_libraries(libSceLibcInternal PRIVATE ${CMAKE_DL_LIBS})
+target_sources(libSceLibcInternal PRIVATE InventoryExports2.cpp)
 target_sources(libSceLibcInternal PRIVATE Directory.cpp)
 target_sources(libSceLibcInternal PRIVATE InitOnce.cpp)
 if(BUILD_TESTING)
