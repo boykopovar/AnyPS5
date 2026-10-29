@@ -52,13 +52,13 @@ int main() {
         Require(scePadEnableProfileIndicator(handle) == PAD_ERROR_INVALID_HANDLE);
     }
     Require(scePadDisableDataConversion(pad, false) == PAD_OK);
-    RequireThrows([] { (void)scePadDisableDataConversion(pad, true); });
+    RequireThrows([&] { (void)scePadDisableDataConversion(pad, true); });
     Require(scePadDisableActiveProfileChange(pad, false) == PAD_OK);
     Require(scePadDisableActiveProfileChange(pad, true) == PAD_OK);
     for (int deviceId : {-1, 0, 1, 123456})
         Require(scePadDisableActiveProfileChangeByDeviceId(deviceId, true) == PAD_OK);
     Require(scePadEnablePs4CompatibleMode(pad, false) == PAD_OK);
-    RequireThrows([] { (void)scePadEnablePs4CompatibleMode(pad, true); });
+    RequireThrows([&] { (void)scePadEnablePs4CompatibleMode(pad, true); });
     Require(scePadEnableControllerIndicator(pad) == PAD_OK);
     Require(scePadEnableProfileIndicator(pad) == PAD_OK);
     for (bool value : {false, true}) {
