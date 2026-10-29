@@ -170,8 +170,8 @@ static void CheckFindAndCount() {
 }
 
 template<typename TValue>
-static void CheckFindCountVector(const void* (*find)(const void*, const void*, TValue),
-                                 std::size_t (*count)(const void*, const void*, TValue)) {
+static void CheckFindCountVector(const void* (APS5_VABI* find)(const void*, const void*, TValue),
+                                 std::size_t (APS5_VABI* count)(const void*, const void*, TValue)) {
     const TValue target = static_cast<TValue>(0xa5);
     for (const std::size_t length : {0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 65}) {
         std::vector<TValue> storage(length + 2, static_cast<TValue>(1));
@@ -194,7 +194,7 @@ static void CheckFindCountVector(const void* (*find)(const void*, const void*, T
     }
 }
 
-using MinElementFunction = const void* (*)(const void*, const void*, bool);
+using MinElementFunction = const void* (APS5_VABI*)(const void*, const void*, bool);
 
 template<typename TValue>
 static void CheckMinElementVector(MinElementFunction function, bool isSigned,
