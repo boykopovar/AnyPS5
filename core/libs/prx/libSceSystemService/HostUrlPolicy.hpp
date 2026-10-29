@@ -1,7 +1,9 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdlib>
+#include <deque>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -66,10 +68,14 @@ public:
     std::chrono::steady_clock::time_point Now() override { return std::chrono::steady_clock::now(); }
 };
 
+constexpr std::size_t OPEN_URL_MAX_ATTEMPTS = 3;
+constexpr std::chrono::seconds OPEN_URL_WINDOW{60};
+
 enum class OpenUrlGateOutcome {
     Disabled,
     Rejected,
     Busy,
+    Limited,
     Declined,
     Failed,
     Launched,
@@ -89,6 +95,10 @@ public:
         if (ValidateHostUrl(url) != HostUrlVerdict::Ok) return OpenUrlGateOutcome::Rejected;
         std::unique_lock lock(state, std::try_to_lock);
         if (!lock.owns_lock()) return OpenUrlGateOutcome::Busy;
+        const auto now = clock->Now();
+        while (!attempts.empty() && now - attempts.front() >= OPEN_URL_WINDOW) attempts.pop_front();
+        if (attempts.size() >= OPEN_URL_MAX_ATTEMPTS) return OpenUrlGateOutcome::Limited;
+        attempts.push_back(now);
         switch (OpenUrlOnHost(mode, url, launcher, confirmation)) {
         case OpenUrlOutcome::Launched: return OpenUrlGateOutcome::Launched;
         case OpenUrlOutcome::Declined: return OpenUrlGateOutcome::Declined;
@@ -102,4 +112,5 @@ public:
 private:
     std::mutex state;
     IUrlClock* clock;
+    std::deque<std::chrono::steady_clock::time_point> attempts;
 };
