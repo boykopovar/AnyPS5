@@ -714,9 +714,42 @@ FrameCheck compareFrames(const FrameCaptureReader& reader, const Options& option
     return check;
 }
 
+#ifdef _WIN32
+void relaunchIfHostRegionBlocks(const FrameCaptureReader& reader) {
+    constexpr int Attempts = 8;
+    const auto& chunks = reader.Chunks();
+    const auto blocked = std::find_if(chunks.begin(), chunks.end(), [](const FrameMemoryChunk& chunk) {
+        return chunk.kind == FrameMemoryKind::Range && chunk.rangeKind != FrameRangeKind::Host && (chunk.access & FrameRangeAccess::Gpu) != 0 &&
+               GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(chunk.address), static_cast<std::size_t>(chunk.bytes));
+    });
+    if (blocked == chunks.end()) return;
+    const char* const previous = std::getenv("APS5_FRAME_REPLAY_ATTEMPT");
+    const int attempt = previous == nullptr ? 1 : std::atoi(previous) + 1;
+    if (attempt > Attempts) return;
+    std::fprintf(stderr, "[frame-replay] a host region sits in the captured GPU range 0x%llx+0x%llx; relaunching (%d of %d)\n", static_cast<unsigned long long>(blocked->address),
+                 static_cast<unsigned long long>(blocked->bytes), attempt, Attempts);
+    std::fflush(stdout);
+    std::fflush(stderr);
+    _putenv_s("APS5_FRAME_REPLAY_ATTEMPT", std::to_string(attempt).c_str());
+    std::wstring commandLine = GetCommandLineW();
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &process)) throw std::runtime_error("frame replay: cannot relaunch, error " + std::to_string(GetLastError()));
+    CloseHandle(process.hThread);
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD code = 2;
+    GetExitCodeProcess(process.hProcess, &code);
+    std::_Exit(static_cast<int>(code));
+}
+#endif
+
 int run(const Options& options) {
     const auto loadStart = Clock::now();
     const FrameCaptureReader reader(options.directory);
+#ifdef _WIN32
+    relaunchIfHostRegionBlocks(reader);
+#endif
     if (reader.Truncated()) std::fprintf(stderr, "[frame-replay] the capture is truncated; replaying the complete records\n");
     auto skipped = restoreMemory(reader);
     const auto loaded = Clock::now();
