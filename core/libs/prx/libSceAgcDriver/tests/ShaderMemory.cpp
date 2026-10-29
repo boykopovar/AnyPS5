@@ -5428,6 +5428,18 @@ void verifyHalfWaveReduction() {
     expectFailure([&] { static_cast<void>(pixel(upperHelperLoop, 32u, true)); }, "v_readlane_b32 of lane 63 is outside the 32-lane host subgroup", "half-wave reduction: the low-word loop proof was reused for helper-inclusive upper lanes");
     require(reductions(pixel(loopScan, 32u, true), spv::OpGroupNonUniformUMin) == 1u, "half-wave reduction: a loop-carried saved EXEC mask exhausted the entry-lane proof on 32 lanes");
     require(halves(pixel(loopScan, 64u, true), spv::OpGroupNonUniformUMin, 0xffffffffu), "half-wave reduction: a loop-carried saved EXEC mask did not preserve the two half-wave UMin reductions");
+    auto computeScan = scan(0xffffffffu, 0x26000000u, 0x83800000u);
+    const auto exported = std::find(computeScan.begin(), computeScan.end(), 0xf800180fu);
+    exported[0] = 0xe0700000u;
+    exported[1] = 0x80000100u;
+    static constexpr std::array<std::uint32_t, 4> computeBuffer{0x10000000u, 0u, 0x40u, 0x00027facu};
+    static constexpr std::array<std::uint32_t, 9> computeCapabilities{spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
+    auto computeRequest = FrontendRequest(computeScan, computeBuffer);
+    computeRequest.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    computeRequest.target.supportedCapabilities = computeCapabilities;
+    const auto twoLane = Recompile(computeRequest);
+    require(twoLane.hostSubgroupSize == 32u && reductions(twoLane.spirv, spv::OpGroupNonUniformUMin) == 0u, "half-wave reduction: a two-lane wave64 compute UMin scan under s_or_saveexec_b64 -1 reached the half-wave scan matcher");
+    require(halves(pixel(scan(0xffffffffu, 0x26000000u, 0x83800000u), 64u, true), spv::OpGroupNonUniformUMin, 0xffffffffu), "half-wave reduction: the wave64 UMin scan under s_or_saveexec_b64 -1 did not read lanes 31 and 63 as two half-wave UMin reductions on 64 lanes");
     auto comparedScan = scan(0u, 0x38000000u, 0x88000000u);
     *std::find(comparedScan.begin(), comparedScan.end(), 0xbe98047eu) = 0x8a986a7eu;
     comparedScan.insert(comparedScan.begin(), 0x7c080080u);
@@ -9359,8 +9371,10 @@ int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
         _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
+        _putenv_s("APS5_NO_SINGLE_LANE_RULE", "1");
 #else
         setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
+        setenv("APS5_NO_SINGLE_LANE_RULE", "1", 1);
 #endif
         using namespace ShaderRecompiler;
         if (argc == 2 && std::string_view(argv[1]) == "--specialized-bda-abi") {

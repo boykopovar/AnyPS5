@@ -311,6 +311,7 @@ bool AllOnesWord(const IrValue* word) {
 
 bool AllLanesBit(const IrValue* bit) {
     bit = Resolved(bit);
+    if (bit != nullptr && bit->HasImmediate()) return bit->Type() == IrType::Bool && bit->ImmediateBool();
     if (Is(bit, IrOpcode::LogicalOr) && EitherOrder(bit, [](const IrValue* inverted, const IrValue* other) { return Is(inverted, IrOpcode::LogicalNot) && Resolved(inverted->Argument(0)) == other; })) return true;
     const auto words = LaneBitWords(bit);
     return words && AllOnesWord((*words)[0]) && AllOnesWord((*words)[1]);
@@ -460,20 +461,14 @@ private:
     std::uint32_t budget = 2048u;
 };
 
-bool EveryLaneBit(const IrValue* bit, bool constantTrue) {
-    const auto* resolved = Resolved(bit);
-    if (constantTrue && resolved != nullptr && resolved->HasImmediate()) return resolved->Type() == IrType::Bool && resolved->ImmediateBool();
-    return AllLanesBit(resolved);
-}
-
 bool WritesEveryLane(const IrValue& update) {
     const auto flags = update.Flags<DppMoveFlags>();
-    return flags.boundControl && flags.rowMask == 0xfu && flags.bankMask == 0xfu && EveryLaneBit(update.Argument(2), true);
+    return flags.boundControl && flags.rowMask == 0xfu && flags.bankMask == 0xfu && AllLanesBit(update.Argument(2));
 }
 
 bool KeepsNoOldValue(const IrValue& permlane) {
     const auto flags = permlane.Flags<PermlaneFlags>();
-    return flags.fetchInactive || flags.boundControl || EveryLaneBit(permlane.Argument(3), true);
+    return flags.fetchInactive || flags.boundControl || AllLanesBit(permlane.Argument(3));
 }
 
 bool UpperLaneTest(const IrValue* bit) {
@@ -592,40 +587,40 @@ std::optional<std::array<const IrValue*, 2>> ReductionOperands(const IrValue* co
 
 const IrValue* RowScanStepInput(const IrValue* step, const WaveReduction& reduction, std::uint32_t control, bool narrow) {
     const bool zeroFill = narrow && reduction.identity == 0u && !reduction.floating;
-    if (!Is(step, IrOpcode::DppUpdateU32) || !RowShiftFlags(step, control, zeroFill) || !EveryLaneBit(step->Argument(2), narrow)) return nullptr;
+    if (!Is(step, IrOpcode::DppUpdateU32) || !RowShiftFlags(step, control, zeroFill) || !AllLanesBit(step->Argument(2))) return nullptr;
     const auto* previous = zeroFill && WritesEveryLane(*step) ? nullptr : Resolved(step->Argument(1));
     const IrValue* input = nullptr;
     const auto operands = ReductionOperands(Resolved(step->Argument(0)), reduction);
     const bool matched = operands && EitherOrder(*operands, [&](const IrValue* moved, const IrValue* own) {
         input = own;
-        return (previous == nullptr || own == previous) && Is(moved, IrOpcode::DppMoveU32) && RowShiftFlags(moved, control, zeroFill) && Resolved(moved->Argument(0)) == own && EveryLaneBit(moved->Argument(1), narrow);
+        return (previous == nullptr || own == previous) && Is(moved, IrOpcode::DppMoveU32) && RowShiftFlags(moved, control, zeroFill) && Resolved(moved->Argument(0)) == own && AllLanesBit(moved->Argument(1));
     });
     return matched ? input : nullptr;
 }
 
-const IrValue* Unmasked(const IrValue* value, bool narrow) {
-    while (Is(value, IrOpcode::SelectU32) && EveryLaneBit(value->Argument(0), narrow)) value = Resolved(value->Argument(1));
+const IrValue* Unmasked(const IrValue* value) {
+    while (Is(value, IrOpcode::SelectU32) && AllLanesBit(value->Argument(0))) value = Resolved(value->Argument(1));
     return value;
 }
 
-bool CrossesRowsOf(const IrValue* value, const IrValue* scan, bool narrow) {
-    const auto* permlane = Unmasked(value, narrow);
+bool CrossesRowsOf(const IrValue* value, const IrValue* scan) {
+    const auto* permlane = Unmasked(value);
     if (!Is(permlane, IrOpcode::Permlane16U32)) return false;
     const auto flags = permlane->Flags<PermlaneFlags>();
-    return flags.x16 && !flags.fetchInactive && Resolved(permlane->Argument(0)) == scan && IsU32(permlane->Argument(1), 0xffffffffu) && IsU32(permlane->Argument(2), 0xffffffffu) && EveryLaneBit(permlane->Argument(3), narrow);
+    return flags.x16 && !flags.fetchInactive && Resolved(permlane->Argument(0)) == scan && IsU32(permlane->Argument(1), 0xffffffffu) && IsU32(permlane->Argument(2), 0xffffffffu) && AllLanesBit(permlane->Argument(3));
 }
 
 std::optional<HalfWaveScan> MatchHalfWaveScan(const IrValue* value, IrShaderStage stage, bool narrow) {
-    const auto* combined = Unmasked(Resolved(value), narrow);
+    const auto* combined = Unmasked(Resolved(value));
     std::optional<std::array<const IrValue*, 2>> operands;
     const auto reduction = std::find_if(WaveReductions.begin(), WaveReductions.end(), [&](const WaveReduction& candidate) { return (operands = ReductionOperands(combined, candidate)).has_value(); });
     const IrValue* scan = nullptr;
-    if (reduction == WaveReductions.end() || !EitherOrder(*operands, [&](const IrValue* own, const IrValue* crossed) { scan = own; return CrossesRowsOf(crossed, own, narrow); })) return std::nullopt;
+    if (reduction == WaveReductions.end() || !EitherOrder(*operands, [&](const IrValue* own, const IrValue* crossed) { scan = own; return CrossesRowsOf(crossed, own); })) return std::nullopt;
     for (const auto control : {0x118u, 0x114u, 0x112u, 0x111u}) {
         scan = RowScanStepInput(scan, *reduction, control, narrow);
         if (scan == nullptr) return std::nullopt;
     }
-    const auto* source = Unmasked(scan, narrow);
+    const auto* source = Unmasked(scan);
     const bool entryKeys = Is(source, IrOpcode::SelectU32) && IsU32(source->Argument(2), reduction->identity) && EntryLaneWalk{stage}.ZeroBit(source->Argument(0));
     const bool upperKeys = narrow && reduction->identity == 0u && !reduction->floating && UpperLaneWalk{stage}.ZeroValue(source);
     if (!entryKeys && !upperKeys) return std::nullopt;
@@ -682,7 +677,7 @@ bool ActiveMaskedBit(const IrValue* bit) {
 }
 
 std::optional<HalfWaveScan> MatchRowScan(const IrValue* value, IrShaderStage stage, bool narrow) {
-    const auto* top = Unmasked(Resolved(value), narrow);
+    const auto* top = Unmasked(Resolved(value));
     for (const auto& reduction : WaveReductions) {
         if (reduction.floating) continue;
         const IrValue* scan = top;
@@ -691,7 +686,7 @@ std::optional<HalfWaveScan> MatchRowScan(const IrValue* value, IrShaderStage sta
             if (scan == nullptr) break;
         }
         if (scan == nullptr) continue;
-        const auto* source = Unmasked(scan, narrow);
+        const auto* source = Unmasked(scan);
         if (Is(source, IrOpcode::SelectU32) && IsU32(source->Argument(2), reduction.identity) && (ActiveMaskedBit(source->Argument(0)) || EntryLaneWalk{stage}.ZeroBit(source->Argument(0)))) return HalfWaveScan{&reduction, source};
     }
     return std::nullopt;

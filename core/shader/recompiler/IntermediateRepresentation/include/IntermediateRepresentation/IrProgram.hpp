@@ -49,6 +49,7 @@ private:
 };
 
 std::string ProgramToString(const IrProgram& program);
+std::string DescribeValue(const IrValue* value, std::uint32_t depth);
 void ValidateProgram(const IrProgram& program, bool requireSsa);
 void ResolveControlFlowIdentities(IrProgram& program);
 bool EquivalentValue(const IrResourcePlan& program, const IrValue* left, const IrValue* right);

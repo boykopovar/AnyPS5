@@ -326,6 +326,7 @@ RedundantValueEliminationStats RedundantValueEliminator::Eliminate(IrProgram& pr
     for (auto& info : program.Metadata().blockInfo) {
         replaced(info.condition);
         replaced(info.indirectTarget);
+        replaced(info.exec);
     }
     for (auto*& read : program.Metadata().dynamicReads) replaced(read);
     for (auto& descriptor : program.Resources().descriptorSources) {

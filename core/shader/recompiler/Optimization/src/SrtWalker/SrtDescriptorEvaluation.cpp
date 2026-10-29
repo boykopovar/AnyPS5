@@ -21,20 +21,6 @@ std::string& failureReason() {
     return HostThreadLocal<std::string, FailureReasonStorage>();
 }
 
-std::string DescribeValue(const IrValue* value, std::uint32_t depth) {
-    if (value == nullptr) return "null";
-    value = value->Resolve();
-    std::string text(IrOpcodeName(value->Opcode()));
-    if (value->HasImmediate() && value->Type() == IrType::U32) return text + "(" + std::to_string(value->ImmediateU32()) + ")";
-    if (depth == 0 || value->ArgumentCount() == 0) return text;
-    text += "(";
-    for (std::size_t index = 0; index < value->ArgumentCount(); ++index) {
-        if (index != 0) text += ", ";
-        text += DescribeValue(value->Argument(index), depth - 1);
-    }
-    return text + ")";
-}
-
 bool Fail(std::string reason) {
     failureReason() = std::move(reason);
     return false;

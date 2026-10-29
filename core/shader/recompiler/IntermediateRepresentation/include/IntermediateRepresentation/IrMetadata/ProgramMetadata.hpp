@@ -32,6 +32,8 @@ struct IrProgramMetadata {
     std::uint32_t vectorWindowBase = 0;
     std::uint32_t vectorWindowSize = 0;
     bool vectorWindowIndexedWrites = false;
+    bool skippedRegionsChecked = false;
+    std::string skippedRegionRejection;
     std::uint32_t tessellationControlStride = 0;
     std::uint32_t tessellationPatchStride = 0;
     std::uint32_t tessellationSharedStride = 0;
