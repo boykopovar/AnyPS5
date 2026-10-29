@@ -86,11 +86,6 @@ int APS5_VABI _ZN3sce2np10CancelLockC2Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np13NpTitleSecretC2ERK16SceNpTitleSecret(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np8WorkItem10SetRunningEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -162,11 +157,6 @@ int APS5_VABI _ZN3sce2np7RingBuf15CheckoutForReadEPm(void) {
 }
 
 int APS5_VABI _ZN3sce2np9EventFlag4OpenEPKc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np13NpTitleSecret5ClearEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -482,11 +472,6 @@ int APS5_VABI _ZN3sce2np9HttpTrans21GetResponseStatusCodeEPNS0_6HandleEPi(void) 
 }
 
 int APS5_VABI _ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleElPl(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

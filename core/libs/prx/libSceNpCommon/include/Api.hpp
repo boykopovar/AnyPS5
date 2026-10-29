@@ -69,6 +69,11 @@ struct NpTitleIdObject {
     NpTitleId titleId;
 };
 
+struct NpTitleSecretObject {
+    const void* const* vtable;
+    NpTitleSecret secret;
+};
+
 extern "C" {
 
 int APS5_VABI sceNpCmpOnlineId(const NpOnlineId* onlineId1, const NpOnlineId* onlineId2);
@@ -248,7 +253,6 @@ int APS5_VABI _ZN3sce2np4Cond4ctorEv(void);
 int APS5_VABI _ZN3sce2np16StreamReadBufferD1Ev(void);
 int APS5_VABI _ZNK3sce2np9EventFlag6IsInitEv(void);
 int APS5_VABI _ZN3sce2np10CancelLockC2Ev(void);
-int APS5_VABI _ZN3sce2np13NpTitleSecretC2ERK16SceNpTitleSecret(void);
 int APS5_VABI _ZN3sce2np8WorkItem10SetRunningEv(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient21CreateRequestForAsyncEPiiPKvm(void);
 int APS5_VABI _ZN3sce2np18HttpConnectionPool13InvalidateAllEv(void);
@@ -264,7 +268,6 @@ int APS5_VABI _ZN3sce2np13RingBufMemory6ExpandEm(void);
 int APS5_VABI _ZThn8_N3sce2np10MemoryFile4ReadEPNS0_6HandleEPvmPm(void);
 int APS5_VABI _ZN3sce2np7RingBuf15CheckoutForReadEPm(void);
 int APS5_VABI _ZN3sce2np9EventFlag4OpenEPKc(void);
-int APS5_VABI _ZN3sce2np13NpTitleSecret5ClearEv(void);
 int APS5_VABI _ZN3sce2np10EventQueue7EnqueueEPKvmj(void);
 int APS5_VABI _ZN3sce2np12HttpTemplateD1Ev(void);
 int APS5_VABI _ZN3sce2np9WorkQueueD2Ev(void);
@@ -328,7 +331,6 @@ int APS5_VABI _ZN3sce2np7RingBufC1Ev(void);
 int APS5_VABI _ZN3sce2np10MemoryFileD1Ev(void);
 int APS5_VABI _ZN3sce2np9HttpTrans21GetResponseStatusCodeEPNS0_6HandleEPi(void);
 int APS5_VABI _ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleElPl(void);
-int APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(void);
 int APS5_VABI _ZN3sce2np14CalloutContextD1Ev(void);
 int APS5_VABI _ZN3sce2np5Mutex7DestroyEv(void);
 int APS5_VABI _ZN3sce2np14JsonDocBuilderC1ERKNS0_9JsonValueE(void);
@@ -402,6 +404,31 @@ bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, con
 bool APS5_VABI _ZN3sce2npneERK12SceNpTitleIdRKNS0_9NpTitleIdE(const NpTitleId* lhs, const NpTitleIdObject* rhs);
 bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs);
 
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1Ev(NpTitleSecretObject* self);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2Ev(NpTitleSecretObject* self);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1ERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1ERK16SceNpTitleSecret(NpTitleSecretObject* self, const NpTitleSecret* secret);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2ERK16SceNpTitleSecret(NpTitleSecretObject* self, const NpTitleSecret* secret);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1EPKvm(NpTitleSecretObject* self, const void* data, std::size_t size);
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2EPKvm(NpTitleSecretObject* self, const void* data, std::size_t size);
+void APS5_VABI _ZN3sce2np13NpTitleSecretD1Ev(NpTitleSecretObject* self);
+void APS5_VABI _ZN3sce2np13NpTitleSecretD2Ev(NpTitleSecretObject* self);
+void APS5_VABI _ZN3sce2np13NpTitleSecretD0Ev(NpTitleSecretObject* self);
+NpTitleSecretObject* APS5_VABI _ZN3sce2np13NpTitleSecretaSERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other);
+void APS5_VABI _ZN3sce2np13NpTitleSecret5ClearEv(NpTitleSecretObject* self);
+int APS5_VABI _ZN3sce2np13NpTitleSecret13SetSecretDataEPvm(NpTitleSecretObject* self, const void* data, std::size_t size);
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret7IsEmptyEv(const NpTitleSecretObject* self);
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsEPvm(const NpTitleSecretObject* self, const void* data, std::size_t size);
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsERKS1_(const NpTitleSecretObject* self, const NpTitleSecretObject* other);
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsERK16SceNpTitleSecret(const NpTitleSecretObject* self, const NpTitleSecret* secret);
+int APS5_VABI _ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(NpTitleSecretObject* out, const char* hex, std::size_t length);
+int APS5_VABI _ZN3sce2np13NpTitleSecret8BuildHexERKS1_Pcmb(const NpTitleSecretObject* secret, char* hex, std::size_t size, bool uppercase);
+bool APS5_VABI _ZN3sce2npeqERKNS0_13NpTitleSecretES3_(const NpTitleSecretObject* lhs, const NpTitleSecretObject* rhs);
+bool APS5_VABI _ZN3sce2npeqERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(const NpTitleSecret* lhs, const NpTitleSecretObject* rhs);
+bool APS5_VABI _ZN3sce2npeqERKNS0_13NpTitleSecretERK16SceNpTitleSecret(const NpTitleSecretObject* lhs, const NpTitleSecret* rhs);
+bool APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretES3_(const NpTitleSecretObject* lhs, const NpTitleSecretObject* rhs);
+bool APS5_VABI _ZN3sce2npneERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(const NpTitleSecret* lhs, const NpTitleSecretObject* rhs);
 [[noreturn]] void APS5_VABI sceNpPanic(void);
 
 }
