@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <string>
 
 static void Require(bool condition) {
@@ -422,14 +423,14 @@ int main() {
     Require(std::strcmp(transformed, "abc") == 0 && transformed[4] == 'z');
     std::memset(transformed, 'z', sizeof(transformed));
     Require(strxfrm_nid_postfix(transformed, "abcdefgh", 4) == 8);
-    Require(std::strcmp(transformed, "abc") == 0 && transformed[4] == 'z');
+    Require(std::memcmp(transformed, "abcd", 4) == 0 && transformed[4] == 'z');
     std::memset(transformed, 'z', sizeof(transformed));
     Require(strxfrm_nid_postfix(transformed, "abcdefg", sizeof(transformed)) == 7 && std::strcmp(transformed, "abcdefg") == 0);
     std::memset(transformed, 'z', sizeof(transformed));
-    Require(strxfrm_nid_postfix(transformed, "abcdefgh", sizeof(transformed)) == 8 && std::strcmp(transformed, "abcdefg") == 0);
+    Require(strxfrm_nid_postfix(transformed, "abcdefgh", sizeof(transformed)) == 8 && std::memcmp(transformed, "abcdefgh", 8) == 0);
     std::memset(transformed, 'z', sizeof(transformed));
     Require(strxfrm_nid_postfix(transformed, "", sizeof(transformed)) == 0 && transformed[0] == '\0' && transformed[1] == 'z');
-    Require(strxfrm_nid_postfix(transformed, "abc", 1) == 3 && transformed[0] == '\0' && transformed[1] == 'z');
+    Require(strxfrm_nid_postfix(transformed, "abc", 1) == 3 && transformed[0] == 'a' && transformed[1] == 'z');
     Require(strxfrm_nid_postfix(nullptr, "abc", 0) == 3);
     Require(strpbrk_nid_postfix(buffer, "ay") == buffer + 1);
     Require(strpbrk_nid_postfix(buffer, "") == nullptr);
@@ -481,23 +482,23 @@ int main() {
     Require(std::strcmp(strtok_r_nid_postfix(nullptr, ",", &firstState), "b") == 0);
     Require(firstState == first + 6);
     Require(strtok_r_nid_postfix(nullptr, ",", &firstState) == nullptr);
-    if (firstState != nullptr) std::fputs("strtok_r retained the state after exhausting delimiters\n", stderr);
-    Require(firstState == nullptr);
-    Require(strtok_r_nid_postfix(nullptr, ",", &firstState) == nullptr);
+    Require(firstState != nullptr && *firstState == '\0' && (std::less<>()(firstState, first) || !std::less<>()(firstState, first + sizeof(first))));
+    char* const exhausted = firstState;
+    Require(strtok_r_nid_postfix(nullptr, ",", &firstState) == nullptr && firstState == exhausted);
     Require(std::strcmp(strtok_r_nid_postfix(nullptr, "", &secondState), "y") == 0);
-    Require(secondState == nullptr);
+    Require(secondState == second + 3);
     char tokenEnd[8] = "last";
     char* finishedState = first;
     *__error_nid_postfix() = 77;
-    Require(strtok_r_nid_postfix(tokenEnd, ",", &finishedState) == tokenEnd && finishedState == nullptr);
+    Require(strtok_r_nid_postfix(tokenEnd, ",", &finishedState) == tokenEnd && finishedState == tokenEnd + 4);
     tokenEnd[4] = 'x';
     tokenEnd[5] = '\0';
-    Require(strtok_r_nid_postfix(nullptr, ",", &finishedState) == nullptr && finishedState == nullptr);
+    Require(strtok_r_nid_postfix(nullptr, ",", &finishedState) == tokenEnd + 4 && finishedState == tokenEnd + 5);
     for (const char* input : {"", ",", ",,,"}) {
         char noTokens[8];
         std::strcpy(noTokens, input);
         finishedState = first;
-        Require(strtok_r_nid_postfix(noTokens, ",", &finishedState) == nullptr && finishedState == nullptr);
+        Require(strtok_r_nid_postfix(noTokens, ",", &finishedState) == nullptr && finishedState == exhausted);
         Require(strtok_r_nid_postfix(nullptr, ",", &finishedState) == nullptr);
     }
     Require(*__error_nid_postfix() == 77);
@@ -542,6 +543,18 @@ int main() {
     Require(std::memcmp(dest, "abc:", 4) == 0);
     Require(memccpy_nid_postfix(dest, "abcdef", ':', 6) == nullptr);
     Require(memccpy_nid_postfix(dest, "abcdef", ':', 0) == nullptr);
+    const char safeA[] = "abcdef";
+    const char safeB[] = "abcdeg";
+    const char safeC[] = "abcdef";
+    Require(timingsafe_memcmp_nid_postfix(safeA, safeC, 6) == 0);
+    Require(timingsafe_memcmp_nid_postfix(safeA, safeB, 6) < 0);
+    Require(timingsafe_memcmp_nid_postfix(safeB, safeA, 6) > 0);
+    Require(timingsafe_memcmp_nid_postfix(safeA, safeB, 5) == 0);
+    Require(timingsafe_memcmp_nid_postfix(safeA, safeB, 0) == 0);
+    const unsigned char highA[] = {0x00, 0x80};
+    const unsigned char highB[] = {0x00, 0x7f};
+    Require(timingsafe_memcmp_nid_postfix(highA, highB, 2) > 0);
+    Require(timingsafe_memcmp_nid_postfix(highB, highA, 2) < 0);
     CheckSecureCopySizeLimits();
     CheckSecureStringSizeLimits();
     return CheckMemcpyOverlap() ? 0 : 1;

@@ -19,6 +19,7 @@ OPCODES = ROOT / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / 
 ISA = Path(__file__).resolve().parent / "rdna_isa.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
 STUB = "NotImplemented_nid_no_patch"
 CALL = re.compile(r"\b(\w+)\s*\(")
 KEYWORDS = r"return|else|do|throw|co_return|co_await|co_yield|and|or|not|xor|bitand|bitor|compl"
@@ -163,15 +164,15 @@ def inert_wrappers(text):
 
 def scan_library(path):
     done, todo, inert, live = set(), set(), set(), set()
-    for source in path.rglob("*.cpp"):
-        if "tests" in source.relative_to(path).parts:
-            continue
-        text = code(source.read_text(encoding="utf-8", errors="ignore"))
+    texts = [code(source.read_text(encoding="utf-8", errors="ignore")) for source in path.rglob("*.cpp")
+             if "tests" not in source.relative_to(path).parts]
+    exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
+    for text in texts:
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)
         for match in DEFINITION.finditer(text):
             name = match.group(1)
-            if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")):
+            if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
                 continue
             body = text[match.end() - 1:body_end(text, match.end() - 1)]
             if any(call.group(1) in calls and not QUALIFIED.search(body, 0, call.start())
@@ -484,7 +485,12 @@ def library_report(base, head):
         new_text, new_percent = library_progress(new)
         delta = "n/a"
         if old_percent is not None and new_percent is not None:
-            delta = f'{round(new_percent - old_percent, 2) or 0:+.2f} pp'
+            change = round(new_percent - old_percent, 2)
+            delta = f'{change or 0:+.2f} pp'
+            exact = exact_delta({"done": old["done"], "total": old["done"] + old["todo"]},
+                                {"done": new["done"], "total": new["done"] + new["todo"]}) if change == 0 else None
+            if exact:
+                delta = f"{small_delta(exact)} pp"
         rows.append(f"| {name} | {old_text} | {new_text} | {delta} |")
     if not rows:
         return []
@@ -502,8 +508,22 @@ def report(base, head):
     return "\n".join(lines)
 
 
+SITE_REPORTS = ("progress.json", "badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html")
+
+
+def require_distinct_reports(output):
+    paths = [output / name for name in SITE_REPORTS]
+    for index, path in enumerate(paths):
+        if not path.exists():
+            continue
+        for other in paths[index + 1:]:
+            if other.exists() and path.samefile(other):
+                raise ValueError(f"{path.name} and {other.name} in {output} are the same file")
+
+
 def write_site(output, libraries, shaders):
     output.mkdir(parents=True, exist_ok=True)
+    require_distinct_reports(output)
     (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2), encoding="utf-8")
     (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
     (output / "badge-shaders.svg").write_text(badge("shaders", shaders), encoding="utf-8")
@@ -524,12 +544,20 @@ def validate_snapshot(snapshot):
         percent = data.get("percent")
         if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not 0 <= percent <= 100:
             raise ValueError(f"{section}.percent must be a finite number between 0 and 100")
+        seen = set()
         for index, group in enumerate(groups):
             location = f"{section}.groups[{index}]"
             if not isinstance(group, dict) or not isinstance(group.get("name"), str):
                 raise ValueError(f"{location} must be an object with a string name")
+            if group["name"] in seen:
+                raise ValueError(f"{location}.name duplicates {group['name']!r}")
+            seen.add(group["name"])
             if "shared_sources" in group and not isinstance(group["shared_sources"], str):
                 raise ValueError(f"{location}.shared_sources must be a string")
+            if section == "libraries":
+                for field in ("done", "todo"):
+                    if field in group and (type(group[field]) is not int or group[field] < 0):
+                        raise ValueError(f"{location}.{field} must be a non-negative integer")
             for field in ("done_names", "todo_names", "inert_names"):
                 values = group.get(field, [])
                 if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
@@ -587,6 +615,8 @@ def main(argv=None):
         if args.output:
             try:
                 write_site(args.output, libraries, shaders)
+            except ValueError as error:
+                parser.error(str(error))
             except OSError as error:
                 parser.error(f"{args.output}: {error.strerror or error}")
         if args.json:

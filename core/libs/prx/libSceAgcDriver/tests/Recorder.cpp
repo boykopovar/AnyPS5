@@ -81,6 +81,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -2875,6 +2876,83 @@ void remappedImportTests(const Device& device) {
     HostImportFor(context, address, bytes);
 }
 
+bool windowedImportRefreshTests(const Device& device) {
+    const auto& context = device.GetContext();
+    constexpr std::size_t window = 131072;
+    constexpr std::size_t unit = 65536;
+    if (context.hostImportAlignment == 0 || context.hostImportAlignment > unit) {
+        std::cout << "skipped, windowed import refresh requires host imports aligned within 64 KiB; alignment=" << context.hostImportAlignment << '\n';
+        return false;
+    }
+    constexpr std::size_t bytes = 5 * window;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(unit, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the windowed import refresh block");
+    const auto first = (reinterpret_cast<std::uint64_t>(block) + window - 1) / window * window;
+    auto* a = reinterpret_cast<void*>(first);
+    auto* neighbour = reinterpret_cast<void*>(first + unit);
+    auto* b = reinterpret_cast<void*>(first + 2 * window);
+    auto* spare = reinterpret_cast<void*>(first + 3 * window);
+    std::vector<void*> registered;
+    SetHostImportWindow(window);
+    struct Cleanup {
+        const Context& context;
+        void* block;
+        std::vector<void*>& registered;
+        std::uint64_t first;
+        ~Cleanup() {
+            {
+                GuestAllocations::Mutation mutation;
+                for (auto* range : registered) mutation.Remove(range);
+            }
+            HostImportFor(context, first, unit);
+            SetHostImportWindow(0);
+#ifdef _WIN32
+            VirtualFree(block, 0, MEM_RELEASE);
+#else
+            std::free(block);
+#endif
+        }
+    } cleanup{context, block, registered, first};
+    const auto add = [&](void* range) {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(range, unit, true, true, true);
+        registered.push_back(range);
+    };
+    const auto remove = [&](void* range) {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(range);
+        std::erase(registered, range);
+    };
+    const auto serial = [&](void* range) { return HostImportSerial(context, reinterpret_cast<std::uint64_t>(range), unit, true); };
+    add(a);
+    add(b);
+    if (HostImportFor(context, first, unit) == nullptr || HostImportFor(context, reinterpret_cast<std::uint64_t>(b), unit) == nullptr) {
+        std::cout << "skipped, host import of the windowed import refresh ranges refused\n";
+        return false;
+    }
+    const auto firstA = serial(a);
+    const auto firstB = serial(b);
+    Require(firstA != 0 && firstB != 0 && firstA != firstB, "the windowed import refresh ranges were not imported apart");
+    add(spare);
+    Require(serial(a) == firstA && serial(b) == firstB, "a range added in another import window retired an import");
+    add(neighbour);
+    Require(serial(b) == firstB, "a range added in another import window retired an import");
+    Require(serial(a) == 0, "an import whose window gained a continuing range was kept");
+    Require(HostImportFor(context, first, unit) != nullptr, "the grown run was not imported again");
+    const auto secondA = serial(a);
+    Require(secondA != 0 && serial(neighbour) == secondA, "the grown run was not imported as one");
+    remove(b);
+    add(b);
+    Require(serial(a) == secondA, "a range mapped again in another import window retired an import");
+    Require(serial(b) == 0, "the import of a range mapped again was kept");
+    std::cout << "Windowed import refresh tests passed\n";
+    return true;
+}
+
 void hostImportRetirementTests(const Device& device) {
     const auto& context = device.GetContext();
     constexpr std::size_t UnitBytes = 2 * 65536;
@@ -4266,8 +4344,10 @@ void drawDescriptorWriteTests(const Device& device, Recorder& recorder) {
             Require(actual.buffers.size() == original.buffers.size() && actual.images.size() == original.images.size(), "snapshot update omitted unchanged descriptors");
             for (const auto& [key, before] : original.buffers) {
                 const auto after = actual.buffers.at(key);
-                const auto expected = key.first == (allocation == 0 ? 2u : 7u) ? draw->snapshots.front().buffer->Handle() : before.buffer;
-                Require(after.buffer == expected && after.offset == before.offset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
+                const bool replaced = key.first == (allocation == 0 ? 2u : 7u);
+                const auto expected = replaced ? draw->snapshots.front().buffer->Handle() : before.buffer;
+                const auto expectedOffset = replaced ? draw->snapshots.front().offset : before.offset;
+                Require(after.buffer == expected && after.offset == expectedOffset && after.range == before.range, "snapshot update replaced the wrong buffer or changed its range");
             }
             for (const auto& [key, before] : original.images) {
                 const auto after = actual.images.at(key);
@@ -9247,6 +9327,109 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     std::cout << "Multisampled target guest access tests passed\n";
 }
 
+void repeatStorageGuardTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || !device.NullDescriptors()) {
+        std::cout << "4x color targets or nullDescriptor unavailable: repeated storage surface guard not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 256;
+    constexpr std::uint32_t targetSide = 64;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t targetBytes = 65536u;
+    constexpr std::size_t bytes = surfaceBytes + 2u * targetBytes;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the repeated storage surface block");
+    std::memset(block, 0, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            ClearMultisampleTargets(context.device);
+            ClearCachedTextures(context.device);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+#ifdef _WIN32
+            VirtualFree(block, 0, MEM_RELEASE);
+#else
+            std::free(block);
+#endif
+        }
+    } unregister{base, block};
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    context.nullDescriptors = true;
+    TextureCache cache(context);
+    context.textureCache = &cache;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the repeated storage surface has an unexpected size");
+    const auto guard = [&](std::uint64_t at) {
+        ColorTarget target{};
+        target.address = at;
+        target.surfaceAddress = at;
+        target.extent = {targetSide, targetSide};
+        target.surfaceExtent = target.extent;
+        target.format = VK_FORMAT_R8G8B8A8_UNORM;
+        target.bytes = targetBytes;
+        target.samples = 4;
+        std::lock_guard gpu(GpuMutex());
+        Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the guarding multisampled target has no view");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    };
+    const auto clearTargets = [&] {
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        ClearMultisampleTargets(context.device);
+    };
+    const auto refusal = [](const std::function<void()>& access) {
+        try {
+            access();
+        } catch (const std::exception& error) {
+            return std::string(error.what());
+        }
+        return std::string();
+    };
+    const auto stored = CachedStorageSurface(context, resource);
+    Require(stored != nullptr, "the storage surface has no image");
+    Require(RepeatStorageSurface(context, resource, stored) == stored && CachedStorageSurface(context, resource) == stored, "without a guarded target the repeat path and the lookup returned different images");
+    guard(address + surfaceBytes);
+    Require(RepeatStorageSurface(context, resource, stored) == stored && CachedStorageSurface(context, resource) == stored, "a guarded target that starts where the surface ends changed the repeat path's or the lookup's image");
+    clearTargets();
+    guard(address + targetBytes);
+    const auto repeated = refusal([&] { static_cast<void>(RepeatStorageSurface(context, resource, stored)); });
+    const auto looked = refusal([&] { static_cast<void>(CachedStorageSurface(context, resource)); });
+    Require(!looked.empty() && looked.find("a storage image access") != std::string::npos && looked.find("multisampled color target") != std::string::npos, "the lookup did not refuse a surface a guarded target overlaps after its first byte: " + looked);
+    Require(repeated == looked, "the repeat path decided differently from the lookup for a guarded target after the surface's first byte: " + repeated);
+    clearTargets();
+    std::cout << "Repeated storage surface guard tests passed\n";
+}
+
 void oneFragmentFmaskGuardTests(const Device& device) {
     const auto& base = device.GetContext();
     if (!device.NullDescriptors()) {
@@ -9827,8 +10010,8 @@ void singleCubeTests(const Device& device, Recorder& recorder) {
     context.detiler = &detiler;
     SampleProgram program(context, recorder, SAMPLE_ARRAY_SPV);
     const VkComponentMapping identity{};
-    for (const auto first : {0u, 5u, 6u}) {
-        std::array<std::uint32_t, 8> words{0x1000u, (56u << 20u) | (3u << 30u), 15u | (63u << 14u), 0xb0000facu, first | (first << 16u), 0, 0, 0};
+    for (const auto [first, last] : {std::pair{0u, 0u}, std::pair{5u, 5u}, std::pair{6u, 6u}, std::pair{0u, 4u}, std::pair{2u, 5u}}) {
+        std::array<std::uint32_t, 8> words{0x1000u, (56u << 20u) | (3u << 30u), 15u | (63u << 14u), 0xb0000facu, last | (first << 16u), 0, 0, 0};
         auto resource = DecodeTextureResource(words);
         const auto geometry = DescribeSurface(resource);
         std::vector<std::byte> memory(static_cast<std::size_t>(geometry.guestBytes) + 256);
@@ -11739,6 +11922,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--reimport-bench") return reimportBench(device);
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-cut-only") return hostImportCutTests(device);
 #endif
+        if (argc == 2 && std::string_view(argv[1]) == "--windowed-import-refresh-only") return windowedImportRefreshTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-retirement-only") {
             const auto alignment = device.GetContext().hostImportAlignment;
             if (alignment == 0 || alignment > 65536) {
@@ -12047,6 +12231,10 @@ int main(int argc, char** argv) {
             std::cout << "Copied draw input tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--repeat-storage-guard-only") {
+            repeatStorageGuardTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--multisample-only") {
             multisampleGuestAccessTests(device, recorder);
             oneFragmentFmaskGuardTests(device);
@@ -12111,6 +12299,7 @@ int main(int argc, char** argv) {
         bdaStagingTests(device, recorder);
         depthSurfaceProofTests(device, recorder);
         multisampleGuestAccessTests(device, recorder);
+        repeatStorageGuardTests(device, recorder);
         oneFragmentFmaskGuardTests(device);
         tiledResolveTests(device, recorder);
         fmaskDecompressMsaaTests(device, recorder);

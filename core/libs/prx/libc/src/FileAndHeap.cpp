@@ -376,6 +376,7 @@ static FileStream* OpenDirectoryStream(const std::filesystem::path& path) {
 
 FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode, FileStream* stream) {
     if (!stream || !mode) { errno = 22; return nullptr; }
+    if (!filename && !stream->IsOpen()) { errno = 9; return nullptr; }
     if (!filename) { errno = 45; return nullptr; } // Mode-only reopening is not supported.
     const auto parsed = ParseFileMode(mode);
     if (!parsed) { errno = 22; return nullptr; }
@@ -383,7 +384,7 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
         std::filesystem::path path;
         if (const int error = *filename ? ResolvePathError_nid_no_patch(filename, path) : 2) {
             if (stream->IsHostStandard()) stream->Detach();
-            else stream->Close();
+            else if (stream->IsOpen()) stream->Close();
             if (stream->IsDynamic()) delete stream;
             errno = error;
             return nullptr;
@@ -536,6 +537,7 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     if (count > std::numeric_limits<std::size_t>::max() / size) throw std::overflow_error("fwrite: buffer size overflow");
     const auto bytes = size * count;
     if (bytes > std::numeric_limits<std::uintptr_t>::max() - reinterpret_cast<std::uintptr_t>(buffer)) throw std::overflow_error("fwrite: buffer address overflow");
+    if (!stream->SwitchToWriting()) return 0;
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buffer, bytes);
     const auto result = std::fwrite(buffer, size, count, handle);
     stream->SyncStatus();
@@ -556,6 +558,7 @@ int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int or
     const int nativeError = errno;
     stream->SyncStatus();
     if (result) errno = nativeError == EOVERFLOW ? 84 : nativeError;
+    else stream->SetLowSurrogate(0);
     return result;
 }
 
@@ -601,7 +604,9 @@ void APS5_VABI rewind_nid_postfix(FileStream* stream) {
 int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream) {
     if (!str) throw std::runtime_error("fputs: null string");
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
-    const int result = std::fputs(str, GetNativeStream(stream));
+    auto* native = GetNativeStream(stream);
+    if (*str != '\0' && !stream->SwitchToWriting()) return -1;
+    const int result = std::fputs(str, native);
     stream->SyncStatus();
     return result;
 }
@@ -644,6 +649,14 @@ void* APS5_VABI reallocf_nid_postfix(void* ptr, size_t newSize) {
     void* result = realloc_nid_postfix(ptr, newSize);
     if (result == nullptr && ptr != nullptr && newSize != 0) ApplicationHeapFree_nid_no_patch(ptr);
     return result;
+}
+
+void* APS5_VABI reallocarray_nid_postfix(void* ptr, size_t nmemb, size_t size) {
+    if (size != 0 && nmemb > std::numeric_limits<size_t>::max() / size) {
+        errno = 12;
+        return nullptr;
+    }
+    return realloc_nid_postfix(ptr, nmemb * size);
 }
 
 void* APS5_VABI memalign_nid_postfix(size_t alignment, size_t size) {
@@ -745,6 +758,43 @@ int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, Guest
     }
     if (source != base) std::memcpy(base, source, count * size);
     free_nid_postfix(scratch);
+
+    return 0;
+}
+
+int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
+    if (count <= 1) return 0;
+    if (size == 0) {
+        errno = 22;
+        return -1;
+    }
+    if (!compare) throw std::invalid_argument("heapsort: null comparator");
+    if (!base) throw std::invalid_argument("heapsort: null base");
+    if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("heapsort: array size overflow");
+
+    auto* const bytes = static_cast<unsigned char*>(base);
+    const auto siftDown = [bytes, size, compare](size_t root, size_t n) {
+        size_t current = root;
+        while (2 * current + 1 < n) {
+            size_t child = 2 * current + 1;
+            if (child + 1 < n && compare(bytes + (child + 1) * size, bytes + child * size) > 0) {
+                child = child + 1;
+            }
+            if (compare(bytes + child * size, bytes + current * size) <= 0) {
+                break;
+            }
+            SwapElements(bytes + current * size, bytes + child * size, size);
+            current = child;
+        }
+    };
+
+    for (size_t i = count / 2; i > 0; --i) {
+        siftDown(i - 1, count);
+    }
+    for (size_t i = count - 1; i > 0; --i) {
+        SwapElements(bytes, bytes + i * size, size);
+        siftDown(0, i);
+    }
 
     return 0;
 }

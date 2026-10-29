@@ -251,6 +251,15 @@ bool ValidateSampleLocations(const Context& context, const State& state) {
     return enabled;
 }
 
+void ValidateMeshLimits(const Context& context, const ShaderRecompiler::MeshConfiguration& mesh, std::uint32_t invocations) {
+    const auto& limits = context.meshLimits;
+    Require(invocations <= limits.maxMeshWorkGroupInvocations && invocations <= limits.maxMeshWorkGroupSize[0], "mesh workgroup of " + std::to_string(invocations) + " invocations exceeds device limits (" + std::to_string(limits.maxMeshWorkGroupInvocations) + " invocations, " + std::to_string(limits.maxMeshWorkGroupSize[0]) + " wide)");
+    Require(mesh.maxVertices <= limits.maxMeshOutputVertices, "mesh output vertices " + std::to_string(mesh.maxVertices) + " exceed the device limit " + std::to_string(limits.maxMeshOutputVertices));
+    Require(mesh.maxPrimitives <= limits.maxMeshOutputPrimitives, "mesh output primitives " + std::to_string(mesh.maxPrimitives) + " exceed the device limit " + std::to_string(limits.maxMeshOutputPrimitives));
+    const auto sharedBytes = static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4;
+    Require(sharedBytes <= limits.maxMeshSharedMemorySize, "mesh LDS " + std::to_string(sharedBytes) + " bytes exceeds the device shared memory limit " + std::to_string(limits.maxMeshSharedMemorySize));
+}
+
 void ValidateViewport(const Context& context, const VkViewport& viewport) {
     Require(std::isfinite(viewport.minDepth) && std::isfinite(viewport.maxDepth), "non-finite viewport depth range");
     Require(context.depthRangeUnrestricted || (viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1), "viewport depth outside [0, 1] requires VK_EXT_depth_range_unrestricted");
@@ -469,7 +478,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     ValidateProvokingVertex(context, state, shaders);
     if (state.rectList) Require(context.tessellationShader && context.limits.maxTessellationPatchSize >= 4, "rect-list requires tessellation with four output control points");
     const bool barycentricPatches = BarycentricPatches(state, shaders);
-    if (barycentricPatches) Require(context.tessellationShader && (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP) && !state.primitiveRestart, "emulated barycentrics through tessellation require a triangle list or strip without primitive restart");
+    if (barycentricPatches) Require(context.tessellationShader && ((state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!state.primitiveRestart || !context.primitiveListRestart)) || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP), "emulated barycentrics through tessellation require a triangle list or strip, with primitive restart in a list only on a device without VK_EXT_primitive_topology_list_restart");
     if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Geometry; })) Require(context.geometryShader, "device does not support geometry shaders");
     if (state.stages.tessellation) {
         Require(context.tessellationShader, "device does not support tessellation shaders");
@@ -479,8 +488,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         Require(context.meshShader, "device does not support VK_EXT_mesh_shader");
         const auto& mesh = *state.stages.mesh;
         const auto invocations = state.stages.vertexWaveSize == 64u && context.subgroup.subgroupSize == 32u ? mesh.threadsPerGroup / 2u : mesh.threadsPerGroup;
-        Require(invocations <= context.meshLimits.maxMeshWorkGroupInvocations && invocations <= context.meshLimits.maxMeshWorkGroupSize[0], "mesh workgroup exceeds device limits");
-        Require(mesh.maxVertices <= context.meshLimits.maxMeshOutputVertices && mesh.maxPrimitives <= context.meshLimits.maxMeshOutputPrimitives && static_cast<std::uint64_t>(mesh.ldsSizeDwords) * 4 <= context.meshLimits.maxMeshSharedMemorySize, "mesh output or LDS exceeds device limits");
+        ValidateMeshLimits(context, mesh, invocations);
     }
     const auto pushStages = PushConstantStages(shaders);
     Require(pushStages == 0 || context.limits.maxPushConstantsSize >= PushBlockBytes(dynamicRendering), "graphics push constant range exceeds device limit");
@@ -596,9 +604,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         input.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(vertexInput.attributes.size());
         input.pVertexAttributeDescriptions = vertexInput.attributes.data();
         VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        assembly.topology = BarycentricPatches(state, shaders) ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : state.topology;
+        const bool patches = BarycentricPatches(state, shaders);
+        assembly.topology = patches ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : state.topology;
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        assembly.primitiveRestartEnable = state.primitiveRestart && (!listTopology || context.primitiveListRestart) ? VK_TRUE : VK_FALSE;
+        assembly.primitiveRestartEnable = !patches && state.primitiveRestart && (!listTopology || context.primitiveListRestart) ? VK_TRUE : VK_FALSE;
         // Viewport and scissor are set per draw (Begin), so they do not multiply pipelines; the depth
         // clip control stays baked in.
         VkPipelineViewportStateCreateInfo viewports{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
@@ -667,6 +676,13 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const bool alternateAlpha = SplitsAlternateAlpha(state);
         std::vector<VkPipelineColorBlendAttachmentState> firstChannels(state.blends.begin(), state.blends.end());
         std::vector<VkPipelineColorBlendAttachmentState> secondChannels(state.blends.begin(), state.blends.end());
+        for (const auto& merged : state.colors) {
+            if (merged.partialWriteMask != UnclampedBlendMask) continue;
+            for (auto* channels : {&firstChannels, &secondChannels}) {
+                channels->at(merged.exportIndex).blendEnable = VK_FALSE;
+                channels->at(merged.exportIndex).colorWriteMask = 0;
+            }
+        }
         if (alternateAlpha) {
             const auto keepsStencil = [](const VkStencilOpState& face) { return face.writeMask == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.passOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };
             Require(!(state.depth && (state.depthWrite || (state.stencilTest && (!keepsStencil(state.stencilFront) || !keepsStencil(state.stencilBack))))) && !state.depthBiasPerFace, "blending into an 8_8 color target with the alternate component order and a separate alpha blend from a draw that writes depth or stencil is not implemented");
@@ -1220,9 +1236,10 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     return CachedPipeline(context, state, vertexInput, resources.SetLayouts(), shaders, attachmentLayout);
 }
 
-std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool* created) {
+std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, bool* created, std::uint64_t* storeHash) {
     static const bool disabled = std::getenv("APS5_NO_PIPELINE_CACHE") != nullptr;
     if (created != nullptr) *created = false;
+    if (storeHash != nullptr) *storeHash = 0;
     if (disabled) return std::make_shared<Pipeline>(context, state, vertexInput, resources, shaders, attachmentLayout);
     auto& store = Pipelines();
     struct PipelineKeyStorage {};
@@ -1262,6 +1279,7 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
         if (auto pipeline = lookup(collision)) {
             ++store.hits;
             ++store.totals.hits;
+            if (storeHash != nullptr) *storeHash = hash;
             return pipeline;
         }
         if (collision) {
@@ -1282,7 +1300,10 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
     {
         std::lock_guard lock(store.mutex);
         bool collision = false;
-        if (auto raced = lookup(collision)) return raced;
+        if (auto raced = lookup(collision)) {
+            if (storeHash != nullptr) *storeHash = hash;
+            return raced;
+        }
         if (collision) {
             ++store.uncached;
             ++store.totals.uncached;
@@ -1317,10 +1338,25 @@ std::shared_ptr<Pipeline> CachedPipeline(const Context& context, const State& st
             ++store.evicted;
             ++store.totals.evicted;
         }
+        if (storeHash != nullptr && store.index.contains(hash)) *storeHash = hash;
     }
     if (created != nullptr) *created = true;
     if (PipelineJournalEnabled() && !PipelineJournalReplaying() && state.tessellationCapture == nullptr) RecordGraphicsPipeline(MakeGraphicsPipelineRecipe(state, vertexInput, resources, shaders, attachmentLayout), shaders);
     return pipeline;
+}
+
+std::shared_ptr<Pipeline> TouchCachedPipeline(const Context& context, std::uint64_t hash, const std::weak_ptr<Pipeline>& expected) {
+    auto& store = Pipelines();
+    std::lock_guard lock(store.mutex);
+    reportPipelines(store);
+    const auto found = store.index.find(hash);
+    if (found == store.index.end()) return nullptr;
+    const auto it = found->second;
+    if (it->pipeline.owner_before(expected) || expected.owner_before(it->pipeline) || !alive(*it, context)) return nullptr;
+    store.entries.splice(store.entries.end(), store.entries, it);
+    ++store.hits;
+    ++store.totals.hits;
+    return it->pipeline;
 }
 
 void BuildPipelineStoreKey(std::vector<std::byte>& key, const Context& context, const State& state, const VertexInputLayout& vertexInput, const PipelineSetLayouts& resources, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout) {

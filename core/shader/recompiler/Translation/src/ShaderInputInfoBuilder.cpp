@@ -151,6 +151,8 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         pixelStorage.psNoPerspective = pixel.noPerspective;
         pixelStorage.psPixelKillEnable = pixel.pixelKillEnable;
         pixelStorage.psDepthExportEnable = pixel.depthExportEnable;
+        pixelStorage.psDepthExportMin = pixel.depthExportMin;
+        pixelStorage.psDepthExportMax = pixel.depthExportMax;
         pixelStorage.psSampleMaskExportEnable = pixel.sampleMaskExportEnable;
         pixelStorage.psStencilRefExportEnable = pixel.stencilRefExportEnable;
         pixelStorage.psStencilOperationValueExport = pixel.stencilOperationValueExport;
@@ -162,6 +164,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         if (pixel.ditheredAlphaToCoverage && !pixel.alphaToCoverage) throw std::runtime_error("dithered alpha-to-coverage requires enabled coverage");
         pixelStorage.psAlphaToCoverage = pixel.alphaToCoverage;
         pixelStorage.psDitheredAlphaToCoverage = pixel.ditheredAlphaToCoverage;
+        pixelStorage.psDitheredAlphaSamples = pixel.ditheredAlphaSamples;
         pixelStorage.quadPixelMask = pixel.quadPixelMask;
         pixelStorage.quadSampleMask = pixel.quadSampleMask;
         pixelStorage.psIteratesSamples = pixel.iteratesSamples;
@@ -173,6 +176,9 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         pixelStorage.mergeSamples = pixel.targetMerge.samples;
         pixelStorage.mergeDepthStencilWrites = pixel.targetMerge.depthStencilWrites;
         pixelStorage.mergeDepthStencilTests = pixel.targetMerge.depthStencilTests;
+        const auto& blend = pixel.targetMerge.blend;
+        if (blend.enabled && (pixel.targetMerge.mask == 0u || pixel.targetMerge.samples != 1u || blend.colorSource > 14u || blend.colorDestination > 14u || blend.alphaSource > 14u || blend.alphaDestination > 14u || blend.colorOperation > 4u || blend.alphaOperation > 4u || blend.writeMask > 0xfu)) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target blend");
+        pixelStorage.mergeBlend = blend;
         pixelStorage.sampleOrder = pixel.sampleOrder;
         ShaderStageInputInfo result;
         result.pixel = &pixelStorage;

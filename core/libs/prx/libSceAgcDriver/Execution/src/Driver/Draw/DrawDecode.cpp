@@ -117,7 +117,7 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
         DrawProgram result{
             {stage, address, std::span(snapshot.code).subspan(codeOffset), snapshot.headerAddress, snapshot.header},
             userDataBase,
-            stage == Stage::Fragment ? 0u : 8u,
+            stage == Stage::Fragment || userDataBase == 0x04cu ? 0u : 8u,
             {},
             {{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}, {snapshot.headerAddress, snapshot.header}}},
             program,
@@ -167,6 +167,8 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             append(0xc8, type, Stage::Mesh, 0x8b, 0x8c, Role::Main);
             InitializeMerged(queue, programs.back(), 0x82, type == 4, staticAbi);
             if (type == 4) append(0x88, 6, Stage::Mesh, 0x8b, 0x8c, Role::GeometryBack);
+        } else if (graphics.stages.legacyVertex) {
+            append(0x48, 2, Stage::Vertex, 0x4b, 0x4c, Role::Main);
         } else {
             append(0xc8, 2, Stage::Vertex, 0x8b, 0x8c, Role::Main);
         }
@@ -208,6 +210,7 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     if (product->pixel.ancillary) product->pixel.rasterPrimitive = Graphics::RasterPrimitiveOf(product->state);
     if (product->pixel.ancillary) product->pixel.layerExported = product->state.layerExports != 0;
     product->pixel.ditheredAlphaToCoverage = product->state.ditheredAlphaToCoverage;
+    product->pixel.ditheredAlphaSamples = product->state.ditheredAlphaSamples;
     product->pixel.iteratesSamples = product->state.perSampleShading;
     product->pixel.sampleLocations = Graphics::PixelSampleLocations(product->state, product->pixel);
     return product;

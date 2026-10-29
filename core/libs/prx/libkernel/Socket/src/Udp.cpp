@@ -582,6 +582,13 @@ std::shared_ptr<Socket> Find(int descriptor) {
     const auto found = sockets.find(descriptor);
     return found != sockets.end() ? found->second : nullptr;
 }
+std::vector<int> DescriptorsOf(const std::shared_ptr<Socket>& socket) {
+    std::lock_guard lock(socketsMutex);
+    std::vector<int> descriptors;
+    for (const auto& [descriptor, entry] : sockets)
+        if (entry == socket) descriptors.push_back(descriptor);
+    return descriptors;
+}
 constexpr short GuestPollReadable = 0x1 | 0x40;
 constexpr short GuestPollWritable = 0x4;
 constexpr short GuestPollVnodeReady = GuestPollReadable | GuestPollWritable;
@@ -595,6 +602,19 @@ short ClosedStreamEvents(int descriptor, short revents, short requested) {
     revents = static_cast<short>(revents | (requested & POLLRDNORM));
     std::lock_guard lock(socket->modeMutex);
     return socket->sendShut ? revents : static_cast<short>(revents & ~POLLHUP);
+}
+#elif defined(__APPLE__)
+short ClosedStreamEvents(int descriptor, short revents, short requested) {
+    if ((revents & (POLLHUP | POLLERR)) != POLLHUP) return revents;
+    const auto socket = Find(descriptor);
+    if (!socket || socket->type != 1) return revents;
+    pollfd received{socket->value, POLLIN, 0};
+    pollfd sent{socket->value, POLLOUT, 0};
+    if (::poll(&received, 1, 0) < 0 || ::poll(&sent, 1, 0) < 0) return revents;
+    revents = static_cast<short>(revents & ~(POLLPRI | POLLRDBAND));
+    if ((received.revents & POLLHUP) && (sent.revents & POLLHUP)) return revents;
+    revents = static_cast<short>(revents & ~POLLHUP);
+    return (sent.revents & (POLLOUT | POLLHUP)) ? static_cast<short>(revents | (requested & POLLOUT)) : revents;
 }
 #endif
 [[noreturn]] void ThrowReadEndWritable(int descriptor) {
@@ -747,13 +767,12 @@ bool ReadableNow(const Socket& socket) {
     return ::poll(&entry, 1, 0) > 0;
 #endif
 }
+bool ReceiveShut(Socket& socket) {
+    std::lock_guard lock(socket.modeMutex);
+    return socket.receiveShut;
+}
 int ReceiveAnsweredHere(Socket& socket, std::uint64_t length) {
-#ifdef _WIN32
-    {
-        std::lock_guard lock(socket.modeMutex);
-        if (socket.receiveShut) return 0;
-    }
-#endif
+    if (ReceiveShut(socket)) return 0;
     if (length != 0) return -1;
     if (socket.type != 1) return ReadableNow(socket) ? -1 : 0;
     sockaddr_storage peer{};
@@ -904,10 +923,10 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     std::int64_t available = 0;
 #ifdef _WIN32
     unsigned long count = 0;
-    if (ioctlsocket(socket->value, FIONREAD, &count) == 0) available = static_cast<std::int64_t>(count);
+    if (!receiveShut && ioctlsocket(socket->value, FIONREAD, &count) == 0) available = static_cast<std::int64_t>(count);
 #else
     int count = 0;
-    if (QueuedBytes(*socket, count) == 0) available = count;
+    if (!receiveShut && QueuedBytes(*socket, count) == 0) available = count;
 #endif
     int sendBuffer = 0;
     socklen_t length = sizeof(sendBuffer);
@@ -950,6 +969,11 @@ bool GuestSockets::Ready(int descriptor, bool write, std::int64_t* data, bool* e
             return PipeWriteState(descriptor, data, eof, &writable) && (writable || *eof);
         }
         socket = found->second;
+    }
+    if (!write && ReceiveShut(*socket) && !Listening(*socket)) {
+        *data = 0;
+        *eof = true;
+        return true;
     }
 #ifdef _WIN32
     WSAPOLLFD entry{socket->value, static_cast<SHORT>(write ? POLLWRNORM : POLLRDNORM), 0};
@@ -1181,6 +1205,10 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
 }
 int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
                                     void* value, std::uint32_t* length) {
+    int netError = 0;
+    if (!GuestSockets::IsOpen(descriptor) && KernelGetSocketOption_nid_no_patch(descriptor, level, option, value, length, &netError)) {
+        return netError == 0 ? 0 : Fail(netError);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (level != 0xffff && level != 0 && level != 6 && level != 41) return Fail(22);
@@ -1423,11 +1451,18 @@ int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (how < 0 || how > 2) return Fail(22);
-    if (::shutdown(socket->value, how) && !AlreadyShut(socket->value, how)) return Fail(NativeError());
-    std::lock_guard lock(socket->modeMutex);
-    if (how != 1) socket->receiveShut = true;
-    if (how != 0) socket->sendShut = true;
-    return 0;
+    sockaddr_storage peer{};
+    socklen_t size = sizeof(peer);
+    const bool unconnected = socket->type == 2 && ::getpeername(socket->value, reinterpret_cast<sockaddr*>(&peer), &size) != 0;
+    if (::shutdown(socket->value, how) && !unconnected && !AlreadyShut(socket->value, how)) return Fail(NativeError());
+    {
+        std::lock_guard lock(socket->modeMutex);
+        if (how != 1) socket->receiveShut = true;
+        if (how != 0) socket->sendShut = true;
+    }
+    if (how != 1)
+        for (const int alias : DescriptorsOf(socket)) EqueueDescriptorReadShut(alias);
+    return unconnected ? Fail(57) : 0;
 }
 int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
     const auto socket = Lookup(descriptor);
@@ -1468,6 +1503,10 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
     if (!argument) return Fail(14);
     if (request != 0x8004667e && request != 0x4004667f) return Fail(25);
     std::lock_guard lock(socket->modeMutex);
+    if (request == 0x4004667f && socket->receiveShut) {
+        *static_cast<int*>(argument) = 0;
+        return 0;
+    }
     unsigned long value = 0;
     if (request == 0x8004667e) value = *static_cast<int*>(argument) != 0;
 #ifdef _WIN32
@@ -1688,8 +1727,9 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     sockaddr_storage native{};
     socklen_t size = 0;
     std::int64_t received = 0;
+    const bool shut = ReceiveShut(*socket);
     std::vector<unsigned char> stamps;
-    if (total != 0 || socket->type == 1 || ReadableNow(*socket)) {
+    if (!shut && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags)) return Fail(waited);
         received = ::recvfrom(socket->value, buffer.data(), static_cast<int>(buffer.size()),
@@ -1726,7 +1766,7 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     if (header.name) {
         unsigned char address[28]{};
         if (socket->family == GuestUnix) {
-            if (socket->type == 1) header.nameLength = 0; else UnnamedAddress(address, &header.nameLength);
+            if (socket->type == 1 || shut) header.nameLength = 0; else UnnamedAddress(address, &header.nameLength);
         } else if (size > 0 && (native.ss_family == AF_INET || native.ss_family == AF_INET6)) {
             GuestAddress(native, address, &header.nameLength);
         } else {
@@ -1846,7 +1886,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
                 ++ready;
                 continue;
             }
-            if (IsKqueueDescriptor(entry.descriptor)) {
+            if (IsKqueueDescriptor_nid_no_patch(entry.descriptor)) {
                 kqueues.push_back(i);
                 continue;
             }
@@ -1903,7 +1943,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
     }
     const auto collect = [&](std::size_t i, bool pipe) {
         auto& entry = descriptors[owners[i]];
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         if (!pipe) native[i].revents = ClosedStreamEvents(entry.descriptor, native[i].revents, native[i].events);
 #endif
         short revents = native[i].revents;

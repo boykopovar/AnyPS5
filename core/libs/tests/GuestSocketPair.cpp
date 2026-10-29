@@ -218,15 +218,9 @@ int main(int argc, char** argv) {
     Require(sceKernelFstat(pair[1], &status) == 0 && status.st_mode == 0140666 && status.st_size == 5);
     Require(shutdown_nid_postfix(pair[0], 1) == 0);
     Require(fstat_nid_disambig1_nid_postfix(pair[0], &status) == 0 && status.st_mode == 0140444);
-#ifndef _WIN32
     Require(shutdown_nid_postfix(pair[1], 0) == 0);
-    Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && status.st_mode == 0140666 && status.st_size == 5);
-    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == 5);
-#else
-    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == 5);
-    Require(shutdown_nid_postfix(pair[1], 0) == 0);
-#endif
     Require(fstat_nid_disambig1_nid_postfix(pair[1], &status) == 0 && status.st_mode == 0140222 && status.st_size == 0);
+    Require(recv_nid_postfix(pair[1], received, sizeof(received), 0) == 0);
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     *__error_nid_postfix() = 0;
     Require(fstat_nid_disambig1_nid_postfix(pair[0], &status) == -1 && *__error_nid_postfix() == 9);
@@ -249,6 +243,14 @@ int main(int argc, char** argv) {
     Require(Unnamed(pair[1], getpeername_nid_postfix) && Exchange(pair[1], copy, "copy"));
     Require(close_nid_postfix(copy) == 0 && NotConnected(pair[1]));
     Require(close_nid_postfix(pair[1]) == 0);
+
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+    Require(send_nid_postfix(pair[0], "c", 1, 0) == 1 && Readable(pair[1]));
+    Require(shutdown_nid_postfix(pair[1], 0) == 0);
+    KernelIovec slot{datagram, sizeof(datagram)};
+    GuestMsghdr shut{sender, static_cast<std::uint32_t>(sizeof(sender)), &slot, 1, nullptr, 0, -1};
+    Require(recvmsg_nid_postfix(pair[1], &shut, 0) == 0 && shut.nameLength == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
 
 #ifdef __APPLE__
     Require(ThrowsRuntimeError([&] { socketpair_nid_postfix(Unix, SequencedPacket, 0, pair); }));

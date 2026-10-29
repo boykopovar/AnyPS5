@@ -55,7 +55,13 @@ int main() {
     Require(sceSigninDialogClose() == 0);
     Require(sceSigninDialogTerminate() == 0);
     Require(sceSigninDialogTerminate() == kErrNotInitialized);
+    Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogOpen(&param) == kErrNotInitialized);
+    Require(sceSigninDialogClose() == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(result) == kErrNotInitialized);
     Require(sceSigninDialogGetStatus() == kStatusNone);
+    Require(sceSigninDialogUpdateStatus() == kStatusNone);
 
     Require(sceSigninDialogInitialize() == 0);
     Require(sceSigninDialogGetStatus() == kStatusInitialized);
@@ -68,4 +74,12 @@ int main() {
     Require(result[2] == 0);
     Require(result[3] == 0);
     Require(sceSigninDialogTerminate() == 0);
+    Require(sceSigninDialogTerminate() == kErrNotInitialized);
+    Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogOpen(&param) == kErrNotInitialized);
+    Require(sceSigninDialogClose() == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(result) == kErrNotInitialized);
+    Require(sceSigninDialogGetStatus() == kStatusNone);
+    Require(sceSigninDialogUpdateStatus() == kStatusNone);
 }

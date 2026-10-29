@@ -578,6 +578,15 @@ int main() {
     {
         const auto listed = root / "listed.txt";
         std::ofstream(listed, std::ios::binary) << "listed";
+        Require(fopen_nid_postfix(listed.string().c_str(), "wx") == nullptr && *__error_nid_postfix() == 17);
+        for (const char* invalidMode : {"z", "", "q"}) {
+            *__error_nid_postfix() = 0;
+            Require(fopen_nid_postfix(listed.string().c_str(), invalidMode) == nullptr && *__error_nid_postfix() == 22);
+        }
+        auto* readWrite = fopen_nid_postfix(listed.string().c_str(), "rw");
+        char word[8] = {};
+        Require(readWrite != nullptr && fread_nid_postfix(word, 1, 6, readWrite) == 6 && std::string(word) == "listed");
+        Require(fclose_nid_postfix(readWrite) == 0);
         for (const char* openMode : {"r", "rb", "re"}) {
             auto* directoryStream = fopen_nid_postfix(root.string().c_str(), openMode);
             Require(directoryStream != nullptr);
@@ -849,11 +858,22 @@ int main() {
             Require(replace() == 0 && !std::filesystem::exists(incoming) && contents() == "replaced");
             Require(remove_nid_postfix(occupied.c_str()) == 0);
         }
-#ifndef _WIN32
         const auto dangling = area / "dangling";
+        const auto replacement = area / "replacement";
+#ifdef _WIN32
+        if (CreateSymbolicLinkW(dangling.c_str(), (area / "nonexistent").c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) == 0) {
+            Require(GetLastError() == ERROR_PRIVILEGE_NOT_HELD);
+            std::fprintf(stderr, "Windows dangling link rename skipped: creating symbolic links needs Developer Mode or administrator rights\n");
+        } else {
+            Require((GetFileAttributesW(dangling.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
+            { std::ofstream stream(replacement); stream << "replacement"; }
+            Require(rename_nid_postfix(name(replacement).c_str(), name(dangling).c_str()) == 0);
+            const DWORD replaced = GetFileAttributesW(dangling.c_str());
+            Require(replaced != INVALID_FILE_ATTRIBUTES && (replaced & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) == 0);
+        }
+#else
         std::filesystem::create_symlink(area / "nonexistent", dangling);
         Require(std::filesystem::is_symlink(dangling));
-        const auto replacement = area / "replacement";
         { std::ofstream stream(replacement); stream << "replacement"; }
         Require(rename_nid_postfix(name(replacement).c_str(), name(dangling).c_str()) == 0);
         Require(!std::filesystem::is_symlink(dangling) && std::filesystem::is_regular_file(dangling));
@@ -1052,6 +1072,11 @@ int main() {
     std::filesystem::create_symlink("missing.txt", dangling);
     const auto statLoop = root / "stat-loop";
     std::filesystem::create_symlink("stat-loop", statLoop);
+    for (const auto* linkPath : {&dangling, &statLoop}) {
+        Require(sceKernelRmdir(linkPath->string().c_str()) == static_cast<int>(0x80020014u));
+        Require(rmdir_nid_postfix(linkPath->string().c_str()) == -1 && *__error_nid_postfix() == 20);
+        Require(lstat_nid_postfix(linkPath->string().c_str(), &linkStatus) == 0 && (linkStatus.st_mode & 0170000) == 0120000);
+    }
     errno = 0;
     Require(!File::TryFillFileStat(statLoop, &status) && errno == ELOOP);
     Require(sceKernelStat(statLoop.generic_string().c_str(), &status) == SCE_KERNEL_ERROR_ELOOP);
@@ -1106,6 +1131,10 @@ int main() {
         Require(checkRelativeLink(fileLink, 11));
         Require(checkRelativeLink(directoryLink, 16));
         Require(checkRelativeLink(danglingLink, 11));
+        const auto movedLink = root / "moved-dangling-link";
+        Require(rename_nid_postfix(danglingLink.string().c_str(), movedLink.string().c_str()) == 0 && checkRelativeLink(movedLink, 11));
+        Require(!std::filesystem::exists(root / "missing.txt"));
+        Require(rename_nid_postfix(movedLink.string().c_str(), danglingLink.string().c_str()) == 0 && checkRelativeLink(danglingLink, 11));
         const auto belowStatLoop = statLoop.string() + "\\inside";
         Require(sceKernelUnlink(belowStatLoop.c_str()) == static_cast<int>(0x8002003eu));
         Require(unlink_nid_postfix(belowStatLoop.c_str()) == -1 && *__error_nid_postfix() == 62);
@@ -1114,6 +1143,19 @@ int main() {
         Require(sceKernelRmdir(belowStatLoop.c_str()) == static_cast<int>(0x8002003eu));
         Require(rmdir_nid_postfix(belowStatLoop.c_str()) == -1 && *__error_nid_postfix() == 62);
         Require(sceKernelRmdir(statLoop.string().c_str()) == static_cast<int>(0x80020014u));
+        Require(rmdir_nid_postfix(statLoop.string().c_str()) == -1 && *__error_nid_postfix() == 20);
+        const auto danglingDirectoryLink = root / "dangling-directory-link";
+        Require(CreateSymbolicLinkW(danglingDirectoryLink.c_str(), L"missing-directory",
+            SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0);
+        for (const auto* linkPath : {&danglingLink, &danglingDirectoryLink, &directoryLink}) {
+            Require(sceKernelRmdir(linkPath->string().c_str()) == static_cast<int>(0x80020014u));
+            Require(rmdir_nid_postfix(linkPath->string().c_str()) == -1 && *__error_nid_postfix() == 20);
+            const DWORD linkAttributes = GetFileAttributesW(linkPath->c_str());
+            Require(linkAttributes != INVALID_FILE_ATTRIBUTES && (linkAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
+        }
+        const DWORD targetAttributes = GetFileAttributesW(targetDirectory.c_str());
+        Require(targetAttributes != INVALID_FILE_ATTRIBUTES && (targetAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0);
+        Require(RemoveDirectoryW(danglingDirectoryLink.c_str()) != 0);
         Require(sceKernelTruncate_nid_postfix(statLoop.string().c_str(), 0) == static_cast<int>(0x8002003eu));
         Require(truncate_nid_postfix(statLoop.string().c_str(), 0) == -1 && *__error_nid_postfix() == 62);
         FileStat followed{};
@@ -1466,11 +1508,24 @@ int main() {
             Require(fopen_nid_postfix(blocked->c_str(), openMode) == nullptr && *__error_nid_postfix() == expected);
         }
     }
-#ifndef _WIN32
     const auto linkedDirectory = root / "linked-directory";
     const auto directoryLink = root / "directory-link";
     const auto danglingDirectoryLink = root / "dangling-directory-link";
     Require(std::filesystem::create_directory(linkedDirectory));
+#ifdef _WIN32
+    constexpr DWORD DirectoryLinkFlags = SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+    if (CreateSymbolicLinkW(directoryLink.c_str(), L"linked-directory", DirectoryLinkFlags) == 0) {
+        Require(GetLastError() == ERROR_PRIVILEGE_NOT_HELD);
+        std::fprintf(stderr, "Windows directory link checks skipped: creating symbolic links needs Developer Mode or administrator rights\n");
+    } else {
+        Require(CreateSymbolicLinkW(danglingDirectoryLink.c_str(), L"missing-directory", DirectoryLinkFlags) != 0);
+        Require(rmdir_nid_postfix(directoryLink.string().c_str()) == -1 && *__error_nid_postfix() == 20);
+        Require(sceKernelRmdir(directoryLink.string().c_str()) == static_cast<int>(0x80020014u));
+        Require(rmdir_nid_postfix(danglingDirectoryLink.string().c_str()) == -1 && *__error_nid_postfix() == 20);
+        Require((GetFileAttributesW(directoryLink.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && std::filesystem::is_directory(linkedDirectory));
+        Require(unlink_nid_postfix(directoryLink.string().c_str()) == 0 && unlink_nid_postfix(danglingDirectoryLink.string().c_str()) == 0);
+    }
+#else
     std::filesystem::create_directory_symlink("linked-directory", directoryLink);
     std::filesystem::create_directory_symlink("missing-directory", danglingDirectoryLink);
     Require(rmdir_nid_postfix(directoryLink.string().c_str()) == -1 && *__error_nid_postfix() == 20);
@@ -1478,8 +1533,8 @@ int main() {
     Require(rmdir_nid_postfix(danglingDirectoryLink.string().c_str()) == -1 && *__error_nid_postfix() == 20);
     Require(std::filesystem::is_symlink(directoryLink) && std::filesystem::is_directory(linkedDirectory));
     Require(unlink_nid_postfix(directoryLink.string().c_str()) == 0 && unlink_nid_postfix(danglingDirectoryLink.string().c_str()) == 0);
-    Require(rmdir_nid_postfix(linkedDirectory.string().c_str()) == 0 && !std::filesystem::exists(linkedDirectory));
 #endif
+    Require(rmdir_nid_postfix(linkedDirectory.string().c_str()) == 0 && !std::filesystem::exists(linkedDirectory));
     const auto dotDirectory = root / "dot-directory";
     Require(std::filesystem::create_directory(dotDirectory));
     const auto dotDirectoryName = dotDirectory.string() + "/.";

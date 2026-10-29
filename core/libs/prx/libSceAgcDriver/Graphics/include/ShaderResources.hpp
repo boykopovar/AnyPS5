@@ -65,6 +65,7 @@ std::shared_ptr<StorageTexture> CachedStorageLayers(const Context& context, cons
 // would return); a true answer counts as a use for the cache's eviction order, as a lookup would.
 bool StorageImageCached(const Context& context, const StorageTexture* image);
 bool StorageImageServesKeys(const StorageTexture& image, std::uint64_t dccAddress);
+std::shared_ptr<StorageTexture> RepeatStorageSurface(const Context& context, const GuestTextureResource& resource, const std::shared_ptr<StorageTexture>& stored);
 
 // Defined in Texture.cpp beside the pending-results registry, for the fast Revalidate below: whether
 // a storage image other than `except` has results pending in [address, address + bytes).
@@ -212,7 +213,8 @@ public:
         std::span<const std::uint32_t> words;
     };
     std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false) const;
-    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder) const;
+    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target) const;
+    static std::uint64_t BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target);
     enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };
     struct MoveProof {
         MoveRefusal refusal = MoveRefusal::None;
@@ -598,14 +600,6 @@ private:
     std::vector<VkDescriptorBufferInfo> descriptorBuffers;
     std::vector<VkDescriptorImageInfo> descriptorImages;
     std::vector<VkWriteDescriptorSet> descriptorWrites;
-    struct MovedWordBuffer {
-        std::size_t allocation;
-        std::vector<std::uint32_t> words;
-        std::size_t size;
-        std::shared_ptr<Buffer> buffer;
-    };
-    mutable std::vector<MovedWordBuffer> movedWordBuffers;
-    mutable std::size_t movedWordBufferNext = 0;
     mutable std::vector<VkDescriptorPoolSize> drawPoolSizes;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
     // notes (counted in MarkGpuWrites for the [buffers] line).

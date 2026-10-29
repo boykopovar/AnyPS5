@@ -567,18 +567,16 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         return 0;
     }
     if (command == NonblockingRequest) {
-        const bool enable = *static_cast<const int*>(argument) != 0;
-        return ChangeStatus(fd, *kind, Nonblocking, enable ? Nonblocking : 0, "ioctl");
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(GuestEfault);
+        return ChangeStatus(fd, *kind, Nonblocking, enable != 0 ? Nonblocking : 0, "ioctl");
     }
     if (command == ReadableRequest) {
         if (*kind == Kind::RandomDevice) return Fail(GuestEnotty);
         if (*kind != Kind::File && *kind != Kind::Pipe && *kind != Kind::Socket && *kind != Kind::ArchivedFile) Unsupported("ioctl", "FIONREAD", *kind, fd);
         const auto archived = File::ArchivedFileRemaining(fd);
         const int available = archived ? static_cast<int>(std::min<std::int64_t>(*archived, std::numeric_limits<int>::max())) : Readable(fd, *kind, "ioctl");
-        if (argument == nullptr) return Fail(GuestEfault);
-        const GuestArena::HostWrite destination(argument, sizeof(available));
-        if (!destination.Open()) return Fail(GuestEfault);
-        std::memcpy(argument, &available, sizeof(available));
+        if (!GuestCopyOut_nid_no_patch(argument, &available, sizeof(available))) return Fail(GuestEfault);
         return 0;
     }
     if (((command >> 8) & 0xff) == TerminalGroup) return Fail(GuestEnotty);

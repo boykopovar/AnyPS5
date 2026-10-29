@@ -18,6 +18,7 @@
 #include <type_traits>
 
 extern "C" std::FILE* GuestStandardOutputFile_nid_no_patch();
+extern "C" std::FILE* GuestStandardOutputForWriting_nid_no_patch();
 
 namespace LibcDetail {
 
@@ -176,6 +177,14 @@ struct FloatSpec {
     std::size_t width = 0;
     int precision = -1;
 };
+
+inline std::string ApplicableLength(const std::string& length, char conversion) {
+    if (std::strchr("diouxXn", conversion)) return length == "L" ? std::string() : length;
+    if (std::strchr("aAeEfFgG", conversion)) return length == "L" ? length : std::string();
+    if (conversion == 'c' || conversion == 's') return length == "l" ? length : std::string();
+    if (conversion == 'p') return std::string();
+    return length;
+}
 
 inline FloatSpec ParseFloatSpec(const std::string& spec) {
     FloatSpec result;
@@ -631,6 +640,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(PaddedStringSpec(spec), conversion == '%' ? "%" : text);
             continue;
         }
+        if (!secure) length = ApplicableLength(length, conversion);
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
         if (conversion == 'd' || conversion == 'i') {
@@ -735,9 +745,11 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
 }
 
 inline int PrintWindows(const char* format, const void* args) {
+    auto* output = GuestStandardOutputForWriting_nid_no_patch();
+    if (!output) return -1;
     std::string buffer;
     const int size = FormatWindows(nullptr, 0, format, args, &buffer);
-    if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), GuestStandardOutputFile_nid_no_patch()) != static_cast<size_t>(size))
+    if (std::fwrite(buffer.data(), 1, static_cast<size_t>(size), output) != static_cast<size_t>(size))
         throw std::runtime_error("Formatted output write failed");
     return size;
 }

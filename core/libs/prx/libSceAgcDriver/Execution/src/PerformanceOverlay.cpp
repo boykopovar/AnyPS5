@@ -15,6 +15,7 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -25,6 +26,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -34,6 +38,9 @@
 #include <psapi.h>
 #else
 #include <sys/resource.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 #endif
 
 namespace AgcDriver {
@@ -616,6 +623,11 @@ std::optional<std::uint64_t> ReadProcessPrivateBytes() {
     counters.cb = sizeof(counters);
     if (K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) == 0) return std::nullopt;
     return static_cast<std::uint64_t>(counters.PrivateUsage);
+#elif defined(__APPLE__)
+    task_vm_info_data_t info{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS || info.phys_footprint == 0) return std::nullopt;
+    return static_cast<std::uint64_t>(info.phys_footprint);
 #else
     std::FILE* status = std::fopen("/proc/self/status", "r");
     if (status == nullptr) return std::nullopt;
@@ -675,6 +687,20 @@ std::optional<std::uint64_t> ReadPageFaults() {
     rusage usage{};
     if (getrusage(RUSAGE_SELF, &usage) != 0) return std::nullopt;
     return static_cast<std::uint64_t>(usage.ru_minflt) + static_cast<std::uint64_t>(usage.ru_majflt);
+#endif
+}
+
+std::optional<std::uint64_t> ReadPhysicalMemoryBytes() {
+#ifdef _WIN32
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (::GlobalMemoryStatusEx(&status) == 0) return std::nullopt;
+    return static_cast<std::uint64_t>(status.ullTotalPhys);
+#else
+    const auto pages = ::sysconf(_SC_PHYS_PAGES);
+    const auto pageSize = ::sysconf(_SC_PAGESIZE);
+    if (pages <= 0 || pageSize <= 0) return std::nullopt;
+    return static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize);
 #endif
 }
 
@@ -751,7 +777,7 @@ OverlayLayout LayOutOverlay(const OverlayContent& content, VkExtent2D extent, Ov
 }
 
 std::array<std::array<float, 4>, OverlayColorCount> OverlayPalette(VkFormat format, VkColorSpaceKHR colorSpace) {
-    std::array<std::array<float, 4>, OverlayColorCount> palette{{{0.0f, 0.0f, 0.0f, 0.6f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.35f, 0.8f, 0.35f, 1.0f}}};
+    std::array<std::array<float, 4>, OverlayColorCount> palette{{{0.0f, 0.0f, 0.0f, 0.6f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.35f, 0.8f, 0.35f, 1.0f}, {0.06f, 0.07f, 0.09f, 0.94f}, {0.22f, 0.24f, 0.29f, 1.0f}, {1.0f, 0.78f, 0.2f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f}}};
     if (colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT) {
         for (auto& color : palette) {
             const float red = srgbDecode(color[0]);
@@ -809,7 +835,7 @@ void PerformanceOverlay::release() noexcept {
         slot.rects.reset();
         slot.capacity = 0;
     }
-    for (const auto& [format, entry] : pipelines) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry, nullptr);
+    for (const auto& [pass, entry] : pipelines) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, entry, nullptr);
     pipelines.clear();
     for (const auto& [key, entry] : renderPasses) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, entry, nullptr);
     renderPasses.clear();
@@ -997,8 +1023,8 @@ VkRenderPass PerformanceOverlay::renderPass(VkFormat format, VkImageLayout initi
     return renderPasses.emplace(key, created).first->second;
 }
 
-VkPipeline PerformanceOverlay::pipeline(VkFormat format, VkRenderPass compatible) {
-    if (const auto found = pipelines.find(format); found != pipelines.end()) return found->second;
+VkPipeline PerformanceOverlay::pipeline(VkRenderPass compatible) {
+    if (const auto found = pipelines.find(compatible); found != pipelines.end()) return found->second;
     VkPipelineShaderStageCreateInfo stages[2]{{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}, {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}};
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
     stages[0].module = vertex;
@@ -1055,7 +1081,7 @@ VkPipeline PerformanceOverlay::pipeline(VkFormat format, VkRenderPass compatible
     info.renderPass = compatible;
     VkPipeline created = VK_NULL_HANDLE;
     Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, VK_NULL_HANDLE, 1, &info, nullptr, &created), "vkCreateGraphicsPipelines performance overlay");
-    return pipelines.emplace(format, created).first->second;
+    return pipelines.emplace(compatible, created).first->second;
 }
 
 OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t slot, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout) {
@@ -1066,11 +1092,15 @@ OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t slo
 }
 
 OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayContent& content, OverlayCorner corner) {
+    return RecordRects(commands, index, destination, format, colorSpace, extent, initialLayout, finalLayout, LayOutOverlay(content, extent, corner));
+}
+
+OverlayRect PerformanceOverlay::RecordRects(VkCommandBuffer commands, std::size_t index, VkImage destination, VkFormat format, VkColorSpaceKHR colorSpace, VkExtent2D extent, VkImageLayout initialLayout, VkImageLayout finalLayout, const OverlayLayout& layout) {
     Graphics::Require(index < slots.size(), "performance overlay slot is out of range");
     Graphics::Require(destination != VK_NULL_HANDLE && extent.width != 0 && extent.height != 0, "the performance overlay destination is unavailable");
+    Graphics::Require(!layout.rects.empty(), "an overlay layout has nothing to draw");
     auto& slot = slots[index];
     releaseTransient(slot);
-    const auto layout = LayOutOverlay(content, extent, corner);
     if (slot.capacity < layout.rects.size()) {
         const auto capacity = std::max<std::size_t>(layout.rects.size(), 1024);
         slot.rects = std::make_unique<Graphics::Buffer>(context, capacity * sizeof(OverlayRect), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -1078,7 +1108,7 @@ OverlayRect PerformanceOverlay::Record(VkCommandBuffer commands, std::size_t ind
     }
     std::memcpy(slot.rects->Bytes().data(), layout.rects.data(), layout.rects.size() * sizeof(OverlayRect));
     const auto pass = renderPass(format, initialLayout, finalLayout);
-    const auto drawing = pipeline(format, pass);
+    const auto drawing = pipeline(pass);
     VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     viewInfo.image = destination;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;

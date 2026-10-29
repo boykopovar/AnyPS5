@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_main_sync
@@ -267,6 +268,16 @@ class CheckMainSyncTests(unittest.TestCase):
     def test_conflicting_unicode_report_preserves_exit_status_and_output_encoding(self):
         self.check_unicode_output(True)
 
+    def test_git_without_write_tree_names_the_version_it_needs(self):
+        def old_git(repo, *args, check=True):
+            if args[0] == "version":
+                return subprocess.CompletedProcess(["git", *args], 0, stdout="git version 2.30.0.windows.2\n", stderr="")
+            return subprocess.CompletedProcess(["git", *args], 129, stdout="", stderr="usage: git merge-tree <base-tree> <branch1> <branch2>")
+
+        with unittest.mock.patch.object(check_main_sync, "git", old_git):
+            with self.assertRaisesRegex(RuntimeError, r"needs git 2\.38 or newer; this git is 2\.30$"):
+                check_main_sync.conflicts(self.repo.path, "main", "HEAD")
+
     def test_missing_base_is_an_error_not_a_pass(self):
         result = subprocess.run([sys.executable, str(TOOL), "--repo", self.directory.name, "--base", "upstream/main"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
@@ -287,6 +298,18 @@ class CheckMainSyncTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(TOOL), "--repo", self.directory.name, "--fetch"], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("merge: clean", result.stdout)
+
+    def test_missing_git_executable_reports_usage_error_without_traceback(self):
+        def missing_run(*args, **kwargs):
+            raise FileNotFoundError(2, "No such file or directory: 'git'")
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with unittest.mock.patch("subprocess.run", side_effect=missing_run), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                check_main_sync.main(["--repo", str(self.repo.path)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("No such file or directory: 'git'", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
 
 if __name__ == "__main__":
