@@ -1,5 +1,10 @@
 #include "prx/libSceSystemService/HostUrl.hpp"
 #include "prx/libSceSystemService/HostUrlPolicy.hpp"
+#include "prx/libSceSystemService/HostUrlBackends.hpp"
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <thread>
 #include <stdexcept>
 #ifdef _WIN32
 #include <stdlib.h>
@@ -223,6 +228,64 @@ void CheckPolicy() {
     }
 }
 
+#ifndef _WIN32
+std::filesystem::path MakeScratchDirectory() {
+    const auto directory = std::filesystem::temp_directory_path() / ("anyps5-open-url-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directories(directory));
+    return directory;
+}
+
+std::filesystem::path WriteOpener(const std::filesystem::path& directory) {
+    const auto opener = directory / "opener.sh";
+    {
+        std::ofstream script(opener);
+        script << "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$0\" \"$1\" > \"" << directory.string() << "/record.tmp\"\nmv \"" << directory.string() << "/record.tmp\" \""
+               << directory.string() << "/record\"\n";
+    }
+    std::filesystem::permissions(opener, std::filesystem::perms::owner_all);
+    return opener;
+}
+
+std::vector<std::string> WaitForRecord(const std::filesystem::path& directory) {
+    for (int attempt = 0; attempt < 500; ++attempt) {
+        if (std::filesystem::exists(directory / "record")) {
+            std::ifstream record(directory / "record");
+            std::vector<std::string> lines;
+            for (std::string line; std::getline(record, line);) lines.push_back(line);
+            return lines;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    std::abort();
+}
+
+void CheckPosixLauncher() {
+    const auto directory = MakeScratchDirectory();
+    const auto opener = WriteOpener(directory);
+    const std::string url = "https://example.com/$(touch_pwned);id&x=1#a*b";
+    {
+        HostBrowserLauncher launcher(opener.string());
+        Require(launcher.Launch(url));
+    }
+    const auto lines = WaitForRecord(directory);
+    Require(lines.size() == 3);
+    Require(lines[0] == "1");
+    Require(lines[1] == opener.string());
+    Require(lines[2] == url);
+    Require(!std::filesystem::exists(directory / "touch_pwned"));
+    Require(!std::filesystem::exists(std::filesystem::current_path() / "touch_pwned"));
+
+    HostBrowserLauncher missing((directory / "absent").string());
+    Require(!missing.Launch("https://example.com/"));
+    HostBrowserLauncher empty{std::string()};
+    Require(!empty.Launch("https://example.com/"));
+    HostBrowserLauncher guarded(opener.string());
+    Require(!guarded.Launch("-https://example.com/"));
+    Require(!guarded.Launch(""));
+    std::filesystem::remove_all(directory);
+}
+#endif
+
 }
 
 int main() {
@@ -236,5 +299,8 @@ int main() {
     CheckLength();
     CheckMode();
     CheckPolicy();
+#ifndef _WIN32
+    CheckPosixLauncher();
+#endif
     return 0;
 }
