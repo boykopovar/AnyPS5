@@ -62,7 +62,12 @@ def oracle():
     if root is not None:
         root = root.resolve()
     executable = shutil.which(compiler[0])
-    selected = str(Path(executable).resolve()) if executable is not None else None
+    if executable is None:
+        selected = None
+    else:
+        path = Path(executable).resolve()
+        status = path.stat()
+        selected = (str(path), status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, status.st_ctime_ns)
     configuration = repr((compiler, selected, str(root))).encode("utf-8")
     key = hashlib.sha256(source.read_bytes() + configuration).hexdigest()
     directory = CACHE / key
