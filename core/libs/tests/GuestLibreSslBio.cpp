@@ -16,6 +16,13 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #ifdef ANYPS5_BIO_DYNAMIC
 #ifdef _WIN32
 #include <windows.h>
@@ -561,6 +568,10 @@ void TestFileAndSocket() {
     Require(BIO_ctrl_nid_postfix(file, 1, 0, nullptr) == 1, "rewind guest file through BIO");
     char buffer[8]{};
     Require(file->method->read(file, buffer, 3) == 3 && std::memcmp(buffer, "abc", 3) == 0, "read guest file through BIO");
+    Require(file->method->read(file, buffer, 1) == 0, "clean guest file EOF returns zero");
+    Require(feof_nid_postfix(&stream) != 0 && ferror_nid_postfix(&stream) == 0, "clean EOF does not set stream error");
+    Require(BIO_ctrl_nid_postfix(file, 1, 0, nullptr) == 0, "file reset returns fseek success status");
+    Require(file->method->read(file, buffer, 3) == 3 && std::memcmp(buffer, "abc", 3) == 0, "read after file BIO reset");
     FileStream* queried = nullptr;
     Require(BIO_ctrl_nid_postfix(file, 107, 0, &queried) == 1 && queried == &stream, "get guest file pointer");
     Require(BIO_free_nid_postfix(file) == 1, "free BIO without closing file");
@@ -573,6 +584,29 @@ void TestFileAndSocket() {
     Bio* ownedBio = BIO_new_fp_nid_postfix(&owned, 1);
     Require(ownedBio && BIO_ctrl_nid_postfix(ownedBio, 8, 0, nullptr) == 1, "owned guest file BIO");
     Require(BIO_free_nid_postfix(ownedBio) == 1 && !owned.IsOpen(), "owned BIO closes guest file");
+
+    int descriptors[2]{-1, -1};
+#ifdef _WIN32
+    Require(_pipe(descriptors, 4096, _O_BINARY) == 0, "create non-seekable guest file pipe");
+    std::FILE* writeOnly = _fdopen(descriptors[1], "wb");
+#else
+    Require(::pipe(descriptors) == 0, "create non-seekable guest file pipe");
+    std::FILE* writeOnly = ::fdopen(descriptors[1], "wb");
+#endif
+    Require(writeOnly != nullptr, "wrap pipe writer in host stream");
+    FileStream pipeStream(writeOnly);
+    Bio* pipeBio = BIO_new_fp_nid_postfix(&pipeStream, 0);
+    Require(pipeBio != nullptr, "construct guest file BIO around pipe writer");
+    Require(pipeBio->method->read(pipeBio, buffer, 1) == -1, "guest file read error must not report clean EOF");
+    Require(ferror_nid_postfix(&pipeStream) != 0 && feof_nid_postfix(&pipeStream) == 0, "pipe read failure sets error, not EOF");
+    Require(BIO_ctrl_nid_postfix(pipeBio, 1, 0, nullptr) == -1, "file reset preserves non-seekable stream failure");
+    Require(BIO_free_nid_postfix(pipeBio) == 1, "free borrowed pipe BIO");
+    Require(fclose_nid_postfix(&pipeStream) == 0, "close borrowed pipe writer");
+#ifdef _WIN32
+    Require(_close(descriptors[0]) == 0, "close pipe reader");
+#else
+    Require(::close(descriptors[0]) == 0, "close pipe reader");
+#endif
 
     Require(BIO_new_socket_nid_postfix(-1, 0) == nullptr, "reject negative guest socket");
     Bio* socket = BIO_new_socket_nid_postfix(42, 0);
