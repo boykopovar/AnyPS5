@@ -20,6 +20,8 @@ public:
     HostWindowSize size{1280, 720};
     HostWindowSize desktop{1920, 1080};
     HostWindowSize beforeFullscreen{};
+    bool cursorShown = true;
+    int cursorCalls = 0;
     int fullscreenCalls = 0;
     int sizeCalls = 0;
 
@@ -39,6 +41,10 @@ public:
     void SetSize(HostWindowSize value) override {
         sizeCalls++;
         size = value;
+    }
+    void ShowCursor(bool show) override {
+        cursorCalls++;
+        cursorShown = show;
     }
 };
 

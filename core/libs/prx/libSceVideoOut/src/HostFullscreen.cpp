@@ -25,3 +25,16 @@ void HostFullscreenState::Toggle() {
     windowedSize = window.Size();
     window.SetFullscreen(true);
 }
+
+void HostFullscreenState::Refresh(bool titleReadsMouse) {
+    const bool hide = window.IsFullscreen() && !titleReadsMouse;
+    if (hide == cursorHidden) return;
+    window.ShowCursor(!hide);
+    cursorHidden = hide;
+}
+
+void HostFullscreenState::Release() {
+    if (!cursorHidden) return;
+    window.ShowCursor(true);
+    cursorHidden = false;
+}

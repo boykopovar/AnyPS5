@@ -67,6 +67,10 @@ public:
         SDL_SetWindowSize(window, size.width, size.height);
     }
 
+    void ShowCursor(bool show) override {
+        require(SDL_ShowCursor(show ? SDL_ENABLE : SDL_DISABLE) >= 0, SDL_GetError());
+    }
+
 private:
     SDL_Window* window;
 };
