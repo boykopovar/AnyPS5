@@ -255,6 +255,7 @@ int main() {
         FileStat linkStatus{};
         Require(lstat_nid_postfix(linkPath.c_str(), &linkStatus) == 0 && Same(linkStatus.st_mtim, first[1]), "symlink mtime updated");
 #endif
+        Require(unlink_nid_postfix(linkPath.c_str()) == 0, "remove the symlink");
     }
     int pipe[2];
     Require(pipe_nid_postfix(pipe) == 0, "create pipe");

@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
 #include <cstdint>
@@ -107,12 +108,19 @@ void LoadState(Context& context) {
     }
 }
 
-void SaveState(const Context& context) {
+void SaveState(const Context& context, const std::set<int>& unlocked) {
     std::filesystem::create_directories(context.state.parent_path());
     const auto temporary = context.state.string() + ".tmp";
     {
         std::ofstream file(temporary, std::ios::trunc);
-        for (const auto id : context.unlocked) file << id << '\n';
+        for (const auto id : unlocked) file << id << '\n';
+        file.flush();
+        if (!file) {
+            file.close();
+            std::error_code removeError;
+            std::filesystem::remove(temporary, removeError);
+            throw std::runtime_error("sceNpTrophy: cannot write the unlock state " + temporary);
+        }
     }
     std::filesystem::rename(temporary, context.state);
 }
@@ -251,8 +259,10 @@ int APS5_VABI sceNpTrophyUnlockTrophy(int contextId, int handle, int trophyId, i
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (context->unlocked.contains(trophyId)) return NP_TROPHY_ERROR_TROPHY_ALREADY_UNLOCKED;
-    context->unlocked.insert(trophyId);
-    SaveState(*context);
+    auto updated = context->unlocked;
+    updated.insert(trophyId);
+    SaveState(*context, updated);
+    context->unlocked = std::move(updated);
     *platinumId = NP_TROPHY_INVALID_ID;
     return 0;
 }

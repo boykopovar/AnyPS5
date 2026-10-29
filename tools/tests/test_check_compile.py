@@ -73,6 +73,8 @@ class CheckCompileTests(CheckCompileFixture):
         self.assertEqual(result.returncode, 0)
         self.assertIn("1 translation units compile", result.stdout)
 
+
+class CheckCompileRecordedCommandTests(CheckCompileFixture):
     def test_the_command_is_rewritten_to_syntax_only_without_object_or_dependency_files(self):
         source = self.source("unit.cpp")
         script = self.compiler(
@@ -254,6 +256,8 @@ class CheckCompileTests(CheckCompileFixture):
                         else:
                             self.assertIn("1 translation units compile", result.stdout)
 
+
+class CheckCompilePathSelectionTests(CheckCompileFixture):
     def test_a_changed_file_with_a_non_ascii_name_is_checked(self):
         self.failing("caf\u00e9.cpp")
         subprocess.run(["git", "-C", str(self.root), "add", "caf\u00e9.cpp"], check=True)
@@ -705,7 +709,25 @@ class CheckCompileResponseTests(CheckCompileFixture):
                 response.write_bytes(content.encode("utf-8"))
                 self.assertEqual(check_compile.expand_response_files(["@flags.rsp"], self.build), expected)
 
-    def test_response_options_compile_without_changing_build_outputs(self):
+    def test_empty_response_options_compile_without_changing_build_outputs(self):
+        self.check_response_option_outputs((
+            ("", "int x;\n"),
+            (" \t\r\n", "int x;\n"),
+        ))
+
+    def test_response_definitions_compile_without_changing_build_outputs(self):
+        self.check_response_option_outputs((
+            ("  -DA=7 -DB=11", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
+            ("-DA=7\n-DB=11\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
+        ))
+
+    def test_crlf_and_quoted_response_definitions_compile_without_changing_build_outputs(self):
+        self.check_response_option_outputs((
+            ("-DA=7\r\n-DB=11\r\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
+            (r'-DNAME=\"hello\" -DB=11', '_Static_assert(sizeof(NAME) == 6 && B == 11, "quoted definition");\n'),
+        ))
+
+    def check_response_option_outputs(self, cases):
         compiler = shutil.which("clang") or shutil.which("gcc")
         if compiler is None:
             self.skipTest("needs a GNU-compatible C compiler")
@@ -717,14 +739,6 @@ class CheckCompileResponseTests(CheckCompileFixture):
                                           ("-c", source.as_posix(), "-MMD", "-MF",
                                            outputs[1].as_posix(), "-o", outputs[0].as_posix())), encoding="utf-8")
         arguments = [compiler, "@" + str(response), "@" + str(output_options)]
-        cases = (
-            ("", "int x;\n"),
-            (" \t\r\n", "int x;\n"),
-            ("  -DA=7 -DB=11", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
-            ("-DA=7\n-DB=11\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
-            ("-DA=7\r\n-DB=11\r\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
-            (r'-DNAME=\"hello\" -DB=11', '_Static_assert(sizeof(NAME) == 6 && B == 11, "quoted definition");\n'),
-        )
         for content, text in cases:
             source.write_text(text, encoding="utf-8")
             response.write_bytes(content.encode("utf-8"))

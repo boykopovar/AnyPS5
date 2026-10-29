@@ -156,6 +156,61 @@ static void TestSessionManagerParameterLifecycles() {
     Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0, "the context did not terminate");
 }
 
+static void TestLeaderboardsParameterLifecycles() {
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingC1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRankingD1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return present ? _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi21ParameterToGetRanking10initializeEPNS1_6Common10LibContextEi(parameter, context, 7) : ParameterInvalidArgument;
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinitionC1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinitionD1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinition9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return present ? _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinition10initializeEPNS1_6Common10LibContextEi(parameter, context, 7) : ParameterInvalidArgument;
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi33ParameterToGetLargeDataByObjectIdC1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi33ParameterToGetLargeDataByObjectIdD1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi33ParameterToGetLargeDataByObjectId9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi12Leaderboards2V17ViewApi33ParameterToGetLargeDataByObjectId10initializeEPNS1_6Common10LibContextEPKc(parameter, context, present ? "object" : nullptr);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi26ParameterToRecordLargeDataC1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi26ParameterToRecordLargeDataD1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi26ParameterToRecordLargeData9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi26ParameterToRecordLargeData10initializeEPNS1_6Common10LibContextEiNS5_19XPsnAtomicOperationEPKc(parameter, context, 7, 0, present ? "object" : nullptr);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi22ParameterToRecordScoreC1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi22ParameterToRecordScoreD1Ev,
+            _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi22ParameterToRecordScore9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            const int result = _ZN3sce2Np9CppWebApi12Leaderboards2V19RecordApi22ParameterToRecordScore10initializeEPNS1_6Common10LibContextEiNS6_12IntrusivePtrINS3_22RecordScoreRequestBodyEEE(parameter, context, 7, present ? &body : &missingBody);
+            if (present || result != ParameterBodyMissing) return result;
+            return ParameterInvalidArgument;
+        });
+}
+
 static void TestIteratorDestructors() {
     unsigned char iterator[0x20];
     std::memset(iterator, 0x5a, sizeof(iterator));
@@ -217,6 +272,7 @@ static void TestVectorSizeAndElements() {
 int main() {
     TestParameterLifecycles();
     TestSessionManagerParameterLifecycles();
+    TestLeaderboardsParameterLifecycles();
     TestIteratorDestructors();
     TestVectorSizeAndElements();
     std::puts("NpCppWebApi offline tests passed");

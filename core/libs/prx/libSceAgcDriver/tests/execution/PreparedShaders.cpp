@@ -31,6 +31,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <thread>
@@ -40,8 +41,16 @@
 #endif
 #include <windows.h>
 #include <io.h>
+#define HOST_DUP _dup
+#define HOST_DUP2 _dup2
+#define HOST_CLOSE _close
+#define HOST_FILENO _fileno
 #else
 #include <unistd.h>
+#define HOST_DUP dup
+#define HOST_DUP2 dup2
+#define HOST_CLOSE close
+#define HOST_FILENO fileno
 #endif
 
 namespace {
@@ -241,6 +250,69 @@ void FailureCapture(AgcDriver::VulkanDevice& device) {
     capture.close();
     std::remove(capturePath.c_str());
     Require(captureText.str() == RequestSerializer{}.Serialize(request), "an earlier preparation failure dump suppressed the dispatch request dump");
+    Require(AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request) == capturePath, "subsequent request dump has the wrong name");
+    Require(!std::ifstream(capturePath, std::ios::binary).is_open(), "de-duplicated request dump was re-created on disk");
+    const std::filesystem::path retryDirectory = "shader_12345cafe_retry";
+    std::filesystem::remove_all(retryDirectory);
+    const auto failedPath = AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request, "_retry/test");
+    Require(!std::ifstream(failedPath, std::ios::binary).is_open(), "uncreatable dump path was unexpectedly created");
+    std::filesystem::create_directories(retryDirectory);
+    const auto retriedPath = AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request, "_retry/test");
+    Require(retriedPath == failedPath, "retried dump returned a different path");
+    std::ifstream retriedFile(retriedPath, std::ios::binary);
+    Require(retriedFile.is_open(), "retried dump file was not created");
+    std::ostringstream retriedText;
+    retriedText << retriedFile.rdbuf();
+    retriedFile.close();
+    std::filesystem::remove_all(retryDirectory);
+    Require(retriedText.str() == RequestSerializer{}.Serialize(request), "retried dump file contents do not match serialized request");
+    const char* previousSkipLimit = std::getenv("APS5_SKIP_REQUEST_DUMPS");
+    const std::string savedSkipLimit = previousSkipLimit != nullptr ? previousSkipLimit : "";
+#ifdef _WIN32
+    Require(_putenv_s("APS5_SKIP_REQUEST_DUMPS", "-1") == 0, "cannot set uncapped skip dumps");
+#else
+    Require(setenv("APS5_SKIP_REQUEST_DUMPS", "-1", 1) == 0, "cannot set uncapped skip dumps");
+#endif
+    const auto skipLogPath = std::filesystem::temp_directory_path() / ("aps5_skip_report_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
+    std::fflush(stderr);
+    const int savedStderr = HOST_DUP(HOST_FILENO(stderr));
+    Require(savedStderr >= 0, "stderr could not be saved");
+#ifdef _WIN32
+    Require(_wfreopen(skipLogPath.wstring().c_str(), L"wb", stderr) != nullptr, "stderr could not be redirected");
+#else
+    Require(std::freopen(skipLogPath.c_str(), "wb", stderr) != nullptr, "stderr could not be redirected");
+#endif
+    try {
+        AgcDriver::DriverDetail::Driver::reportSkip("draw", "test plain skip");
+        AgcDriver::DriverDetail::Driver::reportSkip("draw", "test plain skip");
+        AgcDriver::DriverDetail::Driver::reportSkip("dispatch", "test request skip\nRecompileRequest:\nshader dump test data");
+    } catch (...) {
+        std::fflush(stderr);
+        HOST_DUP2(savedStderr, HOST_FILENO(stderr));
+        HOST_CLOSE(savedStderr);
+        std::filesystem::remove(skipLogPath);
+        throw;
+    }
+    std::fflush(stderr);
+    HOST_DUP2(savedStderr, HOST_FILENO(stderr));
+    HOST_CLOSE(savedStderr);
+#ifdef _WIN32
+    Require((previousSkipLimit != nullptr ? _putenv_s("APS5_SKIP_REQUEST_DUMPS", savedSkipLimit.c_str()) : _putenv_s("APS5_SKIP_REQUEST_DUMPS", "")) == 0, "cannot restore skip dump limit");
+#else
+    Require((previousSkipLimit != nullptr ? setenv("APS5_SKIP_REQUEST_DUMPS", savedSkipLimit.c_str(), 1) : unsetenv("APS5_SKIP_REQUEST_DUMPS")) == 0, "cannot restore skip dump limit");
+#endif
+    std::string capturedSkips;
+    {
+        std::ifstream skipFile(skipLogPath, std::ios::binary);
+        std::ostringstream skipBuffer;
+        skipBuffer << skipFile.rdbuf();
+        capturedSkips = skipBuffer.str();
+    }
+    std::filesystem::remove(skipLogPath);
+    Require(capturedSkips.find("RecompileRequest dumps uncapped (APS5_SKIP_REQUEST_DUMPS)") != std::string::npos, "uncapped skip dump announcement was not output to stderr");
+    Require(capturedSkips.find("[gpu] skipped draw: test plain skip\n") != std::string::npos, "first plain skip was not output to stderr");
+    Require(capturedSkips.find("[gpu] skipped dispatch: test request skip\nRecompileRequest:\nshader dump test data\n") != std::string::npos, "uncapped request skip was not output to stderr");
+    Require(capturedSkips.find("[gpu] skipped draw: test plain skip\n") == capturedSkips.rfind("[gpu] skipped draw: test plain skip\n"), "duplicate plain skip was output multiple times");
 #ifdef _WIN32
     Require(_putenv_s("APS5_DUMP_SHADERS", saved.c_str()) == 0, "cannot restore shader capture");
 #else
@@ -651,7 +723,9 @@ void RegisteredVertexWorkgroup(const ShaderRecompiler::SpirvTarget& target, bool
 
 void LazyRegistration() {
     using namespace NarrowConstantStoreFixture;
-    Require(std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr, "lazy preparation is not enabled");
+    const char* registrationBudget = std::getenv("APS5_REGISTRATION_PREPARE_COMMIT_GB");
+    const bool budgetOnly = std::getenv("APS5_LAZY_SHADER_PREPARE") == nullptr;
+    Require(!budgetOnly || (registrationBudget != nullptr && std::string_view(registrationBudget) == "0"), "lazy preparation is not enabled");
     struct Header {
         Shader shader{};
         std::array<ShaderRegister, 7> registers{};
@@ -669,15 +743,17 @@ void LazyRegistration() {
     header.specials.dispatch_modifier = 0x8000;
     header.registers = {{{0x20c, static_cast<std::uint32_t>(address >> 8u)}, {0x20d, static_cast<std::uint32_t>(address >> 40u)}, {0x207, Threads}, {0x208, 1}, {0x209, 1}, {0x212, 0}, {0x213, 4}}};
     AgcDriverRegisterShader_nid_postfix(&header.shader);
-    ++header.registers[0].value;
-    ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "entry point is outside shader code");
-    --header.registers[0].value;
-    header.registers[2].value = 0;
-    ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "must be nonzero");
-    header.registers[2].value = Threads;
-    header.shader.num_sh_registers = 255;
-    ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "truncated shader metadata");
-    header.shader.num_sh_registers = header.registers.size();
+    if (!budgetOnly) {
+        ++header.registers[0].value;
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "entry point is outside shader code");
+        --header.registers[0].value;
+        header.registers[2].value = 0;
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "must be nonzero");
+        header.registers[2].value = Threads;
+        header.shader.num_sh_registers = 255;
+        ExpectFailure([&] { AgcDriverRegisterShader_nid_postfix(&header.shader); }, "truncated shader metadata");
+        header.shader.num_sh_registers = header.registers.size();
+    }
     const auto registered = [&] {
         const auto registry = AgcDriver::DriverDetail::Driver::Get().RegisteredShaders();
         Require(registry != nullptr, "lazy registration published no shader registry");

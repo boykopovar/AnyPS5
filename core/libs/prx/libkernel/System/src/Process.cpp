@@ -747,6 +747,7 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
     } else if (WIFSIGNALED(encoded) || WIFSTOPPED(encoded)) {
         const int hostSignal = WIFSIGNALED(encoded) ? WTERMSIG(encoded) : WSTOPSIG(encoded);
         int guestSignal = hostSignal;
+#ifndef __APPLE__
         switch (hostSignal) {
         case 7: guestSignal = 10; break;
         case 10: guestSignal = 30; break;
@@ -764,6 +765,7 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
             return -1;
         default: break;
         }
+#endif
         encoded = WIFSTOPPED(encoded) ? ((encoded & ~0xff00) | (guestSignal << 8)) : ((encoded & ~0x7f) | guestSignal);
     }
     if (status != nullptr) *status = encoded;

@@ -167,6 +167,16 @@ static int CheckNoPlayGoFile(const char* root) {
     Require(scePlayGoGetProgress(handle, &chunk, 1, &progress) == 0 && progress.progress_size == 1 && progress.total_size == 1);
     Require(scePlayGoSetInstallSpeed(handle + 1, 2) == badHandle);
     Require(scePlayGoSetInstallSpeed(handle, 2) == 0);
+    std::int32_t speed = 0;
+    Require(scePlayGoGetInstallSpeed(handle + 1, &speed) == badHandle);
+    Require(scePlayGoGetInstallSpeed(handle, nullptr) == badPointer);
+    Require(scePlayGoGetInstallSpeed(handle, &speed) == 0 && speed == 2);
+    int64_t eta = -1;
+    Require(scePlayGoGetEta(handle + 1, &chunk, 1, &eta) == badHandle);
+    Require(scePlayGoGetEta(handle, &chunk, 1, nullptr) == badPointer);
+    Require(scePlayGoGetEta(handle, nullptr, 1, &eta) == badPointer);
+    Require(scePlayGoGetEta(handle, &chunk, 0, &eta) == badSize);
+    Require(scePlayGoGetEta(handle, &chunk, 1, &eta) == 0 && eta == 0);
     Require(scePlayGoPrefetchOptionalChunk(handle + 1, 0, nullptr) == badHandle);
     Require(scePlayGoPrefetchOptionalChunk(handle, 0, nullptr) == 0);
     Require(scePlayGoClose(handle + 1) == badHandle);

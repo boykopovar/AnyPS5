@@ -485,7 +485,12 @@ def library_report(base, head):
         new_text, new_percent = library_progress(new)
         delta = "n/a"
         if old_percent is not None and new_percent is not None:
-            delta = f'{round(new_percent - old_percent, 2) or 0:+.2f} pp'
+            change = round(new_percent - old_percent, 2)
+            delta = f'{change or 0:+.2f} pp'
+            exact = exact_delta({"done": old["done"], "total": old["done"] + old["todo"]},
+                                {"done": new["done"], "total": new["done"] + new["todo"]}) if change == 0 else None
+            if exact:
+                delta = f"{small_delta(exact)} pp"
         rows.append(f"| {name} | {old_text} | {new_text} | {delta} |")
     if not rows:
         return []
@@ -503,8 +508,22 @@ def report(base, head):
     return "\n".join(lines)
 
 
+SITE_REPORTS = ("progress.json", "badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html")
+
+
+def require_distinct_reports(output):
+    paths = [output / name for name in SITE_REPORTS]
+    for index, path in enumerate(paths):
+        if not path.exists():
+            continue
+        for other in paths[index + 1:]:
+            if other.exists() and path.samefile(other):
+                raise ValueError(f"{path.name} and {other.name} in {output} are the same file")
+
+
 def write_site(output, libraries, shaders):
     output.mkdir(parents=True, exist_ok=True)
+    require_distinct_reports(output)
     (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2), encoding="utf-8")
     (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
     (output / "badge-shaders.svg").write_text(badge("shaders", shaders), encoding="utf-8")
@@ -592,6 +611,8 @@ def main(argv=None):
         if args.output:
             try:
                 write_site(args.output, libraries, shaders)
+            except ValueError as error:
+                parser.error(str(error))
             except OSError as error:
                 parser.error(f"{args.output}: {error.strerror or error}")
         if args.json:

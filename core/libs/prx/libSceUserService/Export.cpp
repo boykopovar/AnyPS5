@@ -296,12 +296,15 @@ int APS5_VABI sceUserServiceTerminate(void) {
  return USER_SERVICE_OK;
 }
 
-// No PSN account exists, so the platform privacy setting reports the feature as not permitted.
 int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* value) {
-    (void)user_id;
-    if (!value) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    if (!IsUserLoggedIn(user_id)) {
+        return USER_SERVICE_ERROR_NOT_LOGGED_IN;
+    }
+    if (value == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     *value = 0;
-    return 0;
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetForegroundUser(int* user_id) {

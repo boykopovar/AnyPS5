@@ -9,6 +9,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -28,6 +29,14 @@ void writeSample(float value, std::int32_t wordSize, std::uint8_t* out) {
     std::memcpy(out, &sample, sizeof(sample));
 }
 
+struct PacketDeleter {
+    void operator()(AVPacket* packet) const { av_packet_free(&packet); }
+};
+
+struct FrameDeleter {
+    void operator()(AVFrame* frame) const { av_frame_free(&frame); }
+};
+
 class FfmpegDecoder : public Decoder {
 public:
     FfmpegDecoder(AVCodecID id, std::int32_t wordSize, std::vector<std::uint8_t> extradata = {}) : wordSize(wordSize), extradata(std::move(extradata)), id(id) {
@@ -42,19 +51,15 @@ public:
 
 protected:
     DecodeResult decodePacket(const std::uint8_t* data, std::size_t size, std::uint8_t* pcm, std::size_t pcmSize) {
-        AVPacket* packet = av_packet_alloc();
-        AVFrame* frame = av_frame_alloc();
-        if (!packet || !frame) {
-            av_packet_free(&packet);
-            av_frame_free(&frame);
-            throw std::bad_alloc();
-        }
+        const std::unique_ptr<AVPacket, PacketDeleter> packet(av_packet_alloc());
+        const std::unique_ptr<AVFrame, FrameDeleter> frame(av_frame_alloc());
+        if (!packet || !frame) throw std::bad_alloc();
         packet->data = const_cast<std::uint8_t*>(data);
         packet->size = static_cast<int>(size);
         DecodeResult result{};
         result.consumed = size;
-        if (avcodec_send_packet(context, packet) < 0) result.status = DecodeStatus::InvalidData;
-        while (result.status == DecodeStatus::Ok && avcodec_receive_frame(context, frame) == 0) {
+        if (avcodec_send_packet(context, packet.get()) < 0) result.status = DecodeStatus::InvalidData;
+        while (result.status == DecodeStatus::Ok && avcodec_receive_frame(context, frame.get()) == 0) {
             const auto format = static_cast<AVSampleFormat>(frame->format);
             if (format != AV_SAMPLE_FMT_FLTP && format != AV_SAMPLE_FMT_S16P) throw std::runtime_error("libSceAudiodec: FFmpeg sample format " + std::to_string(frame->format) + " is not converted");
             const auto channels = static_cast<std::size_t>(frame->ch_layout.nb_channels);
@@ -75,10 +80,8 @@ protected:
             result.channels = static_cast<std::uint32_t>(channels);
             result.sampleRate = static_cast<std::uint32_t>(frame->sample_rate);
             result.highEfficiency = context->profile == AV_PROFILE_AAC_HE || context->profile == AV_PROFILE_AAC_HE_V2;
-            av_frame_unref(frame);
+            av_frame_unref(frame.get());
         }
-        av_packet_free(&packet);
-        av_frame_free(&frame);
         return result;
     }
 
