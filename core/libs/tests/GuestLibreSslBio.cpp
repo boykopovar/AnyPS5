@@ -570,6 +570,7 @@ void TestFileAndSocket() {
     Require(file->method->read(file, buffer, 3) == 3 && std::memcmp(buffer, "abc", 3) == 0, "read guest file through BIO");
     Require(file->method->read(file, buffer, 1) == 0, "clean guest file EOF returns zero");
     Require(feof_nid_postfix(&stream) != 0 && ferror_nid_postfix(&stream) == 0, "clean EOF does not set stream error");
+    Require(ERR_get_error_nid_postfix() == 0, "clean EOF does not queue LibreSSL errors");
     Require(BIO_ctrl_nid_postfix(file, 1, 0, nullptr) == 0, "file reset returns fseek success status");
     Require(file->method->read(file, buffer, 3) == 3 && std::memcmp(buffer, "abc", 3) == 0, "read after file BIO reset");
     FileStream* queried = nullptr;
@@ -599,6 +600,11 @@ void TestFileAndSocket() {
     Require(pipeBio != nullptr, "construct guest file BIO around pipe writer");
     Require(pipeBio->method->read(pipeBio, buffer, 1) == -1, "guest file read error must not report clean EOF");
     Require(ferror_nid_postfix(&pipeStream) != 0 && feof_nid_postfix(&pipeStream) == 0, "pipe read failure sets error, not EOF");
+    const auto systemError = ERR_get_error_nid_postfix();
+    const auto bioError = ERR_get_error_nid_postfix();
+    Require((systemError >> 24) == 2 && (bioError >> 24) == 32 && (bioError & 0xfff) == 2,
+            "failed file BIO read queues system and BIO errors");
+    Require(ERR_get_error_nid_postfix() == 0, "file read queues exactly two errors");
     Require(BIO_ctrl_nid_postfix(pipeBio, 1, 0, nullptr) == -1, "file reset preserves non-seekable stream failure");
     Require(BIO_free_nid_postfix(pipeBio) == 1, "free borrowed pipe BIO");
     Require(fclose_nid_postfix(&pipeStream) == 0, "close borrowed pipe writer");
