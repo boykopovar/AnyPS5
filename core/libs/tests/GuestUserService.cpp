@@ -111,8 +111,12 @@ void VerifyLoggedInUser(int userId) {
 }
 
 int main() {
-    Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     int foreground = -1;
+    Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetForegroundUser(&foreground) == USER_SERVICE_ERROR_NOT_INITIALIZED && foreground == -1);
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
+    Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    foreground = -1;
     Require(sceUserServiceGetForegroundUser(&foreground) == USER_SERVICE_OK);
     Require(foreground == USER_SERVICE_INITIAL_USER_ID);
 
@@ -492,5 +496,6 @@ int main() {
     Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<bool*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(errno == 71);
 
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
     return 0;
 }
