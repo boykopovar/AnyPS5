@@ -786,6 +786,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     const auto drainBeforeInline = [&] {
         if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Indirect);
     };
+    const bool pipelineIndirect = pipelined && pipelinedIndirect && drawParameters.indirect.has_value() && DrawPipeline::PipelineIndirect();
     auto& traceIndirect = tail.traceIndirect;
     const auto dumpTarget = tail.dumpTarget;
     const auto dumpSlot1 = tail.dumpSlot1;
@@ -1103,6 +1104,117 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         recordLabelsForPacket(localDevice.get(), submission.queue);
         phaseTiming.Phase(DrawRowLabels);
     };
+    if (drawParameters.indirect && indirectCpu && pipelineIndirect && deferredLabels().labels.empty() && !graphics.rectList && !gpuLock.owns_lock()) {
+        const auto indirect = *drawParameters.indirect;
+        recordQueuedLabelsBeforeRead(submission.queue);
+        const auto readStart = std::chrono::steady_clock::now();
+        const auto count = std::min(indirect.countIndirect ? Pm4::ReadDrawCount(indirect) : indirect.count, indirect.count);
+        std::vector<Pm4::DrawArguments> records;
+        for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(indirect, record));
+        Graphics::CountIndirectDraw(*indirectCpu, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
+        const auto baseVertexWords = UserDataWords(programs, roles, indirect.baseVertexLocation);
+        const auto startInstanceWords = UserDataWords(programs, roles, indirect.startInstanceLocation);
+        const auto drawIndexWords = indirect.drawIndexEnabled ? UserDataWords(programs, roles, indirect.drawIndexLocation) : std::vector<std::pair<std::size_t, std::size_t>>{};
+        struct ExpandedDraw {
+            Pm4::DrawParameters direct;
+            std::vector<Graphics::CompiledShader> stages;
+            std::vector<Graphics::GuestMemorySnapshot> snapshots;
+            std::vector<std::shared_ptr<const ShaderRecompiler::RecompileResult>> patched;
+        };
+        std::vector<ExpandedDraw> expanded;
+        std::vector<DrawPipeline::Range> writes, reads;
+        std::vector<const ShaderRecompiler::RecompileResult*> current(programResults.begin(), programResults.end());
+        const auto enqueueExpanded = [&] {
+            if (expanded.empty()) return;
+            phaseTiming.Phase(DrawRowVectors);
+            const auto commitQueue = submission.queue;
+            const auto commitPacket = tail.packetOpcode;
+            const auto epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
+            auto commit = [this, localDevice = std::move(localDevice), decode = std::move(decode), expanded = std::move(expanded), commitQueue, commitPacket, epoch, writablePrograms = std::move(writablePrograms), results = std::move(results), memory = std::move(memory), linked = std::move(linked), stageCaptures = std::move(stageCaptures), matched = std::move(matched), matchedRegions = std::move(matchedRegions), fresh = std::move(fresh), decodeReads = std::move(decodeReads), shaderMemory = std::move(shaderMemory), entry = std::move(entry), dataEntry = std::move(dataEntry), compiledStages = std::move(compiledStages), stageData = std::move(stageData)] {
+                DrawPipeline::FollowEpoch(epoch);
+                GuestMemory::SetCurrentPacket(commitPacket, commitQueue);
+                for (const auto& item : expanded) commitDraw(localDevice, commitQueue, decode->state, item.direct, item.stages, item.snapshots, nullptr, {}, 0);
+            };
+            auto held = std::make_shared<decltype(commit)>(std::move(commit));
+            DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes), 0, {}, std::move(reads));
+            phaseTiming.Phase(DrawRowLockWait);
+        };
+        for (std::uint32_t record = 0; record < records.size(); ++record) {
+            const auto& arguments = records[record];
+            if (traceIndirect) std::fprintf(stderr, "[draw]   record %u: count %u instances %u first %u vertexOffset %u startInstance %u\n", record, arguments.count, arguments.instances, arguments.firstVertexOrIndex, arguments.vertexOffset, arguments.firstInstance);
+            if (arguments.count == 0 || arguments.instances == 0) continue;
+            std::set<std::size_t> patched;
+            const auto patch = [&](const std::vector<std::pair<std::size_t, std::size_t>>& words, std::uint32_t value) {
+                for (const auto& [program, word] : words) {
+                    writablePrograms[program].userData[word] = value;
+                    patched.insert(program);
+                }
+            };
+            patch(baseVertexWords, indirect.recordBytes == 20 ? arguments.vertexOffset : arguments.firstVertexOrIndex);
+            patch(startInstanceWords, arguments.firstInstance);
+            patch(drawIndexWords, record);
+            if (graphics.stages.tessellation) {
+                for (std::size_t i = 0; i < programs.size(); ++i) {
+                    if (programs[i].binary.stage == Stage::TessellationControl || programs[i].binary.stage == Stage::TessellationEvaluation) patched.insert(i);
+                }
+            }
+            Pm4::DrawParameters direct{0, arguments.count, 0, arguments.instances, drawParameters.flags, drawParameters.indexed, 0, 0};
+            if (drawParameters.indexed) {
+                if (indirect.indexLimitKnown) {
+                    if (arguments.firstVertexOrIndex >= drawParameters.indexCount) continue;
+                    direct.indexCount = std::min(arguments.count, drawParameters.indexCount - arguments.firstVertexOrIndex);
+                } else {
+                    const auto end = static_cast<std::uint64_t>(arguments.firstVertexOrIndex) + arguments.count;
+                    require(end <= std::numeric_limits<std::uint32_t>::max(), "indirect draw index range overflow");
+                    require(end * drawParameters.indexSize <= std::numeric_limits<std::uint64_t>::max() - drawParameters.indexAddress, "indirect draw index range address overflow");
+                    direct.indexCount = arguments.count;
+                }
+                direct.indexAddress = drawParameters.indexAddress + static_cast<std::uint64_t>(arguments.firstVertexOrIndex) * drawParameters.indexSize;
+                direct.indexSize = drawParameters.indexSize;
+            } else {
+                direct.firstVertex = indirect.indxOffset;
+            }
+            if (graphics.stages.mesh) {
+                setMeshIndexBuffer(direct);
+                patched.insert(0);
+            }
+            ExpandedDraw item{direct, stages, {}, {}};
+            for (const auto programIndex : patched) {
+                if (programResults[programIndex] == nullptr) continue;
+                const auto pushBytes = programResults[programIndex]->pushConstants.size();
+                decodeVertexInfo(programIndex);
+                auto patchedResult = materializeDrawStage(programIndex, pushOffsets[programIndex], queue, submission, packetOffset, trace.token, programs, graphics, pixel, vertexInfos, memory, linked, programs[programIndex].binary.stage == Stage::TessellationControl || programs[programIndex].binary.stage == Stage::TessellationEvaluation ? direct : drawParameters, localDevice, *shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics);
+                if (!rejected.empty()) {
+                    enqueueExpanded();
+                    return DrawVerdict::Rejected;
+                }
+                require(patchedResult->pushConstants.size() == pushBytes, "patched program changed its push constant layout");
+                current[programIndex] = patchedResult.get();
+                item.patched.push_back(std::move(patchedResult));
+            }
+            for (auto& stage : item.stages) {
+                for (std::size_t i = 0; i < programResults.size(); ++i) {
+                    if (stage.program == programResults[i] && current[i] != programResults[i]) stage.program = current[i];
+                }
+            }
+            fold(*current[0], item.direct);
+            item.snapshots.reserve(memory.size());
+            for (const auto& region : memory) item.snapshots.push_back({region.guestAddress, region.bytes});
+            if (auto known = localDevice->KnownDrawRejection(graphics, item.stages)) {
+                enqueueExpanded();
+                rejected = std::move(*known);
+                return DrawVerdict::Rejected;
+            }
+            const auto recordWrites = drawWriteRanges(graphics, item.stages);
+            writes.insert(writes.end(), recordWrites.begin(), recordWrites.end());
+            const auto recordReads = QueuedDrawReadRanges(item.direct, item.stages);
+            reads.insert(reads.end(), recordReads.begin(), recordReads.end());
+            expanded.push_back(std::move(item));
+        }
+        enqueueExpanded();
+        timing.Mark("draw_enqueued");
+        return drawn();
+    }
     if (drawParameters.indirect && indirectCpu) {
 
         const auto indirect = *drawParameters.indirect;
@@ -1201,6 +1313,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 timing.Mark("draw_enqueued");
                 return drawn();
             }
+            DrawPipeline::NoteInline(!pipelined ? DrawPipeline::InlineReason::Unpipelined : record != lastDrawable ? DrawPipeline::InlineReason::IndirectRecord : !pipelinedIndirect ? DrawPipeline::InlineReason::IndirectLast : gpuLock.owns_lock() ? DrawPipeline::InlineReason::LockedPrepare : DrawPipeline::InlineReason::Labels, (packet[0] >> 8u) & 0xffu);
             drainBeforeInline();
             lockForDraw();
             noteDrawWriters(stages, submission.queue);
@@ -1238,7 +1351,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             std::fprintf(stderr, "[drawvariant] 0x%llx stage %d code 0x%llx\n", static_cast<unsigned long long>(stages[i].program->variantId), static_cast<int>(stages[i].stage), static_cast<unsigned long long>(programs[i].binary.codeAddress));
         }
     }
-    if (pipelined && !drawParameters.indirect && (tail.queue == nullptr || deferredLabels().labels.empty())) {
+    if (pipelined && (!drawParameters.indirect || pipelineIndirect) && (tail.queue == nullptr || deferredLabels().labels.empty()) && !gpuLock.owns_lock()) {
         phaseTiming.Phase(DrawRowVectors);
         auto writes = drawWriteRanges(graphics, stages);
         const auto commitQueue = submission.queue;
@@ -1251,11 +1364,12 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             commitDraw(localDevice, commitQueue, decode->state, drawParameters, stages, snapshots, recipe, recipeStages, drawKey, trace, shape);
         };
         auto held = std::make_shared<decltype(commit)>(std::move(commit));
-        DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes), 0, {}, std::move(reads), true);
+        DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes), 0, {}, std::move(reads), !drawParameters.indirect);
         phaseTiming.Phase(DrawRowLockWait);
         timing.Mark("draw_enqueued");
         return drawn();
     }
+    DrawPipeline::NoteInline(!pipelined ? DrawPipeline::InlineReason::Unpipelined : drawParameters.indirect ? DrawPipeline::InlineReason::IndirectGpu : gpuLock.owns_lock() ? DrawPipeline::InlineReason::LockedPrepare : DrawPipeline::InlineReason::Labels, (packet[0] >> 8u) & 0xffu);
     if (drawParameters.indirect) drainBeforeInline();
     lockForDraw();
     noteDrawWriters(stages, submission.queue);

@@ -21,6 +21,31 @@ namespace AgcDriver::DriverDetail {
 namespace {
 
 constexpr std::array<const char*, static_cast<std::size_t>(DrawPipeline::DrainReason::Count)> DrainNames{"packet", "flush", "labels", "capture", "indirect", "submission"};
+constexpr std::array<const char*, static_cast<std::size_t>(DrawPipeline::InlineReason::Count)> InlineNames{"unpipelined", "indirect record", "indirect last", "indirect gpu", "labels", "locked prepare", "dispatch", "dispatch indirect"};
+
+template<typename TCounts, typename TReported>
+std::uint64_t appendOpcodeCounts(std::string& text, const char* name, const TCounts& counts, TReported& reported, std::size_t row, std::size_t slots) {
+    std::array<std::pair<std::uint64_t, std::size_t>, 257> window{};
+    std::uint64_t total = 0;
+    for (std::size_t opcode = 0; opcode < slots; ++opcode) {
+        const auto index = row * slots + opcode;
+        const auto now = counts[index].load(std::memory_order_relaxed);
+        window[opcode] = {now - reported[index], opcode};
+        reported[index] = now;
+        total += window[opcode].first;
+    }
+    if (total == 0) return 0;
+    std::partial_sort(window.begin(), window.begin() + 4, window.begin() + static_cast<std::ptrdiff_t>(slots), [](const auto& a, const auto& b) { return a.first > b.first; });
+    char item[80];
+    std::snprintf(item, sizeof(item), " %s %llu:", name, static_cast<unsigned long long>(total));
+    text += item;
+    for (std::size_t shown = 0; shown < 4 && window[shown].first != 0; ++shown) {
+        std::snprintf(item, sizeof(item), " 0x%02zx x%llu", window[shown].second, static_cast<unsigned long long>(window[shown].first));
+        text += item;
+    }
+    text += ';';
+    return total;
+}
 
 std::atomic<unsigned> runningCommitters{0};
 
@@ -249,11 +274,56 @@ std::size_t DrawPipeline::Depth() {
     static const std::size_t depth = [] {
         const char* text = std::getenv("APS5_PIPELINED_DRAWS");
         if (std::getenv("APS5_LOCKED_DRAW_PREPARE") != nullptr || std::getenv("APS5_DRAW_DRAIN") != nullptr || std::getenv("APS5_DRAIN_ALL") != nullptr || std::getenv("APS5_NO_WORDWISE_CAPTURE") != nullptr) return std::size_t{0};
-        if (text == nullptr) return std::size_t{8};
+        const std::size_t standard = PipelineIndirect() ? 64 : 8;
+        if (text == nullptr) return standard;
         const auto value = std::strtoull(text, nullptr, 10);
-        return value == 0 ? std::size_t{0} : value == 1 ? std::size_t{8} : static_cast<std::size_t>(std::min<unsigned long long>(value, 256));
+        return value == 0 ? std::size_t{0} : value == 1 ? standard : static_cast<std::size_t>(std::min<unsigned long long>(value, 256));
     }();
     return depth;
+}
+
+bool DrawPipeline::PipelineIndirect() {
+    static const bool enabled = [] {
+        const char* text = std::getenv("APS5_PIPELINE_INDIRECT");
+        return text != nullptr && text[0] != '\0' && text[0] != '0';
+    }();
+    return enabled;
+}
+
+void DrawPipeline::NoteInline(InlineReason reason, std::uint32_t opcode) {
+    auto& pipeline = Queue0();
+    pipeline.inlineCounts[static_cast<std::size_t>(reason) * OpcodeSlots + std::min<std::uint32_t>(opcode, 0x100)].fetch_add(1, std::memory_order_relaxed);
+    ReportCommitter();
+}
+
+void DrawPipeline::ReportCommitter() {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (!profile) return;
+    auto& pipeline = Queue0();
+    const auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto last = pipeline.committerReportNs.load(std::memory_order_relaxed);
+    if (last == 0) {
+        pipeline.committerReportNs.compare_exchange_strong(last, nowNs, std::memory_order_relaxed);
+        return;
+    }
+    if (nowNs - last < 10'000'000'000ll || !pipeline.committerReportNs.compare_exchange_strong(last, nowNs, std::memory_order_relaxed)) return;
+    std::lock_guard lock(pipeline.committerReportMutex);
+    const auto queuedTotal = pipeline.queuedCount.load(std::memory_order_relaxed);
+    const auto queued = queuedTotal - pipeline.reportedQueued;
+    pipeline.reportedQueued = queuedTotal;
+    std::string inlineText;
+    std::uint64_t inlined = 0;
+    for (std::size_t reason = 0; reason < InlineNames.size(); ++reason) inlined += appendOpcodeCounts(inlineText, InlineNames[reason], pipeline.inlineCounts, pipeline.reportedInline, reason, OpcodeSlots);
+    std::string drainText;
+    std::uint64_t drained = 0;
+    double drainMs = 0;
+    for (std::size_t reason = 0; reason < DrainNames.size(); ++reason) {
+        const auto ns = pipeline.drainCountNs[reason].load(std::memory_order_relaxed);
+        drainMs += static_cast<double>(ns - pipeline.reportedDrainNs[reason]) / 1e6;
+        pipeline.reportedDrainNs[reason] = ns;
+        drained += appendOpcodeCounts(drainText, DrainNames[reason], pipeline.drainCounts, pipeline.reportedDrains, reason, OpcodeSlots);
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[committer] (%.1f s) queued %llu, inline %llu:%s drains %llu (%.1f ms):%s\n", static_cast<double>(nowNs - last) / 1e9, static_cast<unsigned long long>(queued), static_cast<unsigned long long>(inlined), inlineText.c_str(), static_cast<unsigned long long>(drained), drainMs, drainText.c_str());
 }
 
 std::size_t DrawPipeline::QueuedItems() {
@@ -318,6 +388,7 @@ void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64
     }
     depthSum += items.size();
     ++enqueued;
+    queuedCount.fetch_add(1, std::memory_order_relaxed);
     heldReadRanges.fetch_add(reads.size(), std::memory_order_relaxed);
     countWrites(writes, true);
     items.push_back({std::move(commit), std::move(writes), labelAddress, std::move(labelBytes), std::move(reads), draw});
@@ -333,6 +404,7 @@ void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64
         ++wakes;
         wake.notify_one();
     }
+    ReportCommitter();
     static const bool stats = std::getenv("APS5_PIPELINE_STATS") != nullptr;
     if (!profile && !stats) return;
     const auto now = std::chrono::steady_clock::now();
@@ -340,6 +412,7 @@ void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64
 }
 
 void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
+    const auto windowNs = std::max<double>(1.0, static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - lastReport).count()));
     lastReport = now;
     std::string drainText;
     for (std::size_t i = 0; i < drains.size(); ++i) {
@@ -364,8 +437,8 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
     char reads[96];
     std::snprintf(reads, sizeof(reads), " %llu read ranges, %llu stores held, %llu decode drains", static_cast<unsigned long long>(heldReadRanges.load(std::memory_order_relaxed)), static_cast<unsigned long long>(heldReadHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(decodeDrainCount - reportedDecodeDrains));
     reportedDecodeDrains = decodeDrainCount;
-    drainText += reads;
-    AgcDriver::ProfilePrint_nid_no_patch("[draw] pipelined (10 s, depth %zu): %llu commits at %.1f us each on the committer, %llu failed; %llu enqueued behind %.2f on average, waiting %.1f us per draw for room, %.2f us for the lock; %llu committer wakes;%s; drains:%s\n", Depth(), static_cast<unsigned long long>(commits), perCommit, static_cast<unsigned long long>(commitErrors), static_cast<unsigned long long>(enqueued), queued, perDraw, enqueued == 0 ? 0.0 : static_cast<double>(lockWaitNs) / 1e3 / static_cast<double>(enqueued), static_cast<unsigned long long>(wakes), reads, drainText.c_str());
+    const auto busy = static_cast<double>(commitNs) * 100.0 / windowNs;
+    AgcDriver::ProfilePrint_nid_no_patch("[draw] pipelined (10 s, depth %zu): %llu commits at %.1f us each on the committer (%.1f %% busy), %llu failed; %llu enqueued behind %.2f on average, waiting %.1f us per draw for room, %.2f us for the lock; %llu committer wakes;%s; drains:%s\n", Depth(), static_cast<unsigned long long>(commits), perCommit, busy, static_cast<unsigned long long>(commitErrors), static_cast<unsigned long long>(enqueued), queued, perDraw, enqueued == 0 ? 0.0 : static_cast<double>(lockWaitNs) / 1e3 / static_cast<double>(enqueued), static_cast<unsigned long long>(wakes), reads, drainText.c_str());
     commits = commitNs = commitErrors = enqueued = fullWaitNs = depthSum = wakes = lockWaitNs = 0;
     drains = {};
     drainWaitNs = {};
@@ -458,7 +531,12 @@ void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
     const auto index = static_cast<std::size_t>(reason);
     ++drains[index];
     ++drainOpcodes[std::min<std::uint32_t>(opcode, 0x100)];
-    drainWaitNs[index] += elapsedNs(start);
+    const auto waited = elapsedNs(start);
+    drainWaitNs[index] += waited;
+    drainCounts[index * OpcodeSlots + std::min<std::uint32_t>(opcode, 0x100)].fetch_add(1, std::memory_order_relaxed);
+    drainCountNs[index].fetch_add(waited, std::memory_order_relaxed);
+    lock.unlock();
+    ReportCommitter();
     rethrowFailure();
 }
 

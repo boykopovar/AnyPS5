@@ -572,6 +572,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         }
     }
 
+    if (submission.queue == 0) DrawPipeline::NoteInline(indirectArguments != 0 ? DrawPipeline::InlineReason::DispatchIndirect : DrawPipeline::InlineReason::Dispatch, indirectArguments != 0 ? 0x16u : 0x15u);
     for (;;) {
 
         std::shared_ptr<PreparedDispatch> prepared;

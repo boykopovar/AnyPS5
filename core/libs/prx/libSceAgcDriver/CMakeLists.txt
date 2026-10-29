@@ -3398,6 +3398,14 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_pipelined_dispatch_item PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    foreach(agcIndirectItemTest IN ITEMS pipelined_indirect_draw gpu_indirect_arguments_written_ahead gpu_indirect_arguments_misaligned_writer_ahead indirect_arguments_pending_producer indirect_arguments_written_ahead indirect_patched_stage rect_list_indirect sparse_indirect_indices)
+        add_test(NAME agc_driver_${agcIndirectItemTest}_items COMMAND agc_driver_${agcIndirectItemTest}_tests)
+        set_tests_properties(agc_driver_${agcIndirectItemTest}_items PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=1;APS5_PIPELINE_INDIRECT=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+        if(WIN32)
+            set_tests_properties(agc_driver_${agcIndirectItemTest}_items PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     set_tests_properties(agc_driver_queued_index_read_order PROPERTIES TIMEOUT 60)
 
     foreach(agcTest IN ITEMS agc_spirv_narrow_constant_store_tests agc_spirv13_image_tests agc_spirv_optimizer_tests agc_driver_constant_store_tests)
