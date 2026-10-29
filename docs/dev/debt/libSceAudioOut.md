@@ -9,6 +9,9 @@
 
 ### Unknown function info
 
+- [sceAudioDeviceControlGet](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - NID `tKumjQSzhys` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+- [sceAudioDeviceControlSet](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - NID `5ChfcHOf3SM` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [libSceAudioOut additional exports](../../../core/libs/prx/libSceAudioOut/src/InventoryExports.cpp) - the following name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
 
 | Name | NID |

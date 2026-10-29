@@ -490,7 +490,7 @@ private:
     std::atomic<void (*)()> aheadAdoptHook{nullptr};
 
     AgcDriver::Mutex writtenBuffersMutex;
-    std::deque<WrittenBuffer> writtenBuffers;
+    WrittenBufferIndex writtenBuffers;
     std::uint64_t writtenBufferSerial = 0;
     std::unordered_map<std::uint64_t, DwordEvidence> dwordEvidence;
     std::atomic<std::uint64_t> observedUnchanged{0};

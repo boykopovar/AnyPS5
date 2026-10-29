@@ -452,7 +452,7 @@ int APS5_VABI sceKernelSetSuspendState(void);
 int APS5_VABI sceKernelSetTimezoneInfo(void);
 int APS5_VABI sceKernelSetUpdatemode(void);
 int APS5_VABI sceKernelSetVmContainer(void);
-int APS5_VABI sceKernelSettimeofday(void);
+int APS5_VABI sceKernelSettimeofday(const KernelTimeval* tv, const KernelTimezone* tz);
 int APS5_VABI sceKernelSflashGetWritePrio(void);
 int APS5_VABI sceKernelSflashSetWritePrio(void);
 int APS5_VABI sceKernelSlvNotifyError(void);

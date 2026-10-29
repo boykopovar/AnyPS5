@@ -128,7 +128,7 @@ target_include_directories(libc PRIVATE
 target_link_libraries(libc PRIVATE zarchive)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(libc PRIVATE -ffp-contract=off)
+    target_compile_options(libc PRIVATE -ffp-contract=off $<$<CXX_COMPILER_ID:Clang,AppleClang>:-fno-slp-vectorize>)
     if(BUILD_TESTING AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND NOT MSVC)
         add_test(NAME libc_floating_point_contraction
                 COMMAND ${CMAKE_COMMAND} -DCOMPILER=${CMAKE_CXX_COMPILER}

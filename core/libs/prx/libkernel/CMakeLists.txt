@@ -241,9 +241,11 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME guest_process_time_tsc COMMAND guest_process_time_tests tsc)
     add_test(NAME guest_process_time_tsc_scaled COMMAND guest_process_time_tests tsc)
-    set_tests_properties(guest_process_time_tsc_scaled PROPERTIES ENVIRONMENT "APS5_TIME_SCALE=0.5")
+    add_test(NAME guest_process_time_rdtsc COMMAND guest_process_time_tests rdtsc)
+    add_test(NAME guest_process_time_rdtsc_scaled COMMAND guest_process_time_tests rdtsc)
+    set_tests_properties(guest_process_time_tsc_scaled guest_process_time_rdtsc_scaled PROPERTIES ENVIRONMENT "APS5_TIME_SCALE=0.5")
     if(WIN32)
-        set_tests_properties(guest_process_time_tsc guest_process_time_tsc_scaled PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_process_time_tsc guest_process_time_tsc_scaled guest_process_time_rdtsc guest_process_time_rdtsc_scaled PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_process_arguments_tests ${LIBS_INCLUDE_DIR}/tests/GuestProcessArguments.cpp)

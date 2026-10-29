@@ -497,6 +497,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/ProgramHeaderLayoutBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SectionHeaderTableBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/StubBodyBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DecodedInstruction.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/ByteWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libs/nid/src/NidCompute.cpp
