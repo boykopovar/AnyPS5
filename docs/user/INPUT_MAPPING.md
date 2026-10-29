@@ -133,7 +133,7 @@ While the `Shake` input is held (X by default), the controller reports its accel
 
 ## Per-game profiles
 
-A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA16064.ini`. The profile has the same format and overrides only what it lists: an action it names replaces the bindings from the shared file, a setting it names replaces the shared value, and everything else stays. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
+A file named `anyps5-input.<TITLEID>.ini` beside `anyps5-input.ini` (or beside the file `ANYPS5_INPUT_CONFIG` names) is read after it when the running title has that ID, for example `anyps5-input.PPSA00001.ini`. The profile has the same format and overrides only what it lists: an action it names replaces the bindings from the shared file, a setting it names replaces the shared value, and everything else stays. Other titles don't read it. A title ID may contain letters, digits, `_` and `-`. An invalid line in a profile reports the profile's file and line number.
 
 For example, a profile that gives one title a lower mouse sensitivity and Cross on F:
 

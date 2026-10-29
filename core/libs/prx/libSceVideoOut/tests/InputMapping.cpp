@@ -430,11 +430,11 @@ bool crossOnKey(const Pad::InputConfiguration& configuration, SDL_Scancode key) 
 }
 
 void profileNames() {
-    require(Pad::InputProfileName("PPSA16064") == "anyps5-input.PPSA16064.ini", "a title ID names its profile");
+    require(Pad::InputProfileName("PPSA00001") == "anyps5-input.PPSA00001.ini", "a title ID names its profile");
     require(Pad::InputProfileName("CUSA_01-x") == "anyps5-input.CUSA_01-x.ini", "underscores and dashes are allowed");
     require(Pad::InputProfileName("").empty(), "an empty title ID has no profile");
-    require(Pad::InputProfileName("../PPSA16064").empty(), "a title ID with a path separator has no profile");
-    require(Pad::InputProfileName("PPSA16064.ini").empty(), "a title ID with a dot has no profile");
+    require(Pad::InputProfileName("../PPSA00001").empty(), "a title ID with a path separator has no profile");
+    require(Pad::InputProfileName("PPSA00001.ini").empty(), "a title ID with a dot has no profile");
     require(Pad::InputProfileName(std::string(Pad::MaxTitleIdLength + 1, 'A')).empty(), "a title ID over the length limit has no profile");
 }
 
