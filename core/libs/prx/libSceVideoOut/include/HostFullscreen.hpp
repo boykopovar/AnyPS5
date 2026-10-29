@@ -6,7 +6,7 @@ enum class HostFullscreenMode {
     Borderless,
 };
 
-HostFullscreenMode ParseHostFullscreenMode(const char* value);
+HostFullscreenMode ParseHostFullscreenMode(const char* value, bool* unrecognized = nullptr);
 
 struct HostWindowSize {
     int width = 0;
