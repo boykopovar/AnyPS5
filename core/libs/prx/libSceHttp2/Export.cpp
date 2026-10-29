@@ -27,7 +27,7 @@ static constexpr int ERROR_INVALID_ID = static_cast<int>(0x817B1100);
 static constexpr int ERROR_NULL_POINTER = static_cast<int>(0x817B1225);
 static constexpr int ERROR_NOT_FOUND = static_cast<int>(0x817B1025);
 static constexpr int ERROR_INVALID_VALUE = static_cast<int>(0x817B11FE);
-static constexpr int ERROR_TIMEOUT = static_cast<int>(0x817B1068);
+static constexpr int ERROR_TIMEOUT = static_cast<int>(0x817B1079);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
 
 enum class Http2Kind : std::uint8_t { Context, Template, Request, CookieBox };
@@ -415,7 +415,8 @@ int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
 }
 
 int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* timeout, void* option) {
-    if (!result || option) NotImplemented_nid_no_patch(__func__);
+    if (!result) return ERROR_NULL_POINTER;
+    if (option || result->reserved) return ERROR_INVALID_VALUE;
     std::shared_ptr<Http2AsyncState> state;
     {
         std::lock_guard lock(g_handlesMutex);
@@ -425,8 +426,12 @@ int APS5_VABI sceHttp2WaitAsync(int req_id, Http2AsyncResult* result, uint32_t* 
     }
     std::unique_lock lock(state->mutex);
     const auto available = [&] { return state->retired || !state->pending.empty(); };
-    if (timeout && *timeout != 0) {
-        if (!state->changed.wait_for(lock, std::chrono::microseconds(*timeout), available)) return ERROR_TIMEOUT;
+    if (timeout) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(*timeout);
+        const bool ready = state->changed.wait_until(lock, deadline, available);
+        const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - std::chrono::steady_clock::now());
+        *timeout = remaining.count() > 0 ? static_cast<std::uint32_t>(remaining.count()) : 0;
+        if (!ready) return ERROR_TIMEOUT;
     } else {
         state->changed.wait(lock, available);
     }
