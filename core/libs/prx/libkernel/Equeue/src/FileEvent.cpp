@@ -695,7 +695,7 @@ int VnodeDescriptorError(int descriptor) {
     if (!DescriptorIsOpen_nid_no_patch(descriptor)) {
         return GUEST_EBADF;
     }
-    return IsKqueueDescriptor(descriptor) ? GUEST_EINVAL : 0;
+    return IsKqueueDescriptor_nid_no_patch(descriptor) ? GUEST_EINVAL : 0;
 }
 
 }

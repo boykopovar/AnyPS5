@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <list>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 #include <atomic>
@@ -138,6 +139,7 @@ struct VideoOutConfig {
     bool opened = false;
     bool closing = false;
     bool ps4 = false;
+    bool buffersEverRegistered = false;
     std::exception_ptr failure;
     std::stop_token shutdownToken = LibcShutdownToken_nid_postfix();
     int flipRate = 0;
@@ -242,6 +244,7 @@ private:
     void vblankEnd(std::uint64_t tick);
     void updateDisplayRefreshRate();
     void processFlip(FlipRequest& req);
+    std::optional<AgcDriver::DisplayBuffer> overlayPlane();
     void triggerEvents(VideoOutConfig& cfg, int eventKind, void* triggerData);
     void pollHostHdr();
 

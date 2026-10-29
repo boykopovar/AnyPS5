@@ -87,7 +87,14 @@ struct NetSockInfo6 {
     std::int32_t tx_wait;
     std::int32_t reserved[2];
 };
-struct NetStatisticsInfo;
+struct NetStatisticsInfo {
+    std::int32_t kernel_mem_free_size;
+    std::int32_t kernel_mem_free_min;
+    std::int32_t packet_count;
+    std::int32_t packet_qos_count;
+    std::int32_t libnet_mem_free_size;
+    std::int32_t libnet_mem_free_min;
+};
 struct NetInterfaceStats;
 struct NetRouteInfo;
 struct NetDebugParameter;

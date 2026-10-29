@@ -806,6 +806,8 @@ void TestPlayback() {
     Check(sceAvPlayerPostInit(player, &post) == 0, "post init failed");
     Check(sceAvPlayerPostInit(player, nullptr) == InvalidParams, "post init accepted null data");
     Check(sceAvPlayerStreamCount(player) == OperationFailed, "stream count without a source");
+    Check(sceAvPlayerSetTrickSpeed(player, 100) == OperationFailed, "trick speed accepted without a source");
+    Check(sceAvPlayerSetTrickSpeed(player, 0) == OperationFailed, "trick speed checked the speed before the source");
     Check(!sceAvPlayerIsActive(player), "active without a source");
     Check(sceAvPlayerAddSource(player, "/app0/missing.mp4") == OperationFailed, "missing file accepted");
     Check(sceAvPlayerAddSource(player, "/app0/missing/../avplayer.mp4") == OperationFailed, "missing parent accepted");
@@ -1041,6 +1043,7 @@ void TestExtendedExports() {
     Check(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == 0, "bandwidth rejected");
     Check(sceAvPlayerSetAvailableBandwidth(nullptr, 4000, 1000, 8000) == InvalidParams, "bandwidth accepted for a null player");
     Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Check(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == OperationFailed, "bandwidth accepted after a source");
     Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
     CheckStreamInfoEx(player);
     Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
