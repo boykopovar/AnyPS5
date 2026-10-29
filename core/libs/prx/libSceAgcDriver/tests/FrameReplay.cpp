@@ -798,6 +798,7 @@ void testSharedTitleStores(const std::filesystem::path& tool) {
     checkUnwatchedTitleStores(tool, true, [&](std::byte* base) {
         backing.mapped = base;
         AgcDriver::GuestMemory::Unwatch(at(base), 2 * Bytes);
+        GuestArena::GuestArenaReset_nid_postfix(base, BlockBytes);
         GuestArena::GuestArenaMapDirect_nid_postfix(base, Bytes, backing.section, 0, PAGE_READWRITE);
         GuestArena::GuestArenaMapDirect_nid_postfix(base + Bytes, Bytes, backing.section, 0, PAGE_READWRITE);
     });
