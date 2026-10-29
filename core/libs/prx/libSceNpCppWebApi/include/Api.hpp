@@ -2,6 +2,13 @@
 
 #include "SceTypes.hpp"
 
+struct CommonBinary {
+    std::int32_t referenceCount;
+    void* buffer;
+    std::uint64_t size;
+    void* libContext;
+};
+
 struct CommonString {
     std::int32_t referenceCount;
     char* buffer;
@@ -260,8 +267,17 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V1
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6BinaryEEptEv(const IntrusivePtr* self);
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_12Leaderboards2V15EntryEEEEEEdeEv(const IntrusivePtr* self);
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_12Leaderboards2V123RecordScoreResponseBodyEEENS4_INS6_9RecordApi26RecordScoreResponseHeadersEEEE18getResponseHeadersERSB_();
-std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6Binary4sizeEv(const void* self);
-const void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(const void* self);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6BinaryC1EPNS2_10LibContextE(CommonBinary* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6BinaryC2EPNS2_10LibContextE(CommonBinary* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6BinaryD1Ev(CommonBinary* self);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6BinaryD2Ev(CommonBinary* self);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary5clearEv(CommonBinary* self);
+std::int32_t APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary21intrusive_ptr_add_refEPS3_(CommonBinary* self);
+std::int32_t APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary21intrusive_ptr_sub_refEPS3_(CommonBinary* self);
+std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6Binary4sizeEv(const CommonBinary* self);
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(const CommonBinary* self);
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary9setBinaryEPKvm(CommonBinary* self, const void* data, std::uint64_t size);
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary12appendBinaryEPKvm(CommonBinary* self, const void* data, std::uint64_t size);
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEdeEv(const void* self);
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEneERKS9_(const void* self, const void* other);
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V115LocalizedStringEEC1ERS7_(IntrusivePtr* self, const IntrusivePtr* source);
