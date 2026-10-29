@@ -33,6 +33,27 @@ inline bool AppendField(std::string& order, char field) {
     return true;
 }
 
+template <typename Visitor>
+void VisitPatternLetters(std::string_view pattern, Visitor&& visit) {
+    bool quoted = false;
+    for (std::size_t index = 0; index < pattern.size();) {
+        const char letter = pattern[index];
+        if (letter == '\'') {
+            if (index + 1 < pattern.size() && pattern[index + 1] == '\'') {
+                index += 2;
+                continue;
+            }
+            quoted = !quoted;
+            ++index;
+            continue;
+        }
+        std::size_t run = 1;
+        while (index + run < pattern.size() && pattern[index + run] == letter) ++run;
+        index += run;
+        if (!quoted) visit(letter, run);
+    }
+}
+
 }
 
 inline std::optional<int> DateFormatOfStrftime(std::string_view pattern) {
@@ -78,6 +99,18 @@ inline std::optional<int> TimeFormatOfStrftime(std::string_view pattern) {
     }
     if (twelve == twentyFour) return std::nullopt;
     return twelve ? TIME_FORMAT_12HOUR : TIME_FORMAT_24HOUR;
+}
+
+inline std::optional<int> DateFormatOfLdml(std::string_view pattern) {
+    std::string order;
+    bool unique = true;
+    Detail::VisitPatternLetters(pattern, [&](char letter, std::size_t run) {
+        if (letter == 'd' && run <= 2) unique = Detail::AppendField(order, Detail::DAY) && unique;
+        else if (letter == 'M' || letter == 'L') unique = Detail::AppendField(order, Detail::MONTH) && unique;
+        else if (letter == 'y') unique = Detail::AppendField(order, Detail::YEAR) && unique;
+    });
+    if (!unique) return std::nullopt;
+    return Detail::DateFormatOfOrder(order);
 }
 
 }
