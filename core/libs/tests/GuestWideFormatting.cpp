@@ -2,6 +2,8 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include <climits>
+#include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -111,7 +113,7 @@ static void CheckPointer() {
         buffer == std::u16string(u"[      1234][1234      ][00001234][0000001a]"), "vswprintf %p width and precision");
     Require(Format(buffer, 64, u"[%.0p][%p]", address(0), address(0)) == 5 &&
         buffer == std::u16string(u"[][0]"), "vswprintf %p with a zero precision prints nothing");
-    Require(Format(buffer, 64, u"[%lp]", address(0x1234)) == -1, "vswprintf %lp is refused");
+    Require(Format(buffer, 64, u"[%lp]", address(0x1234)) == 6 && buffer == std::u16string(u"[1234]"), "vswprintf %lp ignores the l");
 }
 
 static void CheckCount() {
@@ -132,9 +134,18 @@ static void CheckCount() {
     Require(Format(buffer, 16, u"%2d%ln", 5, &wide) == 2 && wide == 2, "vswprintf %ln");
     count = -7;
     Require(Format(buffer, 16, u"a%5n", &count) < 0 && count == -7, "vswprintf %n with a width");
-    Require(Format(buffer, 16, u"a%Ln", &count) < 0 && count == -7, "vswprintf %Ln");
+    Require(Format(buffer, 16, u"a%Ln", &count) == 1 && count == 1, "vswprintf %Ln writes an int");
+    char16_t lengths[64];
+    Require(Format(lengths, 64, u"%Ld|%Lx|%hf|%zg|%hp|%Lc", 0x41424344, 0x89abcdefu, 1.5, 1.5, reinterpret_cast<void*>(0x1234), 0x44) == 39 &&
+        lengths == std::u16string(u"1094861636|89abcdef|1.500000|1.5|1234|D"), "vswprintf ignores lengths that do not apply");
     const int* const nullCount = nullptr;
     Require(Format(buffer, 16, u"a%n", nullCount) < 0, "vswprintf null %n argument");
+}
+
+static void CheckUnsignedSignFlags() {
+    char16_t buffer[32];
+    Require(swprintf_nid_postfix(buffer, 32, u"[% u|%+u|% lu|% 5u|%+x|% #o]", 7u, 7u, 7ul, 7u, 7u, 7u) == 18 &&
+        buffer == std::u16string(u"[7|7|7|    7|7|07]"), "unsigned conversions ignore the space and plus flags");
 }
 
 static void CheckGroupingFlag() {
@@ -212,6 +223,13 @@ static void CheckSwprintf() {
     Require(swprintf_nid_postfix(wide, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
     Require(wide == std::u16string(u" wide|z  |€"), "swprintf padded output");
     Require(swprintf_nid_postfix(wide, 16, u"%q") < 0 && wide[0] == 0, "swprintf invalid conversion");
+    for (const char16_t* format : {u"%99999999999d", u"%.99999999999d", u"%4294967296s", u"%.4294967296s", u"%2147483648ls", u"%.2147483648ls"}) {
+        wide[0] = u'x';
+        Require(swprintf_nid_postfix(wide, 16, format, 7, u"a") < 0 && wide[0] == 0, "swprintf width or precision beyond int");
+    }
+    wide[0] = u'x';
+    Require(swprintf_nid_postfix(wide, 16, u"%*d", INT_MIN, 7) < 0 && wide[0] == 0, "swprintf INT_MIN width");
+    Require(swprintf_nid_postfix(wide, 16, u"%*d", -5, 7) == 5 && wide == std::u16string(u"7    "), "swprintf negative width");
 }
 
 static bool WcsftimeThrows(char16_t* buffer, const char16_t* format, const GuestTm* time) {
@@ -308,9 +326,18 @@ static void CheckAlternateOctalZero() {
     Require(snwprintf_s_nid_postfix(buffer, 1, u"%#.0o", 0u) == 1 && buffer[0] == 0 && buffer[1] == u'y', "octal zero bounded output");
 }
 
+static void CheckNanSign() {
+    char16_t buffer[64];
+    Require(swprintf_nid_postfix(buffer, 64, u"[%f][%+f][% F][%5.1e]", -NAN, -NAN, NAN, -NAN) == 25, "NaN sign length");
+    Require(buffer == std::u16string(u"[-nan][-nan][ NAN][ -nan]"), "NaN sign");
+    Require(swprintf_nid_postfix(buffer, 64, u"[%-6g][%06a][%LG][%+f][%+G]", NAN, -NAN, -static_cast<long double>(NAN), -INFINITY, NAN) == 34, "NaN flags length");
+    Require(buffer == std::u16string(u"[nan   ][  -nan][-NAN][-inf][+NAN]"), "NaN flags");
+}
+
 int main() {
     CheckAlternateOctalZero();
     CheckBounded();
+    CheckNanSign();
     CheckPositional();
     CheckPointer();
     CheckCount();
@@ -330,4 +357,5 @@ int main() {
     Check(u"%.1s", "\xf0\x9f\x98\x80x", u"");
     Check(u"%.3s", "\xf0\x9f\x98\x80x", u"\U0001f600x");
     CheckGroupingFlag();
+    CheckUnsignedSignFlags();
 }

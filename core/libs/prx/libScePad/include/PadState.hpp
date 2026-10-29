@@ -30,6 +30,7 @@ struct PadInputState {
     std::array<float, 3> gyro{0.0f, 0.0f, 0.0f};
     std::array<PadTouchPoint, 2> touch{};
     std::uint8_t deviceKind = 0;
+    bool intercepted = false;
 };
 
 struct PadTriggerRequest {

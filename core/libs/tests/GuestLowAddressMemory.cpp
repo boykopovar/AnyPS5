@@ -39,7 +39,9 @@ int main() {
     Require(collision != failed && collision != buffer);
     Require(buffer[0] == 0x31 && buffer[bufferBytes - 1] == 0x32);
     Require(munmap_nid_postfix(collision, page) == 0);
-    Require(mmap_nid_postfix(buffer, page, 3, 0x5012, -1, 0) == failed && buffer[0] == 0x31);
+    Require(mmap_nid_postfix(buffer, page, 3, 0x5012, -1, 0) == buffer);
+    Require(buffer[0] == 0 && buffer[bufferBytes - 1] == 0x32);
+    buffer[0] = 0x31;
     Require(mmap_nid_postfix(buffer, page, 3, 0x1012, -1, 0) == buffer);
     Require(buffer[0] == 0 && buffer[bufferBytes - 1] == 0x32);
 

@@ -5,10 +5,16 @@
 #include <climits>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <source_location>
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
+    std::abort();
+}
 
 [[gnu::noinline]] static long double Extended(std::uint16_t signExponent, std::uint64_t mantissa) {
     long double value = 0;
@@ -103,6 +109,11 @@ static void CheckConsoleQuirks() {
     Require(scalblnl_nid_postfix(1.0L, INT64_C(0x100000001)) == 2.0L && scalblnl_nid_postfix(1.0L, INT64_MAX) == 0.5L);
     Require(scalbln_nid_postfix(1.0, INT64_C(0x100000001)) == INFINITY && scalbln_nid_postfix(1.0, INT64_MIN) == 0.0);
     Require(lrint_nid_postfix(0x1p40) == INT64_C(0x10000000000));
+    for (const double outside : {0x1p63, -0x1p64, 1e300, static_cast<double>(INFINITY), -static_cast<double>(INFINITY), static_cast<double>(NAN)}) {
+        Require(lrint_nid_postfix(outside) == INT64_MIN && llrint_nid_postfix(outside) == LLONG_MIN);
+        Require(lrintf_nid_postfix(static_cast<float>(outside)) == INT64_MIN && llrintf_nid_postfix(static_cast<float>(outside)) == LLONG_MIN);
+    }
+    Require(lrint_nid_postfix(-0x1p63) == INT64_MIN && lrintf_nid_postfix(0x1.fffffep62f) == INT64_C(0x7fffff8000000000));
     const long double product = Extended(0x4000, 0xe000000000000000ull) * Extended(0x4001, 0xda76b022816f6a94ull);
     Require(SameBits(fmal_nid_postfix(Extended(0x4000, 0xe000000000000000ull), Extended(0x4001, 0xda76b022816f6a94ull), Extended(0x9b45, 0xd3b49eac84283c95ull)), product));
     Require(finite_nid_postfix(1.0) == 1 && finite_nid_postfix(INFINITY) == 0);
@@ -130,6 +141,10 @@ static void CheckRoundingModes() {
 static void CheckClassification() {
     const long double pseudoDenormal = Extended(0x0000, 0x8000000000000000ull);
     Require(_LDtest_nid_postfix(&pseudoDenormal) == -1 && __fpclassifyl_nid_postfix(pseudoDenormal) == -2);
+    for (const long double unnormal : {Extended(0x3fff, 0x4000000000000000ull), Extended(0x8001, 0), Extended(0x7ffe, 0x7fffffffffffffffull)}) {
+        Require(_LDtest_nid_postfix(&unnormal) == -2 && _LDclass_nid_postfix(unnormal) == -2);
+        Require(__fpclassifyl_nid_postfix(unnormal) == -1 && __isnormall_nid_postfix(unnormal) == 1);
+    }
     const long double zero = 0.0L, infinity = INFINITY, nan = NAN, denormal = Extended(0, 1);
     Require(_LDtest_nid_postfix(&zero) == 0 && _LDtest_nid_postfix(&infinity) == 1 && _LDtest_nid_postfix(&nan) == 2 && _LDtest_nid_postfix(&denormal) == -2);
     Require(__fpclassifyl_nid_postfix(1.0L) == -1 && __fpclassifyl_nid_postfix(0.0L) == 0 && __fpclassifyl_nid_postfix(INFINITY) == 1);
