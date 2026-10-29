@@ -864,6 +864,9 @@ int main() {
     };
     auto version46Dither = twoSample;
     version46Dither.pop_back();
+    const auto ditherMerge = std::search(version46Dither.begin(), version46Dither.end(), pixel.sampleLocations.begin(), pixel.sampleLocations.end()) - version46Dither.begin() + static_cast<std::ptrdiff_t>(pixel.sampleLocations.size() + 1u + sizeof(pixel.sampleOrder));
+    Require(static_cast<std::size_t>(ditherMerge) > ditherByte);
+    EraseTargetMergeVersion50Fields(version46Dither, ditherMerge);
     version46Dither[4] = 46u;
     Require(rejectsDither(version46Dither));
     version46Dither[ditherByte] = 1u;
