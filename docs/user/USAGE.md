@@ -105,11 +105,21 @@ The `--skip-sce-module`, `--exclude-sce-module <file>`, `--skip-syscall-check`, 
 
 A patch file changes bytes of the input executable or of a bundled module before conversion, for a title that hard-codes a value the host cannot meet. The relinker checks the bytes it replaces, so a patch for another version of the title fails instead of corrupting it. With no patch file the output is unchanged.
 
-The advisor requires Python 3.11 or newer. To check a local patch catalog, run:
+The advisor and catalog validator require Python 3.11 or newer. To check a local patch catalog, run:
 
 ```sh
 python3 tools/suggest_patches.py --catalog <directory> --param-json <sce_sys/param.json> --input <input.elf> --relinker <relinker> [--sce-module-path <directory>] [--module-dir <directory>]... [--executable <path>]... [--skip-sce-module] [--timeout-seconds <seconds>] [--list-verified]
 ```
+
+To check every entry in a catalog before sharing it, without game files or a relinker, run:
+
+```sh
+python3 tools/validate_patch_catalog.py --catalog <directory>
+```
+
+The validator checks the index format, duplicate JSON keys, required and optional fields, relative patch and target paths, patch-file presence, TOML structure, target-hash coverage, and duplicate `id` entries that could match the same title build. Entries with the same `id` and content version may coexist when a shared target has different hashes, making their matches mutually exclusive. To publish a new `revision` for the same build, remove the old entry. An empty `entries` array is valid and reports `0 entries valid`.
+
+The validator reports each invalid entry and exits `2` if any entry is invalid; a valid catalog exits `0`. This is a structural check: the relinker accepts a stricter subset of TOML, and only `relinker --verify-patches` with the title files can establish whether the patch parses and matches those files. The validator does not read target files, download anything, or apply patches.
 
 The advisor reads `titleId` and `contentVersion` from the specified `param.json`, checks the SHA-256 of every file targeted by a candidate patch, then calls the relinker specified by `--relinker` to run `--verify-patches`. A relative path such as `--relinker ./relinker` resolves to that local file. The explicit metadata path also works when `param.json` and the unwrapped ELF files are stored separately. The catalog directory must contain an `index.json` with `format: 1` and an `entries` array. Each entry has `titleId`, `contentVersion`, a relative `patch` path, and `targets` mapping every patch target to its SHA-256. Hexadecimal digests are case-insensitive. For example:
 
@@ -243,6 +253,8 @@ Resources can also be packed into `app0.zar` beside `app0/`, a [ZArchive](https:
 For bundled title modules, use the `.guest.prx` files the relinker writes into `app0/` and lists in the layout it prints. `libs/` is for AnyPS5 system libraries, not the original PS5 `.prx` files. Placing an original PS5 module in `libs/` on Windows makes Windows try to load it as a DLL and can fail with error 193 (not a valid Win32 application). A module the title loads while it runs that was not relinked, such as one in a directory not given to `--module-dir`, is not loaded either: the title gets an error and continues, and the runtime prints `[module] dlopen: <path> was not relinked: ...` once for each file. Relink that module's directory with `--module-dir <dir>`.
 
 On Windows, a self-built `libs/` also needs `libgcc_s_seh-1.dll`, `libstdc++-6.dll` and `libwinpthread-1.dll` from the `mingw64/bin` directory of the toolchain that built the libraries; the release archives already contain them. The libraries are loaded without searching `PATH`, so a copy elsewhere on the system is not used, and a library that needs one of them fails with error 126 (the specified module could not be found) although its `.prx` file is present. With `APS5_MIMALLOC` set, the title loads `mimalloc.dll` and `mimalloc-redirect.dll` from `libs/` and allocates through mimalloc. Copy both from `build/core/libs/libs`; the release archives contain them. Without them the title keeps the C runtime's heap and prints nothing.
+
+On macOS, with `APS5_MIMALLOC` set, the title starts again at once with `libmimalloc.dylib` from `libs/` loaded and allocates through mimalloc; the self-built `build/core/libs/libs` already contains it. Without the file the title keeps the system allocator and prints nothing.
 
 On Windows, direct memory (`sceKernelAllocateDirectMemory`, up to 13824 MiB per title) is committed when the title maps it, not when the title allocates it or first uses its pages. The system commit limit (installed memory plus page file size, the second value of Committed in Task Manager) must cover the mapped direct memory together with all other committed memory. Otherwise `sceKernelMapDirectMemory` throws `replace guest placeholder with resident direct memory` with the Windows error (`commit direct memory pages` when a page is mapped at a second address, `keep unmapped direct memory` when it is unmapped); enlarge the page file or close other applications.
 

@@ -347,12 +347,10 @@ void ForgetDirectoryStream_nid_no_patch(int descriptor) {
     g_forgetDirectoryDescriptor(descriptor);
 }
 
-static FileStream* OpenDirectoryStream(const std::filesystem::path& path) {
-    if (!g_openDirectoryDescriptor) throw std::runtime_error("fopen: libkernel has not registered its directory descriptors");
+static std::FILE* OpenDirectoryHandle(const std::filesystem::path& path, const std::string& = {}) {
+    if (!g_openDirectoryDescriptor) throw std::runtime_error("OpenDirectoryHandle: libkernel has not registered its directory descriptors");
     const auto filename = HostOpenName(path);
     if (!filename) { errno = GuestErrnoFromHost_nid_no_patch(errno); return nullptr; }
-    const auto release = [](void* pointer) { ::operator delete(pointer); };
-    std::unique_ptr<void, decltype(release)> storage(::operator new(sizeof(FileStream)), release);
     const int descriptor = g_openDirectoryDescriptor(filename->c_str());
     if (descriptor < 0) {
         const int error = GuestErrnoFromHost_nid_no_patch(errno);
@@ -365,8 +363,15 @@ static FileStream* OpenDirectoryStream(const std::filesystem::path& path) {
         ForgetDirectoryStream_nid_no_patch(descriptor);
         ::_close(descriptor);
         errno = error;
-        return nullptr;
     }
+    return native;
+}
+
+static FileStream* OpenDirectoryStream(const std::filesystem::path& path) {
+    const auto release = [](void* pointer) { ::operator delete(pointer); };
+    std::unique_ptr<void, decltype(release)> storage(::operator new(sizeof(FileStream)), release);
+    auto* native = OpenDirectoryHandle(path);
+    if (!native) return nullptr;
     auto* stream = new (storage.get()) FileStream(native, true);
     storage.release();
     stream->MarkDirectory();
@@ -389,6 +394,19 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
             errno = error;
             return nullptr;
         }
+#ifdef _WIN32
+        if (std::error_code status; !parsed->writes && std::filesystem::is_directory(path, status)) {
+            if (stream->IsHostStandard()) throw std::runtime_error("freopen: reopening a standard stream onto a directory is not implemented");
+            if (!stream->Reopen(path, parsed->native.c_str(), OpenDirectoryHandle)) {
+                const int error = errno;
+                if (stream->IsDynamic()) delete stream;
+                errno = error;
+                return nullptr;
+            }
+            stream->MarkDirectory();
+            return stream;
+        }
+#endif
         if (stream->Reopen(path, parsed->native.c_str(), OpenNative)) {
 #ifdef _WIN32
             if (parsed->append && !AppendOnlyDescriptor(_fileno(stream->GetHandle()))) {
@@ -558,6 +576,7 @@ int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int or
     const int nativeError = errno;
     stream->SyncStatus();
     if (result) errno = nativeError == EOVERFLOW ? 84 : nativeError;
+    else stream->SetLowSurrogate(0);
     return result;
 }
 

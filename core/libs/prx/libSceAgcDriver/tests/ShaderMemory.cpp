@@ -757,7 +757,7 @@ void verifyPlanConditionPruning() {
     require(plan.controlFlow[1].condition != nullptr && plan.controlFlow[2].condition != nullptr, "plan pruning: a condition the evaluator can read was dropped");
     const auto copiedLoad = std::ranges::find_if(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::LoadBufferU32; });
     require(copiedLoad != plan.valueStorage.end() && copiedLoad->ArgumentCount() == 0u, "plan pruning: the unevaluable load was not kept as a leaf");
-    require(std::ranges::all_of(plan.valueStorage, [](const IrValue& value) { return !value.HasUses() && value.OperandUses().empty() && value.Arguments().capacity() == value.ArgumentCount(); }), "plan compaction: a plan value keeps use lists or spare operand capacity");
+    require(std::ranges::all_of(plan.valueStorage, [](const IrValue& value) { return !value.HasUses() && value.OperandUses().empty() && value.Arguments().capacity() == std::max(value.ArgumentCount(), IrOperands::InlineCapacity); }), "plan compaction: a plan value keeps use lists or spare heap operand capacity");
     const std::array<std::uint32_t, 4> data{0x100u, 7u, static_cast<std::uint32_t>(wordAddress), static_cast<std::uint32_t>(wordAddress >> 32u)};
     SrtRuntime runtime{data};
     Detail::Evaluator evaluator(plan, runtime);

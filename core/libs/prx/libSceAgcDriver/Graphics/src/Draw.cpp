@@ -1408,6 +1408,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     inputs.maxIndex = draw.indexed ? 0u : draw.firstVertex + draw.indexCount - 1u;
     if (state.quadList || StripPatches(state, shaders)) {
         Require(!draw.indirect, state.quadList ? "indirect quad-list draw is unsupported" : "an indirect triangle strip through emulated barycentric patches is unsupported");
+        Require(state.quadList || !draw.indexed || !state.primitiveRestart, "an indexed triangle strip with primitive restart through emulated barycentric patches is unsupported");
         const std::uint32_t primitives = state.quadList ? draw.indexCount / 4u : draw.indexCount >= 3u ? draw.indexCount - 2u : 0u;
         if (primitives == 0u || draw.instanceCount == 0u) {
             inputs.nothing = true;
