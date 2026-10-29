@@ -1,0 +1,14 @@
+add_library(libSceNpFriendListDialog SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpFriendListDialog PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpFriendListDialog)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_friend_list_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpFriendListDialog.cpp)
+    target_include_directories(guest_np_friend_list_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_friend_list_dialog_tests PRIVATE libSceNpFriendListDialog)
+    add_test(NAME guest_np_friend_list_dialog COMMAND guest_np_friend_list_dialog_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_friend_list_dialog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpFriendListDialog>")
+    endif()
+endif()

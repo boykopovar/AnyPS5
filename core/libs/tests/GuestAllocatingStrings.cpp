@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
@@ -7,15 +8,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-char* APS5_VABI strndup_nid_postfix(const char*, std::size_t);
-char* APS5_VABI strdup_nid_postfix(const char*);
-int APS5_VABI asprintf_nid_postfix(char**, const char*, ...);
-int APS5_VABI vasprintf_nid_postfix(char**, const char*, VaList*);
-void APS5_VABI free_nid_postfix(void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 

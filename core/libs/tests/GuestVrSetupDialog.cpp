@@ -1,17 +1,8 @@
+#include "prx/libSceVrSetupDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
-
-extern "C" {
-int APS5_VABI sceVrSetupDialogInitialize(void);
-int APS5_VABI sceVrSetupDialogOpen(const VrSetupDialogParam* param);
-int APS5_VABI sceVrSetupDialogUpdateStatus(void);
-int APS5_VABI sceVrSetupDialogGetStatus(void);
-int APS5_VABI sceVrSetupDialogGetResult(std::int32_t* result);
-int APS5_VABI sceVrSetupDialogClose(void);
-int APS5_VABI sceVrSetupDialogTerminate(void);
-}
 
 namespace {
 
@@ -34,6 +25,7 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceVrSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
     Require(sceVrSetupDialogOpen(&param) == kErrNotInitialized);
     Require(sceVrSetupDialogClose() == kErrNotInitialized);
     Require(sceVrSetupDialogGetResult(nullptr) == kErrArgNull);
@@ -70,9 +62,18 @@ int main() {
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
 
+    Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
+    param.size = 55;
+    Require(sceVrSetupDialogOpen(&param) == kErrArgNull);
+    param.size = sizeof(param);
+    Require(sceVrSetupDialogOpen(&param) == 0);
+    Require(sceVrSetupDialogGetStatus() == kStatusFinished);
+
     Require(sceVrSetupDialogClose() == 0);
     Require(sceVrSetupDialogTerminate() == 0);
     Require(sceVrSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
+    Require(sceVrSetupDialogGetResult(nullptr) == kErrArgNull);
     Require(sceVrSetupDialogGetStatus() == kStatusNone);
     Require(sceVrSetupDialogUpdateStatus() == kStatusNone);
 

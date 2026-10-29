@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -19,132 +22,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" {
-int APS5_VABI sceAmprCommandBufferConstructor(Apr::CommandBufferObject*);
-int APS5_VABI sceAmprAprCommandBufferConstructor(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*);
-int APS5_VABI sceAmprCommandBufferSetBuffer(Apr::CommandBufferObject*, void*, std::uint32_t);
-int APS5_VABI sceAmprCommandBufferReset(Apr::CommandBufferObject*);
-void* APS5_VABI sceAmprCommandBufferClearBuffer(Apr::CommandBufferObject*);
-std::uint32_t APS5_VABI sceAmprCommandBufferGetCurrentOffset(const Apr::CommandBufferObject*);
-std::uint32_t APS5_VABI sceAmprCommandBufferGetNumCommands(const Apr::CommandBufferObject*);
-int APS5_VABI sceAmprCommandBufferWriteAddressOnCompletion(Apr::CommandBufferObject*, volatile std::uint64_t*, std::uint64_t);
-int APS5_VABI sceAmprCommandBufferPushMarker(Apr::CommandBufferObject*, const char*);
-int APS5_VABI sceAmprCommandBufferPushMarkerWithColor(Apr::CommandBufferObject*, const char*, std::uint32_t);
-int APS5_VABI sceAmprCommandBufferPopMarker(Apr::CommandBufferObject*);
-int APS5_VABI sceAmprCommandBufferSetMarker(Apr::CommandBufferObject*, const char*);
-int APS5_VABI sceAmprCommandBufferSetMarkerWithColor(Apr::CommandBufferObject*, const char*, const std::uint32_t*);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarker(const char*);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizePushMarkerWithColor(const char*, std::uint32_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizePopMarker();
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarker(const char*);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeSetMarkerWithColor(const char*, std::uint32_t);
-int APS5_VABI sceKernelAprSubmitCommandBuffer(const Apr::CommandBufferObject*, std::uint32_t);
-int APS5_VABI sceKernelAprSubmitCommandBufferAndGetId(const Apr::CommandBufferObject*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceKernelAprWaitCommandBuffer(std::uint32_t);
-int APS5_VABI sceAmprCommandBufferWaitOnAddress(Apr::CommandBufferObject*, volatile std::uint64_t*, std::uint64_t, std::uint8_t, std::uint8_t);
-int APS5_VABI sceAmprCommandBufferWaitOnCounter(Apr::CommandBufferObject*, std::uint8_t, std::uint32_t, std::uint8_t, std::uint8_t);
-int APS5_VABI sceAmprCommandBufferWriteCounterOnCompletion(Apr::CommandBufferObject*, std::uint8_t, std::uint32_t);
-int APS5_VABI sceAmprCommandBufferWriteAddressFromTimeCounterOnCompletion(Apr::CommandBufferObject*, volatile std::uint64_t*);
-int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterOnCompletion(Apr::CommandBufferObject*, volatile std::uint64_t*, std::uint8_t);
-int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterPairOnCompletion(Apr::CommandBufferObject*, volatile std::uint64_t*, std::uint8_t);
-int APS5_VABI sceAmprCommandBufferWriteKernelEventQueueOnCompletion(Apr::CommandBufferObject*, std::uint64_t, std::int32_t, std::uint64_t);
-int APS5_VABI sceAmprCommandBufferNop(Apr::CommandBufferObject*, std::uint32_t);
-int APS5_VABI sceAmprCommandBufferNopWithData(Apr::CommandBufferObject*, std::uint32_t, const std::uint32_t*);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeNop(std::uint32_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeNopWithData(std::uint32_t);
-int APS5_VABI sceAmprCommandBufferWaitOnAddress_04_00(Apr::CommandBufferObject*, volatile std::uint64_t*, std::uint64_t, std::uint8_t, std::uint8_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWaitOnAddress_04_00(volatile std::uint64_t*, std::uint64_t, std::uint8_t, std::uint8_t);
-int APS5_VABI sceAmprCommandBufferWriteAddressFromTimeCounter_04_00(Apr::CommandBufferObject*, volatile std::uint64_t*, std::uint64_t);
-int APS5_VABI sceAmprCommandBufferWriteAddressFromCounter_04_00(Apr::CommandBufferObject*, volatile std::uint64_t*, std::uint8_t, std::uint64_t);
-int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterPair_04_00(Apr::CommandBufferObject*, volatile std::uint64_t*, std::uint8_t, std::uint64_t);
-int APS5_VABI sceAmprCommandBufferWriteKernelEventQueue_04_00(Apr::CommandBufferObject*, std::uint64_t, std::int32_t, std::uint64_t, std::uint64_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromTimeCounter_04_00(volatile std::uint64_t*);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromCounter_04_00(volatile std::uint64_t*, std::uint8_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromCounterPair_04_00(volatile std::uint64_t*, std::uint8_t);
-int APS5_VABI sceAmprCommandBufferWaitOnCounter_04_00(Apr::CommandBufferObject*, std::uint8_t, std::uint8_t, std::uint64_t, std::uint8_t, std::uint8_t, std::uint64_t, std::uint8_t);
-int APS5_VABI sceAmprCommandBufferWriteCounter_04_00(Apr::CommandBufferObject*, std::uint8_t, std::uint8_t, std::uint64_t, std::uint8_t, std::uint8_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWaitOnCounter_04_00(std::uint8_t, std::uint8_t, std::uint64_t, std::uint8_t, std::uint8_t, std::uint64_t, std::uint8_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteCounter_04_00(std::uint8_t, std::uint8_t, std::uint64_t, std::uint8_t);
-int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject*, std::int16_t, const void*, std::uint32_t, const std::uint32_t*);
-int APS5_VABI sceAmprCommandBufferConstructMarker(Apr::CommandBufferObject*, std::uint32_t, const char*, const std::uint32_t*);
-int APS5_VABI sceKernelAprResolveFilepathsToIds(const char**, std::uint32_t, std::uint32_t*, std::uint32_t*);
-int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char**, std::uint32_t, std::uint32_t*, std::uint64_t*, std::uint32_t*);
-int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(const char**, std::uint32_t, std::uint32_t*, std::uint64_t*, int*);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sceAmprAprCommandBufferReadFile(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, std::uint32_t, void*, std::uint64_t, std::uint64_t);
-std::uint32_t APS5_VABI sceAmprMeasureCommandSizeReadFile();
-int APS5_VABI sceAmprAprCommandBufferReadFileGather(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, std::uint64_t, std::uint64_t);
-int APS5_VABI sceAmprAprCommandBufferReadFileScatter(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, void*, std::uint64_t);
-int APS5_VABI sceAmprAprCommandBufferReadFileGatherScatter(Apr::CommandBufferObject*, std::uint64_t*, std::uint64_t*, void*, std::uint64_t, std::uint64_t);
-int APS5_VABI sceAmprAprCommandBufferResetGatherScatterState(Apr::CommandBufferObject*);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeReadFileGather(std::uint64_t, std::uint64_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeReadFileScatter(void*, std::uint64_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeReadFileGatherScatter(void*, std::uint64_t, std::uint64_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeResetGatherScatterState();
-std::size_t APS5_VABI sceKernelGetDirectMemorySize();
-int APS5_VABI sceAmprAmmGetUsageStatsData(void*);
-int APS5_VABI sceAmprAmmCommandBufferConstructor(Apr::CommandBufferObject*);
-int APS5_VABI sceAmprAmmCommandBufferMap(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t);
-int APS5_VABI sceAmprAmmCommandBufferMapWithGpuMaskId(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t, std::uint8_t);
-int APS5_VABI sceAmprAmmCommandBufferMapDirect(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t);
-int APS5_VABI sceAmprAmmCommandBufferMapDirectWithGpuMaskId(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t, std::uint8_t);
-int APS5_VABI sceAmprAmmCommandBufferUnmap(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMap(std::uint64_t, std::uint64_t, std::int32_t, std::int32_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMapWithGpuMaskId(std::uint64_t, std::uint64_t, std::int32_t, std::int32_t, std::uint8_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMapDirect(std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMapDirectWithGpuMaskId(std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t, std::uint8_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeUnmap(std::uint64_t, std::uint64_t);
-int APS5_VABI sceAmprAmmGiveDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceAmprAmmGetVirtualAddressRanges(std::uint64_t*, std::uint64_t*, std::uint64_t*, std::uint64_t*);
-int APS5_VABI sceAmprAmmSubmitCommandBuffer(void*, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAmprAmmSubmitCommandBuffer2(void*, std::uint32_t, std::uint32_t, std::uint64_t*, std::uint32_t*);
-int APS5_VABI sceAmprAmmSubmitCommandBuffer3(void*, std::uint32_t, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceAmprAmmWaitCommandBufferCompletion(std::uint32_t);
-int APS5_VABI sceAmprAprCommandBufferMapBegin(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t);
-int APS5_VABI sceAmprAprCommandBufferMapDirectBegin(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t);
-int APS5_VABI sceAmprAprCommandBufferMapEnd(Apr::CommandBufferObject*);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeMapBegin(std::uint64_t, std::uint64_t, std::uint32_t, std::uint32_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeMapDirectBegin(std::uint64_t, std::uint64_t, std::uint64_t, std::uint32_t, std::uint32_t);
-std::uint64_t APS5_VABI sceAmprMeasureCommandSizeMapEnd();
-int APS5_VABI sceKernelQueryMemoryProtection(void*, void**, void**, int*);
-int APS5_VABI sceKernelReserveVirtualRange(void**, std::size_t, int, std::size_t);
-int APS5_VABI sceKernelMapFlexibleMemory(void**, std::size_t, int, int);
-int APS5_VABI sceKernelMunmap(void*, std::size_t);
-int APS5_VABI sceAmprAmmCommandBufferMapAsPrt(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t);
-int APS5_VABI sceAmprAmmCommandBufferAllocatePaForPrt(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t);
-int APS5_VABI sceAmprAmmCommandBufferRemapIntoPrt(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::uint32_t);
-int APS5_VABI sceKernelWriteModifyMtypeProtectCommand(void*, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t*);
-int APS5_VABI sceKernelWriteRemapIntoPrtCommand(std::uint32_t*, std::uint64_t, std::uint64_t, std::uint64_t, int, int, std::uint64_t*);
-int APS5_VABI sceAmprAmmCommandBufferUnmapToPrt(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMapAsPrt(std::uint64_t, std::uint64_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeAllocatePaForPrt(std::uint64_t, std::uint64_t, std::int32_t, std::int32_t);
-int APS5_VABI sceAmprAmmCommandBufferRemap(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t);
-int APS5_VABI sceAmprAmmCommandBufferRemapWithGpuMaskId(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::uint8_t);
-int APS5_VABI sceAmprAmmCommandBufferMultiMap(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t);
-int APS5_VABI sceAmprAmmCommandBufferMultiMapWithGpuMaskId(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::uint8_t);
-int APS5_VABI sceAmprAmmCommandBufferModifyProtect(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t);
-int APS5_VABI sceAmprAmmCommandBufferModifyProtectWithGpuMaskId(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t, std::uint8_t);
-int APS5_VABI sceAmprAmmCommandBufferModifyMtypeProtect(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t, std::int32_t);
-int APS5_VABI sceAmprAmmCommandBufferModifyMtypeProtectWithGpuMaskId(Apr::CommandBufferObject*, std::uint64_t, std::uint64_t, std::int32_t, std::int32_t, std::int32_t, std::uint8_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeRemap(std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeRemapWithGpuMaskId(std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::uint8_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMultiMap(std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMultiMapWithGpuMaskId(std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::uint8_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeModifyProtect(std::uint64_t, std::uint64_t, std::int32_t, std::int32_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeModifyProtectWithGpuMaskId(std::uint64_t, std::uint64_t, std::int32_t, std::int32_t, std::uint8_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeModifyMtypeProtect(std::uint64_t, std::uint64_t, std::int32_t, std::int32_t, std::int32_t);
-std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeModifyMtypeProtectWithGpuMaskId(std::uint64_t, std::uint64_t, std::int32_t, std::int32_t, std::int32_t, std::uint8_t);
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue*, const char*);
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue);
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue, KernelEvent*, int, int*, const KernelUseconds*);
-int APS5_VABI sceKernelAddAmprEvent(KernelEqueue, int, void*);
-int APS5_VABI sceKernelDeleteAmprEvent(KernelEqueue, int);
-int APS5_VABI sceKernelGetEventFilter(const KernelEvent*);
-std::uintptr_t APS5_VABI sceKernelGetEventId(const KernelEvent*);
-std::intptr_t APS5_VABI sceKernelGetEventData(const KernelEvent*);
-void* APS5_VABI sceKernelGetEventUserData(const KernelEvent*);
-}
 
 static void RequireAt(bool value, int line) {
     if (value) return;
@@ -177,9 +54,20 @@ struct Recorder {
     std::uint32_t Commands() const { return sceAmprCommandBufferGetNumCommands(&buffer); }
 };
 
+std::uint32_t HeaderAt(const Recorder& recorder, std::uint32_t offset) {
+    std::uint32_t first;
+    std::memcpy(&first, recorder.memory.data() + offset, sizeof(first));
+    return first;
+}
+
 void RequireAppended(const Recorder& recorder, std::uint32_t offset, std::uint32_t commands, Apr::Opcode opcode, std::uint64_t measured) {
     Require(recorder.Offset() == offset + measured);
     Require(recorder.Commands() == commands + 1);
+    if (opcode == Apr::Opcode::Nop) {
+        const std::uint32_t first = HeaderAt(recorder, offset);
+        Require(Apr::IsNopHeader(first) && Apr::NopDwords(first) * 4u == measured);
+        return;
+    }
     Apr::CommandHeader header;
     std::memcpy(&header, recorder.memory.data() + offset, sizeof(header));
     if (opcode == Apr::Opcode::CompactReadFileGather) {
@@ -347,6 +235,7 @@ void TestKernelEventQueue() {
     Require(sceKernelAddAmprEvent(eq, 7, &userData) == 0);
     Recorder recorder;
     Require(sceAmprCommandBufferWriteKernelEventQueue_04_00(&recorder.buffer, static_cast<std::uint64_t>(eq), 7, 0x1234, 0) == 0);
+    RequireAppended(recorder, 0, 0, Apr::Opcode::WriteKernelEventQueue, sceAmprMeasureCommandSizeWriteKernelEventQueue_04_00(static_cast<std::uint64_t>(eq), 7, 0x1234));
     Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
     KernelEvent event{};
     int count = 0;
@@ -461,19 +350,24 @@ void TestNops() {
     for (std::uint32_t dwords = 1; dwords <= 16; ++dwords) {
         const auto offset = recorder.Offset();
         const auto commands = recorder.Commands();
+        std::memset(recorder.memory.data() + offset, 0x5A, dwords * 4u);
         Require(sceAmprCommandBufferNop(&recorder.buffer, dwords) == 0);
         RequireAppended(recorder, offset, commands, Apr::Opcode::Nop, sceAmprMeasureCommandSizeNop(dwords));
+        Require(HeaderAt(recorder, offset) == (0x5452000Fu | (dwords - 1u) << 8u));
+        for (std::size_t index = Apr::NopHeaderBytes; index < dwords * 4u; ++index) Require(recorder.memory[offset + index] == 0x5A);
     }
     const auto offset = recorder.Offset();
     const auto commands = recorder.Commands();
     Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 3, data) == 0);
     RequireAppended(recorder, offset, commands, Apr::Opcode::Nop, sceAmprMeasureCommandSizeNopWithData(4));
-    Require(std::memcmp(recorder.memory.data() + offset + sizeof(Apr::CommandHeader), data, sizeof(data)) == 0);
+    Require(HeaderAt(recorder, offset) == 0x5452030Fu);
+    Require(std::memcmp(recorder.memory.data() + offset + Apr::NopHeaderBytes, data, sizeof(data)) == 0);
     Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 0, nullptr) == 0);
+    Require(HeaderAt(recorder, offset + 16u) == 0x5452000Fu);
     const auto emptyPayloadOffset = recorder.Offset();
     std::memset(recorder.memory.data() + emptyPayloadOffset, 0x5A, sceAmprMeasureCommandSizeNopWithData(4));
     Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 3, nullptr) == 0);
-    for (std::size_t index = 0; index < 12; ++index) Require(recorder.memory[emptyPayloadOffset + sizeof(Apr::CommandHeader) + index] == 0x5A);
+    for (std::size_t index = 0; index < 12; ++index) Require(recorder.memory[emptyPayloadOffset + Apr::NopHeaderBytes + index] == 0x5A);
     Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
 
     const auto rejected = static_cast<std::uint64_t>(static_cast<std::uint32_t>(invalidArgument));
@@ -482,6 +376,45 @@ void TestNops() {
     Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 16, data) == invalidArgument);
     Require(sceAmprMeasureCommandSizeNop(0) == rejected && sceAmprMeasureCommandSizeNop(17) == rejected);
     Require(sceAmprMeasureCommandSizeNopWithData(0) == rejected && sceAmprMeasureCommandSizeNopWithData(17) == rejected);
+
+    Apr::CommandBufferObject unbound{};
+    Require(sceAmprCommandBufferConstructor(&unbound) == 0);
+    Require(sceAmprCommandBufferNop(&unbound, 0) == permissionDenied);
+    Require(sceAmprCommandBufferNop(&unbound, 17) == permissionDenied);
+    Require(sceAmprCommandBufferNopWithData(&unbound, 16, data) == permissionDenied);
+    Require(sceAmprCommandBufferConstructNop(&unbound, 0, data, 61, nullptr) == permissionDenied);
+    Require(unbound.offset == 0 && unbound.numCommands == 0);
+}
+
+void TestNopPadding() {
+    Require(sceAmprMeasureCommandSizeNop(1) == 4 && sceAmprMeasureCommandSizeNop(16) == 64);
+    Require(sceAmprMeasureCommandSizeNopWithData(1) == 4 && sceAmprMeasureCommandSizeNopWithData(16) == 64);
+
+    Recorder recorder(64);
+    alignas(8) std::uint64_t done = 0;
+    Require(sceAmprCommandBufferPushMarker(&recorder.buffer, "pad") == 0);
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&recorder.buffer, &done, 1) == 0);
+    const std::uint32_t remaining = 64 - recorder.Offset();
+    Require(remaining % 4 == 0 && remaining / 4 >= 2);
+    Require(sceAmprCommandBufferNop(&recorder.buffer, remaining / 4 + 1) == busy);
+    Require(recorder.Offset() == 64 - remaining && recorder.Commands() == 2);
+    Require(sceAmprCommandBufferNop(&recorder.buffer, remaining / 4) == 0);
+    Require(recorder.Offset() == 64 && recorder.Commands() == 3);
+    Require(sceAmprCommandBufferNop(&recorder.buffer, 1) == busy);
+    Require(sceAmprCommandBufferNopWithData(&recorder.buffer, 0, nullptr) == busy);
+    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
+    Require(done == 1);
+
+    Recorder odd;
+    done = 0;
+    Require(sceAmprCommandBufferNop(&odd.buffer, 1) == 0);
+    Require(odd.Offset() == 4);
+    Require(sceAmprCommandBufferWriteAddressOnCompletion(&odd.buffer, &done, 2) == 0);
+    Require(sceAmprCommandBufferNopWithData(&odd.buffer, 2, nullptr) == 0);
+    Require(sceAmprCommandBufferNop(&odd.buffer, 1) == 0);
+    Require(odd.Offset() == 4 + sizeof(Apr::WriteAddressCommand) + 12 + 4);
+    Require(sceKernelAprSubmitCommandBuffer(&odd.buffer, 0) == 0);
+    Require(done == 2);
 }
 
 void TestVersionedCommands() {
@@ -582,6 +515,10 @@ void TestVersionedCounters() {
 
 void TestClearBuffer() {
     Recorder recorder;
+    Require(sceAmprMeasureCommandSizeWriteAddressOnCompletion() == sizeof(Apr::WriteAddressCommand));
+    Require(sceAmprMeasureCommandSizeWriteCounterOnCompletion() == sizeof(Apr::WriteCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompletion() == sizeof(Apr::WriteKernelEventQueueCommand));
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&recorder.buffer) == recorder.buffer.base);
     Require(sceAmprCommandBufferNop(&recorder.buffer, 1) == 0);
     Require(recorder.Offset() != 0 && recorder.Commands() == 1);
     Require(sceAmprCommandBufferClearBuffer(&recorder.buffer) == recorder.memory.data());
@@ -595,11 +532,20 @@ void TestConstructed() {
     const std::uint32_t word = 0xCAFEF00Du;
     auto offset = recorder.Offset();
     auto commands = recorder.Commands();
+    std::memset(recorder.memory.data() + offset, 0x5A, 20);
     Require(sceAmprCommandBufferConstructNop(&recorder.buffer, 7, payload, sizeof(payload), &word) == 0);
     RequireAppended(recorder, offset, commands, Apr::Opcode::Nop, sceAmprMeasureCommandSizeNopWithData(4));
-    const std::uint8_t* data = recorder.memory.data() + offset + sizeof(Apr::CommandHeader);
+    Require(HeaderAt(recorder, offset) == 0x5452730Fu);
+    const std::uint8_t* data = recorder.memory.data() + offset + Apr::NopHeaderBytes;
     const std::uint8_t padding[3] = {};
     Require(std::memcmp(data, &word, sizeof(word)) == 0 && std::memcmp(data + 4, payload, sizeof(payload)) == 0 && std::memcmp(data + 9, padding, sizeof(padding)) == 0);
+    Require(recorder.memory[offset + 16] == 0x5A);
+    offset = recorder.Offset();
+    Require(sceAmprCommandBufferConstructNop(&recorder.buffer, 0x15, payload, 4, nullptr) == 0);
+    Require(HeaderAt(recorder, offset) == 0x5452510Fu);
+    offset = recorder.Offset();
+    Require(sceAmprCommandBufferConstructNop(&recorder.buffer, -1, payload, 4, nullptr) == 0);
+    Require(HeaderAt(recorder, offset) == 0x5452F10Fu);
 
     const std::array<std::uint8_t, 60> large{};
     offset = recorder.Offset();
@@ -741,6 +687,7 @@ void TestReadAtUnseekableOffsetThrows() {
     bool rejected = false;
     try {
         sceKernelAprSubmitCommandBuffer(&buffer, 0);
+
     } catch (const std::runtime_error& error) {
         rejected = std::string(error.what()).find("returned 0 of 4 bytes") != std::string::npos;
     }
@@ -769,34 +716,69 @@ void TestResolveFailures() {
     std::remove(paths[0]);
 }
 
+void TestResolveForEachVariants() {
+    const char* paths[]{"ampr_foreach_existing.bin", "ampr_foreach_missing.bin"};
+    const char* names[]{"foreach_existing.bin", "foreach_missing.bin"};
+    { std::ofstream file(paths[0], std::ios::binary); file << "data"; }
+    std::uint32_t expected = 0;
+    std::uint32_t failed = 99;
+    Require(sceKernelAprResolveFilepathsToIds(paths, 1, &expected, &failed) == 0);
+    std::uint32_t ids[]{123, 123};
+    int results[]{123, 123};
+    Require(sceKernelAprResolveFilepathsToIdsForEach(paths, 2, ids, results) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
+    ids[0] = ids[1] = 123;
+    results[0] = results[1] = 123;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach("ampr_", names, 2, ids, results) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
+    std::uint64_t sizes[]{123, 123};
+    ids[0] = ids[1] = 123;
+    results[0] = results[1] = 123;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizesForEach("ampr_", names, 2, ids, sizes, results) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0 && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
+    std::remove(paths[0]);
+}
+
 void TestMalformedCommandSizes() {
-    const auto requireFailure = [](Apr::Opcode opcode, std::uint32_t recordBytes, std::uint32_t bufferBytes, const char* expected) {
+    const auto requireFailure = [](const void* record, std::size_t recordBytes, std::uint32_t bufferBytes, const char* expected) {
         std::array<std::uint8_t, 16> memory{};
-        const Apr::CommandHeader header{opcode, recordBytes};
-        std::memcpy(memory.data(), &header, sizeof(header));
+        std::memcpy(memory.data(), record, recordBytes);
         Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, bufferBytes, 1, bufferBytes, memory.data()};
         bool rejected = false;
         try {
             sceKernelAprSubmitCommandBuffer(&buffer, 0);
+
         } catch (const std::runtime_error& error) {
             rejected = std::string(error.what()).starts_with(expected);
         }
         Require(rejected);
     };
+    const auto requireHeaderFailure = [&](Apr::Opcode opcode, std::uint32_t recordBytes, std::uint32_t bufferBytes, const char* expected) {
+        const Apr::CommandHeader header{opcode, recordBytes};
+        requireFailure(&header, sizeof(header), bufferBytes, expected);
+    };
 
-    requireFailure(Apr::Opcode::ReadFile, sizeof(Apr::CommandHeader), sizeof(Apr::CommandHeader), "APR: truncated command payload");
-    requireFailure(Apr::Opcode::WriteAddress, sizeof(Apr::CommandHeader), sizeof(Apr::CommandHeader), "APR: truncated command payload");
-    requireFailure(Apr::Opcode::Nop, std::numeric_limits<std::uint32_t>::max(), 2u * sizeof(Apr::CommandHeader), "APR: malformed command");
+    requireHeaderFailure(Apr::Opcode::ReadFile, sizeof(Apr::CommandHeader), sizeof(Apr::CommandHeader), "APR: truncated command payload");
+    requireHeaderFailure(Apr::Opcode::WriteAddress, sizeof(Apr::CommandHeader), sizeof(Apr::CommandHeader), "APR: truncated command payload");
+    requireHeaderFailure(Apr::Opcode::PopMarker, std::numeric_limits<std::uint32_t>::max(), 2u * sizeof(Apr::CommandHeader), "APR: malformed command");
+
+    const std::uint32_t overflowingNop = Apr::NopHeader(15);
+    requireFailure(&overflowingNop, sizeof(overflowingNop), sizeof(overflowingNop), "APR: malformed command");
+    const Apr::CommandHeader eightByteNop{Apr::Opcode::Nop, sizeof(Apr::CommandHeader)};
+    requireFailure(&eightByteNop, sizeof(eightByteNop), sizeof(eightByteNop), "APR: unknown opcode 0");
+    const std::uint32_t nops[2] = {Apr::NopHeader(0), Apr::NopHeader(0)};
+    requireFailure(nops, sizeof(nops), 7u, "APR: truncated command buffer");
 
     std::array<std::uint8_t, 2 * sizeof(Apr::CommandHeader)> memory{};
-    const Apr::CommandHeader first{Apr::Opcode::Nop, sizeof(Apr::CommandHeader)};
-    const Apr::CommandHeader overflowing{Apr::Opcode::Nop, std::numeric_limits<std::uint32_t>::max()};
+    const Apr::CommandHeader first{Apr::Opcode::PopMarker, sizeof(Apr::CommandHeader)};
+    const Apr::CommandHeader overflowing{Apr::Opcode::PopMarker, std::numeric_limits<std::uint32_t>::max()};
     std::memcpy(memory.data(), &first, sizeof(first));
     std::memcpy(memory.data() + sizeof(first), &overflowing, sizeof(overflowing));
     Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, sizeof(memory), 2, sizeof(memory), memory.data()};
     bool rejected = false;
     try {
         sceKernelAprSubmitCommandBuffer(&buffer, 0);
+
     } catch (const std::runtime_error& error) {
         rejected = std::string(error.what()).starts_with("APR: malformed command");
     }
@@ -924,7 +906,7 @@ void TestAmmRangesAboveHintedMaps() {
     constexpr std::uint64_t step = 0x400000;
     void* span = nullptr;
     Require(sceKernelReserveVirtualRange(&span, 4 * step, 0, 0) == 0);
-    Require(sceKernelMunmap(span, 4 * step) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(span), 4 * step) == 0);
     const auto heap = reinterpret_cast<std::uint64_t>(span);
     void* placed = span;
     Require(sceKernelMapFlexibleMemory(&placed, page, 3, 0) == 0 && placed == span);
@@ -944,26 +926,26 @@ void TestAmmRangesAboveHintedMaps() {
         Require(sceKernelMapFlexibleMemory(&mapped, page, 3, 0) == 0);
         Require(reinterpret_cast<std::uint64_t>(mapped) == hint);
         Require(hint + page <= start || hint >= multimapEnd);
-        Require(sceKernelMunmap(mapped, page) == 0);
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), page) == 0);
     }
-    Require(sceKernelMunmap(span, page) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(span), page) == 0);
 }
 
 void TestAmmUsageStats() {
     std::array<std::uint64_t, 4> stats{};
     Require(sceAmprAmmGetUsageStatsData(nullptr) == static_cast<int>(0x80020016));
     stats[0] = 0x19;
-    Require(sceAmprAmmGetUsageStatsData(stats.data()) == static_cast<int>(0x80020016));
+    Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(stats.data())) == static_cast<int>(0x80020016));
     stats = {0x18, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef};
-    Require(sceAmprAmmGetUsageStatsData(stats.data()) == 0);
+    Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(stats.data())) == 0);
     Require(stats[0] == 0x18);
     Require((stats[1] & 0xffffu) == 512u && (stats[1] >> 16u) == 0u);
     Require((stats[2] & 0xffffffffu) == 7u && (stats[2] >> 32u) == 0u);
     stats = {0x8, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef};
-    Require(sceAmprAmmGetUsageStatsData(stats.data()) == 0);
+    Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(stats.data())) == 0);
     Require(stats[0] == 0x8 && stats[1] == 0xdeadbeef && stats[2] == 0xdeadbeef);
     stats = {0x0, 0xdeadbeef, 0xdeadbeef, 0xdeadbeef};
-    Require(sceAmprAmmGetUsageStatsData(stats.data()) == 0);
+    Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(stats.data())) == 0);
     Require(stats[0] == 0 && stats[1] == 0xdeadbeef);
 }
 
@@ -1021,7 +1003,7 @@ void TestAmm() {
     RequireAppended(remaps, offset, commands, Apr::Opcode::AmmUnmap, sceAmprAmmMeasureAmmCommandSizeUnmap(automatic, 2 * page));
     Require(sceAmprAmmCommandBufferMapWithGpuMaskId(&remaps.buffer, reused, 6 * page, 0, cpuReadWrite, 1) == 0);
     std::uint64_t result = ~0ull;
-    Require(sceAmprAmmSubmitCommandBuffer2(remaps.memory.data(), remaps.Offset(), 0, &result, &id) == 0 && result == 0);
+    Require(sceAmprAmmSubmitCommandBuffer2(remaps.memory.data(), remaps.Offset(), 0, reinterpret_cast<AmmSubmitResult*>(&result), &id) == 0 && result == 0);
     Require(sceAmprAmmWaitCommandBufferCompletion(id) == 0);
     At(reused + 6 * page - 8) = 0x5555;
     Require(At(reused + 6 * page - 8) == 0x5555);
@@ -1165,6 +1147,101 @@ void TestAmmRemapKeepsPoolReferences() {
     Require(At(fresh) == 0xB1);
     At(fresh) = 0xC1;
     Require(At(fresh) == 0xC1);
+}
+
+void TestAmmMapsScatteredPoolPages() {
+    std::uint64_t start = 0;
+    std::uint64_t end = 0;
+    std::uint64_t multimapStart = 0;
+    std::uint64_t multimapEnd = 0;
+    Require(sceAmprAmmGetVirtualAddressRanges(&start, &end, &multimapStart, &multimapEnd) == 0);
+    const auto exhausts = [](Recorder& recorder) {
+        try {
+            SubmitAmm(recorder);
+        } catch (const std::runtime_error& error) {
+            return std::string(error.what()).starts_with("AMM: no free run of ");
+        }
+        return false;
+    };
+    const auto drained = start + 1024 * page;
+    for (std::uint64_t index = 0;; ++index) {
+        Require(index < 4096);
+        Recorder drain;
+        Require(sceAmprAmmCommandBufferMap(&drain.buffer, drained + index * page, page, 0, cpuReadWrite) == 0);
+        if (exhausts(drain)) break;
+    }
+
+    std::int64_t pool = -1;
+    Require(sceAmprAmmGiveDirectMemory(0, static_cast<std::int64_t>(sceKernelGetDirectMemorySize()), 5 * page, page, 1, &pool) == 0);
+    const auto singles = start + 6144 * page;
+    Recorder maps;
+    for (std::uint64_t index = 0; index < 5; ++index) Require(sceAmprAmmCommandBufferMap(&maps.buffer, singles + index * page, page, 0, cpuReadWrite) == 0);
+    SubmitAmm(maps);
+    for (std::uint64_t index = 0; index < 5; ++index) At(singles + index * page) = 0x100 + index;
+
+    Recorder release;
+    for (const std::uint64_t index : {0, 2, 4}) Require(sceAmprAmmCommandBufferUnmap(&release.buffer, singles + index * page, page) == 0);
+    SubmitAmm(release);
+
+    const auto scattered = start + 6400 * page;
+    Recorder gather;
+    Require(sceAmprAmmCommandBufferMap(&gather.buffer, scattered, 3 * page, 0, cpuReadWrite) == 0);
+    SubmitAmm(gather);
+    for (std::uint64_t index = 0; index < 3; ++index) At(scattered + index * page) = 0x200 + index;
+    for (std::uint64_t index = 0; index < 3; ++index) Require(At(scattered + index * page) == 0x200 + index);
+    Require(At(singles + page) == 0x101 && At(singles + 3 * page) == 0x103);
+
+    Recorder empty;
+    Require(sceAmprAmmCommandBufferMap(&empty.buffer, singles, page, 0, cpuReadWrite) == 0);
+    Require(exhausts(empty));
+}
+
+void TestAmmPrtAllocationFailureKeepsZeros() {
+    std::uint64_t start = 0;
+    std::uint64_t end = 0;
+    std::uint64_t multimapStart = 0;
+    std::uint64_t multimapEnd = 0;
+    Require(sceAmprAmmGetVirtualAddressRanges(&start, &end, &multimapStart, &multimapEnd) == 0);
+    const auto exhausts = [](Recorder& recorder) {
+        try {
+            SubmitAmm(recorder);
+        } catch (const std::runtime_error& error) {
+            return std::string(error.what()).starts_with("AMM: no free run of ");
+        }
+        return false;
+    };
+    const auto drained = start + 24576 * page;
+    for (std::uint64_t index = 0;; ++index) {
+        Require(index < 4096);
+        Recorder drain;
+        Require(sceAmprAmmCommandBufferMap(&drain.buffer, drained + index * page, page, 0, cpuReadWrite) == 0);
+        if (exhausts(drain)) break;
+    }
+    std::int64_t pool = -1;
+    Require(sceAmprAmmGiveDirectMemory(0, static_cast<std::int64_t>(sceKernelGetDirectMemorySize()), page, page, 1, &pool) == 0);
+
+    const std::uint64_t prt = start + 28672 * page;
+    Recorder reserve;
+    Require(sceAmprAmmCommandBufferMapAsPrt(&reserve.buffer, prt, 4 * page) == 0);
+    SubmitAmm(reserve);
+    Require(At(prt) == 0 && At(prt + 3 * page) == 0);
+
+    Recorder tooMany;
+    Require(sceAmprAmmCommandBufferAllocatePaForPrt(&tooMany.buffer, prt + page, 2 * page, 0, cpuReadWrite) == 0);
+    Require(exhausts(tooMany));
+    Require(Protection(prt + page) == 0x10 && At(prt) == 0 && At(prt + page) == 0 && At(prt + 2 * page) == 0 && At(prt + 3 * page) == 0);
+
+    Recorder one;
+    Require(sceAmprAmmCommandBufferAllocatePaForPrt(&one.buffer, prt + page, page, 0, cpuReadWrite) == 0);
+    SubmitAmm(one);
+    Require(Protection(prt + page) == 0x03);
+    At(prt + page) = 0x61;
+    Require(At(prt + page) == 0x61 && At(prt) == 0 && At(prt + 2 * page) == 0);
+
+    Recorder none;
+    Require(sceAmprAmmCommandBufferAllocatePaForPrt(&none.buffer, prt + 2 * page, page, 0, cpuReadWrite) == 0);
+    Require(exhausts(none));
+    Require(At(prt + 2 * page) == 0 && At(prt + page) == 0x61);
 }
 
 void TestAmmMapFailureKeepsPoolOwnership() {
@@ -1393,6 +1470,26 @@ void TestAmmPrt() {
     Require(sceAmprAmmMeasureAmmCommandSizeAllocatePaForPrt(prt + 8, page, 0, cpuReadWrite) == ammRejected);
 }
 
+void TestWriteAddressCommand() {
+    Recorder recorder;
+    alignas(8) std::uint64_t target = 0;
+    const auto offset = recorder.Offset();
+    const auto commands = recorder.Commands();
+    Require(sceAmprCommandBufferWriteAddress_04_00(&recorder.buffer, &target, 0x1122334455667788ull, 0) == 0);
+    RequireAppended(recorder, offset, commands, Apr::Opcode::WriteAddress, sceAmprMeasureCommandSizeWriteAddress_04_00());
+    Apr::WriteAddressCommand command{};
+    std::memcpy(&command, recorder.memory.data() + offset, sizeof(command));
+    Require(command.address == reinterpret_cast<std::uint64_t>(&target) && command.value == 0x1122334455667788ull && command.flags == 0);
+    Require(sceAmprMeasureCommandSizeWriteAddress_04_00() == sizeof(Apr::WriteAddressCommand));
+    Require(sceAmprMeasureCommandSizeWriteKernelEventQueue_04_00(0, 0, 0) == sizeof(Apr::WriteKernelEventQueueCommand));
+    Require(sceAmprCommandBufferGetType(&recorder.buffer) == static_cast<std::uint32_t>(Apr::BufferType::Apr));
+    Require(sceKernelAprSubmitCommandBuffer(&recorder.buffer, 0) == 0);
+    Require(target == 0x1122334455667788ull);
+    Apr::CommandBufferObject generic{};
+    Require(sceAmprCommandBufferConstructor(&generic) == 0);
+    Require(sceAmprCommandBufferGetType(&generic) == static_cast<std::uint32_t>(Apr::BufferType::Generic));
+}
+
 void TestKernelWriteCommands() {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
@@ -1486,6 +1583,7 @@ int main() {
     TestFullBuffer();
     TestOffsetPastBuffer();
     TestSubmission();
+    TestWriteAddressCommand();
     TestKernelEventQueue();
     TestWaits();
     TestWaitSatisfiedAfterSubmission();
@@ -1493,6 +1591,7 @@ int main() {
     TestCounters();
     TestRejectedWaitsAndCounters();
     TestNops();
+    TestNopPadding();
     TestVersionedCommands();
     TestVersionedCounters();
     TestClearBuffer();
@@ -1501,6 +1600,7 @@ int main() {
     TestReadPastEndOfFileZeroFills();
     TestReadAtUnseekableOffsetThrows();
     TestResolveFailures();
+    TestResolveForEachVariants();
     TestMalformedCommandSizes();
     TestResolveSymbolicLink();
     TestGatherScatter();
@@ -1508,9 +1608,11 @@ int main() {
     TestAmmUsageStats();
     TestAmmRemapKeepsPoolReferences();
     TestAmmMapFailureKeepsPoolOwnership();
+    TestAmmMapsScatteredPoolPages();
     TestAmm();
     TestAmmRemapAndProtect();
     TestAmmPrt();
+    TestAmmPrtAllocationFailureKeepsZeros();
     TestKernelWriteCommands();
     return 0;
 }

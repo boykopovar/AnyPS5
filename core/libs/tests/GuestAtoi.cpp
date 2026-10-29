@@ -1,11 +1,7 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
-
-extern "C" {
-int APS5_VABI atoi_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 int main() {
     struct Case {

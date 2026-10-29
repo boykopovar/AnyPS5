@@ -149,6 +149,27 @@ int main() {
         bool stackSlotRejected = false;
         try { (void)writeSingle(6); } catch (const std::exception&) { stackSlotRejected = true; }
         Require(stackSlotRejected, "layout must refuse to drop the synthetic stack when its slot is missing");
-        std::cout << "21 program layout cases passed\n";
+        constexpr std::uint16_t extendedCount = 0xffff;
+        std::vector<Domain::ProgramHeader> manyHeaders(extendedCount - Elfpatcher::kSyntheticProgramHeaderCount - 2);
+        manyHeaders.front() = singleLoad.front();
+        Require(builder.RequiredProgramHeaderCount(manyHeaders) == extendedCount - 1, "largest ordinary count changed");
+        const auto writeMany = [&builder](const std::vector<Domain::ProgramHeader>& headers, std::vector<std::uint8_t>& bytes, std::uint16_t count) {
+            const std::uint64_t extraOffset = 0x1000;
+            const std::uint64_t extraSize = static_cast<std::uint64_t>(count) * 56;
+            Elfpatcher::ProgramHeaderLayoutRequest request{extraOffset, 56, count, headers, extraOffset,
+                builder.ComputeExtraBlockVaddr(headers, extraOffset), extraSize, extraOffset, 16, extraOffset + 16, 8};
+            return builder.WriteLayout(bytes, request);
+        };
+        std::vector<std::uint8_t> largeOutput(0x1000 + static_cast<std::uint64_t>(extendedCount) * 56, 0xA5);
+        Require(writeMany(manyHeaders, largeOutput, extendedCount - 1) == extendedCount - 1, "largest ordinary layout rejected");
+        manyHeaders.push_back({});
+        rejected = false;
+        try { builder.RequiredProgramHeaderCount(manyHeaders); } catch (const Domain::RelinkerException&) { rejected = true; }
+        Require(rejected, "extended program header count accepted");
+        const auto beforeLarge = largeOutput;
+        rejected = false;
+        try { writeMany(manyHeaders, largeOutput, extendedCount); } catch (const Domain::RelinkerException&) { rejected = true; }
+        Require(rejected && largeOutput == beforeLarge, "extended count written without section-zero encoding");
+        std::cout << "25 program layout cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

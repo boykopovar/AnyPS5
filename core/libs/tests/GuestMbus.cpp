@@ -1,3 +1,4 @@
+#include "prx/libSceMbus/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
@@ -5,26 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
-
-struct DeviceServiceThreadParam;
-struct DeviceServiceInitParam {
-    std::uint32_t size;
-    std::uint32_t reserved;
-    const DeviceServiceThreadParam* threadParam;
-};
-struct DeviceServiceUsageFilter {
-    std::uint16_t usagePage;
-    std::uint16_t minimumUsage;
-    std::uint16_t maximumUsage;
-};
-
-extern "C" {
-std::int32_t APS5_VABI sceDeviceServiceInitialize(std::int32_t mode, const DeviceServiceInitParam* param);
-std::int32_t APS5_VABI sceDeviceServiceTerminate();
-std::int32_t APS5_VABI sceDeviceServiceGetEventState(std::int32_t clear);
-std::int32_t APS5_VABI sceDeviceServiceQueryDeviceInfo_(std::int32_t deviceClass, const DeviceServiceUsageFilter* filter, std::int32_t arg2, void* infos, std::int32_t maxInfos, std::int32_t* count, std::int32_t* reserved, std::uint32_t infoSize);
-std::int32_t APS5_VABI sceDeviceServiceGetGeneration();
-}
 
 namespace {
 
@@ -45,6 +26,11 @@ int main() {
     param.reserved = 1;
     Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "reserved field accepted");
     param.reserved = 0;
+    DeviceServiceThreadParam threadParam{};
+    threadParam.reserved = 1;
+    param.threadParam = &threadParam;
+    Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "threadParam reserved field accepted");
+    param.threadParam = nullptr;
     Require(sceDeviceServiceInitialize(3, &param) == 0, "default parameter initialization failed");
     Require(sceDeviceServiceInitialize(3, 0) == 0, "initialization failed");
     Require(sceDeviceServiceGetGeneration() == 0, "the device set started at another generation");

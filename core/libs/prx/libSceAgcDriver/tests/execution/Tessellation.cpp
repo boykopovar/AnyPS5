@@ -21,7 +21,9 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -52,6 +54,16 @@ alignas(256) constexpr std::array<std::uint32_t, 49> HullCode{
     0x07000013, 0xbf8cc07f, 0x7e300306, 0x7e320306, 0x7e340306, 0x7e360306, 0x34142484, 0xbefe0414,
     0xe0781000, 0x0403180a, 0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b,
     0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 51> HullMaskedControlPoint{
+    0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0xbf8a0000, 0x7da206f9, 0x81060000, 0xd5480014,
+    0x02151101, 0x362402ff, 0x000000ff, 0x160028a0, 0xd5430015, 0x040224ff, 0x00000060, 0xdbfc0000,
+    0x02000015, 0x362c02ff, 0x00001f00, 0x2c2c2c84, 0xd5430016, 0x045a24ff, 0x00000030, 0xbf8cc07f,
+    0xe0781000, 0x02020216, 0x7da82881, 0xbe94047e, 0xb06a0060, 0x162602f9, 0x0086066a, 0xd8d80008,
+    0x06000013, 0xd8dc1008, 0x07000013, 0xbf8cc07f, 0x7e300306, 0x7e320306, 0x7e340306, 0x7e360306,
+    0x34142484, 0xbefe0414, 0xe0781000, 0x0403180a, 0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000,
+    0xe0741000, 0x0202070b, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 54> HullCompareBranch{
@@ -154,6 +166,22 @@ alignas(256) constexpr std::array<std::uint32_t, 29> LocalIndexAsData{
     0x7e080d04, 0x7e0a0d05, 0x7e0c0d06, 0x7e0e0d07, 0x10100cff, 0x3f19999a, 0x061010ff, 0xbf666666,
     0x3e1008ff, 0x3e800000, 0xd54b0009, 0x03c5e105, 0x161406a0, 0xd9340000, 0x0000080a, 0xd8340008,
     0x0000030a, 0xd8340010, 0x0000070a, 0xbf8cc07f, 0xbefd2106,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 7> LocalInactiveIndex{
+    0x7e108704, 0x7da80b02, 0x160e06a8, 0x7e060302, 0xd9340020, 0x00000207, 0xbe802006,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 8> LocalRestoredIndex{
+    0x7e108704, 0x160e06a8, 0x7da80b02, 0x7e060302, 0xbefe04c1, 0xd9340020, 0x00000207, 0xbe802006,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 7> LocalObservedWindow{
+    0xbefc0383, 0x7da80b02, 0x160e06a8, 0x7e108704, 0xd9340020, 0x00000807, 0xbe802006,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 9> LocalNegatedConjunction{
+    0x7d880b02, 0x160e06a8, 0x02100e80, 0x7da20d02, 0x87fe6a7e, 0xbefe087e, 0xd9340020, 0x00000807, 0xbe802006,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 50> HullDescendingRecords{
@@ -348,6 +376,47 @@ alignas(256) constexpr std::array<std::uint32_t, 87> MergedHullCode{
     0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b, 0xbf810000,
 };
 
+alignas(256) constexpr auto MergedHullHalfWords = [] {
+    std::array<std::uint32_t, MergedHullCode.size() + 4u> code{};
+    std::size_t at = 0;
+    for (std::size_t index = 0; index < MergedHullCode.size(); ++index) {
+        const auto word = MergedHullCode[index];
+        if (word == 0xbf88001cu) {
+            code[at++] = 0xbf88001eu;
+        } else if (word == 0xd8340010u || word == 0xd8d80048u) {
+            const bool write = word == 0xd8340010u;
+            const auto operands = MergedHullCode[++index];
+            code[at++] = write ? 0xd87c0010u : 0xd8f00048u;
+            code[at++] = operands;
+            code[at++] = write ? 0xda840012u : 0xda9c004au;
+            code[at++] = operands;
+        } else {
+            code[at++] = word;
+        }
+    }
+    return code;
+}();
+
+alignas(256) constexpr auto MergedHullHalfRecord = [] {
+    std::array<std::uint32_t, MergedHullCode.size() + 6u> code{};
+    std::size_t at = 0;
+    for (std::size_t index = 0; index < MergedHullCode.size(); ++index) {
+        const auto word = MergedHullCode[index];
+        if (word == 0xbf88001cu) {
+            code[at++] = 0xbf880020u;
+        } else if (word == 0xd9340000u) {
+            ++index;
+            for (const auto value : {0xda840002u, 0x0000080au, 0xd87c0000u, 0x0000080au, 0xd8340004u, 0x0000090au}) code[at++] = value;
+        } else if (word == 0xd8d80048u) {
+            const auto operands = MergedHullCode[++index];
+            for (const auto value : {0xd8f00048u, operands, 0xda9c004au, operands}) code[at++] = value;
+        } else {
+            code[at++] = word;
+        }
+    }
+    return code;
+}();
+
 alignas(256) constexpr std::array<std::uint32_t, 87> MergedHullRegisters{
     0xbefe04c1, 0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0x7da206f9, 0x80060000, 0xbf88001c,
     0xd5480004, 0x02090502, 0xd5480005, 0x02090102, 0xd5480006, 0x02110902, 0xd5480007, 0x02111102,
@@ -418,6 +487,21 @@ alignas(256) constexpr std::array<std::uint32_t, 87> MergedHullReadLane{
     0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 89> MergedHullRingReadBack{
+    0xbefe04c1, 0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0x7da206f9, 0x80060000, 0xbf88001c,
+    0xd5480004, 0x02090502, 0xd5480005, 0x02090102, 0xd5480006, 0x02110902, 0xd5480007, 0x02111102,
+    0x7e080d04, 0x7e0a0d05, 0x7e0c0d06, 0x7e0e0d07, 0x10100cff, 0x3f19999a, 0x061010ff, 0xbf666666,
+    0x3e1008ff, 0x3e800000, 0xd54b0009, 0x03c5e105, 0x161406a0, 0xd9340000, 0x0000080a, 0xd8340008,
+    0x0000070a, 0xd8340010, 0x0000070a, 0xbf8cc07f, 0xbefe04c1, 0xbf8cc07f, 0xd7650000, 0x000100c1,
+    0xd7660000, 0x000200c1, 0xbf8a0000, 0x7da206f9, 0x81060000, 0xbf88002a, 0xd5480014, 0x02151101,
+    0x362402ff, 0x000000ff, 0x160028a0, 0xd5430015, 0x040224ff, 0x00000060, 0xdbfc0000, 0x02000015,
+    0x162c2890, 0xd5430016, 0x045a24ff, 0x00000030, 0xbf8cc07f, 0xe0781000, 0x02020216, 0x7da82881,
+    0xbf880017, 0xbe94047e, 0xb06a0030, 0x162602f9, 0x0086066a, 0xe0301028, 0x02020613, 0xe0341010,
+    0x02020713, 0xbf8c3f70, 0x7e300306, 0x7e320306, 0x7e340306, 0x7e360306, 0x34142484, 0xbefe0414,
+    0xe0781000, 0x0403180a, 0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000, 0xe0741000, 0x0202070b,
+    0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 7> PixelCode{
     0xc8020002, 0xc8060102, 0xc80a0202, 0xc80e0302, 0xf800180f, 0x03020100, 0xbf810000,
 };
@@ -431,6 +515,16 @@ constexpr std::array<std::uint32_t, 3> PatchLevels{1u, 0u, 5u};
 constexpr std::uint16_t Corner(std::uint32_t patch, std::uint32_t x, std::uint32_t y) {
     return static_cast<std::uint16_t>((PatchLevels[patch] << 8u) | (patch << 4u) | (x << 2u) | y);
 }
+
+constexpr std::uint16_t LevelCorner(std::uint32_t level, std::uint32_t patch, std::uint32_t x, std::uint32_t y) {
+    return static_cast<std::uint16_t>((level << 8u) | (patch << 4u) | (x << 2u) | y);
+}
+
+alignas(256) constexpr std::array<std::uint16_t, 9> LastPointLevelIndices{
+    LevelCorner(5u, 0u, 0u, 0u), LevelCorner(5u, 0u, 2u, 0u), Corner(0, 1, 2),
+    LevelCorner(1u, 1u, 0u, 0u), LevelCorner(1u, 1u, 2u, 0u), Corner(1, 1, 2),
+    LevelCorner(0u, 2u, 0u, 0u), LevelCorner(0u, 2u, 2u, 0u), Corner(2, 1, 2),
+};
 
 alignas(256) constexpr std::array<std::uint16_t, 9> Indices{
     Corner(0, 0, 0), Corner(0, 2, 0), Corner(0, 1, 2),
@@ -473,6 +567,7 @@ alignas(256) constexpr std::array<std::uint16_t, 12> NextInputIndices{
 const PatchDraw Triangles{Patches, Indices};
 const PatchDraw NextInputTriangles{{4u, 3u, 1u, 2u, 2u}, NextInputIndices};
 const PatchDraw MergedTriangles{MergedPatches, Indices};
+const PatchDraw MergedLastPointLevels{MergedPatches, LastPointLevelIndices};
 
 struct Stages {
     ShaderRecompiler::RecompileResult local;
@@ -481,7 +576,7 @@ struct Stages {
     ShaderRecompiler::RecompileResult fragment;
 };
 
-ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, std::uint32_t& pushCursor, const PatchDraw& patches = Triangles) {
+ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, std::uint32_t& pushCursor, const PatchDraw& patches = Triangles, std::uint32_t depthRemapMode = 0u) {
     static const std::array<std::uint32_t, 8> domainUserData{};
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const bool hull = stage == ShaderStage::TessellationControl;
@@ -498,10 +593,12 @@ ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& t
         pixel = info;
     } else {
         vertex = ShaderRecompiler::ShaderVertexStageInfo{};
+        vertex->depthRemapMode = depthRemapMode;
         graphics = ShaderRecompiler::GraphicsCompileContext{hull ? 0u : 8u, {}, std::nullopt, patches.configuration, {reinterpret_cast<std::uintptr_t>(patches.indices.data()), static_cast<std::uint32_t>(patches.indices.size()), 2, patches.instances}};
     }
     auto layout = stage == ShaderStage::Fragment ? PixelPushLayout(pushCursor, target) : ShaderRecompiler::BindingLayout{0, 0, pushCursor, AgcDriver::Graphics::PipelinePushSlotBytes - pushCursor};
     if (layout.pushConstantOffsetBytes < AgcDriver::Graphics::PipelinePushSlotBytes) layout.pushConstantSizeBytes = ShaderRecompiler::TessellationLevelPushOffsetBytes - layout.pushConstantOffsetBytes;
+    if (depthRemapMode != 0u && layout.pushConstantOffsetBytes < AgcDriver::Graphics::PipelinePushSlotBytes) layout.pushConstantSizeBytes = ShaderRecompiler::DepthRemapPushOffsetBytes - layout.pushConstantOffsetBytes;
     const ShaderRecompiler::RecompileRequest request{
         {stage, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {64, hull ? 0u : 8u, userData, std::nullopt, pixel, vertex, memory},
@@ -550,7 +647,17 @@ std::uint32_t Row(float y) {
     return static_cast<std::uint32_t>((1.0f - y) * 0.5f * Height);
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, VkCullModeFlags cull, VkFrontFace front, const PatchDraw& patches = Triangles) {
+struct DepthDraw {
+    std::uint64_t address;
+    bool write;
+    bool negativeOneToOne = false;
+    float scale = 1.0f;
+    float offset = 0.0f;
+    float clampMin = 0.0f;
+    float clampMax = 1.0f;
+};
+
+void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, VkCullModeFlags cull, VkFrontFace front, const PatchDraw& patches = Triangles, const DepthDraw* depth = nullptr) {
     for (std::size_t i = 0; i < Pixels.size(); i += 4) {
         for (std::size_t c = 0; c < 4; ++c) Pixels[i + c] = std::byte{Background[c]};
     }
@@ -581,8 +688,93 @@ void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, VkCullModeFlags
     state.blend.colorWriteMask = 15;
     state.blends = {state.blend};
     state.blendConstants = {};
+    if (depth != nullptr) {
+        state.depth = AgcDriver::Graphics::DepthTarget{depth->address, 0u, {Width, Height}, VK_FORMAT_D32_SFLOAT, 1.0f, 0u};
+        state.depthTest = true;
+        state.depthWrite = depth->write;
+        state.depthCompare = depth->write ? VK_COMPARE_OP_ALWAYS : VK_COMPARE_OP_LESS;
+        state.depthScale = depth->scale;
+        state.depthOffset = depth->offset;
+        state.depthClampMin = depth->clampMin;
+        state.depthClampMax = depth->clampMax;
+        state.negativeOneToOne = depth->negativeOneToOne;
+        state.viewport.minDepth = depth->negativeOneToOne ? depth->offset - depth->scale : depth->offset;
+        state.viewport.maxDepth = depth->offset + depth->scale;
+        auto context = device.graphicsContext();
+        context.depthRangeUnrestricted = false;
+        AgcDriver::Graphics::ApplyDepthRemap(context, state);
+    }
     device.Draw(state, {reinterpret_cast<std::uintptr_t>(patches.indices.data()), static_cast<std::uint32_t>(patches.indices.size()), 2, patches.instances, 0, true, 0, patches.firstInstance}, shaders);
     device.WaitIdle();
+}
+
+void RequireDepthRangeRemap(AgcDriver::VulkanDevice& device) {
+    auto target = device.Target();
+    Require(device.graphicsContext().depthClamp, "tessellation depth remap needs depth clamping");
+    target.depthRangeRemap = true;
+    const auto compile = [&](float z, std::uint32_t mode) {
+        std::vector<std::uint32_t> domain(DomainCode.begin(), DomainCode.end());
+        const auto literal = std::ranges::find(domain, 0x7e260280u);
+        Require(literal != domain.end(), "the domain fixture has no constant depth");
+        *literal = 0x7e2602ffu;
+        domain.insert(literal + 1, std::bit_cast<std::uint32_t>(z));
+        std::uint32_t cursor = 0u;
+        return Stages{
+            Compile(target, ShaderStage::Local, LocalCode, cursor),
+            Compile(target, ShaderStage::TessellationControl, HullCode, cursor),
+            Compile(target, ShaderStage::TessellationEvaluation, domain, cursor, Triangles, mode),
+            Compile(target, ShaderStage::Fragment, PixelCode, cursor),
+        };
+    };
+    const auto covered = [] {
+        std::uint32_t count = 0u;
+        for (std::size_t offset = 0; offset < Pixels.size(); offset += 4u) {
+            if (Pixels[offset] == std::byte{255}) ++count;
+        }
+        return count;
+    };
+    Draw(device, compile(0.5f, 0u), VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+    const auto expected = covered();
+    Require(expected != 0u, "the depth fixture drew no tessellated patches");
+    struct Case {
+        bool symmetric;
+        float scale;
+        float offset;
+        float clampMin;
+        float clampMax;
+        float z;
+        bool drawn;
+        float probe;
+        bool passes;
+    };
+    constexpr std::array<Case, 14> cases{{
+        {true, 1.0f, 0.0f, 0.0f, 1.0f, 0.75f, true, 0.5f, true},
+        {true, 1.0f, 0.0f, 0.0f, 1.0f, -0.5f, true, 0.25f, false},
+        {true, 1.0f, 0.0f, 0.0f, 1.0f, -1.25f, false, 0.5f, true},
+        {true, 1.0f, 0.0f, 0.0f, 1.0f, 1.25f, false, 0.5f, true},
+        {false, 2.0f, -0.5f, 0.0f, 1.0f, 0.25f, true, 0.125f, false},
+        {false, 2.0f, -0.5f, 0.0f, 1.0f, 0.75f, true, 0.875f, true},
+        {false, 2.0f, -0.5f, 0.0f, 1.0f, -0.125f, false, 0.5f, true},
+        {false, 2.0f, -0.5f, 0.0f, 1.0f, 1.125f, false, 0.5f, true},
+        {false, 2.0f, -0.5f, 0.25f, 0.75f, 0.4f, true, 0.35f, false},
+        {false, 2.0f, -0.5f, 0.25f, 0.75f, 0.6f, true, 0.65f, true},
+        {false, 2.0f, -0.5f, 0.25f, 0.75f, 0.2f, true, 0.2f, true},
+        {false, 2.0f, -0.5f, 0.25f, 0.75f, 0.8f, true, 0.8f, false},
+        {false, -2.0f, 1.5f, 0.0f, 1.0f, 0.4f, true, 0.65f, true},
+        {false, -2.0f, 1.5f, 0.0f, 1.0f, 0.6f, true, 0.35f, false},
+    }};
+    alignas(4096) static std::array<std::array<float, Width * Height>, cases.size()> depths{};
+    for (std::size_t index = 0; index < cases.size(); ++index) {
+        const auto& test = cases[index];
+        const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(depths[index].data()));
+        const DepthDraw write{address, true, test.symmetric, test.scale, test.offset, test.clampMin, test.clampMax};
+        Draw(device, compile(test.z, test.symmetric ? 2u : 1u), VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE, Triangles, &write);
+        Require(covered() == (test.drawn ? expected : 0u), "tessellation remap clipping differs in case " + std::to_string(index));
+        const DepthDraw probe{address, false};
+        Draw(device, compile(test.probe, 0u), VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE, Triangles, &probe);
+        Require(covered() == (test.passes ? expected : 0u), "tessellation remap stored depth differs in case " + std::to_string(index));
+    }
+    std::puts("Tessellation depth remap: 14 clipping and stored-depth cases passed");
 }
 
 std::uint32_t CoveredPixels(std::uint32_t patch, bool interior) {
@@ -946,6 +1138,54 @@ void RequireMergedHullWithoutSubgroups(const ShaderRecompiler::SpirvTarget& targ
     }
 }
 
+void RequireMergedHullConstantIndices(const ShaderRecompiler::SpirvTarget& target) {
+    std::uint32_t cursor = 0;
+    const auto hull = Compile(target, ShaderStage::TessellationControl, MergedHullCode, cursor, MergedTriangles);
+    const auto words = hull.spirv.Words();
+    std::unordered_set<std::uint32_t> constants;
+    std::unordered_set<std::uint32_t> folded;
+    for (std::size_t at = 5; at + 1u < words.size(); at += words[at] >> 16u) {
+        const auto count = words[at] >> 16u;
+        Require(count != 0u && at + count <= words.size(), "the merged hull program compiled to a malformed SPIR-V instruction");
+        const auto opcode = words[at] & 0xffffu;
+        if (opcode == spv::OpConstant && count >= 3u) constants.insert(words[at + 2u]);
+        const bool integer = opcode == spv::OpIAdd || opcode == spv::OpIMul || opcode == spv::OpUDiv || opcode == spv::OpUMod || opcode == spv::OpShiftRightLogical || opcode == spv::OpBitwiseAnd;
+        const auto operand = [&](std::uint32_t id) { return constants.contains(id) || folded.contains(id); };
+        if (integer && count == 5u && operand(words[at + 3u]) && operand(words[at + 4u])) folded.insert(words[at + 2u]);
+        if (opcode == spv::OpAccessChain) {
+            for (std::uint32_t index = 4u; index < count; ++index) {
+                Require(!folded.contains(words[at + index]), "the merged hull program indexes a tessellation attribute with arithmetic on constants instead of a constant, which AMD's Windows driver reads wrongly");
+            }
+        }
+    }
+}
+
+void RequireBarrierBeforeRingReadBack(const ShaderRecompiler::SpirvTarget& target) {
+    std::uint32_t cursor = 0;
+    const auto hull = Compile(target, ShaderStage::TessellationControl, MergedHullRingReadBack, cursor, MergedLastPointLevels);
+    const auto words = hull.spirv.Words();
+    std::vector<std::uint32_t> outputs;
+    std::vector<std::size_t> barriers;
+    std::vector<std::size_t> stores;
+    std::size_t lastLoad = 0;
+    for (std::size_t at = 5; at < words.size(); at += words[at] >> 16u) {
+        const auto count = words[at] >> 16u;
+        Require(count != 0u && at + count <= words.size(), "the merged hull program compiled to a malformed SPIR-V instruction");
+        const auto opcode = words[at] & 0xffffu;
+        const auto output = [&](std::uint32_t id) { return std::find(outputs.begin(), outputs.end(), id) != outputs.end(); };
+        if (opcode == spv::OpVariable && words[at + 3u] == spv::StorageClassOutput) outputs.push_back(words[at + 2u]);
+        if (opcode == spv::OpAccessChain && output(words[at + 3u])) outputs.push_back(words[at + 2u]);
+        if (opcode == spv::OpStore && output(words[at + 1u])) stores.push_back(at);
+        if (opcode == spv::OpLoad && output(words[at + 3u])) lastLoad = at;
+        if (opcode == spv::OpControlBarrier) barriers.push_back(at);
+    }
+    const auto before = std::lower_bound(barriers.begin(), barriers.end(), lastLoad);
+    Require(lastLoad != 0u && before - barriers.begin() >= 2, "the merged hull program reading control point 2's output back has no barrier besides its s_barrier before the read");
+    const auto first = *(before - 2);
+    const auto second = *(before - 1);
+    Require(std::any_of(stores.begin(), stores.end(), [&](std::size_t store) { return store > first && store < second; }), "the merged hull program reading control point 2's output back waits at no barrier after its control-point writes");
+}
+
 void RequireRegisteredMergedStages() {
     const auto low = [](const auto& code) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code.data()) >> 8u); };
     const auto high = [](const auto& code) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(code.data()) >> 40u); };
@@ -963,7 +1203,7 @@ void RequireRegisteredMergedStages() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -971,6 +1211,10 @@ int main() {
         if (!target.tessellation.has_value()) {
             std::puts("tessellation: skipped, the device has no tessellation shaders");
             return VulkanTestSkipped;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--depth-remap") {
+            RequireDepthRangeRemap(*device);
+            return 0;
         }
         RequireSingleControlPointHulls(target);
         ExpectRefusal(target, ShaderStage::TessellationControl, HullUnguardedFactors, "not written by control point 0 alone");
@@ -982,6 +1226,13 @@ int main() {
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainNeighbourPoint, "neither its patch's control points nor a patch-constant record", RecordPatches);
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainCulledPrimitive, "passthrough primitive");
         ExpectRefusal(target, ShaderStage::Local, LocalIndexAsData, "outside a tessellation ring or LDS address");
+        {
+            std::uint32_t cursor = 0;
+            Require(!Compile(target, ShaderStage::Local, LocalInactiveIndex, cursor).spirv.empty(), "a local program whose relative index survives only on inactive lanes was not compiled");
+        }
+        ExpectRefusal(target, ShaderStage::Local, LocalRestoredIndex, "outside a tessellation ring or LDS address");
+        ExpectRefusal(target, ShaderStage::Local, LocalObservedWindow, "outside a tessellation ring or LDS address");
+        ExpectRefusal(target, ShaderStage::Local, LocalNegatedConjunction, "outside a tessellation ring or LDS address");
         ExpectRefusal(target, ShaderStage::TessellationControl, HullRelativeData, "GE_CNTL.PRIM_GRP_SIZE is 0", RecordPatches);
         ExpectRefusal(target, ShaderStage::TessellationEvaluation, DomainRelativeData, "GE_CNTL.PRIM_GRP_SIZE is 0", RecordPatches);
         ExpectRefusal(target, ShaderStage::TessellationControl, HullCode, "outside its patch's quad factors", {{3u, 3u, 2u, 2u, 2u}, Indices});
@@ -990,6 +1241,7 @@ int main() {
         ExpectRefusal(target, ShaderStage::TessellationControl, HullDescendingRecords, "outside its control points and patch constants", {{3u, 3u, 1u, 2u, 2u, 129u}, Indices});
 
         RequirePatches(*device, target, HullCode, "hull program");
+        RequirePatches(*device, target, HullMaskedControlPoint, "hull program masking its control point out of v1 for its off-chip record");
         RequirePatches(*device, target, HullRestoredExecSaved, "hull program saving its restored exec");
         RequirePatches(*device, target, HullNextInput, "hull program reading the next of 4 input control points of 24 bytes", NextInputTriangles, LocalCodeStride24);
         RequirePatches(*device, target, HullDynamicIndex, "hull program reading a control point at a computed index");
@@ -1003,8 +1255,13 @@ int main() {
         ExpectRefusal(target, ShaderStage::TessellationControl, MergedHullOutsidePatch, "reads LDS outside its patch's control point records", MergedTriangles);
         ExpectRefusal(target, ShaderStage::TessellationControl, MergedHullReadLane, "another lane's register", MergedTriangles);
         RequireMergedHullWithoutSubgroups(target);
+        RequireMergedHullConstantIndices(target);
         RequirePatches(*device, target, MergedHullCode, "merged hull program", MergedTriangles, MergedHullCode);
         RequirePatches(*device, target, MergedHullRegisters, "merged hull program storing its local part's registers", MergedTriangles, MergedHullRegisters);
+        RequirePatches(*device, target, MergedHullHalfWords, "merged hull program passing a value through 16-bit LDS writes and reads", MergedTriangles, MergedHullHalfWords);
+        RequirePatches(*device, target, MergedHullHalfRecord, "merged hull program writing its own record's position in 16-bit halves", MergedTriangles, MergedHullHalfRecord);
+        RequireBarrierBeforeRingReadBack(target);
+        RequirePatches(*device, target, MergedHullRingReadBack, "merged hull program reading control point 2's level back from the off-chip ring", MergedLastPointLevels, MergedHullRingReadBack);
         RequireCounterClockwise(*device, target);
         RequireLevelClamps(*device, target);
         RequireIntegerPartitioning(*device, target);

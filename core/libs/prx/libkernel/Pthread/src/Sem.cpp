@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/Cancel.hpp"
 #include "prx/libc/include/General.hpp"

@@ -1,3 +1,4 @@
+#include "prx/libSceUlt/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
@@ -9,21 +10,6 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceUltInitialize();
-int APS5_VABI sceUltFinalize();
-std::uint64_t APS5_VABI sceUltWaitingQueueResourcePoolGetWorkAreaSize(std::uint32_t, std::uint32_t);
-std::uint64_t APS5_VABI sceUltQueueDataResourcePoolGetWorkAreaSize(std::uint32_t, std::uint64_t, std::uint32_t);
-int APS5_VABI sceUltQueueDataResourcePoolCreate(void*, const char*, std::uint32_t, std::uint64_t, std::uint32_t, void*, void*, const void*, std::uint32_t);
-int APS5_VABI sceUltQueueDataResourcePoolDestroy(void*);
-int APS5_VABI sceUltQueueCreate(void*, const char*, std::uint64_t, void*, void*, const void*, std::uint32_t);
-int APS5_VABI sceUltQueueDestroy(void*);
-int APS5_VABI sceUltQueuePush(void*, const void*);
-int APS5_VABI sceUltQueueTryPush(void*, const void*);
-int APS5_VABI sceUltQueuePop(void*, void*);
-int APS5_VABI sceUltQueueTryPop(void*, void*);
-}
 
 static constexpr int Null = -2139029503;
 static constexpr int Alignment = -2139029502;

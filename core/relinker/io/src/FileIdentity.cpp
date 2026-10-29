@@ -47,6 +47,18 @@ bool SameFile(const std::filesystem::path& first, const std::filesystem::path& s
 #ifdef _WIN32
     return FileIdentity(first) == FileIdentity(second);
 #else
+    for (const auto* path : {&first, &second}) {
+        std::error_code error;
+        const auto status = std::filesystem::status(*path, error);
+        if (error) throw std::filesystem::filesystem_error("Cannot determine file identity", *path, error);
+        if (!std::filesystem::exists(status)) {
+            throw std::filesystem::filesystem_error(
+                "Cannot determine file identity",
+                *path,
+                std::make_error_code(std::errc::no_such_file_or_directory)
+            );
+        }
+    }
     return std::filesystem::equivalent(first, second);
 #endif
 }

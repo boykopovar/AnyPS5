@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include <cstdlib>
 #include <functional>
@@ -7,7 +8,7 @@
 namespace AgcDriver::DriverDetail {
 
 void Driver::reportSkip(const char* kind, const std::string& what) {
-    static std::mutex reportedMutex;
+    static AgcDriver::Mutex reportedMutex;
     static std::set<std::size_t> reported;
     static std::map<std::string, int> requestDumps;
 
@@ -20,7 +21,11 @@ void Driver::reportSkip(const char* kind, const std::string& what) {
     if (!announced) {
         announced = true;
         char text[160];
-        std::snprintf(text, sizeof(text), "[gpu] skip reports: one write each, RecompileRequest dumps capped at %d per reason (APS5_SKIP_REQUEST_DUMPS)\n", dumpLimit);
+        if (dumpLimit < 0) {
+            std::snprintf(text, sizeof(text), "[gpu] skip reports: one write each, RecompileRequest dumps uncapped (APS5_SKIP_REQUEST_DUMPS)\n");
+        } else {
+            std::snprintf(text, sizeof(text), "[gpu] skip reports: one write each, RecompileRequest dumps capped at %d per reason (APS5_SKIP_REQUEST_DUMPS)\n", dumpLimit);
+        }
         line = text;
     }
     const std::string prefix = "[gpu] skipped " + std::string(kind);
@@ -50,7 +55,7 @@ void Driver::reportSkip(const char* kind, const std::string& what) {
 }
 
 std::string Driver::dumpRequest(std::uint64_t address, const ShaderRecompiler::RecompileRequest& request, std::string_view suffix) {
-    static std::mutex dumpMutex;
+    static AgcDriver::Mutex dumpMutex;
     static std::set<std::string> dumped;
     char hex[32];
     std::snprintf(hex, sizeof(hex), "%llx", static_cast<unsigned long long>(address));
@@ -60,10 +65,18 @@ std::string Driver::dumpRequest(std::uint64_t address, const ShaderRecompiler::R
     try {
         const auto text = ShaderRecompiler::RequestSerializer{}.Serialize(request);
         if (std::FILE* file = std::fopen(name.c_str(), "wb")) {
-            std::fwrite(text.data(), 1, text.size(), file);
-            std::fclose(file);
+            const auto written = std::fwrite(text.data(), 1, text.size(), file);
+            const auto closed = std::fclose(file);
+            if (written != text.size() || closed != 0) {
+                dumped.erase(name);
+                std::fprintf(stderr, "[gpu] incomplete write to dump file %s (%zu of %zu bytes, close status %d)\n", name.c_str(), written, text.size(), closed);
+            }
+        } else {
+            dumped.erase(name);
+            std::fprintf(stderr, "[gpu] could not open dump file %s for writing\n", name.c_str());
         }
     } catch (const std::exception& error) {
+        dumped.erase(name);
         std::fprintf(stderr, "[gpu] could not serialize request for 0x%llx: %s\n", static_cast<unsigned long long>(address), error.what());
     }
     return name;

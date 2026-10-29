@@ -1,3 +1,5 @@
+#include "prx/libScePlayerSelectionDialog/include/Api.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
@@ -5,8 +7,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libc/include/General.hpp"
-
-extern "C" int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* users);
 
 namespace {
 
@@ -79,9 +79,13 @@ int APS5_VABI scePlayerSelectionDialogGetResult(PlayerSelectionDialogResult* res
  return COMMON_DIALOG_RESULT_USER_CANCELED;
 }
 
-int APS5_VABI scePlayerSelectionDialogParamInitialize(void* param) {
+int APS5_VABI scePlayerSelectionDialogParamInitialize(PlayerSelectionDialogParam* param) {
  if (param == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
- NotImplemented_nid_no_patch(__func__);
+ std::memset(param, 0, sizeof(*param));
+ param->base.size = sizeof(param->base);
+ param->base.magic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&param->base)) - 1060003575u;
+ param->size = sizeof(*param);
+ return COMMON_DIALOG_OK;
 }
 
 int APS5_VABI scePlayerSelectionDialogTerminate(void) {
