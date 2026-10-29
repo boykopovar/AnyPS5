@@ -737,7 +737,11 @@ void operatingSystemTests() {
     require(!AgcDriver::ParseCommitCharge("CommitLimit:     8159204 kB\nCommitted_AS:   12 MB\n"), "a value in another unit is read as kB");
     require(!AgcDriver::ParseCommitCharge(""), "an empty /proc/meminfo gives a commit charge");
     const auto commit = AgcDriver::ReadCommitCharge();
+#ifdef __APPLE__
+    require(!commit, "a commit charge is read on macOS, which reports none");
+#else
     require(commit && commit->used != 0 && commit->budget != 0, "the system's commit charge and limit cannot be read");
+#endif
     static std::uint8_t* volatile touched = nullptr;
     const auto before = AgcDriver::ReadPageFaults();
     require(before.has_value(), "the process's page faults cannot be read");

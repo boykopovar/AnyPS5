@@ -558,6 +558,7 @@ int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int or
     const int nativeError = errno;
     stream->SyncStatus();
     if (result) errno = nativeError == EOVERFLOW ? 84 : nativeError;
+    else stream->SetLowSurrogate(0);
     return result;
 }
 

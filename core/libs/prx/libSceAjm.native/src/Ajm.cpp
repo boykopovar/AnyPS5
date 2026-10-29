@@ -1692,6 +1692,7 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
         if (job.flags) {
             instance->gapless.skippedSamples = 0;
             instance->segmentSamples = 0;
+            instance->totalDecodedSamples = 0;
         }
         WriteResult(job.sideband, job.sidebandSize, 0);
         break;

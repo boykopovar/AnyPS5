@@ -24,6 +24,8 @@ struct AwaitedWait {
 
 extern "C" void AgcDriverPrepareCommandWrite_nid_no_patch(std::uint64_t address, std::size_t bytes);
 extern "C" void AgcDriverWaitIdle_nid_postfix();
+extern "C" void AgcDriverSubmitGraphics_nid_postfix(std::uint32_t* commands, std::uint32_t dwords);
+extern "C" void AgcDriverUseGcnShaders_nid_postfix();
 extern "C" void AgcDriverRaiseWorkerThreadPriority_nid_postfix(const char* role);
 extern "C" void AgcDriverLockVulkanLoader_nid_postfix();
 extern "C" void AgcDriverUnlockVulkanLoader_nid_postfix();
@@ -32,6 +34,7 @@ extern "C" void AgcDriverRequestScreenshot_nid_postfix();
 extern "C" void AgcDriverSuspendPoint_nid_postfix();
 extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std::uint64_t* completed);
 extern "C" std::size_t AgcDriverAwaitedWaits_nid_postfix(AgcDriver::AwaitedWait* waits, std::size_t capacity);
+extern "C" void AgcDriverWaitForPipelineJournal_nid_postfix();
 extern "C" std::uint64_t AgcDriverDispatchesAdoptedAhead_nid_postfix();
 extern "C" std::uint64_t AgcDriverDispatchesRejectedAhead_nid_postfix();
 extern "C" void AgcDriverSetAheadAdoptHook_nid_postfix(void (*hook)());

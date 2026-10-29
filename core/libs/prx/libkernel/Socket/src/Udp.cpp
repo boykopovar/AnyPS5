@@ -1205,6 +1205,10 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
 }
 int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
                                     void* value, std::uint32_t* length) {
+    int netError = 0;
+    if (!GuestSockets::IsOpen(descriptor) && KernelGetSocketOption_nid_no_patch(descriptor, level, option, value, length, &netError)) {
+        return netError == 0 ? 0 : Fail(netError);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (level != 0xffff && level != 0 && level != 6 && level != 41) return Fail(22);
@@ -1856,7 +1860,7 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
         if (const int error = SendIovecs(*socket, headers->trailers, headers->trailerCount, sent)) return finish(error);
     return finish(0);
 }
-int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
+static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
     if (timeout < -1) return Fail(22);
     if (count && !descriptors) return Fail(14);
     std::vector<std::shared_ptr<void>> held;
@@ -2037,6 +2041,17 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
             return ready;
         }
     }
+}
+
+int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
+    if (timeout < -1) return Fail(22);
+    if (count && !descriptors) return Fail(14);
+    std::vector<GuestPollDescriptor> local(count);
+    const auto bytes = local.size() * sizeof(GuestPollDescriptor);
+    if (count && !GuestCopyIn_nid_no_patch(local.data(), descriptors, bytes)) return Fail(14);
+    const int result = PollDescriptors(local.data(), count, timeout);
+    if (result >= 0 && count && !GuestCopyOut_nid_no_patch(descriptors, local.data(), bytes)) return Fail(14);
+    return result;
 }
 }
 
