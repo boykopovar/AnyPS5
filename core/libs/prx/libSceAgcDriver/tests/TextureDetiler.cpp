@@ -30,6 +30,7 @@ struct Push {
     std::uint32_t columnBegin;
     std::uint32_t rowBegin;
     std::uint32_t pipeBankXor;
+    std::uint32_t originalBase;
 };
 
 Push decodePush(const std::vector<std::byte>& bytes) {
@@ -82,11 +83,13 @@ void RunTextureDetilerTests(const Context& context, const TextureDetilerTestAcce
     Require(push.pitchBytes == 96 && push.blocksPerRow == 5, "push constant row layout changed");
     Require(push.tail == 0 && push.tailX == 0 && push.tailY == 0, "push constant tail fields must reflect a non-tail mip");
     Require(push.elementBytes == 4, "push constant element size changed");
+    Require(push.originalBase == 0, "an ordinary detile must not have a write-back baseline");
     Require(push.rangeBegin == 0 && push.rangeEnd == 0xffffffffu && push.tiledBase == 0 && push.linearBase == 0, "a whole-mip dispatch must move every element out of whole buffers");
     Require(push.columnBegin == 0 && push.rowBegin == 0, "a whole-mip dispatch starts at the mip's origin");
     Require(capture.sourceBuffer == source && capture.destinationBuffer == destination, "dispatch bound the wrong source or destination buffer");
     Require(capture.sourceOffset == 16 && capture.sourceRange == 68, "source descriptor offset or range computed incorrectly");
     Require(capture.destinationOffset == 32 && capture.destinationRange == 56, "destination descriptor offset or range computed incorrectly");
+    Require(capture.originalBuffer == source && capture.originalOffset == capture.sourceOffset && capture.originalRange == capture.sourceRange, "an ordinary detile must bind a valid unused baseline descriptor");
 
     const auto pipelinesAfterFirst = access.pipelineCount();
     Require(pipelinesAfterFirst == 1, "the first dispatch must create exactly one compute pipeline");
@@ -174,6 +177,27 @@ void RunTextureDetilerTests(const Context& context, const TextureDetilerTestAcce
     Require(decodePush(access.lastDispatch().pushConstants).pipeBankXor == 0xa00u, "the window's pipe/bank XOR did not reach the detiling shader");
     Require(equationSpecialization[0] == 4 && equationSpecialization[1] == 4096 && equationSpecialization[2] == 2, "SW_4KB_D_X detiling must select the equation family over 4 KiB blocks");
 
+    for (const auto elementBytes : {1u, 2u, 4u, 8u, 16u}) {
+        const auto pitch = 4u * elementBytes + 7u;
+        const auto changedLayout = makeLayout(4, 3, pitch, 0, pitch * 3u, pitch * 3u);
+        detiler.Dispatch(commands, TextureTileMode::kLinear, elementBytes, source, 19, destination, 39, changedLayout, true);
+        const auto ordinaryPipelines = access.pipelineCount();
+        detiler.Dispatch(commands, TextureTileMode::kLinear, elementBytes, source, 19, destination, 39, changedLayout, true, 0, false, {}, 2067);
+        capture = access.lastDispatch();
+        push = decodePush(capture.pushConstants);
+        Require(push.srcBase == 3 && push.dstBase == 7 && push.originalBase == 3, "changed texture write-back lost a subword offset");
+        Require(capture.sourceOffset == 16 && capture.sourceRange == (3u + pitch * 3u + 3u) / 4u * 4u, "changed texture write-back must bind only the current source window");
+        Require(capture.originalBuffer == source && capture.originalOffset == 2064 && capture.originalRange == capture.sourceRange, "changed texture write-back must bind its baseline independently of the distance between snapshots");
+        Require(capture.destinationOffset == 32 && capture.destinationRange == (7u + pitch * 3u + 3u) / 4u * 4u, "changed texture write-back must bind only the destination window");
+        Require(capture.groupsX == 1 && capture.groupsY == 1, "changed texture write-back changed the dispatch extent");
+        Require(access.pipelineCount() == ordinaryPipelines + 1, "changed texture write-back needs a separate specialization");
+        detiler.Dispatch(commands, TextureTileMode::kLinear, elementBytes, source, 19, destination, 39, changedLayout, true, 0, false, {}, 2590);
+        Require(access.pipelineCount() == ordinaryPipelines + 1, "changed texture write-back must reuse its pipeline across baseline offsets");
+        Require(decodePush(access.lastDispatch().pushConstants).originalBase == 14, "changed texture write-back reused the previous baseline offset");
+        detiler.Dispatch(commands, TextureTileMode::kLinear, elementBytes, source, 19, destination, 39, changedLayout, true);
+        Require(access.pipelineCount() == ordinaryPipelines + 1 && decodePush(access.lastDispatch().pushConstants).originalBase == 0, "ordinary retile reused changed-only state");
+    }
+
     {
         const auto mip = ComputeColorTargetMipLayout(ColorTileMode::RenderTarget, 4, 1024, 1024, 11, 4);
         Require(mip.width == 64 && mip.height == 64 && mip.tail, "the first packed render-target mip has the wrong extent");
@@ -208,6 +232,14 @@ void RunTextureDetilerTests(const Context& context, const TextureDetilerTestAcce
         Require(access.descriptorPoolCount() == pools, "a full descriptor pool whose batches completed must be reset and reused, not joined by a new pool");
     }
 
+    reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, true, 0, false, {}, 256); }, "requires a linear retile");
+    reject([&] { detiler.Dispatch(commands, TextureTileMode::kLinear, 4, source, 0, destination, 0, layout, false, 0, false, {}, 256); }, "requires a linear retile");
+    reject([&] { detiler.Dispatch(commands, TextureTileMode::kLinear, 4, source, 0, destination, 0, layout, true, 0, true, {}, 256); }, "requires a linear retile");
+    reject([&] { detiler.Dispatch(commands, TextureTileMode::kLinear, 4, source, 32, destination, 0, layout, true, 0, false, {}, 16); }, "baseline overlaps");
+    reject([&] { detiler.Dispatch(commands, TextureTileMode::kLinear, 4, source, 0, destination, 0, layout, true, 0, false, {}, 16); }, "baseline overlaps");
+    reject([&] { detiler.Dispatch(commands, TextureTileMode::kLinear, 4, source, 0, destination, 0, layout, true, 0, false, {}, UINT64_MAX); }, "baseline exceeds its buffer address range");
+    reject([&] { detiler.Dispatch(commands, TextureTileMode::kLinear, 4, source, 0, destination, 0, makeLayout(8, 8, 32, 0, 32, std::uint64_t{UINT32_MAX} + 1u), true, 0, false, {}, std::uint64_t{UINT32_MAX} + 1u); }, "baseline exceeds addressable range");
+    reject([&] { detiler.Dispatch(commands, TextureTileMode::kLinear, 4, source, 0, destination, 0, makeLayout(8, 8, 32, 0, 32, 1024), true, 0, false, {}, 2049); }, "baseline buffer range exceeds device limits");
     reject([&] { detiler.Dispatch(VK_NULL_HANDLE, TextureTileMode::kStandard4KB, 4, source, 0, destination, 0, layout, 0); }, "active command buffer");
     reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, VK_NULL_HANDLE, 0, destination, 0, layout, 0); }, "source and destination buffers");
     reject([&] { detiler.Dispatch(commands, TextureTileMode::kStandard4KB, 4, source, 0, VK_NULL_HANDLE, 0, layout, 0); }, "source and destination buffers");

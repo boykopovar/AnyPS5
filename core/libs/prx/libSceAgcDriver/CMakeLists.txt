@@ -45,6 +45,17 @@ add_custom_command(
         DEPENDS "${agcTextureDetileShaderSource}" glslang-standalone
         VERBATIM
 )
+set(agcTextureDetileChangedShaderSpv ${agcTextureDetileGeneratedDir}/TextureDetileChanged.spv)
+set(agcTextureDetileChangedShaderHeader ${agcTextureDetileGeneratedDir}/TextureDetileChanged_spv.h)
+add_custom_command(
+        OUTPUT "${agcTextureDetileChangedShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -DBYTE_OUTPUT=1 -o "${agcTextureDetileChangedShaderSpv}" "${agcTextureDetileShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTextureDetileChangedShaderSpv} -DOUTPUT=${agcTextureDetileChangedShaderHeader}
+        -DSYMBOL=TEXTURE_DETILE_CHANGED_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcTextureDetileShaderSource}" glslang-standalone
+        VERBATIM
+)
 set(agcTextureDetileImageShaderSpv ${agcTextureDetileGeneratedDir}/TextureDetileImage.spv)
 set(agcTextureDetileImageShaderHeader ${agcTextureDetileGeneratedDir}/TextureDetileImage_spv.h)
 add_custom_command(
@@ -360,6 +371,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcSampleOrderShaderHeaders}
         ${agcTextureDetileShaderHeader}
+        ${agcTextureDetileChangedShaderHeader}
         ${agcReadbackHeaders}
         ${agcMultisampleUploadHeader}
         ${agcCmaskClearShaderHeader}
@@ -2775,6 +2787,27 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_period_copy_no_hle PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_COPY_HLE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
         set_tests_properties(agc_driver_period_copy_no_hle PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    foreach(agcLinearCase IN ITEMS mask geometry reader eviction alias same)
+        add_test(NAME agc_driver_linear_target_publication_${agcLinearCase} COMMAND agc_driver_linear_target_publication_tests ${agcLinearCase})
+        set_tests_properties(agc_driver_linear_target_publication_${agcLinearCase} PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(agc_driver_linear_target_publication_${agcLinearCase} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    add_test(NAME agc_driver_linear_target_preserved_bytes_seeded COMMAND agc_driver_linear_target_preserved_bytes_tests)
+    set_tests_properties(agc_driver_linear_target_preserved_bytes_seeded PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LINEAR_SEED_LEFT=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_linear_target_preserved_bytes_seeded PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_linear_target_recipe COMMAND agc_driver_linear_target_resident_tests --recipe)
+    set_tests_properties(agc_driver_linear_target_recipe PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_linear_target_recipe PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_sparse_indirect_indices_unreadable COMMAND agc_driver_sparse_indirect_indices_tests --unreadable)
