@@ -223,6 +223,59 @@ void triggerRamp() {
     require(rejects("TriggerRampMs = 10\ntriggerrampms = 20\n"), "a trigger ramp given twice is rejected");
 }
 
+void writeProfile(const std::string& titleId, const std::string& text) {
+    std::ofstream file(root / Pad::InputProfileName(titleId), std::ios::binary | std::ios::trunc);
+    file << text;
+    require(file.good(), "write the input profile");
+}
+
+bool crossOnKey(const Pad::InputConfiguration& configuration, SDL_Scancode key) {
+    std::size_t crossBindings = 0;
+    bool onKey = false;
+    for (const auto& binding : configuration.bindings) {
+        if (binding.control != Pad::InputControl::Button || binding.button != Pad::PadButton::Cross || binding.key == SDL_SCANCODE_UNKNOWN) continue;
+        ++crossBindings;
+        onKey = onKey || binding.key == key;
+    }
+    return crossBindings == 1 && onKey;
+}
+
+void profileNames() {
+    require(Pad::InputProfileName("PPSA16064") == "anyps5-input.PPSA16064.ini", "a title ID names its profile");
+    require(Pad::InputProfileName("CUSA_01-x") == "anyps5-input.CUSA_01-x.ini", "underscores and dashes are allowed");
+    require(Pad::InputProfileName("").empty(), "an empty title ID has no profile");
+    require(Pad::InputProfileName("../PPSA16064").empty(), "a title ID with a path separator has no profile");
+    require(Pad::InputProfileName("PPSA16064.ini").empty(), "a title ID with a dot has no profile");
+    require(Pad::InputProfileName(std::string(Pad::MaxTitleIdLength + 1, 'A')).empty(), "a title ID over the length limit has no profile");
+}
+
+void profileOverridesShared() {
+    useConfig("MouseSensitivity = 2\nCross = KEY:F\n");
+    writeProfile("PPSA00001", "MouseSensitivity = 4\nMouseCurve = 2\nCross = KEY:G\n");
+    const auto profiled = Pad::LoadInputMapping("PPSA00001");
+    require(profiled.settings.mouseSensitivity == 4.0 && profiled.settings.mouseCurve == 2.0, "a profile overrides and adds settings");
+    require(crossOnKey(profiled, SDL_SCANCODE_G), "a profile replaces the bindings of an action it lists");
+    const auto other = Pad::LoadInputMapping("PPSA00002");
+    require(other.settings.mouseSensitivity == 2.0 && other.settings.mouseCurve == 1.0 && crossOnKey(other, SDL_SCANCODE_F), "another title keeps the shared file");
+    const auto none = Pad::LoadInputMapping();
+    require(none.settings.mouseSensitivity == 2.0 && crossOnKey(none, SDL_SCANCODE_F), "no title ID keeps the shared file");
+    writeProfile("PPSA00001", "MouseCurve = 3\n");
+    const auto partial = Pad::LoadInputMapping("PPSA00001");
+    require(partial.settings.mouseSensitivity == 2.0 && partial.settings.mouseCurve == 3.0 && crossOnKey(partial, SDL_SCANCODE_F), "a profile keeps what it does not list");
+    writeProfile("PPSA00001", "MouseSensitivity = 4\n");
+    require(Pad::LoadInputMapping("PPSA00001").settings.mouseSensitivity == 4.0, "a profile may set a setting the shared file also sets");
+    writeProfile("PPSA00001", "MouseCurve = 9\n");
+    std::string message;
+    try {
+        Pad::LoadInputMapping("PPSA00001");
+    } catch (const std::runtime_error& error) {
+        message = error.what();
+    }
+    require(message.find("anyps5-input.PPSA00001.ini:1") != std::string::npos, "an invalid profile names its file and line");
+    require(Pad::LoadInputMapping("PPSA00002").settings.mouseCurve == 1.0, "an invalid profile does not affect other titles");
+    std::filesystem::remove(root / Pad::InputProfileName("PPSA00001"));
+}
+
 std::size_t toggleMouseBindings(const Pad::InputConfiguration& configuration, SDL_Scancode key, Pad::MouseButton button) {
     std::size_t count = 0;
     for (const auto& binding : configuration.bindings) {
@@ -283,6 +336,8 @@ int main() try {
     stickModifier();
     keyboardRamp();
     triggerRamp();
+    profileNames();
+    profileOverridesShared();
     toggleMouseDefaults();
     nonAsciiPaths();
     deadzoneOffMatchesRawSticks();

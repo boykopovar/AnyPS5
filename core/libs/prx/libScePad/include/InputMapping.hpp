@@ -2,7 +2,10 @@
 #define CORE_LIBS_PRX_LIBSCEPAD_INPUTMAPPING_HPP
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
 #include "SDL_scancode.h"
 #include "SDL_mouse.h"
@@ -15,6 +18,7 @@ inline constexpr int WheelPressDurationMs = 80;
 inline constexpr double DefaultMouseSensitivity = 1.0;
 inline constexpr double MaxMouseSensitivity = 10.0;
 inline constexpr int MaxStickDeadzonePercent = 90;
+inline constexpr std::size_t MaxTitleIdLength = 32;
 
 struct InputSettings {
     int leftStickDeadzonePercent = 0;
@@ -78,7 +82,8 @@ inline constexpr std::array InputMapping{
     InputBinding{SDL_SCANCODE_UNKNOWN, MouseButton::None, InputControl::Button, PadButton::Down, -1}
 };
 
-InputConfiguration LoadInputMapping();
+InputConfiguration LoadInputMapping(std::string_view titleId = {});
+std::string InputProfileName(std::string_view titleId);
 std::array<std::uint8_t, 2> StickWithDeadzone(std::int16_t x, std::int16_t y, int deadzonePercent);
 
 }

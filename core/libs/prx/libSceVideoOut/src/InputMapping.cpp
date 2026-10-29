@@ -262,37 +262,10 @@ std::filesystem::path defaultConfigPath() {
     return "anyps5-input.ini";
 }
 
-}
-
-std::array<std::uint8_t, 2> Pad::StickWithDeadzone(std::int16_t x, std::int16_t y, int deadzonePercent) {
-    if (deadzonePercent < 0 || deadzonePercent > MaxStickDeadzonePercent) throw std::invalid_argument("Pad: stick deadzone out of range");
-    if (deadzonePercent == 0) return {stickByte(x), stickByte(y)};
-    const double normalizedX = std::max(x / 32767.0, -1.0);
-    const double normalizedY = std::max(y / 32767.0, -1.0);
-    const double magnitude = std::hypot(normalizedX, normalizedY);
-    const double deadzone = deadzonePercent / 100.0;
-    if (magnitude <= deadzone) return {stickByte(0), stickByte(0)};
-    const double scale = (magnitude - deadzone) / (1.0 - deadzone) / magnitude;
-    const auto axis = [scale](double value) {
-        return stickByte(static_cast<std::int32_t>(std::lround(std::clamp(value * scale, -1.0, 1.0) * 32767.0)));
-    };
-    return {axis(normalizedX), axis(normalizedY)};
-}
-
-Pad::InputConfiguration Pad::LoadInputMapping() {
-    InputConfiguration configuration{{InputMapping.begin(), InputMapping.end()}, {}};
-    auto& bindings = configuration.bindings;
-    const auto configured = configuredPath();
-    const bool explicitPath = !configured.empty();
-    const std::filesystem::path path = explicitPath ? configured : defaultConfigPath();
+void loadInputFile(Pad::InputConfiguration& configuration, const std::filesystem::path& path) {
     std::ifstream file(path);
-    if (!file) {
-        if (explicitPath || std::filesystem::exists(path)) {
-            throw std::runtime_error("Pad: cannot read input mapping '" + pathToUtf8(path) + "'");
-        }
-        return configuration;
-    }
-
+    if (!file) throw std::runtime_error("Pad: cannot read input mapping '" + pathToUtf8(path) + "'");
+    auto& bindings = configuration.bindings;
     std::unordered_set<std::string> overriddenActions;
     std::array<bool, settingNames.size()> configuredSettings{};
     std::string line;
@@ -327,9 +300,9 @@ Pad::InputConfiguration Pad::LoadInputMapping() {
             auto binding = parseBinding(*action, source);
             const auto normalizedAction = upper(action->name);
             if (overriddenActions.insert(normalizedAction).second) {
-                std::erase_if(bindings, [action](const InputBinding& existing) { return matchesAction(existing, *action); });
+                std::erase_if(bindings, [action](const Pad::InputBinding& existing) { return matchesAction(existing, *action); });
             }
-            const bool duplicate = std::any_of(bindings.begin(), bindings.end(), [&binding](const InputBinding& existing) {
+            const bool duplicate = std::any_of(bindings.begin(), bindings.end(), [&binding](const Pad::InputBinding& existing) {
                 return existing.key == binding.key && existing.mouseButton == binding.mouseButton &&
                     existing.control == binding.control && existing.button == binding.button &&
                     existing.wheelDirection == binding.wheelDirection;
@@ -340,6 +313,42 @@ Pad::InputConfiguration Pad::LoadInputMapping() {
         }
     }
     if (file.bad()) throw std::runtime_error("Pad: cannot read input mapping '" + pathToUtf8(path) + "'");
+}
 
+}
+
+std::array<std::uint8_t, 2> Pad::StickWithDeadzone(std::int16_t x, std::int16_t y, int deadzonePercent) {
+    if (deadzonePercent < 0 || deadzonePercent > MaxStickDeadzonePercent) throw std::invalid_argument("Pad: stick deadzone out of range");
+    if (deadzonePercent == 0) return {stickByte(x), stickByte(y)};
+    const double normalizedX = std::max(x / 32767.0, -1.0);
+    const double normalizedY = std::max(y / 32767.0, -1.0);
+    const double magnitude = std::hypot(normalizedX, normalizedY);
+    const double deadzone = deadzonePercent / 100.0;
+    if (magnitude <= deadzone) return {stickByte(0), stickByte(0)};
+    const double scale = (magnitude - deadzone) / (1.0 - deadzone) / magnitude;
+    const auto axis = [scale](double value) {
+        return stickByte(static_cast<std::int32_t>(std::lround(std::clamp(value * scale, -1.0, 1.0) * 32767.0)));
+    };
+    return {axis(normalizedX), axis(normalizedY)};
+}
+
+std::string Pad::InputProfileName(std::string_view titleId) {
+    const bool valid = !titleId.empty() && titleId.size() <= MaxTitleIdLength && std::all_of(titleId.begin(), titleId.end(), [](char character) {
+        return std::isalnum(static_cast<unsigned char>(character)) != 0 || character == '_' || character == '-';
+    });
+    return valid ? "anyps5-input." + std::string(titleId) + ".ini" : std::string();
+}
+
+Pad::InputConfiguration Pad::LoadInputMapping(std::string_view titleId) {
+    InputConfiguration configuration{{InputMapping.begin(), InputMapping.end()}, {}};
+    const auto configured = configuredPath();
+    const bool explicitPath = !configured.empty();
+    const std::filesystem::path path = explicitPath ? configured : defaultConfigPath();
+    if (explicitPath || std::filesystem::exists(path)) loadInputFile(configuration, path);
+    const auto profile = InputProfileName(titleId);
+    if (!profile.empty()) {
+        const auto profilePath = path.parent_path() / profile;
+        if (std::filesystem::exists(profilePath)) loadInputFile(configuration, profilePath);
+    }
     return configuration;
 }
