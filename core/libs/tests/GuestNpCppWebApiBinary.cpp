@@ -80,13 +80,21 @@ void TestSetAndAppend() {
     Require(std::memcmp(_ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(reinterpret_cast<const CommonBinary*>(storage.bytes)), "abcde", 5) == 0);
 
     Require(_ZN3sce2Np9CppWebApi6Common6Binary9setBinaryEPKvm(binary, nullptr, 1) == kInvalidArgument);
-    Require(Load<std::uint64_t>(storage, kDataSizeOffset) == 0);
-    Require(Load<void*>(storage, kBufferOffset) == nullptr);
+    Require(Load<std::uint64_t>(storage, kDataSizeOffset) == 5);
+    Require(std::memcmp(_ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(reinterpret_cast<const CommonBinary*>(storage.bytes)), "abcde", 5) == 0);
 
     Require(_ZN3sce2Np9CppWebApi6Common6Binary9setBinaryEPKvm(binary, nullptr, 0) == 0);
     Require(_ZN3sce2Np9CppWebApi6Common6Binary12appendBinaryEPKvm(binary, "xy", 2) == 0);
     Require(Load<std::uint64_t>(storage, kDataSizeOffset) == 2);
     Require(std::memcmp(_ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(reinterpret_cast<const CommonBinary*>(storage.bytes)), "xy", 2) == 0);
+
+    Require(_ZN3sce2Np9CppWebApi6Common6Binary9setBinaryEPKvm(binary, _ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(reinterpret_cast<const CommonBinary*>(storage.bytes)), 2) == 0);
+    Require(Load<std::uint64_t>(storage, kDataSizeOffset) == 2);
+    Require(std::memcmp(_ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(reinterpret_cast<const CommonBinary*>(storage.bytes)), "xy", 2) == 0);
+
+    Require(_ZN3sce2Np9CppWebApi6Common6Binary12appendBinaryEPKvm(binary, _ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(reinterpret_cast<const CommonBinary*>(storage.bytes)), 2) == 0);
+    Require(Load<std::uint64_t>(storage, kDataSizeOffset) == 4);
+    Require(std::memcmp(_ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(reinterpret_cast<const CommonBinary*>(storage.bytes)), "xyxy", 4) == 0);
 
     Require(Load<std::int32_t>(storage, kReferenceCountOffset) == 0);
     Require(_ZN3sce2Np9CppWebApi6Common6Binary21intrusive_ptr_add_refEPS3_(binary) == 1);
