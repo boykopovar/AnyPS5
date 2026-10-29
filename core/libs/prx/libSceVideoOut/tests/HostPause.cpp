@@ -1,5 +1,8 @@
+#include "prx/libSceVideoOut/include/HostPause.hpp"
 #include "prx/libSceVideoOut/include/HostPauseSettings.hpp"
 #include "SDL_keyboard.h"
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -56,12 +59,69 @@ void SettingsFocus() {
     Require(Refusal("F9", "x").find("ANYPS5_PAUSE_ON_FOCUS_LOSS") != std::string::npos, "a bad focus value next to a good key is accepted");
 }
 
+SDL_Event Key(unsigned windowId, SDL_Scancode key, bool down, bool repeat = false) {
+    SDL_Event event{};
+    event.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+    event.key.windowID = windowId;
+    event.key.repeat = repeat ? 1 : 0;
+    event.key.keysym.scancode = key;
+    return event;
+}
+
+struct FakeClock {
+    std::chrono::steady_clock::time_point now{std::chrono::seconds(100)};
+    HostPause::Clock Get() { return [this] { return now; }; }
+};
+
+void KeyToggles() {
+    FakeClock clock;
+    HostPause pause({SDL_SCANCODE_F9, false}, clock.Get());
+    Require(!pause.Paused(), "a new pause starts paused");
+    auto change = pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true), 3);
+    Require(change.changed && change.paused && pause.Paused(), "the key does not pause");
+    clock.now += std::chrono::milliseconds(2500);
+    change = pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true), 3);
+    Require(change.changed && !change.paused && !pause.Paused(), "the key does not resume");
+    Require(change.pausedFor == std::chrono::milliseconds(2500), "the paused time is not measured with the injected clock");
+    clock.now += std::chrono::seconds(7);
+    pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true), 3);
+    clock.now += std::chrono::milliseconds(40);
+    change = pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true), 3);
+    Require(change.pausedFor == std::chrono::milliseconds(40), "a second pause is measured from its own start");
+}
+
+void KeyIgnored() {
+    FakeClock clock;
+    HostPause pause({SDL_SCANCODE_F9, false}, clock.Get());
+    Require(!pause.HandleEvent(Key(3, SDL_SCANCODE_F9, false), 3).changed, "a key release toggled the pause");
+    Require(!pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true, true), 3).changed, "a key repeat toggled the pause");
+    Require(!pause.HandleEvent(Key(4, SDL_SCANCODE_F9, true), 3).changed, "a key in another window toggled the pause");
+    Require(!pause.HandleEvent(Key(3, SDL_SCANCODE_F10, true), 3).changed, "another key toggled the pause");
+    Require(!pause.Paused(), "an ignored event left the pause on");
+    pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true), 3);
+    Require(!pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true, true), 3).changed && pause.Paused(), "a key repeat resumed the pause");
+    SDL_Event other{};
+    other.type = SDL_MOUSEMOTION;
+    Require(!pause.HandleEvent(other, 3).changed && pause.Paused(), "a mouse event changed the pause");
+}
+
+void NoKeyNoPause() {
+    FakeClock clock;
+    HostPause pause({SDL_SCANCODE_UNKNOWN, false}, clock.Get());
+    Require(!pause.HandleEvent(Key(3, SDL_SCANCODE_UNKNOWN, true), 3).changed, "an unset key paused on an unknown scancode");
+    Require(!pause.HandleEvent(Key(3, SDL_SCANCODE_F9, true), 3).changed, "an unset key paused on F9");
+    Require(!pause.Paused(), "a disabled pause is on");
+}
+
 }
 
 int main() {
     SettingsDefault();
     SettingsKey();
     SettingsFocus();
+    KeyToggles();
+    KeyIgnored();
+    NoKeyNoPause();
     std::puts("host pause: all checks passed");
     return 0;
 }
