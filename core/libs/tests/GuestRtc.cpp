@@ -998,4 +998,11 @@ int main(int argc, char** argv) {
         Require(sceRtcGetCurrentClockUtc(&ranged) == invalidValue && Equal(ranged, sentinel));
         Require(sceRtcGetCurrentClockLocalTime(&ranged) == invalidValue && Equal(ranged, sentinel));
     }
+    bool threwSetConf = false;
+    try {
+        sceRtcSetConf(0, 0, 0, 0);
+    } catch (const std::exception&) {
+        threwSetConf = true;
+    }
+    Require(threwSetConf);
 }
