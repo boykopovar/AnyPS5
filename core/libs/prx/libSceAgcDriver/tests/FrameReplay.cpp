@@ -860,14 +860,14 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|gpu_store|gpu_fill|gpu_cleared|fence_reuse|busy_queue]\n");
         return 2;
     }
+    int status = 0;
     try {
         if (const auto test = rewound.find(mode); test != rewound.end()) {
             try {
                 AgcDriver::DriverDetail::DriverTestAccess::OpenDevice();
             } catch (const std::exception& error) {
                 if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
-                std::printf("skipped, no usable Vulkan device: %s\n", error.what());
-                return 77;
+                throw Inconclusive(std::string("no usable Vulkan device: ") + error.what());
             }
             test->second(argv[1]);
         } else if (mode == "concurrent") testConcurrentCopies(argv[1]);
@@ -876,11 +876,18 @@ int main(int argc, char** argv) {
         else testCaptureAndReplay(argv[1], mode == "pipelines");
     } catch (const Inconclusive& error) {
         std::printf("skipped, %s\n", error.what());
-        return 77;
+        status = 77;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAILED: %s\n", error.what());
+        status = 1;
+    }
+    try {
+        AgcDriverShutdown_nid_postfix();
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "FAILED shutdown: %s\n", error.what());
         return 1;
     }
+    if (status != 0) return status;
     std::puts("frame replay tests passed");
     return 0;
 }
