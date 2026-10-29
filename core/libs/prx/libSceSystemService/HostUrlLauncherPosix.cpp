@@ -1,3 +1,4 @@
+#include "prx/libSceSystemService/HostUrl.hpp"
 #include "prx/libSceSystemService/HostUrlBackends.hpp"
 #include <cerrno>
 #include <fcntl.h>
@@ -37,7 +38,7 @@ HostBrowserLauncher::HostBrowserLauncher() : program(DefaultProgram()) {}
 HostBrowserLauncher::HostBrowserLauncher(std::string program) : program(std::move(program)) {}
 
 bool HostBrowserLauncher::Launch(const std::string& url) {
-    if (url.empty() || url.front() == '-' || program.empty()) return false;
+    if (ValidateHostUrl(url) != HostUrlVerdict::Ok || program.empty()) return false;
     std::string name = program;
     std::string address = url;
     char* arguments[] = {name.data(), address.data(), nullptr};
