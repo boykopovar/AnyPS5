@@ -9,6 +9,10 @@ HostFullscreenMode ParseHostFullscreenMode(const char* value, bool* unrecognized
     return HostFullscreenMode::Borderless;
 }
 
+std::string HostFullscreenWarning(const char* value) {
+    return std::string("DisplayWindow: ANYPS5_FULLSCREEN='") + value + "' is not 0, 1, windowed or borderless; treating it as borderless";
+}
+
 HostFullscreenState::HostFullscreenState(IHostFullscreenWindow& window) : window(window) {}
 
 void HostFullscreenState::Adopt(HostFullscreenMode mode, HostWindowSize size) {
