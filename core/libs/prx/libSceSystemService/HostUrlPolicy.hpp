@@ -70,12 +70,14 @@ public:
 
 constexpr std::size_t OPEN_URL_MAX_ATTEMPTS = 3;
 constexpr std::chrono::seconds OPEN_URL_WINDOW{60};
+constexpr std::chrono::seconds OPEN_URL_DECLINE_COOLDOWN{600};
 
 enum class OpenUrlGateOutcome {
     Disabled,
     Rejected,
     Busy,
     Limited,
+    Suppressed,
     Declined,
     Failed,
     Launched,
@@ -96,12 +98,16 @@ public:
         std::unique_lock lock(state, std::try_to_lock);
         if (!lock.owns_lock()) return OpenUrlGateOutcome::Busy;
         const auto now = clock->Now();
+        if (suppressed && now < suppressedUntil) return OpenUrlGateOutcome::Suppressed;
         while (!attempts.empty() && now - attempts.front() >= OPEN_URL_WINDOW) attempts.pop_front();
         if (attempts.size() >= OPEN_URL_MAX_ATTEMPTS) return OpenUrlGateOutcome::Limited;
         attempts.push_back(now);
         switch (OpenUrlOnHost(mode, url, launcher, confirmation)) {
         case OpenUrlOutcome::Launched: return OpenUrlGateOutcome::Launched;
-        case OpenUrlOutcome::Declined: return OpenUrlGateOutcome::Declined;
+        case OpenUrlOutcome::Declined:
+            suppressed = true;
+            suppressedUntil = now + OPEN_URL_DECLINE_COOLDOWN;
+            return OpenUrlGateOutcome::Declined;
         case OpenUrlOutcome::Failed: return OpenUrlGateOutcome::Failed;
         case OpenUrlOutcome::Rejected: return OpenUrlGateOutcome::Rejected;
         case OpenUrlOutcome::Disabled: return OpenUrlGateOutcome::Disabled;
@@ -113,4 +119,6 @@ private:
     std::mutex state;
     IUrlClock* clock;
     std::deque<std::chrono::steady_clock::time_point> attempts;
+    bool suppressed = false;
+    std::chrono::steady_clock::time_point suppressedUntil;
 };
