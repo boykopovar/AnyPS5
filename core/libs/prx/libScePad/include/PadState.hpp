@@ -52,6 +52,11 @@ struct PadOutputState {
     bool triggerTouched = false;
     bool motionEnabled = true;
     int vibrationMode = 0;
+    int audioOutPath = 0;
+    bool volumeGainValid = false;
+    std::uint8_t speakerVolume = 0;
+    std::uint8_t headsetVolume = 0;
+    std::uint8_t micGain = 0;
 };
 
 namespace Pad {
@@ -63,6 +68,8 @@ void SetVibration(int port, std::uint8_t large, std::uint8_t small);
 void SetVibration(std::uint8_t large, std::uint8_t small);
 void SetVibrationMode(int port, int mode);
 void SetVibrationMode(int mode);
+void SetAudioOutPath(int port, int path);
+void SetVolumeGain(int port, std::uint8_t speaker, std::uint8_t headset, std::uint8_t mic);
 void SetLightBar(int port, bool valid, std::uint8_t r, std::uint8_t g, std::uint8_t b);
 void SetLightBar(bool valid, std::uint8_t r, std::uint8_t g, std::uint8_t b);
 void SetTriggerCommand(int port, int trigger, const std::uint8_t* command);
