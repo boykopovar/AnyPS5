@@ -109,9 +109,6 @@ struct GuestTextureResource {
     bool gcnPow2Pad = false;
     bool gcnLinearGeneral = false;
     std::uint64_t fmaskCmaskAddress = 0;
-    std::uint32_t gcnPitch = 0;
-    bool gcnPow2Pad = false;
-    bool gcnLinearGeneral = false;
 };
 
 constexpr bool IsGcnMicroTiled(TextureTileMode mode) {
