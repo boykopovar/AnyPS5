@@ -21,6 +21,7 @@ public:
     virtual void SetFullscreen(bool fullscreen) = 0;
     virtual HostWindowSize Size() const = 0;
     virtual void SetSize(HostWindowSize size) = 0;
+    virtual void ShowCursor(bool show) = 0;
 };
 
 class HostFullscreenState {
@@ -29,10 +30,13 @@ public:
 
     void Adopt(HostFullscreenMode mode, HostWindowSize windowedSize);
     void Toggle();
+    void Refresh(bool titleReadsMouse);
+    void Release();
 
 private:
     IHostFullscreenWindow& window;
     HostWindowSize windowedSize;
+    bool cursorHidden = false;
 };
 
 #endif
