@@ -134,6 +134,7 @@ static void FaceMatches(const GuestFaceRec* face, FT_Face host, const FreeType::
 }
 
 static unsigned orientationCases = 0;
+static constexpr bool wideNativeOrientation = FREETYPE_MAJOR > 2 || (FREETYPE_MAJOR == 2 && FREETYPE_MINOR >= 15);
 
 static void CheckOrientationCase(std::vector<GuestVector> points, std::vector<std::uint16_t> contours,
                                  int expected, bool compareNative = true) {
@@ -156,7 +157,23 @@ static void CheckOrientationCase(std::vector<GuestVector> points, std::vector<st
         std::vector<FT_Vector> nativePoints;
         for (const auto& point : points) nativePoints.push_back({static_cast<FT_Pos>(point.x), static_cast<FT_Pos>(point.y)});
         FT_Outline native{outline.n_contours, outline.n_points, nativePoints.data(), tags.data(), contours.data(), outline.flags};
-        Require(FT_Outline_Get_Orientation(&native) == expected);
+        int nativeExpected = expected;
+        if constexpr (wideNativeOrientation) {
+            std::int64_t area = 0;
+            std::size_t first = 0;
+            for (const auto last : contours) {
+                auto previous = points[last];
+                for (std::size_t index = first; index <= last; ++index) {
+                    const auto current = points[index];
+                    area += previous.x * current.y - current.x * previous.y;
+                    previous = current;
+                }
+                first = last + 1;
+            }
+            nativeExpected = points.empty() ? FT_ORIENTATION_TRUETYPE : area > 0 ? FT_ORIENTATION_POSTSCRIPT :
+                             area < 0 ? FT_ORIENTATION_TRUETYPE : FT_ORIENTATION_NONE;
+        }
+        Require(FT_Outline_Get_Orientation(&native) == nativeExpected);
     }
 }
 
@@ -189,7 +206,7 @@ static void CheckOutlineOrientation() {
                                   {0, 0}, {32767, 0}, {32767, 32767}, {0, 32767}};
         unsigned short contours[]{3, 7};
         FT_Outline native{2, 8, nativePoints, nullptr, contours, 0};
-        Require(FT_Outline_Get_Orientation(&native) == FT_ORIENTATION_TRUETYPE);
+        Require(FT_Outline_Get_Orientation(&native) == (wideNativeOrientation ? FT_ORIENTATION_POSTSCRIPT : FT_ORIENTATION_TRUETYPE));
     }
     std::vector<GuestVector> maximum(65535);
     const GuestVector square[]{{0, 0}, {32767, 0}, {32767, 32767}, {0, 32767}};
@@ -504,6 +521,15 @@ static int APS5_VABI NullUserMove(const GuestVector*, void* user) {
     return -17;
 }
 
+static std::uint64_t decompositionDigest = 14695981039346656037ull;
+
+static void RecordDecomposition(const DecomposeEvents& events, int result) {
+    const auto add = [](std::uint64_t value) { decompositionDigest = (decompositionDigest ^ value) * 1099511628211ull; };
+    add(static_cast<std::uint32_t>(result));
+    add(events.calls.size());
+    for (const auto& call : events.calls) for (const auto value : call) add(static_cast<std::uint64_t>(value));
+}
+
 static std::size_t CompareDecomposition(std::vector<GuestVector> points, std::vector<unsigned char> tags,
                                         std::vector<unsigned short> contours, int shift, std::int64_t delta,
                                         std::size_t stopAt = static_cast<std::size_t>(-1), int stopResult = 0) {
@@ -512,18 +538,23 @@ static std::size_t CompareDecomposition(std::vector<GuestVector> points, std::ve
     GuestOutline outline{static_cast<std::uint16_t>(contours.size()), static_cast<std::uint16_t>(points.size()), points.data(), tags.data(), contours.data(), 0};
     FT_Outline native{outline.n_contours, outline.n_points, nativePoints.data(), tags.data(), contours.data(), 0};
     DecomposeEvents actual;
-    DecomposeEvents expected;
-    actual.stopAt = expected.stopAt = stopAt;
-    actual.result = expected.result = stopResult;
+    actual.stopAt = stopAt;
+    actual.result = stopResult;
     const GuestOutlineFuncs functions{GuestMove, GuestLine, GuestConic, GuestCubic, shift, delta};
-    const FT_Outline_Funcs nativeFunctions{NativeMove, NativeLine, NativeConic, NativeCubic, shift, static_cast<FT_Pos>(delta)};
     const int result = FT_Outline_Decompose_nid_postfix(&outline, &functions, &actual);
-    Require(result == FT_Outline_Decompose(&native, &nativeFunctions, &expected));
-    Require(actual.calls == expected.calls);
+    if (std::all_of(tags.begin(), tags.end(), [](unsigned char tag) { return (tag & 3) <= 1; })) {
+        DecomposeEvents expected;
+        expected.stopAt = stopAt;
+        expected.result = stopResult;
+        const FT_Outline_Funcs nativeFunctions{NativeMove, NativeLine, NativeConic, NativeCubic, shift, static_cast<FT_Pos>(delta)};
+        Require(result == FT_Outline_Decompose(&native, &nativeFunctions, &expected));
+        Require(actual.calls == expected.calls);
+    }
+    RecordDecomposition(actual, result);
     for (std::size_t index = 0; index < points.size(); ++index) {
         Require(points[index].x == nativePoints[index].x && points[index].y == nativePoints[index].y);
     }
-    if (stopAt < expected.calls.size()) Require(result == stopResult && actual.calls.size() == stopAt + 1);
+    if (stopAt < actual.calls.size()) Require(result == stopResult && actual.calls.size() == stopAt + 1);
     return actual.calls.size();
 }
 
@@ -572,6 +603,9 @@ static void OutlineDecomposition() {
     Require(FT_Outline_Decompose_nid_postfix(&empty, nullptr, nullptr) == FT_Err_Invalid_Argument);
     const GuestOutlineFuncs unused{nullptr, nullptr, nullptr, nullptr, -1, INT64_MIN};
     Require(FT_Outline_Decompose_nid_postfix(&empty, &unused, nullptr) == 0);
+    constexpr std::array<std::uint64_t, 6> referenceDigests{
+        9337771517416358513ull, 2659011010632787664ull, 15537612554675745923ull,
+        8353793238930575903ull, 13429685399718963483ull, 5403894036230531287ull};
     int scenarios = 0;
     std::size_t calls = 0;
     for (unsigned count = 1; count <= 6; ++count) {
@@ -588,6 +622,7 @@ static void OutlineDecomposition() {
                 }
             }
         }
+        Require(decompositionDigest == referenceDigests[count - 1]);
     }
     const std::vector<GuestVector> curve{{-17, 3}, {7, -5}, {29, 31}, {43, -11}, {59, 37}, {73, -13}, {89, 41}, {101, -17}};
     for (const auto& tags : std::vector<std::vector<unsigned char>>{{1, 0, 0, 1, 2, 2, 1, 0}, {1, 2, 2, 1, 0, 1, 2, 2}, {0, 0, 0, 0, 0, 0, 0, 0}}) {
@@ -602,6 +637,7 @@ static void OutlineDecomposition() {
             }
         }
     }
+    Require(decompositionDigest == 9491977043923692988ull);
     {
         GuestVector points[]{{7, -5}, {11, 13}, {17, -19}, {23, 29}};
         FT_Vector nativePoints[]{{7, -5}, {11, 13}, {17, -19}, {23, 29}};
@@ -702,7 +738,7 @@ static void OutlineDecomposition() {
         }
     }
     Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(oracle) == 0);
-    std::printf("FreeType outline decomposition: %d native comparisons, %zu callbacks, %d rendered glyphs, wide coordinates and callback mutation\n", scenarios, calls, rendered);
+    std::printf("FreeType outline decomposition: %d FreeType 2.13.3 reference scenarios, %zu callbacks, %d rendered glyphs, wide coordinates and callback mutation\n", scenarios, calls, rendered);
 }
 
 struct Finalizers {
@@ -823,6 +859,58 @@ static void CheckCidQueries(GuestFaceRec* face, FT_Face native, int kind, unsign
             ++cidQueries;
         }
     }
+}
+
+static std::vector<unsigned char> CidSubroutineFont(unsigned dictionaries, bool shared) {
+    constexpr std::uint32_t subroutineSize = 16384;
+    const unsigned maps = shared ? 1 : dictionaries;
+    const std::uint32_t glyphStart = 10 + maps * (8 + subroutineSize);
+    std::string header = "%!PS-Adobe-3.0 Resource-CIDFont\n/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincidfont\n"
+        "/CIDFontName /BoundedCID def\n/CIDFontType 0 def\n/CIDFontVersion 1 def\n"
+        "/CIDSystemInfo 3 dict dup begin /Registry (Adobe) def /Ordering (Identity) def /Supplement 0 def end def\n"
+        "/FontBBox [0 0 1000 1000] def\n/FontMatrix [0.001 0 0 0.001 0 0] def\n"
+        "/CIDCount 1 def\n/FDBytes 1 def\n/GDBytes 4 def\n/CIDMapOffset 0 def\n/FDArray " + std::to_string(dictionaries) + " array\n";
+    for (unsigned index = 0; index < dictionaries; ++index) {
+        const auto offset = 10 + (shared ? 0 : index) * (8 + subroutineSize);
+        header += "%ADOBeginFontDict\ndup " + std::to_string(index) + " 10 dict dup begin\n/FontType 1 def\n"
+            "/FontMatrix [0.001 0 0 0.001 0 0] def\n/Private 8 dict dup begin\n/lenIV -1 def\n"
+            "/SubrMapOffset " + std::to_string(offset) + " def\n/SDBytes 4 def\n/SubrCount 1 def\nend def\nend put\n%ADOEndFontDict\n";
+    }
+    header += "def\n(Binary) " + std::to_string(glyphStart + 1) + " StartData\n";
+    std::vector<unsigned char> font(header.begin(), header.end());
+    font.push_back(0);
+    Put32(font, glyphStart);
+    font.push_back(0);
+    Put32(font, glyphStart + 1);
+    for (unsigned index = 0; index < maps; ++index) {
+        const auto start = 18 + index * (8 + subroutineSize);
+        Put32(font, start);
+        Put32(font, start + subroutineSize);
+        font.push_back(11);
+        font.insert(font.end(), subroutineSize - 1, 0);
+    }
+    font.push_back(14);
+    return font;
+}
+
+static void CheckCidSubroutineBudget() {
+    GuestLibrary* library = nullptr;
+    Require(FT_Init_FreeType_nid_postfix(&library) == 0);
+    for (const auto [dictionaries, shared] : {std::pair{1u, true}, {4u, true}, {8u, true}, {8u, false}}) {
+        const auto font = CidSubroutineFont(dictionaries, shared);
+        Require(font.size() < 150000);
+        GuestFaceRec* face = nullptr;
+        const auto error = FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &face);
+        if (shared && dictionaries == 8) {
+            Require(error == FT_Err_Invalid_File_Format && face == nullptr);
+        } else {
+            Require(error == 0 && face != nullptr);
+            Require(FT_Load_Glyph_nid_postfix(face, 0, FT_LOAD_NO_SCALE) == 0);
+            Require(FT_Done_Face_nid_postfix(face) == 0);
+        }
+    }
+    Require(FT_Done_FreeType_nid_postfix(library) == 0);
+    std::puts("FreeType CID subroutines: excessive overlap refused; bounded overlap and disjoint dictionaries passed");
 }
 
 static void CheckCidMetadata() {
@@ -1591,6 +1679,7 @@ int main() {
     }
     const auto previous = std::filesystem::current_path();
     CheckCidMetadata();
+    CheckCidSubroutineBudget();
     std::filesystem::current_path(root);
     CheckOutlineOrientation();
 

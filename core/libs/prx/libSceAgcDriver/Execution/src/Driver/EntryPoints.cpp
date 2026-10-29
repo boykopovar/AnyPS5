@@ -7,6 +7,7 @@
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include <algorithm>
 #include <mutex>
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 
 namespace AgcDriver {
 
@@ -89,6 +90,15 @@ extern "C" void AgcDriverWaitIdle_nid_postfix() try {
     AgcDriver::WaitIdle();
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
+}
+
+extern "C" void AgcDriverSubmitGraphics_nid_postfix(std::uint32_t* commands, std::uint32_t dwords) {
+    const Packet packet{commands, dwords, 0, {}};
+    AgcDriver::Submit(&packet, 0);
+}
+
+extern "C" void AgcDriverUseGcnShaders_nid_postfix() {
+    ShaderRecompiler::SetGcnGuestShaders(true);
 }
 
 static std::mutex& VulkanLoaderMutex() {

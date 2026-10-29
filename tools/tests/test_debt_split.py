@@ -241,6 +241,21 @@ class DebtSplitTests(unittest.TestCase):
         self.assertIn("[local](../ARCHITECTURE.md#layout)", moved)
         self.assertIn("../../../core/libs/prx/libSceA/Export.cpp", moved)
 
+    def test_split_rewrites_angle_bracket_destinations_inside_their_brackets(self):
+        links = {"<ARCHITECTURE.md>": "<../ARCHITECTURE.md>",
+                 "<user guide.md#first steps>": "<../user guide.md#first steps>",
+                 "<a\\>b.md>": "<../a\\>b.md>",
+                 "<https://example.test/guide>": "<https://example.test/guide>",
+                 "</AnyPS5/guide.html>": "</AnyPS5/guide.html>"}
+        references = " ".join(f"[reference]({target})" for target in links)
+        self.write(INDEX, ORIGINAL.replace(A_STUB, A_STUB + " " + references))
+        self.split()
+        moved = self.read("docs/dev/debt/libSceA.md")
+        for target, expected in links.items():
+            with self.subTest(target=target):
+                self.assertIn(f"[reference]({expected})", moved)
+        self.assertNotIn("../<", moved)
+
     def test_split_moves_entries_by_their_first_core_link(self):
         self.split()
         self.assertEqual(self.read("docs/dev/debt/libSceA.md"),

@@ -469,6 +469,7 @@ int APS5_VABI sceRtcGetCurrentClockLocalTime(RtcDateTime* time) {
     if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
     RtcTick local{};
     const RtcTick utc{currentTick()};
+    if (utc.tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     if (const int result = addTicks(&local, &utc, localOffsetSeconds(utc.tick), TICKS_PER_SECOND); result != 0) return result;
     *time = fromTick(local.tick);
     return 0;

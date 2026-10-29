@@ -56,6 +56,16 @@ alignas(256) constexpr std::array<std::uint32_t, 49> HullCode{
     0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 51> HullMaskedControlPoint{
+    0xd7650000, 0x000100c1, 0xd7660000, 0x000200c1, 0xbf8a0000, 0x7da206f9, 0x81060000, 0xd5480014,
+    0x02151101, 0x362402ff, 0x000000ff, 0x160028a0, 0xd5430015, 0x040224ff, 0x00000060, 0xdbfc0000,
+    0x02000015, 0x362c02ff, 0x00001f00, 0x2c2c2c84, 0xd5430016, 0x045a24ff, 0x00000030, 0xbf8cc07f,
+    0xe0781000, 0x02020216, 0x7da82881, 0xbe94047e, 0xb06a0060, 0x162602f9, 0x0086066a, 0xd8d80008,
+    0x06000013, 0xd8dc1008, 0x07000013, 0xbf8cc07f, 0x7e300306, 0x7e320306, 0x7e340306, 0x7e360306,
+    0x34142484, 0xbefe0414, 0xe0781000, 0x0403180a, 0x4a162481, 0x16161690, 0x4c1616ff, 0x00008000,
+    0xe0741000, 0x0202070b, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 54> HullCompareBranch{
     0xd4040016, 0x00020080, 0xbeea0416, 0xbf870001, 0xbf800000, 0xd7650000, 0x000100c1, 0xd7660000,
     0x000200c1, 0xbf8a0000, 0x7da206f9, 0x81060000, 0xd5480014, 0x02151101, 0x362402ff, 0x000000ff,
@@ -1231,6 +1241,7 @@ int main(int argc, char** argv) {
         ExpectRefusal(target, ShaderStage::TessellationControl, HullDescendingRecords, "outside its control points and patch constants", {{3u, 3u, 1u, 2u, 2u, 129u}, Indices});
 
         RequirePatches(*device, target, HullCode, "hull program");
+        RequirePatches(*device, target, HullMaskedControlPoint, "hull program masking its control point out of v1 for its off-chip record");
         RequirePatches(*device, target, HullRestoredExecSaved, "hull program saving its restored exec");
         RequirePatches(*device, target, HullNextInput, "hull program reading the next of 4 input control points of 24 bytes", NextInputTriangles, LocalCodeStride24);
         RequirePatches(*device, target, HullDynamicIndex, "hull program reading a control point at a computed index");
