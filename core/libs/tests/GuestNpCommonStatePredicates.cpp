@@ -8,6 +8,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+
+#ifdef _WIN32
+#include <Windows.h>
+#elif defined(__linux__)
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -26,6 +34,67 @@ void WriteGuest(void* destination, const void* source, std::size_t bytes) {
     const GuestArena::HostWrite access(destination, bytes);
     Require(access.Open(), "guest fixture memory was not writable");
     std::memcpy(destination, source, bytes);
+}
+
+void CheckInaccessibleObjects() {
+    const auto* invalid = reinterpret_cast<const void*>(std::uintptr_t{1});
+    Require(!_ZNK3sce2np9EventFlag6IsInitEv(invalid), "inaccessible event flag fallback");
+    Require(!_ZNK3sce2np7RingBuf6IsFullEv(invalid), "inaccessible ring buffer fallback");
+    Require(!_ZNK3sce2np10EventQueue6IsInitEv(invalid), "inaccessible event queue fallback");
+    Require(!_ZNK3sce2np5Mutex6IsInitEv(invalid), "inaccessible mutex fallback");
+    Require(!_ZN3sce2np3ipc10IpmiClient11IsConnectedEv(const_cast<void*>(invalid)),
+            "inaccessible IPMI client fallback");
+    Require(!_ZN3sce2np7Callout10IsTimedoutEv(const_cast<void*>(invalid)),
+            "inaccessible callout fallback");
+    Require(!_ZN3sce2np13RingBufMemory6IsInitEv(const_cast<void*>(invalid)),
+            "inaccessible ring buffer memory fallback");
+    _ZN3sce2np13NpTitleSecret5ClearEv(const_cast<void*>(invalid));
+    _ZN3sce2np8JsonNull5ClearEv(const_cast<void*>(invalid));
+
+    const auto overflow = reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - 0x20);
+    Require(!_ZNK3sce2np10EventQueue6IsInitEv(overflow), "overflowed event queue address fallback");
+    _ZN3sce2np13NpTitleSecret5ClearEv(overflow);
+}
+
+void CheckPartiallyAccessibleTitleSecret() {
+#if defined(_WIN32)
+    SYSTEM_INFO systemInfo{};
+    GetSystemInfo(&systemInfo);
+    const std::size_t pageSize = systemInfo.dwPageSize;
+    Require(pageSize >= 0x80, "Windows page size");
+    auto* pages = static_cast<std::byte*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT,
+                                                       PAGE_READWRITE));
+    Require(pages != nullptr, "Windows page allocation");
+    std::memset(pages, 0x5a, pageSize * 2);
+    DWORD previousProtection = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &previousProtection) != 0,
+            "Windows page protection");
+    _ZN3sce2np13NpTitleSecret5ClearEv(pages + pageSize - 0x48);
+    for (std::size_t i = 0; i < pageSize; ++i)
+        Require(pages[i] == std::byte{0x5a}, "Windows failed clear preserves accessible page");
+    DWORD restoredProtection = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_READWRITE, &restoredProtection) != 0,
+            "Windows page protection restore");
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0, "Windows page release");
+#elif defined(__linux__)
+    const long configuredPageSize = sysconf(_SC_PAGESIZE);
+    Require(configuredPageSize >= 0x80, "Linux page size");
+    const std::size_t pageSize = static_cast<std::size_t>(configuredPageSize);
+    void* mapping = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+                         -1, 0);
+    Require(mapping != MAP_FAILED, "Linux page mapping");
+    auto* pages = static_cast<std::byte*>(mapping);
+    std::memset(pages, 0x5a, pageSize * 2);
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0, "Linux page protection");
+    _ZN3sce2np13NpTitleSecret5ClearEv(pages + pageSize - 0x48);
+    for (std::size_t i = 0; i < pageSize - 0x40; ++i)
+        Require(pages[i] == std::byte{0x5a}, "Linux clear stays within target prefix");
+    Require(mprotect(pages + pageSize, pageSize, PROT_READ | PROT_WRITE) == 0,
+            "Linux page protection restore");
+    for (std::size_t i = 0; i < pageSize; ++i)
+        Require(pages[pageSize + i] == std::byte{0x5a}, "Linux clear does not modify protected page");
+    Require(munmap(mapping, pageSize * 2) == 0, "Linux page unmapping");
+#endif
 }
 
 }
@@ -102,6 +171,9 @@ int main() {
     Require(!_ZN3sce2np13RingBufMemory6IsInitEv(nullptr), "null ring buffer memory fallback");
     _ZN3sce2np13NpTitleSecret5ClearEv(nullptr);
     _ZN3sce2np8JsonNull5ClearEv(nullptr);
+
+    CheckInaccessibleObjects();
+    CheckPartiallyAccessibleTitleSecret();
 
     std::puts("NP common state predicate tests passed");
     return 0;
