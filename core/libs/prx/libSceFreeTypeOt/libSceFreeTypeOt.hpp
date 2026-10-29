@@ -1,9 +1,5 @@
 #pragma once
 
+#include "prx/libSceFreeTypeOt/include/MemoryAllocation.hpp"
+
 #include "prx/libSceFreeType/include/Api.hpp"
-
-extern "C" {
-
-int APS5_VABI sceFreeTypeOtQAlloc_nid_no_patch();
-
-}

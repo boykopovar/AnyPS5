@@ -1,8 +1,9 @@
-#include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 
 extern "C" {
 
