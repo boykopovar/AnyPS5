@@ -100,6 +100,31 @@ static int testIds() {
         "replacing did not clear the tag before the NpId was refused");
     ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(nullptr, 0) == UTIL_INVALID_ARGUMENT && sceNpUtilCanonicalizeNpIdForPsp2(nullptr, 1) == UTIL_INVALID_ARGUMENT,
         "canonicalizing a null NpId succeeded");
+    NpIdFull loose = npIdWithTag("heron-4", 0x34737000);
+    ok &= expect(sceNpGetPlatformType(&loose) == 0 && sceNpIntGetPlatformType(&loose) == 0, "a tag with opt[4] zero is not platform 0");
+    const NpIdFull nearCompanion = npIdWithTag("heron-4", 0x716D6F63);
+    ok &= expect(sceNpIntGetPlatformType(&nearCompanion) == INVALID_PLATFORM_TYPE, "comq was taken for comp");
+    loose.reserved[0] = 1;
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(&loose, 0) == 0 && std::memcmp(loose.opt + 4, &tags[3], 4) == 0, "a tag with opt[4] zero was not replaced");
+    const std::int32_t replaceValues[] = {2, 0x100, -1};
+    for (const std::int32_t replace : replaceValues) {
+        NpIdFull replaced = npIdWithTag("heron-4", 0x00337370);
+        replaced.reserved[0] = 1;
+        replaced.opt[0] = 0x5A;
+        ok &= expect(sceNpUtilCanonicalizeNpIdForPsp2(&replaced, replace) == 0 && sceNpGetPlatformType(&replaced) == 2 && replaced.opt[0] == 0x5A,
+            "a non-zero replace did not clear only the tag");
+    }
+    NpIdFull refused = npIdWithTag("heron-4", 0);
+    refused.reserved[0] = 2;
+    ok &= expect(sceNpUtilCanonicalizeNpIdForPs4(&refused, 0) == UTIL_INVALID_NP_ID && sceNpGetPlatformType(&refused) == 0, "reserved[0] 2 was accepted");
+    NpIdFull kept = npIdWithTag("heron-4", 0x00337370);
+    std::memset(kept.opt, 0xA5, 4);
+    kept.reserved[0] = 7;
+    const NpIdFull before = kept;
+    ok &= expect(sceNpSetPlatformType(&kept, 4) == INVALID_PLATFORM_TYPE && std::memcmp(&kept, &before, sizeof(kept)) == 0, "a refused type changed the NpId");
+    ok &= expect(sceNpSetPlatformType(&kept, 3) == 0 && std::memcmp(kept.opt, before.opt, 4) == 0 && std::memcmp(kept.reserved, before.reserved, 8) == 0
+            && std::memcmp(&kept.handle, &before.handle, sizeof(kept.handle)) == 0,
+        "setting a platform type changed bytes outside the tag");
 
     NpOnlineId unterminated = onlineId("abcdefghijklmnop");
     unterminated.data[16] = 'q';

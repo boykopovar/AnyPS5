@@ -344,6 +344,18 @@ void TestJid() {
         "a buffer that is too small clears the jid");
     Require(sceNpUtilParseJid(&jid, "user@dom/res", buffer, 13, &length) == 0 && Equals(jid.resource, "res"), "a buffer of the measured size is enough");
     Require(sceNpUtilParseJid(&jid, "   ", buffer, sizeof(buffer), &length) == NpUtilInvalidJid, "a blank jid is refused");
+    Require(sceNpUtilParseJid(&jid, "a-b@c_d", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "a-b") && Equals(jid.domain, "c_d"),
+        "a user may hold a dash and a domain an underscore");
+    Require(sceNpUtilParseJid(&jid, "a@b+c", buffer, sizeof(buffer), &length) == 0 && Equals(jid.domain, "b") && Equals(jid.resource, "c"),
+        "a plus sign ends the domain");
+    Require(sceNpUtilParseJid(&jid, "a@b../r", buffer, sizeof(buffer), &length) == 0 && Equals(jid.domain, "b") && Equals(jid.resource, "./r"),
+        "every trailing dot leaves the domain but only one is skipped");
+    Require(sceNpUtilParseJid(&jid, "\ta@b", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "") && Equals(jid.domain, "")
+            && Equals(jid.resource, "a@b"),
+        "only spaces are skipped before a jid");
+    jid = {buffer, buffer, buffer, 0};
+    Require(sceNpUtilParseJid(&jid, "   ", buffer, sizeof(buffer), &length) == NpUtilInvalidJid && jid.user == nullptr && jid.resource == nullptr,
+        "a refused jid is cleared");
     Require(sceNpUtilParseJid(&jid, nullptr, buffer, sizeof(buffer), &length) == NpUtilInvalid, "parsing needs text");
     Require(sceNpUtilParseJid(&jid, "a@b", nullptr, 0, nullptr) == NpUtilInvalid, "parsing needs a buffer or a length");
 
@@ -360,7 +372,9 @@ void TestJid() {
                              {"u", "a.b2.np.playstation.net", nullptr, 0}, {"u", "a1.b2", nullptr, 0}, {"u", psn.domain, "abcde", 0}, {"u", nullptr, nullptr, 0},
                              {nullptr, psn.domain, nullptr, 0}};
     for (const NpJid& bad : invalid) Require(sceNpUtilJidToNpId(&npId, &bad) == NpUtilInvalidJid, "only a PSN jid with a short user and resource converts");
-    Require(sceNpUtilJidToNpId(nullptr, &psn) == NpUtilInvalid && sceNpUtilJidToNpId(&npId, nullptr) == NpUtilInvalid, "conversion needs both pointers");
+    const NpJid shapes[] = {{"u", "a1.-2.np.playstation.net", nullptr, 0}, {"u", "a1.b2.np.playstation.network", nullptr, 0}};
+    for (const NpJid& bad : shapes) Require(sceNpUtilJidToNpId(&npId, &bad) == NpUtilInvalidJid, "the domain code is alphanumeric and the suffix exact");
+    Require(sceNpUtilJidToNpId(nullptr, &psn) == NpUtilInvalid &&sceNpUtilJidToNpId(&npId, nullptr) == NpUtilInvalid, "conversion needs both pointers");
 }
 
 void TestLanguagesAndDebugIds() {
