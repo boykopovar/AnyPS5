@@ -99,6 +99,19 @@ int main(int count, char** arguments) {
     release(&memory, &block);
     Check(g_frees == 2);
 
+    Check(qAlloc(&memory, 16, &block) == 0 && block != nullptr);
+    void* const retained = block;
+    const int allocations = g_allocations;
+    release(nullptr, &block);
+    Check(block == retained && g_frees == 2);
+    for (int index = 0; index < 16; ++index)
+        Check(static_cast<unsigned char*>(block)[index] == 0xa5);
+    release(&memory, nullptr);
+    release(nullptr, nullptr);
+    Check(block == retained && g_frees == 2 && g_allocations == allocations);
+    release(&memory, &block);
+    Check(block == nullptr && g_frees == 3);
+
     for (const auto allocate : {alloc, qAlloc}) {
         const int allocations = g_allocations;
         block = reinterpret_cast<void*>(0x12345678);
@@ -109,13 +122,13 @@ int main(int count, char** arguments) {
         }
         Check(g_allocations == allocations);
     }
-    Check(g_frees == 2);
+    Check(g_frees == 3);
 
     g_failAllocation = true;
     Check(alloc(&memory, 32, &block) == kOutOfMemory && block == nullptr);
     Check(qAlloc(&memory, 32, &block) == kOutOfMemory && block == nullptr);
     g_failAllocation = false;
-    Check(g_frees == 2);
+    Check(g_frees == 3);
 
 #ifdef _WIN32
     Check(FreeLibrary(module) != 0);

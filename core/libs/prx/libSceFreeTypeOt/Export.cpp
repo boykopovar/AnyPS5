@@ -1,4 +1,4 @@
-#include "prx/libSceFreeType/include/Api.hpp"
+#include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
