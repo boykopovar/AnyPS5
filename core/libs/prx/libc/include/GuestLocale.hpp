@@ -47,6 +47,9 @@ struct String {
     std::uint64_t capacity;
 };
 
+void* AllocateStringStorage(std::size_t bytes);
+void ReleaseStringStorage(String& string);
+
 struct CollateFacet {
     Facet base;
     const void* collation;

@@ -437,6 +437,14 @@ int APS5_VABI sceRtcSetTick(RtcDateTime* time, const RtcTick* tick) {
     return 0;
 }
 
+int APS5_VABI sceRtcConvertDateTimeToTick(const RtcDateTime* time, RtcTick* tick) {
+    return sceRtcGetTick(time, tick);
+}
+
+int APS5_VABI sceRtcConvertTickToDateTime(const RtcTick* tick, RtcDateTime* time) {
+    return sceRtcSetTick(time, tick);
+}
+
 int APS5_VABI sceRtcGetCurrentTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
     tick->tick = currentTick();
@@ -464,6 +472,10 @@ int APS5_VABI sceRtcGetCurrentClockLocalTime(RtcDateTime* time) {
     if (const int result = addTicks(&local, &utc, localOffsetSeconds(utc.tick), TICKS_PER_SECOND); result != 0) return result;
     *time = fromTick(local.tick);
     return 0;
+}
+
+int APS5_VABI sceRtcGetCurrentClockUtc(RtcDateTime* time) {
+    return sceRtcGetCurrentClock(time, 0);
 }
 
 int APS5_VABI sceRtcConvertUtcToLocalTime(const RtcTick* utc, RtcTick* local_time) {
@@ -494,14 +506,23 @@ int APS5_VABI sceRtcGetTime_t(const RtcDateTime* time, int64_t* seconds) {
 }
 
 int APS5_VABI sceRtcSetTime_t(RtcDateTime* time, int64_t seconds) {
-    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
     if (rangeChecked()) {
         if (seconds < 0) return SCE_RTC_ERROR_INVALID_VALUE;
+        if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
         *time = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(seconds) * TICKS_PER_SECOND);
         return 0;
     }
+    if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
     *time = fromTick(UNIX_EPOCH_TICK + static_cast<std::uint64_t>(static_cast<std::uint32_t>(seconds)) * TICKS_PER_SECOND);
     return 0;
+}
+
+int APS5_VABI sceRtcConvertDateTimeToTime_t(const RtcDateTime* time, int64_t* seconds) {
+    return sceRtcGetTime_t(time, seconds);
+}
+
+int APS5_VABI sceRtcConvertTime_tToDateTime(int64_t seconds, RtcDateTime* time) {
+    return sceRtcSetTime_t(time, seconds);
 }
 
 int APS5_VABI sceRtcGetWin32FileTime(const RtcDateTime* time, uint64_t* win32_time) {

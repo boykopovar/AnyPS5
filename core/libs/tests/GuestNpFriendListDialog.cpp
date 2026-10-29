@@ -51,6 +51,11 @@ int main() {
     Require(sceNpFriendListDialogClose() == 0);
     Require(sceNpFriendListDialogTerminate() == 0);
     Require(sceNpFriendListDialogTerminate() == kErrNotInitialized);
+    Require(sceNpFriendListDialogOpenA(nullptr) == kErrNotInitialized);
+    Require(sceNpFriendListDialogOpenA(&param) == kErrNotInitialized);
+    Require(sceNpFriendListDialogClose() == kErrNotInitialized);
+    Require(sceNpFriendListDialogGetResultA(nullptr) == kErrNotInitialized);
+    Require(sceNpFriendListDialogGetResultA(result) == kErrNotInitialized);
     Require(sceNpFriendListDialogGetStatus() == kStatusNone);
     Require(sceNpFriendListDialogUpdateStatus() == kStatusNone);
 
@@ -62,4 +67,12 @@ int main() {
     Require(sceNpFriendListDialogGetResultA(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(sceNpFriendListDialogTerminate() == 0);
+    Require(sceNpFriendListDialogTerminate() == kErrNotInitialized);
+    Require(sceNpFriendListDialogOpenA(nullptr) == kErrNotInitialized);
+    Require(sceNpFriendListDialogOpenA(&param) == kErrNotInitialized);
+    Require(sceNpFriendListDialogClose() == kErrNotInitialized);
+    Require(sceNpFriendListDialogGetResultA(nullptr) == kErrNotInitialized);
+    Require(sceNpFriendListDialogGetResultA(result) == kErrNotInitialized);
+    Require(sceNpFriendListDialogGetStatus() == kStatusNone);
+    Require(sceNpFriendListDialogUpdateStatus() == kStatusNone);
 }

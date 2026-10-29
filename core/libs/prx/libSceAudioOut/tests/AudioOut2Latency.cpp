@@ -48,6 +48,7 @@ static_assert(sizeof(AudioOut2MasteringStatesV2) == 400);
 constexpr int systemUser = 0xFF;
 constexpr int user = 0x10000000;
 constexpr int errorInvalidParam = static_cast<int>(0x80268001);
+constexpr int errorNotInitialized = static_cast<int>(0x80268006);
 constexpr int errorInvalidPointer = static_cast<int>(0x8026800C);
 constexpr int errorMasteringInvalidApiParam = static_cast<int>(0x80268201);
 constexpr int errorMasteringInvalidStatesId = static_cast<int>(0x80268204);
@@ -65,6 +66,39 @@ void TestSet3DLatency() {
     Require(sceAudioOut2Set3DLatency(user, 1) == errorInvalidParam, "a user id is not a valid latency selector");
     Require(sceAudioOut2Set3DLatency(systemUser, 3) == errorInvalidParam, "output 3 must be refused");
     Require(sceAudioOut2Set3DLatency(systemUser, 0xFFFFFFFFu) == errorInvalidParam, "a large output must be refused");
+}
+
+void TestMasteringBeforeInitialize() {
+    const AudioOut2MasteringParamsHeader params{1u};
+    AudioOut2MasteringStates storage{};
+    storage.states_header.states_id = 1u;
+    Require(sceAudioOut2MasteringInit(0) == errorNotInitialized, "mastering initialization before AudioOut2 initialization is refused");
+    Require(sceAudioOut2MasteringInit(1) == errorNotInitialized, "the AudioOut2 initialization check comes before the flag check");
+    Require(sceAudioOut2MasteringInitEx(0) == errorNotInitialized, "sceAudioOut2MasteringInitEx before AudioOut2 initialization is refused");
+    Require(sceAudioOut2MasteringInitEx(0x80000000u) == errorNotInitialized, "sceAudioOut2MasteringInitEx with the mode bit before AudioOut2 initialization is refused");
+    Require(sceAudioOut2MasteringInitEx(1) == errorNotInitialized, "the AudioOut2 initialization check comes before the sceAudioOut2MasteringInitEx flag check");
+    Require(sceAudioOut2MasteringTerm() == errorNotInitialized, "termination before AudioOut2 initialization is refused");
+    Require(sceAudioOut2MasteringGetState(nullptr, 0, 0) == errorNotInitialized, "the AudioOut2 initialization check comes before the null state check");
+    Require(sceAudioOut2MasteringGetState(&storage.states_header, 0, 0) == errorNotInitialized, "states before AudioOut2 initialization are refused");
+    Require(storage.states_header.states_id == 1u && storage.compressor_states.descriptor.id == 0u, "refused states are not written");
+    Require(sceAudioOut2MasteringSetParam(&params, 0, 0) == errorNotInitialized, "parameters before AudioOut2 initialization are refused");
+    Require(sceAudioOut2MasteringSetParam(nullptr, 0, 2) == errorNotInitialized, "the AudioOut2 initialization check comes before the parameter checks");
+}
+
+void TestSystemBeforeInitialize() {
+    std::uint32_t loudness[2] = {1, 0};
+    const auto set = [](std::uint32_t id, void* data, std::size_t size) {
+        const AudioOut2SystemDebugStateParam param{id, 0, data, size};
+        return sceAudioOut2SetSystemDebugState(&param);
+    };
+    Require(set(1, loudness, 8) == errorNotInitialized, "a debug state before AudioOut2 initialization is refused");
+    Require(sceAudioOut2SetSystemDebugState(nullptr) == errorNotInitialized, "the AudioOut2 initialization check comes before the null debug state check");
+    Require(set(2, loudness, 8) == errorNotInitialized, "the AudioOut2 initialization check comes before the debug state id check");
+    Require(set(1, loudness, 4) == errorNotInitialized, "the AudioOut2 initialization check comes before the debug state size check");
+    Require(set(0x20, loudness, 4) == errorNotInitialized, "debug state id 0x20 of size 4 before AudioOut2 initialization is refused");
+    Require(set(1, nullptr, 8) == errorNotInitialized, "a loudness debug state without a param before AudioOut2 initialization is refused");
+    Require(sceAudioOut2EnableChat() == errorNotInitialized, "enabling chat before AudioOut2 initialization is refused");
+    Require(sceAudioOut2DisableChat() == errorNotInitialized, "disabling chat before AudioOut2 initialization is refused");
 }
 
 void TestMasteringInit() {
@@ -227,6 +261,8 @@ void TestLowLatencyService() {
 }
 
 int main() {
+    TestMasteringBeforeInitialize();
+    TestSystemBeforeInitialize();
     Require(sceAudioOut2Initialize() == 0, "initialization must succeed");
     Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004), "a second AudioOut2 initialization fails");
     Require(sceAudioOutInit() == 0, "the first legacy initialization succeeds after AudioOut2's");
