@@ -731,10 +731,10 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
         while (!token.stop_requested()) {
             {
                 std::unique_lock lock(flipQueue->mutex);
-                flipQueue->changed.WaitUntil(lock, TimedWait::DeadlineNanos(PRESENT_POLL_MICROS), [&] { return token.stop_requested() || flipQueue->failure || !flipQueue->requests.empty(); });
+                flipQueue->changed.WaitUntil(lock, TimedWait::DeadlineNanos(PRESENT_POLL_MICROS), [&] { return token.stop_requested() || flipQueue->failure || (!flipQueue->requests.empty() && !flipQueue->hold.Held()); });
                 if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
                 if (token.stop_requested()) break;
-                if (!flipQueue->requests.empty()) {
+                if (!flipQueue->requests.empty() && !flipQueue->hold.Held()) {
                     current = std::move(flipQueue->requests.front());
                     flipQueue->requests.pop_front();
                 }
