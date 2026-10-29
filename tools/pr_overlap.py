@@ -598,6 +598,10 @@ def main_export_findings(prs, current_exports):
             for name in removed_from:
                 canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
                 moved.setdefault(canonical, set()).add(library)
+        for (library, _nid), added_to in added.items():
+            for name in added_to:
+                canonical = NID_DISAMBIG.sub("", nid_names.strip_nid_postfix(name))
+                moved.get(canonical, set()).discard(library)
         names = {}
         for library, nid in added:
             added_names = {
