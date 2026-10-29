@@ -10398,7 +10398,17 @@ void uintTargetTests() {
     Require(uint16.color.packing == ColorExportPacking::None && uint16.color.uintExport, "a UINT16_ABGR export into a UINT target was retyped twice");
     auto halves = queue;
     halves.context[0x1c5] = 4u;
-    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(halves)); }, "color export format 4 into an unsigned integer target is unsupported");
+    const auto fp16 = AgcDriver::Graphics::DecodeState(halves);
+    Require(fp16.color.packing == ColorExportPacking::None && !fp16.blends.at(0).blendEnable, "an FP16_ABGR export into a UINT target was not accepted as an unpacked float");
+    const auto fp16Packings = AgcDriver::Graphics::ExportPackings(fp16);
+    Require(std::all_of(fp16Packings.begin(), fp16Packings.end(), [](ColorExportPacking packing) { return packing == ColorExportPacking::None; }), "an FP16_ABGR export into a UINT target carried an export packing");
+    auto bytesFp16 = bytes;
+    bytesFp16.context[0x1c5] = 4u;
+    const auto eightFp16 = AgcDriver::Graphics::DecodeState(bytesFp16);
+    Require(eightFp16.color.format == VK_FORMAT_R8_UINT && eightFp16.color.packing == ColorExportPacking::None && !eightFp16.blends.at(0).blendEnable, "an FP16_ABGR export into an 8-bit UINT target was not accepted as an unpacked float");
+    auto unorm16 = queue;
+    unorm16.context[0x1c5] = 5u;
+    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(unorm16)); }, "color export format 5 into an unsigned integer target is unsupported");
     auto unorm = queue;
     unorm.context[0x31c] = (unorm.context.at(0x31c) & ~0x1f7cu) | (4u << 2u) | (7u << 8u);
     Require(AgcDriver::Graphics::DecodeState(unorm).color.packing == ColorExportPacking::None, "a 32-bit float target got the unsigned integer export packing");

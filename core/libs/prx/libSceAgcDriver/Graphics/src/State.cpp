@@ -1857,7 +1857,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         }
         if (color.packing == ShaderRecompiler::ColorExportPacking::Uint) {
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
-            if (slotExport != 1 && slotExport != 2 && slotExport != 3 && slotExport != 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
+            if (slotExport == 4) color.packing = ShaderRecompiler::ColorExportPacking::None;
+            else if (slotExport != 1 && slotExport != 2 && slotExport != 3 && slotExport != 9) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
         }
         if (state.blendEnable && !reversed && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {
             const auto addition = [](VkBlendOp op) { return op == VK_BLEND_OP_ADD || op == VK_BLEND_OP_SUBTRACT || op == VK_BLEND_OP_REVERSE_SUBTRACT; };
