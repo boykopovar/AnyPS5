@@ -390,6 +390,29 @@ class ReleasePackageTests(unittest.TestCase):
                 package_release.windows_runtime(Path(tmp))
 
 
+    def test_native_and_web_zip_timestamps_are_clamped_without_changing_files(self):
+        import os
+        for timestamp, year in ((0, 1980), (7258118400, 2107)):
+            with self.subTest(timestamp=timestamp):
+                web = self.build / "web"
+                web.mkdir(exist_ok=True)
+                for name in package_release.WEB_FILES:
+                    (web / name).parent.mkdir(parents=True, exist_ok=True)
+                    (web / name).write_bytes(b"web fixture")
+                    os.utime(web / name, (timestamp, timestamp))
+                os.utime(self.library, (timestamp, timestamp))
+                before = self.library.stat().st_mtime_ns
+                package_release.package("linux", self.build, self.output, "v1")
+                package_release.package_web(self.build, self.output, "v1", "a" * 40)
+                for asset, member, contents in (("prx-linux-v1.zip", "libs/libc.prx", b"library bytes"),
+                                                 ("web-v1.zip", package_release.WEB_FILES[0], b"web fixture")):
+                    with zipfile.ZipFile(self.output / asset) as archive:
+                        self.assertEqual(archive.getinfo(member).date_time[0], year)
+                        self.assertEqual(archive.read(member), contents)
+                self.assertEqual(self.library.stat().st_mtime_ns, before)
+                self.assertEqual((web / package_release.WEB_FILES[0]).stat().st_mtime, timestamp)
+
+
 
 class DocumentationAssetsTests(unittest.TestCase):
     def test_source_copy_failure_does_not_publish_partial_documents(self):
@@ -549,6 +572,28 @@ class ReleaseNoteDestinationsTests(unittest.TestCase):
                 prepare_release_notes.prepare_notes(source, body, full)
             self.assertEqual(full.read_bytes(), b"previous full notes")
             self.assertEqual(list(body.iterdir()), [])
+
+    def test_symbolic_link_loop_preserves_existing_notes(self):
+        for position in range(3):
+            with self.subTest(position=position), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                paths = [root / name for name in ("notes.json", "body.md", "full.md")]
+                paths[0].write_text(json.dumps({"body": "new release notes"}), encoding="utf-8")
+                paths[1].write_bytes(b"previous body")
+                paths[2].write_bytes(b"previous full notes")
+                paths[position].unlink()
+                try:
+                    paths[position].symlink_to(paths[position].name)
+                except (OSError, NotImplementedError) as error:
+                    self.skipTest(str(error))
+                previous = {path: path.read_bytes() for index, path in enumerate(paths) if index != position}
+                result = subprocess.run([sys.executable, str(Path(prepare_release_notes.__file__)),
+                                         "--input", str(paths[0]), "--body", str(paths[1]), "--full", str(paths[2])],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertTrue(paths[position].is_symlink())
+                self.assertEqual({path: path.read_bytes() for path in previous}, previous)
 
     @unittest.skipUnless(os.name == "nt", "Windows read-only output semantics")
     def test_readonly_output_preserves_both_note_files(self):
@@ -902,6 +947,123 @@ class ReleaseMainTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+
+class ReleaseNotesStagingTests(unittest.TestCase):
+    def test_partial_write_to_either_output_preserves_both_old_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "new notes"}), encoding="utf-8")
+            original_open = Path.open
+            for fail_at in (1, 2):
+                body.write_bytes(b"old body")
+                full.write_bytes(b"old full")
+                writes = 0
+
+                class PartialWriter:
+                    def __init__(self, stream):
+                        self.stream = stream
+
+                    def __enter__(self):
+                        self.stream.__enter__()
+                        return self
+
+                    def __exit__(self, *args):
+                        return self.stream.__exit__(*args)
+
+                    def write(self, data):
+                        self.stream.write(data[:3])
+                        raise OSError("injected partial write")
+
+                def opening(path, mode="r", *args, **kwargs):
+                    nonlocal writes
+                    stream = original_open(path, mode, *args, **kwargs)
+                    if "w" in mode or "x" in mode:
+                        writes += 1
+                        if writes == fail_at:
+                            return PartialWriter(stream)
+                    return stream
+
+                with patch.object(Path, "open", opening), self.assertRaisesRegex(OSError, "injected partial write"):
+                    prepare_release_notes.prepare_notes(source, body, full)
+                self.assertEqual(body.read_bytes(), b"old body")
+                self.assertEqual(full.read_bytes(), b"old full")
+                self.assertEqual(list(root.glob(".release-notes-*")), [])
+                prepare_release_notes.prepare_notes(source, body, full)
+                self.assertEqual(body.read_bytes(), b"new notes")
+                self.assertEqual(full.read_bytes(), b"new notes")
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX file size limits")
+    def test_real_file_size_limit_preserves_outputs_and_removes_staging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "N" * 500}), encoding="utf-8")
+            body.write_bytes(b"old body")
+            full.write_bytes(b"old full")
+            program = ("import resource,signal,sys\nfrom pathlib import Path\n"
+                       "sys.path.insert(0,sys.argv[1])\nimport prepare_release_notes\n"
+                       "resource.setrlimit(resource.RLIMIT_FSIZE,(64,64))\nsignal.signal(signal.SIGXFSZ,signal.SIG_IGN)\n"
+                       "try: prepare_release_notes.prepare_notes(*(Path(p) for p in sys.argv[2:]))\nexcept OSError: sys.exit(2)\n")
+            completed = subprocess.run([sys.executable, "-c", program, str(Path(prepare_release_notes.__file__).parent), str(source), str(body), str(full)], capture_output=True, timeout=10)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertEqual(body.read_bytes(), b"old body")
+            self.assertEqual(full.read_bytes(), b"old full")
+            self.assertEqual(list(root.glob(".release-notes-*")), [])
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX mode bits and umask")
+    def test_existing_modes_and_new_file_umask_are_retained(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "new"}), encoding="utf-8")
+            body.write_bytes(b"old")
+            body.chmod(0o640)
+            old_mask = os.umask(0o027)
+            try:
+                prepare_release_notes.prepare_notes(source, body, full)
+            finally:
+                os.umask(old_mask)
+            self.assertEqual(stat.S_IMODE(body.stat().st_mode), 0o640)
+            self.assertEqual(stat.S_IMODE(full.stat().st_mode), 0o640)
+
+    def test_output_symlink_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full, target = (root / name for name in ("notes.json", "body", "full", "target"))
+            source.write_text(json.dumps({"body": "new"}), encoding="utf-8")
+            target.write_bytes(b"old")
+            try:
+                full.symlink_to(target)
+            except OSError as error:
+                if getattr(error, "winerror", None) == 1314:
+                    self.skipTest("needs symbolic-link creation privilege")
+                raise
+            prepare_release_notes.prepare_notes(source, body, full)
+            self.assertTrue(full.is_symlink())
+            self.assertEqual(target.read_bytes(), b"new")
+
+    def test_promotion_failure_leaves_other_destination_intact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "new"}), encoding="utf-8")
+            body.write_bytes(b"old body")
+            full.write_bytes(b"old full")
+            original_replace = os.replace
+
+            def replace(first, second):
+                if second == body.resolve():
+                    raise OSError("second promotion failed")
+                return original_replace(first, second)
+
+            with patch.object(prepare_release_notes.os, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+                prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(body.read_bytes(), b"old body")
+            self.assertEqual(full.read_bytes(), b"new")
+            self.assertEqual(list(root.glob(".release-notes-*")), [])
 
 
 if __name__ == "__main__":

@@ -729,6 +729,20 @@ class HipOracleTests(unittest.TestCase):
                 self.oracle_hip.main(argv)
             self.assertEqual(exit.exception.code, 2)
 
+    def test_cli_rejects_noninteger_dispatch_sizes_before_oracle_work(self):
+        for index, name in ((1, "THREADS"), (4, "OUT_DWORDS")):
+            argv = ["code", "1", "in", "out", "1"]
+            argv[index] = "not-an-int"
+            with self.subTest(argument=name), patch.object(Path, "read_bytes", side_effect=AssertionError("input read")) as read, \
+                    patch.object(self.oracle_hip, "dispatch", side_effect=AssertionError("dispatch called")) as dispatch, \
+                    contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as exited:
+                self.oracle_hip.main(argv)
+            self.assertEqual(exited.exception.code, 2)
+            self.assertIn(f"{name} must be an integer", errors.getvalue())
+            self.assertNotIn("Traceback", errors.getvalue())
+            read.assert_not_called()
+            dispatch.assert_not_called()
+
     def test_cli_rejects_output_aliases_before_oracle_work(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

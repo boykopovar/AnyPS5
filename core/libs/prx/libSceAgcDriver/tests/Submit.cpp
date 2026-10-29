@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
@@ -115,6 +116,14 @@ void testValidation() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void testThreadDimensionGroups() {
+    using AgcDriver::DriverDetail::ThreadDimensionGroups;
+    check(ThreadDimensionGroups(0, 64) == 0, "no threads need no groups");
+    check(ThreadDimensionGroups(64, 64) == 1 && ThreadDimensionGroups(65, 64) == 2, "a partial group still counts");
+    check(ThreadDimensionGroups(0xffffffffu, 1) == 0xffffffffu, "one thread per group keeps the thread count");
+    check(ThreadDimensionGroups(0xffffffffu, 64) == 0x4000000u, "a thread count near 2^32 wrapped before the division");
+}
+
 void testReadOnlyResummarize() {
     std::vector<std::uint32_t> commands;
     for (const auto [offset, value] : {std::pair{0x000u, 0x10u}, {0x200u, 0x007007f3u}, {0x010u, 0xa0000183u}, {0x011u, 0x20000180u}, {0x8eu, 0xffffffffu}, {0x8fu, 0u}, {0x1c4u, 0u}, {0x203u, 0u}}) {
@@ -131,12 +140,13 @@ void testClearState() {
     const auto shader = graphics.shader;
     const auto userConfig = graphics.userConfig;
     graphics.ClearContext();
-    check(graphics.context == AgcDriver::InitialContextRegisters(), "CLEAR_STATE retained context registers");
+    check(graphics.context == AgcDriver::ClearStateContextRegisters(), "CLEAR_STATE retained context registers");
     check(graphics.shader == shader && graphics.userConfig == userConfig, "CLEAR_STATE reset unrelated registers");
     check(graphics.context.count(0x1b3) == 1 && graphics.context.at(0x1b3) == 0 && graphics.context.count(0x1b4) == 1 && graphics.context.at(0x1b4) == 0, "CLEAR_STATE left SPI_PS_INPUT_ENA/ADDR unset");
+    check(graphics.context.at(0x1b6) == 2u, "CLEAR_STATE did not leave SPI_PS_IN_CONTROL at its clear-state NUM_INTERP of 2");
     graphics.context.emplace(0x10, 31);
     graphics.ClearContext();
-    check(graphics.context == AgcDriver::InitialContextRegisters(), "repeated CLEAR_STATE retained context registers");
+    check(graphics.context == AgcDriver::ClearStateContextRegisters(), "repeated CLEAR_STATE retained context registers");
 
     std::array<std::uint32_t, 3> words{0xc0001200, 0, 0};
     Packet packet{words.data(), 2, 0, {}};
@@ -1055,6 +1065,7 @@ int main(int argc, char** argv) {
         testRegisteredFastLaunchWorkgroupVertex();
         testEvents();
         testValidation();
+        testThreadDimensionGroups();
         testClearState();
         testSubmissions();
         testEndOfPipeInterrupts();

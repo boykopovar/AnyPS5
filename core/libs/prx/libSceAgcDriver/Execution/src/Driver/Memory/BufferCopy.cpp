@@ -165,7 +165,7 @@ bool Driver::copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
     if ((packet[4] & 0x20u) != 0) {
         for (std::uint32_t axis = 0; axis < 3; ++axis) {
             const auto threads = std::max(readRegister(queue.shader, 0x207 + axis) & 0xffffu, 1u);
-            groups[axis] = (groups[axis] + threads - 1) / threads;
+            groups[axis] = ThreadDimensionGroups(groups[axis], threads);
         }
     }
     if (groups[1] != 1 || groups[2] != 1) {

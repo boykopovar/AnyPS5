@@ -350,6 +350,26 @@ public:
         }
         return false;
     }
+
+#ifndef _WIN32
+    void ReleaseHostRegion(const void* pointer, std::size_t bytes) {
+        Release(pointer, bytes);
+        std::lock_guard lock(_lock);
+        const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+        const auto end = start + bytes;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> kept;
+        for (const auto& [regionStart, regionEnd] : _hostRegions) {
+            if (regionEnd <= start || regionStart >= end) {
+                kept.emplace_back(regionStart, regionEnd);
+                continue;
+            }
+            if (regionStart < start) kept.emplace_back(regionStart, start);
+            if (regionEnd > end) kept.emplace_back(end, regionEnd);
+        }
+        _hostRegions = std::move(kept);
+        static_cast<void>(ReserveNoReplace(start, bytes));
+    }
+#endif
 };
 
 const bool g_reserved = (Arena::Get(), true);
@@ -661,6 +681,14 @@ bool GuestArenaWriteSharedBacking_nid_no_patch(std::uintptr_t address, const voi
 bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
     const auto resolver = sharedBackingResolver.load(std::memory_order_acquire);
     return resolver != nullptr && resolver(address, bytes, file, offset);
+}
+
+bool GuestArenaOverlapsHostRegion_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    return Arena::Get().OverlapsHostRegion(address, bytes);
+}
+
+void GuestArenaReleaseHostRegion_nid_no_patch(const void* pointer, std::size_t bytes) {
+    Arena::Get().ReleaseHostRegion(pointer, bytes);
 }
 #endif
 

@@ -311,6 +311,12 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     posixFault([&] { return shm_open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDWR, 0600); });
     posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldfind_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return kldstat_nid_postfix(1, paths.Unreadable()); });
+    posixFault([&] { return kldstat_nid_postfix(1, paths.Boundary()); });
+    const std::int32_t statVersion = 1056;
+    std::memcpy(paths.Unreadable() - sizeof(statVersion), &statVersion, sizeof(statVersion));
+    *__error_nid_postfix() = 0;
+    Require(kldstat_nid_postfix(1, paths.Unreadable() - sizeof(statVersion)) == -1 && Error() == 2);
     Require(sceKernelOpen(paths.Unreadable(), SCE_KERNEL_O_RDONLY, 0) == KernelFault);
     Require(sceKernelStat(paths.Unreadable(), &status) == KernelFault);
     Require(sceKernelMkdir(paths.Unreadable(), 0755) == KernelFault);
@@ -1183,6 +1189,22 @@ int main() {
     Require(kldunload_nid_postfix(-1) == -1 && Error() == 1);
     Require(kldunload_nid_postfix(0) == -1 && Error() == 1);
     Require(kldunload_nid_postfix(1) == -1 && Error() == 1);
+    std::array<unsigned char, 2080> fileStatus{};
+    const auto kldstatFails = [&](int fileid, std::int32_t version, int error) {
+        fileStatus.fill(0xA5);
+        std::memcpy(fileStatus.data(), &version, sizeof(version));
+        const auto before = fileStatus;
+        *__error_nid_postfix() = 0;
+        return kldstat_nid_postfix(fileid, fileStatus.data()) == -1 && Error() == error && fileStatus == before;
+    };
+    Require(kldstat_nid_postfix(1, nullptr) == -1 && Error() == 14);
+    Require(kldstat_nid_postfix(1, reinterpret_cast<void*>(0x10)) == -1 && Error() == 14);
+    for (const std::int32_t version : {0, 1, 1040, 1055, 1057, 2079, 2081, -1}) {
+        Require(kldstatFails(1, version, 22) && kldstatFails(-1, version, 22));
+    }
+    for (const std::int32_t version : {1056, 2080}) {
+        for (const int fileid : {-2147483647 - 1, -1, 0, 1, 2, 2147483647}) Require(kldstatFails(fileid, version, 2));
+    }
     struct SymbolLookup {
         std::int32_t version;
         const char* name;

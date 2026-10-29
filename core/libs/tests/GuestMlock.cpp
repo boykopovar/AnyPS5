@@ -153,6 +153,12 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(munlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == -1);
     Require(*__error_nid_postfix() == 22);
+    constexpr int sceInvalid = static_cast<int>(0x80020016u);
+    Require(sceKernelMlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == sceInvalid);
+    Require(sceKernelMunlock_nid_postfix(reinterpret_cast<void*>(std::numeric_limits<std::uintptr_t>::max() - page + 1), page * 2) == sceInvalid);
+    Require(sceKernelMlock_nid_postfix(mapped, 0) == 0 && sceKernelMunlock_nid_postfix(mapped, 0) == 0);
+    Require(sceKernelMlock_nid_postfix(bytes + 1, page) == 0);
+    Require(sceKernelMunlock_nid_postfix(bytes + 1, page) == 0);
 
     void* reserved = nullptr;
     Require(sceKernelReserveVirtualRange(&reserved, page, 0, 0) == 0);

@@ -209,6 +209,10 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_read_encoding.py)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
+        if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
+            add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
+        endif()
         if(NOT APPLE)
             add_test(NAME annotate_module COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
@@ -228,10 +232,16 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_comments.py --shard ${shard}/12)
             set_tests_properties(${conventions_test_name} PROPERTIES TIMEOUT 120)
         endforeach()
+        add_test(NAME performance_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_csv.py)
+        set_tests_properties(performance_csv PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_wrapped_declarations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py)
         add_test(NAME conventions_ci_gate COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_ci_gate.py)
+        add_test(NAME preview_pad_timeline COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_preview_pad_timeline.py)
+        set_tests_properties(preview_pad_timeline PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_git_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_git.py)
         add_test(NAME conventions_doc_links COMMAND ${Python3_EXECUTABLE}
@@ -291,6 +301,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen_stdout_newlines.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
+        add_test(NAME job_reference_errors COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_job_reference_errors.py)
+        set_tests_properties(job_reference_errors PROPERTIES TIMEOUT 20)
         add_test(NAME hardware_oracle_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_compare_results.py)
         set_tests_properties(hardware_oracle_compare PROPERTIES TIMEOUT 120)
@@ -326,6 +339,25 @@ if(BUILD_TESTING)
         add_test(NAME pad_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_timeline.py)
         set_tests_properties(pad_timeline PROPERTIES TIMEOUT 20)
+        function(register_check_compile_remaining_tests)
+            if(TEST check_compile)
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py")
+                file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py"
+                    check_compile_lines REGEX "^class CheckCompile|^    def test_")
+                foreach(line IN LISTS check_compile_lines)
+                    if(line MATCHES "^class (CheckCompile[A-Za-z0-9_]*)")
+                        set(check_compile_class "${CMAKE_MATCH_1}")
+                    elseif(NOT check_compile_class MATCHES "^CheckCompile(Fixture|Tests|OutputTests)$")
+                        string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${line}")
+                        add_test(NAME check_compile_${check_compile_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py ${check_compile_class}.${test_case})
+                        set_tests_properties(check_compile_${check_compile_class}_${test_case} PROPERTIES TIMEOUT 30)
+                    endif()
+                endforeach()
+            endif()
+        endfunction()
+        cmake_language(DEFER CALL register_check_compile_remaining_tests)
         set(check_compile_modes_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_modes.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${check_compile_modes_source}")
         file(STRINGS "${check_compile_modes_source}" check_compile_modes_cases REGEX "^    def test_")
@@ -365,6 +397,29 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
         add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_alignment.py)
+        add_test(NAME trace_intervals_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_intervals_csv.py)
+        set_tests_properties(trace_intervals_csv PROPERTIES TIMEOUT 20)
+        set(trace_digest_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${trace_digest_test_source}")
+        file(STRINGS "${trace_digest_test_source}" trace_digest_cases REGEX "^class |^    def test_")
+        set(trace_digest_first TRUE)
+        foreach(test_case IN LISTS trace_digest_cases)
+            if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                set(trace_digest_class "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+                if(trace_digest_first)
+                    set_tests_properties(trace_digest PROPERTIES
+                        ENVIRONMENT "TRACE_DIGEST_TEST=${trace_digest_class}.${test_case}" TIMEOUT 20)
+                    set(trace_digest_first FALSE)
+                else()
+                    add_test(NAME trace_digest_${trace_digest_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
+                        "${trace_digest_test_source}" "${trace_digest_class}.${test_case}")
+                    set_tests_properties(trace_digest_${trace_digest_class}_${test_case} PROPERTIES TIMEOUT 20)
+                endif()
+            endif()
+        endforeach()
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}
@@ -475,7 +530,7 @@ set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 include(cmake/ZArchive.cmake)
 include(cmake/Opus.cmake)
-if(WIN32)
+if(WIN32 OR APPLE)
     set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
     set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)

@@ -389,11 +389,11 @@ RelinkResult RelinkerPipeline::Relink() {
 
             validationPolicy->ValidateRelocationTypeSupported(relType, pos);
 
-            if (relType == R_X86_64_NONE)
-                continue;
-
             if (plt && relType != R_X86_64_JUMP_SLOT)
                 throw RelinkerException("Unsupported PLT relocation type", pos);
+
+            if (relType == R_X86_64_NONE)
+                continue;
 
             if (relType == 8) {
                 if (symIdx != 0 && !isZeroSectionSymbol(symIdx))
