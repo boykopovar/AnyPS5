@@ -370,6 +370,8 @@ On Linux the request goes to [Feral GameMode](https://github.com/FeralInteractiv
 
 A game that asks for a web page with `sceSystemServiceLaunchWebBrowser` gets a failure and nothing opens, unless `ANYPS5_OPEN_URLS` is set. `ANYPS5_OPEN_URLS=ask` shows the whole address in a message box with Cancel as the default button and opens it in the default browser only when you press Open; with no display to show the box, nothing opens. `ANYPS5_OPEN_URLS=always` opens it without asking, which is not recommended because the game picks the address. Unlike `ask`, where you see the address first, `always` opens any `http` or `https` host the game names, including `localhost` and private-network addresses such as a router's web page. `never`, an empty value and an unset variable keep the failure. Any other value stops the game at its first browser request with an error that names the variable.
 
+Browser requests are limited for all addresses and all game threads together: a request that arrives while a box or a launch is still active is refused at once, at most three boxes or launches happen in any 60 seconds, and after you press Cancel no further box or launch happens for 10 minutes. Refused requests fail like the default.
+
 Only `http://` and `https://` addresses of at most 2048 bytes open. The host refuses addresses with a user name or password, a space, a control character, a character outside ASCII (use punycode and percent escapes), a malformed or control-character percent escape, an empty host or a port outside 1 to 65535, and `psno:` addresses. The browser is started without a shell: `xdg-open` on Linux, `open` on macOS and `ShellExecuteW` on Windows.
 
 ### Trophies
