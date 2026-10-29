@@ -504,6 +504,13 @@ int APS5_VABI sceKernelUnlink(const char* path) {
                 RecordWrittenPath_nid_no_patch(native);
                 return 0;
             }
+            std::string junctionTarget;
+            if ((found.dwFileAttributes & DirectoryLink) == DirectoryLink && found.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT
+                && File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "unlink")) {
+                if (RemoveDirectoryW(native.c_str()) == 0) return SceErrorFromErrno(GuestEperm);
+                RecordWrittenPath_nid_no_patch(native);
+                return 0;
+            }
         }
     }
 #endif

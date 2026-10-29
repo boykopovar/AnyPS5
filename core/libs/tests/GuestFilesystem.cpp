@@ -1243,6 +1243,12 @@ int main() {
     const int followedJunction = sceKernelOpen(junction.string().c_str(), 0, 0);
     Require(followedJunction >= 0 && sceKernelClose(followedJunction) == 0);
     Require(std::filesystem::remove(junction) && std::filesystem::remove(junctionTarget));
+    const auto danglingJunctionTarget = root / "dangling-junction-target";
+    const auto danglingJunction = root / "dangling-junction";
+    Require(std::filesystem::create_directory(danglingJunctionTarget));
+    const auto danglingJunctionCommand = L"cmd /c mklink /J \"" + danglingJunction.wstring() + L"\" \"" + danglingJunctionTarget.wstring() + L"\"";
+    Require(_wsystem(danglingJunctionCommand.c_str()) == 0 && std::filesystem::remove(danglingJunctionTarget));
+    Require(unlink_nid_postfix(danglingJunction.string().c_str()) == 0 && GetFileAttributesW(danglingJunction.c_str()) == INVALID_FILE_ATTRIBUTES);
     const auto tagged = root / "tagged.bin";
     { std::ofstream stream(tagged, std::ios::binary); stream << std::string(1u << 18, 'a'); }
     const HANDLE taggedHandle = CreateFileW(tagged.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
