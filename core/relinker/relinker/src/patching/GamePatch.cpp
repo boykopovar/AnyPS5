@@ -481,6 +481,8 @@ void CheckOverlaps(const std::string& target, const std::vector<PatchedRange>& p
     for (const auto& site : writers.Trampolines) sites.push_back({site.Offset, site.Length, "Intel trampoline site"});
     for (const auto& patch : writers.RelinkPatches) sites.push_back({patch.Offset, patch.Bytes.size(), "relinker patch"});
     sites.insert(sites.end(), writers.Traps.begin(), writers.Traps.end());
+    for (const auto& site : writers.RedZoneSites) sites.push_back({site.Offset, site.Length, "red-zone frame site"});
+    for (const auto& moved : writers.RedZoneDisplacements) sites.push_back({moved.Offset, moved.Bytes.size(), "red-zone moved displacement"});
     const auto relaViolation = [&](const std::span<const std::uint8_t> table, const char* name, const PatchedRange& range) {
         for (std::size_t position = 0; position + 24 <= table.size(); position += 24) {
             std::uint64_t relocation = 0;

@@ -275,3 +275,25 @@ delete globalThis.self;
 console.log("Rate-limited release checks use the verified site manifest; other release-check failures remain errors");
 console.log("Windows folder output rejected before conversion or file writes");
 console.log("Multiple ZIP inputs stream into separate app roots; invalid inputs name the failing archive");
+
+for (const compression of [12, 14]) {
+  const stored = await zip([["libs/system.prx", new Uint8Array([1, 2, 3]), { level: 0 }]]);
+  const bytes = new Uint8Array(await stored.arrayBuffer());
+  const view = new DataView(bytes.buffer);
+  for (let offset = 0; offset + 46 <= bytes.length; offset++) {
+    const signature = view.getUint32(offset, true);
+    if (signature === 0x04034b50) view.setUint16(offset + 8, compression, true);
+    if (signature === 0x02014b50) view.setUint16(offset + 10, compression, true);
+  }
+  let writes = 0;
+  await assert.rejects(packageArchive({ files: [] }, { executable: new Uint8Array([1]), modules: [] }, "program.elf",
+    new Blob([bytes]), { async file() { writes++; throw new Error("destination opened"); } }, () => {}, true), /Unsupported ZIP compression/u);
+  assert.equal(writes, 0);
+}
+for (const mode of [0o010644, 0o020644, 0o060644, 0o140644]) {
+  const special = await zip([["libs/special", new Uint8Array([1]), { versionMadeBy: 0x31e, externalFileAttributes: (mode << 16) >>> 0 }]]);
+  let writes = 0;
+  await assert.rejects(packageArchive({ files: [] }, { executable: new Uint8Array([1]), modules: [] }, "program.elf",
+    special, { async file() { writes++; throw new Error("destination opened"); } }, () => {}, true), /special files/u);
+  assert.equal(writes, 0);
+}

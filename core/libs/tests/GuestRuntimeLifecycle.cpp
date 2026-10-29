@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <atomic>
@@ -11,12 +12,6 @@
 #include <thread>
 #include <source_location>
 #include <pthread.h>
-
-extern "C" {
-char* APS5_VABI dlerror_nid_postfix();
-std::int32_t APS5_VABI sceKernelLoadStartModule(const char*, std::size_t, const void*, std::uint32_t, const void*, int*);
-int APS5_VABI sceKernelStopUnloadModule(std::int32_t, std::size_t, const void*, std::uint32_t, const void*, int*);
-}
 
 namespace {
 struct Event { std::size_t args; const void* argp; };

@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubmissionCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
@@ -440,6 +441,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
             ++flipsCounted;
             submission.flips.begin()->second->GpuReady(frame);
             lock.unlock();
+            Graphics::NoteHostImportFrame();
             AgcDriverDeliverEopInterrupt(0);
             return;
         }
@@ -533,6 +535,18 @@ bool Driver::queue0Before(std::uint64_t received) const {
     for (const auto& pending : worker->second.pending) {
         if (pending.suspend) continue;
         return pending.received < received;
+    }
+    return false;
+}
+
+bool Driver::waitFreeBefore(std::uint64_t received) const {
+    for (const auto& [queue, worker] : workers) {
+        if (queue == 0 || worker.executingWaits) continue;
+        if (worker.executingWaitFree != 0 && worker.executingWaitFree < received) return true;
+        for (const auto& pending : worker.pending) {
+            if (!pending.waitFree || pending.received >= received) break;
+            return true;
+        }
     }
     return false;
 }

@@ -1,3 +1,4 @@
+#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include "Ngs2Test.hpp"
 
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <iterator>
 #include <numbers>
 #include <stdexcept>
@@ -68,6 +70,7 @@ static void TestErrorsAndInfo() {
     named.rack_option.max_ports = 2;
     named.max_channels = 2;
     named.max_inputs = 3;
+    named.num_peak_meter_blocks = 8;
     Ngs2ContextBufferInfo namedQuery{};
     Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SUBMIXER, &named.rack_option, &namedQuery) == SCE_NGS2_OK);
     const auto namedBuffer = Buffer(namedQuery);
@@ -240,21 +243,58 @@ static void TestPan() {
     }
 
     const Ngs2PanParam front{0.0f, 1.0f, 1.0f, 0.0f};
-    float out[2] = {};
+    float out[2] = {-1.0f, -1.0f};
     Require(sceNgs2PanInit(&work, nullptr, 360.0f, 2) == SCE_NGS2_OK);
     Require(sceNgs2PanGetVolumeMatrix(&work, &front, 1, 2, nullptr) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
-    Require(sceNgs2PanGetVolumeMatrix(&work, &front, 0, 2, out) == SCE_NGS2_OK);
-    Require(PanThrows(nullptr, &front, 1, 2) && PanThrows(&work, nullptr, 0, 2));
-    Require(PanThrows(&work, &front, 1, 4) && PanThrows(&work, &front, 1, 3) && !PanThrows(&work, &front, 1, 8));
+    Require(sceNgs2PanGetVolumeMatrix(&work, &front, 0, 2, out) == SCE_NGS2_OK && out[0] == -1.0f && out[1] == -1.0f);
+    Require(SCE_NGS2_ERROR_INVALID_PAN_UNIT_ANGLE == static_cast<int>(0x804A8450) && SCE_NGS2_ERROR_INVALID_PAN_SPEAKER == static_cast<int>(0x804A8451));
+    Require(SCE_NGS2_ERROR_INVALID_PAN_MATRIX_FORMAT == static_cast<int>(0x804A8452) && SCE_NGS2_ERROR_INVALID_PAN_WORK == static_cast<int>(0x804A8453));
+    Require(SCE_NGS2_ERROR_INVALID_PAN_PARAM == static_cast<int>(0x804A8454));
+    float guard[32];
+    const auto panResult = [&](Ngs2PanWork* panWork, const Ngs2PanParam* params, std::uint32_t numParams, std::uint32_t format) {
+        std::fill(std::begin(guard), std::end(guard), -1.0f);
+        const int result = sceNgs2PanGetVolumeMatrix(panWork, params, numParams, format, guard);
+        Require(result == SCE_NGS2_OK || std::all_of(std::begin(guard), std::end(guard), [](float level) { return level == -1.0f; }));
+        return result;
+    };
     const Ngs2PanParam many[9] = {};
-    Require(PanThrows(&work, many, 9, 2) && !PanThrows(&work, many, 8, 2));
+    Require(panResult(nullptr, &front, 1, 2) == SCE_NGS2_ERROR_INVALID_PAN_WORK && panResult(nullptr, nullptr, 1, 2) == SCE_NGS2_ERROR_INVALID_PAN_WORK);
+    Require(sceNgs2PanGetVolumeMatrix(nullptr, &front, 1, 2, nullptr) == SCE_NGS2_ERROR_INVALID_PAN_WORK);
+    Require(panResult(&work, nullptr, 0, 2) == SCE_NGS2_ERROR_INVALID_PAN_PARAM && panResult(&work, nullptr, 1, 3) == SCE_NGS2_ERROR_INVALID_PAN_PARAM);
+    Require(sceNgs2PanGetVolumeMatrix(&work, nullptr, 1, 2, nullptr) == SCE_NGS2_ERROR_INVALID_PAN_PARAM);
+    Require(sceNgs2PanGetVolumeMatrix(&work, &front, 1, 3, nullptr) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    Require(panResult(&work, &front, 1, 4) == SCE_NGS2_ERROR_INVALID_PAN_MATRIX_FORMAT && panResult(&work, &front, 1, 3) == SCE_NGS2_ERROR_INVALID_PAN_MATRIX_FORMAT);
+    Require(panResult(&work, many, 9, 3) == SCE_NGS2_ERROR_INVALID_PAN_MATRIX_FORMAT && panResult(&work, &front, 1, 8) == SCE_NGS2_OK);
+    Require(panResult(&work, many, 9, 2) == SCE_NGS2_ERROR_INVALID_NUM_CHANNELS && panResult(&work, many, 8, 2) == SCE_NGS2_OK);
+    Ngs2PanWork badWork = work;
+    badWork.num_speakers = 3;
+    Require(panResult(&badWork, &front, 1, 2) == SCE_NGS2_ERROR_INVALID_PAN_SPEAKER && panResult(&badWork, &front, 1, 3) == SCE_NGS2_ERROR_INVALID_PAN_MATRIX_FORMAT);
+    Require(panResult(&badWork, many, 9, 2) == SCE_NGS2_ERROR_INVALID_PAN_SPEAKER);
+    badWork.unit_angle = 100.0f;
+    Require(panResult(&badWork, &front, 1, 2) == SCE_NGS2_ERROR_INVALID_PAN_SPEAKER);
+    badWork.num_speakers = 2;
+    Require(panResult(&badWork, &front, 1, 2) == SCE_NGS2_ERROR_INVALID_PAN_UNIT_ANGLE && panResult(&badWork, many, 9, 2) == SCE_NGS2_ERROR_INVALID_PAN_UNIT_ANGLE);
+    Require(sceNgs2PanGetVolumeMatrix(&badWork, &front, 1, 2, nullptr) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
     const Ngs2PanParam nanAngle{NAN, 1.0f, 1.0f, 0.0f};
-    Require(PanThrows(&work, &nanAngle, 1, 2));
+    Require(panResult(&work, &nanAngle, 1, 2) == SCE_NGS2_OK && guard[0] == 0.0f && guard[1] == 0.0f);
     const Ngs2PanParam laterNan[2] = {front, nanAngle};
-    float untouched[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
-    bool rejected = false;
-    try { sceNgs2PanGetVolumeMatrix(&work, laterNan, 2, 2, untouched); } catch (const std::invalid_argument&) { rejected = true; }
-    Require(rejected && std::all_of(std::begin(untouched), std::end(untouched), [](float level) { return level == -1.0f; }));
+    Require(panResult(&work, laterNan, 2, 2) == SCE_NGS2_OK);
+    Require(std::fabs(guard[0] - 0.707106769f) < 1e-6f && guard[1] == 0.0f && std::fabs(guard[2] - 0.707106769f) < 1e-6f && guard[3] == 0.0f);
+    Ngs2PanWork sevenWork{};
+    Require(sceNgs2PanInit(&sevenWork, nullptr, 360.0f, 7) == SCE_NGS2_OK);
+    const Ngs2PanParam nanEach[4] = {{NAN, 1.0f, 1.0f, 0.5f}, {30.0f, NAN, 1.0f, 0.5f}, {30.0f, 1.0f, NAN, 0.5f}, {30.0f, 1.0f, 1.0f, NAN}};
+    Require(panResult(&sevenWork, nanEach, 4, 8) == SCE_NGS2_OK);
+    for (std::uint32_t channel = 0; channel < 8; channel++) {
+        Require(guard[channel * 4] == (channel == 3 ? 0.5f : 0.0f));
+        for (std::uint32_t p = 1; p < 4; p++) Require(std::isnan(guard[channel * 4 + p]));
+    }
+    Ngs2PanWork radianWork{};
+    const float radianPair[] = {-0.52359879f, 0.52359879f};
+    Require(sceNgs2PanInit(&radianWork, radianPair, 2.0f * pi, 2) == SCE_NGS2_OK && radianWork.speaker_angles[0] == 0.52359879f);
+    const Ngs2PanParam belowFirst{0.523598731f, 1.0f, 1.0f, 0.0f};
+    const Ngs2PanParam aboveFirst{0.52359885f, 1.0f, 1.0f, 0.0f};
+    Require(std::nextafter(0.52359879f, 0.0f) == belowFirst.angle && PanThrows(&radianWork, &belowFirst, 1, 1));
+    Require(panResult(&radianWork, &aboveFirst, 1, 1) == SCE_NGS2_OK && std::fabs(guard[0] - 0.707106769f) < 1e-6f);
     const Ngs2PanParam huge{1e30f, 1.0f, 1.0f, 0.0f};
     Require(PanThrows(&work, &huge, 1, 2));
     const float hugeSpeaker[] = {1e30f, 30.0f};
@@ -263,6 +303,9 @@ static void TestPan() {
     Require(sceNgs2PanInit(&work, nullptr, 360.0f, 2) == SCE_NGS2_OK);
     work.speaker_angles[0] = -INFINITY;
     Require(PanThrows(&work, &front, 1, 2));
+    work.speaker_angles[0] = NAN;
+    const Ngs2PanParam right{30.0f, 1.0f, 1.0f, 0.0f};
+    Require(panResult(&work, &right, 1, 2) == SCE_NGS2_OK && guard[0] == 0.0f && guard[1] == 0.0f);
     Require(sceNgs2PanInit(&work, nullptr, 360.0f, 2) == SCE_NGS2_OK);
     Ngs2PanWork marked;
     std::memset(&marked, 0x5a, sizeof(marked));
@@ -277,8 +320,14 @@ static void TestPan() {
         Require(sceNgs2PanInit(&marked, nullptr, 360.0f, count) == static_cast<int>(0x804A8451));
         Require(unchanged());
     }
-    Require(PanInitThrows(&marked, nullptr, 360.0f, 0));
-    Require(unchanged());
+    const float sevenDegrees[] = {0.0f, 40.0f, 110.0f, 150.0f, 210.0f, 250.0f, 320.0f, 360.0f};
+    for (const float unitAngle : {360.0f, 2.0f * pi, 180.0f, NAN}) {
+        Ngs2PanWork seven;
+        std::memset(&seven, 0x5a, sizeof(seven));
+        Require(sceNgs2PanInit(&seven, nullptr, unitAngle, 0) == SCE_NGS2_OK && seven.num_speakers == 7);
+        Require(seven.unit_angle == (unitAngle == 2.0f * pi ? 2.0f * pi : 360.0f));
+        for (std::uint32_t i = 0; i < 8; i++) Require(seven.speaker_angles[i] == sevenDegrees[i]);
+    }
     for (std::uint32_t count : {0u, 1u, 3u, 6u, 8u, 255u}) {
         Require(sceNgs2PanInit(&marked, pair, 360.0f, count) == static_cast<int>(0x804A8451));
         Require(sceNgs2PanInit(&marked, pair, 2.0f * pi, count) == static_cast<int>(0x804A8451));
@@ -290,13 +339,31 @@ static void TestPan() {
         Require(unchanged());
     }
     Require(sceNgs2PanInit(&work, pair, 2.0f * pi, 2) == SCE_NGS2_OK);
-    const float invalid[] = {0.0f, NAN};
-    Require(PanInitThrows(&work, invalid, 360.0f, 2));
+    const float nanSpeaker[] = {0.0f, NAN};
+    Require(sceNgs2PanInit(&work, nanSpeaker, 360.0f, 2) == SCE_NGS2_OK && work.num_speakers == 2 && work.unit_angle == 360.0f);
+    Require(std::isnan(work.speaker_angles[0]) && work.speaker_angles[1] == 0.0f && std::isnan(work.speaker_angles[2]));
     const float onUnit[] = {720.0f, 30.0f};
     const float belowZero[] = {-360.0f, 30.0f};
     Require(PanInitThrows(&work, onUnit, 360.0f, 2) && !PanInitThrows(&work, belowZero, 360.0f, 2));
     work.unit_angle = 100.0f;
-    Require(PanThrows(&work, &front, 1, 2));
+    Require(panResult(&work, &front, 1, 2) == SCE_NGS2_ERROR_INVALID_PAN_UNIT_ANGLE);
+}
+
+static void TestPanExplicitAnglesAndNanDistance() {
+    Ngs2PanWork work;
+    std::memset(&work, 0x5a, sizeof(work));
+    Ngs2PanWork filled;
+    std::memcpy(&filled, &work, sizeof(work));
+    const float pair[] = {-30.0f, 30.0f};
+    Require(sceNgs2PanInit(&work, pair, 360.0f, 2) == SCE_NGS2_OK && work.num_speakers == 2 && work.unit_angle == 360.0f);
+    Require(work.speaker_angles[0] == 30.0f && work.speaker_angles[1] == 330.0f && work.speaker_angles[2] == 390.0f);
+    Require(std::memcmp(&work.speaker_angles[3], &filled.speaker_angles[3], 5 * sizeof(float)) == 0);
+    Require(sceNgs2PanInit(&work, nullptr, 360.0f, 2) == SCE_NGS2_OK);
+    for (std::uint32_t i = 3; i < 8; i++) Require(work.speaker_angles[i] == 0.0f);
+    const Ngs2PanParam params[2] = {{0.0f, 1.0f, 1.0f, 0.0f}, {30.0f, NAN, 1.0f, 0.0f}};
+    float out[4] = {};
+    Require(sceNgs2PanGetVolumeMatrix(&work, params, 2, 2, out) == SCE_NGS2_OK);
+    Require(std::fabs(out[0] - 0.707106769f) < 1e-6f && std::isnan(out[1]) && std::fabs(out[2] - 0.707106769f) < 1e-6f && std::isnan(out[3]));
 }
 
 static void TestPitchAndRepeat() {
@@ -478,6 +545,202 @@ static void TestPcmCallbackSetup() {
             Require(state.waveform_data == callback.pcm.data() + Grain * channels);
             Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
         }
+    }
+}
+
+static void TestPeakMeter() {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 2);
+
+    const auto submixerRack = CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER);
+    const auto submixer = Voice(submixerRack);
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 2, 0});
+    Patch(submixer, master);
+    Event(submixer, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    const std::vector<std::int16_t> pcm(Grain, 16384);
+    uintptr_t samplerRack = 0;
+    const auto sampler = Sampler(system, pcm, 8, &samplerRack);
+    Patch(sampler, submixer);
+    const float levels[2] = {1.0f, 1.0f};
+    Control(sampler, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, 2, levels});
+    Control(sampler, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    const auto render = [&system] {
+        std::vector<float> out(Grain * 2, -1.0f);
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 2};
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    };
+
+    Ngs2VoicePeakMeterParam peak{{}, 1, 0};
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER, peak);
+    Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER, peak);
+    render();
+    Ngs2SubmixerVoiceState submixerState{};
+    Require(sceNgs2VoiceGetState(submixer, &submixerState.voice_state, sizeof(submixerState)) == SCE_NGS2_OK);
+    Require(submixerState.peak_height == 0.5f);
+    Ngs2SamplerVoiceState samplerState{};
+    Require(sceNgs2VoiceGetState(sampler, &samplerState.voice_state, sizeof(samplerState)) == SCE_NGS2_OK);
+    Require(samplerState.peak_height == 0.5f);
+
+    peak.detect_type = 2;
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER, peak);
+    render();
+    Require(sceNgs2VoiceGetState(submixer, &submixerState.voice_state, sizeof(submixerState)) == SCE_NGS2_OK);
+    Require(submixerState.peak_height == 0.5f);
+
+    peak.detect_type = 0;
+    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER, peak);
+    render();
+    Require(sceNgs2VoiceGetState(submixer, &submixerState.voice_state, sizeof(submixerState)) == SCE_NGS2_OK);
+    Require(submixerState.peak_height == 0.0f);
+
+    peak.detect_type = 3;
+    peak.header = {sizeof(peak), 0, SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER};
+    Require(sceNgs2VoiceControl(submixer, &peak.header) == SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE);
+
+    Ngs2SubmixerRackOption invalid{};
+    invalid.rack_option.size = sizeof(invalid);
+    invalid.rack_option.max_grain_samples = 256;
+    invalid.rack_option.max_voices = 1;
+    invalid.max_channels = 2;
+    invalid.max_inputs = 1;
+    std::vector<std::uint64_t> storage(512);
+    Ngs2ContextBufferInfo buffer{};
+    buffer.host_buffer = storage.data();
+    buffer.host_buffer_size = storage.size() * sizeof(std::uint64_t);
+    uintptr_t rejectedRack = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, &invalid.rack_option, &buffer, &rejectedRack) == SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS);
+    invalid.num_peak_meter_blocks = 257;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, &invalid.rack_option, &buffer, &rejectedRack) == SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS);
+    invalid.num_peak_meter_blocks = 8;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SUBMIXER, &invalid.rack_option, &buffer, &rejectedRack) == SCE_NGS2_OK);
+    Require(sceNgs2RackDestroy(rejectedRack, nullptr) == SCE_NGS2_OK);
+
+    Ngs2SamplerRackOption invalidSampler{};
+    invalidSampler.rack_option.size = sizeof(invalidSampler);
+    invalidSampler.rack_option.max_grain_samples = 256;
+    invalidSampler.rack_option.max_voices = 1;
+    invalidSampler.max_channel_works = 1;
+    uintptr_t rejectedSampler = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SAMPLER, &invalidSampler.rack_option, &buffer, &rejectedSampler) == SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS);
+    invalidSampler.num_peak_meter_blocks = 8;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SAMPLER, &invalidSampler.rack_option, &buffer, &rejectedSampler) == SCE_NGS2_OK);
+    Require(sceNgs2RackDestroy(rejectedSampler, nullptr) == SCE_NGS2_OK);
+
+    Require(sceNgs2RackDestroy(samplerRack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2RackDestroy(submixerRack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestPeakMeterHistory() {
+    const auto samplerFor = [](uintptr_t system, std::uint32_t blocks, const std::vector<std::int16_t>& pcm) {
+        Ngs2SamplerRackOption option{};
+        option.rack_option.size = sizeof(option);
+        option.rack_option.max_grain_samples = 512;
+        option.rack_option.max_voices = 1;
+        option.rack_option.max_matrices = 1;
+        option.rack_option.max_ports = 8;
+        option.max_channel_works = 1;
+        option.max_codec_caches = 1;
+        option.max_waveform_blocks = 4;
+        option.max_envelope_points = 1;
+        option.max_filters = 1;
+        option.max_atrac9_decoders = 1;
+        option.max_atrac9_channel_works = 1;
+        option.num_peak_meter_blocks = blocks;
+        Ngs2ContextBufferInfo query{};
+        Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_SAMPLER, &option.rack_option, &query) == SCE_NGS2_OK);
+        const auto buffer = Buffer(query);
+        uintptr_t rack = 0;
+        Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SAMPLER, &option.rack_option, &buffer, &rack) == SCE_NGS2_OK && rack != 0);
+        const auto voice = Voice(rack);
+        Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+        const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 0, 0, static_cast<std::uint32_t>(pcm.size()), 0, 0x55};
+        Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
+        return voice;
+    };
+
+    std::vector<std::int16_t> pcm;
+    for (int gain = 0; gain < 3; gain++) {
+        for (std::uint32_t i = 0; i < Grain; i++) pcm.push_back(static_cast<std::int16_t>(16384 >> gain));
+    }
+
+    {
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, 1);
+        const auto sampler = samplerFor(system, 2, pcm);
+        Patch(sampler, master);
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER, Ngs2VoicePeakMeterParam{{}, 2, 0});
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        Ngs2SamplerVoiceState state{};
+        const auto height = [&sampler, &state] {
+            Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+            return state.peak_height;
+        };
+        RenderI16(system);
+        Require(Near(height(), 0.5f));
+        RenderI16(system);
+        Require(Near(height(), std::sqrt(2.5f / 16.0f)));
+        RenderI16(system);
+        Require(Near(height(), std::sqrt(0.625f / 16.0f)));
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+
+    {
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, 1);
+        const auto sampler = samplerFor(system, 2, pcm);
+        Patch(sampler, master);
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER, Ngs2VoicePeakMeterParam{{}, 1, 0});
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        Ngs2SamplerVoiceState state{};
+        const auto height = [&sampler, &state] {
+            Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+            return state.peak_height;
+        };
+        RenderI16(system);
+        Require(height() == 0.5f);
+        RenderI16(system);
+        Require(height() == 0.5f);
+        RenderI16(system);
+        Require(height() == 0.25f);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+
+    {
+        std::vector<std::int16_t> half(Grain, 0);
+        for (std::uint32_t i = 0; i < Grain / 2; i++) half[i] = static_cast<std::int16_t>(16384);
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, 1);
+        const auto sampler = samplerFor(system, 2, half);
+        Patch(sampler, master);
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER, Ngs2VoicePeakMeterParam{{}, 2, 0});
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        Ngs2SamplerVoiceState state{};
+        const auto height = [&sampler, &state] {
+            Require(sceNgs2VoiceGetState(sampler, &state.voice_state, sizeof(state)) == SCE_NGS2_OK);
+            return state.peak_height;
+        };
+        RenderI16(system);
+        Require(Near(height(), std::sqrt(0.125f)));
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+        Require(height() == 0.0f);
+        const Ngs2WaveformBlock block{0, half.size() * sizeof(std::int16_t), 0, 0, Grain, 0, 0x55};
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, half.data(), 0, 1, &block});
+        Patch(sampler, master);
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        RenderI16(system);
+        Require(height() == 0.0f);
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, half.data(), 0, 1, &block});
+        Patch(sampler, master);
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER, Ngs2VoicePeakMeterParam{{}, 2, 0});
+        RenderI16(system);
+        Require(Near(height(), std::sqrt(0.125f)));
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
     }
 }
 
@@ -836,6 +1099,7 @@ static bool SystemOptionThrows(const Ngs2SystemOption& option) {
     Ngs2ContextBufferInfo query{};
     try {
         sceNgs2SystemQueryBufferSize(&option, &query);
+
     } catch (const std::runtime_error&) {
         return true;
     }
@@ -878,6 +1142,7 @@ static void TestUserData() {
     bool threw = false;
     try {
         sceNgs2SystemGetUserData(system, nullptr);
+
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -901,6 +1166,7 @@ static void TestUserData() {
     threw = false;
     try {
         sceNgs2RackGetUserData(rack, nullptr);
+
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -940,9 +1206,6 @@ static void TestMasteringGain() {
     Control(toQuad, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
     Patch(toQuad, quad);
     Event(toQuad, SCE_NGS2_VOICE_EVENT_PLAY);
-    bool rejected = false;
-    try { Control(stereo, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, NAN, 1.0f}); } catch (const std::exception&) { rejected = true; }
-    Require(rejected);
 
     std::vector<float> outStereo(Grain * 2, -1.0f);
     std::vector<float> outSurround(Grain * 6, -1.0f);
@@ -974,6 +1237,80 @@ static void TestMasteringGain() {
     auto reset = RenderI16(loudSystem);
     for (std::int16_t sample : reset) Require(sample == 24576);
     Require(sceNgs2SystemDestroy(loudSystem, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestMasteringGainClampedLikePs5() {
+    std::deque<std::vector<std::int16_t>> waveforms;
+    const auto chain = [&waveforms](std::uint32_t channels, std::uint32_t grains, uintptr_t& master) {
+        const auto system = CreateSystem();
+        master = Mastering(system, channels);
+        const auto& pcm = waveforms.emplace_back(Grain * grains, 16384);
+        const auto source = Sampler(system, pcm, 0);
+        const std::vector<float> levels(channels, 1.0f);
+        Control(source, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, channels, levels.data()});
+        Control(source, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
+        Patch(source, master);
+        Event(source, SCE_NGS2_VOICE_EVENT_PLAY);
+        return system;
+    };
+    const auto render = [](uintptr_t system, std::uint32_t channels) {
+        std::vector<float> out(Grain * channels, -1.0f);
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        return out;
+    };
+    const auto expect = [](const std::vector<float>& out, std::uint32_t channels, float fbwOut, float lfeOut) {
+        for (std::uint32_t i = 0; i < Grain; i++) {
+            for (std::uint32_t channel = 0; channel < channels; channel++) {
+                const float level = channel == 3 && channels >= 6 ? lfeOut : fbwOut;
+                const float sample = out[i * channels + channel];
+                Require(std::isnan(level) ? std::isnan(sample) : sample == 0.5f * level);
+            }
+        }
+    };
+    const auto gain = [&](std::uint32_t channels, float fbw, float lfe, float fbwOut, float lfeOut) {
+        uintptr_t master = 0;
+        const auto system = chain(channels, 1, master);
+        Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, fbw, lfe});
+        expect(render(system, channels), channels, fbwOut, lfeOut);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    };
+    const float inf = INFINITY;
+    for (const std::uint32_t channels : {6u, 8u}) {
+        gain(channels, 32.0f, 1.0f, 32.0f, 1.0f);
+        gain(channels, 33.0f, 1.0f, 32.0f, 1.0f);
+        gain(channels, 64.0f, 1.0f, 32.0f, 1.0f);
+        gain(channels, 1e30f, 1.0f, 32.0f, 1.0f);
+        gain(channels, inf, 1.0f, 32.0f, 1.0f);
+        gain(channels, -32.0f, 1.0f, -32.0f, 1.0f);
+        gain(channels, -33.0f, 1.0f, -32.0f, 1.0f);
+        gain(channels, -inf, 1.0f, -32.0f, 1.0f);
+        gain(channels, NAN, 1.0f, NAN, 1.0f);
+        gain(channels, 1.0f, 32.0f, 1.0f, 32.0f);
+        gain(channels, 1.0f, 33.0f, 1.0f, 32.0f);
+        gain(channels, 1.0f, 1e30f, 1.0f, 32.0f);
+        gain(channels, 1.0f, inf, 1.0f, 32.0f);
+        gain(channels, 1.0f, -33.0f, 1.0f, -32.0f);
+        gain(channels, 1.0f, -inf, 1.0f, -32.0f);
+        gain(channels, 1.0f, NAN, 1.0f, NAN);
+    }
+    gain(1, 0.5f, 2.0f, 0.5f, 0.5f);
+    gain(1, inf, NAN, 32.0f, 32.0f);
+    gain(2, -inf, 1e30f, -32.0f, -32.0f);
+    gain(2, 2.0f, 0.5f, 2.0f, 2.0f);
+
+    uintptr_t master = 0;
+    const auto system = chain(6, 4, master);
+    expect(render(system, 6), 6, 1.0f, 1.0f);
+    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, 0.5f, 0.25f});
+    expect(render(system, 6), 6, 0.5f, 0.25f);
+    Event(master, SCE_NGS2_VOICE_EVENT_STOP_IMM);
+    Event(master, SCE_NGS2_VOICE_EVENT_PLAY);
+    expect(render(system, 6), 6, 0.5f, 0.25f);
+    Control(master, SCE_NGS2_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, 6, 0});
+    Event(master, SCE_NGS2_VOICE_EVENT_PLAY);
+    expect(render(system, 6), 6, 1.0f, 1.0f);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
 static uintptr_t RackVoice(uintptr_t rack, std::uint32_t index) {
@@ -1048,6 +1385,7 @@ static void TestStereoIntoSurround() {
     bool threw = false;
     try {
         sceNgs2SystemRender(system, info, 3);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -1653,12 +1991,18 @@ int main() {
     TestPcmBlockEnd();
     TestPatchToRackHandle();
     TestPan();
+    TestPanExplicitAnglesAndNanDistance();
     TestPitchAndRepeat();
+    TestPeakMeter();
+    TestPeakMeterHistory();
     TestSubmixerMatrix();
     TestReverb();
     TestReverbSetup();
     TestReverbConversion();
     TestSampleRate();
+
+    TestMasteringGainClampedLikePs5();
+
     TestSystemOptionFlags();
     TestUserData();
     TestPcmCallbackReset();

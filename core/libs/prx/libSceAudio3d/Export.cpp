@@ -1,3 +1,6 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
+#include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstddef>
@@ -13,12 +16,6 @@
 #include "Mixer.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-extern "C" {
-int APS5_VABI sceAudioOutOpen(int user_id, int type, int index, std::uint32_t len, std::uint32_t freq, std::uint32_t param);
-int APS5_VABI sceAudioOutOutput(int handle, const void* ptr);
-int APS5_VABI sceAudioOutClose(int handle);
-}
 
 namespace {
 
@@ -437,9 +434,13 @@ int APS5_VABI sceAudio3dAudioOutOutputs(AudioOutOutputParam* param, uint32_t num
     return 0;
 }
 
-int APS5_VABI sceAudio3dStrError(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI sceAudio3dStrError(std::int32_t error) {
+    static constexpr const char* descriptions[]{
+        "port does not exist", "object does not exist", "invalid parameter",
+        "out of memory", "out of resources", "not ready"
+    };
+    const auto index = static_cast<std::uint32_t>(error) - 0x80EA0002u;
+    return index < std::size(descriptions) ? descriptions[index] : "(unknown)";
 }
 
 int APS5_VABI sceAudio3dPortOpenEx(void) {
@@ -471,19 +472,6 @@ int APS5_VABI sceAudio3dReportUnregisterHandler(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
-size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(uint32_t num_speakers, uint8_t is_3d, uint8_t is_ambisonics);
-int APS5_VABI sceAudioOut2SpeakerArrayCreate(AudioOut2SpeakerArrayHandle* handle, const void* vbap_params, const void* ambi_params);
-int APS5_VABI sceAudioOut2SpeakerArrayDestroy(AudioOut2SpeakerArrayHandle handle);
-int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, uint32_t num_coefficients, uint8_t height_aware, float downmix_spread_radius);
-
-struct Audio3dSpeakerArrayParameters {
-    const AudioOut2Position* positions;
-    std::uint32_t numSpeakers;
-    std::uint8_t is3d;
-    void* memory;
-    std::size_t memorySize;
-};
 
 static_assert(sizeof(Audio3dSpeakerArrayParameters) == 0x20);
 

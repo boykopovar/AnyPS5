@@ -1,0 +1,16 @@
+add_library(libSceNpMatching2 SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceNpMatching2 PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceNpMatching2)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_np_matching2_offline_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpMatching2Offline.cpp)
+    target_include_directories(guest_np_matching2_offline_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_matching2_offline_tests PRIVATE libSceNpMatching2)
+    configure_windows_unwind(guest_np_matching2_offline_tests)
+    add_test(NAME guest_np_matching2_offline COMMAND guest_np_matching2_offline_tests)
+    set_tests_properties(guest_np_matching2_offline PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_np_matching2_offline PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpMatching2>")
+    endif()
+endif()

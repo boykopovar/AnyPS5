@@ -9,6 +9,8 @@
 #include <memory>
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 
+struct ImeKeyboardView;
+
 namespace AgcDriver {
 
 class FrameTiming;
@@ -26,10 +28,11 @@ struct PresentationWindow {
 }
 
 extern "C" void AgcDriverAttachWindow_nid_postfix(const AgcDriver::PresentationWindow& window);
-extern "C" void AgcDriverPresentClear_nid_postfix(const AgcDriver::PresentationWindow& window, bool opaque, void (*gpuReady)(void*), void* context);
-extern "C" void AgcDriverPresentBuffer_nid_postfix(const AgcDriver::PresentationWindow& window, const AgcDriver::DisplayBuffer& buffer, void (*gpuReady)(void*), void* context);
+extern "C" void AgcDriverPresentClear_nid_postfix(const AgcDriver::PresentationWindow& window, bool opaque, const AgcDriver::DisplayBuffer* plane, void (*gpuReady)(void*), void* context);
+extern "C" void AgcDriverPresentBuffer_nid_postfix(const AgcDriver::PresentationWindow& window, const AgcDriver::DisplayBuffer& buffer, const AgcDriver::DisplayBuffer* plane, void (*gpuReady)(void*), void* context);
 extern "C" void AgcDriverReleaseWindow_nid_postfix(void* window);
 extern "C" void AgcDriverTogglePerformanceOverlay_nid_postfix();
+extern "C" void AgcDriverSetSystemOverlay_nid_postfix(const ImeKeyboardView* view);
 extern "C" void AgcDriverReportFailure_nid_postfix(std::exception_ptr error);
 
 #endif

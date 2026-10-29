@@ -1,3 +1,4 @@
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
@@ -7,23 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 
-struct HeaderPacketParam {
-    std::uint64_t size;
-    std::uint32_t channels;
-    std::uint32_t sampleRate;
-    std::int32_t bytesPerSecond;
-    std::int32_t blockSize0Log2;
-    std::int32_t blockSize1Log2;
-    std::uint32_t reserved;
-    const std::uint8_t* setupPacket;
-    std::uint64_t setupPacketSize;
-    std::uint8_t* output;
-    std::uint64_t outputSize;
-    std::uint64_t writtenSize;
-};
-static_assert(sizeof(HeaderPacketParam) == 0x48);
-
-extern "C" int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(HeaderPacketParam* param);
+static_assert(sizeof(WVorbisHeaderPacketParameter) == 0x48);
 
 namespace {
 
@@ -40,11 +25,11 @@ void Require(bool value, const char* message) {
 
 constexpr std::array<std::uint8_t, 12> Setup {5, 'v', 'o', 'r', 'b', 'i', 's', 9, 0, 0xAA, 0xBB, 0xCC};
 
-HeaderPacketParam Valid(std::uint8_t* output, std::size_t outputSize) {
-    return {sizeof(HeaderPacketParam), 2, 48000, 16000, 8, 11, 0, Setup.data(), Setup.size(), output, outputSize, 0};
+WVorbisHeaderPacketParameter Valid(std::uint8_t* output, std::size_t outputSize) {
+    return {sizeof(WVorbisHeaderPacketParameter), 2, 48000, 16000, 8, 11, 0, Setup.data(), Setup.size(), output, outputSize, 0};
 }
 
-int Create(HeaderPacketParam param) { return sceAjmDecWVorbisCreateHeaderPacket(&param); }
+int Create(WVorbisHeaderPacketParameter param) { return sceAjmDecWVorbisCreateHeaderPacket(&param); }
 
 void TestValidation() {
     std::array<std::uint8_t, 128> output {};
@@ -56,15 +41,15 @@ void TestValidation() {
     param.bytesPerSecond = -1;
     Require(Create(param) == InvalidParameter, "a negative byte rate is refused");
     param = Valid(output.data(), output.size());
-    param.blockSize0Log2 = 5;
+    param.shortBlockExponent = 5;
     Require(Create(param) == InvalidParameter, "a block size below 64 is refused");
-    param.blockSize0Log2 = 38;
-    param.blockSize1Log2 = 38;
+    param.shortBlockExponent = 38;
+    param.longBlockExponent = 38;
     Require(Create(param) == 0, "block size exponents are taken modulo 32 as the console's shift does");
     param = Valid(output.data(), output.size());
-    param.blockSize1Log2 = 7;
+    param.longBlockExponent = 7;
     Require(Create(param) == InvalidParameter, "block size 1 below block size 0 is refused");
-    param.blockSize1Log2 = 14;
+    param.longBlockExponent = 14;
     Require(Create(param) == InvalidParameter, "a block size above 8192 is refused");
     param = Valid(output.data(), output.size());
     param.setupPacket = nullptr;
@@ -86,7 +71,7 @@ void TestPacket() {
     output.fill(0xEE);
     auto param = Valid(output.data(), output.size());
     Require(sceAjmDecWVorbisCreateHeaderPacket(&param) == 0, "a valid header packet is built");
-    Require(param.writtenSize == 56 + Setup.size(), "the written size covers the table, both headers and the setup packet");
+    Require(param.outputSize == 56 + Setup.size(), "the written size covers the table, both headers and the setup packet");
     constexpr std::uint8_t Expected[] {
         0, 0, 30, 0, 16, 0, 9, 0, 3, 0,
         1, 'v', 'o', 'r', 'b', 'i', 's', 0, 0, 0, 0, 2, 0x80, 0xBB, 0, 0, 0, 0, 0, 0, 0x00, 0xF4, 0x01, 0x00, 0, 0, 0, 0, 0xB8, 1,

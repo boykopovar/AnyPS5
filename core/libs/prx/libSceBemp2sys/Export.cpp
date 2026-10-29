@@ -1,3 +1,4 @@
+#include "prx/libSceBemp2sys/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"

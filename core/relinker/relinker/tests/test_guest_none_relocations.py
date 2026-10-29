@@ -124,6 +124,7 @@ def invalid_cases(sce):
     yield "overlapping-real", module([NOOP, RELATIVE, RELATIVE], sce=sce), "Overlapping guest relocations"
     yield "invalid-plt-kind", module(plt=[NOOP, RELATIVE], sce=sce), "Unsupported relocation or symbol index"
     yield "unrelocated-lifecycle", module([(TARGET, 0, FUNCTION)], sce=sce, lifecycle=True, initial=FUNCTION), "Unrelocated guest lifecycle pointer"
+    yield "plt-lifecycle", module(plt=[JUMP_SLOT], sce=sce, lifecycle=True, initial=0), "Unsupported guest lifecycle relocation"
     size = 0x61000031 if sce else 8
     entry = 0x61000033 if sce else 9
     address = 0x6100002f if sce else 7

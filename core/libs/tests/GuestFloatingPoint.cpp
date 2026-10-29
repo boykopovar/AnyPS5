@@ -1,30 +1,22 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <barrier>
 #include <cstdint>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <thread>
 #include <xmmintrin.h>
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-void APS5_VABI _Feraise_nid_postfix(int);
-int APS5_VABI fegetround_nid_postfix();
-int APS5_VABI fesetround_nid_postfix(int);
-int APS5_VABI fetestexcept_nid_postfix(int);
-int APS5_VABI feclearexcept_nid_postfix(int);
-int APS5_VABI fegetexceptflag_nid_postfix(std::uint16_t*, int);
-int APS5_VABI fesetexceptflag_nid_postfix(const std::uint16_t*, int);
-int APS5_VABI feenableexcept_nid_postfix(int);
-int APS5_VABI fedisableexcept_nid_postfix(int);
-int APS5_VABI __feenableexcept_nid_postfix(int);
-int APS5_VABI __fedisableexcept_nid_postfix(int);
-int APS5_VABI fegettrapenable_nid_postfix();
-int APS5_VABI fegetexcept_nid_postfix();
-int APS5_VABI fesettrapenable_nid_postfix(int);
-}
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -43,6 +35,10 @@ Environment ReadEnvironment() {
 void WriteEnvironment(const Environment& state) {
     asm volatile("fldenv %0" : : "m"(state.x87));
     _mm_setcsr(state.sse);
+}
+
+bool SameControlState(const Environment& left, const Environment& right) {
+    return left.x87[0] == right.x87[0] && left.x87[1] == right.x87[1] && left.sse == right.sse;
 }
 
 void Require(bool value, const char* message) {
@@ -70,13 +66,14 @@ void CheckEnabledExceptions() {
             state.x87[1] = (state.x87[1] & ~0x3fu) | (x87 & 0x15u);
             state.sse = (state.sse & ~0x7fbfu) | 0x2000 | (sse << 7) | (sse & 0x2au);
             WriteEnvironment(state);
+            const auto written = ReadEnvironment();
             *__error_nid_postfix() = 123;
             const int enabled = fegetexcept_nid_postfix();
             const int error = *__error_nid_postfix();
             const auto after = ReadEnvironment();
             WriteEnvironment(seeded);
             Require(enabled == static_cast<int>(0x3f ^ x87), "enabled exceptions use the x87 masks independently of SSE");
-            Require(after.x87[0] == state.x87[0] && after.x87[1] == state.x87[1] && after.sse == state.sse,
+            Require(after.x87[0] == written.x87[0] && after.x87[1] == written.x87[1] && after.sse == written.sse,
                     "enabled exception query preserves control modes and flags");
             Require(error == 123, "enabled exception query preserves errno");
         }
@@ -126,6 +123,7 @@ void CheckFeraise() {
         const auto seeded = SeedFlags(0, 0);
         *__error_nid_postfix() = 0;
         _Feraise_nid_postfix(static_cast<int>(requested));
+
         const unsigned raised = (requested & 0x18) != 0 ? requested | 0x20 : requested;
         const auto state = ReadEnvironment();
         Require((state.x87[1] & 0x3f) == raised && (state.sse & 0x3f) == raised, "_Feraise raises the flags on both units");
@@ -141,6 +139,8 @@ void CheckFlags() {
     Require(fetestexcept_nid_postfix(0) == 0, "empty exception query");
     Require(fetestexcept_nid_postfix(0x3f) == 0x27, "combine x87 and SSE flags, including denormals");
     Require(fetestexcept_nid_postfix(0x0c) == 0x04, "query only requested flags");
+    const auto unmasked = ReadEnvironment();
+    Require(fetestexcept_nid_postfix(0xffff) == static_cast<int>((unmasked.x87[1] | unmasked.sse) & 0xffffu), "a mask past the exception flags returns the other status and MXCSR bits");
     struct { std::uint16_t before, value, after; } saved{0x1234, 0xffff, 0x5678};
     Require(fegetexceptflag_nid_postfix(&saved.value, 0x07) == 0 && saved.value == 0x07, "save selected flags");
     Require(saved.before == 0x1234 && saved.after == 0x5678, "fexcept_t writes exactly two bytes");
@@ -245,13 +245,122 @@ void CheckTraps() {
     WriteEnvironment(seeded);
 }
 
-int main() {
+using HoldExcept = int (APS5_VABI*)(Environment*);
+
+void CheckHold(HoldExcept hold, Environment* saved) {
+    const auto before = ReadEnvironment();
+    *__error_nid_postfix() = 123;
+    Require(hold(saved) == 0, "feholdexcept succeeds");
+    const auto after = ReadEnvironment();
+    Require(std::memcmp(saved, &before, sizeof(before)) == 0, "feholdexcept saves the full original environment");
+    Require((after.x87[0] & 0x3f) == 0x3f && (after.sse & 0x1f80) == 0x1f80, "feholdexcept masks both units");
+    Require((after.x87[1] & 0x80ff) == 0 && (after.sse & 0x3f) == 0, "feholdexcept clears pending exceptions");
+    Require((after.x87[1] & ~0x80ffu) == (before.x87[1] & ~0x80ffu), "feholdexcept preserves other x87 status bits");
+    Require((after.x87[0] & ~0x3fu) == (before.x87[0] & ~0x3fu), "feholdexcept preserves x87 control settings");
+    Require((after.sse & ~0x1fbfu) == (before.sse & ~0x1fbfu), "feholdexcept preserves SSE control settings");
+    Require(after.x87[2] == before.x87[2] && std::memcmp(after.x87.data() + 3, before.x87.data() + 3, 16) == 0, "feholdexcept preserves x87 tags and instruction/data state");
+    Require(*__error_nid_postfix() == 123, "feholdexcept preserves errno");
+}
+
+void CheckHoldExcept(HoldExcept hold) {
+    Require(hold != nullptr, "feholdexcept export is missing");
+    static_assert(sizeof(Environment) == 32 && alignof(Environment) == 4 && offsetof(Environment, sse) == 28);
+    const auto original = ReadEnvironment();
+    struct {
+        std::array<unsigned char, 8> before;
+        Environment value;
+        std::array<unsigned char, 8> after;
+    } output;
+    for (unsigned rounding = 0; rounding < 4; ++rounding) {
+        for (unsigned modes = 0; modes < 4; ++modes) {
+            for (unsigned mask = 0; mask < 64; ++mask) {
+                auto state = original;
+                const unsigned sseMask = (mask * 13 + 7) & 0x3f;
+                state.x87[0] = (state.x87[0] & ~0xc3fu) | (rounding << 10) | mask;
+                state.x87[1] = (state.x87[1] & ~0x80ffu) | (mask & 0x25);
+                state.sse = (state.sse & ~0xffffu) | (sseMask << 7) | (sseMask & 0x1a) | (((rounding + 1) & 3) << 13) | ((modes & 1) << 6) | ((modes & 2) << 14);
+                WriteEnvironment(state);
+                std::memset(&output, 0xa5, sizeof(output));
+                CheckHold(hold, &output.value);
+                for (const auto byte : output.before) Require(byte == 0xa5, "feholdexcept underwrites output");
+                for (const auto byte : output.after) Require(byte == 0xa5, "feholdexcept overwrites output");
+            }
+        }
+    }
+    WriteEnvironment(original);
+    bool threw = false;
+    try { hold(nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw, "feholdexcept rejects null storage");
+    const auto afterNull = ReadEnvironment();
+    Require(SameControlState(original, afterNull), "null feholdexcept preserves the environment");
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr, "allocate feholdexcept guard pages");
+    DWORD oldProtection;
+    Require(VirtualProtect(memory + page, page, PAGE_NOACCESS, &oldProtection) != 0, "protect feholdexcept trailing page");
+#else
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    auto* memory = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED, "allocate feholdexcept guard pages");
+    Require(mprotect(memory + page, page, PROT_NONE) == 0, "protect feholdexcept trailing page");
+#endif
+    CheckHold(hold, reinterpret_cast<Environment*>(memory + page - sizeof(Environment)));
+#ifdef _WIN32
+    Require(VirtualFree(memory, 0, MEM_RELEASE) != 0, "release feholdexcept guard pages");
+#else
+    Require(munmap(memory, page * 2) == 0, "release feholdexcept guard pages");
+#endif
+    WriteEnvironment(original);
+    std::barrier ready(2);
+    const auto worker = [&](unsigned mode) {
+        const auto saved = ReadEnvironment();
+        auto state = saved;
+        state.x87[0] = (state.x87[0] & ~0xc00u) | (mode << 10) | 0x3f;
+        state.x87[1] &= ~0x80ffu;
+        state.sse |= 0x1f80;
+        state.sse &= ~0x3fu;
+        WriteEnvironment(state);
+        ready.arrive_and_wait();
+        Environment output;
+        CheckHold(hold, &output);
+        ready.arrive_and_wait();
+        Require(fegetround_nid_postfix() == static_cast<int>(mode << 10), "feholdexcept keeps thread-local rounding");
+        WriteEnvironment(saved);
+    };
+    std::thread first(worker, 1);
+    std::thread second(worker, 2);
+    first.join();
+    second.join();
+    const auto afterThreads = ReadEnvironment();
+    Require(SameControlState(original, afterThreads), "feholdexcept workers preserve the main environment");
+}
+
+int main(int argc, char** argv) {
+    Require(argc == 2, "expected libc path");
+#ifdef _WIN32
+    const auto library = LoadLibraryA(argv[1]);
+    Require(library != nullptr, "load libc for feholdexcept");
+    const auto hold = reinterpret_cast<HoldExcept>(GetProcAddress(library, "feholdexcept_nid_postfix"));
+#else
+    const auto library = dlopen(argv[1], RTLD_NOW);
+    Require(library != nullptr, "load libc for feholdexcept");
+    const auto hold = reinterpret_cast<HoldExcept>(dlsym(library, "feholdexcept_nid_postfix"));
+#endif
     const auto original = ReadEnvironment();
     CheckRounding();
     CheckEnabledExceptions();
     CheckFlags();
     CheckTraps();
     CheckThreads();
+    CheckHoldExcept(hold);
     WriteEnvironment(original);
+#ifdef _WIN32
+    FreeLibrary(library);
+#else
+    dlclose(library);
+#endif
     std::puts("floating-point environment checks passed");
 }

@@ -1,39 +1,11 @@
+#include "prx/libSceFont/include/Api.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceFont/include/FontGraphics.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
-
-struct FontGraphicsDevice;
-struct FontGraphicsDeviceParam;
-struct FontGraphicsService;
-struct FontGraphicsServiceParam;
-struct FontWords;
-struct FontGlyphSupport;
-struct FontOutlineProfile;
-struct FontMetrics;
-struct FontStyleInformation;
-struct FontGlyphExpandBufferState;
-struct FontGraphicsResource;
-struct FontGraphicsFrame;
-struct FontGraphicsDesignResource;
-struct FontGraphicsDesign;
-struct FontGraphicsCanvas;
-struct FontGraphicsCanvasSequence;
-struct FontGraphicsSurface;
-struct FontGraphicsSurfaceTexture;
-struct FontGraphicsFill;
-
-struct FontGraphicsRegion {
-    float x;
-    float y;
-    float width;
-    float height;
-    std::uint32_t flags;
-    std::uint32_t tag;
-    float outerRadius;
-    float innerRadius;
-};
+#include "prx/libSceFont/include/FontWords.hpp"
 
 static_assert(sizeof(FontGraphicsRegion) == 32);
 static_assert(offsetof(FontGraphicsRegion, x) == 0);
@@ -45,30 +17,12 @@ static_assert(offsetof(FontGraphicsRegion, tag) == 20);
 static_assert(offsetof(FontGraphicsRegion, outerRadius) == 24);
 static_assert(offsetof(FontGraphicsRegion, innerRadius) == 28);
 
-struct FontGraphicsFillMethod {
-    std::int32_t mode;
-    std::int32_t type;
-    std::uint32_t flags;
-    std::uint32_t tag;
-    std::byte reserved[16];
-};
-
 static_assert(sizeof(FontGraphicsFillMethod) == 32);
 static_assert(offsetof(FontGraphicsFillMethod, mode) == 0);
 static_assert(offsetof(FontGraphicsFillMethod, type) == 4);
 static_assert(offsetof(FontGraphicsFillMethod, flags) == 8);
 static_assert(offsetof(FontGraphicsFillMethod, tag) == 12);
 static_assert(offsetof(FontGraphicsFillMethod, reserved) == 16);
-
-struct FontGraphicsFillPlot {
-    float mapping[4];
-    const FontGraphicsRegion* region;
-    std::uint16_t tag;
-    std::uint16_t reserved26;
-    std::uint16_t layout;
-    std::uint8_t flags;
-    std::byte reserved[33];
-};
 
 static_assert(sizeof(FontGraphicsFillPlot) == 64);
 static_assert(offsetof(FontGraphicsFillPlot, mapping) == 0);
@@ -79,16 +33,6 @@ static_assert(offsetof(FontGraphicsFillPlot, layout) == 28);
 static_assert(offsetof(FontGraphicsFillPlot, flags) == 30);
 static_assert(offsetof(FontGraphicsFillPlot, reserved) == 31);
 
-struct FontGraphicsFillRates {
-    float mapping[4];
-    const FontGraphicsFill* fill;
-    std::uint16_t tag;
-    std::uint16_t effect;
-    std::uint16_t layout;
-    std::uint8_t flags;
-    std::byte reserved[33];
-};
-
 static_assert(sizeof(FontGraphicsFillRates) == 64);
 static_assert(offsetof(FontGraphicsFillRates, mapping) == 0);
 static_assert(offsetof(FontGraphicsFillRates, fill) == 16);
@@ -98,14 +42,6 @@ static_assert(offsetof(FontGraphicsFillRates, layout) == 28);
 static_assert(offsetof(FontGraphicsFillRates, flags) == 30);
 static_assert(offsetof(FontGraphicsFillRates, reserved) == 31);
 
-struct FontGraphicsPoolUsage {
-    std::uint32_t capacity;
-    std::uint32_t used;
-    std::uint32_t available;
-    std::uint32_t peak;
-    std::int32_t change;
-};
-
 static_assert(sizeof(FontGraphicsPoolUsage) == 20);
 static_assert(offsetof(FontGraphicsPoolUsage, capacity) == 0);
 static_assert(offsetof(FontGraphicsPoolUsage, used) == 4);
@@ -113,26 +49,14 @@ static_assert(offsetof(FontGraphicsPoolUsage, available) == 8);
 static_assert(offsetof(FontGraphicsPoolUsage, peak) == 12);
 static_assert(offsetof(FontGraphicsPoolUsage, change) == 16);
 
-struct FontGraphicsMemoryUsage {
-    FontGraphicsPoolUsage storage;
-    FontGraphicsPoolUsage allocations;
-    void* address;
-};
-
 static_assert(sizeof(FontGraphicsMemoryUsage) == 48);
 static_assert(offsetof(FontGraphicsMemoryUsage, storage) == 0);
 static_assert(offsetof(FontGraphicsMemoryUsage, allocations) == 20);
 static_assert(offsetof(FontGraphicsMemoryUsage, address) == 40);
 
-struct FontGraphicsDeviceUsage {
-    FontGraphicsMemoryUsage first;
-    FontGraphicsMemoryUsage second;
-};
-
 static_assert(sizeof(FontGraphicsDeviceUsage) == 96);
 static_assert(offsetof(FontGraphicsDeviceUsage, first) == 0);
 static_assert(offsetof(FontGraphicsDeviceUsage, second) == 48);
-
 
 #pragma GCC visibility push(default)
 
@@ -159,8 +83,7 @@ int APS5_VABI sceFontCreateGraphicsServiceWithEdition(const FontMemory* memory, 
 }
 
 int APS5_VABI sceFontCreateWords(const FontMemory* memory, FontTextSource* source, std::uint64_t unusedSlot, FontWords** words) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::CreateWords(memory, source, words);
 }
 
 int APS5_VABI sceFontDestroyGraphicsDevice(FontGraphicsDevice** device) {
@@ -174,42 +97,11 @@ int APS5_VABI sceFontDestroyGraphicsService(FontGraphicsService** service) {
 }
 
 int APS5_VABI sceFontDestroyWords(FontWords** words) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::DestroyWords(words);
 }
 
-
-int APS5_VABI sceFontGetFontGlyphsOutlineProfile(FontHandle font, FontOutlineProfile* profile) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGetFontMetrics(FontHandle font, std::uint32_t mode, FontMetrics* metrics) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGetFontStyleInformation(FontHandle font, FontStyleInformation* information) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI sceFontGetGlyphExpandBufferState(FontHandle font, FontGlyphExpandBufferState* state) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGlyphRenderImage(FontGlyph glyph, const FontStyleFrame* styleFrame, FontRenderer renderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* output) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGlyphRenderImageHorizontal(FontGlyph glyph, const FontStyleFrame* styleFrame, FontRenderer renderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* output) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceFontGlyphRenderImageVertical(FontGlyph glyph, const FontStyleFrame* styleFrame, FontRenderer renderer, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* output) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -240,43 +132,35 @@ int APS5_VABI sceFontGraphicsExchangeResource(FontGraphicsResource* resource, Fo
 }
 
 int APS5_VABI sceFontGraphicsFillMethodInit(FontGraphicsFillMethod* method, std::int32_t mode, std::int32_t type) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillMethodInit(method, mode, type);
 }
 
 int APS5_VABI sceFontGraphicsFillPlotInit(FontGraphicsFillPlot* plot, const FontGraphicsRegion* region) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillPlotInit(plot, region);
 }
 
 int APS5_VABI sceFontGraphicsFillPlotSetLayout(FontGraphicsFillPlot* plot, std::int32_t first, std::int32_t second) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillPlotSetLayout(plot, first, second);
 }
 
 int APS5_VABI sceFontGraphicsFillPlotSetMapping(FontGraphicsFillPlot* plot, float first, float second, float third, float fourth) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillPlotSetMapping(plot, first, second, third, fourth);
 }
 
 int APS5_VABI sceFontGraphicsFillRatesInit(FontGraphicsFillRates* rates, const FontGraphicsFill* fill, std::uint32_t effect) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillRatesInit(rates, fill, effect);
 }
 
 int APS5_VABI sceFontGraphicsFillRatesSetFillEffect(FontGraphicsFillRates* rates, const FontGraphicsFill* fill, std::uint32_t effect) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillRatesSetFillEffect(rates, fill, effect);
 }
 
 int APS5_VABI sceFontGraphicsFillRatesSetLayout(FontGraphicsFillRates* rates, std::int32_t first, std::int32_t second) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillRatesSetLayout(rates, first, second);
 }
 
 int APS5_VABI sceFontGraphicsFillRatesSetMapping(FontGraphicsFillRates* rates, float first, float second, float third, float fourth) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsFillRatesSetMapping(rates, first, second, third, fourth);
 }
 
 int APS5_VABI sceFontGraphicsGetDeviceUsage(FontGraphicsDevice* device, FontGraphicsDeviceUsage* usage) {
@@ -285,18 +169,15 @@ int APS5_VABI sceFontGraphicsGetDeviceUsage(FontGraphicsDevice* device, FontGrap
 }
 
 int APS5_VABI sceFontGraphicsRegionInit(FontGraphicsRegion* region, float x, float y, float width, float height) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsRegionInit(region, x, y, width, height);
 }
 
 int APS5_VABI sceFontGraphicsRegionInitCircular(FontGraphicsRegion* region, float centerX, float centerY, float outerRadius, float innerRadius) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsRegionInitCircular(region, centerX, centerY, outerRadius, innerRadius);
 }
 
 int APS5_VABI sceFontGraphicsRegionInitRoundish(FontGraphicsRegion* region, float x, float y, float width, float height, float outerRadius, float innerRadius, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsRegionInitRoundish(region, x, y, width, height, outerRadius, innerRadius, flags);
 }
 
 int APS5_VABI sceFontGraphicsRelease(void** object) {
@@ -464,14 +345,17 @@ int APS5_VABI sceFontGraphicsUpdateShapeFillPlot(FontGraphicsResource* resource,
     return 0;
 }
 
+void APS5_VABI sceFontSetGraphicsErrorCallback(Font::GraphicsErrorCallback callback) {
+    Font::SetGraphicsErrorCallback(callback);
+}
+
 int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter* firstCharacter, FontTextCharacter* endCharacter, FontTextCharacter** lastCharacter, FontTextCharacter** nextCharacter) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::WordsFindWordCharacters(words, firstCharacter, endCharacter, lastCharacter, nextCharacter);
 }
 
 int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* frame, const void* data, std::uint32_t dataSize, float x, float y, float width, float height, FontGraphicsFill** fill) {

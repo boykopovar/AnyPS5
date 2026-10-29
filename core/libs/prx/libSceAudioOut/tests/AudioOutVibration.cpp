@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -6,15 +7,6 @@
 #include <stdexcept>
 #include <string_view>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOutOpen(int, int, int, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioOutExOpen(int, std::uint32_t);
-int APS5_VABI sceAudioOutClose(int);
-int APS5_VABI sceAudioOutOutput(int, const void*);
-int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam*, std::uint32_t);
-int APS5_VABI sceAudioOutSetVolume(int, std::uint32_t, int*);
-}
 
 static void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);

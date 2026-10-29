@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
@@ -7,23 +9,68 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <stdexcept>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sem_init_nid_postfix(void*, int, unsigned int);
-int APS5_VABI sem_destroy_nid_postfix(void*);
-int APS5_VABI sem_post_nid_postfix(void*);
-int APS5_VABI sem_trywait_nid_postfix(void*);
-int APS5_VABI sem_timedwait_nid_postfix(void*, const KernelTimespec*);
-int APS5_VABI sem_getvalue_nid_postfix(void*, int*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool condition, const char* message) {
     if (!condition) {
         std::fprintf(stderr, "%s\n", message);
         std::abort();
     }
+}
+
+static void CheckRetire() {
+    constexpr int rounds = 20000;
+    std::atomic<std::uintptr_t*> published{nullptr};
+    std::thread poster([&] {
+        for (int round = 0; round < rounds; ++round) {
+            published.wait(nullptr, std::memory_order_acquire);
+            std::uintptr_t* target = published.exchange(nullptr, std::memory_order_acq_rel);
+            Require(sem_post_nid_postfix(target) == 0, "post to a semaphore its waiter destroys must succeed");
+        }
+    });
+    for (int round = 0; round < rounds; ++round) {
+        std::uintptr_t slot = 0;
+        Require(sem_init_nid_postfix(&slot, 0, 0) == 0, "retired semaphore must initialize");
+        published.store(&slot, std::memory_order_release);
+        published.notify_one();
+        for (int spins = 0; sem_trywait_nid_postfix(&slot) != 0; ++spins) {
+            if (spins >= 4096) std::this_thread::yield();
+        }
+        Require(sem_destroy_nid_postfix(&slot) == 0, "semaphore must be destroyable once its count is taken");
+    }
+    poster.join();
+}
+
+static KernelTimespec RealtimeAfter(std::int64_t nanoseconds) {
+    KernelTimespec now{};
+    Require(sceKernelClockGettime(0, &now) == 0, "realtime clock must be readable");
+    const auto total = now.tv_nsec + nanoseconds;
+    return KernelTimespec{now.tv_sec + total / 1000000000, total % 1000000000};
+}
+
+static void CheckFutureDeadline() {
+    std::uintptr_t sem = 0;
+    int value = -1;
+    Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "deadline semaphore must initialize");
+    const auto soon = RealtimeAfter(50000000);
+    const auto start = std::chrono::steady_clock::now();
+    *__error_nid_postfix() = 0;
+    Require(sem_timedwait_nid_postfix(&sem, &soon) == -1 && *__error_nid_postfix() == 60, "future deadline must expire with ETIMEDOUT");
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40), "future deadline expired early");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "expired deadline must preserve the count");
+
+    int waitResult = -2;
+    const auto later = RealtimeAfter(5000000000);
+    std::thread waiter([&] { waitResult = sem_timedwait_nid_postfix(&sem, &later); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto posted = std::chrono::steady_clock::now();
+    Require(sem_post_nid_postfix(&sem) == 0, "post must release a timed waiter");
+    waiter.join();
+    Require(waitResult == 0, "timed waiter must succeed after a post before its deadline");
+    Require(std::chrono::steady_clock::now() - posted < std::chrono::seconds(4), "timed waiter waited for its deadline");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "timed waiter must consume the posted count");
+    Require(sem_destroy_nid_postfix(&sem) == 0, "deadline semaphore destroy must succeed");
 }
 
 int main(int argc, char** argv) {
@@ -99,4 +146,29 @@ int main(int argc, char** argv) {
     Require(sem_timedwait_nid_postfix(&sem, &expiredTimeout) == -1 && *__error_nid_postfix() == 60, "blocked expired-timeout wait must report ETIMEDOUT");
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "failed timed waits must preserve the count");
     Require(sem_destroy_nid_postfix(&sem) == 0, "blocked semaphore destroy must succeed");
+    CheckFutureDeadline();
+    CheckRetire();
+
+    Require(sem_init_nid_postfix(&sem, 0, 1) == 0, "renamed semaphore must initialize");
+    Require(sem_setname_nid_postfix(&sem, "semaphore") == 0, "first setname must succeed");
+    *__error_nid_postfix() = 0;
+    Require(sem_setname_nid_postfix(&sem, "other") == -1 && *__error_nid_postfix() == 35, "second setname must report EAGAIN");
+    *__error_nid_postfix() = 0;
+    Require(sem_setname_nid_postfix(&sem, "") == -1 && *__error_nid_postfix() == 35, "second setname with an empty name must report EAGAIN");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 1, "setname must preserve the count");
+    bool rejected = false;
+    try { sem_setname_nid_postfix(&sem, nullptr); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected, "null name must throw");
+    rejected = false;
+    try { sem_setname_nid_postfix(nullptr, "semaphore"); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    Require(rejected, "null semaphore must throw");
+    Require(sem_trywait_nid_postfix(&sem) == 0, "renamed semaphore must stay usable");
+    Require(sem_destroy_nid_postfix(&sem) == 0, "renamed semaphore destroy must succeed");
+    *__error_nid_postfix() = 0;
+    Require(sem_setname_nid_postfix(&sem, "semaphore") == -1 && *__error_nid_postfix() == 35, "destroyed semaphore must report EAGAIN like a zeroed one");
+    Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "reinitialized semaphore must initialize");
+    Require(sem_setname_nid_postfix(&sem, "again") == 0, "a reinitialized semaphore can be named again");
+    Require(sem_destroy_nid_postfix(&sem) == 0, "reinitialized semaphore destroy must succeed");
 }

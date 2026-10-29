@@ -1,3 +1,4 @@
+#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include <algorithm>
 #include <condition_variable>
 #include <cstddef>
@@ -17,7 +18,6 @@
 
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
-
 
 static std::vector<Ngs2System*>& Systems() {
     static auto* const systems = new std::vector<Ngs2System*>();

@@ -1,3 +1,4 @@
+#include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libSceSsl/SslTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SslCertificateFixture.hpp"
@@ -10,22 +11,6 @@
 #include <stdexcept>
 #include <vector>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceSslInit_nid_postfix(std::uint64_t);
-int APS5_VABI sceSslTerm_nid_postfix(int);
-int APS5_VABI sceSslLoadCert(int, int, SceSsl::Data**, SceSsl::Data*, SceSsl::Data*);
-int APS5_VABI sceSslUnloadCert(int);
-int APS5_VABI sceSslGetCaList(int, SceSsl::CaList*);
-int APS5_VABI sceSslFreeCaList(int, SceSsl::CaList*);
-int APS5_VABI sceSslGetSerialNumber(int, void*, unsigned char*, std::size_t*);
-void* APS5_VABI sceSslGetSubjectName(int, void*);
-void* APS5_VABI sceSslGetIssuerName(int, void*);
-int APS5_VABI sceSslGetNameEntryCount(int, void*);
-int APS5_VABI sceSslGetNameEntryInfo(int, void*, int, char*, std::size_t, char*, std::size_t, std::size_t*);
-int APS5_VABI sceSslFreeSslCertName(int, void*);
-int APS5_VABI sceSslGetPem(int, void*, char*, std::size_t*);
-}
 
 namespace {
 

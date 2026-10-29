@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HeapDiagnostics.hpp"
@@ -13,13 +15,9 @@
 #include <dlfcn.h>
 #endif
 
-extern "C" void APS5_VABI sceKernelSetThreadDtors(thread_dtors_func_t dtors);
-extern "C" int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info);
 extern "C" const char* __progname_nid_postfix;
 
 namespace {
-
-using ThreadDestructorFunction = void (APS5_VABI*)(void*);
 
 struct ThreadDestructor {
     ThreadDestructorFunction function;
@@ -95,6 +93,7 @@ bool ForceThreadDestructorPass(KernelModule handle) {
 void RegisterThreadExitHook() {
     [[maybe_unused]] static const bool registered = [] {
         sceKernelSetThreadDtors(RunThreadDestructors_nid_no_patch);
+
         return true;
     }();
 }

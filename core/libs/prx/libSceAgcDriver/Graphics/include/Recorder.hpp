@@ -22,6 +22,7 @@
 #include <tuple>
 #include <unordered_set>
 #include <utility>
+#include <string>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -67,6 +68,7 @@ public:
         VkCommandBuffer commands = VK_NULL_HANDLE;
         bool continued = false;
         bool barrier = true;
+        PassBreak reason = PassBreak::Continued;
     };
     DrawPassStart StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access);
     void LeaveRenderPassOpen(std::uint64_t key, std::uint32_t timing, bool fenced, const PassAccess& access, std::function<void(VkCommandBuffer)> afterPass = {});
@@ -107,7 +109,8 @@ public:
     static constexpr std::size_t DrawInputEntries = 16384;
     std::shared_ptr<Buffer> UnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, VkDeviceSize* offset = nullptr);
     void NoteUnwrittenDrawSnapshot(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 3>& stamp, std::shared_ptr<Buffer> buffer, VkDeviceSize offset = 0);
-    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0);
+    std::shared_ptr<Buffer> ReusableDrawSnapshot(std::uint64_t address, std::size_t bytes, SnapshotUse use = SnapshotUse::Storage, std::uint32_t* derived = nullptr, std::uint64_t generation = 0, VkDeviceSize* offset = nullptr);
+    static constexpr std::size_t ContainingSnapshotProbes = 16;
     void KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::uint64_t generation, std::uint64_t registryGeneration, std::shared_ptr<Buffer> buffer, SnapshotUse use = SnapshotUse::Storage, std::uint32_t derived = 0);
     static constexpr std::size_t DrawUploadChunk = std::size_t{1} << 20u;
     struct UploadSlice {
@@ -182,6 +185,7 @@ public:
     // Whether the OPEN (unsubmitted) batch writes the range: a wait on such a range must submit it.
     bool OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t PendingWriterSerial(std::uint64_t address, std::size_t bytes) const;
+    std::uint64_t PendingWriterSerial(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> exceptNotes) const;
     // What SyncThrough(address, bytes) would wait for, for the [hooksync] attribution: the newest
     // batch whose noted range overlaps the access (the open batch counts first, with the serial it
     // will get), whether that batch's fence has already signaled (its GPU work is done, so the
@@ -202,6 +206,7 @@ public:
     // Submits the open batch and returns the serial of the newest submitted batch (0 when nothing was
     // ever submitted); WaitSerial(serial) then covers all recorded work.
     std::uint64_t SubmitAndEpoch();
+    std::uint64_t OpenBatchSerial();
     bool HasTimeline() const { return timeline != VK_NULL_HANDLE; }
     bool RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress source, VkDeviceAddress arguments, const std::array<std::uint32_t, 3>* threadGroup = nullptr);
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
@@ -220,6 +225,7 @@ public:
     std::uint64_t SamplesTotal();
     bool DumpSamples(VkDeviceAddress target, std::uint64_t address = 0);
     void NoteSampledDraw(VkCommandBuffer commands);
+    void NoteDrawTraceToken(std::uint64_t token) noexcept;
     bool QueuesSampleDumps() const;
     void PrepareSampleSlot();
     void EndPassSamples();
@@ -468,9 +474,13 @@ public:
     // queries around each timed range; the totals per key are reported every 10 s. Begin returns the
     // range index to pass to End, or NoTiming when timing is off or the batch's queries are used up.
     static constexpr std::uint32_t NoTiming = 0xffffffffu;
+    static constexpr std::uint64_t DrawTimingFlag = std::uint64_t{1} << 63u;
+    static constexpr std::uint64_t DrawTimingKey(std::uint64_t variantId) { return variantId | DrawTimingFlag; }
+    static std::string TimingKeyLabel(std::uint64_t key);
     static bool GpuTimingEnabled();
     static bool BatchStampsEnabled();
     std::uint32_t BeginGpuTiming(std::uint64_t key);
+    std::uint32_t BeginInPassGpuTiming(std::uint64_t key);
     // `bytes`: what the range moved (a fill's, a copy's), summed per key on the [gputime] line.
     void EndGpuTiming(std::uint32_t index, std::uint64_t bytes = 0);
     // The key of the whole-batch range (first to last command; reported as "batch" on the [gputime]
@@ -664,6 +674,7 @@ private:
             std::uint64_t key = 0;
             std::uint32_t timing = NoTiming;
             std::function<void(VkCommandBuffer)> afterPass;
+            PassBreak closedBy = PassBreak::NewBatch;
         } renderPass;
         PassHazards passHazards;
         // A pass ended in this batch: Submit records the host-read barrier its draws left out.
@@ -678,6 +689,8 @@ private:
             std::uint64_t end;
         };
         std::vector<KeyStore> keyStores;
+        std::vector<std::uint64_t> drawTraceTokens;
+        std::unordered_set<std::uint64_t> drawTraceTokenSet;
     };
     struct LabelEntry {
         std::uint32_t value;
@@ -769,7 +782,7 @@ private:
     // form, toward the host only); returns whether the batch's host-read barrier was included.
     bool closeStoreRun(bool atSubmit = false);
     // Ends the render pass a draw left open (vkCmdEndRenderPass, the pass's trailing barrier).
-    void endOpenRenderPass(bool barrier = true);
+    void endOpenRenderPass(PassBreak by, bool barrier = true);
     // Records the queued key stores as one run (`forWriter`: before a command writing, reading or
     // labelling over one, not at Submit).
     void recordKeyStores(bool forWriter);
@@ -888,6 +901,7 @@ private:
     std::map<DrawSnapshotKey, IndexRange> indexRanges;
     std::list<DrawSnapshotKey> indexRangeRecency;
     bool refreshDrawSnapshot(DrawSnapshot& entry, std::uint64_t address, std::size_t bytes);
+    std::shared_ptr<Buffer> containingDrawSnapshot(std::uint64_t address, std::size_t bytes, VkDeviceSize* offset);
     mutable std::weak_ptr<const WriteRanges> publishedWriteRanges;
     mutable bool publishedWriteRangesValid = false;
 };

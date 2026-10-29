@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
@@ -52,7 +53,7 @@ int APS5_VABI fesetround_nid_postfix(int rounding) {
 int APS5_VABI fetestexcept_nid_postfix(int exceptions) {
     std::uint16_t status;
     asm volatile("fnstsw %0" : "=am"(status));
-    return (status | _mm_getcsr()) & static_cast<unsigned>(exceptions) & Exceptions;
+    return static_cast<int>((status | _mm_getcsr()) & static_cast<unsigned>(exceptions));
 }
 
 int APS5_VABI fegetexceptflag_nid_postfix(std::uint16_t* flags, int exceptions) {
@@ -60,8 +61,6 @@ int APS5_VABI fegetexceptflag_nid_postfix(std::uint16_t* flags, int exceptions) 
     *flags = static_cast<std::uint16_t>(fetestexcept_nid_postfix(exceptions));
     return 0;
 }
-
-int* APS5_VABI __error_nid_postfix();
 
 void APS5_VABI _Feraise_nid_postfix(int exceptions) {
     constexpr unsigned Invalid = 0x01, Ranges = 0x1c, Overflows = 0x18, Inexact = 0x20;
@@ -85,6 +84,14 @@ int APS5_VABI fesetexceptflag_nid_postfix(const std::uint16_t* flags, int except
     return 0;
 }
 
+int APS5_VABI feraiseexcept_nid_postfix(int exceptions) {
+    const auto raised = static_cast<unsigned>(exceptions);
+    if ((raised & ~Exceptions) != 0) throw std::invalid_argument("feraiseexcept: unsupported exception bits");
+    ReplaceFlags(raised, raised);
+    asm volatile("fwait");
+    return 0;
+}
+
 int APS5_VABI feclearexcept_nid_postfix(int exceptions) {
     const auto mask = static_cast<unsigned>(exceptions) & Exceptions;
     if (mask == Exceptions) {
@@ -95,7 +102,6 @@ int APS5_VABI feclearexcept_nid_postfix(int exceptions) {
     }
     return 0;
 }
-
 
 int APS5_VABI feenableexcept_nid_postfix(int exceptions) {
     return ChangeTraps(exceptions, true);

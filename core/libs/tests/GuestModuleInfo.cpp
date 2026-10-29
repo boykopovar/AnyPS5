@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
@@ -11,18 +12,7 @@
 #include <source_location>
 #include <string>
 #include <vector>
-extern "C" {
-void* APS5_VABI dlopen_nid_postfix(const char*, int);
-void* APS5_VABI dlsym_nid_postfix(void*, const char*);
-int APS5_VABI dlclose_nid_postfix(void*);
-int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t, int, ModuleInfoEx*);
-int APS5_VABI sceKernelGetModuleList(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleInfo(KernelModule, ModuleInfo*);
-int APS5_VABI sceKernelGetModuleList2(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleInfo2(KernelModule, ModuleInfo*);
-std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void**, std::size_t*);
-std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(InternalSegmentInfo*);
-}
+
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (!value) {
         std::fprintf(stderr, "module info check failed at line %u\n", location.line());
@@ -93,7 +83,9 @@ int main(int argc, char** argv) {
     Require(sceKernelGetModuleList(shorter.data(), count - 1, &untouched) == SCE_KERNEL_ERROR_ENOMEM);
     Require(untouched == 99 && shorter.back() == -1 && std::equal(handles.begin(), handles.end() - 1, shorter.begin()));
     Require(sceKernelGetModuleList(nullptr, 0, &untouched) == SCE_KERNEL_ERROR_EFAULT);
-    Require(sceKernelGetModuleList(handles.data(), handles.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    std::vector<KernelModule> written(count, -1);
+    Require(sceKernelGetModuleList(written.data(), written.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(written == handles);
     const auto kernelEx = Query(reinterpret_cast<const void*>(&sceKernelGetModuleInfo), 0);
     ModuleInfo kernelInfo{};
     kernelInfo.st_size = sizeof(ModuleInfo);

@@ -1,8 +1,6 @@
+#include "prx/libSceKeyboard/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
-
-struct KeyboardDeviceInfo;
-struct KeyboardProcessFocus;
 
 extern "C" {
 

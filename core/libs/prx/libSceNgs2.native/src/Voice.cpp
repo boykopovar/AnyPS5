@@ -1,3 +1,4 @@
+#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -19,8 +20,22 @@ static constexpr std::uint8_t COMMAND_TYPE_INT = 3;
 static constexpr std::uint8_t COMMAND_TYPE_UINT = 4;
 static constexpr std::uint8_t COMMAND_TYPE_FLOAT_ARRAY = 0x11;
 static constexpr float MAX_MATRIX_LEVEL = 4.0f;
+static constexpr float MAX_MASTERING_GAIN = 32.0f;
+
+struct Ngs2ReturnCode {
+    int code;
+};
+
+static void SendEvent(Ngs2Voice& voice, std::uint32_t eventId) {
+    if (eventId == SCE_NGS2_VOICE_EVENT_PLAY && voice.channels == 0) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_VOICE_ACCESS};
+    voice.SetEvent(eventId);
+}
 
 void Ngs2Voice::SetEvent(std::uint32_t eventId) {
+    if (state != Ngs2PlayState::Empty &&
+        (eventId == SCE_NGS2_VOICE_EVENT_STOP || eventId == SCE_NGS2_VOICE_EVENT_STOP_IMM || eventId == SCE_NGS2_VOICE_EVENT_KILL)) {
+        for (auto& gain : customGain) if (gain.configured) gain.lifecycleUnknown = true;
+    }
     switch (eventId) {
         case SCE_NGS2_VOICE_EVENT_PLAY:
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
@@ -48,6 +63,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
 }
 
 void Ngs2Voice::ResetSetup() {
+    for (auto& gain : customGain) if (gain.configured) gain.lifecycleUnknown = true;
     ++waveformRevision;
     SetEvent(SCE_NGS2_VOICE_EVENT_STOP_IMM);
     std::fill(ports.begin(), ports.end(), Ngs2Port{});
@@ -73,11 +89,16 @@ void Ngs2Voice::ResetSetup() {
     callback = nullptr;
     callbackData = 0;
     callbackFlags = 0;
+    peakMeterHistory.clear();
+    peakMeterMode = 0;
+    peakMeterCount = 0;
+    peakMeterCursor = 0;
+    peakHeight = 0.0f;
 }
 
 const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block) {
     const auto& last = block.pieces.back();
-    return last.data + last.frames * voice.channels * sizeof(std::int16_t);
+    return last.data + last.frames * voice.channels * Ngs2PcmSampleBytes(voice.waveformType);
 }
 
 const std::uint8_t* Ngs2Voice::WaveformData() const {
@@ -86,11 +107,12 @@ const std::uint8_t* Ngs2Voice::WaveformData() const {
     if (waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) return block.data + block.dataCursor;
     if (block.streaming) {
         for (const auto& piece : block.pieces) {
-            if (block.cursor >= piece.firstFrame && block.cursor - piece.firstFrame < piece.frames) return piece.data + (block.cursor - piece.firstFrame) * channels * sizeof(std::int16_t);
+            if (block.cursor >= piece.firstFrame && block.cursor - piece.firstFrame < piece.frames) return piece.data + (block.cursor - piece.firstFrame) * channels * Ngs2PcmSampleBytes(waveformType);
         }
         return Ngs2StreamEnd(*this, block);
     }
-    return block.data + (static_cast<std::size_t>(block.info.num_skip_samples) + block.cursor) * channels * sizeof(std::int16_t);
+    if (block.data == nullptr) return nullptr;
+    return block.data + (static_cast<std::size_t>(block.info.num_skip_samples) + block.cursor) * channels * Ngs2PcmSampleBytes(waveformType);
 }
 
 static Ngs2Port& PortAt(Ngs2Voice& voice, std::uint32_t port) {
@@ -118,13 +140,15 @@ static void SetPortMatrix(Ngs2Voice& voice, std::uint32_t port, std::int32_t mat
 
 static void Patch(Ngs2Voice& voice, const Ngs2VoicePatchParam& patch) {
     auto& port = PortAt(voice, patch.port);
-    if (patch.dest_input_id != 0) throw std::runtime_error("NGS2: voice input " + std::to_string(patch.dest_input_id) + " is not implemented");
     if (patch.dest_handle == 0) {
+        if (patch.dest_input_id != 0) throw std::runtime_error("NGS2: a disconnected port with a nonzero input id is not implemented");
         port.dest = nullptr;
+        port.destInput = 0;
         return;
     }
     auto* dest = Ngs2FindVoice(patch.dest_handle);
     if (dest == nullptr) {
+        if (patch.dest_input_id != 0) throw std::runtime_error("NGS2: a rack destination with a nonzero input id is not implemented");
         auto* rack = Ngs2FindRack(patch.dest_handle);
         if (rack != nullptr && !rack->voices.empty()) dest = &rack->voices.front();
     }
@@ -132,7 +156,12 @@ static void Patch(Ngs2Voice& voice, const Ngs2VoicePatchParam& patch) {
         dest->rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
         APS5_INVALID_ARG_EX;
     }
+    if (patch.dest_input_id != 0 &&
+        (dest->rack->rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || patch.dest_input_id >= dest->rack->maxInputs)) {
+        throw std::runtime_error("NGS2: voice input " + std::to_string(patch.dest_input_id) + " is not implemented for this rack");
+    }
     port.dest = dest;
+    port.destInput = patch.dest_input_id;
 }
 
 static void ApplyCommonParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
@@ -159,7 +188,7 @@ static void ApplyCommonParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param
             break;
         }
         case SCE_NGS2_VOICE_PARAM_PATCH: Patch(voice, ParamAs<Ngs2VoicePatchParam>(param)); break;
-        case SCE_NGS2_VOICE_PARAM_EVENT: voice.SetEvent(ParamAs<Ngs2VoiceEventParam>(param).event_id); break;
+        case SCE_NGS2_VOICE_PARAM_EVENT: SendEvent(voice, ParamAs<Ngs2VoiceEventParam>(param).event_id); break;
         case SCE_NGS2_VOICE_PARAM_CALLBACK: {
             const auto& callback = ParamAs<Ngs2VoiceCallbackParam>(param);
             voice.callback = callback.callback;
@@ -172,10 +201,14 @@ static void ApplyCommonParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param
 }
 
 static void SetupSampler(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
+    if (format.waveform_type == 0 && format.num_channels == 0 && format.sample_rate == 0) {
+        if (voice.channels == 0) voice.ResetSetup();
+        return;
+    }
     voice.ResetSetup();
-    if (format.waveform_type == 0 && format.num_channels == 0 && format.sample_rate == 0) return;
-    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
-        throw std::runtime_error("NGS2: waveform type " + Ngs2Hex(format.waveform_type) + " is not implemented");
+    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2PcmSampleBytes(format.waveform_type);
+    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && format.config_data != 0) {
+        throw std::runtime_error("NGS2: configured PCM waveforms are not implemented");
     }
     if (format.frame_offset != 0 || format.frame_margin != 0) throw std::runtime_error("NGS2: waveform frame offset and margin are not implemented");
     if (format.num_channels == 0 || format.num_channels > NGS2_MAX_CHANNELS || format.sample_rate == 0) APS5_INVALID_ARG_EX;
@@ -226,7 +259,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
         voice.waveformEnd = nullptr;
         if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2RestartAtrac9(voice);
     }
-    const std::size_t frameBytes = voice.channels * sizeof(std::int16_t);
+    const std::size_t frameBytes = voice.channels == 0 || voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 ? 0 : voice.channels * Ngs2PcmSampleBytes(voice.waveformType);
     if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) {
         AppendStreamData(voice, param, frameBytes);
         voice.acceptsBlocks = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) != 0;
@@ -238,7 +271,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
         const auto& block = param.blocks[i];
         if (block.num_samples == 0 && block.data_size == 0) continue;
         if (allowsSilence && block.data_size == 0) {
-            if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) throw std::runtime_error("NGS2: a dataless waveform block under the silence flag is not implemented for ATRAC9 voices");
+            if (voice.waveformType != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) throw std::runtime_error("NGS2: a dataless waveform block under the silence flag is not implemented for this format");
             voice.blocks.push_back({nullptr, block});
             continue;
         }
@@ -294,6 +327,17 @@ void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
     filter.a2 = (1.0 - alpha) * inverseA0;
 }
 
+static void SetPeakMeter(Ngs2Voice& voice, std::uint32_t detectType) {
+    if (detectType > 2) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE};
+    if (voice.peakMeterMode != detectType) {
+        voice.peakMeterHistory.clear();
+        voice.peakMeterCount = 0;
+        voice.peakMeterCursor = 0;
+        voice.peakHeight = 0.0f;
+    }
+    voice.peakMeterMode = detectType;
+}
+
 static void ApplySamplerParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     switch (param.id) {
         case SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP:
@@ -318,6 +362,7 @@ static void ApplySamplerParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& para
             break;
         }
         case SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER: Ngs2SetFilter(voice, ParamAs<Ngs2SamplerVoiceFilterParam>(param)); break;
+        case SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER: SetPeakMeter(voice, ParamAs<Ngs2VoicePeakMeterParam>(param).detect_type); break;
         default: throw std::runtime_error("NGS2: sampler voice param " + Ngs2Hex(param.id) + " is not implemented");
     }
 }
@@ -343,6 +388,10 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         case SCE_NGS2_RACK_ID_SAMPLER:
         case SCE_NGS2_RACK_ID_CUSTOM_SAMPLER: ApplySamplerParam(voice, param); return;
         case SCE_NGS2_RACK_ID_SUBMIXER:
+            if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER) {
+                SetPeakMeter(voice, ParamAs<Ngs2VoicePeakMeterParam>(param).detect_type);
+                return;
+            }
             if (param.id == SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX) {
                 const auto& fx = ParamAs<Ngs2SubmixerVoiceUserFxParam>(param);
                 voice.userFxHandler = fx.handler;
@@ -379,9 +428,8 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
             }
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_GAIN || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_GAIN) {
                 const auto& gain = ParamAs<Ngs2MasteringVoiceGainParam>(param);
-                if (!std::isfinite(gain.fbw_level) || !std::isfinite(gain.lfe_level)) APS5_INVALID_ARG_EX;
-                voice.fbwLevel = gain.fbw_level;
-                voice.lfeLevel = gain.lfe_level;
+                voice.fbwLevel = std::clamp(gain.fbw_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
+                voice.lfeLevel = std::clamp(gain.lfe_level, -MAX_MASTERING_GAIN, MAX_MASTERING_GAIN);
                 return;
             }
             if (param.id == SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT || param.id == SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_OUTPUT) {
@@ -404,9 +452,18 @@ int APS5_VABI sceNgs2VoiceControl(uintptr_t voice_handle, const Ngs2VoiceParamHe
     auto* found = Ngs2FindVoice(voice_handle);
     if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
     auto& voice = *found;
-    for (const auto* param = param_list;; param = reinterpret_cast<const Ngs2VoiceParamHeader*>(reinterpret_cast<const std::uint8_t*>(param) + param->next)) {
-        ApplyParam(voice, *param);
-        if (param->next == 0) break;
+    try {
+        for (const auto* param = param_list;; param = reinterpret_cast<const Ngs2VoiceParamHeader*>(reinterpret_cast<const std::uint8_t*>(param) + param->next)) {
+            if ((param->id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN) {
+                const auto result = Ngs2ApplyCustomGainParam(voice, *param);
+                if (result != SCE_NGS2_OK) return result;
+            } else {
+                ApplyParam(voice, *param);
+            }
+            if (param->next == 0) break;
+        }
+    } catch (const Ngs2ReturnCode& result) {
+        return result.code;
     }
     return SCE_NGS2_OK;
 }
@@ -417,20 +474,24 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCom
     if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
     auto& voice = *found;
     if (commands == nullptr && num_commands != 0) APS5_INVALID_ARG_EX;
-    for (std::size_t i = 0; i < num_commands; i++) {
-        const auto& command = commands[i];
-        const std::uint32_t index = command.id >> 24;
-        const std::uint32_t id = command.id & 0xffffff;
-        const std::uint8_t expectedType = id == COMMAND_EVENT ? COMMAND_TYPE_UINT
-                                        : id == COMMAND_MATRIX_LEVELS ? COMMAND_TYPE_FLOAT_ARRAY
-                                        : id == COMMAND_PORT_VOLUME ? COMMAND_TYPE_FLOAT
-                                        : id == COMMAND_PORT_MATRIX ? COMMAND_TYPE_INT : 0;
-        if (expectedType == 0) throw std::runtime_error("NGS2: voice command " + Ngs2Hex(command.id) + " is not implemented");
-        if (command.type != expectedType) throw std::invalid_argument("NGS2: voice command " + Ngs2Hex(command.id) + " has value type " + Ngs2Hex(command.type));
-        if (id == COMMAND_EVENT) voice.SetEvent(command.value.u);
-        else if (id == COMMAND_MATRIX_LEVELS) SetMatrixLevels(voice, index, command.value.levels, command.count);
-        else if (id == COMMAND_PORT_VOLUME) PortAt(voice, index).volume = command.value.f;
-        else SetPortMatrix(voice, index, command.value.i);
+    try {
+        for (std::size_t i = 0; i < num_commands; i++) {
+            const auto& command = commands[i];
+            const std::uint32_t index = command.id >> 24;
+            const std::uint32_t id = command.id & 0xffffff;
+            const std::uint8_t expectedType = id == COMMAND_EVENT ? COMMAND_TYPE_UINT
+                                            : id == COMMAND_MATRIX_LEVELS ? COMMAND_TYPE_FLOAT_ARRAY
+                                            : id == COMMAND_PORT_VOLUME ? COMMAND_TYPE_FLOAT
+                                            : id == COMMAND_PORT_MATRIX ? COMMAND_TYPE_INT : 0;
+            if (expectedType == 0) throw std::runtime_error("NGS2: voice command " + Ngs2Hex(command.id) + " is not implemented");
+            if (command.type != expectedType) throw std::invalid_argument("NGS2: voice command " + Ngs2Hex(command.id) + " has value type " + Ngs2Hex(command.type));
+            if (id == COMMAND_EVENT) SendEvent(voice, command.value.u);
+            else if (id == COMMAND_MATRIX_LEVELS) SetMatrixLevels(voice, index, command.value.levels, command.count);
+            else if (id == COMMAND_PORT_VOLUME) PortAt(voice, index).volume = command.value.f;
+            else SetPortMatrix(voice, index, command.value.i);
+        }
+    } catch (const Ngs2ReturnCode& result) {
+        return result.code;
     }
     return SCE_NGS2_OK;
 }
@@ -449,6 +510,7 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             sampler = {};
             sampler.voice_state.state_flags = voice.stateFlags;
             sampler.envelope_height = 1.0f;
+            sampler.peak_height = voice.peakHeight;
             sampler.num_decoded_samples = voice.decodedSamples;
             sampler.decoded_data_size = voice.decodedBytes;
             sampler.user_data = voice.blocks.empty() ? 0 : voice.blocks.front().info.user_data;
@@ -466,6 +528,7 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             auto& submixer = *reinterpret_cast<Ngs2SubmixerVoiceState*>(state);
             submixer = {};
             submixer.voice_state.state_flags = voice.stateFlags;
+            submixer.peak_height = voice.peakHeight;
             return SCE_NGS2_OK;
         }
         case SCE_NGS2_RACK_ID_CUSTOM_SAMPLER: {
@@ -498,6 +561,7 @@ int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t voice_handle, uint32_t port, Ngs
     info->matrix_id = source.matrix;
     info->volume = source.volume;
     info->dest_handle = reinterpret_cast<Ngs2Handle>(source.dest);
+    info->dest_input_id = source.destInput;
     return SCE_NGS2_OK;
 }
 

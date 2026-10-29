@@ -1,3 +1,4 @@
+#include "prx/libSceNpCommerce/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <array>
@@ -8,20 +9,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* param);
-int APS5_VABI sceUserServiceTerminate();
-int APS5_VABI sceNpCommerceDialogInitialize();
-int APS5_VABI sceNpCommerceDialogInitializeInternal();
-int APS5_VABI sceNpCommerceDialogOpen(const NpCommerceDialogParam* param);
-int APS5_VABI sceNpCommerceDialogOpen2(const NpCommerceDialogParam2* param);
-int APS5_VABI sceNpCommerceDialogUpdateStatus(void);
-int APS5_VABI sceNpCommerceDialogGetStatus(void);
-int APS5_VABI sceNpCommerceDialogGetResult(NpCommerceDialogResult* result);
-int APS5_VABI sceNpCommerceDialogClose(void);
-int APS5_VABI sceNpCommerceDialogTerminate();
-}
 
 namespace {
 
@@ -157,6 +144,7 @@ int main() {
     bool threw = false;
     try {
         sceNpCommerceDialogOpen2(&param2);
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -207,7 +195,15 @@ int main() {
     Require(sceNpCommerceDialogUpdateStatus() == statusFinished);
     RequireCanceledResult(param2.userData, false);
     Require(sceNpCommerceDialogTerminate() == 0);
+    Require(sceNpCommerceDialogTerminate() == static_cast<int>(0x80B80003u));
+    Require(sceNpCommerceDialogClose() == static_cast<int>(0x80B80003u));
+    Require(sceNpCommerceDialogOpen(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceNpCommerceDialogOpen2(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceNpCommerceDialogOpen2(&param2) == static_cast<int>(0x80B80003u));
+    Require(sceNpCommerceDialogGetResult(nullptr) == static_cast<int>(0x80B8000Du));
+    Require(sceNpCommerceDialogGetResult(&result) == static_cast<int>(0x80B80003u));
     Require(sceNpCommerceDialogGetStatus() == statusNone);
+    Require(sceNpCommerceDialogUpdateStatus() == statusNone);
     Require(sceUserServiceTerminate() == 0);
     return 0;
 }

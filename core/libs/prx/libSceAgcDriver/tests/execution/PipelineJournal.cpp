@@ -346,6 +346,36 @@ void JournalTests() {
     }
 }
 
+void HeldModuleTests() {
+    using namespace NarrowConstantStoreFixture;
+    constexpr std::uint32_t programs = 16;
+    Block compute(BlockBytes);
+    const auto words = AddressWords(compute);
+    std::vector<std::vector<std::uint32_t>> codes;
+    for (std::uint32_t salt = 1; salt <= programs; ++salt) codes.push_back(ComputeCode(salt));
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "no device to record the compute programs");
+        device->WaitForPipelineJournalReplay();
+        std::vector<ShaderRecompiler::RecompileResult> results;
+        for (const auto& code : codes) results.push_back(CompileCompute(*device, code, words, 32));
+        for (std::size_t index = 0; index < results.size(); ++index) device->Dispatch(results[index], 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(codes[index].data()));
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    SetEnvironment("APS5_PIPELINE_JOURNAL_THREADS", "1");
+    const auto before = Snapshot();
+    const auto device = OpenVulkanTestDevice();
+    Require(device != nullptr, "no device to replay the compute programs");
+    device->WaitForPipelineJournalReplay();
+    const auto replayed = Snapshot();
+    SetEnvironment("APS5_PIPELINE_JOURNAL_THREADS", "2");
+    Require(replayed.journal.loadedRecipes == programs + 2 && replayed.journal.loadedModules == programs + 3 && replayed.journal.droppedRecords == 0, "the journal does not hold the 16 compute programs beside the first two pipelines");
+    Require(replayed.journal.replayedCompute - before.journal.replayedCompute == programs + 1 && replayed.journal.replayedGraphics - before.journal.replayedGraphics == 1 && replayed.journal.replayRejected == before.journal.replayRejected && replayed.journal.replayFailed == before.journal.replayFailed, "the one-thread replay did not build every recorded pipeline");
+    const auto held = replayed.journal.replayHeldPeakBytes;
+    Require(held > 0 && held * 4 < replayed.journal.loadedBytes, "the one-thread replay held " + std::to_string(held) + " bytes of modules at once from a " + std::to_string(replayed.journal.loadedBytes) + "-byte journal");
+}
+
 // --benchmark [count]: `count` distinct compute programs, dispatched for the first time on three
 // devices in turn. The first device starts without the driver's pipeline cache file (a driver with
 // an on-disk shader cache of its own, lavapipe's Mesa cache here, still serves from it unless that
@@ -696,6 +726,7 @@ int main(int argc, char** argv) {
         EvictionWatermarkTests();
         EvictionKeepsPendingModules();
         OversizedRecordKeepsTheJournal();
+        HeldModuleTests();
         std::puts("pipeline journal record and replay passed");
         return 0;
     } catch (const std::exception& error) {

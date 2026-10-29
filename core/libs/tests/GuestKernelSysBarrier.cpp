@@ -1,3 +1,6 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
@@ -43,7 +46,7 @@ static constexpr unsigned WAITERS = 4;
 static void Require(bool value) { if (!value) std::abort(); }
 
 struct Context {
-    GuestBarrier* barrier = nullptr;
+    PthreadBarrierPrivate* barrier = nullptr;
     std::atomic<int> serial{0};
     std::atomic<int> released{0};
 };
@@ -58,7 +61,7 @@ static void* APS5_VABI Waiter(void* arg) {
 }
 
 int main() {
-    GuestBarrierattr* attr = nullptr;
+    PthreadBarrierattrPrivate* attr = nullptr;
     Require(scePthreadBarrierattrInit(nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierattrInit(&attr) == 0 && attr != nullptr);
     int pshared = -1;
@@ -86,7 +89,7 @@ int main() {
     Require(scePthreadBarrierDestroy(&context.barrier) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierWait(nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
-    GuestBarrier* single = nullptr;
+    PthreadBarrierPrivate* single = nullptr;
     Require(scePthreadBarrierInit(&single, nullptr, 1, nullptr) == 0);
     Require(scePthreadBarrierWait(&single) == BARRIER_SERIAL_THREAD);
     Require(scePthreadBarrierDestroy(&single) == 0);

@@ -1,3 +1,4 @@
+#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include "Ngs2Test.hpp"
 
 #include "libatrac9.h"
@@ -396,6 +397,7 @@ static bool ParseThrows(const std::vector<std::uint8_t>& file) {
     Ngs2WaveformInfo info{};
     try {
         sceNgs2ParseWaveformData(file.data(), file.size(), &info);
+
     } catch (const std::runtime_error&) {
         return true;
     }

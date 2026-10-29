@@ -1,3 +1,5 @@
+#include "prx/libc/include/WindowsFormatting.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 #include <cerrno>
@@ -8,7 +10,6 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
-#include <stdexcept>
 
 extern "C" void APS5_VABI ignore_handler_s_nid_postfix(const char* message, void* pointer, int error) {
     SonyIgnoreHandlerS(message, pointer, error);
@@ -17,8 +18,6 @@ extern "C" void APS5_VABI ignore_handler_s_nid_postfix(const char* message, void
 extern "C" void* APS5_VABI set_constraint_handler_s_nid_postfix(void* handler) {
     return SonySetConstraintHandlerS(handler);
 }
-
-extern "C" std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
 
 extern "C" std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const std::uint16_t* source, std::size_t capacity) {
     std::size_t count = 0;
@@ -38,13 +37,10 @@ extern "C" int APS5_VABI wcscpy_s_nid_postfix(std::uint16_t* dest, std::size_t s
     return SonyWcscpyS(dest, size, src);
 }
 
-extern "C" int APS5_VABI strerror_r_nid_postfix(int error, char* buffer, std::size_t capacity);
-
 namespace {
 
 std::size_t ReadErrorMessage(int error, char (&message)[128]) {
-    const int result = strerror_r_nid_postfix(error, message, sizeof(message));
-    if (result != 0 && result != 22) throw std::runtime_error("strerror_s: error message exceeds internal buffer");
+    strerror_r_nid_postfix(error, message, sizeof(message));
     return std::strlen(message);
 }
 
@@ -83,5 +79,5 @@ extern "C" int APS5_VABI strerror_s_nid_postfix(char* buffer, std::size_t capaci
     std::memcpy(buffer, message, capacity - 1);
     buffer[capacity - 1] = '\0';
     if (capacity > 3) std::memcpy(buffer + capacity - 4, "...", 3);
-    return 34;
+    return 0;
 }
