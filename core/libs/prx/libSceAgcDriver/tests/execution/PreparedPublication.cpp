@@ -153,6 +153,37 @@ void HeaderSelection() {
     Reject([&] { static_cast<void>(RegisteredProgram(*registry, 0x10000, {2, 4})); });
 }
 
+void FailedRegistrationPublication() {
+    const auto makeSnapshot = [] {
+        auto snapshot = std::make_shared<ShaderSnapshot>();
+        snapshot->codeAddress = 0x10000;
+        snapshot->headerAddress = 0x20000;
+        snapshot->code = {0xbf810000u};
+        return snapshot;
+    };
+    auto failed = makeSnapshot();
+    failed->prepared->failure = std::make_exception_ptr(std::runtime_error("temporary preparation failure"));
+    std::shared_ptr<ShaderRegistry> registry;
+    PublishRegisteredShader(registry, failed);
+    const auto previous = registry;
+    const auto retry = makeSnapshot();
+    PublishRegisteredShader(registry, retry);
+    Require(RegisteredProgram(*registry, retry->codeAddress, {0}) == retry, "registration retry reused a failed preparation");
+    Require(RegisteredProgram(*previous, failed->codeAddress, {0}) == failed && failed->prepared->failure != nullptr, "registration retry changed an earlier registry snapshot");
+    PublishRegisteredShader(registry, makeSnapshot());
+    Require(RegisteredProgram(*registry, retry->codeAddress, {0}) == retry, "successful registration stopped reusing its preparation");
+    {
+        std::lock_guard lock(retry->prepared->mutex);
+        retry->prepared->pending = true;
+    }
+    PublishRegisteredShader(registry, makeSnapshot());
+    Require(RegisteredProgram(*registry, retry->codeAddress, {0}) == retry, "registration duplicated pending preparation");
+    {
+        std::lock_guard lock(retry->prepared->mutex);
+        retry->prepared->pending = false;
+    }
+}
+
 void RegistryVersions() {
     using Expected = std::map<std::uint64_t, std::shared_ptr<const ShaderSnapshot>>;
     const auto matches = [](const ShaderRegistry& current, const Expected& expected) {
@@ -440,6 +471,7 @@ int main() {
     try {
         Transactions();
         HeaderSelection();
+        FailedRegistrationPublication();
         RegistryVersions();
         FusedHullHeaderSelection();
         TransactionLock();
