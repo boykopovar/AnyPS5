@@ -145,6 +145,48 @@ static void CheckComplex() {
     Require(__real__ large == 1.L && __imag__ large == 0.L);
     const __complex__ double byInfinity = __divdc3_nid_postfix(1., 1., INFINITY, INFINITY);
     Require(__real__ byInfinity == 0. && __imag__ byInfinity == 0.);
+
+    auto makeComplex = []<typename T>(T r, T i) {
+        __complex__ T val{};
+        __real__ val = r;
+        __imag__ val = i;
+        return val;
+    };
+
+    const __complex__ double z = makeComplex(3., 4.);
+    Require(creal_nid_postfix(z) == 3. && cimag_nid_postfix(z) == 4.);
+    Require(cabs_nid_postfix(z) == 5.);
+    Require(carg_nid_postfix(makeComplex(1., 1.)) == std::atan2(1., 1.));
+    const __complex__ double cj = conj_nid_postfix(z);
+    Require(__real__ cj == 3. && __imag__ cj == -4.);
+    const __complex__ double pj = cproj_nid_postfix(makeComplex(INFINITY, 2.));
+    Require(std::isinf(__real__ pj) && __imag__ pj == 0.);
+    const __complex__ double pjn = cproj_nid_postfix(makeComplex(1., -INFINITY));
+    Require(std::isinf(__real__ pjn) && std::signbit(__imag__ pjn));
+    const __complex__ double pnorm = cproj_nid_postfix(z);
+    Require(__real__ pnorm == 3. && __imag__ pnorm == 4.);
+
+    const __complex__ float zf = makeComplex(3.f, -4.f);
+    Require(crealf_nid_postfix(zf) == 3.f && cimagf_nid_postfix(zf) == -4.f);
+    Require(cabsf_nid_postfix(zf) == 5.f);
+    Require(cargf_nid_postfix(makeComplex(0.f, 1.f)) == std::atan2(1.f, 0.f));
+    const __complex__ float cjf = conjf_nid_postfix(zf);
+    Require(__real__ cjf == 3.f && __imag__ cjf == 4.f);
+    const __complex__ float pjf = cprojf_nid_postfix(makeComplex(INFINITY, -1.f));
+    Require(std::isinf(__real__ pjf) && std::signbit(__imag__ pjf));
+    const __complex__ float pfnorm = cprojf_nid_postfix(zf);
+    Require(__real__ pfnorm == 3.f && __imag__ pfnorm == -4.f);
+
+    const __complex__ long double zl = makeComplex(5.L, 12.L);
+    Require(creall_nid_postfix(zl) == 5.L && cimagl_nid_postfix(zl) == 12.L);
+    Require(cabsl_nid_postfix(zl) == 13.L);
+    Require(cargl_nid_postfix(makeComplex(-1.L, 0.L)) == std::atan2(0.L, -1.L));
+    const __complex__ long double cjl = conjl_nid_postfix(zl);
+    Require(__real__ cjl == 5.L && __imag__ cjl == -12.L);
+    const __complex__ long double pjl = cprojl_nid_postfix(makeComplex(-INFINITY, 1.L));
+    Require(std::isinf(__real__ pjl) && __real__ pjl > 0.L && __imag__ pjl == 0.L);
+    const __complex__ long double plnorm = cprojl_nid_postfix(zl);
+    Require(__real__ plnorm == 5.L && __imag__ plnorm == 12.L);
 }
 
 int main() {

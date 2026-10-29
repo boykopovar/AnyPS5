@@ -579,4 +579,45 @@ long double APS5_VABI __powixf2_nid_postfix(long double base, int exponent) {
     return reciprocal ? 1 / result : result;
 }
 
+double APS5_VABI creal_nid_postfix(__complex__ double z) { return __real__ z; }
+float APS5_VABI crealf_nid_postfix(__complex__ float z) { return __real__ z; }
+long double APS5_VABI creall_nid_postfix(__complex__ long double z) { return __real__ z; }
+
+double APS5_VABI cimag_nid_postfix(__complex__ double z) { return __imag__ z; }
+float APS5_VABI cimagf_nid_postfix(__complex__ float z) { return __imag__ z; }
+long double APS5_VABI cimagl_nid_postfix(__complex__ long double z) { return __imag__ z; }
+
+__complex__ double APS5_VABI conj_nid_postfix(__complex__ double z) { return MakeComplex(__real__ z, -__imag__ z); }
+__complex__ float APS5_VABI conjf_nid_postfix(__complex__ float z) { return MakeComplex(__real__ z, -__imag__ z); }
+__complex__ long double APS5_VABI conjl_nid_postfix(__complex__ long double z) { return MakeComplex(__real__ z, -__imag__ z); }
+
+__complex__ double APS5_VABI cproj_nid_postfix(__complex__ double z) {
+    if (std::isinf(__real__ z) || std::isinf(__imag__ z)) {
+        return MakeComplex(INFINITY, std::copysign(0.0, __imag__ z));
+    }
+    return z;
+}
+
+__complex__ float APS5_VABI cprojf_nid_postfix(__complex__ float z) {
+    if (std::isinf(__real__ z) || std::isinf(__imag__ z)) {
+        return MakeComplex(INFINITY, std::copysign(0.0f, __imag__ z));
+    }
+    return z;
+}
+
+__complex__ long double APS5_VABI cprojl_nid_postfix(__complex__ long double z) {
+    if (std::isinf(__real__ z) || std::isinf(__imag__ z)) {
+        return MakeComplex(INFINITY, std::copysign(0.0L, __imag__ z));
+    }
+    return z;
+}
+
+double APS5_VABI carg_nid_postfix(__complex__ double z) { return std::atan2(__imag__ z, __real__ z); }
+float APS5_VABI cargf_nid_postfix(__complex__ float z) { return std::atan2(__imag__ z, __real__ z); }
+long double APS5_VABI cargl_nid_postfix(__complex__ long double z) { return std::atan2(__imag__ z, __real__ z); }
+
+double APS5_VABI cabs_nid_postfix(__complex__ double z) { return std::hypot(__real__ z, __imag__ z); }
+float APS5_VABI cabsf_nid_postfix(__complex__ float z) { return std::hypot(__real__ z, __imag__ z); }
+long double APS5_VABI cabsl_nid_postfix(__complex__ long double z) { return std::hypot(__real__ z, __imag__ z); }
+
 }
