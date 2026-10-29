@@ -4461,6 +4461,24 @@ bool StorageTexture::WaitForFlushing(std::uint64_t address, std::size_t bytes, c
     }
 }
 
+bool StorageTexture::hashedAtUnwatch(std::uint64_t address, std::size_t bytes) const {
+    return guestBytes > GenerationBaselineBytes && overlapsLive(address, bytes);
+}
+
+bool StorageTexture::UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    if (AnyPendingOverlaps(ranges)) return true;
+    auto& live = Live();
+    std::lock_guard lock(live.mutex);
+    for (const auto& range : ranges) {
+        if (range.second <= range.first) continue;
+        const auto bytes = static_cast<std::size_t>(range.second - range.first);
+        for (const auto* texture : live.textures) {
+            if (texture->hashedAtUnwatch(range.first, bytes)) return true;
+        }
+    }
+    return false;
+}
+
 void StorageTexture::SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes) {
     std::vector<std::shared_ptr<StorageTexture>> overlapping;
     {
@@ -4479,7 +4497,7 @@ void StorageTexture::SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes)
         auto& images = Live();
         std::lock_guard lock(images.mutex);
         for (auto* texture : images.textures) {
-            if (texture->guestBytes <= GenerationBaselineBytes || !texture->overlapsLive(address, bytes)) continue;
+            if (!texture->hashedAtUnwatch(address, bytes)) continue;
             if (auto alive = texture->weak_from_this().lock()) live.push_back(std::move(alive));
         }
     }

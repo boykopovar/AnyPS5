@@ -219,6 +219,7 @@ public:
     static void FlushAllPending(const char* reason);
     static bool WaitForFlushing(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr);
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
+    static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
     static std::size_t StoreSmallPending(const char* reason);
     static void StoreReadbackBeforeLabel(const char* reason);
@@ -596,6 +597,7 @@ private:
     // Whether the image is live (not released) and overlaps the fill: the test that gives ClassifyFill
     // its overlapping images, and that NoteKeysFill and ClearByKeysFill use to bound the key match.
     bool overlapsLive(std::uint64_t address, std::size_t bytes) const;
+    bool hashedAtUnwatch(std::uint64_t address, std::size_t bytes) const;
     // Whether a fill of [address, address + bytes) is a fill of this image's DCC keys, `overlapped`
     // saying whether any live image overlaps the fill (see Texture.cpp).
     bool keysFillMatches(std::uint64_t address, std::size_t bytes, bool overlapped) const;

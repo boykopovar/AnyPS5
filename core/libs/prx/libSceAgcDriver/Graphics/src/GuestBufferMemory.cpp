@@ -4196,7 +4196,7 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
             if (!GuestMemory::GpuMutex().HeldByThisThread()) {
                 const auto run = importRun(current, range->address, std::numeric_limits<std::uint64_t>::max(), effectiveBudget(context, state));
                 const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{run.base, run.base + run.bytes}}};
-                if (wouldRetireImport(state, run) || StorageTexture::AnyPendingOverlaps(span)) return false;
+                if (wouldRetireImport(state, run) || StorageTexture::UnwatchHookLocksGpu(span)) return false;
             }
             if (!state.importedAtMap.emplace(range->address, range->bytes).second && findImport(state, range->address, range->address + range->bytes) == nullptr) continue;
             importAllocation(context, state, range->address, current, ImportRequester::Map, 0, false);

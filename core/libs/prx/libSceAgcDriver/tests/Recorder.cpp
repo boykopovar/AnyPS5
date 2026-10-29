@@ -6762,6 +6762,117 @@ bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+std::atomic<bool> unwatchHookEntered{false};
+
+void SignalUnwatchHook(std::uint64_t address, std::size_t bytes) {
+    unwatchHookEntered.store(true, std::memory_order_release);
+    StorageTexture::SaveBeforeUnwatch(address, bytes);
+}
+
+bool unwatchHookLockOrderTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: the unwatch hook's lock order at a map-time import not tested\n";
+        return false;
+    }
+    constexpr std::uint32_t side = 1024;
+    constexpr std::size_t surfaceBytes = static_cast<std::size_t>(side) * side * 4;
+    constexpr std::size_t mappedBytes = 512 * 1024;
+    const auto decided = PrepareImportWatch(base);
+    SetImportWatch(base, ImportWatch::Unwatch);
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() {
+            SetImportWatch(context, decided);
+            AgcDriver::GuestMemory::SetUnwatchHook(&StorageTexture::SaveBeforeUnwatch);
+        }
+    } restore{base, decided};
+    void* block = AllocateWatched(surfaceBytes, 65536);
+    if (block == nullptr) {
+        std::cout << "no write watching: the unwatch hook's lock order at a map-time import not tested\n";
+        return false;
+    }
+    std::memset(block, 0x5a, surfaceBytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, mappedBytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            HostImportFor(context, address, mappedBytes);
+            ReleaseWatched(block, surfaceBytes);
+        }
+    } unregister{base, block, address};
+    GuestAllocations::Mapped mapped;
+    for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+        if (range->address == address) mapped.push_back(range);
+    }
+    Require(mapped.size() == 1, "(l) the surface's range is not registered");
+    AgcDriver::GuestMemory::CollectWritesUncached(address, surfaceBytes);
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "(l) unexpected surface size");
+    auto image = StorageTexture::Create(context, detiler, resource, 0);
+    recorder.Keep(image);
+    std::atomic<bool> finished{false};
+    std::thread watchdog([&] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!finished.load(std::memory_order_acquire)) {
+            if (std::chrono::steady_clock::now() > deadline) {
+                std::cerr << "(l) deadlock: a map-time import ran the unwatch hook into the GPU lock under the import lock while the GPU lock's owner waited for the import lock\n";
+                std::cerr.flush();
+                std::_Exit(1);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    });
+    std::atomic<int> deferred{-1};
+    {
+        std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(ImportMappedRanges(context, {}, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "(l) the device was not adopted");
+        unwatchHookEntered.store(false, std::memory_order_release);
+        AgcDriver::GuestMemory::SetUnwatchHook(&SignalUnwatchHook);
+        std::thread mapping([&] { deferred.store(ImportMappedRanges(context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false) ? 0 : 1, std::memory_order_release); });
+        while (!unwatchHookEntered.load(std::memory_order_acquire) && deferred.load(std::memory_order_acquire) < 0) std::this_thread::yield();
+        HostImportFor(context, address, mappedBytes);
+        gpu.unlock();
+        mapping.join();
+    }
+    finished.store(true, std::memory_order_release);
+    watchdog.join();
+    AgcDriver::GuestMemory::SetUnwatchHook(&StorageTexture::SaveBeforeUnwatch);
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        if (deferred.load() == 1) Require(ImportMappedRanges(context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "(l) the deferred import failed under the GPU lock");
+        Require(HostImportFor(context, address, mappedBytes) != nullptr, "(l) the surface was not imported");
+    }
+    std::cout << "unwatch hook lock order at a map-time import passed\n";
+    return true;
+}
+
 // A write-back stores the texels of an image and leaves every other byte of the surface's memory
 // as it was: the padding of the tile blocks the surface covers only partly (its last block column
 // and row), the tail block of a mip chain, the bytes between the mips and the pitch padding of a
@@ -12229,6 +12340,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pending-after-unwatch-only") return pendingAfterLeavingWatchTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--unwatch-lock-order-only") return unwatchHookLockOrderTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--completion-labels-only") {
             completionCountTests(device, recorder);
             afterRecordedWorkTests(device, recorder);
