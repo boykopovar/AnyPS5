@@ -4502,6 +4502,7 @@ void StorageTexture::SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes)
         }
     }
     if (overlapping.empty() && live.empty()) return;
+    RequireGpuLockBeforeImports("the unwatch hook");
     std::lock_guard gpu(GuestMemory::GpuMutex());
     for (const auto& texture : live) texture->hashBeforeUnwatch(address, bytes, proven);
     for (const auto& texture : overlapping) texture->saveBeforeUnwatch();

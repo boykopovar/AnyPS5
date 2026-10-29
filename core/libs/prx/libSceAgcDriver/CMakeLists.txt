@@ -1703,7 +1703,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_unwatch_hook_lock_order COMMAND agc_driver_recorder_tests --unwatch-lock-order-only)
-    set_tests_properties(agc_unwatch_hook_lock_order PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    set_tests_properties(agc_unwatch_hook_lock_order PROPERTIES ENVIRONMENT "APS5_ASSERT_GPU_LOCK=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
         set_tests_properties(agc_unwatch_hook_lock_order PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")

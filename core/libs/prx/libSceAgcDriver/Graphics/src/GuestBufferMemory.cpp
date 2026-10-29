@@ -241,6 +241,36 @@ struct ImportSettle {
 #endif
 };
 
+#ifdef NDEBUG
+const bool importsLockOrderChecked = std::getenv("APS5_ASSERT_GPU_LOCK") != nullptr;
+#else
+const bool importsLockOrderChecked = true;
+#endif
+
+thread_local std::uint32_t importsHeld = 0;
+
+class ImportsMutex {
+public:
+    void lock() noexcept {
+        mutex.lock();
+        if (importsLockOrderChecked) ++importsHeld;
+    }
+
+    bool try_lock() noexcept {
+        if (!mutex.try_lock()) return false;
+        if (importsLockOrderChecked) ++importsHeld;
+        return true;
+    }
+
+    void unlock() noexcept {
+        if (importsLockOrderChecked) --importsHeld;
+        mutex.unlock();
+    }
+
+private:
+    AgcDriver::Mutex mutex;
+};
+
 // Imports persist across draws, keyed by allocation base, and are dropped when their allocation leaves
 // the registered set; a dropped import is destroyed once the recorded work that may read it completed.
 struct RefreshedRange {
@@ -250,7 +280,7 @@ struct RefreshedRange {
 };
 
 struct HostImports {
-    AgcDriver::Mutex mutex;
+    ImportsMutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     PFN_vkDestroyBuffer destroyBuffer = nullptr;
     PFN_vkFreeMemory freeMemory = nullptr;
@@ -4147,6 +4177,12 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
     refreshImports(context, state, lease);
     return importAccess(context, state, address, address + bytes, lease, requester);
+}
+
+void RequireGpuLockBeforeImports(const char* where) {
+    if (!importsLockOrderChecked || importsHeld == 0 || GuestMemory::GpuMutex().HeldByThisThread()) return;
+    std::fprintf(stderr, "[lock] ASSERT: %s takes GuestMemory::GpuMutex while this thread holds the host imports mutex without it\n", where);
+    std::abort();
 }
 
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
