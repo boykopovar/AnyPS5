@@ -333,6 +333,15 @@ static int WindowTest() {
         SDL_GetWindowSize(window.Handle(), &back.width, &back.height);
         Require(!Fullscreen(window) && back == windowed, "leaving a fullscreen start did not give the creation size");
     }
+    SDL_setenv("ANYPS5_FULLSCREEN", "yes", 1);
+    {
+        DisplayWindow window;
+        if (!Open(window)) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            return 77;
+        }
+        Require(Fullscreen(window), "a legacy non-empty value did not open fullscreen");
+    }
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
     return 0;
 }
