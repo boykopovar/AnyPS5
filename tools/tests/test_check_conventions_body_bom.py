@@ -75,6 +75,21 @@ class BodyBomTests(unittest.TestCase):
         result = self.run_checker(BODY.encode("utf-8"), ["--event", "event.json"], b"[]")
         self.assertUsageError(result, "--event")
 
+    def test_excessively_nested_event_is_a_usage_error(self):
+        depth = sys.getrecursionlimit() + 64
+        for _ in range(8):
+            try:
+                json.loads("[" * depth + "]" * depth)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("JSON decoder accepted every bounded nesting probe")
+        nested = ("[" * (depth + 128) + "]" * (depth + 128)).encode("utf-8")
+        result = self.run_checker(BODY.encode("utf-8"), ["--event", "event.json"], nested)
+        self.assertUsageError(result, "--event")
+        self.assertNotIn("not a JSON object", result.stderr)
+
     def test_event_pull_request_body_is_checked(self):
         event = json.dumps({"pull_request": {"title": "fix: x", "body": BODY}}).encode("utf-8")
         result = self.run_checker(b"", ["--event", "event.json"], event)
