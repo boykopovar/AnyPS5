@@ -114,6 +114,12 @@ void SpeakerInfoAfterAudioOutInit() {
     Require(sceAudioOut2GetSpeakerInfo(&info, 0) == 0);
 }
 
+void RepeatedInitializationAfterAudioOutInit() {
+    Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004));
+    Require(sceAudioOut2Initialize() == static_cast<int>(0x80268004));
+    Require(sceAudioOutInit() == static_cast<int>(0x8026000e));
+}
+
 void SpeakerInfoRejectsBadFlags() {
     AudioOut2SpeakerInfo info;
     std::memset(&info, 0xAB, sizeof(info));
@@ -145,6 +151,7 @@ int main() {
 
     SpeakerInfoRequiresInitialization();
     SpeakerInfoAfterAudioOutInit();
+    RepeatedInitializationAfterAudioOutInit();
 
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0);

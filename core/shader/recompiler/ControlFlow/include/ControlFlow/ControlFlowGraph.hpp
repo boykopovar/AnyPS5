@@ -68,6 +68,7 @@ struct BasicBlock {
     std::uint32_t instructionBegin = 0;
     std::uint32_t instructionEnd = 0;
     std::uint32_t estimatedSpirvWords = 0;
+    std::uint32_t immediatePostDominator = InvalidControlFlowId;
     std::vector<std::uint32_t> predecessors;
     std::vector<std::uint32_t> successors;
     std::vector<std::uint32_t> dominators;

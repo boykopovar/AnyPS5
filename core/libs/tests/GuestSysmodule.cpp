@@ -19,6 +19,13 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <dlfcn.h>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -117,12 +124,16 @@ void CheckUnknownIds() {
     const std::uint16_t id = UnknownModuleId();
     const std::uint32_t internalId = id | kInternalFlag;
     Require(kModuleTable.find(internalId) == kModuleTable.end());
-    Require(sceSysmoduleIsLoaded(id) == 0);
-    Require(sceSysmoduleLoadModule(id) == 0);
-    Require(sceSysmoduleIsLoaded(id) == 0);
-    Require(sceSysmoduleUnloadModule(id) == 0);
-    Require(sceSysmoduleUnloadModule(id) == 0);
-    Require(sceSysmoduleIsLoaded(id) == 0);
+    for (const std::uint16_t rejected : {id, std::uint16_t{0x0001}, std::uint16_t{0x0080}, std::uint16_t{0x00c5}, std::uint16_t{0x0100}, std::uint16_t{0x8000}}) {
+        Require(sceSysmoduleIsLoaded(rejected) == kInvalidValue);
+        Require(sceSysmoduleLoadModule(rejected) == kInvalidValue);
+        Require(sceSysmoduleIsLoaded(rejected) == kInvalidValue);
+        Require(sceSysmoduleUnloadModule(rejected) == kInvalidValue);
+    }
+    Require(kModuleTable.find(0x0111) == kModuleTable.end());
+    Require(sceSysmoduleIsLoaded(0x0111) == 0);
+    Require(sceSysmoduleLoadModule(0x0111) == 0);
+    Require(sceSysmoduleUnloadModule(0x0111) == 0);
     Require(ThrowsRuntimeError([internalId] { sceSysmoduleLoadModuleInternal(internalId); }));
     Require(ThrowsRuntimeError([internalId] { sceSysmoduleUnloadModuleInternal(internalId); }));
     int result = 0x5a5a5a5a;
@@ -191,6 +202,52 @@ void CheckUnwindInfo() {
     RequireUnwindMatchesRegion(memory + 2 * page);
     Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
     RequireUnwindMatchesRegion(memory);
+}
+#elif defined(__APPLE__)
+void RequireUnwindMatchesRegion(const void* pointer, const char* nameEnd) {
+    const auto address = reinterpret_cast<std::uint64_t>(pointer);
+    mach_vm_address_t region = address;
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t basic{};
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    Require(mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&basic), &count, &object) == KERN_SUCCESS);
+    Require(region <= address && address - region < size);
+    ModuleInfoForUnwind info{};
+    Require(sceSysmoduleGetModuleInfoForUnwind(address, 0, &info) == 0);
+    Require(info.st_size == sizeof(ModuleInfoForUnwind));
+    Require(info.seg0_addr == region && info.seg0_size == size);
+    const std::string name = info.name;
+    if (nameEnd == nullptr) {
+        Require(name.empty());
+    } else {
+        const std::string end = std::string("/") + nameEnd;
+        Require(name.size() > end.size() && name.compare(name.size() - end.size(), end.size(), end) == 0);
+    }
+    Require(info.eh_frame_hdr_addr == 0 && info.eh_frame_addr == 0 && info.eh_frame_size == 0);
+}
+
+void CheckUnwindInfo() {
+    RequireUnwindMatchesRegion(reinterpret_cast<const void*>(&RequireUnwindMatchesRegion), "guest_sysmodule_tests");
+    Dl_info library{};
+    Require(dladdr(reinterpret_cast<const void*>(&sceSysmoduleGetModuleInfoForUnwind), &library) != 0 && library.dli_fname != nullptr);
+    const std::string libraryPath = library.dli_fname;
+    RequireUnwindMatchesRegion(reinterpret_cast<const void*>(&sceSysmoduleGetModuleInfoForUnwind), libraryPath.substr(libraryPath.find_last_of('/') + 1).c_str());
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* anonymous = mmap(nullptr, page, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(anonymous != MAP_FAILED);
+    RequireUnwindMatchesRegion(anonymous, nullptr);
+    Require(munmap(anonymous, page) == 0);
+    void* gap = mmap(nullptr, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(gap != MAP_FAILED && munmap(gap, page) == 0);
+    ModuleInfoForUnwind info{};
+    bool threw = false;
+    try {
+        sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(gap), 0, &info);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
 }
 #endif
 
@@ -329,9 +386,7 @@ int main() {
     Require(sceSysmoduleUnloadModuleInternal(kAgcModuleId) == 0);
     Require(sceSysmoduleIsLoadedInternal(kAgcModuleId) == kModuleUnloaded);
     Require(sceSysmoduleUnloadModuleInternal(kAgcModuleId) == kModuleUnloaded);
-#if defined(__linux__) || defined(_WIN32)
     CheckUnwindInfo();
-#endif
 
     std::int32_t handle = -1;
     Require(sceSysmoduleGetModuleHandleInternal(kFiberModuleId, &handle) == kModuleUnloaded);

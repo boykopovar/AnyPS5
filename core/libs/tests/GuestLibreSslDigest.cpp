@@ -165,11 +165,12 @@ int main() {
     std::memcpy(context + 108, &length, 4);
     std::memset(digest, 0xee, sizeof(digest));
     Require(SHA256_Final_nid_postfix(digest, reinterpret_cast<Sha256Context*>(context)) == 1 && Hex(digest, 16) == "e3b0c44298fc1c149afbf4c8996fb924" && digest[16] == 0xee, "SHA256_Final truncates to the digest length");
-    SHA512_Init_nid_postfix(reinterpret_cast<Sha512Context*>(context));
-
-    length = 32;
-    std::memcpy(context + 212, &length, 4);
-    RequireThrows([&] { SHA512_Final_nid_postfix(digest, reinterpret_cast<Sha512Context*>(context)); }, "SHA-512/256 digest length");
+    for (std::uint32_t truncated : {28u, 32u}) {
+        SHA512_Init_nid_postfix(reinterpret_cast<Sha512Context*>(context));
+        std::memcpy(context + 212, &truncated, 4);
+        std::memset(digest, 0xee, sizeof(digest));
+        Require(SHA512_Final_nid_postfix(digest, reinterpret_cast<Sha512Context*>(context)) == 0 && digest[0] == 0xee && digest[63] == 0xee, "SHA512_Final with a SHA-512/t digest length");
+    }
     SHA256_Init_nid_postfix(reinterpret_cast<Sha256Context*>(context));
 
     length = 64;
@@ -179,6 +180,8 @@ int main() {
     const auto* abc = reinterpret_cast<const unsigned char*>("abc");
     Require(SHA256_nid_postfix(abc, 3, digest) == digest && Hex(digest, 32) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA256 one-shot");
     Require(SHA256_nid_postfix(nullptr, 0, digest) == digest && Hex(digest, 32) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA256 one-shot of nothing");
-    RequireThrows([&] { SHA256_nid_postfix(abc, 3, nullptr); }, "SHA256 one-shot without a digest buffer");
+    unsigned char* shared = SHA256_nid_postfix(abc, 3, nullptr);
+    Require(shared && shared != digest && Hex(shared, 32) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA256 one-shot into the static buffer");
+    Require(SHA256_nid_postfix(nullptr, 0, nullptr) == shared && Hex(shared, 32) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA256 one-shot reuses the static buffer");
     std::puts("libSceLibreSsl digest tests passed");
 }

@@ -244,10 +244,6 @@ constexpr const char* MONTH_FULL_NAMES[] = {"January", "February", "March", "Apr
     "October", "November", "December"};
 constexpr int YEAR_BASE = 1900;
 
-bool isLeapYearSum(int year, int base) {
-    return isLeapYear(year % 400 + base % 400);
-}
-
 struct FormatBuffer {
     char* cursor;
     char* limit;
@@ -287,32 +283,44 @@ int twoDigitYear(std::int64_t year) {
     return static_cast<int>((year % 100 + 100) % 100);
 }
 
-std::int64_t weekOfYear(const GuestTm& time, int shift) {
-    return (static_cast<std::int64_t>(time.tm_yday) + 7 - (static_cast<std::int64_t>(time.tm_wday) + shift) % 7) / 7;
+int wrapped(std::int64_t value) {
+    return static_cast<int>(static_cast<std::uint32_t>(value));
+}
+
+int weekOfYear(const GuestTm& time, int shift) {
+    return wrapped(static_cast<std::int64_t>(time.tm_yday) + 7 - wrapped(static_cast<std::int64_t>(time.tm_wday) + shift) % 7) / 7;
 }
 
 struct IsoWeek {
-    std::int64_t year;
+    int year;
     int week;
 };
 
+bool isoLeapYear(int year) {
+    return year % 4 == 0 && (year % 100 != 0 || year / 400 == 100 || year / 400 == -300);
+}
+
+bool midweek(int weekday) {
+    return weekday >= 2 && weekday <= 4;
+}
+
 IsoWeek isoWeek(const GuestTm& time) {
-    if (time.tm_yday < 0) NotImplemented_nid_no_patch("strftime: ISO week of a negative tm_yday");
-    if (time.tm_yday >= (isLeapYearSum(time.tm_year, YEAR_BASE) ? 366 : 365)) NotImplemented_nid_no_patch("strftime: ISO week of a tm_yday past the year");
-    if (time.tm_wday < -6) NotImplemented_nid_no_patch("strftime: ISO week of a tm_wday below -6");
-    int base = YEAR_BASE;
-    std::int64_t yday = time.tm_yday;
-    for (;;) {
-        const int length = isLeapYearSum(time.tm_year, base) ? 366 : 365;
-        const std::int64_t bottom = (yday + 11 - time.tm_wday) % 7 - 3;
-        std::int64_t top = bottom - length % 7;
-        if (top < -3) top += 7;
-        top += length;
-        if (yday >= top) return {static_cast<std::int64_t>(time.tm_year) + base + 1, 1};
-        if (yday >= bottom) return {static_cast<std::int64_t>(time.tm_year) + base, static_cast<int>(1 + (yday - bottom) / 7)};
-        --base;
-        yday += isLeapYearSum(time.tm_year, base) ? 366 : 365;
-    }
+    const int leap = isoLeapYear(time.tm_year) ? 1 : 0;
+    const int span = wrapped(static_cast<std::int64_t>(time.tm_wday) - time.tm_yday);
+    const int firstWeekday = wrapped(static_cast<std::int64_t>(span) + 371) % 7;
+    const int nextFirstWeekday = (leap + firstWeekday + 365) % 7;
+    const int nextYear = wrapped(static_cast<std::int64_t>(time.tm_year) + 1);
+    if (midweek(nextFirstWeekday) && wrapped(static_cast<std::int64_t>(time.tm_yday) - leap) >= 366 - nextFirstWeekday) return {nextYear, 1};
+    const int mondayWeekday = wrapped(static_cast<std::int64_t>(time.tm_wday) + 6) % 7;
+    const int week = wrapped(static_cast<std::int64_t>(time.tm_yday) - mondayWeekday + 7) / 7 + (midweek(firstWeekday) ? 1 : 0);
+    if (week < 0) return {nextYear, 1};
+    if (week > 0) return {time.tm_year, week};
+    const int previousYear = wrapped(static_cast<std::int64_t>(time.tm_year) - 1);
+    const int previousLeap = isoLeapYear(previousYear) ? 1 : 0;
+    const int previousFirstWeekday = wrapped(static_cast<std::int64_t>(span) + 13 - previousLeap) % 7;
+    if (midweek((previousLeap + previousFirstWeekday + 365) % 7)) return {previousYear, 0};
+    const int lastWeekday = wrapped(static_cast<std::int64_t>(span) + 13) % 7;
+    return {previousYear, (372 + previousLeap - lastWeekday) / 7 + (midweek(previousFirstWeekday) ? 1 : 0)};
 }
 
 void formatTime(FormatBuffer& buffer, const char* format, const GuestTm& time);
@@ -342,7 +350,7 @@ bool addConversion(FormatBuffer& buffer, char conversion, const GuestTm& time) {
     case 'e': addNumber(buffer, time.tm_mday, 100, "%2d"); return true;
     case 'F': formatTime(buffer, "%Y-%m-%d", time); return true;
     case 'g': addNumber(buffer, twoDigitYear(isoWeek(time).year), 100, "%02d"); return true;
-    case 'G': addNumber(buffer, isoWeek(time).year, 10000, "%04d"); return true;
+    case 'G': addNumber(buffer, static_cast<std::int64_t>(isoWeek(time).year) + YEAR_BASE, 10000, "%04d"); return true;
     case 'H': addNumber(buffer, time.tm_hour, 100, "%02d"); return true;
     case 'I': addNumber(buffer, (static_cast<std::int64_t>(time.tm_hour) + 11) % 12 + 1, 100, "%02d"); return true;
     case 'j': addNumber(buffer, static_cast<std::int64_t>(time.tm_yday) + 1, 1000, "%03d"); return true;
@@ -604,7 +612,7 @@ char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
 
 char* APS5_VABI ctime_nid_postfix(const int64_t* timer) {
     if (const GuestTm* local = localtime_nid_postfix(timer)) return asctime_nid_postfix(local);
-    static char unknown[26];
+    static thread_local char unknown[26];
     std::memcpy(unknown, "??? ??? ?? ??:??:?? ????\n", sizeof(unknown));
     errno = EINVAL;
     return unknown;

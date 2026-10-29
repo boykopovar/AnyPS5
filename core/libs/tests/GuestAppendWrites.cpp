@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +14,9 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 static void Check(bool condition, int line) {
     if (!condition) {
@@ -109,6 +113,36 @@ int main() {
     Require(appended.size() == static_cast<std::size_t>(size) + 3 * LineLength);
     Require(appended.substr(0, LineLength) == head);
     Require(appended.substr(static_cast<std::size_t>(size) + LineLength) == positioned + gathered);
+
+#ifdef _WIN32
+    void* unreadable = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
+    Require(unreadable != nullptr);
+    char validChar = 'x';
+    const KernelIovec badPieces[2]{{&validChar, 1}, {unreadable, 10}};
+    const KernelIovec badPiecesFirst[2]{{unreadable, 10}, {&validChar, 1}};
+    const KernelIovec badPiecesZeroLength[2]{{unreadable, 0}, {&validChar, 1}};
+
+    *__error_nid_postfix() = 0;
+    Require(writev_nid_postfix(first, badPieces, 2) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(pwritev_nid_postfix(first, badPieces, 2, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(sceKernelWritev(first, badPieces, 2) == static_cast<int>(0x8002000eu));
+    Require(sceKernelPwritev(first, badPieces, 2, 0) == static_cast<int>(0x8002000eu));
+
+    *__error_nid_postfix() = 0;
+    Require(writev_nid_postfix(first, badPiecesFirst, 2) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(pwritev_nid_postfix(first, badPiecesFirst, 2, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(sceKernelWritev(first, badPiecesFirst, 2) == static_cast<int>(0x8002000eu));
+    Require(sceKernelPwritev(first, badPiecesFirst, 2, 0) == static_cast<int>(0x8002000eu));
+
+    Require(Contents().size() == static_cast<std::size_t>(size) + 3 * LineLength);
+
+    Require(writev_nid_postfix(first, badPiecesZeroLength, 2) == 1);
+    Require(Contents().size() == static_cast<std::size_t>(size) + 3 * LineLength + 1);
+
+    VirtualFree(unreadable, 0, MEM_RELEASE);
+#endif
 
     for (const int fd : descriptors) Require(sceKernelClose(fd) == 0);
     std::remove(Path);

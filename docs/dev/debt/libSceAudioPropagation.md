@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [libSceAudioPropagation](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) lacks acoustic propagation: attributes have no effect, sources expose 36 initially empty, invalid path slots and no rays, rendering preserves the destination mix without adding path contributions, and allocated CPU work memory is mostly unused. Ray results and audio paths accept empty lists and throw otherwise; calculation returns initial native validation errors and throws for unsupported propagation. Room, portal, source and material handles are tracked, but destruction after their system is destroyed silently succeeds without native lifetime semantics being confirmed. Occlusion, reflections and reverb are absent.
+- [libSceAudioPropagation](../../../core/libs/prx/libSceAudioPropagation/Export.cpp) lacks acoustic propagation: attributes have no effect, sources expose 36 initially empty, invalid path slots and no rays, rendering preserves the destination mix without adding path contributions, and allocated CPU work memory is mostly unused. Ray results and audio paths accept empty lists and throw otherwise; `sceAudioPropagationSourceCalculateAudioPaths` returns the initial native validation errors, then goes through `NotImplemented_nid_no_patch`, as propagation is not implemented. Room, portal, source and material handles are tracked, but destruction after their system is destroyed silently succeeds without native lifetime semantics being confirmed. Occlusion, reflections and reverb are absent.
 
 ### Unknown function info
 
