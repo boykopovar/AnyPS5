@@ -30,6 +30,8 @@ static constexpr int SCE_NGS2_ERROR_INVALID_PAN_WORK = static_cast<int>(0x804A84
 static constexpr int SCE_NGS2_ERROR_INVALID_PAN_PARAM = static_cast<int>(0x804A8454);
 static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_HANDLE = static_cast<int>(0x804A8203);
 static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_ACCESS = static_cast<int>(0x804A8351);
+static constexpr int SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS = static_cast<int>(0x804A8092);
+static constexpr int SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE = static_cast<int>(0x804A8093);
 static constexpr int SCE_NGS2_ERROR_NULL_PARAM_LIST = static_cast<int>(0x804A8360);
 static constexpr int SCE_NGS2_ERROR_INVALID_PARAM_ID = static_cast<int>(0x804A835A);
 static constexpr int SCE_NGS2_ERROR_INVALID_GEOM_LISTENER_ADDRESS = static_cast<int>(0x804A8461);
@@ -85,8 +87,10 @@ static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS 
 static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_EXIT_LOOP = 0x10000004;
 static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH = 0x10000005;
 static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER = 0x1000000a;
+static constexpr std::uint32_t SCE_NGS2_SAMPLER_VOICE_PARAM_PEAK_METER = 0x10000009;
 static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP = 0x20000000;
 static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX = 0x20000004;
+static constexpr std::uint32_t SCE_NGS2_SUBMIXER_VOICE_PARAM_PEAK_METER = 0x20000005;
 static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_SETUP = 0x20010000;
 static constexpr std::uint32_t SCE_NGS2_REVERB_VOICE_PARAM_I3DL2 = 0x20010001;
 static constexpr std::uint32_t SCE_NGS2_MASTERING_VOICE_PARAM_SETUP = 0x30000000;
@@ -625,6 +629,13 @@ static_assert(sizeof(Ngs2CustomVoiceFilterParam) == 40);
 static_assert(offsetof(Ngs2CustomVoiceFilterParam, type) == 8);
 static_assert(offsetof(Ngs2CustomVoiceFilterParam, channel_mask) == 12);
 static_assert(offsetof(Ngs2CustomVoiceFilterParam, param) == 16);
+
+struct Ngs2VoicePeakMeterParam {
+    Ngs2VoiceParamHeader header;
+    std::uint32_t detect_type;
+    std::uint32_t reserved;
+};
+static_assert(sizeof(Ngs2VoicePeakMeterParam) == 16);
 
 struct Ngs2MasteringVoiceSetupParam {
     Ngs2VoiceParamHeader header;

@@ -75,29 +75,92 @@ const uint8_t* singleByteProfile(SingleByte::Table table) {
     return PROFILES[3 + table];
 }
 
+bool singleByteTable(const void* profile, SingleByte::Table& table) {
+    for (std::size_t index = 0; index < SingleByte::Count; ++index) {
+        if (profile != singleByteProfile(static_cast<SingleByte::Table>(index))) continue;
+        table = static_cast<SingleByte::Table>(index);
+        return true;
+    }
+    return false;
+}
+
 const uint16_t* sbcHighTable(const void* profile) {
     if (profile == CP1251_PROFILE) return CP1251_HIGH;
     if (profile == CP1250_PROFILE) return CP1250_HIGH;
-    for (std::size_t table = 0; table < SingleByte::Count; ++table) {
-        if (profile == singleByteProfile(static_cast<SingleByte::Table>(table))) return SingleByte::HIGH[table];
-    }
-    return nullptr;
+    SingleByte::Table table;
+    return singleByteTable(profile, table) ? SingleByte::HIGH[table] : nullptr;
+}
+
+bool lowGraphicsUnassigned(const void* profile, uint8_t sbc) {
+    SingleByte::Table table;
+    return sbc >= 0x21 && sbc <= 0x7E && singleByteTable(profile, table) && SingleByte::LOW_GRAPHICS_UNASSIGNED[table];
+}
+
+const SingleByte::LowCode* lowCodes(const void* profile) {
+    SingleByte::Table table;
+    return singleByteTable(profile, table) ? SingleByte::LOW[table] : nullptr;
+}
+
+bool isSingleByte(const void* profile, SingleByte::Table expected) {
+    SingleByte::Table table;
+    return singleByteTable(profile, table) && table == expected;
+}
+
+bool isSevenBit(const void* profile) {
+    SingleByte::Table table;
+    return singleByteTable(profile, table) && SingleByte::SEVEN_BIT[table];
 }
 
 bool sbcToUnicode(const uint8_t* profile, uint8_t sbc, uint32_t& code) {
     code = sbc;
-    if (sbc < 0x80) return true;
+    if (isSingleByte(profile, SingleByte::JisX0201Katakana) && sbc >= 0x21 && sbc <= 0x7E) {
+        code = 0xFF61 + (sbc - 0x21);
+        return sbc <= 0x5F;
+    }
+    if (sbc < 0x80) {
+        if (lowGraphicsUnassigned(profile, sbc)) return false;
+        if (const SingleByte::LowCode* low = lowCodes(profile)) {
+            for (std::size_t i = 0; i < std::size(SingleByte::LOW[0]) && low[i].byte != 0; ++i) {
+                if (low[i].byte == sbc) code = low[i].code;
+            }
+        }
+        return true;
+    }
     if (const uint16_t* high = sbcHighTable(profile)) code = high[sbc - 0x80];
     else if (sbc < 0xA0) code = CP1252_HIGH[sbc - 0x80];
-    return code != 0;
+    return code != 0 && code != SingleByte::Unassigned;
+}
+
+int sbcError(const uint8_t* profile, uint8_t sbc, uint32_t& code) {
+    if (sbc >= 0x80 && isSevenBit(profile)) return CES_ERROR_INVALID_ENCODE;
+    return sbcToUnicode(profile, sbc, code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
 }
 
 bool unicodeToSbc(const uint8_t* profile, uint32_t code, uint8_t& sbc) {
+    if (isSingleByte(profile, SingleByte::JisX0201Katakana)) {
+        if (code >= 0xFF61 && code <= 0xFF9F) {
+            sbc = static_cast<uint8_t>(0x21 + (code - 0xFF61));
+            return true;
+        }
+        if (code >= 0x21 && code <= 0x7E) return false;
+    }
+    if (const SingleByte::LowCode* low = lowCodes(profile)) {
+        for (std::size_t i = 0; i < std::size(SingleByte::LOW[0]) && low[i].byte != 0; ++i) {
+            if (low[i].code == code) {
+                sbc = low[i].byte;
+                return true;
+            }
+            if (low[i].byte == code) return false;
+        }
+    }
+    if (code >= 0x80 && isSevenBit(profile)) return false;
     if (const uint16_t* high = sbcHighTable(profile)) {
         if (code < 0x80) {
+            if (lowGraphicsUnassigned(profile, static_cast<uint8_t>(code))) return false;
             sbc = static_cast<uint8_t>(code);
             return true;
         }
+        if (code == SingleByte::Unassigned) return false;
         for (uint32_t i = 0; i < 128; ++i) {
             if (high[i] == code) {
                 sbc = static_cast<uint8_t>(0x80 + i);
@@ -849,7 +912,7 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
     const uint8_t lead = mbcs[0];
     if (isSbc(profile)) {
         length = 1;
-        return sbcToUnicode(static_cast<const uint8_t*>(profile), lead, code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
+        return sbcError(static_cast<const uint8_t*>(profile), lead, code);
     }
     if (isSjis(profile)) {
         const bool strict = isSjisX0208(profile);
@@ -1277,7 +1340,7 @@ int unitTarget(const void*, uint32_t code, Unit* target, uint32_t& length) {
 int sbcToUnit(const uint8_t* profile, uint8_t sbc, const void* target, uint32_t& code) {
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!target) return CES_ERROR_INVALID_DST_BUFFER;
-    return sbcToUnicode(profile, sbc, code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
+    return sbcError(profile, sbc, code);
 }
 
 template<bool BigEndian>
@@ -1454,6 +1517,54 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1258(void) {
     return singleByteProfile(SingleByte::Cp1258);
 }
 
+const uint8_t* APS5_VABI sceCesRefersUcsProfileAscii(void) {
+    return singleByteProfile(SingleByte::Ascii);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileAsciiWithKatakana(void) {
+    return singleByteProfile(SingleByte::AsciiWithKatakana);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileBs4730(void) {
+    return singleByteProfile(SingleByte::Bs4730);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileGbT1988(void) {
+    return singleByteProfile(SingleByte::GbT1988);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileGbT1988Tilde0x7e(void) {
+    return singleByteProfile(SingleByte::GbT1988Tilde0x7e);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201(void) {
+    return singleByteProfile(SingleByte::JisX0201);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201Katakana(void) {
+    return singleByteProfile(SingleByte::JisX0201Katakana);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201Roman(void) {
+    return singleByteProfile(SingleByte::JisX0201Roman);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201RomanTilde0x7e(void) {
+    return singleByteProfile(SingleByte::JisX0201RomanTilde0x7e);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201Tilde0x7e(void) {
+    return singleByteProfile(SingleByte::JisX0201Tilde0x7e);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileKsX1003(void) {
+    return singleByteProfile(SingleByte::KsX1003);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileKsX1003Tilde0x7e(void) {
+    return singleByteProfile(SingleByte::KsX1003Tilde0x7e);
+}
+
 void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void* sheet) {
     if (!sheet) return nullptr;
     std::memcpy(sheet, SJIS_TAG, sizeof(SJIS_TAG));
@@ -1574,7 +1685,7 @@ int APS5_VABI sceCesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8_t* utf8
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     uint32_t code = 0;
-    if (!sbcToUnicode(profile, sbc, code)) return CES_ERROR_UNASSIGNED_CODE;
+    if (const int result = sbcError(profile, sbc, code); result != 0) return result;
     uint8_t encoded[4];
     const uint32_t length = encodeUtf8(code, encoded);
     if (utf8_len) *utf8_len = length;

@@ -8,6 +8,7 @@
 #endif
 
 #include "SceTypes.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceSsl/include/Ssl.hpp"
@@ -28,6 +29,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <future>
 #include <map>
 #include <mutex>
@@ -526,7 +529,15 @@ int main(int argc, char** argv) {
     SceSsl::Data root{reinterpret_cast<std::uint8_t*>(const_cast<char*>(RootPem)), sizeof(RootPem)};
     SceSsl::Data* authorities[] = {&root};
     Require(sceSslLoadCert(ssl, 1, authorities, nullptr, nullptr) == 0, "trust loopback CA");
-    if (argc == 2 && std::string_view(argv[1]) == "--early") {
+    if (argc == 2 && std::string_view(argv[1]) == "--system-roots") {
+        const auto list = std::filesystem::current_path() / sceKernelGetFsSandboxRandomWord() / "common" / "cert" / "CA_LIST.cer";
+        std::filesystem::create_directories(list.parent_path());
+        std::ofstream(list, std::ios::binary | std::ios::trunc) << RootPem;
+        const int unloaded = sceSslInit_nid_postfix(8 * 1024 * 1024);
+        Require(unloaded > 0, "SSL context without certificates");
+        Success(unloaded, Mode::Normal);
+        Require(sceSslTerm_nid_postfix(unloaded) == 0, "SSL context without certificates term");
+    } else if (argc == 2 && std::string_view(argv[1]) == "--early") {
         for (const auto mode : {Mode::EarlyFinal, Mode::EarlyReset, Mode::EarlyEmpty, Mode::EarlyLarge}) EarlyResponse(ssl, mode);
         Failure(ssl, Mode::EarlyResetIncomplete);
 #ifdef _WIN32

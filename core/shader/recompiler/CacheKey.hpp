@@ -210,6 +210,10 @@ private:
         append(key, value.linearCentroid);
         append(key, value.pixelKillEnable);
         append(key, value.depthExportEnable);
+        if (value.depthExportEnable) {
+            append(key, std::bit_cast<std::uint32_t>(value.depthExportMin));
+            append(key, std::bit_cast<std::uint32_t>(value.depthExportMax));
+        }
         append(key, value.sampleMaskExportEnable);
         append(key, value.earlyZ);
         append(key, value.executeOnNoop);
@@ -231,6 +235,18 @@ private:
         append(key, value.targetMerge.samples);
         append(key, value.targetMerge.depthStencilWrites);
         append(key, value.targetMerge.depthStencilTests);
+        if (value.targetMerge.blend.enabled) {
+            const auto& blend = value.targetMerge.blend;
+            append(key, blend.snorm);
+            append(key, blend.colorSource);
+            append(key, blend.colorDestination);
+            append(key, blend.colorOperation);
+            append(key, blend.alphaSource);
+            append(key, blend.alphaDestination);
+            append(key, blend.alphaOperation);
+            append(key, blend.writeMask);
+            append(key, blend.constants);
+        }
         append(key, value.sampleOrder);
     }
 
@@ -321,6 +337,7 @@ private:
         append(key, value.nonConstantImageOffsets);
         append(key, value.srgbDecodeFormats);
         append(key, value.narrowSubgroupClock);
+        append(key, value.fragmentBarycentricBuiltins);
         append(key, value.float64DenormPreserve);
         append(key, value.depthRangeRemap);
         append(key, value.registrationModules);
@@ -337,6 +354,7 @@ private:
         append(key, value.largePixelFunctionLdsBuffer);
         append(key, value.pixelFunctionStorageDwords);
         append(key, value.deviceScopeLdsMemoryBarriers);
+        append(key, value.ldsLockFences);
     }
 };
 

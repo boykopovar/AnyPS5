@@ -30,6 +30,7 @@ int main() {
     constexpr auto invalidArgument = static_cast<std::int32_t>(0x81540001u);
     constexpr auto noCallback = static_cast<std::int32_t>(0x81540006u);
     Require(sceBluetoothHidRegisterCallback(nullptr, nullptr, nullptr) == notInitialized, "initialization check order");
+    Require(sceBluetoothHidRegisterCallback(&Callback, nullptr, nullptr) == notInitialized, "non-null callback before initialization");
     Require(sceBluetoothHidRegisterDevice(1, 2) == notInitialized, "registration before initialization");
     Require(sceBluetoothHidUnregisterDevice(1, 2) == notInitialized, "unregistration before initialization");
     Require(sceBluetoothHidUnregisterCallback() == notInitialized, "callback removal before initialization");
@@ -95,6 +96,8 @@ int main() {
     Require(threw, "set feature report did not throw");
     Require(sceBluetoothHidUnregisterDevice(0x44f, 0x1000) == 0, "device unregistration failed");
     Require(sceBluetoothHidUnregisterCallback() == 0, "callback unregistration failed");
+    Require(sceBluetoothHidUnregisterCallback() == noCallback, "duplicate callback unregistration");
+    Require(sceBluetoothHidRegisterDevice(0x44f, 0x1000) == noCallback, "device registration after callback unregistration");
     BluetoothHidThreadParam thread{};
     BluetoothHidParam filled;
     std::memset(&filled, 0xa5, sizeof(filled));
@@ -111,6 +114,7 @@ int main() {
     std::memset(&filled, 0x5a, sizeof(filled));
     Require(sceBluetoothHidParamInitialize(&filled, nullptr) == 0 && filled.threadParam == nullptr && filled.reserved == 0 && filled.padding == 0x5a5a5a5au, "a null thread parameter was not stored as given");
     Require(sceBluetoothHidParamInitialize(nullptr, &thread) == invalidArgument, "a null parameter block was not refused");
+    Require(sceBluetoothHidParamInitialize(nullptr, nullptr) == invalidArgument, "null parameter and null thread parameter were not refused");
     std::puts("BluetoothHid tests passed");
     return 0;
 }

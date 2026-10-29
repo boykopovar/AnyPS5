@@ -16,6 +16,13 @@ function(add_test_executable target)
     endif()
 endfunction()
 
+function(configure_host_test_executable target)
+    if(MINGW)
+        target_compile_options(${target} PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(${target} PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+endfunction()
+
 function(add_asan_test_options test options)
     if(ANYPS5_ENABLE_ASAN)
         set_property(TEST ${test} APPEND PROPERTY ENVIRONMENT_MODIFICATION "ASAN_OPTIONS=string_append::${options}")
@@ -89,7 +96,18 @@ if(ANYPS5_ENABLE_TSAN)
     endif()
 endif()
 
-if(ANYPS5_ENABLE_ASAN)
+option(ANYPS5_BUILD_FUZZERS "Build the relinker libFuzzer targets with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(ANYPS5_BUILD_FUZZERS)
+    if(NOT ANYPS5_RELINKER_ONLY)
+        message(FATAL_ERROR "ANYPS5_BUILD_FUZZERS requires ANYPS5_RELINKER_ONLY")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR APPLE OR WIN32)
+        message(FATAL_ERROR "ANYPS5_BUILD_FUZZERS requires Clang on Linux")
+    endif()
+    set(ANYPS5_RELINKER_CLI OFF CACHE BOOL "Build the native relinker command line" FORCE)
+    add_compile_options(-fsanitize=address,undefined,fuzzer-no-link -fno-sanitize=function -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+elseif(ANYPS5_ENABLE_ASAN)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
         message(FATAL_ERROR "ANYPS5_ENABLE_ASAN is supported only on Linux")
     endif()
@@ -228,12 +246,29 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_test_registration.py --scripts)
         add_test(NAME build_eligibility COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_eligibility.py)
+        add_test(NAME check_skips_ctest COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips_ctest.py)
+        set_tests_properties(check_skips_ctest PROPERTIES TIMEOUT 30)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
+        add_test(NAME sanitizer_report COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_report.py)
         add_test(NAME select_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py)
         add_test(NAME check_main_sync COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_main_sync.py)
+        set(select_tests_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${select_tests_source}")
+        file(STRINGS "${select_tests_source}" select_tests_classes REGEX "^class [A-Za-z0-9_]*Tests\\(")
+        foreach(test_class IN LISTS select_tests_classes)
+            string(REGEX REPLACE "^class ([A-Za-z0-9_]+).*" "\\1" test_class "${test_class}")
+            if(test_class STREQUAL "SelectTests")
+                set_tests_properties(select_tests PROPERTIES ENVIRONMENT "ANYPS5_SELECT_TEST_CLASS=SelectTests" TIMEOUT 30)
+            else()
+                add_test(NAME select_tests_${test_class} COMMAND ${Python3_EXECUTABLE} "${select_tests_source}" ${test_class})
+                set_tests_properties(select_tests_${test_class} PROPERTIES TIMEOUT 30)
+            endif()
+        endforeach()
         add_test(NAME configure_seed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_configure_seed.py ConfigureSeedTests)
         add_test(NAME configure_seed_paths COMMAND ${Python3_EXECUTABLE}
@@ -267,6 +302,14 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_own_branch.py)
         add_test(NAME pr_overlap_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_errors.py)
+        add_test(NAME pr_overlap_branch_scan COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_branch_scan.py)
+        add_test(NAME pr_overlap_progress COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_progress.py)
+        add_test(NAME pr_overlap_pages COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_pages.py)
+        add_test(NAME pr_overlap_export_cache COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_export_cache.py)
         add_test(NAME nid_database_cache COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_nid_names.py)
         add_test(NAME release_package COMMAND ${Python3_EXECUTABLE}
@@ -283,6 +326,25 @@ if(BUILD_TESTING)
         add_test(NAME pad_timeline COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pad_timeline.py)
         set_tests_properties(pad_timeline PROPERTIES TIMEOUT 20)
+        function(register_check_compile_remaining_tests)
+            if(TEST check_compile)
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py")
+                file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py"
+                    check_compile_lines REGEX "^class CheckCompile|^    def test_")
+                foreach(line IN LISTS check_compile_lines)
+                    if(line MATCHES "^class (CheckCompile[A-Za-z0-9_]*)")
+                        set(check_compile_class "${CMAKE_MATCH_1}")
+                    elseif(NOT check_compile_class MATCHES "^CheckCompile(Fixture|Tests|OutputTests)$")
+                        string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${line}")
+                        add_test(NAME check_compile_${check_compile_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile.py ${check_compile_class}.${test_case})
+                        set_tests_properties(check_compile_${check_compile_class}_${test_case} PROPERTIES TIMEOUT 30)
+                    endif()
+                endforeach()
+            endif()
+        endfunction()
+        cmake_language(DEFER CALL register_check_compile_remaining_tests)
         set(check_compile_modes_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_modes.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${check_compile_modes_source}")
         file(STRINGS "${check_compile_modes_source}" check_compile_modes_cases REGEX "^    def test_")
@@ -322,6 +384,29 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
         add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_alignment.py)
+        add_test(NAME trace_intervals_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_intervals_csv.py)
+        set_tests_properties(trace_intervals_csv PROPERTIES TIMEOUT 20)
+        set(trace_digest_test_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${trace_digest_test_source}")
+        file(STRINGS "${trace_digest_test_source}" trace_digest_cases REGEX "^class |^    def test_")
+        set(trace_digest_first TRUE)
+        foreach(test_case IN LISTS trace_digest_cases)
+            if(test_case MATCHES "^class ([A-Za-z0-9_]+)")
+                set(trace_digest_class "${CMAKE_MATCH_1}")
+            else()
+                string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
+                if(trace_digest_first)
+                    set_tests_properties(trace_digest PROPERTIES
+                        ENVIRONMENT "TRACE_DIGEST_TEST=${trace_digest_class}.${test_case}" TIMEOUT 20)
+                    set(trace_digest_first FALSE)
+                else()
+                    add_test(NAME trace_digest_${trace_digest_class}_${test_case} COMMAND ${Python3_EXECUTABLE}
+                        "${trace_digest_test_source}" "${trace_digest_class}.${test_case}")
+                    set_tests_properties(trace_digest_${trace_digest_class}_${test_case} PROPERTIES TIMEOUT 20)
+                endif()
+            endif()
+        endforeach()
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}

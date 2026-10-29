@@ -36,6 +36,7 @@ public:
     [[nodiscard]] const std::vector<IrBlock*>& BlockOrder() const;
 
 private:
+    std::shared_ptr<std::pmr::memory_resource> instructionNodes;
     std::vector<std::unique_ptr<IrBlock>> blocks;
     std::vector<IrBlock*> blockOrder;
     std::vector<std::unique_ptr<IrValue>> values;

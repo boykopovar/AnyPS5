@@ -248,7 +248,26 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("| libScePad | 1/3 (33.33%) | 2/3 (66.67%) | +33.33 pp |", progress.report(base, head))
         before = dict(self.report_library("libSceLarge", ["Ready"]), todo=100000)
         after = dict(before, todo=100001)
-        self.assertIn("| +0.00 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        self.assertIn("| -<0.0001 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        self.assertNotIn("-0.00 pp", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+
+    def test_report_shows_a_library_change_that_two_decimals_would_hide(self):
+        before = dict(self.report_library("libc", ["A"], ["T"]), done=1340, todo=11)
+        after = dict(self.report_library("libc", ["A", "B"], ["T"]), done=1341, todo=11)
+        self.assertIn("| libc | 1340/1351 (99.19%) | 1341/1352 (99.19%) | +0.0006 pp |",
+                      progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        same = dict(self.report_library("libc", ["B"], ["T"]), done=1340, todo=11)
+        self.assertIn("| +0.00 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(same)))
+
+    def test_report_compares_libraries_whose_counts_are_floats(self):
+        before = dict(self.report_library("libc", ["A"], ["T"]), done=1.0, todo=2.0)
+        after = dict(self.report_library("libc", ["A", "B"], ["T"]), done=2.0, todo=3.0)
+        report = progress.report(self.report_snapshot(before), self.report_snapshot(after))
+        self.assertIn("| libc | 1.0/3.0 (33.33%) | 2.0/5.0 (40.00%) | +6.67 pp |", report)
+        tiny_before = dict(before, done=1340.0, todo=11.0)
+        tiny_after = dict(after, done=1341.0, todo=11.0)
+        report = progress.report(self.report_snapshot(tiny_before), self.report_snapshot(tiny_after))
+        self.assertIn("| +0.00 pp |", report)
 
     def test_report_limits_library_rows(self):
         head = self.report_snapshot(*(self.report_library(f"libSce{i:03}", ["Ready"]) for i in range(103)))
@@ -676,6 +695,31 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, 2)
             self.assertIn(str(blocked), stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_aliased_reports_are_refused_and_left_unchanged(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir()
+            first, second = output / "progress.json", output / "progress.html"
+            first.write_text("json report", encoding="utf-8")
+            try:
+                second.hardlink_to(first)
+            except OSError:
+                self.skipTest("hard links are not available")
+            others = {name: output / name for name in ("badge-libraries.svg", "badge-shaders.svg", "progress.svg")}
+            for name, path in others.items():
+                path.write_text(name, encoding="utf-8")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_main([str(output)], libraries, shaders)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("progress.json and progress.html", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertEqual(first.read_text(encoding="utf-8"), "json report")
+            self.assertEqual(second.read_text(encoding="utf-8"), "json report")
+            for name, path in others.items():
+                self.assertEqual(path.read_text(encoding="utf-8"), name)
 
     def test_root_must_be_a_source_tree(self):
         with tempfile.TemporaryDirectory() as directory:

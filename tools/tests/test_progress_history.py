@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,44 @@ class HistoryReportOutputTests(unittest.TestCase):
 
 
 class ProgressHistoryTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "requires Windows read-only replacement semantics")
+    def test_readonly_cache_failure_cleans_temporary_and_can_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "history.json"
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "first", "int APS5_VABI A() { return 0; }\n")
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+                first = progress_history.collect("HEAD", cache)
+                previous = cache.read_bytes()
+                cache.chmod(stat.S_IREAD)
+                commit(root, "2026-01-02", "second", "int APS5_VABI B() { return 0; }\n")
+                try:
+                    with self.assertRaises(PermissionError):
+                        progress_history.collect("HEAD", cache)
+                    self.assertEqual(cache.read_bytes(), previous)
+                    self.assertEqual(list(root.glob(".history-*")), [])
+                finally:
+                    cache.chmod(stat.S_IREAD | stat.S_IWRITE)
+                    for path in root.glob(".history-*"):
+                        path.chmod(stat.S_IREAD | stat.S_IWRITE)
+                retried = progress_history.collect("HEAD", cache)
+                self.assertEqual(len(retried), 2)
+                self.assertEqual(retried[0], first[0])
+                self.assertEqual(len(json.loads(cache.read_text(encoding="utf-8"))["commits"]), 2)
+                self.assertEqual(list(root.glob(".history-*")), [])
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits are not supported on Windows")
+    def test_cache_replacement_retains_posix_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "history.json"
+            cache.write_bytes(b"previous cache")
+            cache.chmod(0o640)
+            progress_history.save_cache(cache, "rules", {})
+            self.assertEqual(stat.S_IMODE(cache.stat().st_mode), 0o640)
+            self.assertEqual(json.loads(cache.read_text(encoding="utf-8"))["rules"], "rules")
+            self.assertEqual(list(cache.parent.iterdir()), [cache])
+
     def test_cache_reuses_immutable_commits_and_invalidates_changed_rules(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -206,6 +245,28 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertIn("<!DOCTYPE html>", html)
             data = json.loads((output / "history.json").read_text(encoding="utf-8"))
             self.assertEqual(data, [point])
+
+    def test_main_rejects_aliased_output_reports(self):
+        point = {"date": "2026-01-01", "commit": "abc1234",
+                 "libraries": {"done": 1, "total": 2, "percent": 50.0},
+                 "shaders": {"done": 3, "total": 4, "percent": 75.0}}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir(parents=True)
+            report = output / "history.json"
+            alias = output / "history.html"
+            report.write_text("existing json", encoding="utf-8")
+            try:
+                os.link(report, alias)
+            except OSError:
+                self.skipTest("hard links unavailable")
+            errors = io.StringIO()
+            with patch.object(progress_history, "collect", return_value=[point]):
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                    progress_history.main([str(output)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertEqual(report.read_text(encoding="utf-8"), "existing json")
+            self.assertEqual(alias.read_text(encoding="utf-8"), "existing json")
 
 
 

@@ -603,6 +603,19 @@ short ClosedStreamEvents(int descriptor, short revents, short requested) {
     std::lock_guard lock(socket->modeMutex);
     return socket->sendShut ? revents : static_cast<short>(revents & ~POLLHUP);
 }
+#elif defined(__APPLE__)
+short ClosedStreamEvents(int descriptor, short revents, short requested) {
+    if ((revents & (POLLHUP | POLLERR)) != POLLHUP) return revents;
+    const auto socket = Find(descriptor);
+    if (!socket || socket->type != 1) return revents;
+    pollfd received{socket->value, POLLIN, 0};
+    pollfd sent{socket->value, POLLOUT, 0};
+    if (::poll(&received, 1, 0) < 0 || ::poll(&sent, 1, 0) < 0) return revents;
+    revents = static_cast<short>(revents & ~(POLLPRI | POLLRDBAND));
+    if ((received.revents & POLLHUP) && (sent.revents & POLLHUP)) return revents;
+    revents = static_cast<short>(revents & ~POLLHUP);
+    return (sent.revents & (POLLOUT | POLLHUP)) ? static_cast<short>(revents | (requested & POLLOUT)) : revents;
+}
 #endif
 [[noreturn]] void ThrowReadEndWritable(int descriptor) {
     throw std::runtime_error("poll: POLLOUT on the read end of pipe descriptor " + std::to_string(descriptor) + " is not supported");
@@ -1192,6 +1205,10 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
 }
 int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
                                     void* value, std::uint32_t* length) {
+    int netError = 0;
+    if (!GuestSockets::IsOpen(descriptor) && KernelGetSocketOption_nid_no_patch(descriptor, level, option, value, length, &netError)) {
+        return netError == 0 ? 0 : Fail(netError);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (level != 0xffff && level != 0 && level != 6 && level != 41) return Fail(22);
@@ -1869,7 +1886,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
                 ++ready;
                 continue;
             }
-            if (IsKqueueDescriptor(entry.descriptor)) {
+            if (IsKqueueDescriptor_nid_no_patch(entry.descriptor)) {
                 kqueues.push_back(i);
                 continue;
             }
@@ -1926,7 +1943,7 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
     }
     const auto collect = [&](std::size_t i, bool pipe) {
         auto& entry = descriptors[owners[i]];
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         if (!pipe) native[i].revents = ClosedStreamEvents(entry.descriptor, native[i].revents, native[i].events);
 #endif
         short revents = native[i].revents;

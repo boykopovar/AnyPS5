@@ -62,6 +62,13 @@ int main() {
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
 
+    Require(sceVrSetupDialogOpen(nullptr) == kErrArgNull);
+    param.size = 55;
+    Require(sceVrSetupDialogOpen(&param) == kErrArgNull);
+    param.size = sizeof(param);
+    Require(sceVrSetupDialogOpen(&param) == 0);
+    Require(sceVrSetupDialogGetStatus() == kStatusFinished);
+
     Require(sceVrSetupDialogClose() == 0);
     Require(sceVrSetupDialogTerminate() == 0);
     Require(sceVrSetupDialogTerminate() == kErrNotInitialized);

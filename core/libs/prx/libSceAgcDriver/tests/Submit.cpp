@@ -1,11 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -87,7 +89,9 @@ void testValidation() {
     expectFailure([] { sceAgcDriverAgrSubmitDcb(nullptr); });
     expectFailure([] { sceAgcDriverSubmitAcb(0x20, nullptr); });
     expectFailure([&] { sceAgcDriverSubmitAcb(0, &packet); });
-    expectFailure([&] { sceAgcDriverSubmitAcb(0x58, &packet); });
+    check(sceAgcDriverSubmitAcb(0x58, &packet) == 0, "queue 0x58 submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    expectFailure([&] { sceAgcDriverSubmitAcb(0x59, &packet); });
     packet.dw_num = 2;
     expectFailure([&] { sceAgcDriverSubmitDcb(&packet); });
     packet.dw_num = 3;
@@ -110,6 +114,14 @@ void testValidation() {
     packet.addr = reinterpret_cast<std::uint32_t*>(0x1000);
     expectFailure([&] { sceAgcDriverSubmitDcb(&packet); });
     AgcDriverWaitIdle_nid_postfix();
+}
+
+void testThreadDimensionGroups() {
+    using AgcDriver::DriverDetail::ThreadDimensionGroups;
+    check(ThreadDimensionGroups(0, 64) == 0, "no threads need no groups");
+    check(ThreadDimensionGroups(64, 64) == 1 && ThreadDimensionGroups(65, 64) == 2, "a partial group still counts");
+    check(ThreadDimensionGroups(0xffffffffu, 1) == 0xffffffffu, "one thread per group keeps the thread count");
+    check(ThreadDimensionGroups(0xffffffffu, 64) == 0x4000000u, "a thread count near 2^32 wrapped before the division");
 }
 
 void testReadOnlyResummarize() {
@@ -208,6 +220,7 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip-only queue submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(output->ready.load() == 1, "flip-only queue flip was not handed to its output");
+    check(AgcDriver::Graphics::HostImportFramesEnded() == 1, "the first flip did not end a host import frame");
     check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == 1 && sceAgcDriverGetEqEventType(events.data()) == 0, "flip on a queue that never requested a release interrupt did not raise its event");
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip-only queue event was not cleared");
     std::array<std::uint32_t, 8> words{0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0};
@@ -229,6 +242,7 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip after a release interrupt submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(output->ready.load() == 2, "flip after a release interrupt was not handed to its output");
+    check(AgcDriver::Graphics::HostImportFramesEnded() == 2, "a flip packet executed on the queue did not end a host import frame");
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip on a queue that already raised its own release interrupt raised a second event");
     words[2] = 1u << 24u;
     check(sceAgcDriverSubmitDcb(&packet) == 0, "release before sustained flips submit failed");
@@ -259,6 +273,13 @@ void testEndOfPipeInterrupts() {
         check(output->ready.load() == static_cast<int>(4 + sustainedFlips + index), "flip paired with a release interrupt was not handed to its output");
         check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a flip raised an event within two flips of the queue's own release interrupt");
     }
+    const auto framesBefore = AgcDriver::Graphics::HostImportFramesEnded();
+    const auto readyBefore = output->ready.load();
+    std::thread([] { AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{7, -1, 1, 0}); }).join();
+    AgcDriverWaitIdle_nid_postfix();
+    static_cast<void>(owner->GetTriggeredEvents(events.data(), 2));
+    check(output->ready.load() == readyBefore + 1, "flip from a thread that never submitted queue 0 was not handed to its output");
+    check(AgcDriver::Graphics::HostImportFramesEnded() == framesBefore + 1, "a CPU flip from a thread that never submitted queue 0 did not end a host import frame");
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
     alignas(8) static volatile std::uint64_t label = 0;
     const auto labelAddress = reinterpret_cast<std::uintptr_t>(&label);
@@ -430,6 +451,31 @@ void testWaitFreeSubmissionBehindHeldOne() {
     submit(0x20, commands(writeData(&label, 1)));
     check(waitFor(&done, 1, "queue 0 never passed the wait a later submission of the held queue satisfies") < std::chrono::milliseconds(500), "queue 0's wait on a label stored behind a held submission was not released at once");
     check(other == 1, "the held submission did not run before the one behind it");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testQueue0SubmissionAfterEarlierWaitFreeWork() {
+    alignas(64) static volatile std::uint32_t first = 0, second = 0;
+    constexpr std::uint32_t writes = 20000;
+    std::vector<std::uint32_t> words;
+    for (std::uint32_t i = 1; i <= writes; ++i) {
+        const auto write = writeData(&first, i);
+        words.insert(words.end(), write.begin(), write.end());
+    }
+    submit(0x20, words);
+    submit(0, commands(writeData(&second, 1)));
+    waitFor(&second, 1, "queue 0's submission never ran");
+    check(first == writes, "queue 0 ran a submission before another queue's earlier wait-free submission finished");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testQueue0SubmissionBehindWaitingQueue() {
+    alignas(64) static volatile std::uint32_t label = 0, other = 0, done = 0;
+    submit(0x20, commands(waitEqual(&label, 1)));
+    submit(0x20, commands(writeData(&other, 1)));
+    submit(0, commands(writeData(&label, 1), writeData(&done, 1)));
+    check(waitFor(&done, 1, "queue 0 never ran while another queue waited on it") < std::chrono::milliseconds(500), "queue 0 waited for a wait-free submission queued behind another queue's wait on queue 0");
+    waitFor(&other, 1, "the wait-free submission behind the satisfied wait never ran");
     AgcDriverWaitIdle_nid_postfix();
 }
 
@@ -1018,6 +1064,7 @@ int main(int argc, char** argv) {
         testRegisteredFastLaunchWorkgroupVertex();
         testEvents();
         testValidation();
+        testThreadDimensionGroups();
         testClearState();
         testSubmissions();
         testEndOfPipeInterrupts();
@@ -1030,6 +1077,8 @@ int main(int argc, char** argv) {
         testMultiAcbs();
         testWaitFreeSubmissionBehindHeldOne();
         testWaitFreeSubmissionTheCpuWaitsFor();
+        testQueue0SubmissionAfterEarlierWaitFreeWork();
+        testQueue0SubmissionBehindWaitingQueue();
         testMultiSubmissions();
         testShaderHeaderAlignment();
         testHeaderWithoutProgramAddress();

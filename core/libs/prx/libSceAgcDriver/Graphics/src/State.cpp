@@ -437,8 +437,8 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
 DepthTarget decodeDepthPlane(const Registers& cx) {
     const auto viewRegister = find(cx, 0x002);
     const auto view = viewRegister == cx.end() ? 0u : viewRegister->second;
-    const auto viewMip = (view >> 26u) & 0xfu;
     const auto maxMip = (read(cx, 0x010) >> 16u) & 0xfu;
+    const auto viewMip = maxMip == 0 ? 0u : (view >> 26u) & 0xfu;
     const auto zFormat = read(cx, 0x010) & 3u;
     const auto stencilRegister = find(cx, 0x011);
     const auto stencilInfo = stencilRegister == cx.end() ? 0u : stencilRegister->second;
@@ -466,7 +466,6 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     }
     const auto size = read(cx, 0x007);
     depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
-    if (maxMip == 0 && viewMip != 0) Require(false, "depth view mip " + std::to_string(viewMip) + " on a surface without mips");
     if (maxMip != 0) {
         char message[320];
         std::snprintf(message, sizeof(message), "depth view mip %u of %u at %ux%u (DB_Z_INFO 0x%08x, DB_DEPTH_VIEW 0x%08x)", viewMip, maxMip + 1u, depth.extent.width, depth.extent.height, read(cx, 0x010), view);
@@ -1431,7 +1430,9 @@ void ApplyDepthRemap(const Context& context, State& state) {
     const auto& viewport = state.viewport;
     const bool inRange = viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1;
     if (context.depthRangeUnrestricted || inRange) return;
-    Require(state.stages.path == ShaderPath::Vertex && !state.stages.mesh && !state.stages.tessellation, "viewport depth outside [0, 1] is remapped on the vertex path only");
+    const bool vertex = state.stages.path == ShaderPath::Vertex && !state.stages.tessellation;
+    const bool tessellation = state.stages.path == ShaderPath::Tessellation && state.stages.tessellation.has_value();
+    Require((vertex || tessellation) && !state.stages.mesh, "viewport depth outside [0, 1] is remapped on the vertex and tessellation paths only");
     Require(context.depthClamp, "viewport depth outside [0, 1] needs depth clamping to stand in for the console's clamp");
     const float clampMin = std::clamp(state.depthClampMin, 0.0f, 1.0f);
     const float clampMax = std::clamp(state.depthClampMax, 0.0f, 1.0f);
@@ -1451,6 +1452,20 @@ void ApplyDepthRemap(const Context& context, State& state) {
     state.viewport.maxDepth = clampMax;
     state.negativeOneToOne = false;
     state.depthClamp = true;
+}
+
+static bool SignedNormalizedFormat(VkFormat format) {
+    return format == VK_FORMAT_R8_SNORM || format == VK_FORMAT_R16_SNORM || format == VK_FORMAT_R8G8_SNORM || format == VK_FORMAT_R16G16_SNORM || format == VK_FORMAT_R8G8B8A8_SNORM || format == VK_FORMAT_B8G8R8A8_SNORM || format == VK_FORMAT_R16G16B16A16_SNORM;
+}
+
+static std::uint32_t NormalizedChannelMask(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_SNORM:
+        case VK_FORMAT_R16_SNORM: return 0x1u;
+        case VK_FORMAT_R8G8_SNORM:
+        case VK_FORMAT_R16G16_SNORM: return 0x3u;
+        default: return 0xfu;
+    }
 }
 
 State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
@@ -1808,7 +1823,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             Require(nibbles || (exportedMask & packedMask) == packedMask, "partial writes of " + packed + " color target are unsupported");
             if ((exportedMask & packedMask) != packedMask) {
                 Require(color.mipCount == 1u && color.depth == 1u && color.layers == 1u && color.arrayLastSlice == 0u, "partial writes of a mipmapped, volume or array " + std::string(PackedColorTargetName(color.packing)) + " color target are not implemented");
-                Require(std::ranges::none_of(result.colors, [](const ColorTarget& other) { return other.partialWriteMask != 0; }), "partial writes of more than one packed color target are not implemented");
+                Require(std::ranges::none_of(result.colors, [](const ColorTarget& other) { return other.partialWriteMask != 0; }), "a draw merges into one color target at most, so partial writes of a packed color target cannot join another merged color target");
                 color.partialWriteMask = PackedWriteMask(mapping, exportedMask);
                 state.colorWriteMask = 0;
                 if (color.samples > 1u) {
@@ -1835,7 +1850,13 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         if (const auto info = read(cx, 0x31c + slot * 0xfu); state.blendEnable && (info & 0x8000u) == 0 && ((info >> 8u) & 7u) <= 1u) {
             char detail[80];
             std::snprintf(detail, sizeof(detail), " (CB_COLOR_INFO 0x%08x, CB_BLEND%u_CONTROL 0x%08x)", info, slot, blend);
-            throw std::runtime_error(std::string("AGC graphics: blending unclamped normalized color is not implemented") + detail);
+            const std::string where = detail;
+            Require(color.samples == 1u && color.packing == ShaderRecompiler::ColorExportPacking::None, "blending unclamped normalized color into a multisampled or packed color target is not implemented" + where);
+            Require(!reversed && mapping != 0xecu, "blending unclamped normalized color into a color target with a reversed or alternate component order is not implemented" + where);
+            Require(!(secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor)), "dual-source blending of unclamped normalized color is not implemented" + where);
+            Require(std::ranges::none_of(result.colors, [&](const ColorTarget& other) { return &other != &color && other.partialWriteMask != 0; }), "a draw merges into one color target at most, so blending unclamped normalized color cannot join another merged color target" + where);
+            Require(!SignedNormalizedFormat(color.format) || (state.colorWriteMask & NormalizedChannelMask(color.format)) == NormalizedChannelMask(color.format), "blending unclamped signed normalized color with a write mask that skips a component is not implemented, since the shader rewrites the skipped component through a float and the code -128 would become -127" + where);
+            color.partialWriteMask = UnclampedBlendMask;
         }
         result.blends[color.exportIndex] = state;
     }
@@ -1905,10 +1926,11 @@ bool DepthStencilTests(const State& state) {
 }
 
 ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state) {
+    static_assert(VK_BLEND_FACTOR_ZERO == 0 && VK_BLEND_FACTOR_SRC_ALPHA_SATURATE == 14 && VK_BLEND_OP_ADD == 0 && VK_BLEND_OP_MAX == 4);
     ShaderRecompiler::TargetMerge merge;
     for (const auto& color : state.colors) {
         if (color.partialWriteMask == 0) continue;
-        Require(merge.mask == 0 && color.exportIndex < 8u && color.samples <= 8u, "a draw merges into one packed color target at most");
+        Require(merge.mask == 0 && color.exportIndex < 8u && color.samples <= 8u, "a draw merges into one color target at most");
         Require(color.samples == 1u || state.perSampleShading, "a merged multisampled color target needs per-sample shading");
         merge.target = static_cast<std::uint8_t>(color.exportIndex);
         merge.mask = color.partialWriteMask;
@@ -1916,6 +1938,19 @@ ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state) {
         merge.descriptor = EncodeTextureResource(TargetMergeSurface(color));
         merge.depthStencilWrites = DepthStencilWrites(state);
         merge.depthStencilTests = DepthStencilTests(state);
+        if (color.partialWriteMask != UnclampedBlendMask) continue;
+        const auto& attachment = state.blends.at(color.exportIndex);
+        auto& blend = merge.blend;
+        blend.enabled = true;
+        blend.snorm = SignedNormalizedFormat(color.format);
+        blend.colorSource = static_cast<std::uint8_t>(attachment.srcColorBlendFactor);
+        blend.colorDestination = static_cast<std::uint8_t>(attachment.dstColorBlendFactor);
+        blend.colorOperation = static_cast<std::uint8_t>(attachment.colorBlendOp);
+        blend.alphaSource = static_cast<std::uint8_t>(attachment.srcAlphaBlendFactor);
+        blend.alphaDestination = static_cast<std::uint8_t>(attachment.dstAlphaBlendFactor);
+        blend.alphaOperation = static_cast<std::uint8_t>(attachment.alphaBlendOp);
+        blend.writeMask = static_cast<std::uint8_t>(attachment.colorWriteMask & 0xfu);
+        for (std::size_t i = 0; i < 4; ++i) blend.constants[i] = std::bit_cast<std::uint32_t>(state.blendConstants[i]);
     }
     return merge;
 }
@@ -2332,7 +2367,7 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
             Require(target.samples == 1, "CB metadata pass over a multisampled color target, whose texels are on the host, is unsupported (only a CB resolve is modeled)");
         }
         Require((read(cx, 0x31c + slot * 0xfu) & 0x10000000u) == 0 || target.dccAddress != 0, "CB metadata pass over a mipmapped DCC color target, whose keys are not modeled");
-        if (target.cmaskAddress != 0 || target.dccAddress != 0) requireCovered(target);
+        if (target.dccAddress != 0 || (target.cmaskAddress != 0 && pass.mode != ColorMetadataPass::Mode::EliminateFastClear)) requireCovered(target);
         pass.targets.push_back(target);
     }
     return pass;

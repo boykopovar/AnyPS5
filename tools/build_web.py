@@ -33,22 +33,55 @@ def request(url):
     return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60)
 
 
+def release_metadata(release):
+    if not isinstance(release, dict):
+        raise ValueError("release metadata must be a JSON object")
+    for field in ("tag_name", "html_url"):
+        if not isinstance(release.get(field), str) or not release[field]:
+            raise ValueError(f"release metadata {field} must be nonempty text")
+    assets = release.get("assets")
+    if not isinstance(assets, list) or any(not isinstance(asset, dict) or not isinstance(asset.get("name"), str)
+                                         or not asset["name"] for asset in assets):
+        raise ValueError("release metadata assets must be a list of named asset objects")
+    return release
+
+
+def asset_metadata(asset, maximum):
+    name = asset["name"]
+    if type(asset.get("size")) is not int or not 0 < asset["size"] <= maximum:
+        raise ValueError(f"Invalid release asset {name}: archive size must be a positive integer no greater than {maximum}")
+    if not isinstance(asset.get("browser_download_url"), str) or not asset["browser_download_url"]:
+        raise ValueError(f"Invalid release asset {name}: browser_download_url must be nonempty text")
+    if asset.get("digest") is not None and not isinstance(asset["digest"], str):
+        raise ValueError(f"Invalid release asset {name}: digest must be text or null")
+    return asset
+
+
+def library_assets(release):
+    assets = {}
+    for platform in ("windows", "linux"):
+        name = f"prx-{platform}-{release['tag_name']}.zip"
+        matches = [asset for asset in release["assets"] if asset["name"] == name]
+        if len(matches) != 1:
+            raise ValueError(f"Missing or ambiguous release asset: {name}")
+        assets[platform] = asset_metadata(matches[0], 512 * 1024 * 1024)
+    return assets
+
+
 def publish_libraries(output, release=None):
     if release is None:
         with request("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest") as response:
             release = json.load(response)
+    release = release_metadata(release)
     tag = release["tag_name"]
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", tag):
         raise ValueError("Invalid release tag")
     manifest = {"tag": tag, "url": release["html_url"], "platforms": {}}
+    assets = library_assets(release)
     destination = output / "libraries"
     destination.mkdir(exist_ok=True)
     for platform in ("windows", "linux"):
-        name = f"prx-{platform}-{tag}.zip"
-        matches = [asset for asset in release["assets"] if asset["name"] == name]
-        if len(matches) != 1:
-            raise ValueError(f"Missing or ambiguous release asset: {name}")
-        asset = matches[0]
+        asset = assets[platform]
         temporary = destination / f"{platform}.download"
         try:
             digest = hashlib.sha256()
@@ -71,6 +104,10 @@ def publish_libraries(output, release=None):
                     raise ValueError("Invalid library archive")
                 if any(file.flag_bits & 1 for file in files):
                     raise ValueError(f"Encrypted release archive {asset['name']} is not supported")
+                if any(file.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for file in files):
+                    raise ValueError("Library ZIP archive compression must be Store or Deflate")
+                if any((file.external_attr >> 16) & 0o170000 not in (0, 0o100000, 0o040000) for file in files):
+                    raise ValueError("Library ZIP links and special files are not supported")
                 names = {}
                 for file in files:
                     if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
@@ -104,6 +141,7 @@ def publish_libraries(output, release=None):
 def publish_release(output):
     with request("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest") as response:
         release = json.load(response)
+    release = release_metadata(release)
     tag = release["tag_name"]
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", tag) or tag.endswith("."):
         raise ValueError("Invalid release tag")
@@ -111,9 +149,8 @@ def publish_release(output):
     matches = [asset for asset in release["assets"] if asset["name"] == name]
     if len(matches) != 1:
         raise ValueError(f"Missing or ambiguous release asset: {name}; publish a release with the web converter")
-    asset = matches[0]
-    if not 0 < asset["size"] <= 128 * 1024 * 1024:
-        raise ValueError("Invalid web release archive size")
+    asset = asset_metadata(matches[0], 128 * 1024 * 1024)
+    library_assets(release)
     with request(asset["browser_download_url"]) as response:
         data = response.read(asset["size"] + 1)
     if len(data) != asset["size"]:
@@ -191,6 +228,8 @@ def main(argv=None):
         for name in ("relinker_wasm.mjs", "relinker_wasm.wasm"):
             if not (output / "native" / name).is_file():
                 parser.error(f"Build relinker_wasm first: missing {name}")
+            if (output / "native" / name).stat().st_size == 0:
+                parser.error(f"Build relinker_wasm first: empty {name}")
         copy_sources(output)
         print(output)
         return 0

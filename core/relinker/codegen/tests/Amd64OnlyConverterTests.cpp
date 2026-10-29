@@ -536,6 +536,20 @@ void converterSegment() {
     requireFailure([&] { (void)converter->Convert(file, {segmentHeader(0x200)}); }, "Segment exceeding the file was accepted");
 }
 
+void converterSegmentMappedAtInt64Max() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter();
+    const auto file = segmentFixture();
+    const Domain::ProgramHeader mappedAtInt64Max{1, 5, 0x200, 0x8000000000000000, 0, 20, 20, 16};
+    const auto converted = converter->Convert(file, {mappedAtInt64Max});
+    require(converted.ReplacedCount == 1 && converted.Trampolines.size() == 1, "Converter misclassified a segment mapped at 2^63");
+    auto branchInto = file;
+    branchInto[0x207] = 0x02;
+    requireFailure([&] { (void)converter->Convert(branchInto, {mappedAtInt64Max}); }, "A branch into an AMD-only instruction was accepted in a segment mapped at 2^63");
+    branchInto[0x207] = 0x80;
+    const auto backward = converter->Convert(branchInto, {mappedAtInt64Max});
+    require(backward.ReplacedCount == 1 && backward.Trampolines.size() == 1, "A backward branch from a segment mapped at 2^63 changed the conversion");
+}
+
 void converterRipRelativeFollower() {
     const auto converter = Codegen::MakeAmd64OnlyConverter();
     const auto withFollower = [](const Bytes& following) {
@@ -2327,6 +2341,7 @@ int main() {
         rdpruExecution();
         mcommitExecution();
         converterSegment();
+        converterSegmentMappedAtInt64Max();
         converterRipRelativeFollower();
         converterSha256();
         converterSha1();

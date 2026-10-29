@@ -13,6 +13,7 @@
 #include "prx/libc/include/FailureReport.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -107,6 +108,19 @@ void testNopPad() {
     largest[0] = 0xfffe1000u;
     check(AgcDriver::Pm4::PacketWords(largest[0]) == largest.size(), "the largest counted NOP is not sized by its count");
     AgcDriver::Pm4::Validate(largest, 0);
+}
+
+void testWorkloadNopPayloadsIgnored() {
+    AgcDriver::QueueState state;
+    for (const auto& packet : {
+        makePacket(0x10, {1, 0x18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}),
+        makePacket(0x10, {1, 33, 0xffffffffu, 0xfffffffdu, 0, 0, 0, 0, 0, 0, 0}),
+        makePacket(0x10, {1, 0, 0, 0, 0, 0, 0, 0}),
+    }) execute(state, packet);
+    check(state.markers.empty() && state.indexBase == 0 && !state.indexBufferSize && state.indexType == 0 &&
+        state.instanceCount == 1 && state.predication.operation == 0 && state.predication.address == 0 &&
+        state.shader.begin() == state.shader.end() && !state.savedContext && state.constantRam.empty(),
+        "a workload NOP payload reached queue state");
 }
 
 void testRegisters() {
@@ -835,6 +849,35 @@ void testWriteChangedStoresExactlyTheChangedRuns() {
     for (std::size_t i = 0; i < sizeof(guest); ++i) {
         const auto expected = current[i] != original[i] ? static_cast<std::uint8_t>(current[i]) : static_cast<std::uint8_t>(0xa0u ^ i);
         check(guest[i] == expected, "write-back stored a byte the GPU did not change or missed one it did");
+    }
+}
+
+void testWriteChangedChunksOfEveryDensity() {
+    alignas(64) static std::uint8_t guest[128];
+    constexpr std::size_t Tail = 5;
+    std::vector<std::byte> original(96 + Tail), current(96 + Tail);
+    for (std::size_t i = 0; i < original.size(); ++i) original[i] = current[i] = static_cast<std::byte>(i);
+    const std::array<std::uint32_t, 6> masks = {0x0421u, 0x8421u, 0x8423u, 0xfb7bu, 0x5ad7u, 0xffffu};
+    for (std::size_t chunk = 0; chunk < masks.size(); ++chunk) {
+        for (std::size_t bit = 0; bit < 16; ++bit) {
+            if ((masks[chunk] >> bit) & 1u) current[chunk * 16 + bit] ^= std::byte{0xff};
+        }
+    }
+    current[96] ^= std::byte{0xff};
+    current[99] ^= std::byte{0xff};
+    const auto limit = AgcDriver::GuestMemory::ChangedByteStoreLimit();
+    check(limit == 4u || limit == 16u, "the byte-store limit is neither the masked-store cut-off nor every density");
+    for (const std::size_t offset : {std::size_t{0}, std::size_t{1}}) {
+        const auto size = offset == 0 ? std::size_t{96} : current.size();
+        for (const auto byteStoreLimit : {0u, 4u, 16u, limit}) {
+            for (std::size_t i = 0; i < sizeof(guest); ++i) guest[i] = static_cast<std::uint8_t>(0xa0u ^ i);
+            AgcDriver::GuestMemory::WriteChanged(reinterpret_cast<std::uintptr_t>(guest + offset), std::span(current).first(size), std::span(original).first(size), byteStoreLimit);
+            for (std::size_t i = 0; i < sizeof(guest); ++i) {
+                const bool inside = i >= offset && i - offset < size;
+                const auto expected = inside && current[i - offset] != original[i - offset] ? static_cast<std::uint8_t>(current[i - offset]) : static_cast<std::uint8_t>(0xa0u ^ i);
+                check(guest[i] == expected, "write-back of chunks with 3, 4, 5, 13, 10 and 16 changed bytes, aligned or one byte off with a 5-byte tail, stored a byte the GPU did not change or missed one it did");
+            }
+        }
     }
 }
 
@@ -2095,8 +2138,10 @@ int main(int argc, char** argv) {
         }
         testCatalog();
         testNopPad();
+        testWorkloadNopPayloadsIgnored();
         testRewindPayloadBits();
         testWriteChangedKeepsUntouchedBytes();
+        testWriteChangedChunksOfEveryDensity();
         testWriteChangedStoresExactlyTheChangedRuns();
         testRegisters();
         testRegisterFile();
