@@ -19,6 +19,7 @@ static constexpr int GUEST_SIGUSR1 = 30;
 static constexpr int GUEST_CREATE_DETACHED = 1;
 static constexpr int DETACHED_ROUNDS = 200;
 static constexpr auto SUSPENDED_WINDOW = std::chrono::milliseconds(50);
+static constexpr std::size_t THREAD_STACK_SIZE = 256 * 1024;
 static void* const CANCELED = reinterpret_cast<void*>(std::uintptr_t{1});
 static void* const FINISHED = reinterpret_cast<void*>(std::uintptr_t{7});
 
@@ -38,6 +39,7 @@ static std::atomic<bool> release{false};
 static std::atomic<bool> stopResuming{false};
 static std::atomic<int> raised{0};
 static std::atomic<Pthread> raisedOn{nullptr};
+alignas(16) static unsigned char threadStack[THREAD_STACK_SIZE];
 
 static void* APS5_VABI Record(void* opaque) {
     static_cast<Started*>(opaque)->ran.store(true);
@@ -178,6 +180,7 @@ static void ReportsCreateSuspendedInAttrGet(int (APS5_VABI* get)(Pthread, Pthrea
     Require(pthread_attr_init_nid_postfix(&attr) == 0, "pthread_attr_init failed");
     Require(get(suspended, &attr) == 0, "getting the attributes of a suspended thread failed");
     Pthread copy = nullptr;
+    Require(pthread_attr_setstack_nid_postfix(&attr, threadStack, sizeof(threadStack)) == 0, "pthread_attr_setstack failed");
     Require(pthread_create_nid_postfix(&copy, &attr, Record, &second) == 0, "pthread_create with the attributes of a suspended thread failed");
     std::this_thread::sleep_for(SUSPENDED_WINDOW);
     Require(!second.ran.load(), "a thread created with the attributes of a suspended thread ran before it was resumed");
@@ -192,6 +195,7 @@ static void ReportsCreateSuspendedInAttrGet(int (APS5_VABI* get)(Pthread, Pthrea
     Require(get(running, &attr) == 0, "getting the attributes of a running thread failed");
     Started third;
     Pthread plain = nullptr;
+    Require(pthread_attr_setstack_nid_postfix(&attr, threadStack, sizeof(threadStack)) == 0, "pthread_attr_setstack failed");
     Require(pthread_create_nid_postfix(&plain, &attr, Record, &third) == 0, "pthread_create with the attributes of a running thread failed");
     Require(pthread_join_nid_postfix(plain, &result) == 0 && result == FINISHED && third.ran.load(), "a thread created with the attributes of a running thread did not run");
     release.store(true);
