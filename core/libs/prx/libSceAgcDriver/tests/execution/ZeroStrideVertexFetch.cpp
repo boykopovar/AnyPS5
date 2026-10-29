@@ -124,6 +124,28 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     device.WaitIdle();
 }
 
+void DescriptorDiagnostics(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t component = 0; component < 4u; ++component) {
+        for (const auto selector : {2u, 3u}) {
+            const auto shift = component * 3u;
+            const Case value{3u, 16u, true, "reserved selector", (0xfacu & ~(7u << shift)) | (selector << shift)};
+            const auto fields = VertexBufferDescriptor(value);
+            char expected[192];
+            std::snprintf(expected, sizeof(expected), "reserved prepared vertex component selector %u at location 0 component %u (V#=[%08x %08x %08x %08x])",
+                selector, component, fields[0], fields[1], fields[2], fields[3]);
+            bool rejected = false;
+            try {
+                Draw(device, value);
+            } catch (const std::runtime_error& error) {
+                const std::string message(error.what());
+                Require(message.find(expected) != std::string::npos, "reserved selector error did not identify the component and descriptor: " + message);
+                rejected = true;
+            }
+            Require(rejected, "a reserved vertex component selector was accepted");
+        }
+    }
+}
+
 void Check(const Case& value) {
     for (std::uint32_t vertex = 0; vertex < Vertices; ++vertex) {
         for (std::uint32_t component = 0; component < 4u; ++component) {
@@ -169,6 +191,7 @@ int main() {
             Draw(*device, value);
             Check(value);
         }
+        DescriptorDiagnostics(*device);
         std::puts("zero-stride vertex fetch tests passed");
         return 0;
     } catch (const std::exception& error) {

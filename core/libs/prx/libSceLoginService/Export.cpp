@@ -1,8 +1,7 @@
+#include "prx/libSceLoginService/include/Api.hpp"
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct LoginServiceDeviceRequest;
 
 extern "C" {
 

@@ -282,6 +282,54 @@ void applyAndMismatch() {
     require(PatchTarget(bytes, "other", entries).Applied.empty() && bytes == original, "entry hit another target");
 }
 
+void programmaticWidths() {
+    auto bytes = twoSegmentFixture();
+    const auto original = bytes;
+    const ElfReader reader(original);
+    const std::vector<PatchEntry> invalid{
+        entry("t", 0x1000, {0}, {9, 8}),
+        entry("t", 0x1000, {0, 1}, {9}),
+        entry("t", 0x1000, {}, {}),
+        entry("t", 0x1000, {}, {9}),
+        entry("t", 0x1000, {0}, {}),
+    };
+    for (const auto& patch : invalid) {
+        const std::vector<PatchEntry> entries{entry("t", 0x1100, {0x80}, {1}), patch};
+        rejects([&] { ResolveRanges(reader, entries); }, "same nonzero width");
+        rejects([&] { PatchTarget(bytes, "t", entries); }, "same nonzero width");
+        require(bytes == original, "an invalid patch width wrote bytes");
+        rejects([&] { ApplyPatches(bytes, "t", entries, {{0x2000, 1, 0x1100}, {0x1000, patch.Expected.size(), 0x1000}}); }, "same nonzero width");
+        require(bytes == original, "direct application of an invalid patch width wrote bytes");
+        for (const bool outputMode : {false, true}) {
+            PatchFile file;
+            file.MainTarget = "t";
+            file.Entries = entries;
+            rejects([&] { VerifyPatches(file, {{"t", original}}, {}, outputMode); }, "same nonzero width");
+        }
+    }
+}
+
+void applicationRangeWidths() {
+    const std::vector<std::uint8_t> original{0, 1, 2, 3};
+    auto bytes = original;
+    const std::vector<PatchEntry> entries{entry("t", 0x1000, {0}, {9}), entry("t", 0x1002, {2, 3}, {8, 7})};
+    for (const std::uint64_t length : {0u, 1u, 3u}) {
+        rejects([&] { ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}, {2, length, 0x1002}}); }, "range length does not match");
+        require(bytes == original, "a mismatched range length wrote bytes");
+    }
+    rejects([&] { ApplyPatches(bytes, "t", {entry("t", 0x1003, {3, 4}, {8, 7})}, {{3, 1, 0x1003}}); }, "range length does not match");
+    require(bytes == original, "a truncated comparison range wrote bytes");
+    for (const std::uint64_t offset : std::array<std::uint64_t, 4>{3, 4, 5, UINT64_MAX}) {
+        rejects([&] { ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}, {offset, 2, 0x1002}}); }, "range exceeds the image");
+        require(bytes == original, "an out-of-bounds patch wrote bytes");
+    }
+    rejects([&] { ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}}); }, "ranges do not match");
+    require(bytes == original, "a missing range wrote bytes");
+    const auto applied = ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}, {2, 2, 0x1002}});
+    require(bytes == std::vector<std::uint8_t>({9, 1, 8, 7}) && applied.size() == 2, "valid boundary patches failed");
+    require(ApplyPatches(bytes, "t", {}, {}).empty(), "empty patch list was rejected");
+}
+
 void overlapWithWriters() {
     const std::vector<PatchedRange> patched{{0x1010, 2, 0x401010}};
     const auto reject = [&](const WriterSites& sites, const std::string& writer) { rejects([&] { CheckOverlaps("t", patched, sites); }, writer); };
@@ -305,6 +353,14 @@ void overlapWithWriters() {
     CheckOverlaps("t", patched, {.Traps = trapBefore});
     const std::vector<WriterRange> window{{0x100f, 4, "window"}};
     reject({.Traps = window}, "window");
+    const std::vector<Codegen::TrampolineSite> frame{{0x1011, 0x401011, 5, {}, {}, 0}};
+    reject({.RedZoneSites = frame}, "red-zone frame site");
+    const std::vector<Codegen::TrampolineSite> frameBefore{{0x100b, 0x40100b, 5, {}, {}, 0}};
+    CheckOverlaps("t", patched, {.RedZoneSites = frameBefore});
+    const std::vector<Codegen::RedZoneDisplacement> moved{{0x100f, {0x10, 0, 0, 0}}};
+    reject({.RedZoneDisplacements = moved}, "red-zone moved displacement");
+    const std::vector<Codegen::RedZoneDisplacement> movedBefore{{0x100f, {0x10}}};
+    CheckOverlaps("t", patched, {.RedZoneDisplacements = movedBefore});
 }
 
 void conversion() {
@@ -340,9 +396,66 @@ void conversion() {
     rejects([&] { converter.Convert(conversionInput(executable), failing); }, "expected 07 found 00");
     failing.Patches = {entry("custom-name.bin", 0x1000, {0xc3, 0}, {0, 0}), entry("custom-name.bin", 0x1001, {0}, {1})};
     rejects([&] { converter.Convert(conversionInput(executable), failing); }, "overlaps");
+    for (const auto target : {TargetSystem::Linux, TargetSystem::Windows, TargetSystem::MacOs}) {
+        failing.Target = target;
+        for (const char* name : {"custom-name.bin", "sce_module/plugin.prx"}) {
+            failing.Patches = {entry(name, 0x1001, {0}, {9, 8})};
+            rejects([&] { converter.Convert(conversionInput(executable), failing); }, "same nonzero width");
+        }
+    }
 
     const auto repeated = converter.Convert(conversionInput(executable), plain);
     require(repeated.Executable == baseline.Executable && repeated.Modules.front().Bytes == baseline.Modules.front().Bytes, "no entries changed the output");
+}
+
+std::vector<std::uint8_t> framedLeafFixture() {
+    auto bytes = conversionFixture();
+    Io::WriteU64(bytes, 64 + 32, 0x80);
+    Io::WriteU64(bytes, 64 + 40, 0x80);
+    std::fill(bytes.begin() + 0x1000, bytes.begin() + 0x1080, 0xcc);
+    const std::vector<std::uint8_t> caller{0xe8, 0x3b, 0x00, 0x00, 0x00, 0xc3};
+    const std::vector<std::uint8_t> leaf{0x53, 0x41, 0x56, 0x41, 0x57, 0x48, 0x89, 0x7c, 0x24, 0xf0, 0x48, 0x8b, 0x04, 0x24, 0x48, 0x8b, 0x44, 0x24, 0x08, 0x41, 0x5f, 0x41, 0x5e, 0x5b, 0xc3};
+    std::copy(caller.begin(), caller.end(), bytes.begin() + 0x1000);
+    std::copy(leaf.begin(), leaf.end(), bytes.begin() + 0x1040);
+    const auto ehFrameHeader = 64 + 7 * 56;
+    Io::WriteU32(bytes, ehFrameHeader, 0x6474e550);
+    Io::WriteU32(bytes, ehFrameHeader + 4, 4);
+    for (const auto field : {8, 16, 24}) Io::WriteU64(bytes, ehFrameHeader + field, 0x2900);
+    Io::WriteU64(bytes, ehFrameHeader + 32, 32);
+    Io::WriteU64(bytes, ehFrameHeader + 40, 32);
+    Io::WriteU64(bytes, ehFrameHeader + 48, 4);
+    Io::WriteU32(bytes, 0x2800, 9);
+    const std::vector<std::uint8_t> cie{1, 0, 1, 0x78, 16};
+    std::copy(cie.begin(), cie.end(), bytes.begin() + 0x2808);
+    Io::WriteU32(bytes, 0x2840, 20);
+    Io::WriteU32(bytes, 0x2844, 0x44);
+    Io::WriteU64(bytes, 0x2848, 0x1040);
+    Io::WriteU64(bytes, 0x2850, leaf.size());
+    bytes[0x2900] = 1;
+    bytes[0x2902] = 3;
+    Io::WriteU64(bytes, 0x2904, 0x2800);
+    Io::WriteU32(bytes, 0x290c, 1);
+    Io::WriteU64(bytes, 0x2910, 0x1040);
+    Io::WriteU64(bytes, 0x2918, 0x2840);
+    return bytes;
+}
+
+void framedLeafPatches() {
+    TestProgress progress;
+    const Conversion converter(progress);
+    const auto executable = framedLeafFixture();
+    ConversionOptions options;
+    options.TargetName = "custom-name.bin";
+    options.Target = TargetSystem::Windows;
+    options.FrameRedZone = true;
+    converter.Convert(conversionInput(executable), options);
+    require(progress.Messages.find("1 framed (1 without a frame pointer, 1 rsp operands moved, 2 in 1 operand stubs; 1 exits)") != std::string::npos, "the fixture's leaf was not framed with a moved displacement and an operand stub: " + progress.Messages);
+    options.Patches = {entry("custom-name.bin", 0x1010, {0xcc}, {0x90})};
+    require(converter.Convert(conversionInput(executable), options).AppliedPatches.size() == 1, "a patch outside the framed leaf was not applied");
+    options.Patches = {entry("custom-name.bin", 0x1049, {0xf0}, {0xe8})};
+    rejects([&] { converter.Convert(conversionInput(executable), options); }, "overlaps red-zone moved displacement at off=0x1049 length 1");
+    options.Patches = {entry("custom-name.bin", 0x104c, {0x04}, {0x0c})};
+    rejects([&] { converter.Convert(conversionInput(executable), options); }, "overlaps red-zone frame site at off=0x104a length 9");
 }
 
 void targets() {
@@ -529,8 +642,11 @@ int main() {
         ranges();
         headerRange();
         applyAndMismatch();
+        programmaticWidths();
+        applicationRangeWidths();
         overlapWithWriters();
         conversion();
+        framedLeafPatches();
         targets();
         verify();
         rangeFailureInVerify();

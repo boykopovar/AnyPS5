@@ -245,19 +245,7 @@ bool runsAllStartingLanes(const IrProgram& program, const IrBlock* target) {
     return false;
 }
 
-bool holdsStartingLanes(const IrProgram& program, const IrValue& word, std::uint32_t index, std::uint32_t depth = 0) {
-    if (depth > 8u) return false;
-    if (word.Opcode() == IrOpcode::BitwiseAnd32) {
-        return holdsStartingLanes(program, resolveArg(word, 0), index, depth + 1u) && holdsStartingLanes(program, resolveArg(word, 1), index, depth + 1u);
-    }
-    if (word.Opcode() == IrOpcode::BitwiseOr32) {
-        return holdsStartingLanes(program, resolveArg(word, 0), index, depth + 1u) || holdsStartingLanes(program, resolveArg(word, 1), index, depth + 1u);
-    }
-    if (word.Opcode() != IrOpcode::CompositeExtractU32x4 || !isImmediateU32(resolveArg(word, 1), index)) return false;
-    const auto& ballot = resolveArg(word, 0);
-    if (ballot.Opcode() != IrOpcode::Ballot || !runsAllStartingLanes(program, ballot.Parent())) return false;
-    const auto& condition = resolveArg(ballot, 0);
-    if (isImmediate(condition, IrType::U1)) return condition.ImmediateBool();
+bool isRealLaneCondition(const IrValue& condition) {
     if (condition.Opcode() != IrOpcode::IEqual32) return false;
     const auto helper = [](const IrValue& value) {
         if (value.Opcode() != IrOpcode::GetBuiltin) return false;
@@ -269,7 +257,49 @@ bool holdsStartingLanes(const IrProgram& program, const IrValue& word, std::uint
     return (helper(lhs) && isImmediateU32(rhs, 0u)) || (helper(rhs) && isImmediateU32(lhs, 0u));
 }
 
-bool foldStartingQuadBitTest(const IrProgram& program, IrBuilder& builder, IrValue& inst) {
+enum class LaneCoverage { Real, Quads };
+
+constexpr std::uint32_t StartingLaneDepth = 8u;
+
+bool holdsStartingLanes(const IrProgram& program, const IrValue& word, std::uint32_t index, LaneCoverage coverage, std::uint32_t depth = 0) {
+    if (depth > StartingLaneDepth) return false;
+    if (word.Opcode() == IrOpcode::BitwiseAnd32) {
+        return holdsStartingLanes(program, resolveArg(word, 0), index, coverage, depth + 1u) && holdsStartingLanes(program, resolveArg(word, 1), index, coverage, depth + 1u);
+    }
+    if (word.Opcode() == IrOpcode::BitwiseOr32) {
+        return holdsStartingLanes(program, resolveArg(word, 0), index, coverage, depth + 1u) || holdsStartingLanes(program, resolveArg(word, 1), index, coverage, depth + 1u);
+    }
+    if (word.Opcode() == IrOpcode::CompositeExtractU64 && isImmediateU32(resolveArg(word, 1), index)) {
+        const auto& mask = resolveArg(word, 0);
+        if (mask.Opcode() != IrOpcode::WqmU64) return false;
+        const auto& lanes = resolveArg(mask, 0);
+        return lanes.Opcode() == IrOpcode::CompositeConstructU64 && holdsStartingLanes(program, resolveArg(lanes, index), index, LaneCoverage::Real, depth + 1u);
+    }
+    if (coverage == LaneCoverage::Quads) return false;
+    if (word.Opcode() != IrOpcode::CompositeExtractU32x4 || !isImmediateU32(resolveArg(word, 1), index)) return false;
+    const auto& ballot = resolveArg(word, 0);
+    if (ballot.Opcode() != IrOpcode::Ballot || !runsAllStartingLanes(program, ballot.Parent())) return false;
+    const auto& condition = resolveArg(ballot, 0);
+    return isImmediate(condition, IrType::U1) ? condition.ImmediateBool() : isRealLaneCondition(condition);
+}
+
+IrValue* startingRealLaneCondition(const IrProgram& program, const IrValue& word, std::uint32_t index, std::uint32_t depth = 0u) {
+    if (depth > StartingLaneDepth) return nullptr;
+    if (word.Opcode() == IrOpcode::BitwiseAnd32) {
+        for (std::size_t side = 0u; side < 2u; ++side) {
+            auto* condition = startingRealLaneCondition(program, resolveArg(word, side), index, depth + 1u);
+            if (condition != nullptr && holdsStartingLanes(program, resolveArg(word, 1u - side), index, LaneCoverage::Real, depth + 1u)) return condition;
+        }
+        return nullptr;
+    }
+    if (word.Opcode() != IrOpcode::CompositeExtractU32x4 || !isImmediateU32(resolveArg(word, 1), index)) return nullptr;
+    const auto& ballot = resolveArg(word, 0);
+    if (ballot.Opcode() != IrOpcode::Ballot || !runsAllStartingLanes(program, ballot.Parent())) return nullptr;
+    auto& condition = resolveArg(ballot, 0);
+    return isRealLaneCondition(condition) ? &condition : nullptr;
+}
+
+bool foldStartingLaneBitTest(const IrProgram& program, IrBuilder& builder, IrValue& inst) {
     if (program.Resources().stage != IrShaderStage::Pixel) return false;
     auto& left = resolveArg(inst, 0);
     auto& right = resolveArg(inst, 1);
@@ -291,14 +321,13 @@ bool foldStartingQuadBitTest(const IrProgram& program, IrBuilder& builder, IrVal
     } else if (program.WaveSize() != 32u) {
         return false;
     }
-    if (low->Opcode() != IrOpcode::CompositeExtractU64 || !isImmediateU32(resolveArg(*low, 1), 0u)) return false;
-    const auto& wqm = resolveArg(*low, 0);
-    if (high != nullptr && (high->Opcode() != IrOpcode::CompositeExtractU64 || &resolveArg(*high, 0) != &wqm || !isImmediateU32(resolveArg(*high, 1), 1u))) return false;
-    if (wqm.Opcode() != IrOpcode::WqmU64) return false;
-    const auto& lanes = resolveArg(wqm, 0);
-    if (lanes.Opcode() != IrOpcode::CompositeConstructU64 || !holdsStartingLanes(program, resolveArg(lanes, 0), 0u)) return false;
-    if (high != nullptr && !holdsStartingLanes(program, resolveArg(lanes, 1), 1u)) return false;
-    replaceWith(inst, builder.ConstantBool(true));
+    if (holdsStartingLanes(program, *low, 0u, LaneCoverage::Quads) && (high == nullptr || holdsStartingLanes(program, *high, 1u, LaneCoverage::Quads))) {
+        replaceWith(inst, builder.ConstantBool(true));
+        return true;
+    }
+    auto* condition = startingRealLaneCondition(program, *low, 0u);
+    if (condition == nullptr || (high != nullptr && startingRealLaneCondition(program, *high, 1u) != condition)) return false;
+    replaceWith(inst, *condition);
     return true;
 }
 
@@ -1221,7 +1250,7 @@ bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
             return foldU32(builder, value, [](std::uint32_t a, std::uint32_t b) { return std::max(a, b); });
         }
         case IrOpcode::IEqual32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a == b; }) || foldEqualityByValueSet(builder, value, true, facts);
-        case IrOpcode::INotEqual32: return foldConstantBitTest(builder, value) || foldStartingQuadBitTest(program, builder, value) || foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a != b; }) || foldEqualityByValueSet(builder, value, false, facts);
+        case IrOpcode::INotEqual32: return foldConstantBitTest(builder, value) || foldStartingLaneBitTest(program, builder, value) || foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a != b; }) || foldEqualityByValueSet(builder, value, false, facts);
         case IrOpcode::ULessThan32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a < b; }) || foldULessThanByRange(builder, value, facts);
         case IrOpcode::ULessThanEqual32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a <= b; });
         case IrOpcode::UGreaterThan32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a > b; });

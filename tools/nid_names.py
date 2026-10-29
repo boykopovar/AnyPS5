@@ -24,7 +24,7 @@ CPP_TOKEN = re.compile(
     r'|(?P<string>(?:u8|u|U|L)?"(?:\\[\s\S]|[^"\\])*")'
     r"|(?P<char>(?:u8|u|U|L)?'(?:\\[\s\S]|[^'\\])*')"
     r"|(?P<code>(?:[0-9]|\.[0-9])[A-Za-z0-9_.']*|[A-Za-z_][A-Za-z0-9_]*|\S)")
-DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:->\s*[^;{]+)?(?:try\s*)?\{")
 NID_POSTFIX = "_nid_postfix"
 ASM_FUNCTION_MACROS = {"APS5_ASM_FUNCTION", "APS5_SIGNAL_ASM_FUNCTION"}
 
@@ -47,17 +47,7 @@ def strip_nid_postfix(name):
     return re.sub(r"_nid_disambig[0-9]+$", "", name.removesuffix(NID_POSTFIX))
 
 
-def load_db(path):
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        print("downloading NID database to %s ..." % path, file=sys.stderr)
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as download:
-            temporary = Path(download.name)
-        try:
-            urllib.request.urlretrieve(DB_URL, str(temporary))
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
+def read_db(path):
     db = {}
     with open(path, encoding="utf-8-sig", errors="replace") as handle:
         for line in handle:
@@ -67,6 +57,24 @@ def load_db(path):
                 if nid and name:
                     db.setdefault(nid, name)
     return db
+
+
+def load_db(path):
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        print("downloading NID database to %s ..." % path, file=sys.stderr)
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".nid-db-", suffix=".tmp", delete=False) as download:
+            temporary = Path(download.name)
+        try:
+            urllib.request.urlretrieve(DB_URL, str(temporary))
+            db = read_db(temporary)
+            if not any(re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) for nid in db):
+                raise ValueError(f"{path}: downloaded database contains no valid NID records")
+            temporary.replace(path)
+            return db
+        finally:
+            temporary.unlink(missing_ok=True)
+    return read_db(path)
 
 
 def source_files(root):
@@ -181,10 +189,13 @@ def symbol_file(path):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(
         description="Suggest real names for Unknown NID stubs")
     parser.add_argument("--db", default=os.environ.get("ANYPS5_NID_DB"),
-                        help="NID database CSV (downloaded to a cache dir by default)")
+                        help="NID database CSV; defaults to $ANYPS5_NID_DB, then to a copy downloaded to a cache dir")
     parser.add_argument("--nid", action="append", default=None,
                         help="resolve only these NIDs instead of scanning the tree")
     parser.add_argument("--name", "--symbol", dest="name", action="append", default=None,
@@ -222,13 +233,13 @@ def main(argv=None):
 
     db_path = Path(args.db) if args.db else DEFAULT_CACHE
     try:
-        db = load_db(db_path)
+        db = {} if requested_nids and not args.nid else load_db(db_path)
         if requested_nids:
             unknowns = {nid: "<cli>" for nid in (args.nid or [])}
         else:
             unknowns = collect_unknowns()
         real_names = collect_real_names() if unknowns else set()
-    except (OSError, UnicodeError) as error:
+    except (OSError, ValueError) as error:
         parser.error(str(error))
 
     rows = []
@@ -241,7 +252,7 @@ def main(argv=None):
                 status = "MISMATCH"
                 failures += 1
             elif suggestion in real_names:
-                status = "already-implemented"
+                status = "name-in-use"
             else:
                 status = "rename-ready"
         rows.append({"nid": nid, "stub": unknowns[nid],
@@ -254,14 +265,11 @@ def main(argv=None):
         for row in rows:
             print("%-12s %-40s %-12s %s" % (
                 row["nid"], row["stub"][:40], row["status"], row["suggestion"]))
-        print("%d unknowns, %d suggestions (%d already implemented)" % (
+        print("%d unknowns, %d suggestions (%d names already in use)" % (
             len(rows), sum(1 for r in rows if r["suggestion"]),
-            sum(1 for r in rows if r["status"] == "already-implemented")))
+            sum(1 for r in rows if r["status"] == "name-in-use")))
     return 1 if failures else 0
 
 
 if __name__ == "__main__":
-    for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
     sys.exit(main())

@@ -40,6 +40,24 @@ class TimelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pad_timeline.compile_timeline(self.document, 1)
 
+    def test_duplicate_buttons_are_rejected(self):
+        document = {
+            "version": 1,
+            "events": [
+                {"at_ms": 0, "hold_ms": 100, "buttons": ["cross", "cross"]}
+            ],
+        }
+
+        for buttons in (
+            ["cross", "cross"],
+            ["l1", "r1", "l1"],
+            ["release", "release"],
+        ):
+            with self.subTest(buttons=buttons):
+                document["events"][0]["buttons"] = buttons
+                with self.assertRaisesRegex(ValueError, "duplicate button names"):
+                    pad_timeline.compile_timeline(document, sequence=1)
+
     def test_unknown_buttons(self):
         for buttons in [["typo"], "cross", [True]]:
             with self.subTest(buttons=buttons):
@@ -73,6 +91,26 @@ class TimelineTests(unittest.TestCase):
         for repeat, gap in [(0, 0), (4097, 0), (True, 0), (1, -1), (4096, 3600000)]:
             with self.assertRaises(ValueError):
                 pad_timeline.compile_timeline(self.document, 1, repeat, gap)
+
+    def test_repeated_event_count_at_capacity(self):
+        rows = pad_timeline.compile_timeline(self.document, 42, 2048, 0).splitlines()
+        self.assertEqual(rows[0], "APS5_PAD_TIMELINE 1 42 4096")
+        self.assertEqual(len(rows) - 1, 4096)
+        self.assertEqual(rows[1:3], ["200 100 18432", "500 200 64"])
+        self.assertEqual(rows[2047:2051], [
+            "716300 100 18432", "716600 200 64", "717000 100 18432", "717300 200 64",
+        ])
+        self.assertEqual(rows[-2:], ["1433100 100 18432", "1433400 200 64"])
+        with self.assertRaisesRegex(ValueError, "1 to 4096 events after repetition"):
+            pad_timeline.compile_timeline(self.document, 42, 2049, 0)
+
+    def test_repeated_duration_includes_inter_iteration_gaps_only(self):
+        document = {"version": 1, "events": [{"at_ms": 0, "hold_ms": 5000, "buttons": ["cross"]}]}
+        self.assertEqual(
+            pad_timeline.compile_timeline(document, 42, 2, 3590000),
+            "APS5_PAD_TIMELINE 1 42 2\n0 5000 16384\n3595000 5000 16384\n")
+        with self.assertRaisesRegex(ValueError, "repeated timeline exceeds one hour"):
+            pad_timeline.compile_timeline(document, 42, 2, 3590001)
 
     def test_sequence_bounds(self):
         for sequence in [0, -1, True, 2**64]:
@@ -134,6 +172,39 @@ class TimelineTests(unittest.TestCase):
             os.link(timeline, linked)
             self.assertEqual(self.run_cli(timeline, linked).returncode, 2)
             self.assertEqual(timeline.read_text(encoding="utf-8"), original)
+
+    def test_symbolic_link_loops_are_usage_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline = root / "sequence.json"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            loop = root / "loop"
+            try:
+                loop.symlink_to(loop.name)
+            except (OSError, NotImplementedError):
+                self.skipTest("symbolic links are unavailable")
+            for arguments in ((timeline, loop), (loop, root / "command")):
+                with self.subTest(arguments=arguments):
+                    result = self.run_cli(*arguments)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertTrue(result.stderr.startswith("pad_timeline: "), result.stderr)
+                    self.assertTrue(loop.is_symlink())
+                    self.assertFalse((root / "command").exists())
+
+    def test_output_directory_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline = root / "sequence.json"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            target_dir = root / "output_dir"
+            target_dir.mkdir()
+            result = self.run_cli(timeline, target_dir)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(f"{target_dir} is a directory", result.stderr)
+            nonexistent_parent = root / "missing" / "command"
+            result = self.run_cli(timeline, nonexistent_parent)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(f"directory does not exist: {nonexistent_parent.parent}", result.stderr)
 
     def test_sequence_advances_past_existing_command_after_clock_reset(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,27 +1,10 @@
+#include "prx/libSceMbus/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <string>
-
-struct DeviceServiceThreadParam {
-    std::uint64_t affinityMask;
-    std::int32_t priority;
-    std::uint32_t reserved;
-};
-
-struct DeviceServiceInitParam {
-    std::uint32_t size;
-    std::uint32_t reserved;
-    const DeviceServiceThreadParam* threadParam;
-};
-
-struct DeviceServiceUsageFilter {
-    std::uint16_t usagePage;
-    std::uint16_t minimumUsage;
-    std::uint16_t maximumUsage;
-};
 
 static_assert(sizeof(DeviceServiceThreadParam) == 16);
 static_assert(offsetof(DeviceServiceThreadParam, priority) == 8);

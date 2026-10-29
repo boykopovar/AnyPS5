@@ -106,12 +106,12 @@ int main() {
         const auto prefetched = SubmitBehindBusyPipeline(prefetch, 0x11111111u, true);
         check(prefetched.outstanding >= 2, "a DMA_DATA prefetch drained the draw pipeline: the label behind it never queued behind the held commit (" + std::to_string(prefetched.outstanding) + " outstanding)");
         check(prefetched.drains == 0, "a DMA_DATA prefetch drained the draw pipeline (" + std::to_string(prefetched.drains) + " packet drains)");
-        const auto copied = SubmitBehindBusyPipeline(copy, 0x22222222u, false);
-        check(copied.outstanding == 1, "a DMA_DATA copy did not hold the queue worker (" + std::to_string(copied.outstanding) + " outstanding)");
-        check(copied.drains == 1, "a DMA_DATA copy did not drain the draw pipeline (" + std::to_string(copied.drains) + " packet drains)");
+        const auto copied = SubmitBehindBusyPipeline(copy, 0x22222222u, true);
+        check(copied.outstanding >= 2, "a DMA_DATA copy that misses every queued write drained the draw pipeline: the label behind it never queued behind the held commit (" + std::to_string(copied.outstanding) + " outstanding)");
+        check(copied.drains == 0, "a DMA_DATA copy that misses every queued write drained the draw pipeline (" + std::to_string(copied.drains) + " packet drains)");
         for (std::size_t i = 0; i < Destination.size(); ++i) check(Destination[i] == (i < 128 ? Source[i] : 0u), "the copy did not land, or wrote past its bytes");
         LibcRunShutdown_nid_postfix();
-        std::puts("a DMA_DATA prefetch keeps the draw pipeline, a copy drains it");
+        std::puts("a DMA_DATA prefetch and a copy that misses every queued write keep the draw pipeline");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

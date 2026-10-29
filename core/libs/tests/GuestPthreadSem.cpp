@@ -1,3 +1,5 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -7,23 +9,7 @@
 #include <stdexcept>
 #include <thread>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, const char* name);
-int APS5_VABI scePthreadSemDestroy(PthreadSem* sem);
-int APS5_VABI scePthreadSemPost(PthreadSem* sem);
-int APS5_VABI scePthreadSemWait(PthreadSem* sem);
-int APS5_VABI scePthreadSemTrywait(PthreadSem* sem);
-int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, unsigned int usec);
-int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
-static constexpr int SCE_KERNEL_ERROR_EOVERFLOW = static_cast<int>(0x80020054u);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
 
 static void Require(bool value) { if (!value) std::abort(); }
 

@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -7,12 +10,6 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI _umtx_op_nid_postfix(void* object, int operation, std::uint64_t value, void* sizeArgument, void* timeArgument);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
-}
 
 static constexpr int UMTX_OP_WAIT = 2;
 static constexpr int UMTX_OP_WAKE = 3;
