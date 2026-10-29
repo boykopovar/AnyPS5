@@ -1,7 +1,11 @@
 #pragma once
 
+#include <atomic>
+#include <memory>
 #include <string>
 #include "prx/libSceSystemService/HostUrlPolicy.hpp"
+
+constexpr int HOST_BROWSER_MAX_OPENERS = 2;
 
 class HostBrowserLauncher final : public IUrlLauncher {
 public:
@@ -11,6 +15,7 @@ public:
 
 private:
     std::string program;
+    std::shared_ptr<std::atomic<int>> running = std::make_shared<std::atomic<int>>(0);
 };
 
 class HostMessageBoxConfirmation final : public IUrlConfirmation {
