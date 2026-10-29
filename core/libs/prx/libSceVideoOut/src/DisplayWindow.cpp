@@ -102,7 +102,10 @@ void DisplayWindow::create(std::uint32_t sourceWidth, std::uint32_t sourceHeight
     const auto boundsHeight = static_cast<std::uint32_t>(static_cast<std::uint64_t>(usable.h) * DisplayWindowInitialSizePercent / 100);
     const auto initialSize = AgcDriver::ComputeContainSize_nid_postfix(sourceWidth, sourceHeight, boundsWidth, boundsHeight, true);
     require(initialSize.width >= DisplayWindowMinimumWidth && initialSize.height >= DisplayWindowMinimumHeight, "initial window extent is smaller than the minimum");
-    const auto fullscreenMode = ParseHostFullscreenMode(std::getenv("ANYPS5_FULLSCREEN"));
+    const char* fullscreenSetting = std::getenv("ANYPS5_FULLSCREEN");
+    bool unrecognizedFullscreen = false;
+    const auto fullscreenMode = ParseHostFullscreenMode(fullscreenSetting, &unrecognizedFullscreen);
+    if (unrecognizedFullscreen) std::fprintf(stderr, "%s\n", HostFullscreenWarning(fullscreenSetting).c_str());
     const auto title = GetAppTitle_nid_postfix();
     AgcDriverLockVulkanLoader_nid_postfix();
     const auto fullscreenFlag = fullscreenMode == HostFullscreenMode::Borderless ? static_cast<Uint32>(SDL_WINDOW_FULLSCREEN_DESKTOP) : 0u;
