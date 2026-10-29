@@ -36,6 +36,19 @@ class ErrorReportTests(unittest.TestCase):
         self.assertIn("exit code 128", str(raised.exception.code))
         self.assertIn(MISSING_REF, str(raised.exception.code))
 
+    def test_merge_on_old_git_names_the_version_it_needs(self):
+        def old_git(command, **kwargs):
+            if "version" in command:
+                return subprocess.CompletedProcess(command, 0, stdout=b"git version 2.39.5\n", stderr=b"")
+            if "rev-parse" in command:
+                return subprocess.CompletedProcess(command, 0, stdout=b"/repo\n", stderr=b"")
+            return subprocess.CompletedProcess(command, 129, stdout=b"", stderr=b"error: unknown option")
+
+        with patch.object(subprocess, "run", side_effect=old_git), patch.dict(pr_overlap._REPO_ROOTS, clear=True):
+            with self.assertRaisesRegex(RuntimeError, r"needs git 2\.40 or newer; this git is 2\.39$"):
+                pr_overlap.merge("--merge-base=refs/pr/base", "a", "b")
+            with self.assertRaisesRegex(RuntimeError, r"failed: error: unknown option$"):
+                pr_overlap.merge("refs/pr/base", "a")
 
     def test_main_reconfigures_streams(self):
         class Stream:

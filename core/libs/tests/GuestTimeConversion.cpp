@@ -496,6 +496,21 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(std::strcmp(ctime_nid_postfix(&underflow), "??? ??? ?? ??:??:?? ????\n") == 0 && *__error_nid_postfix() == 22,
         "ctime of an unrepresentable time did not report it");
+    {
+        std::barrier finish(3);
+        std::array<const char*, 2> texts{};
+        std::array<std::thread, 2> readers;
+        for (std::size_t index = 0; index < readers.size(); ++index) {
+            readers[index] = std::thread([&, index] {
+                texts[index] = ctime_nid_postfix(&underflow);
+                finish.arrive_and_wait();
+            });
+        }
+        const char* own = ctime_nid_postfix(&underflow);
+        finish.arrive_and_wait();
+        Require(texts[0] != texts[1] && texts[0] != own && texts[1] != own, "ctime of an unrepresentable time shared one buffer between threads");
+        for (auto& reader : readers) reader.join();
+    }
 
     constexpr std::int64_t latest = std::numeric_limits<std::int64_t>::max();
     constexpr std::int64_t earliest = std::numeric_limits<std::int64_t>::min();

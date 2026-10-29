@@ -209,7 +209,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t 
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool alphaToCoverage, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, bool dithered = false, bool sampleMaskExport = false) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool alphaToCoverage, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, bool dithered = false, bool sampleMaskExport = false, std::uint8_t ditheredSamples = 8) {
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = 0xf;
     const auto target = device.Target();
@@ -246,6 +246,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.blendConstants = {};
     state.alphaToCoverage = alphaToCoverage;
     state.ditheredAlphaToCoverage = dithered;
+    state.ditheredAlphaSamples = ditheredSamples;
     state.samples = color.samples;
 
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
@@ -254,6 +255,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     auto prepared = AgcDriver::Graphics::DecodePixelStageInfo(context, {});
     prepared.alphaToCoverage = alphaToCoverage;
     prepared.ditheredAlphaToCoverage = dithered;
+    prepared.ditheredAlphaSamples = ditheredSamples;
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, codeAddress, pixelCode, 0, {}},
         {waveSize, 0, {}, std::nullopt, prepared, std::nullopt, pixelMemory},
@@ -267,6 +269,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     fragment.context.pixel = AgcDriver::Graphics::DecodePixelStageInfo(context, AgcDriver::Graphics::ExportMappings(state));
     fragment.context.pixel->alphaToCoverage = state.alphaToCoverage;
     fragment.context.pixel->ditheredAlphaToCoverage = state.ditheredAlphaToCoverage;
+    fragment.context.pixel->ditheredAlphaSamples = state.ditheredAlphaSamples;
     const ShaderRecompiler::SrtRuntime runtime{};
     const auto materialize = [&](const ShaderRecompiler::RecompileRequest& request) {
         const auto invocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request);
@@ -374,65 +377,28 @@ void Check(AgcDriver::VulkanDevice& device, const Block& block, const ColorTarge
     }
 }
 
-void DitheredCoverage(AgcDriver::VulkanDevice& device) {
-    struct Case {
-        std::uint32_t bits;
-        std::uint32_t format;
-        std::array<std::uint32_t, 4> masks;
-    };
-    constexpr std::array<Case, 36> cases{{
-        {0x00000000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
-        {0x80000000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
-        {0x3c7fffffu, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
-        {0x3c800000u, 9u, {0x10u, 0x00u, 0x00u, 0x00u}},
-        {0x3c800001u, 9u, {0x10u, 0x00u, 0x00u, 0x00u}},
-        {0x3cffffffu, 9u, {0x10u, 0x00u, 0x00u, 0x00u}},
-        {0x3d000000u, 9u, {0x04u, 0x00u, 0x00u, 0x00u}},
-        {0x3d000001u, 9u, {0x04u, 0x00u, 0x00u, 0x00u}},
-        {0x3effffffu, 9u, {0x35u, 0x36u, 0x36u, 0x35u}},
-        {0x3f000000u, 9u, {0x35u, 0x36u, 0x36u, 0x35u}},
-        {0x3f000001u, 9u, {0x35u, 0x36u, 0x36u, 0x35u}},
-        {0x3f77ffffu, 9u, {0xffu, 0xf7u, 0xffu, 0xffu}},
-        {0x3f780000u, 9u, {0xffu, 0x7fu, 0xffu, 0xffu}},
-        {0x3f780001u, 9u, {0xffu, 0x7fu, 0xffu, 0xffu}},
-        {0x3f800000u, 9u, {0xffu, 0xffu, 0xffu, 0xffu}},
-        {0x7f800000u, 9u, {0xffu, 0xffu, 0xffu, 0xffu}},
-        {0xff800000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
-        {0x7fc00000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
-        {0x00000000u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
-        {0x00008000u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
-        {0x000023ffu, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
-        {0x00002400u, 4u, {0x10u, 0x00u, 0x00u, 0x00u}},
-        {0x00002401u, 4u, {0x10u, 0x00u, 0x00u, 0x00u}},
-        {0x000027ffu, 4u, {0x10u, 0x00u, 0x00u, 0x00u}},
-        {0x00002800u, 4u, {0x04u, 0x00u, 0x00u, 0x00u}},
-        {0x00002801u, 4u, {0x04u, 0x00u, 0x00u, 0x00u}},
-        {0x000037ffu, 4u, {0x35u, 0x36u, 0x36u, 0x35u}},
-        {0x00003800u, 4u, {0x35u, 0x36u, 0x36u, 0x35u}},
-        {0x00003801u, 4u, {0x35u, 0x36u, 0x36u, 0x35u}},
-        {0x00003bbfu, 4u, {0xffu, 0xf7u, 0xffu, 0xffu}},
-        {0x00003bc0u, 4u, {0xffu, 0x7fu, 0xffu, 0xffu}},
-        {0x00003bc1u, 4u, {0xffu, 0x7fu, 0xffu, 0xffu}},
-        {0x00003c00u, 4u, {0xffu, 0xffu, 0xffu, 0xffu}},
-        {0x00007c00u, 4u, {0xffu, 0xffu, 0xffu, 0xffu}},
-        {0x0000fc00u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
-        {0x00007e00u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
-    }};
+struct DitherCase {
+    std::uint32_t bits;
+    std::uint32_t format;
+    std::array<std::uint32_t, 4> masks;
+};
+
+void DitheredCoverage(AgcDriver::VulkanDevice& device, std::uint32_t samples, std::span<const DitherCase> cases) {
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
     std::vector<std::unique_ptr<Block>> blocks;
     for (const auto& test : cases) {
-        blocks.push_back(std::make_unique<Block>(layout.Bytes() * 8u));
+        blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
         auto& source = *blocks.back();
         std::memset(source.data, 0, source.bytes);
-        const auto multisampled = DecodeTarget(source, 8);
-        for (std::uint32_t sample = 0; sample < 8; ++sample) {
-            const Color color{std::ldexp(1.0f, static_cast<int>(sample) - 7), 0, 0, 1};
+        const auto multisampled = DecodeTarget(source, samples);
+        for (std::uint32_t sample = 0; sample < samples; ++sample) {
+            const Color color{std::ldexp(1.0f, static_cast<int>(sample) - static_cast<int>(samples - 1u)), 0, 0, 1};
             Draw(device, multisampled, false, Float32Export, Program(color, Float32Export, 1u << sample), false, true);
         }
         const auto alpha = test.format == Float32Export ? std::bit_cast<float>(test.bits) : 0.0f;
         const Color color{0, 0, 0, alpha};
         const auto half = test.format == Float16Export ? std::optional<std::uint16_t>(static_cast<std::uint16_t>(test.bits)) : std::nullopt;
-        Draw(device, multisampled, true, test.format, Program(color, test.format, std::nullopt, half), true);
+        Draw(device, multisampled, true, test.format, Program(color, test.format, std::nullopt, half), true, false, static_cast<std::uint8_t>(samples));
         blocks.push_back(std::make_unique<Block>(layout.Bytes()));
         auto& resolved = *blocks.back();
         std::memset(resolved.data, 0, resolved.bytes);
@@ -445,7 +411,7 @@ void DitheredCoverage(AgcDriver::VulkanDevice& device) {
         for (std::uint32_t y = 0; y < Height; ++y) {
             for (std::uint32_t x = 0; x < Width; ++x) {
                 const auto mask = test.masks[2u * (x & 1u) + (y & 1u)];
-                const auto expected = x < ScissorWidth ? static_cast<float>(255u - mask) / 1024.0f : 0.0f;
+                const auto expected = x < ScissorWidth ? static_cast<float>((1u << samples) - 1u - mask) / static_cast<float>((1u << (samples - 1u)) * samples) : 0.0f;
                 const auto actual = FromHalf(stored[layout.Offset(x, y) / 2u]);
                 if (actual == expected) continue;
                 char detail[192];
@@ -456,6 +422,162 @@ void DitheredCoverage(AgcDriver::VulkanDevice& device) {
         programCount = 0;
     }
     AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+}
+
+constexpr std::array<DitherCase, 36> EightSampleDitherCases{{
+    {0x00000000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x80000000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x3c7fffffu, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x3c800000u, 9u, {0x10u, 0x00u, 0x00u, 0x00u}},
+    {0x3c800001u, 9u, {0x10u, 0x00u, 0x00u, 0x00u}},
+    {0x3cffffffu, 9u, {0x10u, 0x00u, 0x00u, 0x00u}},
+    {0x3d000000u, 9u, {0x04u, 0x00u, 0x00u, 0x00u}},
+    {0x3d000001u, 9u, {0x04u, 0x00u, 0x00u, 0x00u}},
+    {0x3effffffu, 9u, {0x35u, 0x36u, 0x36u, 0x35u}},
+    {0x3f000000u, 9u, {0x35u, 0x36u, 0x36u, 0x35u}},
+    {0x3f000001u, 9u, {0x35u, 0x36u, 0x36u, 0x35u}},
+    {0x3f77ffffu, 9u, {0xffu, 0xf7u, 0xffu, 0xffu}},
+    {0x3f780000u, 9u, {0xffu, 0x7fu, 0xffu, 0xffu}},
+    {0x3f780001u, 9u, {0xffu, 0x7fu, 0xffu, 0xffu}},
+    {0x3f800000u, 9u, {0xffu, 0xffu, 0xffu, 0xffu}},
+    {0x7f800000u, 9u, {0xffu, 0xffu, 0xffu, 0xffu}},
+    {0xff800000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x7fc00000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x00000000u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x00008000u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x000023ffu, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x00002400u, 4u, {0x10u, 0x00u, 0x00u, 0x00u}},
+    {0x00002401u, 4u, {0x10u, 0x00u, 0x00u, 0x00u}},
+    {0x000027ffu, 4u, {0x10u, 0x00u, 0x00u, 0x00u}},
+    {0x00002800u, 4u, {0x04u, 0x00u, 0x00u, 0x00u}},
+    {0x00002801u, 4u, {0x04u, 0x00u, 0x00u, 0x00u}},
+    {0x000037ffu, 4u, {0x35u, 0x36u, 0x36u, 0x35u}},
+    {0x00003800u, 4u, {0x35u, 0x36u, 0x36u, 0x35u}},
+    {0x00003801u, 4u, {0x35u, 0x36u, 0x36u, 0x35u}},
+    {0x00003bbfu, 4u, {0xffu, 0xf7u, 0xffu, 0xffu}},
+    {0x00003bc0u, 4u, {0xffu, 0x7fu, 0xffu, 0xffu}},
+    {0x00003bc1u, 4u, {0xffu, 0x7fu, 0xffu, 0xffu}},
+    {0x00003c00u, 4u, {0xffu, 0xffu, 0xffu, 0xffu}},
+    {0x00007c00u, 4u, {0xffu, 0xffu, 0xffu, 0xffu}},
+    {0x0000fc00u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x00007e00u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
+}};
+
+constexpr std::array<DitherCase, 56> TwoSampleDitherCases{{
+    {0x00000000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x80000000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x3dffffffu, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x3e000000u, 9u, {0x02u, 0x00u, 0x00u, 0x02u}},
+    {0x3e000001u, 9u, {0x02u, 0x00u, 0x00u, 0x02u}},
+    {0x3e7fffffu, 9u, {0x02u, 0x00u, 0x00u, 0x02u}},
+    {0x3e800000u, 9u, {0x01u, 0x02u, 0x00u, 0x01u}},
+    {0x3e800001u, 9u, {0x01u, 0x02u, 0x00u, 0x01u}},
+    {0x3ebfffffu, 9u, {0x01u, 0x02u, 0x00u, 0x01u}},
+    {0x3ec00000u, 9u, {0x01u, 0x02u, 0x02u, 0x01u}},
+    {0x3ec00001u, 9u, {0x01u, 0x02u, 0x02u, 0x01u}},
+    {0x3effffffu, 9u, {0x01u, 0x02u, 0x02u, 0x01u}},
+    {0x3f000000u, 9u, {0x01u, 0x01u, 0x02u, 0x01u}},
+    {0x3f000001u, 9u, {0x01u, 0x01u, 0x02u, 0x01u}},
+    {0x3f1fffffu, 9u, {0x01u, 0x01u, 0x02u, 0x01u}},
+    {0x3f200000u, 9u, {0x03u, 0x01u, 0x02u, 0x03u}},
+    {0x3f200001u, 9u, {0x03u, 0x01u, 0x02u, 0x03u}},
+    {0x3f3fffffu, 9u, {0x03u, 0x01u, 0x02u, 0x03u}},
+    {0x3f400000u, 9u, {0x03u, 0x03u, 0x01u, 0x03u}},
+    {0x3f400001u, 9u, {0x03u, 0x03u, 0x01u, 0x03u}},
+    {0x3f5fffffu, 9u, {0x03u, 0x03u, 0x01u, 0x03u}},
+    {0x3f600000u, 9u, {0x03u, 0x03u, 0x03u, 0x03u}},
+    {0x3f600001u, 9u, {0x03u, 0x03u, 0x03u, 0x03u}},
+    {0x3f800000u, 9u, {0x03u, 0x03u, 0x03u, 0x03u}},
+    {0x7f800000u, 9u, {0x03u, 0x03u, 0x03u, 0x03u}},
+    {0xff800000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x7fc00000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x40000000u, 9u, {0x03u, 0x03u, 0x03u, 0x03u}},
+    {0xbf800000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x00000000u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x00008000u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x00002fffu, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x00003000u, 4u, {0x02u, 0x00u, 0x00u, 0x02u}},
+    {0x00003001u, 4u, {0x02u, 0x00u, 0x00u, 0x02u}},
+    {0x000033ffu, 4u, {0x02u, 0x00u, 0x00u, 0x02u}},
+    {0x00003400u, 4u, {0x01u, 0x02u, 0x00u, 0x01u}},
+    {0x00003401u, 4u, {0x01u, 0x02u, 0x00u, 0x01u}},
+    {0x000035ffu, 4u, {0x01u, 0x02u, 0x00u, 0x01u}},
+    {0x00003600u, 4u, {0x01u, 0x02u, 0x02u, 0x01u}},
+    {0x00003601u, 4u, {0x01u, 0x02u, 0x02u, 0x01u}},
+    {0x000037ffu, 4u, {0x01u, 0x02u, 0x02u, 0x01u}},
+    {0x00003800u, 4u, {0x01u, 0x01u, 0x02u, 0x01u}},
+    {0x00003801u, 4u, {0x01u, 0x01u, 0x02u, 0x01u}},
+    {0x000038ffu, 4u, {0x01u, 0x01u, 0x02u, 0x01u}},
+    {0x00003900u, 4u, {0x03u, 0x01u, 0x02u, 0x03u}},
+    {0x00003901u, 4u, {0x03u, 0x01u, 0x02u, 0x03u}},
+    {0x000039ffu, 4u, {0x03u, 0x01u, 0x02u, 0x03u}},
+    {0x00003a00u, 4u, {0x03u, 0x03u, 0x01u, 0x03u}},
+    {0x00003a01u, 4u, {0x03u, 0x03u, 0x01u, 0x03u}},
+    {0x00003affu, 4u, {0x03u, 0x03u, 0x01u, 0x03u}},
+    {0x00003b00u, 4u, {0x03u, 0x03u, 0x03u, 0x03u}},
+    {0x00003b01u, 4u, {0x03u, 0x03u, 0x03u, 0x03u}},
+    {0x00003c00u, 4u, {0x03u, 0x03u, 0x03u, 0x03u}},
+    {0x00007c00u, 4u, {0x03u, 0x03u, 0x03u, 0x03u}},
+    {0x0000fc00u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
+    {0x00007e00u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
+}};
+
+void DccSrgbClearTests(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 4);
+    const ColorTargetLayout allocation(Width, Height, ColorTileMode::RenderTarget, 8);
+    std::vector<std::unique_ptr<Block>> blocks;
+    struct ClearTargets {
+        AgcDriver::VulkanDevice& device;
+        ~ClearTargets() {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+            AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        }
+    } clearTargets{device};
+    const auto targetFor = [&](const Block& block, std::uint32_t count, VkFormat format) {
+        auto target = DecodeTarget(block, count);
+        target.format = format;
+        target.elementBytes = 4;
+        target.bytes = layout.Bytes();
+        return target;
+    };
+    for (const auto format : {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB}) {
+        for (const auto key : {0x00u, 0x40u, 0x80u, 0xc0u}) {
+            for (const auto alphaOnMsb : {false, true}) {
+                blocks.push_back(std::make_unique<Block>(allocation.Bytes() * samples));
+                auto& source = *blocks.back();
+                std::memset(source.data, 0x5a, source.bytes);
+                blocks.push_back(std::make_unique<Block>(BlockBytes));
+                auto& metadata = *blocks.back();
+                std::memset(metadata.data, key, metadata.bytes);
+                auto target = targetFor(source, samples, format);
+                target.dccAddress = metadata.Address();
+                target.dccPipeAligned = true;
+                target.dccAlphaOnMsb = alphaOnMsb;
+                Draw(device, target, false, Float32Export, Program(Color{0.25f, 0.5f, 0.75f, 0.125f}, Float32Export, 0u), false, true);
+                blocks.push_back(std::make_unique<Block>(allocation.Bytes()));
+                auto& resolved = *blocks.back();
+                std::memset(resolved.data, 0xa5, resolved.bytes);
+                AgcDriver::Graphics::ColorMetadataPass pass{};
+                pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+                pass.source = target;
+                pass.targets = {targetFor(resolved, 1u, format)};
+                device.ColorMetadataPass(pass);
+                const auto stored = ReadBack(device, resolved);
+                const auto bytes = std::as_bytes(std::span(stored));
+                std::array<std::byte, 4> expected{};
+                const auto keys = key == 0x00u ? AgcDriver::Graphics::DccKeys::Clear0000 : key == 0x40u ? AgcDriver::Graphics::DccKeys::Clear0001 : key == 0x80u ? AgcDriver::Graphics::DccKeys::Clear1110 : AgcDriver::Graphics::DccKeys::Clear1111;
+                Require(AgcDriver::Graphics::FillDccClear(format, keys, alphaOnMsb, expected), "the sRGB DCC expected texel was not encoded");
+                for (std::uint32_t y = 0; y < Height; ++y) {
+                    for (std::uint32_t x = 0; x < Width; ++x) {
+                        for (std::uint32_t channel = 0; channel < 4; ++channel) Require(bytes[layout.Offset(x, y) + channel] == expected[channel], "an sRGB DCC import or resolve changed an undrawn sample endpoint");
+                    }
+                }
+            }
+        }
+    }
 }
 
 void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSamples) {
@@ -1083,6 +1205,19 @@ int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 3 && std::string_view(argv[1]) == "--dcc-srgb-clear") {
+            const auto samples = std::string_view(argv[2]) == "2" ? 2u : std::string_view(argv[2]) == "4" ? 4u : std::string_view(argv[2]) == "8" ? 8u : 0u;
+            Require(samples != 0, "unknown sRGB DCC test sample count");
+            try {
+                DccSrgbClearTests(*device, samples);
+            } catch (const std::runtime_error& error) {
+                if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
+                std::printf("skipped, the device lacks the requested multisample color attachments: %s\n", error.what());
+                return VulkanTestSkipped;
+            }
+            std::cout << "Multisampled sRGB DCC clear tests passed\n";
+            return 0;
+        }
         if ((argc == 2 || argc == 3) && std::string_view(argv[1]) == "--dcc-fast-clear") {
             const auto samples = argc == 2 ? 0u : std::string_view(argv[2]) == "2" ? 2u : std::string_view(argv[2]) == "4" ? 4u : std::string_view(argv[2]) == "8" ? 8u : 0u;
             Require(argc == 2 || samples != 0, "unknown DCC test sample count");
@@ -1123,13 +1258,24 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--dithered8") {
             try {
-                DitheredCoverage(*device);
+                DitheredCoverage(*device, 8, EightSampleDitherCases);
             } catch (const std::runtime_error& error) {
                 if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
                 std::printf("skipped, the device lacks eight-sample color attachments: %s\n", error.what());
                 return VulkanTestSkipped;
             }
             std::puts("dithered eight-sample alpha-to-coverage tests passed");
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--dithered2") {
+            try {
+                DitheredCoverage(*device, 2, TwoSampleDitherCases);
+            } catch (const std::runtime_error& error) {
+                if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
+                std::printf("skipped, the device lacks two-sample color attachments: %s\n", error.what());
+                return VulkanTestSkipped;
+            }
+            std::puts("dithered two-sample alpha-to-coverage tests passed");
             return 0;
         }
         Require(argc == 1, "unknown alpha-to-coverage test argument");

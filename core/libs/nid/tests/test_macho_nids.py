@@ -266,8 +266,20 @@ def check_refusals(patcher, directory):
     assert result.returncode != 0 and "signed Mach-O images cannot grow linkedit data" in result.stdout + result.stderr, (result.stdout, result.stderr)
     result, _ = patch(patcher, directory, "opcodes.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [], bind_opcodes=True))
     assert result.returncode != 0 and "bind opcodes are not supported" in result.stdout + result.stderr, (result.stdout, result.stderr)
-    result, _ = patch(patcher, directory, "long.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [("_sceXy", 1)]))
-    assert result.returncode != 0 and "import NID longer than original name" in result.stdout + result.stderr, (result.stdout, result.stderr)
+    result, _ = patch(patcher, directory, "signed-short.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [("_sceXy", 1)], signed=True))
+    assert result.returncode != 0 and "signed Mach-O images cannot grow linkedit data" in result.stdout + result.stderr, (result.stdout, result.stderr)
+
+
+def check_short_imports(patcher, directory):
+    imports = [("_sceXy", 1), ("_malloc", 2), ("_sceKernelFoo", 1), ("_sceNetRecv", 1)]
+    result, path = patch(patcher, directory, "short.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], imports))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    data = path.read_bytes()
+    assert exports_of(data) == {"_" + nid("puts"): (0, 0x100)}, exports_of(data)
+    assert chained_imports(data) == [("_" + nid("sceXy"), 1), ("_malloc", 2), ("_" + nid("sceKernelFoo"), 1), ("_" + nid("sceNetRecv"), 1)], chained_imports(data)
+    result, path = patch(patcher, directory, "one-byte.dylib", build_dylib([("_puts_nid_postfix", 0, 0x100)], [("_sceNetRecv", 1), ("_sceKernelFoo", 1)]))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert chained_imports(path.read_bytes()) == [("_" + nid("sceNetRecv"), 1), ("_" + nid("sceKernelFoo"), 1)], chained_imports(path.read_bytes())
 
 
 def main():
@@ -281,6 +293,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="anyps5-macho-nid-a\u00e7\u00e3o-\u65e5\u672c-") as directory:
         check_shrinking(patcher, directory)
         check_growing(patcher, directory)
+        check_short_imports(patcher, directory)
         check_preserved(patcher, directory)
         check_export_list(patcher, directory)
         check_refusals(patcher, directory)
