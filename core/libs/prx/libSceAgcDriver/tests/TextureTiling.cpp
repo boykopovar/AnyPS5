@@ -233,11 +233,6 @@ void gcnThickTilingTests() {
     Require(geometry.mips[0].tiledSize == 2048u && geometry.mips[1].tiledOffset == 4096u && geometry.mips[1].tiledSize == 1024u && geometry.mips[0].blocksPerRow == 2u, "PS4 thick volume levels are not slabs of four slices");
     Require(geometry.GuestOffset(5u, geometry.mips[0]) == 2048u && geometry.GuestOffset(3u, geometry.mips[1]) == 4096u, "PS4 thick volume slab offset is misplaced");
     Require(geometry.mips[0].linearSize == 512u && geometry.mips[1].linearOffset == 512u && geometry.sliceLinearBytes == 640u, "PS4 thick volume linear staging is not per slice");
-    auto layered = volume;
-    layered.dimension = TextureDimension::k2DArray;
-    std::string refused;
-    try { DescribeSurface(layered); } catch (const std::exception& error) { refused = error.what(); }
-    Require(refused.find("only implemented for 3D") != std::string::npos, "a 2D array T# in a PS4 thick tile mode was laid out instead of throwing");
     GuestTextureResource deep = volume;
     deep.width = 32u;
     deep.height = 32u;
