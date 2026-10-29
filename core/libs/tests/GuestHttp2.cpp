@@ -74,6 +74,12 @@ int main() {
     Http2AsyncResult result{};
     Require(Throws([&] { sceHttp2WaitAsync(failed, &result, nullptr, nullptr); }));
     Require(sceHttp2WaitAsync(0, &result, nullptr, nullptr) == InvalidId);
+    Require(sceHttp2WaitAsync(failed, nullptr, nullptr, nullptr) == static_cast<int>(0x817B1225));
+    Http2AsyncResult reserved{};
+    reserved.reserved = &tag;
+    Require(sceHttp2WaitAsync(failed, &reserved, nullptr, nullptr) == static_cast<int>(0x817B11FE));
+    Http2AsyncResult clean{};
+    Require(sceHttp2WaitAsync(failed, &clean, nullptr, &tag) == static_cast<int>(0x817B11FE));
     Require(sceKernelDeleteUserEvent(eq, failed) == 0);
     Require(sceKernelDeleteEqueue(eq) == 0);
     const int sibling = sceHttp2CreateTemplate(context, "other", 2, 0);
