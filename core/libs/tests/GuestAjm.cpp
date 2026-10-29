@@ -1882,6 +1882,40 @@ void TestAt9GaplessSegments(std::uint32_t context) {
     Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
+void TestAt9GaplessResetRestartsTotal(std::uint32_t context) {
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    std::vector<std::uint8_t> stream(1024, 0);
+    std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+    const At9Control start{{0, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0};
+    std::int32_t result[2] = {-1, -1};
+    RunControl(context, instance, CONTROL_START, &start, sizeof(start), result);
+    Require(result[0] == 0);
+    const auto first = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size());
+    Require(first.stream.outputWritten == 1024 * 2 && first.stream.totalDecodedSamples == 1024);
+
+    std::vector<std::uint8_t> batch(4096);
+    AjmBatchInfo info{};
+    const GaplessDecode seek{512, 0, 0};
+    std::int32_t setResult[2] = {-1, -1};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobSetGaplessDecode(&info, instance, &seek, 1, setResult) == 0);
+    Submit(context, info);
+    Require(setResult[0] == 0);
+    const auto second = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size());
+    Require(second.stream.outputWritten == 512 * 2 && second.stream.totalDecodedSamples == 512);
+
+    const GaplessDecode longer{1024, 0, 0};
+    Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+    Require(sceAjmBatchJobSetGaplessDecode(&info, instance, &longer, 0, setResult) == 0);
+    Submit(context, info);
+    Require(setResult[0] == 0);
+    const auto third = RunAt9Job(context, instance, runMultipleFrames, stream.data() + second.stream.inputConsumed, stream.size() - static_cast<std::size_t>(second.stream.inputConsumed));
+    Require(third.stream.totalDecodedSamples == 512 + static_cast<std::uint64_t>(third.stream.outputWritten) / 2);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
 void TestAt9RunDecodesWholeInput(std::uint32_t context) {
     std::vector<std::uint8_t> stream(1024, 0);
     std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
@@ -2302,7 +2336,7 @@ void TestOpusGaplessReset(std::uint32_t context, std::size_t outputFrames, float
         DecodeSideband baseline{};
         RunDecode(context, reference, OPUS_STEREO + offset, packetBytes, expected.data(), expected.size() * sizeof(std::int16_t), baseline);
         Require(baseline.result == 0 && static_cast<std::size_t>(baseline.inputConsumed) == packetBytes);
-        Require(baseline.totalDecodedSamples == static_cast<std::uint64_t>(segment + 1) * 860 + (ratio == 0 ? segment * 960 : 0));
+        Require(baseline.totalDecodedSamples == 860);
         const std::size_t expectedBytes = ratio > 0 ? static_cast<std::size_t>(baseline.outputWritten) : totalSamples * 2 * sizeof(std::int16_t);
         Require(expectedBytes > 0);
         std::size_t produced = 0;
@@ -2312,7 +2346,7 @@ void TestOpusGaplessReset(std::uint32_t context, std::size_t outputFrames, float
             RunDecode(context, instance, OPUS_STEREO + offset, drain == 0 ? packetBytes : 0, pcm.data(), outputFrames * 2 * sizeof(std::int16_t), decoded);
             if (decoded.outputWritten <= 0) throw std::runtime_error("Opus gapless segment " + std::to_string(segment) + " wrote " + std::to_string(decoded.outputWritten) + " bytes with " + std::to_string(expectedBytes - produced) + " still expected");
             Require(decoded.result == 0 && static_cast<std::size_t>(decoded.inputConsumed) == (drain == 0 ? packetBytes : 0));
-            Require(decoded.totalDecodedSamples == static_cast<std::uint64_t>(segment + 1) * totalSamples);
+            Require(decoded.totalDecodedSamples == totalSamples);
             const auto samples = static_cast<std::size_t>(decoded.outputWritten) / sizeof(std::int16_t);
             Require(samples <= outputFrames * 2 && produced + static_cast<std::size_t>(decoded.outputWritten) <= expectedBytes);
             Require(std::equal(pcm.begin(), pcm.begin() + samples, expected.begin() + produced / sizeof(std::int16_t)));
@@ -2331,7 +2365,7 @@ void TestOpusGaplessReset(std::uint32_t context, std::size_t outputFrames, float
             RunDecode(context, instance, OPUS_STEREO + offset, packetBytes, pcm.data(), outputFrames * 2 * sizeof(std::int16_t), decoded);
             RunDecode(context, reference, OPUS_STEREO + offset, packetBytes, expected.data(), expected.size() * sizeof(std::int16_t), baseline);
             Require(decoded.result == 0 && static_cast<std::size_t>(decoded.inputConsumed) == packetBytes && decoded.outputWritten == 0);
-            Require(decoded.totalDecodedSamples == static_cast<std::uint64_t>(segment + 1) * totalSamples);
+            Require(decoded.totalDecodedSamples == totalSamples);
             Require(std::all_of(pcm.begin(), pcm.end(), [](auto sample) { return sample == -12345; }));
         }
         offset = (offset + packetBytes) % sizeof(OPUS_STEREO);
@@ -2522,6 +2556,7 @@ int main(int argc, char** argv) {
     TestBuildersWithoutBuffers(context);
     TestResampleAt9(context);
     TestAt9GaplessSegments(context);
+    TestAt9GaplessResetRestartsTotal(context);
     TestAt9RunDecodesWholeInput(context);
     TestAt9FlagRules(context);
     TestPcmResample(context);

@@ -215,6 +215,8 @@ endforeach()
 
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
+include(prx/libSceFreeType/PostScriptInfo.cmake)
+
 if(APS5_ENABLE_TRACY)
     set_target_properties(TracyClient PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${UNPATCHED_DIR}
@@ -233,7 +235,7 @@ if(APS5_ENABLE_TRACY)
     list(APPEND PATCHED_OUTPUTS ${TRACY_CLIENT_COPIED})
 endif()
 
-if(TARGET mimalloc)
+if(TARGET mimalloc AND WIN32)
     add_executable(pe_import_first ${CMAKE_CURRENT_SOURCE_DIR}/allocator/PeImportFirstMain.cpp ${CMAKE_CURRENT_SOURCE_DIR}/allocator/PeImportFirst.cpp)
     target_compile_features(pe_import_first PRIVATE cxx_std_20)
     if(MINGW)
@@ -254,6 +256,14 @@ if(TARGET mimalloc)
             COMMENT "Copying mimalloc-redirect.dll beside the libraries"
     )
     list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/mimalloc.dll ${PATCHED_DIR}/mimalloc-redirect.dll)
+elseif(TARGET mimalloc)
+    add_custom_command(
+            OUTPUT ${PATCHED_DIR}/libmimalloc.dylib
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/libmimalloc.dylib
+            DEPENDS mimalloc
+            COMMENT "Copying libmimalloc.dylib beside the libraries"
+    )
+    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/libmimalloc.dylib)
 endif()
 
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
@@ -480,6 +490,11 @@ if(BUILD_TESTING)
         add_test(NAME guest_kernel_sys_threads_${case} COMMAND guest_kernel_sys_threads_tests ${UNPATCHED_DIR} unpatched ${case})
         add_test(NAME guest_kernel_sys_threads_${case}_patched COMMAND guest_kernel_sys_threads_tests ${PATCHED_DIR} patched ${case})
         set_tests_properties(guest_kernel_sys_threads_${case} guest_kernel_sys_threads_${case}_patched PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            get_filename_component(kernelSysThreadsRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            set_tests_properties(guest_kernel_sys_threads_${case} guest_kernel_sys_threads_${case}_patched PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${kernelSysThreadsRuntimeDirectory}")
+        endif()
     endforeach()
 
     add_test_executable(guest_gnm_neo_packets_tests tests/GuestGnmNeoPackets.cpp)
@@ -848,6 +863,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSsl>")
     endif()
 
+    add_test_executable(guest_kernel_sys_ksem_tests tests/GuestKernelSysKsem.cpp)
+    target_include_directories(guest_kernel_sys_ksem_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_ksem_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_ksem_tests)
+    add_test(NAME guest_kernel_sys_ksem COMMAND guest_kernel_sys_ksem_tests)
+    set_tests_properties(guest_kernel_sys_ksem PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_ksem PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(guest_system_gesture_tests tests/GuestSystemGesture.cpp)
     target_include_directories(guest_system_gesture_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_system_gesture_tests PRIVATE libSceSystemGesture libc)
@@ -886,6 +912,13 @@ if(BUILD_TESTING)
     set_tests_properties(savedata_memory_growth_read_failure PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(savedata_memory_growth savedata_memory_growth_read_failure PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+        add_test_executable(savedata_memory_host_write_tests tests/SaveDataMemoryHostWrite.cpp)
+        target_include_directories(savedata_memory_host_write_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        target_link_libraries(savedata_memory_host_write_tests PRIVATE libSceSaveData.native libkernel libc)
+        configure_windows_unwind(savedata_memory_host_write_tests)
+        add_test(NAME savedata_memory_host_write COMMAND savedata_memory_host_write_tests)
+        set_tests_properties(savedata_memory_host_write PROPERTIES TIMEOUT 20
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
     add_test_executable(savedata_memory_journal_tests tests/SaveDataMemoryJournal.cpp)
@@ -1118,3 +1151,4 @@ if(BUILD_TESTING)
 endif()
 
 include(prx/libSceFreeType/CurveBounds.cmake)
+include(prx/libSceBeisobmf/Tests.cmake)

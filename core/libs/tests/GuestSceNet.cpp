@@ -119,6 +119,16 @@ static void CheckSocketHostErrors() {
     Require(Failed(sceNetSocket(nullptr, 2, 1, 17), 43));
 }
 
+static void CheckSocketArgumentErrors() {
+    for (const int family : {0, 99}) {
+        Require(Failed(sceNetSocket(nullptr, family, 1, 6), 47));
+        Require(Failed(sceNetSocket(nullptr, family, 99, 6), 47));
+    }
+    for (const int family : {2, 28}) {
+        for (const int type : {0, 4, 99}) Require(Failed(sceNetSocket(nullptr, family, type, 6), 43));
+    }
+}
+
 static void CheckStreamSender(int family) {
     const auto addressSize = family == 2 ? 16u : 28u;
     const int listener = sceNetSocket(nullptr, family, 1, 6);
@@ -2184,6 +2194,7 @@ int main() {
     CheckInitParam();
     CheckEpollWritable();
     CheckSocketHostErrors();
+    CheckSocketArgumentErrors();
     CheckPoolStats();
     CheckStatisticsInfo();
     CheckIfName();
@@ -2238,6 +2249,19 @@ int main() {
     Require(setsockopt_nid_postfix(closed, 0xffff, 0x20, &enabled, sizeof(enabled)) == 0);
     Require(sceNetSetsockopt(closed, 0xffff, 0x20, &enabled, sizeof(enabled)) == 0);
     Require(sceNetSetsockopt(closed, 0xffff, 0x4, &enabled, sizeof(enabled)) == 0);
+    int option = 0;
+    std::uint32_t optionSize = sizeof(option);
+    Require(sceNetGetsockopt(closed, 0xffff, 0x20, &option, &optionSize) == 0 && option == 0x20 && optionSize == sizeof(option));
+    Require(sceNetGetsockopt(closed, 0xffff, 0x4, &option, &optionSize) == 0 && option == 0x4);
+    option = 0;
+    optionSize = sizeof(option);
+    Require(getsockopt_nid_postfix(closed, 0xffff, 0x20, &option, &optionSize) == 0 && option == 0x20 && optionSize == sizeof(option));
+    KernelTimeval receiveTimeout{0, 250000};
+    Require(setsockopt_nid_postfix(closed, 0xffff, 0x1006, &receiveTimeout, sizeof(receiveTimeout)) == 0);
+    receiveTimeout = {};
+    std::uint32_t timeoutSize = sizeof(receiveTimeout);
+    Require(getsockopt_nid_postfix(closed, 0xffff, 0x1006, &receiveTimeout, &timeoutSize) == 0 && timeoutSize == sizeof(receiveTimeout));
+    Require(receiveTimeout.tv_sec == 0 && receiveTimeout.tv_usec == 250000);
     Require(close_nid_postfix(closed) == 0);
     Require(Failed(sceNetSocketClose(closed), 9));
     CheckKernelTimeouts();

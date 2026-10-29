@@ -306,6 +306,13 @@ def main(argv=None):
     parser.add_argument("--thread", help="keep only this thread of an APS5_SAMPLE_THREADS file")
     parser.add_argument("--unverified", action="store_true", help="also symbolize modules the samples have no '# module' record for")
     args = parser.parse_args(argv)
+    try:
+        return symbolize(parser, args)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+
+
+def symbolize(parser, args):
     if args.out:
         output = Path(args.out)
         for source in (args.samples, args.since):

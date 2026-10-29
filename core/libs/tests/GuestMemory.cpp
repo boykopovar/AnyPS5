@@ -671,6 +671,18 @@ static void CheckSavedDirectMemorySurvivesCachePressure() {
 #endif
 }
 
+static void CheckAllocateMainDirectMemory() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t physical = -1;
+    Require(sceKernelAllocateMainDirectMemory(page * 2, page * 2, 3, &physical) == 0);
+    Require(physical >= 0 && physical % static_cast<std::int64_t>(page * 2) == 0 && static_cast<std::size_t>(physical) + page * 2 <= sceKernelGetDirectMemorySize());
+    int type = -1;
+    std::int64_t start = -1;
+    std::int64_t end = -1;
+    Require(sceKernelGetDirectMemoryType(physical, &type, &start, &end) == 0 && type == 3 && start == physical && end == physical + static_cast<std::int64_t>(page * 2));
+    Require(sceKernelReleaseDirectMemory(physical, page * 2) == 0);
+}
+
 static void CheckReusedDirectMemorySections() {
 #ifdef _WIN32
     constexpr std::size_t page = 0x4000;
@@ -3728,6 +3740,7 @@ int main(int argc, char** argv) {
     CheckSparseDirectMemoryBacking();
     CheckSavedDirectMemorySurvivesCachePressure();
     CheckReusedDirectMemorySections();
+    CheckAllocateMainDirectMemory();
     CheckReleaseDirectMemoryClearsMappings();
     CheckReleaseDirectMemoryRejectsInvalidRanges();
     CheckFixedMappingReplacesPartialOverlap();

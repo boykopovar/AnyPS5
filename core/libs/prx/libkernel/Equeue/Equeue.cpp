@@ -125,6 +125,7 @@ void KernelEqueuePrivate::TriggerExpiredTimers(uint64_t nowNs) {
                 ev.event.data += static_cast<intptr_t>(count);
                 ev.deadlineNs += count * ev.intervalNs;
             }
+            if (!ev.triggered) ++m_activations;
             ev.triggered = true;
         }
     }
@@ -150,7 +151,9 @@ bool KernelEqueuePrivate::PollEvents() {
     bool polled = false;
     for (auto& ev : m_events) {
         if (ev.enabled && ev.filter.pollFunc != nullptr) {
+            const bool was = ev.triggered;
             ev.triggered = ev.filter.pollFunc(&ev);
+            if (!was && ev.triggered) ++m_activations;
             polled = true;
         }
     }
@@ -333,6 +336,7 @@ int KernelEqueuePrivate::CollectTriggered(KernelEvent* ev, int num) {
             e.event = e.pendingEvents.front();
             e.pendingEvents.pop_front();
             e.triggered = true;
+            ++m_activations;
         }
         const auto next = std::next(it);
         if (erase) {
@@ -414,6 +418,17 @@ std::size_t KernelEqueuePrivate::CountTriggeredEvents() {
     TriggerExpiredTimers(MonotonicNs());
     PollEvents();
     return static_cast<std::size_t>(std::count_if(m_events.begin(), m_events.end(), [](const KernelEqueueEvent& event) { return event.enabled && event.triggered; }));
+}
+
+KernelEqueuePrivate::TriggeredSnapshot KernelEqueuePrivate::SnapshotTriggered() {
+    std::unique_lock lock(m_mutex);
+    if (m_closed) {
+        return {0, m_activations};
+    }
+    TriggerExpiredTimers(MonotonicNs());
+    PollEvents();
+    const auto count = static_cast<std::size_t>(std::count_if(m_events.begin(), m_events.end(), [](const KernelEqueueEvent& event) { return event.enabled && event.triggered; }));
+    return {count, m_activations};
 }
 
 std::vector<std::shared_ptr<KernelEqueuePrivate>> KernelEqueuePrivate::WatchedQueues() {
@@ -501,6 +516,7 @@ int KernelEqueuePrivate::AddEvent(const KernelEqueueEvent& event) {
         }
     } else {
         m_events.push_back(event);
+        if (event.triggered) ++m_activations;
     }
     m_cond.NotifyOne();
     WakePollers();
@@ -521,11 +537,13 @@ int KernelEqueuePrivate::TriggerEvent(uintptr_t ident, int16_t filter, void* tri
         return SCE_KERNEL_ERROR_ENOENT;
     }
     if (it->enabled) {
+        const bool was = it->triggered;
         if (it->filter.triggerFunc != nullptr) {
             it->filter.triggerFunc(&*it, triggerData);
         } else {
             it->triggered = true;
         }
+        if (!was && it->triggered) ++m_activations;
     }
     m_cond.NotifyOne();
     WakePollers();
@@ -555,6 +573,14 @@ int KernelEqueuePrivate::EditEvent(uintptr_t ident, int16_t filter, const std::f
     if (it == m_events.end()) {
         return SCE_KERNEL_ERROR_ENOENT;
     }
+    struct Activation {
+        KernelEqueuePrivate& queue;
+        KernelEqueueEvent& event;
+        bool active;
+        ~Activation() {
+            if (!active && event.enabled && event.triggered) ++queue.m_activations;
+        }
+    } activation{*this, *it, it->enabled && it->triggered};
     edit(*it);
     m_cond.NotifyOne();
     WakePollers();
@@ -910,8 +936,26 @@ KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t
     return event;
 }
 
+static std::mutex g_closeObserverMutex;
+static std::vector<void (*)(int)> g_closeObservers;
+
+extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor)) {
+    std::lock_guard lock(g_closeObserverMutex);
+    g_closeObservers.push_back(observer);
+}
+
+static void NotifyDescriptorCloseObservers(int descriptor) {
+    std::vector<void (*)(int)> observers;
+    {
+        std::lock_guard lock(g_closeObserverMutex);
+        observers = g_closeObservers;
+    }
+    for (const auto observer : observers) observer(descriptor);
+}
+
 void EqueueDescriptorClosed(int descriptor) {
     KqueueDescriptorClosed(descriptor);
+    NotifyDescriptorCloseObservers(descriptor);
     std::vector<KernelEqueueRef> owners;
     {
         std::unique_lock lock(g_equeueMutex);
