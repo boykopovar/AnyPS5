@@ -848,8 +848,13 @@ bool StencilReferenceDefinedForKeptInvocations(const IrProgram& program) {
     return valid;
 }
 
+static bool DeferredBufferFaultsOnly(const IrProgram& program) {
+    const auto& deferred = program.Info().deferInvalidBufferTypeFaults;
+    return !program.Info().usesDma && std::ranges::any_of(deferred, [](bool value) { return value; });
+}
+
 bool StencilReplaySafe(const IrProgram& program) {
-    if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty())) return false;
+    if (program.Info().sharedMemoryBytes != 0u || program.Info().bdaWrites || (program.Info().usesFaultBuffer && program.Resources().guardedSrtSlots.empty() && !DeferredBufferFaultsOnly(program))) return false;
     if (program.Info().usesFaultBuffer && !FaultControlFlowAcyclic(program)) return false;
     for (const auto& input : program.Info().inputs) if (input.kind == StageInputKind::PrimitiveId) return false;
     bool masks = false;

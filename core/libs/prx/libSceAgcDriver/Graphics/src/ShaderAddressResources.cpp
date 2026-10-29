@@ -138,7 +138,14 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
         if (tables != 0 && storesThroughAddressesCached(shader.program->spirv)) bdaReadOnly = false;
         usesFaultBuffer = usesFaultBuffer || faults != 0;
         const bool tableFaultsOnly = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ImageTableMap; });
-        faultChecks = faultChecks || tables != 0 || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || shader.program->windowLaneGuards != 0 || shader.program->descriptorFaults != 0 || loopGuarded));
+        const bool deferredBufferTypeFaults = std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) {
+            if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers || binding.guestDescriptor.size() % 4u != 0u) return false;
+            for (std::size_t element = 0; element < binding.bufferDeferredTypeFault.size() && element * 4u + 3u < binding.guestDescriptor.size(); ++element) {
+                if (binding.bufferDeferredTypeFault[element] && (binding.guestDescriptor[element * 4u + 3u] >> 30u) != 0u) return true;
+            }
+            return false;
+        });
+        faultChecks = faultChecks || tables != 0 || deferredBufferTypeFaults || (faults != 0 && (!tableFaultsOnly || shader.program->imageTableFaults != 0 || shader.program->poisonedSrtReads != 0 || shader.program->windowLaneGuards != 0 || shader.program->descriptorFaults != 0 || loopGuarded));
     }
     if (usesBda) {
         Require(context.bufferDeviceAddress, "buffer device address is not enabled");

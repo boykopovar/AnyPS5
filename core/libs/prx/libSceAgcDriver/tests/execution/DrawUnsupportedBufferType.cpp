@@ -27,15 +27,32 @@ alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{
 alignas(256) constexpr std::array<std::uint32_t, 16> PixelCode{
     0x7e020280u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x7e000280u, 0x7e0602f2u, 0xf800180fu, 0x03010002u, 0xbf810000u,
 };
+alignas(256) constexpr std::array<std::uint32_t, 9> InactivePixelCode{
+    0xbefe0404u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x7e000280u, 0x7e0602f2u, 0xf800180fu, 0x03010002u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 16> WritingPixelCode{
+    0x7e020280u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0xe0701000u, 0x80000201u, 0x7e000280u, 0x7e0602f2u, 0xf800180fu, 0x03010002u, 0xbf810000u,
+};
 
 void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::initializer_list<std::uint32_t> payload) {
     commands.push_back(0xc0000000u | (static_cast<std::uint32_t>(payload.size() - 1) << 16u) | (opcode << 8u));
     commands.insert(commands.end(), payload);
 }
 
-void Draw(const std::array<std::uint32_t, 4>& descriptor, std::uint32_t* label = nullptr) {
+enum class Pixel { Load, Inactive, Writing };
+
+const void* PixelAddress(Pixel kind) {
+    switch (kind) {
+    case Pixel::Inactive: return InactivePixelCode.data();
+    case Pixel::Writing: return WritingPixelCode.data();
+    case Pixel::Load: break;
+    }
+    return PixelCode.data();
+}
+
+void Draw(const std::array<std::uint32_t, 4>& descriptor, Pixel kind = Pixel::Load, std::uint32_t* label = nullptr) {
     const auto vertex = reinterpret_cast<std::uintptr_t>(VertexCode.data());
-    const auto pixel = reinterpret_cast<std::uintptr_t>(PixelCode.data());
+    const auto pixel = reinterpret_cast<std::uintptr_t>(PixelAddress(kind));
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000},
         {0x1b6, 0}, {0x207, 0}, {0x200, 0}, {0x203, 0x800},
@@ -59,8 +76,9 @@ void Draw(const std::array<std::uint32_t, 4>& descriptor, std::uint32_t* label =
     };
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> shader{
         {0xc8, static_cast<std::uint32_t>(vertex >> 8u)}, {0xc9, static_cast<std::uint32_t>(vertex >> 40u)}, {0x8b, 0u},
-        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 4u << 1u},
+        {0x008, static_cast<std::uint32_t>(pixel >> 8u)}, {0x009, static_cast<std::uint32_t>(pixel >> 40u)}, {0x00b, 6u << 1u},
         {0x00c, descriptor[0]}, {0x00d, descriptor[1]}, {0x00e, descriptor[2]}, {0x00f, descriptor[3]},
+        {0x010, 0}, {0x011, 0},
     };
     std::vector<std::uint32_t> commands;
     Append(commands, 0x79, {0x242, 4});
@@ -79,15 +97,29 @@ void Draw(const std::array<std::uint32_t, 4>& descriptor, std::uint32_t* label =
     AgcDriverWaitIdle_nid_postfix();
 }
 
-void NamesShaderAndDescriptor() {
+void ReportsDeferredTypeFault() {
     const auto address = reinterpret_cast<std::uintptr_t>(Source.data());
     const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), sizeof(Source), 0xa1b00facu};
     try {
         Draw(descriptor);
     } catch (const std::exception& error) {
         const std::string message = error.what();
+        Require(message.find("BDA access failed") != std::string::npos, "draw failed for another reason: " + message);
+        Require(message.find("stage=2 reason=8") != std::string::npos, "draw did not report an invalid fragment descriptor: " + message);
+        return;
+    }
+    throw std::runtime_error("a pixel shader read a buffer through a descriptor of type 2 without reporting a draw-completion fault");
+}
+
+void NamesShaderAndDescriptor() {
+    const auto address = reinterpret_cast<std::uintptr_t>(Source.data());
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), sizeof(Source), 0xa1b00facu};
+    try {
+        Draw(descriptor, Pixel::Writing);
+    } catch (const std::exception& error) {
+        const std::string message = error.what();
         char shader[64];
-        std::snprintf(shader, sizeof(shader), "shader 0x%llx stage %u", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(PixelCode.data())), static_cast<unsigned>(ShaderRecompiler::ShaderStage::Fragment));
+        std::snprintf(shader, sizeof(shader), "shader 0x%llx stage %u", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(WritingPixelCode.data())), static_cast<unsigned>(ShaderRecompiler::ShaderStage::Fragment));
         char words[64];
         std::snprintf(words, sizeof(words), "(buffer 0 V# %08x %08x %08x %08x)", descriptor[0], descriptor[1], descriptor[2], descriptor[3]);
         Require(message.find("buffer descriptor uses an unsupported type") != std::string::npos, "draw failed for another reason: " + message);
@@ -96,7 +128,13 @@ void NamesShaderAndDescriptor() {
         if (std::getenv("APS5_DRAW_PIPELINE") != nullptr) Require(message.find("draw at submission ") != std::string::npos && message.find("(finished on the draw finisher)") != std::string::npos, "a draw finished on the draw finisher does not name its submission and offset: " + message);
         return;
     }
-    throw std::runtime_error("a pixel shader read a buffer through a descriptor of type 2");
+    throw std::runtime_error("a pixel shader that writes a buffer through a descriptor of type 2 was not refused");
+}
+
+void InactiveLaneDoesNotFault() {
+    const auto address = reinterpret_cast<std::uintptr_t>(Source.data());
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), sizeof(Source), 0xa1b00facu};
+    Draw(descriptor, Pixel::Inactive);
 }
 
 void SkipsRefusedDraw() {
@@ -105,7 +143,7 @@ void SkipsRefusedDraw() {
     alignas(8) static std::uint32_t label = 0;
     for (int submission = 0; submission < 2; ++submission) {
         label = 0;
-        Draw(descriptor, &label);
+        Draw(descriptor, Pixel::Writing, &label);
         Require(label == 7u, "the packet after a skipped refused draw was not executed");
     }
     for (const auto byte : Pixels) Require(byte == std::byte{0}, "a skipped refused draw wrote its color target");
@@ -115,13 +153,19 @@ void SkipsRefusedDraw() {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "--skip-refused"), "invalid test arguments");
+        Require(argc == 1 || (argc == 2 && (std::string_view(argv[1]) == "--skip-refused" || std::string_view(argv[1]) == "--deferred-fault")), "invalid test arguments");
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
-        if (argc == 2) SkipsRefusedDraw();
-        else NamesShaderAndDescriptor();
+        if (argc == 2 && std::string_view(argv[1]) == "--skip-refused") {
+            SkipsRefusedDraw();
+        } else if (argc == 2) {
+            ReportsDeferredTypeFault();
+        } else {
+            InactiveLaneDoesNotFault();
+            NamesShaderAndDescriptor();
+        }
         try { AgcDriverShutdown_nid_postfix(); } catch (const std::exception&) {}
         std::puts("draw unsupported buffer type tests passed");
         return 0;
