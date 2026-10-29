@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -7,14 +8,6 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
-
-extern "C" {
-int APS5_VABI mergesort_nid_postfix(void*, std::size_t, std::size_t, int (APS5_VABI*)(const void*, const void*));
-int* APS5_VABI __error_nid_postfix();
-void APS5_VABI qsort_nid_postfix(void*, std::size_t, std::size_t, int (APS5_VABI*)(const void*, const void*));
-int APS5_VABI qsort_s_nid_postfix(void*, std::size_t, std::size_t, int (APS5_VABI*)(const void*, const void*, void*), void*);
-void* APS5_VABI set_constraint_handler_s_nid_postfix(void*);
-}
 
 namespace {
 
@@ -156,6 +149,7 @@ bool ExpectOrder(const char* name, const std::vector<int>& keys, const std::vect
     std::vector<Element> elements;
     for (std::size_t index = 0; index < keys.size(); ++index) elements.push_back({keys[index], static_cast<int>(index)});
     qsort_nid_postfix(elements.data(), elements.size(), sizeof(Element), CompareKeys);
+
     for (std::size_t index = 0; index < tags.size(); ++index) {
         if (elements[index].tag != tags[index]) {
             std::fprintf(stderr, "%s: element %zu has tag %d, expected %d\n", name, index, elements[index].tag, tags[index]);
@@ -175,6 +169,7 @@ bool ExpectSorted(std::size_t size, std::size_t count) {
     std::vector<unsigned char> counts(256);
     for (std::size_t index = 0; index < count; ++index) ++counts[bytes[index * size]];
     qsort_nid_postfix(bytes.data(), count, size, CompareFirstByte);
+
     for (std::size_t index = 0; index < count; ++index) {
         if (index > 0 && bytes[(index - 1) * size] > bytes[index * size]) {
             std::fprintf(stderr, "qsort of %zu %zu-byte elements is not sorted at %zu\n", count, size, index);
@@ -190,7 +185,6 @@ bool ExpectSorted(std::size_t size, std::size_t count) {
     }
     return true;
 }
-
 
 bool CheckMergesort() {
     InitializeHeap();
@@ -216,6 +210,29 @@ bool CheckMergesort() {
     if (!correct) std::fprintf(stderr, "mergesort failed\n");
     return correct;
 }
+
+bool CheckHeapsort() {
+    bool correct = true;
+    for (const std::size_t count : {0, 1, 2, 3, 7, 16, 33, 1000}) {
+        std::vector<Element> elements;
+        for (std::size_t index = 0; index < count; ++index) elements.push_back({static_cast<int>((index * 7919) % 5), static_cast<int>(index)});
+        correct &= heapsort_nid_postfix(elements.data(), count, sizeof(Element), CompareKeys) == 0;
+        for (std::size_t index = 1; index < count; ++index) {
+            const auto& before = elements[index - 1];
+            const auto& after = elements[index];
+            correct &= before.key <= after.key;
+        }
+    }
+    unsigned char bytes[3] = {3, 1, 2};
+    *__error_nid_postfix() = 0;
+    correct &= heapsort_nid_postfix(nullptr, 0, 0, nullptr) == 0;
+    unsigned char single = 42;
+    correct &= heapsort_nid_postfix(&single, 1, 0, nullptr) == 0;
+    correct &= heapsort_nid_postfix(bytes, 3, 0, CompareFirstByte) == -1 && *__error_nid_postfix() == 22 && bytes[0] == 3;
+    correct &= heapsort_nid_postfix(nullptr, 0, 4, CompareKeys) == 0;
+    if (!correct) std::fprintf(stderr, "heapsort failed\n");
+    return correct;
+}
 }
 
 int main() {
@@ -235,5 +252,6 @@ int main() {
         for (const std::size_t count : {0, 1, 2, 6, 7, 8, 40, 41, 1000})
             correct &= ExpectSorted(size, count);
     correct &= CheckMergesort();
+    correct &= CheckHeapsort();
     return correct ? 0 : 1;
 }

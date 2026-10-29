@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -6,8 +7,6 @@
 #include "prx/libc/include/General.hpp"
 
 namespace {
-
-using Uint128 = unsigned __int128;
 
 [[noreturn]] void ConsoleTrap(const char* function) {
     throw std::runtime_error(std::string(function) + ": the console implementation traps (ud2)");

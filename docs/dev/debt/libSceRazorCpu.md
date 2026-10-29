@@ -3,6 +3,15 @@
 ### Silent stubs
 
 - [libSceRazorCpu](../../../core/libs/prx/libSceRazorCpu/Export.cpp): capture-controller registration, thread-local capture storage, marker serialization and flushing are not implemented. The host implements only the confirmed uninitialized-profiler path: markers return zero without reading labels, and `sceRazorCpuFlushOccurred` returns false without writing its optional output.
+- [libSceRazorCpu](../../../core/libs/prx/libSceRazorCpu/Export.cpp): the entry above covers only the markers and `sceRazorCpuFlushOccurred`. Fourteen further calls also return without reading their arguments or recording anything (`sceRazorCpuDisableFiberUserMarkers` returns nothing, the others zero). Three of them are imported by the 53 titles run here:
+
+| Call | Titles importing it (of 53) |
+| --- | --- |
+| `sceRazorCpuSync` | 1 |
+| `sceRazorCpuPlotValue` | 2 |
+| `sceRazorCpuWriteBookmark` | 2 |
+
+The other eleven are imported by none of them: `sceRazorCpuIsCapturing`, `sceRazorCpuNamedSync`, `sceRazorCpuDisableFiberUserMarkers`, `sceRazorCpuInitDataTags`, `sceRazorCpuShutdownDataTags`, `sceRazorCpuTagArray`, `sceRazorCpuTagBuffer`, `sceRazorCpuResizeTaggedBuffer`, `sceRazorCpuUnTagBuffer`, `sceRazorCpuBeginLogicalFileAccess` and `sceRazorCpuEndLogicalFileAccess`.
 
 ### Unknown function info
 

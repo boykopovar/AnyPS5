@@ -16,13 +16,14 @@ def fixture(second_code: bytes, with_import: bool = False) -> bytearray:
     image[0x210:0x215] = b"\xe9\xfb\x05\x00\x00"
     image[0x800:0x800 + len(second_code)] = second_code
     struct.pack_into("<QQq", image, 0x700, 0x310, 8, 0x1210)
-    tags = ([(1, 4), (5, 0x600), (10, 12), (6, 0x620), (11, 24)] if with_import else
+    tags = ([(1, 5), (5, 0x600), (10, 12), (6, 0x620), (11, 24)] if with_import else
             [(5, 0x600), (10, 1), (6, 0x620), (11, 24)])
     tags += [
             (7, 0x700), (8, 48 if with_import else 24), (9, 24), (0, 0)]
     if with_import:
         tags.insert(-1, (0x6100003f, 48))
-        image[0x600:0x600 + len(b"foo\x00lib.so\x00")] = b"foo\x00lib.so\x00"
+        image[0x600:0x600 + len(b"\x00foo\x00lib.so\x00")] = b"\x00foo\x00lib.so\x00"
+        struct.pack_into("<I", image, 0x638, 1)
         struct.pack_into("<QQq", image, 0x718, 0x300, (1 << 32) | 6, 0)
     struct.pack_into("<IIQQQQQQ", image, 64,
                      1, 6, 0, 0, 0, 0x800, 0x800, 0x1000)
@@ -118,15 +119,19 @@ def main():
         result, output = run_case(relinker, work, "strict", ["unused-filter=2"], b"\x90\xc3")
         assert result.returncode == 2 and "multiple executable segments" in result.stderr and not output.exists(), result
 
-        for name, memory_size in (("overlap-past-end", 0x10000000000000), ("overlap-next", 0x1300)):
+        image_targets = ([], ["--lazy-binding"], ["--linux-fixed-base", "0x400000"], ["--windows"], ["--macos"])
+        for name, memory_size, targets in (("overlap-past-end", 0x10000000000000, image_targets[3:]),
+                                           ("overlap-next", 0x1300, image_targets)):
             image = fixture(b"\x90\xc3")
             struct.pack_into("<Q", image, 64 + 40, memory_size)
             source = work / (name + ".elf")
-            output = work / (name + ".exe")
             source.write_bytes(image)
-            result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
-                                    capture_output=True, text=True, timeout=20)
-            assert result.returncode == 2 and "Overlapping PT_LOAD memory ranges" in result.stderr and not output.exists(), (name, result)
+            output = work / (name + ".out")
+            for options in targets:
+                result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                assert result.returncode == 2 and "Overlapping PT_LOAD memory ranges" in result.stderr, (name, options, result)
+                assert not output.exists(), (name, options)
     print("Executable segment tests passed")
 
 

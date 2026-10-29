@@ -1,13 +1,8 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdio>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceAudioOutGetSimulatedHandleStatusInfo();
-int APS5_VABI sceAudioOutGetInfoOpenNum();
-int APS5_VABI sceAudioOutGetInfo();
-}
 
 static void Require(bool value, const char* message) {
     if (value) return;

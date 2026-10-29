@@ -1,3 +1,4 @@
+#include "prx/libSceHttp/include/Http.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>

@@ -325,8 +325,9 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     if (expectedDeviceDwords) std::printf("lds lock budget: %s GPU readback verified across 256 lanes\n", name);
 }
 
-void Misaligned(AgcDriver::VulkanDevice& device, std::uint32_t ldsDwords) {
+void Misaligned(AgcDriver::VulkanDevice& device, std::uint32_t ldsDwords, const char* lds) {
     const auto result = Compile(device, MisalignedCode, ldsDwords);
+    Output.fill(0xdeadbeefu);
     StderrCapture capture;
     try {
         device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(MisalignedCode.data()));
@@ -336,8 +337,9 @@ void Misaligned(AgcDriver::VulkanDevice& device, std::uint32_t ldsDwords) {
         throw;
     }
     const auto log = capture.Finish();
-    Require(log.find("BDA access failed: address=0x4 instruction=0x2c bytes=8 ") != std::string::npos && log.find("reason=7") != std::string::npos, "lds lock budget: misaligned ds_add_u64 on device-backed LDS did not fault");
-    std::puts("lds lock budget: misaligned ds_add_u64 faulted");
+    Require(log.find("BDA access failed: address=0x4 instruction=0x2c bytes=8 ") != std::string::npos && log.find("reason=7") != std::string::npos, std::string("lds lock budget: misaligned ds_add_u64 on ") + lds + " LDS did not fault");
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Require(Output[tid * 2u] == 0u && Output[tid * 2u + 1u] == 0u, std::string("lds lock budget: misaligned ds_add_u64 on ") + lds + " LDS changed the slot: lane " + std::to_string(tid) + " read " + Hex(Output[tid * 2u] | (static_cast<std::uint64_t>(Output[tid * 2u + 1u]) << 32u)));
+    std::printf("lds lock budget: misaligned ds_add_u64 on %s LDS faulted\n", lds);
 }
 
 void LockBudget(AgcDriver::VulkanDevice& device) {
@@ -349,7 +351,8 @@ void LockBudget(AgcDriver::VulkanDevice& device) {
     const auto operations = static_cast<std::uint64_t>(Threads) * Iterations;
     Run(device, UniformCode, "limit", operations, 1, limit / 4u, (limit / 4u + 2u) & ~1u);
     const auto& capabilities = target.supportedCapabilities;
-    if (std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) != capabilities.end()) Misaligned(device, limit / 4u);
+    if (std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) != capabilities.end()) Misaligned(device, limit / 4u, "device-backed");
+    Misaligned(device, LdsDwords, "workgroup");
     Run(device, UniformCode, "limit-4", operations, 1, (limit - 4u) / 4u, 0u);
     std::puts("lds lock budget tests passed");
 }

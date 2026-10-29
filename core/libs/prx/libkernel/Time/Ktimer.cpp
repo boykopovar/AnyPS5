@@ -1,10 +1,10 @@
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstdint>
 #include <mutex>
-
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI clock_gettime_nid_postfix(int clockId, void* tp);
 
 namespace {
 
@@ -29,21 +29,6 @@ constexpr int TimerMax = 32;
 constexpr long long NanosecondsPerSecond = 1000000000;
 constexpr long long TickNanoseconds = 1000000;
 
-struct GuestSigevent {
-    int notify;
-    int signo;
-};
-
-struct GuestTimespec {
-    std::int64_t tv_sec;
-    std::int64_t tv_nsec;
-};
-
-struct GuestItimerspec {
-    GuestTimespec it_interval;
-    GuestTimespec it_value;
-};
-
 using Nanoseconds = __int128;
 
 struct Ktimer {
@@ -56,22 +41,23 @@ struct Ktimer {
 std::mutex g_ktimerLock;
 Ktimer g_ktimers[TimerMax];
 
-Nanoseconds ToNanoseconds(const GuestTimespec& time) {
+Nanoseconds ToNanoseconds(const KernelTimespec& time) {
     return static_cast<Nanoseconds>(time.tv_sec) * NanosecondsPerSecond + time.tv_nsec;
 }
 
-GuestTimespec ToTimespec(Nanoseconds time) {
+KernelTimespec ToTimespec(Nanoseconds time) {
     return {static_cast<std::int64_t>(time / NanosecondsPerSecond),
             static_cast<std::int64_t>(time % NanosecondsPerSecond)};
 }
 
 Nanoseconds ClockNow(int clock) {
-    GuestTimespec now{};
+    KernelTimespec now{};
     clock_gettime_nid_postfix(clock, &now);
+
     return ToNanoseconds(now);
 }
 
-bool FixTimespec(GuestTimespec& time) {
+bool FixTimespec(KernelTimespec& time) {
     if (time.tv_sec < 0 || time.tv_nsec < 0 || time.tv_nsec >= NanosecondsPerSecond) return false;
     if (time.tv_sec == 0 && time.tv_nsec != 0 && time.tv_nsec < TickNanoseconds) time.tv_nsec = TickNanoseconds;
     return true;
@@ -95,7 +81,7 @@ GuestItimerspec Remaining(Ktimer& timer) {
     const Nanoseconds now = ClockNow(timer.clock);
     Expire(timer, now);
     GuestItimerspec result{ToTimespec(timer.interval), {}};
-    if (timer.value != 0) result.it_value = timer.value > now ? ToTimespec(timer.value - now) : GuestTimespec{0, 1};
+    if (timer.value != 0) result.it_value = timer.value > now ? ToTimespec(timer.value - now) : KernelTimespec{0, 1};
     return result;
 }
 

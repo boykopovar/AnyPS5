@@ -1,19 +1,34 @@
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
-extern "C" int APS5_VABI sceSaveDataCancel(std::uint32_t cancelArgument);
+namespace {
+
+void Require(bool value, const char* message) {
+    if (!value) {
+        std::fprintf(stderr, "%s\n", message);
+        std::abort();
+    }
+}
+
+template <typename TCall>
+void RequireThrows(TCall call, const std::string& expectedMessage) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        Require(std::string(error.what()) == expectedMessage, "unexpected error message");
+        return;
+    }
+    Require(false, "call returned instead of reporting that it is not implemented");
+}
+
+}
 
 int main() {
-    try {
-        sceSaveDataCancel(0);
-    } catch (const std::runtime_error& error) {
-        if (std::string(error.what()) == "sceSaveDataCancel not implemented") return 0;
-        std::fprintf(stderr, "sceSaveDataCancel threw: %s\n", error.what());
-        return 1;
-    }
-    std::fprintf(stderr, "sceSaveDataCancel returned instead of reporting that it is not implemented\n");
-    return 1;
+    RequireThrows([] { sceSaveDataCancel(0); }, "sceSaveDataCancel not implemented");
+    return 0;
 }

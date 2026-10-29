@@ -1,3 +1,4 @@
+#include "prx/libSceAudioIn/include/AudioIn.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <chrono>
@@ -10,23 +11,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioInInit();
-int APS5_VABI sceAudioInOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioInHqOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioInAsyncOpen(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioInOpenEx(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioInHqOpenEx(int, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI sceAudioInSetCompressorPreGain();
-int APS5_VABI sceAudioInSetNoiseGateThreshold();
-int32_t APS5_VABI sceAudioInIsPadEmbeddedMic(int32_t);
-int32_t APS5_VABI sceAudioInGetGain(int32_t, float*);
-int32_t APS5_VABI sceAudioInGetRerouteCount(int32_t);
-int APS5_VABI sceAudioInInput(int, void*);
-int APS5_VABI sceAudioInGetSilentState(int);
-int APS5_VABI sceAudioInClose(int);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -98,6 +82,9 @@ void TestValidation() {
         Require(sceAudioInGetGain(badHandle, &gain) == invalidHandle && gain == 1.0f);
         Require(sceAudioInGetRerouteCount(badHandle) == invalidHandle);
         Require(sceAudioInGetGain(badHandle, nullptr) == invalidPointer);
+        Require(sceAudioInClose(badHandle) == invalidHandle);
+        Require(sceAudioInInput(badHandle, nullptr) == invalidHandle);
+        Require(sceAudioInGetSilentState(badHandle) == invalidHandle);
     }
     int port = sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 2);
     float gain = 0.0f;

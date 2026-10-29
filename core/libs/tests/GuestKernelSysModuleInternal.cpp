@@ -1,3 +1,5 @@
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <algorithm>
@@ -7,14 +9,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule, ModuleInfoEx*);
-int APS5_VABI sceKernelGetModuleListInternal(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleList(KernelModule*, std::size_t, std::size_t*);
-int APS5_VABI sceKernelGetModuleInfo(KernelModule, ModuleInfo*);
-int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t, int, ModuleInfoEx*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -35,7 +29,9 @@ static void CheckList() {
     Require(sceKernelGetModuleListInternal(shorter.data(), internal.size() - 1, &untouched) == SCE_KERNEL_ERROR_ENOMEM);
     Require(untouched == 99 && shorter.back() == -1);
     Require(sceKernelGetModuleListInternal(nullptr, 0, &untouched) == SCE_KERNEL_ERROR_EFAULT);
+    std::fill(shorter.begin(), shorter.end(), -1);
     Require(sceKernelGetModuleListInternal(shorter.data(), shorter.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(shorter == internal);
 }
 
 static void CheckEachModule() {
@@ -57,11 +53,12 @@ static void CheckEachModule() {
 static void CheckMatchesAddressLookup() {
     ModuleInfoEx byAddress{};
     byAddress.st_size = sizeof(ModuleInfoEx);
-    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(&sceKernelGetModuleInfo), 2, &byAddress) == 0);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(&sceKernelGetModuleInfo), 1, &byAddress) == 0);
     ModuleInfoEx byHandle{};
     byHandle.st_size = sizeof(ModuleInfoEx);
     Require(sceKernelGetModuleInfoInternal(byAddress.id, &byHandle) == 0);
-    Require(std::memcmp(&byHandle, &byAddress, sizeof(ModuleInfoEx)) == 0);
+    Require(byAddress.st_size == 0 && byHandle.st_size == sizeof(ModuleInfoEx));
+    Require(std::memcmp(byHandle.name, byAddress.name, sizeof(ModuleInfoEx) - offsetof(ModuleInfoEx, name)) == 0);
 }
 
 static void CheckRefusals() {
@@ -79,10 +76,22 @@ static void CheckRefusals() {
     Require(sceKernelGetModuleInfoInternal(-1, &unknown) == SCE_KERNEL_ERROR_ESRCH && unknown.name[0] == '\0');
 }
 
+static void CheckLoadStartSysmodule() {
+    int res = -1;
+    Require(sceKernelLoadStartModuleForSysmodule(nullptr, 0, nullptr, 0, nullptr, &res) == static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT));
+    Require(res == 0);
+    Require(sceKernelLoadStartModuleForSysmodule(nullptr, 0, nullptr, 0, nullptr, nullptr) == static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT));
+    res = -1;
+    Require(sceKernelLoadStartModuleForSysmodule("/system/common/lib/nonexistent_sysmodule.sprx", 0, nullptr, 0, nullptr, &res) ==
+            static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT));
+    Require(res == 0);
+}
+
 int main() {
     CheckList();
     CheckEachModule();
     CheckMatchesAddressLookup();
     CheckRefusals();
+    CheckLoadStartSysmodule();
     return 0;
 }

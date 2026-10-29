@@ -1,3 +1,5 @@
+#include "prx/libSceHmd2/include/Api.hpp"
+#include "prx/libSceHmd2/Hmd2.hpp"
 #include "Hmd2.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -13,25 +15,6 @@
 
 namespace Hmd2 {
 
-struct ReprojectionStatus;
-struct ReprojectionOutput {
-    std::uint32_t textureDescriptor[8];
-};
-
-struct ReprojectionInitializeParameter {
-    void* workMemory;
-    void* displayMemory;
-    std::int32_t threadPriority;
-    std::uint32_t threadAffinity;
-    std::uint32_t queueParameter24;
-    std::uint32_t queueParameter28;
-    std::uint32_t renderingMode;
-    std::uint32_t reserved36;
-    void* auxiliaryMemory;
-    std::uint32_t timingInterval;
-    std::uint32_t reserved52[5];
-};
-
 static_assert(sizeof(ReprojectionOutput) == 32);
 static_assert(sizeof(ReprojectionInitializeParameter) == 72);
 static_assert(offsetof(ReprojectionInitializeParameter, threadPriority) == 16);
@@ -39,28 +22,6 @@ static_assert(offsetof(ReprojectionInitializeParameter, threadAffinity) == 20);
 static_assert(offsetof(ReprojectionInitializeParameter, renderingMode) == 32);
 static_assert(offsetof(ReprojectionInitializeParameter, auxiliaryMemory) == 40);
 static_assert(offsetof(ReprojectionInitializeParameter, timingInterval) == 48);
-struct ReprojectionLayer;
-struct ReprojectionBufferedLayer;
-
-struct ReprojectionOption {
-    std::uint32_t size;
-    std::uint32_t flags;
-    std::uint32_t reserved[30];
-};
-
-struct ReprojectionParameter {
-    const ReprojectionLayer* layers;
-    std::int32_t layerCount;
-    std::uint8_t padding[4];
-    const ReprojectionOption* option;
-};
-
-struct ReprojectionBufferedParameter {
-    const ReprojectionBufferedLayer* layers;
-    std::int32_t layerCount;
-    std::uint8_t padding[4];
-    const ReprojectionOption* option;
-};
 
 static_assert(sizeof(ReprojectionOption) == 128);
 static_assert(sizeof(ReprojectionParameter) == 24);
@@ -68,88 +29,12 @@ static_assert(sizeof(ReprojectionBufferedParameter) == 24);
 static_assert(offsetof(ReprojectionParameter, option) == 16);
 static_assert(offsetof(ReprojectionBufferedParameter, option) == 16);
 
-
-struct MirroringParameter {
-    void* workMemory;
-    void* displayMemory;
-};
-
-struct MirroringOption {
-    std::uint32_t mode;
-    std::uint32_t reserved[7];
-};
-
 static_assert(sizeof(MirroringParameter) == 16);
 static_assert(sizeof(MirroringOption) == 32);
-
-struct GazeResultParameter {
-    std::uint32_t size;
-    std::int32_t handle;
-    std::uint8_t reserved[8];
-};
-struct GazeResult;
-struct FoveatedRenderingResult {
-    std::uint32_t size;
-    std::int32_t status;
-    float direction[3];
-    std::uint8_t reserved[4];
-};
 
 static_assert(sizeof(GazeResultParameter) == 16);
 static_assert(sizeof(FoveatedRenderingResult) == 24);
 static_assert(offsetof(FoveatedRenderingResult, direction) == 8);
-struct GazeCalibrationData {
-    void* data;
-    std::int32_t size;
-};
-struct GazeUserCalibrationData {
-    const void* data;
-    std::int32_t size;
-};
-struct GazeUserCalibrationStatus {
-    std::int32_t status;
-    std::int32_t eye;
-    float point[3];
-};
-struct GazeRawData;
-struct GazeObjectSelectionTransform {
-    float values[16];
-};
-
-struct GazeObjectSelectionObject {
-    std::uint64_t id;
-    std::uint32_t enabled;
-    std::uint32_t reserved12;
-    GazeObjectSelectionTransform transform;
-    const GazeObjectSelectionTransform* boundingBoxes;
-    std::uint32_t boundingBoxCount;
-    std::uint32_t reserved92;
-};
-
-struct GazeObjectSelectionParameter {
-    std::uint32_t size;
-    std::uint32_t reserved4;
-    std::uint64_t reserved8;
-    std::uint64_t gazeTimestamp;
-    GazeObjectSelectionTransform transform;
-    std::uint32_t selectionMode;
-    std::uint32_t filterMode;
-    std::uint64_t timestamp;
-    const GazeObjectSelectionObject* objects;
-    std::uint32_t objectCount;
-    std::uint32_t reserved116;
-};
-
-struct GazeObjectSelectionResult {
-    std::uint32_t size;
-    std::uint32_t selected;
-    std::uint64_t objectId;
-    std::uint64_t gazeTimestamp;
-    std::uint32_t gazeValid;
-    float origin[3];
-    float direction[3];
-    float distance;
-};
 
 static_assert(sizeof(GazeObjectSelectionTransform) == 64);
 static_assert(sizeof(GazeObjectSelectionObject) == 96);
@@ -168,28 +53,6 @@ static_assert(offsetof(GazeObjectSelectionResult, gazeTimestamp) == 16);
 static_assert(offsetof(GazeObjectSelectionResult, origin) == 28);
 static_assert(offsetof(GazeObjectSelectionResult, direction) == 40);
 static_assert(offsetof(GazeObjectSelectionResult, distance) == 52);
-struct GazeObjectSelectionInitializeParameter {
-    std::uint32_t size;
-    std::uint32_t maxObjects;
-    void* memory;
-    std::uint32_t memorySize;
-    std::uint32_t reserved;
-};
-struct GazeObjectSelectionMemoryParameter {
-    std::uint32_t size;
-    std::uint32_t maxObjects;
-};
-struct GazeObjectSelectionMemoryInfo {
-    std::uint32_t size;
-    std::uint32_t memorySize;
-    std::uint64_t alignment;
-};
-
-struct CalibrationPoint {
-    float x;
-    float y;
-    float z;
-};
 
 static_assert(sizeof(CalibrationPoint) == 12);
 static_assert(sizeof(GazeCalibrationData) == 16);
@@ -497,7 +360,6 @@ int APS5_VABI sceHmd2RpeorjectionSetParam() {
     return 0;
 }
 
-
 std::int32_t APS5_VABI Hmd2BeforeInitializeZero() {
     return BeforeInitialize(0, __func__);
 }
@@ -520,10 +382,6 @@ int APS5_VABI sceHmd2SetIpdOffset(std::uint8_t enabled, float offset) {
 }
 APS5_EXPORT("-kZT7X7OMg0", Hmd2BeforeInitializeZero);
 APS5_EXPORT("1ewLtng-SVk", Hmd2BeforeInitializeZero);
-APS5_EXPORT("B0b8DeIUGes", Hmd2BeforeInitializeZero);
-APS5_EXPORT("HclLg4Oj5yw", Hmd2BeforeInitializeZero);
-APS5_EXPORT("VbEvrQXsZyY", Hmd2BeforeInitializeZero);
-APS5_EXPORT("bB6MKZi5UCQ", Hmd2BeforeInitializeZero);
 APS5_EXPORT("OXQ1EDf02XU", Hmd2BeforeInitializeZero);
 APS5_EXPORT("IAxfMTvFm0M", Hmd2BeforeInitializeZero);
 APS5_EXPORT("qTJtAtaLeno", Hmd2BeforeInitializeZero);
@@ -680,16 +538,44 @@ std::int32_t APS5_VABI Hmd2BeforeInitializeMinusOne() {
 }
 APS5_EXPORT("EAkv8Mqt33E", Hmd2BeforeInitializeMinusOne);
 APS5_EXPORT("Rv7bkmKvmz0", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("1oPZizn0SNA", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("TwCpE-nNrlo", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("jkqAeQfdtxw", Hmd2BeforeInitializeMinusOne);
-APS5_EXPORT("+l0RQph81Z8", Hmd2BeforeInitializeMinusOne);
 APS5_EXPORT("qsmAtGw1Ncc", Hmd2BeforeInitializeMinusOne);
 APS5_EXPORT("uKhwYoMsIsA", Hmd2BeforeInitializeMinusOne);
 APS5_EXPORT("WNdaigr94dI", Hmd2BeforeInitializeMinusOne);
 APS5_EXPORT("P6S5ZVWf-H0", Hmd2BeforeInitializeMinusOne);
 APS5_EXPORT("sun6NWE1sdg", Hmd2BeforeInitializeMinusOne);
 APS5_EXPORT("--TFsJYXo04", Hmd2BeforeInitializeMinusOne);
+
+std::int32_t APS5_VABI sceHmd2InternalTrackingOpen() {
+    return BeforeInitialize(0, __func__);
+}
+
+std::int32_t APS5_VABI sceHmd2InternalTrackingClose() {
+    return BeforeInitialize(0, __func__);
+}
+
+std::int32_t APS5_VABI sceHmd2InternalLedDetectorOpen() {
+    return BeforeInitialize(0, __func__);
+}
+
+std::int32_t APS5_VABI sceHmd2InternalLedDetectorClose() {
+    return BeforeInitialize(0, __func__);
+}
+
+std::int32_t APS5_VABI sceHmd2InternalTrackingStart() {
+    return BeforeInitialize(-1, __func__);
+}
+
+std::int32_t APS5_VABI sceHmd2InternalTrackingStop() {
+    return BeforeInitialize(-1, __func__);
+}
+
+std::int32_t APS5_VABI sceHmd2InternalLedDetectorStart() {
+    return BeforeInitialize(-1, __func__);
+}
+
+std::int32_t APS5_VABI sceHmd2InternalLedDetectorStop() {
+    return BeforeInitialize(-1, __func__);
+}
 
 std::int32_t APS5_VABI Hmd2BeforeInitializeValue0400() {
     return BeforeInitialize(0x400, __func__);
@@ -988,7 +874,6 @@ std::int32_t APS5_VABI Hmd2CheckSecondThenError1002(const void* a0, const void* 
     return BeforeInitialize(Hmd2::Error1002, __func__);
 }
 APS5_EXPORT("W-ZIlUXcrNA", Hmd2CheckSecondThenError1002);
-
 
 std::int32_t APS5_VABI Hmd2WriteStateTwo(void* a0) {
     if (a0 == nullptr) return Hmd2::ParameterNull;

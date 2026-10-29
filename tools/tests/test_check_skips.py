@@ -37,6 +37,102 @@ OTHER = [
 
 
 class CheckSkipsTests(unittest.TestCase):
+    def test_ctest_status_and_prefixed_device_reasons_are_expected(self):
+        reports = (
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>skipped, the device lacks geometryShader</system-out>', "linux"),
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>f16 native: skipped, the device has no native f16 with RTE rounding and kept denormals</system-out>', "linux"),
+            ('<skipped message="SKIP_RETURN_CODE=77"/><system-err>video: skipped, no display or Vulkan device: ErrorInitializationFailed</system-err>', "windows"),
+            ('<skipped message="SKIP_REGULAR_EXPRESSION_MATCHED"/><system-out>skipped, no usable Vulkan device: none</system-out>', "windows"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, job in reports:
+                with self.subTest(job=job, report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("all expected", result.stdout)
+
+    def test_ctest_status_does_not_allow_missing_or_unexpected_reasons(self):
+        reports = (
+            '<skipped message="SKIP_RETURN_CODE=77"/>',
+            '<skipped message="SKIP_REGULAR_EXPRESSION_MATCHED"/>',
+            '<skipped message="SKIP_RETURN_CODE=77"/><system-out>skipped, flaky\nskipped, the device lacks geometryShader</system-out>',
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report in reports:
+                for job in ("linux", "windows"):
+                    with self.subTest(job=job, report=report):
+                        junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                        result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                                capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertIn("error: guest_probe skipped", result.stdout)
+
+    def test_ctest_status_preserves_high_refresh_policy(self):
+        reason = "skipped, current display does not provide 120 Hz"
+        reports = (
+            (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{reason}</system-out>', 0),
+            (f'<skipped message="SKIP_REGULAR_EXPRESSION_MATCHED"/><system-out>{reason}</system-out>', 0),
+            (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{reason}\nunexpected failure detail</system-out>', 1),
+            (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{reason}\nskipped, flaky</system-out>', 1),
+            (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>skipped, no display\n{reason}</system-out>', 1),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, expected_code in reports:
+                for job in ("linux", "windows"):
+                    with self.subTest(job=job, report=report):
+                        junit.write_text(f'<testsuite><testcase name="guest_video_out_high_frame_rate">{report}</testcase></testsuite>', encoding="utf-8")
+                        result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                                capture_output=True, text=True)
+                        self.assertEqual(result.returncode, expected_code, result.stdout + result.stderr)
+
+    def test_list_reports_device_reason_after_ctest_status(self):
+        xml = ('<testsuite><testcase name="guest_probe"><skipped message="SKIP_RETURN_CODE=77"/>'
+               '<system-out>f16 native: skipped, the device has no native f16</system-out></testcase></testsuite>')
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            junit.write_text(xml, encoding="utf-8")
+            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--list"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("guest_probe: skipped, the device has no native f16", result.stdout)
+            self.assertNotIn("SKIP_RETURN_CODE", result.stdout)
+
+    def test_unexpected_skip_reason_cannot_hide_behind_a_device_limitation(self):
+        reports = (
+            ('<skipped message="flaky"/><system-out>skipped, the device lacks geometryShader</system-out>', "linux"),
+            ('<skipped message="flaky"/><system-err>skipped, no display</system-err>', "windows"),
+            ('<skipped>flaky</skipped><system-out>skipped, no usable Vulkan device</system-out>', "windows"),
+            ('<skipped/><system-out>skipped, flaky\nskipped, the device lacks geometryShader</system-out>', "linux"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, job in reports:
+                with self.subTest(job=job, report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("error: guest_probe skipped", result.stdout)
+
+    def test_multiple_allowed_skip_reasons_remain_expected(self):
+        reports = (
+            ('<skipped message="the device lacks geometryShader"/><system-out>skipped, no display</system-out>', "linux"),
+            ('<skipped message="no display"/><system-err>skipped, no usable Vulkan device</system-err>', "windows"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for report, job in reports:
+                with self.subTest(job=job, report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_non_junit_xml_fails_in_every_cli_mode(self):
         reports = ('<config/>', '<Site><Testing><Test Status="notrun"><Name>coverage</Name></Test></Testing></Site>')
         with tempfile.TemporaryDirectory() as directory:
@@ -249,6 +345,40 @@ class CheckSkipsTests(unittest.TestCase):
 
 
 
+class RequiredTestsTests(unittest.TestCase):
+    def test_required_reports_without_testcases_fail_in_both_jobs(self):
+        for xml in ('<testsuite/>', '<testsuites><testsuite tests="0"/></testsuites>'):
+            with tempfile.TemporaryDirectory() as directory:
+                junit = Path(directory) / "junit.xml"
+                junit.write_text(xml, encoding="utf-8")
+                for job in ("linux", "windows"):
+                    for options in ([], ["--list"]):
+                        with self.subTest(xml=xml, job=job, options=options):
+                            result = subprocess.run(
+                                [sys.executable, "-I", str(TOOL), str(junit), "--job", job, "--require-tests", *options],
+                                capture_output=True, text=True, timeout=5)
+                            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                            self.assertIn("no testcases", result.stderr)
+                            result = subprocess.run(
+                                [sys.executable, "-I", str(TOOL), str(junit), "--job", job, *options],
+                                capture_output=True, text=True, timeout=5)
+                            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_executed_tests_without_skips_pass_in_both_jobs(self):
+        for xml in ('<testsuite><testcase name="normal"/></testsuite>',
+                    '<testsuites><testsuite><testcase name="normal"/></testsuite></testsuites>'):
+            with tempfile.TemporaryDirectory() as directory:
+                junit = Path(directory) / "junit.xml"
+                junit.write_text(xml, encoding="utf-8")
+                for job in ("linux", "windows"):
+                    with self.subTest(xml=xml, job=job):
+                        result = subprocess.run(
+                            [sys.executable, "-I", str(TOOL), str(junit), "--job", job, "--require-tests"],
+                            capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertIn("0 test(s) skipped, all expected", result.stdout)
+
+
 class SkipReportTests(unittest.TestCase):
     def skipped(self, content):
         with tempfile.TemporaryDirectory() as directory:
@@ -304,6 +434,26 @@ class SkipReportTests(unittest.TestCase):
     def test_message_and_element_text_are_both_retained(self):
         found = self.skipped('<testsuite><testcase name="gpu"><skipped message="unsupported">the device has no required extension</skipped></testcase></testsuite>')
         self.assertRegex(found[0][1], check_skips.DEVICE_LIMITATION)
+
+
+class NotRunTests(unittest.TestCase):
+    def test_real_notrun_case_is_rejected_before_windows_agc_exemption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text('add_test(agc_missing "' + (root / "missing-program").as_posix() + '")\n', encoding="utf-8")
+            report = root / "report.xml"
+            generated = subprocess.run(["ctest", "--test-dir", str(root), "--output-junit", str(report)],
+                                       capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(generated.returncode, 0)
+            self.assertIn('status="notrun"', report.read_text(encoding="utf-8"))
+            for job in ("windows", "linux"):
+                with self.subTest(job=job):
+                    checked = subprocess.run([sys.executable, str(TOOL), str(report), "--job", job, "--require-tests"],
+                                             capture_output=True, text=True, timeout=10)
+                    self.assertEqual(checked.returncode, 2, checked.stdout + checked.stderr)
+                    self.assertIn("notrun", checked.stderr)
+                    self.assertIn("agc_missing", checked.stderr)
+                    self.assertNotIn("Traceback", checked.stderr)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,9 @@
 // Resource registration feeds GPU debugging tools, none of which are attached; the game treats this code as benign.
 static constexpr int SCE_AGC_ERROR_RESOURCE_REGISTRATION_UNAVAILABLE = static_cast<int>(0x8A6C9018);
 static constexpr uint32_t RESOURCE_REGISTRATION_MAX_NAME_LENGTH = 0xfc;
+static constexpr int SCE_AGC_ERROR_WORKLOAD_STREAM_INVALID_ID = static_cast<int>(0x8A6C0033);
+static constexpr int SCE_AGC_ERROR_WORKLOAD_STREAM_NULL = static_cast<int>(0x8A6C0035);
+static constexpr int SCE_AGC_ERROR_WORKLOAD_STREAM_NOT_REGISTERED = static_cast<int>(0x8A6C003A);
 static constexpr uint32_t WORKLOAD_STREAM_MIN_ID = 1;
 static constexpr uint32_t WORKLOAD_STREAM_MAX_ID = 31;
 
@@ -49,10 +52,11 @@ int APS5_VABI sceAgcDriverRegisterMultipleResources(uint32_t* resourceHandle, ui
 }
 
 int APS5_VABI sceAgcDriverRegisterWorkloadStream(uint32_t stream_id, const void* stream) {
- if (stream != nullptr && stream_id >= WORKLOAD_STREAM_MIN_ID && stream_id <= WORKLOAD_STREAM_MAX_ID) {
-  std::lock_guard lock(g_workloadStreamLock);
-  g_workloadStreams |= 1u << stream_id;
- }
+ if (stream_id < WORKLOAD_STREAM_MIN_ID || stream_id > WORKLOAD_STREAM_MAX_ID) return SCE_AGC_ERROR_WORKLOAD_STREAM_INVALID_ID;
+ std::lock_guard lock(g_workloadStreamLock);
+ if ((g_workloadStreams & (1u << stream_id)) != 0) return SCE_AGC_ERROR_WORKLOAD_STREAM_INVALID_ID;
+ if (stream == nullptr) return SCE_AGC_ERROR_WORKLOAD_STREAM_NULL;
+ g_workloadStreams |= 1u << stream_id;
  return 0;
 }
 
@@ -83,10 +87,10 @@ int APS5_VABI sceAgcDriverUnregisterAllResourcesForOwner(uint32_t owner_handle) 
 }
 
 int APS5_VABI sceAgcDriverUnregisterWorkloadStream(uint32_t stream_id) {
-    if (stream_id >= WORKLOAD_STREAM_MIN_ID && stream_id <= WORKLOAD_STREAM_MAX_ID) {
-        std::lock_guard lock(g_workloadStreamLock);
-        g_workloadStreams &= ~(1u << stream_id);
-    }
+    if (stream_id < WORKLOAD_STREAM_MIN_ID || stream_id > WORKLOAD_STREAM_MAX_ID) return SCE_AGC_ERROR_WORKLOAD_STREAM_INVALID_ID;
+    std::lock_guard lock(g_workloadStreamLock);
+    if ((g_workloadStreams & (1u << stream_id)) == 0) return SCE_AGC_ERROR_WORKLOAD_STREAM_NOT_REGISTERED;
+    g_workloadStreams &= ~(1u << stream_id);
     return 0;
 }
 

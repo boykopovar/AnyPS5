@@ -1,23 +1,10 @@
+#include "prx/libSceNetCtlAp/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceNetCtlApInit(void);
-void APS5_VABI sceNetCtlApTerm(void);
-int APS5_VABI sceNetCtlApCheckCallback(void);
-int APS5_VABI sceNetCtlApClearEvent(int eventType);
-int APS5_VABI sceNetCtlApRegisterCallback(void (APS5_VABI *func)(int, void*), void* arg, int* cid);
-int APS5_VABI sceNetCtlApUnregisterCallback(int cid);
-int APS5_VABI sceNetCtlApGetResult(int eventType, int* errorCode);
-int APS5_VABI sceNetCtlApGetInfo(void* info);
-int APS5_VABI sceNetCtlApGetState(int* state);
-int APS5_VABI sceNetCtlApStop(void);
-int APS5_VABI sceNetCtlApGetConnectInfo(const char* optStr, void* connectInfo);
-}
 
 namespace {
 
@@ -108,7 +95,7 @@ int main() {
         cids[i] = -1;
         Require(sceNetCtlApRegisterCallback(Callback, &cids[i], &cids[i]) == 0 && cids[i] == i);
     }
-    int extra = -1;
+    int extra = 0x5a5a;
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, &extra) == kErrCallbackMax && extra == -1);
     Require(sceNetCtlApRegisterCallback(nullptr, nullptr, &extra) == kErrInvalidAddr);
     Require(sceNetCtlApRegisterCallback(Callback, nullptr, nullptr) == kErrInvalidAddr);
@@ -123,6 +110,7 @@ int main() {
     bool threw = false;
     try {
         sceNetCtlApInit();
+
     } catch (const std::runtime_error&) {
         threw = true;
     }
@@ -136,5 +124,6 @@ int main() {
     Require(sceNetCtlApGetState(&state) == 0 && state == 0);
     sceNetCtlApTerm();
     sceNetCtlApTerm();
+
     RequireUninitialized();
 }

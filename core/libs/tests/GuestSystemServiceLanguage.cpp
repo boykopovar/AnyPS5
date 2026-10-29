@@ -1,3 +1,4 @@
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include <cstdlib>
@@ -5,8 +6,6 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
-
-extern "C" int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value);
 
 namespace {
 

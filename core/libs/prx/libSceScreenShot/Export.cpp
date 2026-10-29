@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceScreenShot/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
@@ -6,8 +8,6 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/File.hpp"
-
-extern "C" int APS5_VABI sceKernelFstat(int d, FileStat* sb);
 
 namespace {
 
@@ -43,6 +43,7 @@ int SetOverlayImage(const char* path, int offsetX, int offsetY) {
         result = stat.st_size > 0 && stat.st_size <= maxSize ? 0 : ErrorOverlaySize;
     }
     sceKernelClose(descriptor);
+
     return result;
 }
 

@@ -15,6 +15,7 @@
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
+#include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -69,6 +70,8 @@ constexpr std::uint32_t Uint8x4Info = 0x8428u;
 constexpr std::uint32_t Format8888Unorm = 56;
 constexpr std::uint32_t Format8888Uint = 60;
 constexpr std::uint32_t Format8888Sint = 61;
+constexpr std::uint32_t Float10_11_11Info = 0x0718u;
+constexpr std::uint32_t Format11_11_10Float = 36;
 constexpr std::uint32_t Type2DMsaa = 14;
 constexpr std::uint32_t TileRenderTarget = 0x1b;
 constexpr std::uint32_t TileZ64KBX = 0x18;
@@ -230,6 +233,20 @@ AgcDriver::Graphics::ColorTarget DecodeSwappedTarget(const Block& block) {
     return color;
 }
 
+AgcDriver::Graphics::ColorTarget DecodePackedFloatTarget(const Block& block) {
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
+    cx[0x31b] = 0;
+    cx[0x31c] = Float10_11_11Info;
+    cx[0x31d] = MultisampledAttrib;
+    cx[0x3b0] = ((Side - 1u) << 14u) | (Side - 1u);
+    cx[0x3b8] = TiledAttrib3;
+    cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    Require(color.format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && color.samples == Samples && color.extent.width == Side && color.extent.height == Side, "the 10_11_11 float target did not decode as a 16x16 B10G11R11 surface of 4 samples");
+    return color;
+}
+
 AgcDriver::Graphics::ColorTarget DecodeUintTarget(const Block& block) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
@@ -262,6 +279,20 @@ void CheckSwappedSamples(const std::vector<std::array<float, 4>>& loaded) {
         ++drawn;
     }
     Require(drawn != 0, "no sample of the BGRA8 target holds the drawn color");
+}
+
+void CheckPackedFloatSamples(const std::vector<std::array<float, 4>>& loaded) {
+    const std::array<float, 4> expected{Drawn[0], Drawn[1], Drawn[2], 1.0f};
+    const std::array<float, 4> background{0.0f, 0.0f, 0.0f, 1.0f};
+    std::size_t drawn = 0;
+    for (const auto& texel : loaded) {
+        if (texel == background) continue;
+        char text[256];
+        std::snprintf(text, sizeof(text), "a sample of the 10_11_11 float target read through a format 36 descriptor reads (%g, %g, %g, %g) instead of the drawn (%g, %g, %g, 1)", texel[0], texel[1], texel[2], texel[3], expected[0], expected[1], expected[2]);
+        Require(texel == expected, text);
+        ++drawn;
+    }
+    Require(drawn != 0, "no sample of the 10_11_11 float target holds the drawn color");
 }
 
 void CheckUintSamples(const std::vector<std::array<float, 4>>& loaded) {
@@ -431,9 +462,20 @@ void RequireStoreRefused(AgcDriver::VulkanDevice& device, const std::array<std::
     Require(refusal.find(expected) != std::string::npos, what + " was not refused: " + refusal);
 }
 
+bool DeclaresCapability(std::span<const std::uint32_t> words, spv::Capability capability) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0u && count <= words.size() - cursor, "a SPIR-V instruction is truncated");
+        if ((words[cursor] & 0xffffu) == spv::OpCapability && words[cursor + 1u] == static_cast<std::uint32_t>(capability)) return true;
+        cursor += count;
+    }
+    return false;
+}
+
 std::vector<std::array<float, 4>> RunLoad(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, bool arrayed, std::uint32_t fragments) {
     std::vector<std::uint32_t> userData;
     const auto program = CompileLoad(device, texture, userData, arrayed);
+    Require(!DeclaresCapability(program.spirv, spv::CapabilityImageMSArray), "the multisampled image_load declared ImageMSArray, which only multisampled arrayed storage images need");
     std::vector<std::array<float, 4>> loaded(Side * Side * fragments);
     const auto codeAddress = reinterpret_cast<std::uintptr_t>((arrayed ? ArrayLoadCode : LoadCode).data());
     for (std::uint32_t first = 0; first < loaded.size(); first += Threads) {
@@ -988,6 +1030,12 @@ int main(int argc, char** argv) {
         CheckSwappedSamples(swappedSamples);
         CheckFirstSampleReads(*device, TargetDescriptor(swapped, SampleShift, Format8888Unorm), swappedSamples, true, "from a 4x BGRA8 target read through an RGBA8 descriptor");
         std::puts("a 4x BGRA8 color target loaded through an RGBA8 texture descriptor reads its drawn color with red and blue swapped");
+        Block packedFloat(4u * BlockBytes);
+        Draw(*device, TargetState(DecodePackedFloatTarget(packedFloat)));
+        const auto packedSamples = LoadSamples(*device, packedFloat, Format11_11_10Float);
+        CheckPackedFloatSamples(packedSamples);
+        CheckFirstSampleReads(*device, TargetDescriptor(packedFloat, SampleShift, Format11_11_10Float), packedSamples, true, "from a 4x 10_11_11 float target read through a format 36 descriptor");
+        std::puts("a 4x 10_11_11 float color target loaded through a format 36 (11_11_10 float) texture descriptor reads its drawn color");
         Block integer(4u * BlockBytes);
         Block signedFill(BlockBytes);
         if ((AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).limits.sampledImageIntegerSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0) {
@@ -1015,6 +1063,20 @@ int main(int argc, char** argv) {
         Block stored(BlockBytes);
         StoreWords(stored, colorBytes, FillOnes);
         CheckUniform(LoadSamples(*device, stored), Ones, "from color memory of half-float ones no draw rendered to");
+        Block reused(BlockBytes);
+        StoreWords(reused, colorBytes, FillOnes);
+        CheckUniform(LoadSamples(*device, reused), Ones, "from color memory of half-float ones no draw rendered to, before the title reuses it");
+        AgcDriver::Graphics::RequireNoMultisampleColorTarget(reused.Address(), static_cast<std::size_t>(colorBytes / 2u), "a storage image access");
+        StoreWords(reused, colorBytes, 0u);
+        CheckUniform(LoadSamples(*device, reused), {}, "from color memory no draw rendered to after the title reused it for zeros");
+        std::string drawnRefusal;
+        try {
+            AgcDriver::Graphics::RequireNoMultisampleColorTarget(block.Address(), static_cast<std::size_t>(colorBytes / 2u), "a storage image access");
+        } catch (const std::exception& error) {
+            drawnRefusal = error.what();
+        }
+        Require(drawnRefusal.find("whose samples are only on the host") != std::string::npos, "a guest access over a drawn 4x target is not refused");
+        std::puts("a guest access over a 4x texture no draw rendered to retires it, so a later load reads the memory's new value, and a guest access over a drawn target is still refused");
         const auto storedState = TargetState(DecodeTarget(stored));
         Draw(*device, storedState);
         CheckSamples(storedState, LoadSamples(*device, stored), Ones);
@@ -1031,6 +1093,23 @@ int main(int argc, char** argv) {
         Block undrawn(BlockBytes);
         StoreSamples(*device, TargetDescriptor(undrawn, SampleShift), SampleWrites(leftHalf));
         CheckWritten(std::vector<std::array<float, 4>>(Side * Side * Samples), LoadSamples(*device, undrawn), leftHalf, "into zeroed color memory no draw rendered to");
+        const auto refusedOver = [&](const Block& over) {
+            try {
+                AgcDriver::Graphics::RequireNoMultisampleColorTarget(over.Address(), static_cast<std::size_t>(colorBytes / 2u), "a storage image access");
+            } catch (const std::exception& error) {
+                return std::string(error.what()).find("whose samples are only on the host") != std::string::npos;
+            }
+            return false;
+        };
+        Require(refusedOver(undrawn), "a guest access over a 4x texture no draw rendered to but a dispatch wrote is not refused");
+        Block absorbing(BlockBytes);
+        StoreWords(absorbing, colorBytes, FillOnes);
+        CheckUniform(LoadSamples(*device, absorbing), Ones, "from color memory of half-float ones no draw rendered to, before a fill the texture absorbs");
+        Require(AgcDriver::Graphics::MultisampledColorFillAbsorbs(absorbing.Address(), static_cast<std::size_t>(colorBytes), 0u), "a fill of 0 over the whole color memory of a 4x texture no draw rendered to is not absorbed");
+        AgcDriver::Graphics::NoteColorMetadataFill(absorbing.Address(), static_cast<std::size_t>(colorBytes), 0u);
+        Require(refusedOver(absorbing), "a guest access over a 4x texture no draw rendered to that absorbed a fill is not refused");
+        CheckUniform(LoadSamples(*device, absorbing), {}, "from a 4x texture no draw rendered to after it absorbed a fill of 0");
+        std::puts("a guest access over a 4x texture no draw rendered to is still refused once a dispatch wrote it or it absorbed a fill");
         Block mixedStore(BlockBytes);
         StoreWords(mixedStore, colorBytes, FillOnes);
         std::memcpy(mixedStore.data + colorBytes - sizeof(odd), &odd, sizeof(odd));

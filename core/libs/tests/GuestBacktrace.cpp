@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -13,8 +14,7 @@
 #include <vector>
 
 extern "C" {
-int APS5_VABI sceLibcBacktraceGetBufferSize_nid_postfix(int, int*, std::size_t*);
-int APS5_VABI sceLibcBacktraceSelf_nid_postfix(int, void*, std::size_t, int*);
+
 #if defined(_WIN32)
 std::string BacktraceModulePath_nid_no_patch(HMODULE, std::size_t);
 #endif

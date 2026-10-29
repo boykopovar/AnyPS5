@@ -25,8 +25,13 @@ def git(*args):
 
 
 def daily_commits(ref):
+    try:
+        log = git("log", "--first-parent", "--format=%H %ct", ref)
+    except subprocess.CalledProcessError as error:
+        reason = error.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"cannot read the history of {ref}: {reason}") from error
     seen = {}
-    for line in git("log", "--first-parent", "--format=%H %ct", ref).decode("utf-8").splitlines():
+    for line in log.decode("utf-8").splitlines():
         sha, timestamp = line.split()
         seen.setdefault(datetime.fromtimestamp(int(timestamp), timezone.utc).date().isoformat(), sha)
     return sorted(seen.items())
@@ -100,7 +105,7 @@ def save_cache(path, signature, commits):
             temporary = Path(output.name)
             json.dump({"schema_version": 1, "rules": signature, "commits": commits}, output, sort_keys=True)
             output.write("\n")
-        if path.exists():
+        if os.name != "nt" and path.exists():
             temporary.chmod(stat.S_IMODE(path.stat().st_mode))
         os.replace(temporary, path)
     finally:
@@ -227,9 +232,13 @@ def main(argv=None):
     parser.add_argument("--ref", default="HEAD", help="branch or commit whose first-parent history is measured")
     parser.add_argument("--cache", type=Path, help="reuse per-commit counts while the scanner, ISA list and Python version match")
     args = parser.parse_args(argv)
+    outputs = [args.output / name for name in ("history.json", "history.svg", "history.html")]
     try:
+        for index, path in enumerate(outputs):
+            for other in outputs[index + 1:]:
+                if (path.exists() and other.exists() and path.samefile(other)) or path.resolve() == other.resolve():
+                    raise ValueError(f"generated reports cannot alias each other: {path.name} and {other.name}")
         if args.cache:
-            outputs = [args.output / name for name in ("history.json", "history.svg", "history.html")]
             if any(args.cache.resolve() == path.resolve() or
                    (args.cache.exists() and path.exists() and args.cache.samefile(path)) for path in outputs):
                 raise ValueError("history cache must differ from generated reports")
@@ -238,10 +247,13 @@ def main(argv=None):
         parser.error(str(error))
     if not points:
         parser.error("no commit with a measurable tree")
-    args.output.mkdir(parents=True, exist_ok=True)
-    (args.output / "history.json").write_text(json.dumps(points, indent=2), encoding="utf-8")
-    (args.output / "history.svg").write_text(chart(points) + "\n", encoding="utf-8")
-    (args.output / "history.html").write_text(page(points), encoding="utf-8")
+    try:
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / "history.json").write_text(json.dumps(points, indent=2), encoding="utf-8")
+        (args.output / "history.svg").write_text(chart(points) + "\n", encoding="utf-8")
+        (args.output / "history.html").write_text(page(points), encoding="utf-8")
+    except OSError as error:
+        parser.error(f"{error.filename or args.output}: {error.strerror or error}")
     print(f"{len(points)} days, {points[0]['date']} .. {points[-1]['date']}")
 
 

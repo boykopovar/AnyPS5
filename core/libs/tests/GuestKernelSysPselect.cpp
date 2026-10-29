@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -8,17 +10,9 @@
 #include <cstring>
 #include <source_location>
 
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI pipe_nid_postfix(int* descriptors);
-int APS5_VABI close_nid_postfix(int descriptor);
-std::int64_t APS5_VABI write_nid_postfix(int descriptor, const char* buffer, std::int64_t size);
-int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet);
-int APS5_VABI pselect_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout, const void* sigmask);
-}
-
 namespace {
 
+constexpr int Eintr = 4;
 constexpr int Einval = 22;
 constexpr int SigBlock = 1;
 constexpr int SigSetmask = 3;
@@ -57,6 +51,17 @@ SignalSet CurrentMask() {
 
 bool Same(const SignalSet& left, const SignalSet& right) {
     return std::memcmp(left.bits, right.bits, sizeof(left.bits)) == 0;
+}
+
+int caught = 0;
+
+void APS5_VABI Count(int) {
+    ++caught;
+}
+
+void RaiseBlocked(const SignalSet& blocked) {
+    Require(sigprocmask_nid_postfix(SigBlock, &blocked, nullptr) == 0);
+    Require(raise_nid_postfix(SigUsr1) == 0 && caught == 0);
 }
 
 }
@@ -100,6 +105,60 @@ int main() {
         Require(Same(CurrentMask(), before));
         const Timespec zero{0, 0};
         Require(pselect_nid_postfix(-1, nullptr, nullptr, nullptr, &zero, nullptr) == -1 && Error() == Einval);
+    }
+    Require(signal_nid_postfix(SigUsr1, Count) != reinterpret_cast<GuestHandler>(static_cast<std::uintptr_t>(-1)));
+    const SignalSet empty{};
+    {
+        RaiseBlocked(blocked);
+        const SignalSet withUsr1 = CurrentMask();
+        DescriptorSet read{};
+        read.Add(writer);
+        const DescriptorSet original = read;
+        const Timespec limit{0, 300000000};
+        const auto start = std::chrono::steady_clock::now();
+        Require(pselect_nid_postfix(writer + 1, read.words.data(), nullptr, nullptr, &limit, &empty) == -1 && Error() == Eintr);
+        Require(std::chrono::steady_clock::now() - start < std::chrono::milliseconds(150));
+        Require(caught == 1);
+        Require(read.words == original.words);
+        Require(Same(CurrentMask(), withUsr1));
+        caught = 0;
+    }
+    {
+        RaiseBlocked(blocked);
+        Require(pselect_nid_postfix(0, nullptr, nullptr, nullptr, nullptr, &empty) == -1 && Error() == Eintr && caught == 1);
+        caught = 0;
+    }
+    {
+        RaiseBlocked(blocked);
+        DescriptorSet read{};
+        read.Add(reader);
+        const Timespec limit{0, 300000000};
+        Require(pselect_nid_postfix(reader + 1, read.words.data(), nullptr, nullptr, &limit, &empty) == 1 && caught == 1);
+        Require(read.Has(reader));
+        caught = 0;
+    }
+    {
+        RaiseBlocked(blocked);
+        const Timespec zero{0, 0};
+        DescriptorSet read{};
+        read.Add(writer);
+        Require(pselect_nid_postfix(writer + 1, read.words.data(), nullptr, nullptr, &zero, &empty) == 0 && caught == 1);
+        caught = 0;
+    }
+    {
+        RaiseBlocked(blocked);
+        const Timespec invalid{0, 1000000000};
+        Require(pselect_nid_postfix(0, nullptr, nullptr, nullptr, &invalid, &empty) == -1 && Error() == Einval && caught == 1);
+        caught = 0;
+    }
+    {
+        RaiseBlocked(blocked);
+        const Timespec limit{0, 200000000};
+        const auto start = std::chrono::steady_clock::now();
+        Require(pselect_nid_postfix(0, nullptr, nullptr, nullptr, &limit, &blocked) == 0 && caught == 0);
+        Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(150));
+        Require(sigprocmask_nid_postfix(SigSetmask, &empty, nullptr) == 0 && caught == 1);
+        caught = 0;
     }
     Require(sigprocmask_nid_postfix(SigSetmask, &before, nullptr) == 0);
     Require(close_nid_postfix(reader) == 0 && close_nid_postfix(writer) == 0);

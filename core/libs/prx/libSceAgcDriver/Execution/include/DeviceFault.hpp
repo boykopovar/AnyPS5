@@ -16,6 +16,17 @@
 
 namespace AgcDriver {
 
+struct DeviceDiagnostics {
+    bool config = false;
+    bool checkpoints = false;
+    VkDeviceDiagnosticsConfigFlagsNV flags = 0;
+};
+
+inline DeviceDiagnostics ChooseDeviceDiagnostics(bool requested, bool configSupported, bool checkpointsSupported) {
+    if (!requested || !configSupported) return {};
+    return {true, checkpointsSupported, VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_ERROR_REPORTING_BIT_NV};
+}
+
 inline const char* DeviceFaultAddressKind(VkDeviceFaultAddressTypeEXT type) {
     switch (type) {
     case VK_DEVICE_FAULT_ADDRESS_TYPE_NONE_EXT: return "none";

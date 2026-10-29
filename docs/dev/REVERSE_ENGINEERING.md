@@ -38,9 +38,9 @@ The PS5 uses the System V AMD64 calling convention: integer and pointer argument
 A call site doesn't settle what the library writes, which error codes it returns, its side effects, or the values a
 title happens to accept. "The title continues if it gets 0" is not "the console returns 0". Everything that the call
 site and the other sources leave open throws (`NotImplemented_nid_no_patch`), as in
-[libSceAudioIn](debt/libSceAudioIn.md): the signature came from a call site, the meaning of the result did not, so the
-export still throws. A silent stub is allowed only when it affects the UI ([CONTRIBUTING](../../CONTRIBUTING.md)): a
-read that always reports no data, or a write that drops its data, is not UI.
+[libSceNpManager](debt/libSceNpManager.md): the signature came from a call site, what the library writes into the
+buffer did not, so the export still throws. A silent stub is allowed only when it affects the UI
+([CONTRIBUTING](../../CONTRIBUTING.md)): a read that always reports no data, or a write that drops its data, is not UI.
 
 ## Finding the call sites
 
@@ -62,6 +62,12 @@ read that always reports no data, or a write that drops its data, is not UI.
    objdump -D -b binary -m i386:x86-64 --adjust-vma=0x0 text.bin > text.dis
    grep -nE 'call +0x1f2e480$' text.dis       # callers of the JUMP_SLOT stub at 0x1f2e480
    ```
+
+   For a relinked module (`*.guest.prx`), `tools/annotate_module.py <module> --out <prefix>` does this cut and
+   disassembly for every executable segment and writes `<prefix>.asm`, `<prefix>.imports.txt` and
+   `<prefix>.exports.txt`. It names each import call, PLT stub, GOT reference and export entry from the module's NIDs
+   through the database of `tools/nid_names.py`, which is downloaded on first use unless `--db` names a CSV or
+   `--no-names` prints the NIDs instead. It needs binutils `objdump`.
 
    A disassembler that loads the program headers (Ghidra, IDA) does the same.
 4. Log strings near the call confirm which import it is: `strings -t x eboot.elf`, then the `lea` that loads that address.

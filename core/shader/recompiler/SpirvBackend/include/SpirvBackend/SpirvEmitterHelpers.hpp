@@ -157,6 +157,7 @@ std::uint32_t EmitF16BitsToF32Decoded(SpirvEmitterState& state, std::uint32_t bi
 void EmitProgram(SpirvEmitterState& state);
 void DefineGetBdaPointer(SpirvEmitterState& state);
 void DefineDot2F32F16Function(SpirvEmitterState& state);
+void DefineReciprocalCorrectionFunction(SpirvEmitterState& state);
 void EmitLabel(SpirvEmitterState& state, std::uint32_t label);
 std::uint32_t Unary(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t type, std::uint32_t value);
 std::uint32_t Binary(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t type, std::uint32_t lhs, std::uint32_t rhs);

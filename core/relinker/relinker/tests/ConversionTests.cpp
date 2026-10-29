@@ -25,7 +25,7 @@ void reject(TAction action) {
     throw std::runtime_error("Invalid conversion was accepted");
 }
 
-std::vector<std::uint8_t> fixture(const std::string& needed = {}) {
+std::vector<std::uint8_t> fixture(const std::string& needed = {}, const std::string& soname = {}) {
     std::vector<std::uint8_t> bytes(0x3000);
     const std::array<std::uint8_t, 7> magic{0x7f, 'E', 'L', 'F', 2, 1, 1};
     std::copy(magic.begin(), magic.end(), bytes.begin());
@@ -53,10 +53,15 @@ std::vector<std::uint8_t> fixture(const std::string& needed = {}) {
     header(1, 1, 6, 0x2000, 0x1000);
     for (std::size_t index = 3; index < 8; ++index) header(index, 0x6fffff01, 0, 0, 0);
     bytes[0x1000] = 0xc3;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> tags{{5, 0x2600}, {10, needed.empty() ? 1 : needed.size() + 2}, {6, 0x2620}, {11, 24}, {7, 0x2700}, {8, 0}, {9, 24}, {4, 0x2680}};
+    const std::size_t sonameOffset = needed.empty() ? 1 : needed.size() + 2;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> tags{{5, 0x2600}, {10, soname.empty() ? sonameOffset : sonameOffset + soname.size() + 1}, {6, 0x2620}, {11, 24}, {7, 0x2700}, {8, 0}, {9, 24}, {4, 0x2680}};
     if (!needed.empty()) {
         std::copy(needed.begin(), needed.end(), bytes.begin() + 0x2601);
         tags.push_back({1, 1});
+    }
+    if (!soname.empty()) {
+        std::copy(soname.begin(), soname.end(), bytes.begin() + 0x2600 + static_cast<std::ptrdiff_t>(sonameOffset));
+        tags.push_back({14, sonameOffset});
     }
     tags.push_back({0, 0});
     header(2, 2, 6, 0x2000, tags.size() * 16);
@@ -127,6 +132,56 @@ void convert() {
     require(progress.Events.back().Completed != 1 || progress.Events.back().Stage != Domain::ProgressStage::Executable, "Failed conversion reported completion");
 }
 
+void backupCopies() {
+    for (const auto target : {Relinker::TargetSystem::Windows, Relinker::TargetSystem::Linux}) {
+        TestProgress progress;
+        Relinker::ConversionOptions options;
+        options.Target = target;
+        auto source = input();
+        for (const auto* name : {"libSceFace.prx", "libSceFace.prx.esbak", "libSceFace.prxbak"})
+            source.Modules.push_back({std::filesystem::path("virtual/title/sce_module") / name, fixture({}, "libSceFace.prx")});
+        const auto output = Relinker::Conversion(progress).Convert(std::move(source), options);
+        require(output.Modules.size() == 1 && output.Modules.front().Path.generic_string() == "virtual/output/app0/sce_module/libSceFace.prx.guest.prx", "A backup copy was converted");
+        for (const auto* name : {"libSceFace.prx.esbak", "libSceFace.prxbak"})
+            require(progress.Messages.find(std::string("Skipping backup copy: sce_module/") + name + " (same SONAME as sce_module/libSceFace.prx)\n") != std::string::npos, "A skipped backup copy was not reported");
+    }
+    TestProgress progress;
+    auto source = input();
+    source.Modules.push_back({"virtual/title/sce_module/libSceFace.prx", fixture({}, "libSceFace.prx")});
+    source.Modules.push_back({"virtual/title/sce_module/libSceFace.prx.esbak", fixture({}, "libSceFaceOld.prx")});
+    const auto output = Relinker::Conversion(progress).Convert(std::move(source), {});
+    require(output.Modules.size() == 2 && progress.Messages.find("Skipping backup copy") == std::string::npos, "A module with another SONAME was skipped as a backup copy");
+}
+
+void runtimeLifecyclePolicy() {
+    TestProgress progress;
+    const Relinker::Conversion converter(progress);
+    for (const auto* directory : {"sce_module", "sce_modules", "prx", "Media/Plugins"}) {
+        auto source = input();
+        const auto parent = source.ModuleRoot / directory;
+        auto module = fixture();
+        Io::WriteU64(module, 0x2080, 12);
+        Io::WriteU64(module, 0x2088, 0x1000);
+        Io::WriteU64(module, 208, 160);
+        Io::WriteU64(module, 216, 160);
+        source.Modules.push_back({parent / "plugin.prx", std::move(module)});
+        source.RuntimeDirectories.push_back(parent);
+        const auto output = converter.Convert(std::move(source), {});
+        const auto& bytes = output.Modules.at(0).Bytes;
+        const auto headers = Io::ReadU64(bytes, 32);
+        bool initializesOnMapping = false;
+        for (std::uint16_t index = 0; index < Io::ReadU16(bytes, 56); ++index) {
+            const auto header = headers + index * 56;
+            if (Io::ReadU32(bytes, header) != 2) continue;
+            const auto dynamic = Io::ReadU64(bytes, header + 8);
+            const auto end = dynamic + Io::ReadU64(bytes, header + 32);
+            for (auto offset = dynamic; offset < end; offset += 16)
+                if (Io::ReadU64(bytes, offset) == 12) initializesOnMapping = Io::ReadU64(bytes, offset + 8) != 0;
+        }
+        require(initializesOnMapping == (std::string_view(directory) != "Media/Plugins"), "Default SDK directories lost their mapping initializer");
+    }
+}
+
 void fixedBase() {
     TestProgress progress;
     const Relinker::Conversion converter(progress);
@@ -195,6 +250,25 @@ void scanning() {
     progress.Events.clear();
     reject([&] { scanner->ScanCodeSectionForSyscalls(code, 0, code.size()); });
     require(progress.Events.back().Completed < progress.Events.back().Total, "Failed scan reported completion");
+}
+
+void branchAcrossSignedBoundary() {
+    std::vector<std::uint8_t> image(64 + 32, 0x90);
+    image[64] = 0xc3;
+    const std::array<std::uint8_t, 5> jump{0xe9, 0xeb, 0xff, 0xff, 0xff};
+    std::copy(jump.begin(), jump.end(), image.begin() + 64 + 16);
+    image.back() = 0xc3;
+    Domain::ProgramHeader header{};
+    header.Type = 1;
+    header.Flags = 1;
+    header.Offset = 64;
+    header.MappedAddress = 0x7ffffffffffffff0;
+    header.FileSize = image.size() - 64;
+    header.MemorySize = header.FileSize;
+    Io::WriteU64(image, 24, 0x8000000000000000);
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
+    require(instructions.contains(0x8000000000000000), "Lost the entry above the signed boundary");
+    require(instructions.contains(0x7ffffffffffffff0), "Lost the branch target below the signed boundary");
 }
 
 class FailingProgress final : public Domain::IProgress {
@@ -313,7 +387,7 @@ void relocationValidation() {
             converter.Convert(source, {});
             throw std::runtime_error("Unsupported relocation type was accepted");
         } catch (const Domain::RelinkerException& error) {
-            require(std::string(error.what()).find("Unsupported relocation type 0x99") != std::string::npos, "Wrong error for unsupported relocation");
+            require(std::string(error.what()) == "Unsupported relocation type 0x99", "Wrong error for unsupported relocation");
             require(error.FailureOffset == 0x2700, "Wrong failure offset for unsupported relocation");
         }
     }
@@ -348,8 +422,11 @@ void relocationValidation() {
 int main() {
     try {
         convert();
+        backupCopies();
+        runtimeLifecyclePolicy();
         fixedBase();
         scanning();
+        branchAcrossSignedBoundary();
         diagnosticContext();
         cancellation();
         baseRelocations();
