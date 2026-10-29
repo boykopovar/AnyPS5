@@ -6,6 +6,7 @@
 #endif
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -161,6 +162,67 @@ void CheckMode() {
     SetEnvironment("ANYPS5_OPEN_URLS", nullptr);
 }
 
+class RecordingLauncher final : public IUrlLauncher {
+public:
+    bool Launch(const std::string& url) override {
+        launched.push_back(url);
+        return result;
+    }
+    std::vector<std::string> launched;
+    bool result = true;
+};
+
+class ScriptedConfirmation final : public IUrlConfirmation {
+public:
+    bool Confirm(const std::string& url) override {
+        asked.push_back(url);
+        return answer;
+    }
+    std::vector<std::string> asked;
+    bool answer = true;
+};
+
+void CheckPolicy() {
+    const std::string good = "https://example.com/a?b=c";
+    RecordingLauncher launcher;
+    ScriptedConfirmation confirmation;
+
+    Require(OpenUrlOnHost(OpenUrlMode::Never, good, launcher, confirmation) == OpenUrlOutcome::Disabled);
+    Require(launcher.launched.empty() && confirmation.asked.empty());
+
+    Require(OpenUrlOnHost(OpenUrlMode::Ask, good, launcher, confirmation) == OpenUrlOutcome::Launched);
+    Require(confirmation.asked == std::vector<std::string>{good});
+    Require(launcher.launched == std::vector<std::string>{good});
+
+    confirmation.answer = false;
+    Require(OpenUrlOnHost(OpenUrlMode::Ask, good, launcher, confirmation) == OpenUrlOutcome::Declined);
+    Require(confirmation.asked.size() == 2 && launcher.launched.size() == 1);
+    confirmation.answer = true;
+
+    launcher.result = false;
+    Require(OpenUrlOnHost(OpenUrlMode::Ask, good, launcher, confirmation) == OpenUrlOutcome::Failed);
+    Require(confirmation.asked.size() == 3 && launcher.launched.size() == 2);
+    launcher.result = true;
+
+    confirmation.answer = false;
+    Require(OpenUrlOnHost(OpenUrlMode::Always, good, launcher, confirmation) == OpenUrlOutcome::Launched);
+    Require(confirmation.asked.size() == 3 && launcher.launched.size() == 3);
+    confirmation.answer = true;
+
+    for (const std::string& bad : {std::string("psno://example.com"), std::string("https://u:p@example.com/"), std::string("https://example.com/\n"),
+                                   std::string("http://"), std::string("")}) {
+        for (const OpenUrlMode mode : {OpenUrlMode::Ask, OpenUrlMode::Always}) {
+            const std::size_t asked = confirmation.asked.size();
+            const std::size_t launched = launcher.launched.size();
+            Require(OpenUrlOnHost(mode, bad, launcher, confirmation) == OpenUrlOutcome::Rejected);
+            Require(confirmation.asked.size() == asked && launcher.launched.size() == launched);
+        }
+        const std::size_t launched = launcher.launched.size();
+        Require(OpenUrlOnHost(OpenUrlMode::Never, bad, launcher, confirmation) == OpenUrlOutcome::Disabled);
+        Require(launcher.launched.size() == launched);
+    }
+}
+
 }
 
 int main() {
@@ -173,5 +235,6 @@ int main() {
     CheckPort();
     CheckLength();
     CheckMode();
+    CheckPolicy();
     return 0;
 }
