@@ -209,6 +209,10 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_read_encoding.py)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
+        if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
+            add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
+        endif()
         if(NOT APPLE)
             add_test(NAME annotate_module COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
@@ -228,10 +232,16 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_comments.py --shard ${shard}/12)
             set_tests_properties(${conventions_test_name} PROPERTIES TIMEOUT 120)
         endforeach()
+        add_test(NAME performance_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_csv.py)
+        set_tests_properties(performance_csv PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_wrapped_declarations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py)
         add_test(NAME conventions_ci_gate COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_ci_gate.py)
+        add_test(NAME preview_pad_timeline COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_preview_pad_timeline.py)
+        set_tests_properties(preview_pad_timeline PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_git_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_git.py)
         add_test(NAME conventions_doc_links COMMAND ${Python3_EXECUTABLE}
@@ -256,7 +266,18 @@ if(BUILD_TESTING)
         add_test(NAME select_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py)
         add_test(NAME check_main_sync COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_main_sync.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_main_sync.py CheckMainSyncTests)
+        set_tests_properties(check_main_sync PROPERTIES TIMEOUT 30)
+        set(check_main_sync_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_main_sync.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${check_main_sync_source}")
+        file(STRINGS "${check_main_sync_source}" check_main_sync_classes REGEX "^class [A-Za-z0-9_]*Tests\\(")
+        foreach(test_class IN LISTS check_main_sync_classes)
+            string(REGEX REPLACE "^class ([A-Za-z0-9_]+).*" "\\1" test_class "${test_class}")
+            if(NOT test_class STREQUAL "CheckMainSyncTests")
+                add_test(NAME check_main_sync_${test_class} COMMAND ${Python3_EXECUTABLE} "${check_main_sync_source}" ${test_class})
+                set_tests_properties(check_main_sync_${test_class} PROPERTIES TIMEOUT 30)
+            endif()
+        endforeach()
         set(select_tests_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${select_tests_source}")
         file(STRINGS "${select_tests_source}" select_tests_classes REGEX "^class [A-Za-z0-9_]*Tests\\(")
@@ -291,6 +312,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen_stdout_newlines.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
+        add_test(NAME job_reference_errors COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_job_reference_errors.py)
+        set_tests_properties(job_reference_errors PROPERTIES TIMEOUT 20)
         add_test(NAME hardware_oracle_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_compare_results.py)
         set_tests_properties(hardware_oracle_compare PROPERTIES TIMEOUT 120)
@@ -494,6 +518,7 @@ set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HVF ON CACHE BOOL "" FORCE)
 set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
 if(NOT ANYPS5_USE_SYSTEM_DEPS)
     add_subdirectory(3rdparty/freetype EXCLUDE_FROM_ALL)
@@ -517,7 +542,7 @@ set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 include(cmake/ZArchive.cmake)
 include(cmake/Opus.cmake)
-if(WIN32)
+if(WIN32 OR APPLE)
     set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
     set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)

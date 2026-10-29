@@ -277,6 +277,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Memory/CaptureValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Memory/WriteEvidence.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Memory/WrittenBuffers.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Memory/WrittenBufferIndex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/CommandValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/PacketExecution.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Packets/PacketFlush.cpp
@@ -876,6 +877,24 @@ if(BUILD_TESTING AND NOT WIN32)
     set_target_properties(agc_collect_memo_generation_tests PROPERTIES CXX_EXTENSIONS OFF)
     add_test(NAME agc_collect_memo_generation COMMAND agc_collect_memo_generation_tests)
     set_tests_properties(agc_collect_memo_generation PROPERTIES TIMEOUT 30)
+endif()
+
+add_test_executable(agc_written_buffer_index_tests EXCLUDE_FROM_ALL
+        tests/WrittenBufferIndex.cpp
+        Execution/src/Driver/Memory/WrittenBufferIndex.cpp
+)
+target_include_directories(agc_written_buffer_index_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_written_buffer_index_tests PRIVATE libc)
+set_target_properties(agc_written_buffer_index_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_written_buffer_index_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_written_buffer_index_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_written_buffer_index COMMAND agc_written_buffer_index_tests)
+    set_tests_properties(agc_written_buffer_index PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_written_buffer_index PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 add_test_executable(agc_thread_priority_tests EXCLUDE_FROM_ALL
@@ -1933,6 +1952,8 @@ if(BUILD_TESTING)
         ENVIRONMENT "APS5_PIN_WAIT_MS=2000" SKIP_RETURN_CODE 77 TIMEOUT 30)
     set_tests_properties(agc_driver_unit_shadow_budget PROPERTIES
         ENVIRONMENT "APS5_PIN_WAIT_MS=2000;APS5_UNIT_SHADOW_MIB=8" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_small_tiled_shadow_label COMMAND agc_driver_recorder_tests --small-tiled-shadow-label-only)
+    set_tests_properties(agc_small_tiled_shadow_label PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_recorder_completion_labels COMMAND agc_driver_recorder_tests --completion-labels-only)
     set_tests_properties(agc_recorder_completion_labels PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     add_test(NAME agc_recorder_cmask COMMAND agc_driver_recorder_tests --cmask-only)
@@ -1944,7 +1965,7 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "a failed check stopped the test with a texture upload in its open batch"
         FAIL_REGULAR_EXPRESSION "recorder teardown")
     if(WIN32)
-        set_tests_properties(agc_driver_host_import_lifetime agc_driver_host_import_mutation_race agc_driver_unit_shadow agc_driver_unit_shadow_budget PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_host_import_lifetime agc_driver_host_import_mutation_race agc_driver_unit_shadow agc_driver_unit_shadow_budget agc_small_tiled_shadow_label PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         set_tests_properties(agc_recorder_completion_labels agc_recorder_cmask agc_recorder_cube agc_recorder_failed_check PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
@@ -2621,6 +2642,7 @@ target_include_directories(agc_driver_sample_order_tests PRIVATE ${agcTestShader
 target_include_directories(agc_driver_prepared_exports_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
 target_include_directories(agc_driver_pipeline_journal_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+target_link_libraries(agc_driver_pipeline_journal_tests PRIVATE ${CMAKE_DL_LIBS})
 
 target_include_directories(agc_driver_buffer_descriptor_runtime_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
@@ -2697,6 +2719,11 @@ if(BUILD_TESTING)
     add_test(NAME agc_shader_srt_read_patching COMMAND agc_shader_memory_tests --srt-read-patching)
     set_tests_properties(agc_shader_srt_read_patching PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_shader_table_snapshot_reuse COMMAND agc_shader_memory_tests --table-snapshot-reuse)
+    add_test(NAME agc_shader_region_merge COMMAND agc_shader_memory_tests --region-merge)
+    set_tests_properties(agc_shader_region_merge PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_shader_region_merge PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     set_tests_properties(agc_shader_table_snapshot_reuse PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_shader_table_snapshot_reuse_unmasked COMMAND agc_shader_memory_tests --table-snapshot-reuse)
     set_tests_properties(agc_shader_table_snapshot_reuse_unmasked PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_MASKED_RESULT_MEMO=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")

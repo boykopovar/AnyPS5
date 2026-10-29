@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -131,6 +132,20 @@ class ProgressSnapshotTests(unittest.TestCase):
             with patch("sys.stdout", stdout):
                 self.assertEqual(progress.main(["--compare", str(paths[0]), str(paths[0])]), 0)
             self.assertEqual(stdout.getvalue(), expected)
+
+
+    def test_duplicate_names_are_rejected_within_each_section(self):
+        for section in ("libraries", "shaders"):
+            with self.subTest(section=section):
+                snapshot = self.snapshot()
+                snapshot[section]["groups"] = [{"name": "Repeated"}, {"name": "other"}, {"name": "Repeated"}]
+                self.assert_rejected(snapshot, section + ".groups[2].name duplicates 'Repeated'")
+
+    def test_group_names_are_case_sensitive_and_local_to_each_section(self):
+        snapshot = self.snapshot()
+        for section in ("libraries", "shaders"):
+            snapshot[section]["groups"] = [{"name": "same"}, {"name": "Same"}]
+        progress.validate_snapshot(snapshot)
 
 
 class ProgressTests(unittest.TestCase):
@@ -704,7 +719,7 @@ class ProgressTests(unittest.TestCase):
             first, second = output / "progress.json", output / "progress.html"
             first.write_text("json report", encoding="utf-8")
             try:
-                second.hardlink_to(first)
+                os.link(first, second)
             except OSError:
                 self.skipTest("hard links are not available")
             others = {name: output / name for name in ("badge-libraries.svg", "badge-shaders.svg", "progress.svg")}

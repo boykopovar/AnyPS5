@@ -1018,7 +1018,7 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
     std::unique_ptr<Manager, decltype(&DestroyManager)> owner(manager, DestroyManager);
     manager->running = true;
     manager->workerCount = workers;
-    manager->spinTicks = sceKernelGetTscFrequency() / 1000000 * settings.spinMicroseconds;
+    manager->spinTicks = HostTscFrequency_nid_no_patch() / 1000000 * settings.spinMicroseconds;
     for (std::uint32_t index = 0; index < layout.nodes; ++index) std::construct_at(&manager->nodes[index]);
     for (std::uint32_t index = layout.nodes; index > 1; --index) ReturnNode(*manager, &manager->nodes[index - 1]);
     manager->freeSequences = sequences == MaxSequences ? ~std::uint32_t{0} : (std::uint32_t{1} << sequences) - 1;

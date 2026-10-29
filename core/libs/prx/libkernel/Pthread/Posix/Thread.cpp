@@ -23,6 +23,7 @@
 extern "C" {
 
 int APS5_VABI JoinThread_nid_no_patch(Pthread thread, void** retval, const KernelTimespec* abstime);
+bool IsInitialPthread_nid_no_patch();
 
 }
 
@@ -186,9 +187,9 @@ int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, Ker
 
 static Pthread SchedTarget(int pid, const char* function) {
     if (pid == 0) return scePthreadSelf();
-    if (pid == getpid_nid_postfix())
-        throw std::runtime_error(std::string(function) + ": the first thread of the process, which its own pid selects, is not tracked");
-    return nullptr;
+    if (pid != getpid_nid_postfix()) return nullptr;
+    if (IsInitialPthread_nid_no_patch()) return scePthreadSelf();
+    throw std::runtime_error(std::string(function) + ": the main thread is selected by the own pid from another thread, which is not modelled");
 }
 
 static int SchedFailure(int error) {
@@ -197,7 +198,6 @@ static int SchedFailure(int error) {
 }
 
 static bool InSchedRange(int policy, int priority) {
-    if (policy != GUEST_SCHED_FIFO && policy != GUEST_SCHED_RR) return false;
     return priority >= sched_get_priority_min_nid_postfix(policy) && priority <= sched_get_priority_max_nid_postfix(policy);
 }
 
@@ -207,8 +207,6 @@ int APS5_VABI sched_getparam_nid_postfix(int pid, KernelSchedParam* param) {
     int policy = 0;
     KernelSchedParam current{};
     if (const int error = PosixThread::ToErrno(scePthreadGetschedparam(thread, &policy, &current))) return SchedFailure(error);
-    if (!InSchedRange(policy, current.sched_priority))
-        throw std::runtime_error("sched_getparam: the thread's priority " + std::to_string(current.sched_priority) + " is outside the sched_get_priority_min to sched_get_priority_max range of policy " + std::to_string(policy) + "; what the console reports is unverified");
     if (!param) return SchedFailure(PosixThread::GUEST_EFAULT);
     *param = current;
     return 0;
@@ -227,10 +225,13 @@ int APS5_VABI sched_setparam_nid_postfix(int pid, const KernelSchedParam* param)
     if (!param) return SchedFailure(PosixThread::GUEST_EFAULT);
     const Pthread thread = SchedTarget(pid, "sched_setparam");
     if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
+    const auto live = LockLiveGuestThread(thread);
+    if (!live.owns_lock()) return SchedFailure(PosixThread::GUEST_ESRCH);
     const int policy = thread->schedPolicy.load(std::memory_order_relaxed);
-    if (!InSchedRange(policy, param->sched_priority))
-        throw std::runtime_error("sched_setparam: priority " + std::to_string(param->sched_priority) + " is outside the sched_get_priority_min to sched_get_priority_max range of policy " + std::to_string(policy) + "; FreeBSD answers EPERM and the console's answer is unverified");
-    if (const int error = PosixThread::ToErrno(scePthreadSetprio(thread, param->sched_priority))) return SchedFailure(error);
+    if (policy != GUEST_SCHED_FIFO && policy != GUEST_SCHED_RR)
+        throw std::runtime_error("sched_setparam: the thread's policy " + std::to_string(policy) + " is neither SCHED_FIFO nor SCHED_RR, for which the answer of a PS5 is unmeasured");
+    if (!InSchedRange(policy, param->sched_priority)) return SchedFailure(PosixThread::GUEST_EPERM);
+    thread->priority.store(param->sched_priority, std::memory_order_relaxed);
     return 0;
 }
 

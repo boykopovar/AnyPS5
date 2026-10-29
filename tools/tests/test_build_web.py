@@ -306,6 +306,81 @@ class ReleaseMetadataTests(unittest.TestCase):
 
 
 
+class WebReleaseLayoutTests(unittest.TestCase):
+    TAG, REVISION = "v1", "a" * 40
+    CORE = ("index.html", "app.mjs", "worker.mjs", "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
+
+    def release(self, names, extra=(), metadata=None):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name in (*names, *extra):
+                archive.writestr(name, b"content " + name.encode())
+            archive.writestr("web-release.json", json.dumps(metadata or {"tag": self.TAG, "revision": self.REVISION}))
+        return buffer.getvalue()
+
+    def publish(self, data):
+        url = "https://example.invalid/web.zip"
+        release = {"tag_name": self.TAG, "html_url": "https://example.invalid/v1",
+                   "assets": [{"name": f"web-{self.TAG}.zip", "size": len(data), "browser_download_url": url,
+                               "digest": "sha256:" + hashlib.sha256(data).hexdigest()}]}
+        responses = {"https://api.github.com/repos/boykopovar/AnyPS5/releases/latest": json.dumps(release).encode(), url: data}
+
+        def libraries(staging, _release):
+            (staging / "release.json").write_text(json.dumps({"tag": self.TAG}), encoding="utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "web"
+            with patch.object(build_web, "request", side_effect=lambda address: io.BytesIO(responses[address])), \
+                    patch.object(build_web, "library_assets"), patch.object(build_web, "publish_libraries", side_effect=libraries), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    build_web.publish_release(output)
+                finally:
+                    self.published = sorted(str(file.relative_to(output)) for file in output.rglob("*") if file.is_file()) if output.exists() else []
+
+    def test_current_release_with_every_web_file_is_published(self):
+        self.publish(self.release(build_web.WEB_FILES))
+        self.assertIn("failure-report.mjs", self.published)
+
+    def test_release_lacking_a_newer_web_file_is_published_as_shipped(self):
+        older = [name for name in build_web.WEB_FILES if name != "failure-report.mjs"]
+        self.publish(self.release(older))
+        self.assertNotIn("failure-report.mjs", self.published)
+        self.assertIn("app.mjs", self.published)
+        self.assertIn("release.json", self.published)
+
+    def test_release_with_an_unknown_file_is_rejected(self):
+        for extra in ("unlisted.mjs", "native/extra.wasm", "../escape.mjs", "app.mjs.bak"):
+            with self.subTest(extra=extra):
+                with self.assertRaisesRegex(ValueError, "Invalid web release archive layout"):
+                    self.publish(self.release(build_web.WEB_FILES, extra=(extra,)))
+                self.assertEqual(self.published, [])
+
+    def test_release_missing_a_core_file_is_rejected(self):
+        for missing in self.CORE:
+            with self.subTest(missing=missing):
+                with self.assertRaisesRegex(ValueError, "Invalid web release archive layout"):
+                    self.publish(self.release([name for name in build_web.WEB_FILES if name != missing]))
+                self.assertEqual(self.published, [])
+
+    def test_release_with_a_duplicate_entry_is_rejected(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            data = self.release(build_web.WEB_FILES, extra=("app.mjs",))
+        with self.assertRaisesRegex(ValueError, "Invalid web release archive layout"):
+            self.publish(data)
+
+    def test_release_with_an_empty_file_or_mismatched_metadata_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "does not match the selected release"):
+            self.publish(self.release(build_web.WEB_FILES, metadata={"tag": "v0", "revision": self.REVISION}))
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for name in build_web.WEB_FILES:
+                archive.writestr(name, b"" if name == "app.mjs" else b"x")
+            archive.writestr("web-release.json", json.dumps({"tag": self.TAG, "revision": self.REVISION}))
+        with self.assertRaisesRegex(ValueError, "Invalid expanded web release archive size"):
+            self.publish(buffer.getvalue())
+
+
 class LocalNativeArtifactTests(unittest.TestCase):
     def test_empty_or_missing_native_input_does_not_copy_sources(self):
         with tempfile.TemporaryDirectory() as directory:

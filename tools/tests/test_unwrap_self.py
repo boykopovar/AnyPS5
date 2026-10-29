@@ -155,6 +155,30 @@ class UnwrapTest(unittest.TestCase):
                 self.assertEqual(source.read_bytes(), container)
                 self.assertEqual(alias.read_bytes(), container)
 
+    def test_symbolic_link_loops_are_reported_without_a_traceback(self):
+        container = build_container(default_segments(), default_records(), default_payloads())
+        source = Path(self.directory) / "input.self"
+        source.write_bytes(container)
+        loop = Path(self.directory) / "loop.elf"
+        output = Path(self.directory) / "output.elf"
+        try:
+            loop.symlink_to(loop.name)
+        except OSError as error:
+            self.skipTest(str(error))
+        for arguments in ((source, loop), (loop, output)):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, str(Path(unwrap_self.__file__)), *map(str, arguments)],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("FAIL: ", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertTrue(loop.is_symlink())
+                self.assertEqual(os.readlink(loop), loop.name)
+                self.assertFalse(output.exists())
+                self.assertEqual(source.read_bytes(), container)
+                self.assertEqual(sorted(path.name for path in Path(self.directory).iterdir()), ["input.self", "loop.elf"])
+
     def test_main_with_explicit_argv(self):
         container = build_container(default_segments(), default_records(), default_payloads())
         source = Path(self.directory) / "input.self"

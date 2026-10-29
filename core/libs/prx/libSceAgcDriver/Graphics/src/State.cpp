@@ -610,7 +610,7 @@ constexpr std::array<std::array<std::int8_t, 2>, 2> StandardLocations2{{{4, 4}, 
 constexpr std::array<std::array<std::int8_t, 2>, 4> StandardLocations4{{{-2, -6}, {6, -2}, {-6, 2}, {2, 6}}};
 constexpr std::array<std::array<std::int8_t, 2>, 8> StandardLocations8{{{1, -3}, {-1, 3}, {5, 1}, {-3, -5}, {-5, 5}, {-7, -1}, {3, 7}, {7, -7}}};
 
-std::string nonTriangleRejection(const QueueState& queue, const char* message, bool rectangles = false) {
+std::string nonTriangleRejection(const QueueState& queue, const char* message, bool rectangles = false, bool lines = false) {
     const auto word = [](const Registers& registers, std::uint32_t offset, RegisterBank bank = RegisterBank::Context) -> std::optional<std::uint32_t> {
         const auto it = find(registers, offset, bank);
         if (it == registers.end()) return std::nullopt;
@@ -627,7 +627,7 @@ std::string nonTriangleRejection(const QueueState& queue, const char* message, b
             const auto topology = (*parameters >> 5u) & 7u;
             if ((domain != 1u && domain != 2u) || (topology != 2u && topology != 3u)) return zeroMessage(0x2db, *parameters, message);
         }
-    } else if (const auto primitive = word(queue.userConfig, 0x242, RegisterBank::UserConfig); primitive && *primitive != 4u && *primitive != 5u && *primitive != 6u && *primitive != 21u && !(rectangles && (*primitive == 7u || *primitive == 17u))) {
+    } else if (const auto primitive = word(queue.userConfig, 0x242, RegisterBank::UserConfig); primitive && *primitive != 4u && *primitive != 5u && *primitive != 6u && *primitive != 21u && !(rectangles && (*primitive == 7u || *primitive == 17u)) && !(lines && (*primitive == 2u || *primitive == 3u))) {
         return zeroMessage(0x242, *primitive, message);
     }
     return {};
@@ -646,7 +646,7 @@ std::string singleSampleMsaaRejection(const QueueState& queue) {
     }
     if (const auto alphaToMask = word(cx, 0x2dc); alphaToMask && (*alphaToMask & 1u) != 0 && !(ditheredAlphaToCoverageWord(*alphaToMask) && alphaToCoverageDisabled(cx))) return zeroMessage(0x2dc, *alphaToMask, "MSAA_ENABLE on a single-sample target with alpha-to-coverage");
     if (const auto conservative = word(cx, 0x313); conservative && (*conservative & ~0x001f6000u) != 0) return zeroMessage(0x313, *conservative, "MSAA_ENABLE on a single-sample target with conservative rasterization");
-    return nonTriangleRejection(queue, "MSAA_ENABLE on a single-sample target for primitives other than triangles and rectangles", true);
+    return nonTriangleRejection(queue, "MSAA_ENABLE on a single-sample target for primitives other than triangles, lines and rectangles", true, true);
 }
 
 std::string singleSampleDepthScanRejection(const QueueState& queue) {

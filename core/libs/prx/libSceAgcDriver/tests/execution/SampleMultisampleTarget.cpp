@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -618,6 +619,14 @@ void CheckNativeIndices(AgcDriver::VulkanDevice& device, const Block& source, co
         guarded = error.what();
     }
     Require(guarded.find("whose samples are only on the host") != std::string::npos, "the draw-input source is not guarded as a native target");
+    const auto hostOnly = AgcDriver::Graphics::HostOnlySampleRanges(source.Address(), 48u);
+    Require(std::ranges::any_of(hostOnly, [&](const auto& range) { return range.first <= source.Address() && source.Address() < range.first + range.second; }), "the host-only samples of the draw-input source are not reported to the frame capture snapshot");
+    Require(AgcDriver::Graphics::HostOnlySampleRanges(neighbor, 12u).empty(), "the neighbor of a native target is reported as host-only samples");
+    std::vector<std::byte> captured(static_cast<std::size_t>(colorBytes) + 12u, std::byte{0xcc});
+    const auto zeroed = AgcDriver::ReadAroundRanges(source.Address(), captured, AgcDriver::Graphics::HostOnlySampleRanges(source.Address(), captured.size()), AgcDriver::GuestMemory::ReadCommitted);
+    std::vector<std::byte> after(12u);
+    AgcDriver::GuestMemory::ReadCommitted(neighbor, after);
+    Require(zeroed == colorBytes && AgcDriver::AllZero(std::span(captured).first(static_cast<std::size_t>(colorBytes))) && std::ranges::equal(std::span(captured).last(12u), after), "a capture read across a native target and its neighbor did not zero exactly the target");
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         const auto* native = AgcDriver::Graphics::HostImportFor(context, source.Address(), 12u);

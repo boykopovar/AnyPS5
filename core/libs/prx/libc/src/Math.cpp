@@ -1412,7 +1412,8 @@ static inline float PowfFloat(std::int32_t w) { return std::bit_cast<float>(w); 
 float APS5_VABI powf_nid_postfix(float x, float y) {
     static const float bp[] = {1.0f, 1.5f}, dp_h[] = {0.0f, static_cast<float>(5.84960938e-01)}, dp_l[] = {0.0f, static_cast<float>(1.56322085e-06)};
     const float zero = 0.0f, half = 0.5f, qrtr = 0.25f, thrd = static_cast<float>(3.33333343e-01), one = 1.0f, two = 2.0f, two24 = 16777216.0f;
-    const float huge = 1.0e30f, tiny = 1.0e-30f;
+    const float huge = 1.0e30f;
+    static const volatile float tiny = 1.0e-30f;
     const float L1 = static_cast<float>(6.0000002384e-01), L2 = static_cast<float>(4.2857143283e-01), L3 = static_cast<float>(3.3333334327e-01);
     const float L4 = static_cast<float>(2.7272811532e-01), L5 = static_cast<float>(2.3066075146e-01), L6 = static_cast<float>(2.0697501302e-01);
     const float P1 = static_cast<float>(1.6666667163e-01), P2 = static_cast<float>(-2.7777778450e-03), P3 = static_cast<float>(6.6137559770e-05);

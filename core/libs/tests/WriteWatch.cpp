@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <set>
 #include <stdexcept>
@@ -209,6 +210,47 @@ void CheckEmptyRanges() {
     }
 }
 
+void CheckNonWriteFaults(bool execute) {
+    Region region(1);
+#if defined(__aarch64__)
+    const std::uint32_t returnInstruction = 0xd65f03c0;
+    std::memcpy(region.base, &returnInstruction, sizeof(returnInstruction));
+#elif defined(__x86_64__)
+    region.base[0] = 0xc3;
+#endif
+    for (const bool armed : {false, true}) {
+        for (const bool hostWrite : {false, true}) {
+            const auto child = ::fork();
+            Require(child >= 0, "cannot fork a faulting child");
+            if (child == 0) {
+                ::alarm(2);
+                if (!execute) {
+                    char path[] = "/tmp/anyps5-write-watch-XXXXXX";
+                    const int file = ::mkstemp(path);
+                    if (file < 0) ::_exit(2);
+                    ::unlink(path);
+                    if (::ftruncate(file, region.bytes) != 0) ::_exit(2);
+                    if (::mmap(region.base, region.bytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, 0) != region.base) ::_exit(2);
+                    if (::ftruncate(file, 0) != 0) ::_exit(2);
+                    ::close(file);
+                }
+                GuestWriteWatchRegister_nid_postfix(region.base, region.bytes);
+                if (armed) static_cast<void>(region.Collect());
+                if (hostWrite) GuestWriteWatchBeginHostWrite_nid_postfix(region.base, region.bytes);
+                if (execute) reinterpret_cast<void (*)()>(region.base)();
+                else {
+                    const volatile auto value = *static_cast<volatile std::uint8_t*>(region.base);
+                    static_cast<void>(value);
+                }
+                ::_exit(3);
+            }
+            int status = 0;
+            Require(::waitpid(child, &status, 0) == child, "cannot wait for a faulting child");
+            Require(WIFSIGNALED(status) && (WTERMSIG(status) == SIGBUS || WTERMSIG(status) == SIGSEGV), execute ? "a non-executable watched page did not deliver its fault" : "a watched mapping with missing backing did not deliver its read fault");
+        }
+    }
+}
+
 void CheckProtection() {
     Region region(6);
     std::uintptr_t runEnd = 0;
@@ -321,6 +363,8 @@ int main(int argc, char** argv) {
         else if (mode == "register") CheckRegisterAgain();
         else if (mode == "mapped") CheckRegisterMapped();
         else if (mode == "host") CheckHostWrite();
+        else if (mode == "execute-fault") CheckNonWriteFaults(true);
+        else if (mode == "read-fault") CheckNonWriteFaults(false);
         else if (mode == "empty") CheckEmptyRanges();
         else if (mode == "protection") CheckProtection();
         else if (mode == "overlaps") CheckOverlaps();

@@ -20,6 +20,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             if (header.Flags == 0) continue;
             header.Flags |= 4;
         }
+        if (header.Type == 7) header.Alignment = std::max<std::uint64_t>(header.Alignment, 1);
         headers.push_back(header);
     }
     if (std::none_of(headers.begin(), headers.end(), [&](const auto& header) { return header.Type == PT_GNU_STACK; }))

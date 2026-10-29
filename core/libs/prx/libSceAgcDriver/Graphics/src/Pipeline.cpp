@@ -478,7 +478,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     ValidateProvokingVertex(context, state, shaders);
     if (state.rectList) Require(context.tessellationShader && context.limits.maxTessellationPatchSize >= 4, "rect-list requires tessellation with four output control points");
     const bool barycentricPatches = BarycentricPatches(state, shaders);
-    if (barycentricPatches) Require(context.tessellationShader && (state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP) && !state.primitiveRestart, "emulated barycentrics through tessellation require a triangle list or strip without primitive restart");
+    if (barycentricPatches) Require(context.tessellationShader && ((state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!state.primitiveRestart || !context.primitiveListRestart)) || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP), "emulated barycentrics through tessellation require a triangle list or strip, with primitive restart in a list only on a device without VK_EXT_primitive_topology_list_restart");
     if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Geometry; })) Require(context.geometryShader, "device does not support geometry shaders");
     if (state.stages.tessellation) {
         Require(context.tessellationShader, "device does not support tessellation shaders");
@@ -604,9 +604,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         input.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(vertexInput.attributes.size());
         input.pVertexAttributeDescriptions = vertexInput.attributes.data();
         VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        assembly.topology = BarycentricPatches(state, shaders) ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : state.topology;
+        const bool patches = BarycentricPatches(state, shaders);
+        assembly.topology = patches ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : state.topology;
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        assembly.primitiveRestartEnable = state.primitiveRestart && (!listTopology || context.primitiveListRestart) ? VK_TRUE : VK_FALSE;
+        assembly.primitiveRestartEnable = !patches && state.primitiveRestart && (!listTopology || context.primitiveListRestart) ? VK_TRUE : VK_FALSE;
         // Viewport and scissor are set per draw (Begin), so they do not multiply pipelines; the depth
         // clip control stays baked in.
         VkPipelineViewportStateCreateInfo viewports{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
