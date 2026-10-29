@@ -144,6 +144,60 @@ void CheckRejectedAndFailedCount() {
     Require(launcher.Count() == OPEN_URL_MAX_ATTEMPTS);
 }
 
+void CheckDeclineCooldown() {
+    FakeClock clock;
+    OpenUrlGate gate(clock);
+    CountingLauncher launcher;
+    CountingConfirmation confirmation;
+    confirmation.answer = false;
+    Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Declined);
+    for (int index = 0; index < 1000; ++index) {
+        Require(gate.Run(OpenUrlMode::Ask, index % 2 == 0 ? "https://example.com/a" : "https://example.net/" + std::to_string(index), launcher, confirmation) ==
+                OpenUrlGateOutcome::Suppressed);
+    }
+    Require(gate.Run(OpenUrlMode::Always, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Suppressed);
+    Require(confirmation.Count() == 1 && launcher.Count() == 0);
+
+    clock.Advance(OPEN_URL_DECLINE_COOLDOWN - std::chrono::seconds(1));
+    Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Suppressed);
+    Require(confirmation.Count() == 1);
+    clock.Advance(std::chrono::seconds(1));
+    confirmation.answer = true;
+    Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Launched);
+    Require(confirmation.Count() == 2 && launcher.Count() == 1);
+    Require(gate.Run(OpenUrlMode::Ask, "https://example.com/b", launcher, confirmation) == OpenUrlGateOutcome::Launched);
+}
+
+void CheckRepeatedCancel() {
+    FakeClock clock;
+    OpenUrlGate gate(clock);
+    CountingLauncher launcher;
+    CountingConfirmation confirmation;
+    confirmation.answer = false;
+    for (int round = 0; round < 5; ++round) {
+        Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Declined);
+        Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Suppressed);
+        clock.Advance(OPEN_URL_DECLINE_COOLDOWN);
+    }
+    Require(confirmation.Count() == 5 && launcher.Count() == 0);
+}
+
+void CheckSuppressedDoesNotUseAttempts() {
+    FakeClock clock;
+    OpenUrlGate gate(clock);
+    CountingLauncher launcher;
+    CountingConfirmation confirmation;
+    confirmation.answer = false;
+    Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Declined);
+    clock.Advance(OPEN_URL_DECLINE_COOLDOWN - std::chrono::seconds(1));
+    for (int index = 0; index < 10; ++index) Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Suppressed);
+    clock.Advance(std::chrono::seconds(1));
+    confirmation.answer = true;
+    for (std::size_t index = 0; index < OPEN_URL_MAX_ATTEMPTS; ++index)
+        Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Launched);
+    Require(gate.Run(OpenUrlMode::Ask, "https://example.com/a", launcher, confirmation) == OpenUrlGateOutcome::Limited);
+}
+
 }
 
 int main() {
@@ -151,5 +205,8 @@ int main() {
     CheckNever();
     CheckRateCap();
     CheckRejectedAndFailedCount();
+    CheckDeclineCooldown();
+    CheckRepeatedCancel();
+    CheckSuppressedDoesNotUseAttempts();
     return 0;
 }
