@@ -81,6 +81,7 @@ public:
     };
     static SupplyCounts Supplies();
     [[nodiscard]] std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> SuppliedBlocks() const;
+    [[nodiscard]] std::size_t Bytes() const;
     struct VouchCounts {
         std::uint64_t calls, blocks, refused, words;
     };

@@ -407,8 +407,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     std::vector<std::uint8_t> buf = std::move(sourceElf);
 
     const std::uint32_t type = _fixedBase ? ET_EXEC : ET_DYN;
-    buf[kEhdrOsAbiOffset] = 0;
-    buf[kEhdrAbiVersionOffset] = 0;
+    std::fill_n(buf.begin() + static_cast<std::ptrdiff_t>(kEhdrOsAbiOffset), 9, std::uint8_t{0});
     buf[kEhdrTypeOffset] = static_cast<std::uint8_t>(type & 0xFF);
     buf[kEhdrTypeOffset + 1] = static_cast<std::uint8_t>((type >> 8) & 0xFF);
     _byteWriter->WriteU64(buf, kEhdrShOffOffset, 0);

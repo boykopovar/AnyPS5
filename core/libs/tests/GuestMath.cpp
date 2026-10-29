@@ -13,6 +13,7 @@
 #include <cstring>
 #include <limits>
 #include <initializer_list>
+#include <source_location>
 #include <xmmintrin.h>
 
 static_assert(sizeof(GuestFloatingPointEnvironment) == 32);
@@ -51,7 +52,11 @@ extern DinkumwareFloatCharacteristics _Flt_nid_postfix;
 extern DinkumwareFloatCharacteristics _Dbl_nid_postfix;
 extern DinkumwareFloatCharacteristics _Ldbl_nid_postfix;
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
+    std::abort();
+}
 constexpr int StandardExceptions = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
 
 static void CheckSquareRoot() {
@@ -309,72 +314,74 @@ static void CheckNanConversions() {
         bool extendedMeasured;
         bool wideDoubleMeasured;
         bool wideOtherMeasured;
+        std::uint32_t singleBits;
+        std::size_t singleUsed;
     };
     static constexpr MeasuredNan cases[] = {
-        {"nan", 0x7ff8000000000000ull, 3, 3, true, true, true},
-        {"NAN", 0x7ff8000000000000ull, 3, 3, false, false, false},
-        {"nan()", 0x7ff8000000000000ull, 5, 5, false, false, false},
-        {"nan(1)", 0x7ff8000000000001ull, 6, 6, true, true, true},
-        {"nan(0x10)", 0x7ff8000000000010ull, 9, 9, false, false, false},
-        {"nan(abc)", 0x7ff8000000000abcull, 8, 8, false, false, false},
-        {"nan(", 0x7ff8000000000000ull, 3, 3, true, true, true},
-        {"-nan", 0xfff8000000000000ull, 4, 4, true, true, true},
-        {"+nan(5)", 0x7ff8000000000005ull, 7, 7, false, false, false},
-        {"nan(10)", 0x7ff8000000000010ull, 7, 7, false, false, false},
-        {"nan(xyz)", 0x7ff8000000000000ull, 8, 8, false, false, false},
-        {"nan(_)", 0x7ff8000000000000ull, 6, 6, false, false, false},
-        {"nan(12", 0x7ff8000000000012ull, 3, 3, false, false, false},
-        {"-nan(5)", 0xfff8000000000005ull, 7, 7, false, false, false},
-        {"nan(0x8000000000000)", 0x7ff8000000000000ull, 20, 20, false, false, false},
-        {"nan(0x10000000000000)", 0x7ff8000000000001ull, 21, 21, true, true, false},
-        {"nan(0x400000)", 0x7ff8000000400000ull, 13, 13, false, false, false},
-        {"NaN(0X1F)", 0x7ff800000000001full, 9, 9, false, false, false},
-        {"nan(0x)", 0x7ff8000000000000ull, 7, 7, false, false, false},
-        {"nan(123abc)", 0x7ff8000000123abcull, 11, 11, true, true, false},
-        {"nan(1x2)", 0x7ff8000000000000ull, 8, 8, true, true, false},
-        {"nan(0x1g)", 0x7ff8000000000000ull, 9, 9, true, true, false},
-        {"nan(g1)", 0x7ff8000000000000ull, 7, 7, true, true, false},
-        {"nan(0x0x1)", 0x7ff8000000000000ull, 10, 10, true, true, false},
-        {"nan(fffffffffffff)", 0x7fffffffffffffffull, 18, 18, true, true, false},
-        {"nan(1fffffffffffff)", 0x7fffffffffffffffull, 19, 19, true, true, false},
-        {"nan(10000000000000)", 0x7ff8000000000001ull, 19, 19, true, true, false},
-        {"nan(20000000000000)", 0x7ff8000000000001ull, 19, 19, true, true, false},
-        {"nan(0x20000000000000)", 0x7ff8000000000001ull, 21, 21, true, true, false},
-        {"nan(ffffffffffffffff)", 0x7fffffffffffffffull, 21, 21, true, true, false},
-        {"nan(10000000000000000)", 0x7ff8000000000001ull, 22, 22, true, true, false},
-        {"nan(0X)", 0x7ff8000000000000ull, 7, 7, true, true, false},
-        {"nan(-1)", 0x7ff8000000000000ull, 7, 3, true, true, false},
-        {"nan(+1)", 0x7ff8000000000000ull, 7, 3, true, true, false},
-        {"nan( 1)", 0x7ff8000000000001ull, 7, 3, true, true, false},
-        {"nan(1 )", 0x7ff8000100000000ull, 7, 3, true, true, false},
-        {"nan(0)", 0x7ff8000000000001ull, 6, 6, true, true, false},
-        {"nan(00001)", 0x7ff8000000000001ull, 10, 10, true, true, false},
-        {"nan(0x0001)", 0x7ff8000000000001ull, 11, 11, true, true, false},
-        {"nan(8000000000000)", 0x7ff8000000000000ull, 18, 18, true, true, false},
-        {"nan(7ffffffffffff)", 0x7fffffffffffffffull, 18, 18, true, true, false},
-        {"nan(123", 0x7ff8000000000123ull, 3, 3, true, true, false},
-        {"nan(1)x", 0x7ff8000000000001ull, 6, 6, true, true, false},
-        {"-nan(1)", 0xfff8000000000001ull, 7, 7, true, true, false},
-        {"nan(abcdefABCDEF)", 0x7ff8abcdefabcdefull, 17, 17, true, true, false},
-        {"nan(0xABCDEF)", 0x7ff8000000abcdefull, 13, 13, true, true, false},
-        {"nan(9)", 0x7ff8000000000009ull, 6, 6, true, true, false},
-        {"nan(1_2)", 0x7ff8000000000000ull, 8, 8, true, true, false},
-        {"nan(_1)", 0x7ff8000000000000ull, 7, 7, true, true, false},
-        {"nan(1)(2)", 0x7ff8000000000001ull, 6, 6, true, true, false},
-        {"+nan", 0x7ff8000000000000ull, 4, 4, true, true, true},
-        {"NaN", 0x7ff8000000000000ull, 3, 3, true, true, true},
-        {"-NAN(5)", 0xfff8000000000005ull, 7, 7, true, true, true},
-        {"nan(5)", 0x7ff8000000000005ull, 6, 6, true, true, true},
-        {"-nan(abc)", 0xfff8000000000abcull, 9, 9, true, true, true},
-        {"  -nan", 0xfff8000000000000ull, 6, 6, true, true, true},
-        {"nan(12 x", 0x7ff8000000000000ull, 3, 3, true, true, true},
-        {"nan(12x", 0x7ff8000000000000ull, 3, 3, true, true, true},
-        {"nan(1", 0x7ff8000000000001ull, 3, 3, true, true, true},
-        {"nan(a b)", 0x7ff8000a0000000bull, 8, 3, true, true, true},
-        {"nan(ab)", 0x7ff80000000000abull, 7, 7, true, true, true},
-        {"nanx", 0x7ff8000000000000ull, 3, 3, true, true, true},
-        {"-nan()", 0xfff8000000000000ull, 6, 6, true, true, true},
-        {"nan(0x8000000000001)", 0x7ff8000000000001ull, 20, 20, true, true, true},
+        {"nan", 0x7ff8000000000000ull, 3, 3, true, true, true, 0x7fc00000u, 3},
+        {"NAN", 0x7ff8000000000000ull, 3, 3, false, false, false, 0x7fc00000u, 3},
+        {"nan()", 0x7ff8000000000000ull, 5, 5, false, false, false, 0x7fc00000u, 5},
+        {"nan(1)", 0x7ff8000000000001ull, 6, 6, true, true, true, 0x7fc00001u, 6},
+        {"nan(0x10)", 0x7ff8000000000010ull, 9, 9, false, false, false, 0x7fc00010u, 9},
+        {"nan(abc)", 0x7ff8000000000abcull, 8, 8, false, false, false, 0x7fc00abcu, 8},
+        {"nan(", 0x7ff8000000000000ull, 3, 3, true, true, true, 0x7fc00000u, 3},
+        {"-nan", 0xfff8000000000000ull, 4, 4, true, true, true, 0xffc00000u, 4},
+        {"+nan(5)", 0x7ff8000000000005ull, 7, 7, false, false, false, 0x7fc00005u, 7},
+        {"nan(10)", 0x7ff8000000000010ull, 7, 7, false, false, false, 0x7fc00010u, 7},
+        {"nan(xyz)", 0x7ff8000000000000ull, 8, 8, false, false, false, 0x7fc00000u, 8},
+        {"nan(_)", 0x7ff8000000000000ull, 6, 6, false, false, false, 0x7fc00000u, 6},
+        {"nan(12", 0x7ff8000000000012ull, 3, 3, false, false, false, 0x7fc00012u, 3},
+        {"-nan(5)", 0xfff8000000000005ull, 7, 7, false, false, false, 0xffc00005u, 7},
+        {"nan(0x8000000000000)", 0x7ff8000000000000ull, 20, 20, false, false, false, 0x7fc00001u, 20},
+        {"nan(0x10000000000000)", 0x7ff8000000000001ull, 21, 21, true, true, false, 0x7fc00001u, 21},
+        {"nan(0x400000)", 0x7ff8000000400000ull, 13, 13, false, false, false, 0x7fc00000u, 13},
+        {"NaN(0X1F)", 0x7ff800000000001full, 9, 9, false, false, false, 0x7fc0001fu, 9},
+        {"nan(0x)", 0x7ff8000000000000ull, 7, 7, false, false, false, 0x7fc00000u, 7},
+        {"nan(123abc)", 0x7ff8000000123abcull, 11, 11, true, true, false, 0x7fd23abcu, 11},
+        {"nan(1x2)", 0x7ff8000000000000ull, 8, 8, true, true, false, 0x7fc00000u, 8},
+        {"nan(0x1g)", 0x7ff8000000000000ull, 9, 9, true, true, false, 0x7fc00000u, 9},
+        {"nan(g1)", 0x7ff8000000000000ull, 7, 7, true, true, false, 0x7fc00000u, 7},
+        {"nan(0x0x1)", 0x7ff8000000000000ull, 10, 10, true, true, false, 0x7fc00000u, 10},
+        {"nan(fffffffffffff)", 0x7fffffffffffffffull, 18, 18, true, true, false, 0x7fffffffu, 18},
+        {"nan(1fffffffffffff)", 0x7fffffffffffffffull, 19, 19, true, true, false, 0x7fffffffu, 19},
+        {"nan(10000000000000)", 0x7ff8000000000001ull, 19, 19, true, true, false, 0x7fc00001u, 19},
+        {"nan(20000000000000)", 0x7ff8000000000001ull, 19, 19, true, true, false, 0x7fc00001u, 19},
+        {"nan(0x20000000000000)", 0x7ff8000000000001ull, 21, 21, true, true, false, 0x7fc00001u, 21},
+        {"nan(ffffffffffffffff)", 0x7fffffffffffffffull, 21, 21, true, true, false, 0x7fffffffu, 21},
+        {"nan(10000000000000000)", 0x7ff8000000000001ull, 22, 22, true, true, false, 0x7fc00001u, 22},
+        {"nan(0X)", 0x7ff8000000000000ull, 7, 7, true, true, false, 0x7fc00000u, 7},
+        {"nan(-1)", 0x7ff8000000000000ull, 7, 3, true, true, false, 0x7fc00000u, 7},
+        {"nan(+1)", 0x7ff8000000000000ull, 7, 3, true, true, false, 0x7fc00000u, 7},
+        {"nan( 1)", 0x7ff8000000000001ull, 7, 3, true, true, false, 0x7fc00001u, 7},
+        {"nan(1 )", 0x7ff8000100000000ull, 7, 3, true, true, false, 0x7fc00001u, 7},
+        {"nan(0)", 0x7ff8000000000001ull, 6, 6, true, true, false, 0x7fc00001u, 6},
+        {"nan(00001)", 0x7ff8000000000001ull, 10, 10, true, true, false, 0x7fc00001u, 10},
+        {"nan(0x0001)", 0x7ff8000000000001ull, 11, 11, true, true, false, 0x7fc00001u, 11},
+        {"nan(8000000000000)", 0x7ff8000000000000ull, 18, 18, true, true, false, 0x7fc00001u, 18},
+        {"nan(7ffffffffffff)", 0x7fffffffffffffffull, 18, 18, true, true, false, 0x7fffffffu, 18},
+        {"nan(123", 0x7ff8000000000123ull, 3, 3, true, true, false, 0x7fc00123u, 3},
+        {"nan(1)x", 0x7ff8000000000001ull, 6, 6, true, true, false, 0x7fc00001u, 6},
+        {"-nan(1)", 0xfff8000000000001ull, 7, 7, true, true, false, 0xffc00001u, 7},
+        {"nan(abcdefABCDEF)", 0x7ff8abcdefabcdefull, 17, 17, true, true, false, 0x7fcdefabu, 17},
+        {"nan(0xABCDEF)", 0x7ff8000000abcdefull, 13, 13, true, true, false, 0x7febcdefu, 13},
+        {"nan(9)", 0x7ff8000000000009ull, 6, 6, true, true, false, 0x7fc00009u, 6},
+        {"nan(1_2)", 0x7ff8000000000000ull, 8, 8, true, true, false, 0x7fc00000u, 8},
+        {"nan(_1)", 0x7ff8000000000000ull, 7, 7, true, true, false, 0x7fc00000u, 7},
+        {"nan(1)(2)", 0x7ff8000000000001ull, 6, 6, true, true, false, 0x7fc00001u, 6},
+        {"+nan", 0x7ff8000000000000ull, 4, 4, true, true, true, 0x7fc00000u, 4},
+        {"NaN", 0x7ff8000000000000ull, 3, 3, true, true, true, 0x7fc00000u, 3},
+        {"-NAN(5)", 0xfff8000000000005ull, 7, 7, true, true, true, 0xffc00005u, 7},
+        {"nan(5)", 0x7ff8000000000005ull, 6, 6, true, true, true, 0x7fc00005u, 6},
+        {"-nan(abc)", 0xfff8000000000abcull, 9, 9, true, true, true, 0xffc00abcu, 9},
+        {"  -nan", 0xfff8000000000000ull, 6, 6, true, true, true, 0xffc00000u, 6},
+        {"nan(12 x", 0x7ff8000000000000ull, 3, 3, true, true, true, 0x7fc00000u, 3},
+        {"nan(12x", 0x7ff8000000000000ull, 3, 3, true, true, true, 0x7fc00000u, 3},
+        {"nan(1", 0x7ff8000000000001ull, 3, 3, true, true, true, 0x7fc00001u, 3},
+        {"nan(a b)", 0x7ff8000a0000000bull, 8, 3, true, true, true, 0x7fc0000au, 8},
+        {"nan(ab)", 0x7ff80000000000abull, 7, 7, true, true, true, 0x7fc000abu, 7},
+        {"nanx", 0x7ff8000000000000ull, 3, 3, true, true, true, 0x7fc00000u, 3},
+        {"-nan()", 0xfff8000000000000ull, 6, 6, true, true, true, 0xffc00000u, 6},
+        {"nan(0x8000000000001)", 0x7ff8000000000001ull, 20, 20, true, true, true, 0x7fc00001u, 20},
     };
     bool correct = true;
     for (const auto& test : cases) {
@@ -388,9 +395,8 @@ static void CheckNanConversions() {
             std::fprintf(stderr, "atof(\"%s\")\n", test.text);
             correct = false;
         }
-        const std::uint32_t expectedSingle = (test.bits >> 63 != 0 ? 0x80000000u : 0) | 0x7fc00000u;
         const auto single = std::bit_cast<std::uint32_t>(strtof_nid_postfix(test.text, &end));
-        if (single != expectedSingle || end != test.text + test.sequenceUsed) {
+        if (single != test.singleBits || end != test.text + test.singleUsed) {
             std::fprintf(stderr, "strtof(\"%s\") = 0x%08x\n", test.text, static_cast<unsigned>(single));
             correct = false;
         }
@@ -404,6 +410,11 @@ static void CheckNanConversions() {
         char16_t wide[64] = {};
         for (std::size_t i = 0; test.text[i] != 0; ++i) wide[i] = static_cast<unsigned char>(test.text[i]);
         char16_t* wideEnd = nullptr;
+        const auto wideSingle = std::bit_cast<std::uint32_t>(wcstof_nid_postfix(wide, &wideEnd));
+        if (wideSingle != test.singleBits || wideEnd != wide + test.singleUsed) {
+            std::fprintf(stderr, "wcstof(\"%s\") = 0x%08x\n", test.text, static_cast<unsigned>(wideSingle));
+            correct = false;
+        }
         if (test.wideDoubleMeasured) {
             const auto wideValue = std::bit_cast<std::uint64_t>(wcstod_nid_postfix(wide, &wideEnd));
             if (wideValue != test.bits || wideEnd != wide + test.used) {
@@ -412,11 +423,9 @@ static void CheckNanConversions() {
             }
         }
         if (test.wideOtherMeasured) {
-            const auto wideSingle = std::bit_cast<std::uint32_t>(wcstof_nid_postfix(wide, &wideEnd));
-            const bool singleOk = wideSingle == expectedSingle && wideEnd == wide + test.sequenceUsed;
             const long double wideExtended = wcstold_nid_postfix(wide, &wideEnd);
-            if (!singleOk || !ExtendedBits(wideExtended, 0xc000000000000000ull, 0x7fff) || wideEnd != wide + test.sequenceUsed) {
-                std::fprintf(stderr, "wcstof/wcstold(\"%s\")\n", test.text);
+            if (!ExtendedBits(wideExtended, 0xc000000000000000ull, 0x7fff) || wideEnd != wide + test.sequenceUsed) {
+                std::fprintf(stderr, "wcstold(\"%s\")\n", test.text);
                 correct = false;
             }
         }
@@ -521,8 +530,9 @@ static void CheckHypotSpecialValue() {
 static void CheckAsinfErrno() {
     for (const float input : {2.0f, -2.0f, std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
         errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
         (void)asinf_nid_postfix(input);
-        Require(errno == EDOM);
+        Require(errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
     }
     for (const float input : {1.0f, -1.0f, 0.5f, 0.0f}) {
         errno = 1234;
@@ -551,6 +561,59 @@ static void CheckExp2Errno() {
     Require(errno == 0);
     Require(std::isinf(result) && result > 0);
     Require(std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+}
+
+static void CheckPowfUnderflowFlag() {
+    constexpr struct {
+        float x;
+        float y;
+        std::uint32_t expected;
+    } cases[] = {{2.0f, -1075.0f, 0x00000000u}, {0.5f, 1024.0f, 0x00000000u}, {-2.0f, -1075.0f, 0x80000000u}, {1.5f, -1075.0f, 0x00000000u}};
+    for (const auto& item : cases) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(powf_nid_postfix(item.x, item.y)) == item.expected);
+        Require(errno == ERANGE && std::fetestexcept(FE_UNDERFLOW) != 0);
+    }
+    errno = 1234;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::bit_cast<std::uint32_t>(powf_nid_postfix(2.0f, -140.0f)) == 0x00000200u);
+    Require(errno == 1234 && std::fetestexcept(FE_UNDERFLOW) == 0);
+    constexpr struct {
+        float x;
+        float y;
+        std::uint32_t expected;
+        int flags;
+    } subnormals[] = {{2.0f, -149.0f, 0x00000001u, 0}, {-2.0f, -141.0f, 0x80000100u, 0}, {3.0f, -90.0f, 0x00000052u, FE_UNDERFLOW | FE_INEXACT}};
+    for (const auto& item : subnormals) {
+        errno = 1234;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(powf_nid_postfix(item.x, item.y)) == item.expected);
+        Require(errno == 1234 && std::fetestexcept(FE_UNDERFLOW | FE_INEXACT) == item.flags);
+    }
+    constexpr struct {
+        float x;
+        float y;
+        std::uint32_t expected;
+        int error;
+        int flags;
+    } largeExponents[] = {
+        {0.5f, 3.0e7f, 0x00000000u, ERANGE, FE_UNDERFLOW | FE_INEXACT},
+        {0.5f, 0x1p27f, 0x00000000u, ERANGE, FE_UNDERFLOW | FE_INEXACT},
+        {0.5f, 0x1.000002p27f, 0x00000000u, 1234, FE_UNDERFLOW | FE_INEXACT},
+        {0.5f, 3.0e8f, 0x00000000u, 1234, FE_UNDERFLOW | FE_INEXACT},
+        {2.0f, -3.0e8f, 0x00000000u, 1234, FE_UNDERFLOW | FE_INEXACT},
+        {2.0f, 3.0e8f, 0x7f800000u, 1234, FE_OVERFLOW | FE_INEXACT},
+        {0.5f, -3.0e8f, 0x7f800000u, 1234, FE_OVERFLOW | FE_INEXACT},
+        {0.5f, 0x1.fffffep127f, 0x00000000u, 1234, FE_UNDERFLOW | FE_INEXACT},
+        {-2.0f, -3.0e8f, 0x00000000u, 1234, FE_UNDERFLOW | FE_INEXACT},
+    };
+    for (const auto& item : largeExponents) {
+        errno = 1234;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(powf_nid_postfix(item.x, item.y)) == item.expected);
+        Require(errno == item.error && std::fetestexcept(FE_ALL_EXCEPT) == item.flags);
+    }
 }
 
 static void CheckPowfSpecialValue() {
@@ -591,13 +654,20 @@ struct RestoreFloatingPointState {
 };
 
 static void CheckAcosfErrno() {
+    constexpr std::uint32_t domain[][2] = {
+        {0x40000000u, 0xffc00000u}, {0xc0000000u, 0xffc00000u}, {0x7f800000u, 0xffc00000u}, {0xff800000u, 0xffc00000u},
+        {0x3f800001u, 0xffc00000u}, {0x7fc00000u, 0x7fc00000u}, {0xffc00000u, 0xffc00000u},
+    };
+    for (const auto& [input, expected] : domain) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(std::bit_cast<float>(input))) == expected);
+        Require(errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
     errno = 0;
-    Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(2.0f)) == 0xffc00000u);
-    Require(errno == 0);
-    Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(-2.0f)) == 0xffc00000u);
-    Require(errno == 0);
+    std::feclearexcept(FE_ALL_EXCEPT);
     Require(std::bit_cast<std::uint32_t>(acosf_nid_postfix(0.5f)) == 0x3f860a92u);
-    Require(errno == 0);
+    Require(errno == 0 && std::fetestexcept(FE_INVALID) == 0);
 }
 
 static void CheckFmodfErrno() {
@@ -912,6 +982,65 @@ static void CheckSinhOverflowErrno() {
             }
         }
     }
+}
+
+static bool AsinhWithinUlps(std::uint64_t result, std::uint64_t expected, std::uint64_t ulps) {
+    return ((result ^ expected) >> 63) == 0 && (result > expected ? result - expected : expected - result) <= ulps;
+}
+
+static void CheckAsinhMsunBits() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x0000000000000000ull, 0x0000000000000000ull}, {0x0000000000000001ull, 0x0000000000000001ull},
+        {0x000fffffffffffffull, 0x000fffffffffffffull}, {0x3c90000000000000ull, 0x3c90000000000000ull},
+        {0x3e2ffffffffffffeull, 0x3e2ffffffffffffeull}, {0x3e2fffffffffffffull, 0x3e2fffffffffffffull},
+        {0x3e30000000000000ull, 0x3e30000000000000ull}, {0x3e30000000000001ull, 0x3e30000000000001ull},
+        {0x3fe0000000000000ull, 0x3fdecc2caec5160aull}, {0x3ff0000000000000ull, 0x3fec34366179d427ull},
+        {0x3ffffffffffffffeull, 0x3ff719218313d086ull}, {0x3fffffffffffffffull, 0x3ff719218313d087ull},
+        {0x4000000000000000ull, 0x3ff719218313d087ull}, {0x4000000000000001ull, 0x3ff719218313d088ull},
+        {0x40000000ffffffffull, 0x3ff71922680cf8fbull},
+        {0x40000000022b9b89ull, 0x3ff719218504c3dbull}, {0x400000003975b451ull, 0x3ff71921b67892afull},
+        {0x41b0000027529ad0ull, 0x403419ecb987ee2bull}, {0x41b00000c4233f8eull, 0x403419ecc354f82full},
+        {0x41b00000f8114bd4ull, 0x403419ecc693d8c6ull}, {0x3fc858aceb437920ull, 0x3fc833b16e1536cfull},
+        {0x3fcfb2fb91be23b8ull, 0x3fcf623e1dc2a7a9ull}, {0x3fd3d86039728f38ull, 0x3fd38a4bb16cd986ull},
+        {0x3fd4f018ee15f210ull, 0x3fd494d053c63f5aull}, {0x3fd604e5888b9750ull, 0x3fd59b3a3e84d0f4ull},
+        {0x3fd7781dc03644bcull, 0x3fd6f902e56b239full}, {0x3fd93948915edbd0ull, 0x3fd89cd215ce473aull},
+        {0x3fdbd5bf8a15f854ull, 0x3fdb0650596801feull}, {0x3fded53018738f74ull, 0x3fddbff057eac993ull},
+        {0x3ff11a74b868ac6full, 0x3fedbcdc2899ca28ull}, {0x3ff3070681bd56f0ull, 0x3ff0251226fd5bb4ull},
+        {0x3ff55fe87b9ca7c4ull, 0x3ff19a41c3590934ull},
+    };
+    for (const auto& [input, expected] : cases) {
+        for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{1} << 63}) {
+            const std::uint64_t result = std::bit_cast<std::uint64_t>(asinh_nid_postfix(std::bit_cast<double>(input | sign)));
+            if (result != (expected | sign)) {
+                std::fprintf(stderr, "Guest asinh failed for %016llx: got %016llx, expected %016llx\n", static_cast<unsigned long long>(input | sign), static_cast<unsigned long long>(result), static_cast<unsigned long long>(expected | sign));
+                std::abort();
+            }
+        }
+    }
+}
+
+static void CheckAsinhLargeArguments() {
+    constexpr std::uint64_t cases[][2] = {
+        {0x4000000100000000ull, 0x3ff71922680cf8fcull}, {0x4000000100000001ull, 0x3ff71922680cf8fdull},
+        {0x4008000000000000ull, 0x3ffd185b507edc0eull}, {0x4024000000000000ull, 0x4007fc5c506d2bdbull},
+        {0x408f400000000000ull, 0x401e67530a363e15ull}, {0x41affffffffffffeull, 0x403419ecb712c481ull},
+        {0x41afffffffffffffull, 0x403419ecb712c481ull}, {0x41b0000000000000ull, 0x403419ecb712c481ull},
+        {0x41b00000ffffffffull, 0x403419ecc712c401ull}, {0x41b0000100000000ull, 0x403419ecc712c400ull},
+        {0x41b0000100000001ull, 0x403419ecc712c400ull}, {0x4202a05f20000000ull, 0x4037b810429a7c2aull},
+        {0x54b249ad2594c37dull, 0x406cde73f84a4f2cull}, {0x7fefffffffffffffull, 0x408633ce8fb9f87dull},
+    };
+    for (const auto& [input, expected] : cases) {
+        for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{1} << 63}) {
+            const std::uint64_t result = std::bit_cast<std::uint64_t>(asinh_nid_postfix(std::bit_cast<double>(input | sign)));
+            if (!AsinhWithinUlps(result, expected | sign, 4)) {
+                std::fprintf(stderr, "Guest asinh failed for %016llx: got %016llx, expected %016llx\n", static_cast<unsigned long long>(input | sign), static_cast<unsigned long long>(result), static_cast<unsigned long long>(expected | sign));
+                std::abort();
+            }
+        }
+    }
+    Require(asinh_nid_postfix(std::numeric_limits<double>::infinity()) == std::numeric_limits<double>::infinity());
+    Require(asinh_nid_postfix(-std::numeric_limits<double>::infinity()) == -std::numeric_limits<double>::infinity());
+    Require(std::isnan(asinh_nid_postfix(std::numeric_limits<double>::quiet_NaN())));
 }
 
 static void CheckRoundingNaNConsoleBits() {
@@ -1914,11 +2043,15 @@ static void CheckMissingClassificationExports() {
     Require(isnanf_nid_postfix(0.f) == 0 && isnanf_nid_postfix(-1.f) == 0);
 
     const long double negativeNan = std::copysign(std::numeric_limits<long double>::quiet_NaN(), -1.L);
-    Require(__signbitl_nid_postfix(0.L) == 0 && __signbitl_nid_postfix(-0.L) == 1);
-    Require(__signbitl_nid_postfix(1.L) == 0 && __signbitl_nid_postfix(-1.L) == 1);
+    Require(__signbitl_nid_postfix(0.L) == 0 && __signbitl_nid_postfix(-0.L) == 0x8000);
+    Require(__signbitl_nid_postfix(1.L) == 0 && __signbitl_nid_postfix(-1.L) == 0x8000);
     Require(__signbitl_nid_postfix(std::numeric_limits<long double>::infinity()) == 0);
-    Require(__signbitl_nid_postfix(-std::numeric_limits<long double>::infinity()) == 1);
-    Require(__signbitl_nid_postfix(negativeNan) == 1);
+    Require(__signbitl_nid_postfix(-std::numeric_limits<long double>::infinity()) == 0x8000);
+    Require(__signbitl_nid_postfix(negativeNan) == 0x8000);
+    Require(__signbit_nid_postfix(0.0) == 0 && __signbit_nid_postfix(-0.0) == 0x8000 && __signbit_nid_postfix(-1e-310) == 0x8000);
+    Require(__signbit_nid_postfix(std::copysign(std::numeric_limits<double>::quiet_NaN(), -1.0)) == 0x8000);
+    Require(__signbitf_nid_postfix(1.f) == 0 && __signbitf_nid_postfix(-0.f) == 0x8000 && __signbitf_nid_postfix(-infinity) == 0x8000);
+    Require(__signbitf_nid_postfix(nan) == 0 && __signbitf_nid_postfix(std::copysign(nan, -1.f)) == 0x8000);
 }
 
 static void CheckFloatMathExports() {
@@ -2037,10 +2170,20 @@ static void CheckLongDoubleFunctions() {
     Require(tgammaf_nid_postfix(5.0f) == 24.0f && std::abs(tgammaf_nid_postfix(0.5f) - 1.77245385f) < 1e-6f);
     Require(tgammaf_nid_postfix(1.0f) == 1.0f && tgammaf_nid_postfix(2.0f) == 1.0f && tgammaf_nid_postfix(3.0f) == 2.0f);
     Require(std::isinf(tgammaf_nid_postfix(0.0f)) && std::isnan(tgammaf_nid_postfix(-1.0f)));
+    for (const float pole : {-1.0f, -2.0f, -710.0f, -std::numeric_limits<float>::infinity()}) Require(std::bit_cast<std::uint32_t>(tgammaf_nid_postfix(pole)) == 0xffc00000u);
     const float negativeGammaUnderflow = tgammaf_nid_postfix(-4260.884765625f);
     const float positiveGammaUnderflow = tgammaf_nid_postfix(-4261.2f);
     Require(negativeGammaUnderflow == 0.0f && std::signbit(negativeGammaUnderflow));
     Require(positiveGammaUnderflow == 0.0f && !std::signbit(positiveGammaUnderflow));
+    for (const float x : {0.0f, -0.0f, -INFINITY, INFINITY, 40.0f, 1.0e5f, 3.0e38f, -4261.2f, 0.5f}) {
+        errno = 7;
+        static_cast<void>(tgammaf_nid_postfix(x));
+        Require(errno == 7);
+    }
+    for (const float x : {-1.0f, -2.0f, -1.0e5f, -3.0e38f}) {
+        errno = 7;
+        Require(std::isnan(tgammaf_nid_postfix(x)) && errno == EDOM);
+    }
     Require(hypotl_nid_postfix(3.0L, -4.0L) == 5.0L && hypotl_nid_postfix(nan, -infinity) == infinity);
 
     Require(hypot3f_nid_postfix(3.0f, -4.0f, 12.0f) == 13.0f && hypot3f_nid_postfix(0.0f, 3.0f, -4.0f) == 5.0f);
@@ -2132,10 +2275,12 @@ static void CheckNoConversionZero() {
         Require(parsedFloat == 0.f && std::signbit(parsedFloat) && end == text);
         Require(!std::signbit(strtold_nid_postfix(text, nullptr)));
     }
-    for (const char* text : {"-nan", "-NAN", " -nan(5)"}) {
+    struct SignedNan { const char* text; std::uint32_t bits; };
+    for (const SignedNan& signedNan : {SignedNan{"-nan", 0xffc00000u}, SignedNan{"-NAN", 0xffc00000u}, SignedNan{" -nan(5)", 0xffc00005u}}) {
+        const char* const text = signedNan.text;
         char* end = nullptr;
         const float parsedFloat = strtof_nid_postfix(text, &end);
-        Require(std::bit_cast<std::uint32_t>(parsedFloat) == 0xffc00000u && end == text + std::strlen(text));
+        Require(std::bit_cast<std::uint32_t>(parsedFloat) == signedNan.bits && end == text + std::strlen(text));
     }
     Require(std::bit_cast<std::uint32_t>(strtof_nid_postfix("nan", nullptr)) == 0x7fc00000u);
     char* end = nullptr;
@@ -2450,6 +2595,8 @@ int main() {
     CheckSinhMsunBits();
     CheckSinhLargeArguments();
     CheckSinhOverflowErrno();
+    CheckAsinhMsunBits();
+    CheckAsinhLargeArguments();
     CheckRoundingNaNConsoleBits();
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
@@ -2544,6 +2691,7 @@ int main() {
     const auto minimum = div_nid_postfix(std::numeric_limits<int>::min(), 10);
     Require(minimum.quot == -214748364 && minimum.rem == -8);
     CheckPowfSpecialValue();
+    CheckPowfUnderflowFlag();
     Require(abs_nid_postfix(0) == 0);
     CheckAcosfErrno();
     CheckAcosfMsun();

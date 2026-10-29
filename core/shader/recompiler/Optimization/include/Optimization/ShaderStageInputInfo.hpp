@@ -186,6 +186,8 @@ struct ShaderPixelInputInfo {
     bool psNoPerspective = false;
     bool psPixelKillEnable = false;
     bool psDepthExportEnable = false;
+    float psDepthExportMin = 0.0f;
+    float psDepthExportMax = 1.0f;
     bool psSampleMaskExportEnable = false;
     bool psStencilRefExportEnable = false;
     bool psStencilOperationValueExport = false;
@@ -207,6 +209,7 @@ struct ShaderPixelInputInfo {
     std::uint8_t mergeSamples = 1;
     bool mergeDepthStencilWrites = false;
     bool mergeDepthStencilTests = false;
+    TargetBlend mergeBlend{};
     std::array<std::uint32_t, 4> sampleOrder{};
     ShaderStageRuntime stage;
 

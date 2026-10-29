@@ -109,6 +109,153 @@ class SymbolizeSamplesTests(unittest.TestCase):
                     for path, content in original.items():
                         self.assertEqual(path.read_bytes(), content)
 
+    def test_output_cannot_alias_a_module_input(self):
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text(
+            f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+            "libSceAgcDriver.prx+0x1011 1\n",
+            encoding="utf-8",
+        )
+        module = self.libs / "libSceAgcDriver.prx"
+        original = module.read_bytes()
+        for alias in ("same", "hardlink"):
+            with self.subTest(alias=alias):
+                output = module if alias == "same" else self.root / "module-output"
+                if alias == "hardlink":
+                    os.link(module, output)
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                         "--libs", str(self.libs), "--out", str(output)],
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("must be separate from module inputs", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(module.read_bytes(), original)
+                if alias == "hardlink":
+                    output.unlink()
+
+    def test_output_cannot_alias_an_unreferenced_module(self):
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text(
+            f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+            "libSceAgcDriver.prx+0x1011 1\n",
+            encoding="utf-8",
+        )
+        module = self.libs / "other.prx"
+        build_pe(module)
+        original = module.read_bytes()
+        for alias in ("same", "hardlink"):
+            with self.subTest(alias=alias):
+                output = module if alias == "same" else self.root / "other-output"
+                if alias == "hardlink":
+                    os.link(module, output)
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                         "--libs", str(self.libs), "--out", str(output)],
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("must be separate from module inputs", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(module.read_bytes(), original)
+                if alias == "hardlink":
+                    output.unlink()
+
+    def test_write_only_aliased_module_candidate_is_protected(self):
+        if os.name != "posix" or os.geteuid() == 0:
+            self.skipTest("An unprivileged POSIX user is required")
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text(
+            f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+            "libSceAgcDriver.prx+0x1011 1\n",
+            encoding="utf-8",
+        )
+        output = self.libs / "opaque-module"
+        output.write_bytes(b"opaque")
+        original = output.read_bytes()
+        output.chmod(0o200)
+        try:
+            result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                     "--libs", str(self.libs), "--out", str(output)],
+                                    capture_output=True, text=True, timeout=5)
+        finally:
+            output.chmod(0o600)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("module inputs", result.stderr)
+        self.assertEqual(output.read_bytes(), original)
+
+    def test_unreferenced_malformed_or_unsupported_module_candidate_is_protected(self):
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text(
+            f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+            "libSceAgcDriver.prx+0x1011 1\n",
+            encoding="utf-8",
+        )
+        for kind in ("malformed-prx", "unsupported-pe"):
+            with self.subTest(kind=kind):
+                output = self.libs / ("malformed.prx" if kind == "malformed-prx" else "unsupported.bin")
+                if kind == "malformed-prx":
+                    output.write_bytes(b"not a PE image")
+                else:
+                    build_pe(output)
+                    image = bytearray(output.read_bytes())
+                    struct.pack_into("<H", image, 0x58, 0x10B)
+                    output.write_bytes(image)
+                original = output.read_bytes()
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                         "--libs", str(self.libs), "--out", str(output)],
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("module inputs", result.stderr)
+                self.assertEqual(output.read_bytes(), original)
+
+    def test_address_output_alias_keeps_collapsed_stack_error(self):
+        samples = self.root / "worker.txt"
+        samples.write_text(
+            f"# 1 samples\nlibSceAgcDriver.prx 0x1011 1 1\n"
+            f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n",
+            encoding="utf-8",
+        )
+        module = self.libs / "libSceAgcDriver.prx"
+        original = module.read_bytes()
+        result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                 "--libs", str(self.libs), "--out", str(module)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--out needs a collapsed-stack file", result.stderr)
+        self.assertNotIn("module inputs", result.stderr)
+        self.assertEqual(module.read_bytes(), original)
+
+    def test_unreferenced_output_inside_libs_remains_allowed(self):
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text(
+            f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+            "libSceAgcDriver.prx+0x1011 1\n",
+            encoding="utf-8",
+        )
+        output = self.libs / "symbolized.txt"
+        output.write_text("previous output\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples),
+                                 "--libs", str(self.libs), "--out", str(output)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(output.read_text(encoding="utf-8"), "libSceAgcDriver.prx!short 1\n")
+
+    def test_module_alias_does_not_hide_a_later_missing_lib_directory(self):
+        samples = self.root / "worker.collapsed.txt"
+        samples.write_text(
+            f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+            "libSceAgcDriver.prx+0x1011 1\n",
+            encoding="utf-8",
+        )
+        module = self.libs / "libSceAgcDriver.prx"
+        missing = self.root / "missing-libs"
+        original = module.read_bytes()
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+            symbolize_samples.main([str(samples), "--libs", str(self.libs),
+                                    "--libs", str(missing), "--out", str(module)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn(missing.name, errors.getvalue())
+        self.assertEqual(module.read_bytes(), original)
+
     def test_distinct_output_preserves_sample_captures(self):
         record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
         later, earlier, output = (self.root / name for name in ("later.txt", "earlier.txt", "named.txt"))
@@ -279,6 +426,32 @@ class SymbolizeSamplesTests(unittest.TestCase):
         bad.write_text("# header\nlibSceAgcDriver.prx+0x1011 many\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, r"bad\.collapsed\.txt:2:"):
             symbolize_samples.load(bad)
+
+    def test_unusable_inputs_are_usage_errors(self):
+        good = self.root / "good.collapsed.txt"
+        good.write_text("libSceAgcDriver.prx+0x1011 1\n", encoding="utf-8")
+        bad = self.root / "bad.collapsed.txt"
+        bad.write_text("# header\nlibSceAgcDriver.prx+0x1011 many\n", encoding="utf-8")
+        binary = self.root / "binary.collapsed.txt"
+        binary.write_bytes(b"\xff\xfe\n")
+        cases = {
+            "missing samples": ([self.root / "missing.txt", "--libs", self.libs], "missing.txt"),
+            "undecodable samples": ([binary, "--libs", self.libs], "codec"),
+            "malformed samples": ([bad, "--libs", self.libs], "bad.collapsed.txt:2:"),
+            "malformed since": ([good, "--since", bad, "--libs", self.libs], "bad.collapsed.txt:2:"),
+            "missing libs": ([good, "--libs", self.root / "missing-libs"], "missing-libs"),
+            "unwritable out": ([good, "--libs", self.libs, "--out", self.root / "missing" / "out.txt"], "out.txt"),
+        }
+        for name, (arguments, message) in cases.items():
+            with self.subTest(name):
+                errors = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors), \
+                        self.assertRaises(SystemExit) as raised:
+                    symbolize_samples.main([str(argument) for argument in arguments])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("error:", errors.getvalue())
+                self.assertIn(message, errors.getvalue())
+                self.assertNotIn("Traceback", errors.getvalue())
 
     def test_removed_module_warns_once_and_other_modules_still_resolve(self):
         missing = self.libs / "removed.prx"

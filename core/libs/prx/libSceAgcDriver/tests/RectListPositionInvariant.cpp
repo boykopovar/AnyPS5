@@ -11,6 +11,7 @@
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -188,6 +189,30 @@ int CornerIndex(std::span<const std::uint32_t> words, float x, float y) {
 
 }
 
+std::vector<std::uint32_t> VertexWithClipDistances(std::uint32_t count) {
+    constexpr auto word = [](std::uint32_t words, spv::Op opcode) { return (words << spv::WordCountShift) | static_cast<std::uint32_t>(opcode); };
+    return {
+        spv::MagicNumber, 0x00010400u, 0u, 7u, 0u,
+        word(3, spv::OpTypeFloat), 1u, 32u,
+        word(4, spv::OpTypeInt), 2u, 32u, 0u,
+        word(4, spv::OpConstant), 2u, 3u, count,
+        word(4, spv::OpTypeArray), 4u, 1u, 3u,
+        word(4, spv::OpTypePointer), 5u, spv::StorageClassOutput, 4u,
+        word(4, spv::OpVariable), 5u, 6u, spv::StorageClassOutput,
+        word(4, spv::OpDecorate), 6u, spv::DecorationBuiltIn, spv::BuiltInClipDistance,
+    };
+}
+
+bool BuildRejected(const RecompileResult& vertex, const SpirvTarget& target) {
+    RecompileResult fragment;
+    try {
+        static_cast<void>(BuildRectListShaders(vertex, fragment, target));
+    } catch (const std::runtime_error& error) {
+        return std::string_view(error.what()).find("exceeds device limits") != std::string_view::npos;
+    }
+    return false;
+}
+
 int main() {
     try {
         static constexpr std::array<std::uint32_t, 2> capabilities{spv::CapabilityShader, spv::CapabilityTessellation};
@@ -217,6 +242,15 @@ int main() {
             std::snprintf(message, sizeof(message), "rect-list corner (%.9g, %.9g) selected vertex %d, expected %.0f", static_cast<double>(corner[0]), static_cast<double>(corner[1]), selected, static_cast<double>(corner[2]));
             Check(selected == static_cast<int>(corner[2]), message);
         }
+        static constexpr std::array<std::uint32_t, 3> clipCapabilities{spv::CapabilityShader, spv::CapabilityClipDistance, spv::CapabilityTessellation};
+        SpirvTarget clipTarget = target;
+        clipTarget.supportedCapabilities = clipCapabilities;
+        clipTarget.tessellation = TessellationTargetLimits{32, 8, 8, 120, 4096, 8, 8};
+        RecompileResult clipVertex;
+        clipVertex.spirv = VertexWithClipDistances(2);
+        Check(!BuildRejected(clipVertex, clipTarget), "rect-list rejected a ClipDistance[2] vertex that fits eight per-vertex components");
+        clipVertex.spirv = VertexWithClipDistances(8);
+        Check(BuildRejected(clipVertex, clipTarget), "rect-list accepted a ClipDistance[8] vertex whose position and clip distances need twelve per-vertex components");
         std::printf("rect-list position invariant tests passed\n");
         return 0;
     } catch (const std::exception& error) {

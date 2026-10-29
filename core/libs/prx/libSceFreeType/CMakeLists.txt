@@ -11,6 +11,20 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/OutlineDecompose.cpp
 )
 target_include_directories(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR})
+target_sources(libSceFreeType PRIVATE src/Advances.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_advances_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeAdvances.cpp)
+    target_include_directories(guest_freetype_advances_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_advances_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_advances_tests)
+    add_test(NAME guest_freetype_advances COMMAND guest_freetype_advances_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_advances PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+endif()
+
 target_link_libraries(libSceFreeType PRIVATE freetype)
 target_sources(libSceFreeType PRIVATE src/SizeRequest.cpp)
 

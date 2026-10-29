@@ -1,5 +1,9 @@
 # libSceAmpr technical debt
 
+### Silent stubs
+
+- [sceAmprCommandBufferDestructor, sceAmprAprCommandBufferDestructor, sceAmprAmmCommandBufferConstructor, sceAmprAmmCommandBufferDestructor](../../../core/libs/prx/libSceAmpr/Export.cpp) (libSceAmpr) - return 0 without reading or changing the buffer, or the APR gather and scatter states. Unlike `sceAmprCommandBufferConstructor` and `sceAmprAprCommandBufferConstructor`, the AMM constructor leaves every field of the buffer as the caller left it. Borderlands 4 (PPSA01494), Ghost of Tsushima (PPSA02225), Forspoken (PPSA03984), Astro Bot (PPSA21564), Crimson Desert (PPSA25286), MXGP 26 (PPSA30839) and Super Meat Boy 3D (PPSA31162) call both destructors; Forspoken also calls the AMM constructor and destructor once each
+
 ### Unknown function info
 
 - [AMPR command buffer null arguments](../../../core/libs/prx/libSceAmpr/Export.cpp) (libSceAmpr) - the result for a null command buffer is unknown for `sceAmprCommandBufferConstructor`, `sceAmprAprCommandBufferConstructor`, `sceAmprCommandBufferReset` and `sceAmprCommandBufferSetBuffer`; these return `SCE_KERNEL_ERROR_EINVAL` here, but the behavior has not been confirmed on a PS5.

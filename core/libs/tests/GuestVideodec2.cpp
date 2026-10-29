@@ -832,8 +832,24 @@ void testConcurrentOwnership() {
 
 }
 
+void testComputeQueues() {
+    SceVideodec2::ComputeMemoryInfo memory{sizeof(SceVideodec2::ComputeMemoryInfo), 0, nullptr};
+    checkThrows([] { sceVideodec2QueryComputeMemoryInfo_nid_postfix(nullptr); });
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(&memory) == 0 && memory.cpuGpuMemorySize == (1u << 20u), "the compute work memory is not 1 MiB");
+    const SceVideodec2::ComputeConfigInfo config{sizeof(SceVideodec2::ComputeConfigInfo), 0, 0, false};
+    std::uint64_t first = 0;
+    std::uint64_t second = 0;
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(nullptr, &memory, &first); });
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, nullptr, &first); });
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, nullptr); });
+    check(first == 0, "a rejected allocation wrote a queue");
+    check(sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, &first) == 0 && first != 0, "the first compute queue was not allocated");
+    check(sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, &second) == 0 && second != 0 && second != first, "a second compute queue repeats the first");
+}
+
 int main() {
     try {
+        testComputeQueues();
         testFailures();
         testDecode(false);
         testDecode(true);

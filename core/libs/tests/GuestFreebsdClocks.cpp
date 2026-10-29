@@ -321,8 +321,15 @@ static void CalendarConversionsFollowTheHostZone() {
     SetTimeZone("UTC0");
 }
 
+static void KernelTimezoneIsUtc() {
+    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000eu));
+    KernelTimezone zone{-1, -1};
+    Require(sceKernelGettimezone(&zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+}
+
 int main() {
     if (!OmittedResolutionSucceeds()) return 1;
+    KernelTimezoneIsUtc();
     UnsupportedResolutionStillThrows();
     OmittedTimeIsFaultAfterClockValidation();
     SettimeValidatesLikeFreebsd();
