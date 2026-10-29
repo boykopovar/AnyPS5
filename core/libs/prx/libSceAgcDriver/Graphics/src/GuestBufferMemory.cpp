@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidentMirror.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -6027,6 +6028,100 @@ std::shared_ptr<Buffer> stagingBuffer(const Context& context, std::size_t bytes,
     }
 }
 
+namespace {
+
+struct ResidentRange {
+    std::shared_ptr<Buffer> buffer;
+    std::uint64_t syncGeneration = 0;
+    std::uint64_t forgetSerial = 0;
+};
+
+struct ResidentRanges {
+    std::mutex mutex;
+    VkDevice device = VK_NULL_HANDLE;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, ResidentRange> ranges;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint32_t> heat;
+    std::uint64_t promoted = 0, bound = 0, skipped = 0, skippedBytes = 0, copied = 0, invalidated = 0;
+    std::chrono::steady_clock::time_point reported = std::chrono::steady_clock::now();
+};
+
+ResidentRanges& Residents() {
+    static auto* ranges = new ResidentRanges;
+    return *ranges;
+}
+
+constexpr std::size_t ResidentLimit = 32;
+constexpr std::uint32_t ResidentPromoteAfter = 8;
+constexpr std::uint64_t ResidentMinBytes = 65536;
+
+void reportResidents(ResidentRanges& residents) {
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - residents.reported < std::chrono::seconds(10)) return;
+    residents.reported = now;
+    if (profile) std::fprintf(stderr, "[resident-ranges] (10 s) %zu resident, %llu promoted, %llu bound by builds, copy-ins %llu skipped (%.1f MiB) / %llu made, %llu invalidated by other stamps\n", residents.ranges.size(), static_cast<unsigned long long>(residents.promoted), static_cast<unsigned long long>(residents.bound), static_cast<unsigned long long>(residents.skipped), residents.skippedBytes / 1048576.0, static_cast<unsigned long long>(residents.copied), static_cast<unsigned long long>(residents.invalidated));
+    residents.promoted = residents.bound = residents.skipped = residents.skippedBytes = residents.copied = residents.invalidated = 0;
+    residents.heat.clear();
+}
+
+}
+
+std::shared_ptr<Buffer> residentBuffer(const Context& context, std::uint64_t begin, std::uint64_t end) {
+    if (RuntimeSwitches::Set(RuntimeSwitch::NoResidentRanges) || end - begin < ResidentMinBytes) return nullptr;
+    auto& residents = Residents();
+    std::lock_guard lock(residents.mutex);
+    if (residents.device != context.device) {
+        residents.ranges.clear();
+        residents.heat.clear();
+        residents.device = context.device;
+    }
+    const auto forget = GuestMemory::ForgetSerial();
+    const std::pair key{begin, end};
+    if (const auto found = residents.ranges.find(key); found != residents.ranges.end()) {
+        if (found->second.forgetSerial == forget) {
+            ++residents.bound;
+            return found->second.buffer;
+        }
+        residents.ranges.erase(found);
+    }
+    if (++residents.heat[key] < ResidentPromoteAfter || residents.ranges.size() >= ResidentLimit) return nullptr;
+    auto buffer = stagingBuffer(context, static_cast<std::size_t>(end - begin), gpuCopyUsage(context, true));
+    if (buffer == nullptr) return nullptr;
+    residents.ranges[key] = ResidentRange{buffer, 0, forget};
+    ++residents.promoted;
+    ++residents.bound;
+    return buffer;
+}
+
+bool residentCurrent(std::uint64_t begin, std::uint64_t end, const std::shared_ptr<Buffer>& buffer) {
+    if (RuntimeSwitches::Set(RuntimeSwitch::NoResidentRanges)) return false;
+    auto& residents = Residents();
+    std::lock_guard lock(residents.mutex);
+    reportResidents(residents);
+    const auto found = residents.ranges.find({begin, end});
+    if (found == residents.ranges.end() || found->second.buffer != buffer) return false;
+    if (found->second.syncGeneration == 0 || found->second.forgetSerial != GuestMemory::ForgetSerial()) return false;
+    const auto bytes = static_cast<std::size_t>(end - begin);
+    static_cast<void>(GuestMemory::CollectWrites(begin, bytes));
+    if (!GuestMemory::UnchangedSince(begin, bytes, found->second.syncGeneration)) {
+        ++residents.invalidated;
+        found->second.syncGeneration = 0;
+        return false;
+    }
+    ++residents.skipped;
+    residents.skippedBytes += bytes;
+    return true;
+}
+
+void residentCopied(std::uint64_t begin, std::uint64_t end, const std::shared_ptr<Buffer>& buffer) {
+    auto& residents = Residents();
+    std::lock_guard lock(residents.mutex);
+    const auto found = residents.ranges.find({begin, end});
+    if (found == residents.ranges.end() || found->second.buffer != buffer) return;
+    ++residents.copied;
+    found->second.syncGeneration = GuestMemory::CollectWrites(begin, static_cast<std::size_t>(end - begin));
+}
+
 // APS5_TRACE_STAGING=1: every distinct staged range once, with its size and whether an atomic
 // element lies in it, to see which elements the staging window admits at a stage.
 void traceStaged(std::uint64_t begin, std::uint64_t end, bool atomic) {
@@ -6326,7 +6421,9 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
             const bool misaligned = !bindableInPlace(HostImportOffset(*entry, region.begin), addressable);
             if (staged) {
                 const auto allocateStart = std::chrono::steady_clock::now();
-                region.buffer = stagingBuffer(context, static_cast<std::size_t>(region.end - region.begin), gpuCopyUsage(context, addressable));
+                region.buffer = residentBuffer(context, region.begin, region.end);
+                region.resident = region.buffer != nullptr;
+                if (!region.resident) region.buffer = stagingBuffer(context, static_cast<std::size_t>(region.end - region.begin), gpuCopyUsage(context, addressable));
                 if (profile) allocateUs.fetch_add(microsecondsSince(allocateStart), std::memory_order_relaxed);
                 if (region.buffer == nullptr) {
                     // No shadow to be had: in place when aligned, else the host copy below.
@@ -6885,6 +6982,11 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
             }
         }
         recorder->Keep(region->buffer);
+        if (region->resident && region->deviceLocal && expected.empty() && residentCurrent(region->begin, region->end, region->buffer)) {
+            copiedBytes -= bytes;
+            region->snapshot.clear();
+            continue;
+        }
         std::shared_ptr<Buffer> carried;
         if (region->deviceLocal && inputSnapshot == nullptr && !region->sparse && region->mirror == nullptr && region->bufferEnd == 0) carried = takeCarriedShadow(context, *recorder, region->begin, region->end);
         if (carried != nullptr) {
@@ -6896,6 +6998,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
         } else {
             CopyBuffer(context, commands, copySource, copyOffset, region->buffer->Handle(), 0, bytes);
         }
+        if (region->resident) residentCopied(region->begin, region->end, region->buffer);
         if (!expected.empty()) {
             auto readback = std::make_shared<Buffer>(context, expected.size(), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
             recorder->Keep(readback, readback->Bytes().size());
@@ -7336,14 +7439,40 @@ void GuestBufferMemory::MarkStagedWrites() const {
 }
 
 void GuestBufferMemory::MarkDirectWrites() const {
+    thread_local std::vector<std::pair<const Region*, bool>>* residentSlot = nullptr;
+    auto& resident = ShaderRecompiler::ThreadOwned(residentSlot);
+    resident.clear();
+    for (const auto& region : regions) {
+        if (!region.resident || !region.gpuCopy || !region.copiedBack) continue;
+        auto& residents = Residents();
+        std::lock_guard lock(residents.mutex);
+        const auto found = residents.ranges.find({region.begin, region.end});
+        if (found == residents.ranges.end() || found->second.buffer != region.buffer) continue;
+        resident.emplace_back(&region, found->second.syncGeneration != 0 && GuestMemory::UnchangedSince(region.begin, static_cast<std::size_t>(region.end - region.begin), found->second.syncGeneration));
+    }
+    std::uint64_t marked = 0;
     for (const auto& [begin, end] : writes) {
         const auto* found = owner(begin, end);
         if (found == nullptr) continue;
         const auto& region = *found;
         if (region.direct != nullptr || (region.gpuCopy && region.copiedBack)) {
             std::uint64_t order = 0;
-            static_cast<void>(GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin), order));
+            const auto generation = GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin), order);
             directWritesGeneration = std::max(directWritesGeneration, order);
+            marked = std::max(marked, generation);
+        }
+    }
+    if (resident.empty()) return;
+    auto& residents = Residents();
+    std::lock_guard lock(residents.mutex);
+    for (const auto& [region, current] : resident) {
+        const auto found = residents.ranges.find({region->begin, region->end});
+        if (found == residents.ranges.end() || found->second.buffer != region->buffer) continue;
+        if (!current) {
+            if (found->second.syncGeneration != 0) ++residents.invalidated;
+            found->second.syncGeneration = 0;
+        } else if (marked != 0) {
+            found->second.syncGeneration = std::max(found->second.syncGeneration, marked);
         }
     }
 }
