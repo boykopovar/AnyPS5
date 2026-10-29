@@ -49,6 +49,16 @@ static void CheckInvalidValue(const std::string& executable) {
     Require(RunChild(executable, "", errors) == 0, "an empty value must be the same as unset: " + Read(errors));
 }
 
+static void CheckUnreadableTitle(const std::string& executable) {
+    const auto errors = std::filesystem::current_path() / "child-errors.txt";
+    Require(RunChild(executable, "off", errors) == 0, "a copy with the check off must ignore the unreadable title: " + Read(errors));
+    Require(RunChild(executable, "on", errors) != 0, "a title whose ID cannot be read must stop with the check on");
+    const auto message = Read(errors);
+    Require(message.find(std::filesystem::current_path().string()) != std::string::npos, "the error must name the directory: " + message);
+    Require(message.find("ANYPS5_INSTANCE_LOCK=off") != std::string::npos, "the error must name the variable: " + message);
+    Require(!std::filesystem::exists(LockFile()), "no lock file may be created when the title ID is unreadable");
+}
+
 static void CheckSecondInstance(const std::string& executable) {
     const auto errors = std::filesystem::current_path() / "child-errors.txt";
     Require(RunChild(executable, "off", errors) == 0, "a copy with the check off must run beside the holder: " + Read(errors));
@@ -72,6 +82,7 @@ int main(int argc, char** argv) {
 #ifndef _WIN32
         else if (mode == "second") CheckSecondInstance(argv[0]);
         else if (mode == "invalid") CheckInvalidValue(argv[0]);
+        else if (mode == "unreadable") CheckUnreadableTitle(argv[0]);
 #endif
         else throw std::runtime_error("unknown mode '" + mode + "'");
     } catch (const std::exception& error) {
