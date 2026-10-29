@@ -165,3 +165,42 @@
 
 - [Tournament launch parameters](../../../core/libs/prx/libSceSystemService/Export.cpp): occurrence parameters occupy 32 bytes and contain two string pointers and a user ID. The final string semantics are unresolved. Event-details and team-profile launches retain an unused first argument slot of unknown declared type. The daemon blocking-event receive argument is passed unchanged as 64 bits to IPC; its meaning remains unresolved. Protected bodies in [PendingExports.cpp](../../../core/libs/prx/libSceSystemService/PendingExports.cpp) remain unchanged.
 - [sceSystemServiceIsBgmPlaying, sceShellCoreUtilIsBgmPlaying](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - what they return while music plays, and in a title process, is not measured. Both return 0, as they do in a payload process on PS5 firmware 13.60 with no music playing, where neither writes through a pointer passed as the first argument. In [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/a808e76/src/core/libraries/system/systemservice.cpp) they report whether its libSceMusicPlayerService is playing; there is no libSceMusicPlayerService here, so no background music can be playing
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceSystemService/Export.cpp) - 32 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `16waHD4tFBo` |
+| `Unknown` | `1m-E1Xh8COo` |
+| `Unknown` | `7eu2qjQGigw` |
+| `Unknown` | `90unWbnI0qE` |
+| `Unknown` | `E-bXVJqwGZw` |
+| `Unknown` | `G3oPdw3lkps` |
+| `Unknown` | `KgiwSrROsIQ` |
+| `Unknown` | `LxGOxroprpg` |
+| `Unknown` | `NXFtO8BfVeo` |
+| `Unknown` | `Oxh0CSsTZ78` |
+| `Unknown` | `OyTwhCKWXi4` |
+| `Unknown` | `U0HutHWnMBM` |
+| `Unknown` | `VDs9VSjSJh0` |
+| `Unknown` | `ZWNP+-dWr8E` |
+| `Unknown` | `axzblV8OvWU` |
+| `Unknown` | `bJyWctnSXyU` |
+| `Unknown` | `bUNkT3XDg0Y` |
+| `Unknown` | `c5+4Scso9EU` |
+| `Unknown` | `fBGD-HNimSk` |
+| `Unknown` | `fPAZ5DBsDxo` |
+| `Unknown` | `ifJiF5witJ4` |
+| `Unknown` | `kDGjRMtUDxo` |
+| `Unknown` | `lgpIdZ8T0xg` |
+| `Unknown` | `pj1SzIAxPlk` |
+| `Unknown` | `qdTPJWjquDc` |
+| `Unknown` | `rIqPq0oWlrg` |
+| `Unknown` | `sgYo-zXHQRE` |
+| `Unknown` | `tPMOYbbviYs` |
+| `Unknown` | `uElcdmhh-c8` |
+| `Unknown` | `xn-HgPW29x4` |
+| `Unknown` | `y16IXiJfafA` |
+| `Unknown` | `yOiZq+9-ZMQ` |
