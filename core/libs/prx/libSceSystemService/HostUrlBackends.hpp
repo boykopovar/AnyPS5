@@ -12,3 +12,10 @@ public:
 private:
     std::string program;
 };
+
+class HostMessageBoxConfirmation final : public IUrlConfirmation {
+public:
+    bool Confirm(const std::string& url) override;
+};
+
+std::string HostConfirmationText(const std::string& url);
