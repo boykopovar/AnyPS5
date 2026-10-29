@@ -910,8 +910,26 @@ KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t
     return event;
 }
 
+static std::mutex g_closeObserverMutex;
+static std::vector<void (*)(int)> g_closeObservers;
+
+extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor)) {
+    std::lock_guard lock(g_closeObserverMutex);
+    g_closeObservers.push_back(observer);
+}
+
+static void NotifyDescriptorCloseObservers(int descriptor) {
+    std::vector<void (*)(int)> observers;
+    {
+        std::lock_guard lock(g_closeObserverMutex);
+        observers = g_closeObservers;
+    }
+    for (const auto observer : observers) observer(descriptor);
+}
+
 void EqueueDescriptorClosed(int descriptor) {
     KqueueDescriptorClosed(descriptor);
+    NotifyDescriptorCloseObservers(descriptor);
     std::vector<KernelEqueueRef> owners;
     {
         std::unique_lock lock(g_equeueMutex);

@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -672,15 +673,31 @@ int APS5_VABI sceFreeTypeOtVectorUnit_nid_no_patch() {
 }
 APS5_EXPORT("3WpTQrvGUcU", sceFreeTypeOtVectorUnit_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_P6WOAeb0lJ8_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI ft_corner_is_flat_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y) {
+    const __int128 ax = static_cast<__int128>(in_x) + static_cast<__int128>(out_x);
+    const __int128 ay = static_cast<__int128>(in_y) + static_cast<__int128>(out_y);
+    const auto hypot = [](__int128 x, __int128 y) -> unsigned __int128 {
+        const auto ux = static_cast<unsigned __int128>(x < 0 ? -x : x);
+        const auto uy = static_cast<unsigned __int128>(y < 0 ? -y : y);
+        return ux > uy ? ux + ((3 * uy) >> 3) : uy + ((3 * ux) >> 3);
+    };
+    const auto inDist = hypot(in_x, in_y);
+    const auto outDist = hypot(out_x, out_y);
+    const auto hypotDist = hypot(ax, ay);
+    const auto sumDist = inDist + outDist;
+    if (sumDist < hypotDist) {
+        return 1;
+    }
+    return (sumDist - hypotDist) < (hypotDist >> 4) ? 1 : 0;
 }
-APS5_EXPORT("P6WOAeb0lJ8", sceFreeTypeOtUnknown_P6WOAeb0lJ8_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_XGVABnpNksQ_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y) {
+    const auto delta = static_cast<std::int64_t>(
+        static_cast<std::uint64_t>(in_x) * static_cast<std::uint64_t>(out_y) -
+        static_cast<std::uint64_t>(in_y) * static_cast<std::uint64_t>(out_x)
+    );
+    return (delta > 0) - (delta < 0);
 }
-APS5_EXPORT("XGVABnpNksQ", sceFreeTypeOtUnknown_XGVABnpNksQ_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_Ln9I6YfmYJU_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

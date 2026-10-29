@@ -24,6 +24,15 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "SaveData.hpp"
 #include "prx/libSceSaveData/SaveDataFile.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 static constexpr char SAVE_DIR[] = "_sd";
 
@@ -230,12 +239,20 @@ SaveDataParam load_param(const std::string& real_path) {
     SaveDataParam param{};
     read_param_file(param_path(real_path), &param);
     if (param.mtime == 0) {
+#ifdef _WIN32
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        if (GetFileAttributesExW(std::filesystem::path(real_path).c_str(), GetFileExInfoStandard, &data)) {
+            const auto ticks = static_cast<std::int64_t>((static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime);
+            param.mtime = (ticks - 116444736000000000LL) / 10000000LL;
+        }
+#else
         std::error_code ec;
         const auto written = std::filesystem::last_write_time(real_path, ec);
         if (!ec) {
             const auto system = std::chrono::file_clock::to_sys(written);
             param.mtime = std::chrono::duration_cast<std::chrono::seconds>(system.time_since_epoch()).count();
         }
+#endif
     }
     return param;
 }

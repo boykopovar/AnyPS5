@@ -32,9 +32,9 @@ ctest --test-dir build --output-on-failure
 
 Python 3 is optional; without it some relinker tests are not registered.
 
-Every push to `main`, including a merged pull request, automatically runs full Linux and Windows builds and tests and the relinker matrix on Linux, Windows and macOS, using the pushed commit without contributor checks.
+Every push to `main`, including a merged pull request, automatically runs full Linux and Windows builds and tests, which include the relinker tests, using the pushed commit without contributor checks. The relinker-only build and tests run separately on macOS, for arm64 and x86_64, and the relinker-only build with the address sanitizer runs on Linux, only when the push changes a file the relinker-only build uses.
 
-For pull requests, full Linux and Windows builds and tests run only when a collaborator with write access selects Actions > Build > Run workflow on `main` and enters an open pull request number targeting `main`. A collaborator can start the same manual run from the command line, replacing `1234` with the pull request number:
+For pull requests, full Linux and Windows builds and tests run only when a collaborator with write access selects Actions > Build > Run workflow on `main` and enters up to 40 numbers of open pull requests targeting `main`, separated by spaces or commas; they are merged in that order and built together. A collaborator can start the same manual run from the command line, replacing `1234` with the pull request numbers:
 
 ```
 gh workflow run build.yml --repo boykopovar/AnyPS5 --ref main --field pr=1234
@@ -43,6 +43,8 @@ gh workflow run build.yml --repo boykopovar/AnyPS5 --ref main --field pr=1234
 This manual run also builds and tests the relinker on Linux, Windows and macOS when the pull request changes a file the relinker-only build uses, regardless of the author's previous contributions. The relinker matrix also runs automatically when a pull request targeting `main` is opened, updated or reopened, if its author already has a commit in `main` and it changes a file the relinker-only build uses; full builds never run automatically for pull requests. Every job that runs automatically for pull requests runs only when the pull request changes its files: a `paths` filter on the `pull_request` trigger, or `needs: eligibility` with an `if` on the files output it sets in `build.yml`. The Conventions check fails a workflow change that adds a job without one. All build jobs build the selected pull request merged into the current `main` (GitHub's merge commit), so a pull request that no longer merges cleanly must be rebased first. New commits require another manual run for full builds.
 
 With `--field full=false`, the manual run skips the full builds and runs only the relinker matrix on Linux, Windows and macOS, if the pull request changes a file the relinker-only build uses, such as the Python tools and their tests in `tools/`.
+
+With `--field linux=false`, the manual run skips the full Linux build and adds Linux to the relinker matrix, if the pull requests change a file the relinker-only build uses. With `--field select=true`, the full builds build and run only the tests whose build inputs the pull requests change; push builds of `main` always run every test.
 
 The Conventions check runs automatically for every contributor, including first-time contributors. It uses the checker from the current tip of the base branch, so rules added after a pull request was opened apply to its next run, and reads pull request Git objects without executing pull request code. The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [technical debt](docs/dev/TechnicalDebt.md), the index or a file in `docs/dev/debt/`, and only UTF-8 text files. Run it locally before pushing:
 

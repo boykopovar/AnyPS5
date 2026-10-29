@@ -562,6 +562,7 @@ private:
             return;
         }
         ::signal(signal, SIG_DFL);
+        if (previous.sa_handler == SIG_DFL) ::raise(signal);
     }
 
     bool record(std::uintptr_t address) {

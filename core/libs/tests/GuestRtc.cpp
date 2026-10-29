@@ -939,6 +939,11 @@ int main(int argc, char** argv) {
         Require(sceRtcGetCurrentAdNetworkTick(&current) == 0 && current.tick >= adClock.tick && current.tick < adClock.tick + 1000000);
         Require(sceRtcGetCurrentDebugNetworkTick(&current) == 0 && current.tick >= debugClock.tick && current.tick < debugClock.tick + 1000000);
         Require(sceRtcGetCurrentRawNetworkTick(&current) == 0 && current.tick > unixEpochTick);
+        Require(sceRtcGetCurrentTick(nullptr) == invalidPointer);
+        Require(sceRtcGetCurrentNetworkTick(nullptr) == invalidPointer);
+        Require(sceRtcGetCurrentRawNetworkTick(nullptr) == invalidPointer);
+        Require(sceRtcGetCurrentAdNetworkTick(nullptr) == invalidPointer);
+        Require(sceRtcGetCurrentDebugNetworkTick(nullptr) == invalidPointer);
     }
     SetCompiledSdkVersion(process.data(), 0x02ffffff);
     Require(sceRtcGetDayOfWeek(0, 13, 1) == invalidYear && sceRtcGetDayOfWeek(10000, 1, 1) == 6);

@@ -183,6 +183,31 @@ class LibraryPublicationTests(unittest.TestCase):
         self.assertFalse(any(file.suffix == ".download" for file in self.libraries.iterdir()))
 
 
+    def test_browser_incompatible_compression_and_special_files_preserve_old_release(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        for compression in (zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, "w", compression=compression) as archive:
+                archive.writestr("libs/libc.prx", b"content")
+            with self.subTest(compression=compression), self.assertRaisesRegex(ValueError, "compression"):
+                self.publish(data.getvalue(), valid)
+            self.assertEqual(self.manifest.read_bytes(), self.previous)
+            self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+        for mode in (0o010644, 0o020644, 0o060644, 0o120777, 0o140644):
+            entry = zipfile.ZipInfo("libs/special")
+            entry.create_system = 3
+            entry.external_attr = mode << 16
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "special files"):
+                self.publish(library_zip([(entry, b"content")]), valid)
+            self.assertEqual(self.manifest.read_bytes(), self.previous)
+        for compression in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, "w", compression=compression) as archive:
+                archive.writestr("libs/libc.prx", b"valid")
+            self.publish(data.getvalue(), data.getvalue())
+            self.assertEqual(json.loads(self.manifest.read_text(encoding="utf-8"))["tag"], "v1")
+
+
 class BuildWebCliTests(unittest.TestCase):
     def test_missing_relinker_wasm_reports_error_without_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -199,8 +224,8 @@ class BuildWebCliTests(unittest.TestCase):
             build = Path(directory)
             native = build / "web" / "native"
             native.mkdir(parents=True)
-            (native / "relinker_wasm.mjs").touch()
-            (native / "relinker_wasm.wasm").touch()
+            (native / "relinker_wasm.mjs").write_bytes(b"export default {};")
+            (native / "relinker_wasm.wasm").write_bytes(b"\0asm\x01\0\0\0")
             with contextlib.redirect_stdout(io.StringIO()):
                 code = build_web.main(["--build", str(build)])
             self.assertEqual(code, 0)
@@ -278,6 +303,40 @@ class ReleaseMetadataTests(unittest.TestCase):
                             build_web.publish_libraries(root, release)
                     self.assertEqual(existing.read_bytes(), b"previous manifest")
                     self.assertEqual(list(root.iterdir()), [existing])
+
+
+
+class LocalNativeArtifactTests(unittest.TestCase):
+    def test_empty_or_missing_native_input_does_not_copy_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            native = build / "web/native"
+            native.mkdir(parents=True)
+            marker = build / "web/app.mjs"
+            marker.write_bytes(b"preserve old site")
+            for name in ("relinker_wasm.mjs", "relinker_wasm.wasm"):
+                for missing in (False, True):
+                    with self.subTest(name=name, missing=missing):
+                        for artifact in ("relinker_wasm.mjs", "relinker_wasm.wasm"):
+                            (native / artifact).write_bytes(b"nonempty fixture")
+                        if missing:
+                            (native / name).unlink()
+                        else:
+                            (native / name).write_bytes(b"")
+                        stdout, stderr = io.StringIO(), io.StringIO()
+                        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                            build_web.main(["--build", str(build)])
+                        self.assertEqual(raised.exception.code, 2)
+                        self.assertIn(("missing " if missing else "empty ") + name, stderr.getvalue())
+                        self.assertEqual(stdout.getvalue(), "")
+                        self.assertEqual(marker.read_bytes(), b"preserve old site")
+                        self.assertFalse((build / "web/.nojekyll").exists())
+            for artifact in ("relinker_wasm.mjs", "relinker_wasm.wasm"):
+                (native / artifact).write_bytes(b"nonempty fixture")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(build_web.main(["--build", str(build)]), 0)
+            self.assertEqual(marker.read_bytes(), (build_web.ROOT / "demo/web/app.mjs").read_bytes())
+            self.assertTrue((build / "web/.nojekyll").exists())
 
 
 if __name__ == "__main__":

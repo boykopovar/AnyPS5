@@ -101,6 +101,10 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
     std::memcpy(&options, option, size);
     const auto maxChannels = RackMaxChannels(rackId, options);
     if ((rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) && maxChannels > SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS) return SCE_NGS2_ERROR_INVALID_NUM_CHANNELS;
+    if ((rackId == SCE_NGS2_RACK_ID_SAMPLER && (options.sampler.num_peak_meter_blocks < 1 || options.sampler.num_peak_meter_blocks > 256)) ||
+        (rackId == SCE_NGS2_RACK_ID_SUBMIXER && (options.submixer.num_peak_meter_blocks < 1 || options.submixer.num_peak_meter_blocks > 256))) {
+        return SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS;
+    }
     if ((rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) && (options.customSubmixer.max_inputs == 0 || options.customSubmixer.max_inputs > SCE_NGS2_CUSTOM_SUBMIXER_MAX_INPUTS)) {
         throw std::runtime_error("NGS2: custom submixer racks with " + std::to_string(options.customSubmixer.max_inputs) + " inputs are not implemented");
     }
@@ -141,6 +145,9 @@ static int CreateRack(Ngs2Handle systemHandle, std::uint32_t rackId, const RackO
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) rack->maxChannelWorks = options.customSampler.max_channel_works;
     if (rackId == SCE_NGS2_RACK_ID_SUBMIXER) rack->maxInputs = options.submixer.max_inputs;
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) rack->maxInputs = options.customSubmixer.max_inputs;
+    if (rackId == SCE_NGS2_RACK_ID_SAMPLER) rack->peakMeterBlocks = options.sampler.num_peak_meter_blocks;
+    if (rackId == SCE_NGS2_RACK_ID_SUBMIXER) rack->peakMeterBlocks = options.submixer.num_peak_meter_blocks;
+    if (rackId == SCE_NGS2_RACK_ID_MASTERING) rack->peakMeterBlocks = options.mastering.num_peak_meter_blocks;
     rack->bufferInfo = bufferInfo;
     rack->allocator = allocator;
     rack->voices.resize(options.common.max_voices);
