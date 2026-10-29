@@ -285,6 +285,19 @@ int main() {
     require(same(overlap, shifted, 5));
     require(wmemset_nid_postfix(copy, u'世', 3) == copy && copy[0] == u'世' && copy[2] == u'世' && copy[3] == u'y');
 
+    require(wmemchr_nid_postfix(units, u'x', 0) == nullptr);
+    require(wmemcmp_nid_postfix(units, lower, 0) == 0);
+    char16_t untouched[] = {u'a', u'b', u'c', u'd', u'e'};
+    require(wmemcpy_nid_postfix(untouched, units, 0) == untouched && same(untouched, u"abcde", 5));
+    require(wmemmove_nid_postfix(untouched, units, 0) == untouched && same(untouched, u"abcde", 5));
+    require(wmemset_nid_postfix(untouched, u'z', 0) == untouched && same(untouched, u"abcde", 5));
+    require(wcsncpy_nid_postfix(untouched, u"xyz", 0) == untouched && same(untouched, u"abcde", 5));
+    require(wmemmove_nid_postfix(untouched, untouched + 1, 4) == untouched && same(untouched, u"bcdee", 5));
+    char16_t appended[] = {u'a', u'b', 0, u'z', u'z', 0};
+    require(wcsncat_nid_postfix(appended, u"cd", 0) == appended && same(appended, u"ab\0zz", 6));
+    require(wcsspn_nid_postfix(u"xyz", u"ab") == 0);
+    require(wcspbrk_nid_postfix(haystack, u"") == nullptr);
+
     char16_t* end = nullptr;
     const char16_t* negative = u"  -42xyz";
     require(wcstol_nid_postfix(negative, &end, 10) == -42 && end == negative + 5);

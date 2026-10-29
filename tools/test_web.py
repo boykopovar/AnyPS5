@@ -28,7 +28,7 @@ def main(argv=None):
     try:
         subprocess.run(["node", "--test", *(str(ROOT / "demo/web/tests" / name) for name in (
             "app.test.mjs", "batch.test.mjs", "failure-report.test.mjs", "output-directory.test.mjs"
-        ))], check=True)
+        ) + ("directory-writer.test.mjs",))], check=True)
         with tempfile.TemporaryDirectory(prefix="anyps5-web-") as directory:
             fixture = Path(directory)
             (fixture / "main.elf").write_bytes(main_fixture())

@@ -133,6 +133,20 @@ class ProgressSnapshotTests(unittest.TestCase):
             self.assertEqual(stdout.getvalue(), expected)
 
 
+    def test_duplicate_names_are_rejected_within_each_section(self):
+        for section in ("libraries", "shaders"):
+            with self.subTest(section=section):
+                snapshot = self.snapshot()
+                snapshot[section]["groups"] = [{"name": "Repeated"}, {"name": "other"}, {"name": "Repeated"}]
+                self.assert_rejected(snapshot, section + ".groups[2].name duplicates 'Repeated'")
+
+    def test_group_names_are_case_sensitive_and_local_to_each_section(self):
+        snapshot = self.snapshot()
+        for section in ("libraries", "shaders"):
+            snapshot[section]["groups"] = [{"name": "same"}, {"name": "Same"}]
+        progress.validate_snapshot(snapshot)
+
+
 class ProgressTests(unittest.TestCase):
     def report_library(self, name, done=(), todo=(), **extra):
         return {"name": name, "label": name, "done": len(done), "todo": len(todo),

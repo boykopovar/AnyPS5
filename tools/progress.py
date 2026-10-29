@@ -544,10 +544,14 @@ def validate_snapshot(snapshot):
         percent = data.get("percent")
         if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not 0 <= percent <= 100:
             raise ValueError(f"{section}.percent must be a finite number between 0 and 100")
+        seen = set()
         for index, group in enumerate(groups):
             location = f"{section}.groups[{index}]"
             if not isinstance(group, dict) or not isinstance(group.get("name"), str):
                 raise ValueError(f"{location} must be an object with a string name")
+            if group["name"] in seen:
+                raise ValueError(f"{location}.name duplicates {group['name']!r}")
+            seen.add(group["name"])
             if "shared_sources" in group and not isinstance(group["shared_sources"], str):
                 raise ValueError(f"{location}.shared_sources must be a string")
             if section == "libraries":

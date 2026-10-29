@@ -488,6 +488,7 @@ int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime
 int APS5_VABI sem_reltimedwait_np_nid_postfix(void* sem, uint32_t usec);
 int APS5_VABI sem_post_nid_postfix(void* sem);
 int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value);
+int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name);
 void* APS5_VABI sem_open_nid_postfix(const char* name, int flags, ...);
 int APS5_VABI sem_close_nid_postfix(void* sem);
 int APS5_VABI sem_unlink_nid_postfix(const char* name);

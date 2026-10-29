@@ -12,5 +12,12 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_np_trophy PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpTrophy>")
+        add_test_executable(guest_np_trophy_host_write_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpTrophyHostWrite.cpp)
+        target_include_directories(guest_np_trophy_host_write_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_np_trophy_host_write_tests PRIVATE libSceNpTrophy libkernel libc)
+        configure_windows_unwind(guest_np_trophy_host_write_tests)
+        add_test(NAME guest_np_trophy_host_write COMMAND guest_np_trophy_host_write_tests)
+        set_tests_properties(guest_np_trophy_host_write PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpTrophy>")
     endif()
 endif()
