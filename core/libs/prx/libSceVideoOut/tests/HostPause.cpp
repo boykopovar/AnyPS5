@@ -1,5 +1,6 @@
 #include "prx/libSceVideoOut/include/HostPause.hpp"
 #include "prx/libSceVideoOut/include/HostPauseSettings.hpp"
+#include "prx/libSceVideoOut/include/PresentHold.hpp"
 #include "SDL_keyboard.h"
 #include <chrono>
 #include <cstdint>
@@ -162,6 +163,26 @@ void FocusAndKey() {
     Require(!pause.HandleEvent(Window(3, SDL_WINDOWEVENT_FOCUS_GAINED), 3).paused && !pause.Paused(), "regaining focus did not resume once the key was off");
 }
 
+void HoldState() {
+    PresentHold hold;
+    Require(!hold.Held() && hold.Epoch() == 0, "a new hold is held or has an epoch");
+    Require(!hold.Set(false) && hold.Epoch() == 0, "releasing a hold that is not held changed the epoch");
+    Require(hold.Set(true) && hold.Held() && hold.Epoch() == 1, "holding does not hold or count");
+    Require(!hold.Set(true) && hold.Epoch() == 1, "holding twice changed the epoch");
+    Require(hold.Set(false) && !hold.Held() && hold.Epoch() == 2, "releasing does not release or count");
+}
+
+void HoldOverlap() {
+    PresentHold hold;
+    const auto before = hold.Epoch();
+    Require(!hold.Overlapped(before), "an untouched hold overlaps a wait");
+    hold.Set(true);
+    Require(hold.Overlapped(before), "an active hold does not overlap a wait");
+    hold.Set(false);
+    Require(hold.Overlapped(before), "a hold that began and ended inside a wait does not overlap it");
+    Require(!hold.Overlapped(hold.Epoch()), "a wait that began after the last hold overlaps it");
+}
+
 }
 
 int main() {
@@ -174,6 +195,8 @@ int main() {
     FocusRule();
     FocusIgnored();
     FocusAndKey();
+    HoldState();
+    HoldOverlap();
     std::puts("host pause: all checks passed");
     return 0;
 }
