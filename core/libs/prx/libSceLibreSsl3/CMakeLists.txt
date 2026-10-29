@@ -102,4 +102,12 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libressl3_key_components PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(libressl3_import_binding_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ImportBinding.cpp)
+        add_dependencies(libressl3_import_binding_tests libs)
+        target_link_libraries(libressl3_import_binding_tests PRIVATE ${CMAKE_DL_LIBS})
+        add_test(NAME libressl3_import_binding COMMAND libressl3_import_binding_tests ${PATCHED_DIR})
+        set_tests_properties(libressl3_import_binding PROPERTIES TIMEOUT 20)
+    endif()
 endif()
