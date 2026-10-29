@@ -1,4 +1,7 @@
 add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp PendingExports.cpp LoadExec.cpp)
+if(NOT WIN32)
+    target_sources(libSceSystemService PRIVATE HostUrlLauncherPosix.cpp)
+endif()
 target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage)
 configure_windows_unwind(libSceSystemService)
