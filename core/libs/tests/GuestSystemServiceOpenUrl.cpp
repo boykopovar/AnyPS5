@@ -4,6 +4,7 @@
 #include "prx/libSceSystemService/HostUrlPolicy.hpp"
 #include "prx/libSceSystemService/HostUrlBackends.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -393,6 +394,72 @@ void CheckLaunchWebBrowser() {
     Require(call(good.c_str()) == unavailable);
 }
 
+void CheckExportedLimits() {
+    constexpr int unavailable = static_cast<int>(0x8002002Du);
+    CountingLauncher launcher;
+    CountingConfirmation confirmation;
+    FakeClock clock;
+    SystemServiceSetUrlHandlers_nid_no_patch(&launcher, &confirmation, &clock);
+    SetEnvironment("ANYPS5_OPEN_URLS", "ask");
+
+    confirmation.answer = false;
+    Require(sceSystemServiceLaunchWebBrowser("https://example.com/a") == unavailable);
+    for (int index = 0; index < 200; ++index)
+        Require(sceSystemServiceLaunchWebBrowser(index % 2 == 0 ? "https://example.com/a" : "https://example.org/b") == unavailable);
+    Require(confirmation.Count() == 1 && launcher.Count() == 0);
+    clock.Advance(OPEN_URL_DECLINE_COOLDOWN);
+    confirmation.answer = true;
+    Require(sceSystemServiceLaunchWebBrowser("https://example.com/a") == 0);
+    Require(confirmation.Count() == 2 && launcher.Count() == 1);
+
+    SetEnvironment("ANYPS5_OPEN_URLS", "always");
+    Require(sceSystemServiceLaunchWebBrowser("https://example.com/b") == 0);
+    Require(sceSystemServiceLaunchWebBrowser("https://example.com/c") == 0);
+    for (int index = 0; index < 200; ++index) Require(sceSystemServiceLaunchWebBrowser("https://example.com/d") == unavailable);
+    Require(launcher.Count() == OPEN_URL_MAX_ATTEMPTS);
+    clock.Advance(OPEN_URL_WINDOW);
+    Require(sceSystemServiceLaunchWebBrowser("https://example.com/e") == 0);
+    Require(launcher.Count() == OPEN_URL_MAX_ATTEMPTS + 1);
+
+    SetEnvironment("ANYPS5_OPEN_URLS", "never");
+    const std::size_t asked = confirmation.Count();
+    const std::size_t launched = launcher.Count();
+    for (int index = 0; index < 1000; ++index) Require(sceSystemServiceLaunchWebBrowser("https://example.com/f") == unavailable);
+    Require(confirmation.Count() == asked && launcher.Count() == launched);
+    SetEnvironment("ANYPS5_OPEN_URLS", nullptr);
+    SystemServiceSetUrlHandlers_nid_no_patch(nullptr, nullptr, nullptr);
+}
+
+void CheckExportedConcurrentCallers() {
+    constexpr int unavailable = static_cast<int>(0x8002002Du);
+    CountingLauncher launcher;
+    CountingConfirmation confirmation;
+    FakeClock clock;
+    SystemServiceSetUrlHandlers_nid_no_patch(&launcher, &confirmation, &clock);
+    SetEnvironment("ANYPS5_OPEN_URLS", "ask");
+    confirmation.blocking = true;
+
+    std::atomic<int> first{-1};
+    std::thread active([&] { first = sceSystemServiceLaunchWebBrowser("https://example.com/a"); });
+    confirmation.WaitUntilAsked(1);
+    std::vector<std::thread> callers;
+    std::atomic<int> unavailableCount{0};
+    for (int index = 0; index < 16; ++index)
+        callers.emplace_back([&, index] {
+            const std::string url = "https://example.com/" + std::to_string(index % 3);
+            if (sceSystemServiceLaunchWebBrowser(url.c_str()) == unavailable) ++unavailableCount;
+        });
+    for (std::thread& caller : callers) caller.join();
+    Require(unavailableCount == 16);
+    Require(confirmation.Count() == 1 && launcher.Count() == 0);
+    confirmation.Release();
+    active.join();
+    Require(first == 0);
+    Require(confirmation.Count() == 1 && launcher.Count() == 1);
+    SetEnvironment("ANYPS5_OPEN_URLS", nullptr);
+    SystemServiceSetUrlHandlers_nid_no_patch(nullptr, nullptr, nullptr);
+}
+
 }
 
 int main() {
@@ -407,6 +474,8 @@ int main() {
     CheckMode();
     CheckPolicy();
     CheckLaunchWebBrowser();
+    CheckExportedLimits();
+    CheckExportedConcurrentCallers();
     CheckConfirmationText();
 #ifdef __linux__
     CheckConfirmationWithoutDisplay();
