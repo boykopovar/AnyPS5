@@ -58,6 +58,11 @@ void OwnedImage::Allocate(const Context& device, const VkMemoryAllocateInfo& all
 
 namespace {
 
+std::atomic<std::uint64_t>& eightBitWrites() {
+    static std::atomic<std::uint64_t> writes{0};
+    return writes;
+}
+
 // APS5_PROFILE_DRAW: accumulate texture setup phases and report every 200 textures.
 struct TextureProfile {
     double allocate = 0, read = 0, gpu = 0, view = 0;
@@ -3911,6 +3916,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
         static_cast<void>(hooked);
     }
     ++version;
+    if (const auto format = ResolveTextureFormat(descriptor.format); format == VK_FORMAT_R8_UINT || format == VK_FORMAT_R8_UNORM) eightBitWrites().fetch_add(1, std::memory_order_release);
     const bool wasLent = std::exchange(lent, false);
     if (dirty) {
         if (wasLent) BumpPendingSerial();
@@ -4701,6 +4707,10 @@ bool StorageTexture::StoreAtLabelRequested(const char* value) {
     if (value == nullptr) return false;
     if (std::strcmp(value, "1") == 0) return true;
     throw std::runtime_error(std::string("APS5_STORE_AT_LABEL=") + value + ": expected 1");
+}
+
+std::uint64_t StorageTexture::EightBitWrites() {
+    return eightBitWrites().load(std::memory_order_acquire);
 }
 
 std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t address, std::uint64_t bytes) {

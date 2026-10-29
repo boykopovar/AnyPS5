@@ -734,9 +734,11 @@ public:
 
     void TakeStencilStorage() {
         if (target.samples != 1 || target.stencilAddress == 0) return;
+        const auto writes = StorageTexture::EightBitWrites();
+        if (writes == stencilWritesSeen) return;
+        stencilWritesSeen = writes;
         const auto bytes = DepthSliceBytes(target.extent, 1u);
         auto storage = StorageTexture::FindPending(target.stencilAddress, bytes);
-        if (storage == nullptr) storage = StorageTexture::FindLive(target.stencilAddress, bytes);
         if (storage == nullptr) return;
         const auto& described = storage->Descriptor();
         const auto format = ResolveTextureFormat(described.format);
@@ -1087,6 +1089,7 @@ private:
     PlaneStorage stencilPlane;
     std::weak_ptr<StorageTexture> stencilTaken;
     std::uint64_t stencilTakenVersion = 0;
+    std::uint64_t stencilWritesSeen = 0;
     std::uint64_t depthMemory = 0;
     std::uint64_t stencilMemory = 0;
     StencilCopy stencilCopy;
