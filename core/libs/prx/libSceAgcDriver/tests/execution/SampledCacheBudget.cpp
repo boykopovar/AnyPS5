@@ -1230,7 +1230,8 @@ bool hasHostMemoryType(const VkPhysicalDeviceMemoryProperties& memory) {
 
 bool recoveryTests(Context context, const std::string& mode) {
     const bool recent = mode == "recover-sampled-recent" || mode == "recover-sampled-recent-noroom";
-    if (recent && !hasHostMemoryType(context.memory)) {
+    const bool storageRecent = mode == "recover-storage-recent" || mode == "recover-storage-recent-noroom";
+    if ((recent || storageRecent) && !hasHostMemoryType(context.memory)) {
         std::puts("skipped, the device has no memory type outside its device-local heaps for a texture to fall back to");
         return false;
     }
@@ -1256,6 +1257,31 @@ bool recoveryTests(Context context, const std::string& mode) {
         Require(recovery.released == allocated, "storage allocation recovery counted memory still held by its caller");
         pending->Flush();
         Require(!pending->Dirty(), "pending storage results could not be stored after memory recovery");
+    } else if (storageRecent) {
+        const bool room = mode == "recover-storage-recent";
+        context.discreteGpu = true;
+        context.memoryProperties2 = &ReportBudget;
+        recovery.memory = context.memory;
+        recovery.deviceLocalOnly = true;
+        Recorder::CountPresent();
+        Require(ReadBudget(context) == ExpectedBudget(context), "the recovery fixture's first budget read already had room past the device's share");
+        if (room) SetSampledSpillForTest(SampledSpillStep);
+        auto image = CachedStorageSurface(context, Resource(block.Surface(0)));
+        const auto allocated = image->AllocationBytes();
+        const auto* kept = image.get();
+        image.reset();
+        Require(StorageImageCached(context, kept) && TextureCacheUsage().sampledEntries == 0, "the recent storage image fixture needs one cached storage image and no sampled texture");
+        recovery.pressure = true;
+        auto made = Sampled(context, block.Surface(2));
+        recovery.pressure = false;
+        if (room) {
+            Require(made != nullptr && StorageImageCached(context, kept) && recovery.released == 0, "while the sampled cache was past the device's share, an allocation that could go to host memory evicted a storage image of the current present");
+            Require(recovery.hostAllocations == 1, "the texture whose device allocation failed was not placed in host memory");
+            SetSampledSpillForTest(0);
+        } else {
+            Require(made != nullptr && !StorageImageCached(context, kept) && recovery.released == allocated, "with no room past the device's share, sampled allocation recovery did not evict the storage image of the current present");
+            Require(recovery.hostAllocations == 0, "the texture whose device allocation failed went to host memory although the recovery released enough");
+        }
     } else if (recent || mode == "recover-sampled-recent-device") {
         const bool hostHeap = mode != "recover-sampled-recent-device";
         const bool room = mode == "recover-sampled-recent";
@@ -1343,7 +1369,7 @@ bool recoveryTests(Context context, const std::string& mode) {
         Require(!source->Dirty(), "pending storage results could not be stored after memory recovery");
     }
     Require(recovery.requests == 1 && recovery.failures >= 1 && recovery.failures <= 2, "image allocation recovery was skipped or retried without a bound");
-    const char* label = storage ? "storage" : mode == "recover-srgb" ? "sRGB" : mode == "recover-repack" ? "repacked" : mode == "recover-sampled-recent" ? "recent sampled (host heap, room past the device's share)" : mode == "recover-sampled-recent-noroom" ? "recent sampled (host heap, no room)" : mode == "recover-sampled-recent-device" ? "recent sampled (no host heap)" : "sampled";
+    const char* label = storage ? "storage" : mode == "recover-srgb" ? "sRGB" : mode == "recover-repack" ? "repacked" : mode == "recover-sampled-recent" ? "recent sampled (host heap, room past the device's share)" : mode == "recover-sampled-recent-noroom" ? "recent sampled (host heap, no room)" : mode == "recover-sampled-recent-device" ? "recent sampled (no host heap)" : mode == "recover-storage-recent" ? "recent storage (host heap, room past the device's share)" : mode == "recover-storage-recent-noroom" ? "recent storage (host heap, no room)" : "sampled";
     std::printf("%s image allocation recovered after %u injected failures: %llu bytes released\n", label, recovery.failures, static_cast<unsigned long long>(recovery.released));
     return true;
 }
@@ -1448,7 +1474,7 @@ int main(int argc, char** argv) {
         }
         const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
         const bool disableStorageImageMultisample = mode == "without-storage-image-multisample";
-        const bool recent = mode == "recover-sampled-recent" || mode == "recover-sampled-recent-noroom" || mode == "recover-sampled-recent-device";
+        const bool recent = mode == "recover-sampled-recent" || mode == "recover-sampled-recent-noroom" || mode == "recover-sampled-recent-device" || mode == "recover-storage-recent" || mode == "recover-storage-recent-noroom";
         const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack" || recent;
         const bool growth = mode == "spill-growth";
         const bool reported = memory || recent || growth;
