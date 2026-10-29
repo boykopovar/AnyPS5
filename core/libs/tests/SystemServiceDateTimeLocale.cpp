@@ -58,6 +58,8 @@ void RequireStrftimeDatesWithoutConsoleFormat() {
     RequireDate("%x", std::nullopt);
     RequireDate("%c", std::nullopt);
     RequireDate("%X %d/%m/%Y", std::nullopt);
+    RequireDate("%x %d/%m/%Y", std::nullopt);
+    RequireDate("%d/%m/%Y %c", std::nullopt);
     RequireDate("%d/%m/%", std::nullopt);
     RequireDate("%d/%m/%-", std::nullopt);
     RequireDate("", std::nullopt);
@@ -159,6 +161,10 @@ void RequireLdmlTimes() {
     RequireLdmlTime("h:mm a", TIME_FORMAT_12HOUR);
     RequireLdmlTime("K:mm a", TIME_FORMAT_12HOUR);
     RequireLdmlTime("tt h:mm:ss", TIME_FORMAT_12HOUR);
+    RequireLdmlTime("mm:ss tt", TIME_FORMAT_12HOUR);
+    RequireLdmlTime("mm:ss a", TIME_FORMAT_12HOUR);
+    RequireLdmlTime("K", TIME_FORMAT_12HOUR);
+    RequireLdmlTime("h", TIME_FORMAT_12HOUR);
     RequireLdmlTime("HH:mm:ss", TIME_FORMAT_24HOUR);
     RequireLdmlTime("H:mm", TIME_FORMAT_24HOUR);
     RequireLdmlTime("k:mm", TIME_FORMAT_24HOUR);
@@ -174,6 +180,7 @@ void RequireLdmlTimesWithoutConsoleFormat() {
     RequireLdmlTime("h:mm H", std::nullopt);
     RequireLdmlTime("mm:ss", std::nullopt);
     RequireLdmlTime("'h' 'H'", std::nullopt);
+    RequireLdmlTime("'o''clock' mm", std::nullopt);
     RequireLdmlTime("", std::nullopt);
     RequireLdmlTime("dd/MM/yyyy", std::nullopt);
 }
