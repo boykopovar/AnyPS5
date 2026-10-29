@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 #include <cstring>
 #include <initializer_list>
 #include "SceTypes.hpp"
@@ -114,6 +115,13 @@ int main() {
     commandBatch = {commands, 0, 152};
     Require(sceAcm_Panner(&commandBatch, 1, sources, 0, 0, 1, sources, sources, nullptr, outputs) == static_cast<int>(0x81940009));
     Require(commandBatch.offset == 0 && commandBatch.buffer_size == 152);
+    bool unsupportedPriority = false;
+    try {
+        sceAcmBatchJobPriority(nullptr, 0);
+    } catch (const std::runtime_error&) {
+        unsupportedPriority = true;
+    }
+    Require(unsupportedPriority);
 
     Require(sceAcmContextDestroy(context1) == 0);
     Require(sceAcmContextDestroy(context1) == BadContext);
