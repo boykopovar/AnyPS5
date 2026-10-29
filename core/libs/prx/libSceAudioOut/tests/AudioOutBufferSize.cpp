@@ -1,7 +1,9 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SDL.h"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
+#include "prx/libSceAudioOut/include/HostPause.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -16,6 +18,8 @@ int opened = 0;
 int closed = 0;
 int queued = 0;
 std::uint32_t queuedBytes = 0;
+bool expectSilence = false;
+bool silent = false;
 const void* supplied = nullptr;
 std::uint32_t suppliedBytes = 0;
 
@@ -32,6 +36,26 @@ void RunPassThrough() {
     suppliedBytes = static_cast<std::uint32_t>(samples.size() * sizeof(float));
     Require(sceAudioOutOutput(handle, samples.data()) == 512, "a 512-frame output did not return 512");
     Require(queued == 1 && queuedBytes == 16384, "a 512-frame F32 8-channel output did not queue 16384 bytes");
+    Require(sceAudioOutClose(handle) == 0 && closed == 1, "the port did not close its device");
+}
+
+void RunPaused() {
+    std::vector<float> samples(512u * 8u, 0.25f);
+    const int handle = sceAudioOutOpen(0, 0, 0, 512, 48000, 5);
+    Require(handle > 0 && opened == 1, "a 512-frame F32 8-channel port did not open its device");
+    supplied = samples.data();
+    suppliedBytes = static_cast<std::uint32_t>(samples.size() * sizeof(float));
+    AudioOutSetHostPause_nid_no_patch(true);
+    expectSilence = true;
+    Require(sceAudioOutOutput(handle, samples.data()) == 512, "a paused output did not return 512");
+    Require(queued == 1 && queuedBytes == 16384, "a paused output did not queue the same 16384 bytes");
+    Require(silent, "a paused output queued sound");
+    Require(std::all_of(samples.begin(), samples.end(), [](float v) { return v == 0.25f; }), "a paused output wrote the title's buffer");
+    AudioOutSetHostPause_nid_no_patch(false);
+    expectSilence = false;
+    Require(sceAudioOutOutput(handle, samples.data()) == 512, "a resumed output did not return 512");
+    Require(queued == 2 && queuedBytes == 16384, "a resumed output did not queue 16384 bytes");
+    Require(!silent, "a resumed output queued silence");
     Require(sceAudioOutClose(handle) == 0 && closed == 1, "the port did not close its device");
 }
 
@@ -108,7 +132,9 @@ extern "C" int SDLCALL SDL_QueueAudio(SDL_AudioDeviceID id, const void* data, Ui
     Require(id == device, "wrong queue fed");
     ++queued;
     queuedBytes = bytes;
-    if (bytes <= suppliedBytes) Require(std::memcmp(data, supplied, bytes) == 0, "the queued audio is not the supplied samples");
+    const auto* queuedData = static_cast<const std::uint8_t*>(data);
+    silent = std::all_of(queuedData, queuedData + bytes, [](std::uint8_t b) { return b == 0; });
+    if (!expectSilence && bytes <= suppliedBytes) Require(std::memcmp(data, supplied, bytes) == 0, "the queued audio is not the supplied samples");
     return 0;
 }
 extern "C" void SDLCALL SDL_ClearQueuedAudio(SDL_AudioDeviceID id) { Require(id == device, "wrong queue cleared"); }
@@ -120,6 +146,7 @@ int main(int argc, char** argv) {
         Require(argc == 2, "invalid test arguments");
         const std::string_view mode = argv[1];
         if (mode == "pass_through") RunPassThrough();
+        else if (mode == "paused") RunPaused();
         else if (mode == "wrap") RunOverflow(0x80000000u, 5, 8u * sizeof(float));
         else if (mode == "mix") RunOverflow(0x80000000u, 7, 8u * sizeof(float));
         else if (mode == "threshold") RunOverflow(0x40000000u, 0, sizeof(std::int16_t));
