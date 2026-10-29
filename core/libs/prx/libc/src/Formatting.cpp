@@ -253,11 +253,16 @@ bool DecimalOutOfRange(const std::string& field) {
 
 template <typename T>
 void StoreDefaultNaN(void* target, std::size_t bytes) {
-    T value;
-    std::memcpy(&value, target, sizeof(value));
+    T value{};
+    std::memcpy(&value, target, std::min(bytes, sizeof(value)));
     if (!std::isnan(value)) return;
-    value = std::numeric_limits<T>::quiet_NaN();
-    std::memcpy(target, &value, bytes);
+    if (bytes == 10) {
+        constexpr unsigned char quiet[10]{0, 0, 0, 0, 0, 0, 0, 0xc0, 0xff, 0x7f};
+        std::memcpy(target, quiet, sizeof(quiet));
+    } else {
+        value = std::numeric_limits<T>::quiet_NaN();
+        std::memcpy(target, &value, bytes);
+    }
 }
 
 class StringSource {

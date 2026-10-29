@@ -526,6 +526,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
             float single = 0;
             double wide = 0;
             unsigned char extended[16];
+            std::memset(extended, 0x55, sizeof(extended));
             Require(ScanListS(input, "%f", &single) == 1 && std::bit_cast<std::uint32_t>(single) == 0x7fc00000u);
             Require(ScanListS(input, "%lf", &wide) == 1 && std::bit_cast<std::uint64_t>(wide) == 0x7ff8000000000000ull);
             Require(ScanListS(input, "%Lf", extended) == 1);
@@ -534,6 +535,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
             std::memcpy(&mantissa, extended, 8);
             std::memcpy(&exponent, extended + 8, 2);
             Require(mantissa == 0xc000000000000000ull && exponent == 0x7fff);
+            Require(std::all_of(extended + 10, extended + 16, [](unsigned char byte) { return byte == 0x55; }));
         }
         const struct {
             const char* input;
