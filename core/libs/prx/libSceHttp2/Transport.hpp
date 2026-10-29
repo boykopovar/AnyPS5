@@ -27,6 +27,10 @@ struct Settings {
     void* authInfoArgument = nullptr;
     void* preSendCallback = nullptr;
     void* preSendArgument = nullptr;
+    void* redirectCallback = nullptr;
+    void* redirectArgument = nullptr;
+    void* sslCallback = nullptr;
+    void* sslArgument = nullptr;
 };
 
 struct Capacity {
