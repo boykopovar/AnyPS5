@@ -65,6 +65,8 @@
 
 - [Host pause](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut) - the vblank counter keeps running during a pause, so the flips queued meanwhile (at most `VIDEO_OUT_FLIP_QUEUE_CAPACITY`) find their vblank target already passed and present back to back on resume instead of one per vblank; the effect on a title's frame pacing is not measured
 
+- [Host pause](../../../core/libs/prx/libSceVideoOut/src/HostPause.cpp) (libSceVideoOut) - `ANYPS5_PAUSE_ON_FOCUS_LOSS` follows `SDL_WINDOWEVENT_FOCUS_LOST`, `SDL_WINDOWEVENT_MINIMIZED` and `SDL_WINDOWEVENT_FOCUS_GAINED` of the display window only. A window that starts without focus is not paused until its first focus event, and a restore from minimize resumes only through the focus-gained event that follows it. The event order was not observed on a real X11, Wayland, Windows or macOS window system, only through injected events
+
 - The following pending declarations have unverified signatures and behavior; they are parameterless import-resolution declarations and throw through `NotImplemented_nid_no_patch`: [`sceDbgVideoOutAddOutputModeVr60Privilege`](../../../core/libs/prx/libSceVideoOut/Unimplemented.cpp).
 
 - [ANYPS5_PAD_PORT0_STATE](../../../core/libs/prx/libSceVideoOut/include/Port0Presence.hpp) (libSceVideoOut) - the 500 ms hold before a controller's removal or return changes port 0, and the rule that keyboard and mouse input reaches port 0 only while a controller is bound there, are AnyPS5 choices that keep a flapping cable from flapping the title. The console's own reaction (how long it takes to report a removed pad, whether it pauses on connected false, and whether it logs the initial user out) is not measured.
@@ -255,6 +257,7 @@
 - [sceVideoOutSetConfigurationMode](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): the name hashes to NID `N1+j0RymMUQ`, a function export in both older and later version-labelled images. Its signature and behavior are unverified; this import-resolution declaration throws.
 
 - [Older callable NIDs](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary library qualifier and one uses the nosubmission qualifier; qualified guest import resolution is unverified.
+
 - [Later callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): 13 function exports of the primary logical library observed only in the 13.60-labelled image; no matching NIDs were found in the older inventory. Each name hashes to its NID and matches the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. `sceVideoOutSysGetMonitorInfo` is a separate export from `sceVideoOutSysGetMonitorInfo_`. `sceVideoOutDebugLatencyMeasureGetLatestLatency` is also exported under the `libSceVideoOut_nosubmission` and `libSceVideoOutLatency_nosubmission` qualifiers; qualified guest import resolution is unverified.
 
 | Name | NID |
