@@ -1,3 +1,4 @@
+#include "prx/libSceConvertKeycode/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
@@ -12,13 +13,10 @@
 #include <string>
 #include <utility>
 
-extern "C" {
-int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t, std::uint32_t, std::uint16_t*);
-int APS5_VABI sceConvertKeycodeGetImeKeyboardType(std::int32_t, std::uint32_t*);
-int APS5_VABI sceConvertKeycodeGetCharacter(std::uint16_t, std::uint32_t, std::uint32_t, char16_t*);
-}
-
 static void Require(bool value) { if (!value) std::abort(); }
+
+static_assert(ImeKeyboardType::LookUp(INT32_MIN, 0, 0) == 0);
+static_assert(ImeKeyboardType::LookUp(INT32_MAX, 0, 0) == 0);
 
 static void SetLanguage(const char* value) {
 #ifdef _WIN32
@@ -146,6 +144,7 @@ int main() {
         bool rejected = false;
         try {
             sceConvertKeycodeGetVirtualKeycode(28, layout, &virtualKey);
+
         } catch (const std::runtime_error&) {
             rejected = true;
         }
@@ -214,5 +213,35 @@ int main() {
             Require(sceConvertKeycodeGetCharacter(key, 0xFFFFFFFFu, layout, &character) == 0 && character == 0);
         }
     }
+    KeyboardData keyData{};
+    keyData.length = 1;
+    keyData.key_code[0] = 4;
+    char16_t kbdChar = u'?';
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(nullptr, 0, 0, 4, &kbdChar) == static_cast<int>(0x80BC0031u));
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, 4, nullptr) == static_cast<int>(0x80BC0031u));
+    for (std::int32_t badIndex : {-1, 1, 16}) {
+        kbdChar = u'?';
+        bool rejected = false;
+        try {
+            sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, badIndex, 0, 4, &kbdChar);
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        Require(rejected && kbdChar == u'?');
+    }
+    for (std::uint32_t layout : {31u, 39u}) {
+        kbdChar = u'?';
+        bool rejected = false;
+        try {
+            sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, layout, &kbdChar);
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        Require(rejected && kbdChar == u'?');
+    }
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, 0, &kbdChar) == static_cast<int>(0x80BC001Du));
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, 40, &kbdChar) == static_cast<int>(0x80BC001Du));
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0, 4, &kbdChar) == 0 && kbdChar == u'a');
+    Require(sceConvertKeycodeGetCharacterFromKeyboardData(&keyData, 0, 0x200, 4, &kbdChar) == 0 && kbdChar == u'A');
     return 0;
 }

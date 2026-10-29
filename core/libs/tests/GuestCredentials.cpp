@@ -1,29 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI seteuid_nid_postfix(std::uint32_t);
-int APS5_VABI setegid_nid_postfix(std::uint32_t);
-int APS5_VABI setuid_nid_postfix(std::uint32_t);
-int APS5_VABI setgid_nid_postfix(std::uint32_t);
-int APS5_VABI setreuid_nid_postfix(std::uint32_t, std::uint32_t);
-int APS5_VABI setregid_nid_postfix(std::uint32_t, std::uint32_t);
-int APS5_VABI setresuid_nid_postfix(std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI setresgid_nid_postfix(std::uint32_t, std::uint32_t, std::uint32_t);
-int APS5_VABI setgroups_nid_postfix(int, const std::uint32_t*);
-int APS5_VABI getgroups_nid_postfix(int, std::uint32_t*);
-int APS5_VABI getuid_nid_postfix(void);
-int APS5_VABI geteuid_nid_postfix(void);
-int APS5_VABI getgid_nid_postfix(void);
-int APS5_VABI getegid_nid_postfix(void);
-int APS5_VABI issetugid_nid_postfix(void);
-int APS5_VABI getresuid_nid_postfix(std::uint32_t*, std::uint32_t*, std::uint32_t*);
-int APS5_VABI getresgid_nid_postfix(std::uint32_t*, std::uint32_t*, std::uint32_t*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 using SetId = int (APS5_VABI *)(std::uint32_t);

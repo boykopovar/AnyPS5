@@ -1,3 +1,4 @@
+#include "prx/libSceNgs2/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

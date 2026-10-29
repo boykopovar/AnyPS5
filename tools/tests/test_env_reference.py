@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import env_reference
@@ -82,6 +83,97 @@ class EnvReferenceTests(unittest.TestCase):
 
         found = env_reference.reads([root / "core"])
         self.assertIn("APS5_MULTILINE", found)
+
+    def test_long_multiline_reads_are_checked_and_keep_their_locations(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('auto a = std::getenv(\n\n\n\n"APS5_DEEP_STRING");\n'
+                          'auto b = EnvInt(\n\n\n\n"APS5_DEEP_COUNT", 17);\n', encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_DEEP_STRING"], [(source.as_posix(), 1, "string", "")])
+        self.assertEqual(found["APS5_DEEP_COUNT"], [(source.as_posix(), 6, "integer", "17")])
+        doc = root / "ENVIRONMENT.md"
+        doc.write_text("", encoding="utf-8")
+        out = io.StringIO()
+        self.assertEqual(env_reference.check(found, doc, BOTH, out), 1)
+        self.assertIn("APS5_DEEP_STRING", out.getvalue())
+        self.assertIn("APS5_DEEP_COUNT", out.getvalue())
+
+    def test_long_multiline_reads_keep_surrounding_expression_context(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('auto a = std::getenv(\n\n\n\n"APS5_DEEP_PRESENT") != nullptr;\n'
+                          'auto b = atoi(\n\n\n\nstd::getenv(\n\n\n\n"APS5_DEEP_INTEGER"));\n'
+                          'auto c = std::getenv(\n\n\n\n"APS5_DEEP_DEFAULT") ? 0 : 99;\n',
+                          encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_DEEP_PRESENT"], [(source.as_posix(), 1, "presence", "")])
+        self.assertEqual(found["APS5_DEEP_INTEGER"], [(source.as_posix(), 10, "integer", "")])
+        self.assertEqual(found["APS5_DEEP_DEFAULT"], [(source.as_posix(), 15, "string", "99")])
+
+    def test_short_reads_in_long_expressions_keep_their_kind_and_default(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('auto integer = atoi(\n\n\n\nstd::getenv("APS5_SHORT_INTEGER"));\n'
+                          'auto present = std::getenv("APS5_SHORT_PRESENT")\n\n\n\n!= nullptr;\n'
+                          'auto text = std::getenv("APS5_STILL_STRING");\n'
+                          'if (text != nullptr) text = nullptr;\n'
+                          'auto fallback = std::getenv("APS5_SHORT_DEFAULT")\n\n\n\n? 1 : 42;\n',
+                          encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_SHORT_INTEGER"], [(source.as_posix(), 5, "integer", "")])
+        self.assertEqual(found["APS5_SHORT_PRESENT"], [(source.as_posix(), 6, "presence", "")])
+        self.assertEqual(found["APS5_STILL_STRING"], [(source.as_posix(), 11, "string", "")])
+        self.assertEqual(found["APS5_SHORT_DEFAULT"], [(source.as_posix(), 13, "string", "42")])
+
+    def test_statement_boundaries_ignore_comments_and_literals(self):
+        cases = (
+            ('auto value = atoi(/* ;{} */ std::getenv("APS5_VALUE"));', "integer", ""),
+            ('auto value = std::getenv("APS5_VALUE") /* ;{} */ != nullptr;', "presence", ""),
+            ("auto value = std::getenv(\"APS5_VALUE\") ? ';' : 99;", "string", "99"),
+            ('auto value = std::atoi((std::puts(R"tag(;{})tag"), std::getenv("APS5_VALUE")));', "integer", ""),
+            ('auto value = std::atoi((std::puts(";{}"), std::getenv("APS5_VALUE")));', "integer", ""),
+        )
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        for text, kind, default in cases:
+            with self.subTest(source=text):
+                source.write_text(text + "\n", encoding="utf-8")
+                found = env_reference.reads([root / "core"])
+                self.assertEqual(found["APS5_VALUE"], [(source.as_posix(), 1, kind, default)])
+
+    def test_multiple_reads_in_one_statement_keep_independent_kinds_and_defaults(self):
+        cases = (
+            ('consume(std::getenv("APS5_STRING"),\n\n\n\n'
+             'std::getenv("APS5_PRESENT") != nullptr);',
+             {"APS5_STRING": ("string", ""), "APS5_PRESENT": ("presence", "")}),
+            ('consume(std::getenv("APS5_FIRST_PRESENT") != nullptr,\n\n\n\n'
+             'std::getenv("APS5_LAST_STRING"));',
+             {"APS5_FIRST_PRESENT": ("presence", ""), "APS5_LAST_STRING": ("string", "")}),
+            ('consume(atoi(std::getenv("APS5_COUNT")),\n\n\n\n'
+             'std::getenv("APS5_OTHER_STRING"));',
+             {"APS5_COUNT": ("integer", ""), "APS5_OTHER_STRING": ("string", "")}),
+            ('consume(std::getenv("APS5_FALLBACK") ? 1 : 42,\n\n\n\n'
+             'std::getenv("APS5_NO_DEFAULT"));',
+             {"APS5_FALLBACK": ("string", "42"), "APS5_NO_DEFAULT": ("string", "")}),
+            ('consume(atoi((std::puts(R"tag(;,{})tag"), std::getenv("APS5_NESTED_COUNT"))),\n'
+             'std::getenv("APS5_NEXT_STRING"));',
+             {"APS5_NESTED_COUNT": ("integer", ""), "APS5_NEXT_STRING": ("string", "")}),
+        )
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        for text, expected in cases:
+            with self.subTest(source=text):
+                source.write_text(text + "\n", encoding="utf-8")
+                found = env_reference.reads([root / "core"])
+                self.assertEqual(set(found), set(expected))
+                for name, classification in expected.items():
+                    self.assertEqual(found[name][0][2:], classification)
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(env_reference.main(["--root", str(root / "core"), "--table"]), 0)
+                for name, (kind, default) in expected.items():
+                    self.assertIn(f"| `{name}` | {kind} |", output.getvalue())
+                    self.assertIn(f"| {default} |", output.getvalue())
 
     def test_whitespace_before_parentheses_preserves_names_kinds_and_defaults(self):
         root = self.fixture()
@@ -167,6 +259,19 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertTrue(found)
         self.assertTrue([name for name in found if name.startswith("APS5_")])
         self.assertTrue([name for name in found if name.startswith("ANYPS5_")])
+
+    def test_reads_fails_on_a_source_file_it_cannot_decode(self):
+        root = self.fixture()
+        (root / "core" / "Latin.cpp").write_bytes(b'static const char* s = "caf\xe9";\n')
+        with self.assertRaises(ValueError) as raised:
+            env_reference.reads([root / "core"], BOTH)
+        self.assertIn("Latin.cpp", str(raised.exception))
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = env_reference.main(["--check", "--doc", str(root / "missing.md"), "--root", str(root / "core")])
+        self.assertEqual(code, 1)
+        self.assertIn("cannot read", stderr.getvalue())
+        self.assertIn("Latin.cpp", stderr.getvalue())
 
     def test_check_passes_when_every_read_name_has_a_row(self):
         root = self.fixture()
@@ -282,6 +387,34 @@ class EnvReferenceTests(unittest.TestCase):
                 self.assertEqual(code, 1, (name, flags))
                 self.assertIn("is not a directory", err.getvalue())
                 self.assertNotIn("no longer reads", out.getvalue())
+
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, text):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with patch.object(env_reference.sys, "stdout", out), patch.object(env_reference.sys, "stderr", err):
+            try:
+                env_reference.main(["--root", "nonexistent"])
+            except SystemExit:
+                pass
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ def main():
         work = Path(directory)
         probe = work / "probe.c"
         probe.write_text(
-            "#include <dlfcn.h>\n"
+            "#define _GNU_SOURCE\n#include <dlfcn.h>\n"
             "#include <unistd.h>\n"
             "void check(void) {\n"
             "    int (*function)(void) = dlsym(RTLD_DEFAULT, \"FixtureExport\");\n"

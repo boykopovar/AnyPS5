@@ -1,9 +1,8 @@
+#include "prx/libSceAppInstUtil/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
-
-struct AppInstallProgressInfo;
 
 extern "C" {
 

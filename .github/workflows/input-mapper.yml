@@ -1,0 +1,29 @@
+name: Input mapper
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/input-mapper.yml'
+      - 'tools/input-mapper/**'
+      - 'core/libs/prx/libScePad/include/**'
+      - 'core/libs/prx/libSceVideoOut/src/InputMapping.cpp'
+
+permissions:
+  contents: read
+
+jobs:
+  input-mapper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - run: npm --prefix tools/input-mapper test

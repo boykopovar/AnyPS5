@@ -1,18 +1,11 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
-
-extern "C" {
-int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address);
-std::uint32_t APS5_VABI inet_addr_nid_postfix(const char* text);
-char* APS5_VABI inet_ntoa_nid_postfix(std::uint32_t address);
-char* APS5_VABI inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
-char* APS5_VABI __inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 

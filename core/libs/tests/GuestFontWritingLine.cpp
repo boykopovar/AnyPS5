@@ -1,19 +1,10 @@
+#include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <initializer_list>
-
-extern "C" {
-int APS5_VABI sceFontCreateWritingLine(const FontMemory*, std::int32_t, const void*, void**);
-int APS5_VABI sceFontDestroyWritingLine(void**);
-int APS5_VABI sceFontWritingLineClear(void*);
-int APS5_VABI sceFontWritingLineWritesOrder(void*, std::uint64_t, const FontWritingMetrics*, void*);
-const FontWritingLineStep* APS5_VABI sceFontWritingLineRefersRenderStep(void*);
-int APS5_VABI sceFontWritingLineGetRenderMetrics(void*, FontWritingMetrics*);
-int APS5_VABI sceFontWritingLineGetOrderingSpace(void*, float*, float*, float*, float*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {

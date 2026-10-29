@@ -1,3 +1,4 @@
+#include "prx/libSceJpegEnc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
@@ -7,13 +8,6 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
-
-extern "C" {
-std::int32_t APS5_VABI sceJpegEncQueryMemorySize(const JpegEncCreateParam*);
-std::int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam*, void*, std::uint32_t, void**);
-std::int32_t APS5_VABI sceJpegEncDelete(void*);
-std::int32_t APS5_VABI sceJpegEncEncode(void*, const JpegEncEncodeParam*, JpegEncOutputInfo*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

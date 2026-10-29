@@ -40,6 +40,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ShaderCachePack.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/RectListShaders.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/BarycentricGeometryShader.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/TessellationCaptureShader.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaOpcode.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaProgram.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/src/RdnaInstructionDecoder.cpp
@@ -173,11 +174,14 @@ function(add_shader_recompiler target runtimeTarget)
 
     target_compile_features(${target} PUBLIC cxx_std_20)
     if(WIN32)
-        target_compile_options(${target} PRIVATE "SHELL:-include ${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostStandardStreams.hpp")
+        target_compile_options(${target} PRIVATE "SHELL:-include \"${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostStandardStreams.hpp\"")
     endif()
 
     if(ANYPS5_ENABLE_SPIRV_TOOLS)
         target_sources(${target} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvOptimizer.cpp)
+        if(WIN32)
+            set_source_files_properties(${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvOptimizer.cpp TARGET_DIRECTORY ${target} PROPERTIES COMPILE_DEFINITIONS _WIN32_WINNT=0x0602)
+        endif()
     endif()
 
     set(shaderCacheGeneratedDir "${CMAKE_CURRENT_BINARY_DIR}/${target}_generated")
@@ -241,6 +245,7 @@ function(add_shader_recompiler target runtimeTarget)
             BuildBarycentricTessellationShaders
             BuildPreparedShaderKey
             BuildRectListShaders
+            BuildTessellationCaptureGeometryShader
             CaptureResources
             DebugProbeActive
             DepthBitsTextureWidth

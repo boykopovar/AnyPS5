@@ -1,3 +1,7 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -9,38 +13,6 @@
 #include <windows.h>
 #endif
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadDetach(Pthread thread);
-int APS5_VABI pthread_join_nid_postfix(Pthread thread, void** value);
-int APS5_VABI pthread_detach_nid_postfix(Pthread thread);
-void APS5_VABI scePthreadExit(void* retval);
-Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI scePthreadGetthreadid(void);
-int APS5_VABI pthread_getthreadid_np_nid_postfix(void);
-void APS5_VABI scePthreadTestcancel();
-void APS5_VABI pthread_testcancel_nid_postfix(void);
-int APS5_VABI scePthreadSetcancelstate(int state, int* old_state);
-int APS5_VABI scePthreadSetcanceltype(int type, int* old_type);
-void APS5_VABI pthread_set_name_np_nid_postfix(Pthread thread, const char* name);
-int APS5_VABI scePthreadGetname(Pthread thread, char* name);
-int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr);
-int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr);
-int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type);
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGetstackaddr(const PthreadAttr* attr, void** stack_addr);
-int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, size_t* stack_size);
-int APS5_VABI mprotect_nid_postfix(void* address, std::size_t length, int protection) noexcept;
-int APS5_VABI sceKernelIsStack(void* addr, void** start, void** end);
-}
-
 static bool StackContains(Pthread thread, const void* address) {
     PthreadAttr attr = nullptr;
     if (scePthreadAttrInit(&attr) != 0 || scePthreadAttrGet(thread, &attr) != 0) return false;
@@ -48,20 +20,18 @@ static bool StackContains(Pthread thread, const void* address) {
     size_t size = 0;
     const bool queried = scePthreadAttrGetstackaddr(&attr, &stack) == 0 && scePthreadAttrGetstacksize(&attr, &size) == 0;
     scePthreadAttrDestroy(&attr);
+
     const auto begin = reinterpret_cast<std::uintptr_t>(stack);
     const auto value = reinterpret_cast<std::uintptr_t>(address);
     return queried && stack != nullptr && size != 0 && value >= begin && value - begin < size;
 }
 
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
-static constexpr int SCE_KERNEL_ERROR_EPERM = 0x80020001;
-static constexpr int SCE_KERNEL_ERROR_EDEADLK = 0x8002000b;
 static constexpr int GUEST_EDEADLK = 11;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int MUTEX_TYPE_RECURSIVE = 2;
-static constexpr int PTHREAD_CANCEL_ENABLE = 0;
-static constexpr int PTHREAD_CANCEL_ASYNCHRONOUS = 2;
+static constexpr int GuestPthread_Cancel_Enable = 0;
+static constexpr int GuestPthread_Cancel_Asynchronous = 2;
 static constexpr std::intptr_t WorkerRetval = 0x1234;
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -78,6 +48,7 @@ static void ReportedStack(Pthread thread, std::uintptr_t* begin, std::uintptr_t*
     size_t size = 0;
     Require(scePthreadAttrGetstackaddr(&attr, &stack) == SCE_OK && scePthreadAttrGetstacksize(&attr, &size) == SCE_OK);
     scePthreadAttrDestroy(&attr);
+
     *begin = reinterpret_cast<std::uintptr_t>(stack);
     *end = *begin + size;
 }
@@ -165,12 +136,14 @@ static void* APS5_VABI Worker(void* arg) {
     context.posixJoinSelf = pthread_join_nid_postfix(context.selfFromWorker, nullptr);
     int oldState = -1;
     int oldType = -1;
-    context.testcancelReturned = scePthreadSetcancelstate(PTHREAD_CANCEL_ENABLE, &oldState) == SCE_OK &&
-        scePthreadSetcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, &oldType) == SCE_OK;
+    context.testcancelReturned = scePthreadSetcancelstate(GuestPthread_Cancel_Enable, &oldState) == SCE_OK &&
+        scePthreadSetcanceltype(GuestPthread_Cancel_Asynchronous, &oldType) == SCE_OK;
     scePthreadTestcancel();
     pthread_testcancel_nid_postfix();
-    context.testcancelReturned = context.testcancelReturned && oldState == PTHREAD_CANCEL_ENABLE;
+
+    context.testcancelReturned = context.testcancelReturned && oldState == GuestPthread_Cancel_Enable;
     scePthreadExit(reinterpret_cast<void*>(WorkerRetval));
+
     return nullptr;
 }
 
@@ -229,14 +202,15 @@ int main() {
 
     scePthreadTestcancel();
     pthread_testcancel_nid_postfix();
-
     Require(scePthreadMutexUnlock(&mutex) == SCE_OK);
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
 
     char name[32] = {'x'};
     pthread_set_name_np_nid_postfix(mainSelf, "q2-main");
+
     Require(scePthreadGetname(mainSelf, name) == SCE_OK && std::strcmp(name, "q2-main") == 0);
     pthread_set_name_np_nid_postfix(mainSelf, nullptr);
+
     Require(scePthreadGetname(mainSelf, name) == SCE_OK && name[0] == '\0');
     pthread_set_name_np_nid_postfix(nullptr, "ignored");
 

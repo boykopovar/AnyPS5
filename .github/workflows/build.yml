@@ -56,6 +56,7 @@ jobs:
       relinker: ${{ steps.gate.outputs.relinker }}
       register-context: ${{ steps.gate.outputs.register-context }}
       write-watch: ${{ steps.gate.outputs.write-watch }}
+      mingw-host-tests: ${{ steps.gate.outputs.mingw-host-tests }}
       full: ${{ steps.gate.outputs.full }}
       relinker-hosts: ${{ steps.gate.outputs.relinker-hosts }}
     steps:
@@ -126,14 +127,22 @@ jobs:
                 paths.some((path) => prefixes.some((prefix) => prefix.endsWith('/') ? path.startsWith(prefix) : path === prefix));
               const edits = (job) => ['*', '', 'eligibility', job].some((name) => workflowJobs.has(name));
               return {
-                relinker: edits('relinker') || touches(
+                relinker: edits('relinker') || edits('relinker-asan') || touches(
                   'core/relinker/', libc, 'core/libs/prx/libkernel/AppMetadata/', 'core/libs/tests/ParamJsonParser.cpp',
-                  'core/shader/recompiler/tests/CacheFileReadTests.cpp', 'core/shader/recompiler/ShaderCacheDirectory.hpp',
+                  'core/libs/prx/libkernel/DirectMemory/DirectMemory.hpp', 'core/libs/prx/libkernel/KernelErrors.hpp',
+                  'core/libs/nid/src/NidCompute.cpp', 'core/libs/nid/src/Sha1.cpp',
+                  'core/libs/nid/include/nid/NidCompute.hpp', 'core/libs/nid/include/nid/Sha1.hpp',
+                  'core/libs/prx/libScePad/tests/InputCommandFile.cpp', 'core/libs/prx/libScePad/include/InputCommandFile.hpp',
+                  'core/shader/recompiler/', '.github/pull_request_template.md', '.github/workflows/pr-overlap.yml',
                   'tools/', 'cmake/', 'CMakeLists.txt'
                 ),
                 registerContext: edits('register-context') ||
                   touches('core/libs/tests/register_context/', 'core/libs/tests/RegisterContext.cpp', libc),
                 writeWatch: edits('write-watch') || touches('core/libs/tests/write_watch/', 'core/libs/tests/WriteWatch.cpp', libc),
+                mingwHostTests: edits('eligibility') || edits('windows') || touches(
+                  'core/libs/', 'tools/build_mingw_host_only_tests.py',
+                  'tools/tests/test_mingw_host_only_test_targets.py', 'CMakeLists.txt'
+                ),
               };
             };
             const relinkerHosts = (full, linux) => JSON.stringify([
@@ -168,6 +177,7 @@ jobs:
               core.setOutput('relinker', run.relinker);
               core.setOutput('register-context', run.registerContext);
               core.setOutput('write-watch', run.writeWatch);
+              core.setOutput('mingw-host-tests', false);
               core.setOutput('full', true);
               core.setOutput('relinker-hosts', relinkerHosts(true, true));
               await core.summary.addRaw(
@@ -257,6 +267,7 @@ jobs:
             core.setOutput('relinker', relinker);
             core.setOutput('register-context', registerContext);
             core.setOutput('write-watch', writeWatch);
+            core.setOutput('mingw-host-tests', !manual && run.mingwHostTests);
             core.setOutput('full', full);
             core.setOutput('relinker-hosts', relinkerHosts(full, linux));
             const merged = pulls.map((pull) => `PR #${pull.number} at ${pull.head} merged into main at ${main.commit.sha}`);
@@ -421,7 +432,7 @@ jobs:
 
   linux:
     needs: eligibility
-    if: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.linux)) && needs.eligibility.outputs.full == 'true' }}
+    if: ${{ !github.event.repository.fork && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.linux)) && needs.eligibility.outputs.full == 'true' }}
     runs-on: [self-hosted, linux, x64, anyps5]
     timeout-minutes: 60
     env:
@@ -522,7 +533,7 @@ jobs:
         env:
           BASE: ${{ needs.eligibility.outputs.sha }}
         run: |
-          git diff --name-only "$BASE" HEAD > changed.txt
+          git diff --name-only -z "$BASE" HEAD -- > changed.txt
           python3 tools/select_tests.py select build test-graph.json changed.txt
       - id: build
         run: |
@@ -557,7 +568,7 @@ jobs:
 
   windows:
     needs: eligibility
-    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.eligibility.outputs.full == 'true' }}
+    if: ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.eligibility.outputs.full == 'true') || (github.event_name == 'pull_request' && needs.eligibility.outputs.mingw-host-tests == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -641,7 +652,10 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: configure-seed.cmake
-          key: configure-seed-${{ env.WINLIBS_ZIP }}-${{ steps.submodules.outputs.key }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'core/libs/CMakeLists.txt', '.github/workflows/build.yml') }}
+          key: configure-seed-${{ env.WINLIBS_ZIP }}-${{ steps.submodules.outputs.key }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'core/libs/CMakeLists.txt', 'tools/configure_seed.py', '.github/workflows/build.yml') }}
+      - if: github.event_name == 'pull_request'
+        shell: bash
+        run: mkdir -p build/.cmake/api/v1/query && touch build/.cmake/api/v1/query/codemodel-v2
       - shell: cmd
         run: if exist configure-seed.cmake (cmake -C configure-seed.cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown") else (cmake -S . -B build %CONFIGURE% "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown")
       - if: steps.seed-cache.outputs.cache-hit != 'true'
@@ -674,17 +688,30 @@ jobs:
           BASE: ${{ needs.eligibility.outputs.sha }}
         shell: cmd
         run: |
-          git diff --name-only %BASE% HEAD > changed.txt
+          git diff --name-only -z %BASE% HEAD -- > changed.txt
           python tools/select_tests.py select build test-graph.json changed.txt
       - id: build
+        if: github.event_name != 'pull_request'
         shell: cmd
         run: if exist build\select.ninja (ninja -C build -f select.ninja selected) else (cmake --build build)
+      - name: List changed files for host-only test linking
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ needs.eligibility.outputs.sha }}
+        run: git diff --name-only "$BASE" HEAD > changed.txt
+      - name: Link changed host-only core/libs test executables
+        if: github.event_name == 'pull_request'
+        shell: cmd
+        run: python tools/build_mingw_host_only_tests.py build changed.txt
       - id: libs
+        if: github.event_name != 'pull_request'
         shell: cmd
         run: cmake --build build --target libs
-      - shell: cmd
+      - if: github.event_name != 'pull_request'
+        shell: cmd
         run: python tools/select_tests.py ctest build --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
-      - run: python tools/check_skips.py build/ctest.xml --job windows
+      - if: github.event_name != 'pull_request'
+        run: python tools/check_skips.py build/ctest.xml --job windows
       - name: Write the test graph of main
         if: ${{ !cancelled() && github.event_name == 'push' && steps.build.outcome == 'success' && steps.libs.outcome == 'success' }}
         continue-on-error: true

@@ -1,11 +1,10 @@
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-
-extern "C" int APS5_VABI sceAgcDriverNopDataWritePacket(void* destination, uint32_t address, const void* data, uint32_t bytes);
 
 int main() {
     std::array<std::byte, 24> storage;
@@ -34,5 +33,18 @@ int main() {
     std::memcpy(&address, storage.data() + 8, sizeof(address));
     if (zeroBytesWords != 2 || header != 0xc0001000U || address != 0x01020304U) return 7;
     if (storage[12] != std::byte{0xaa}) return 8;
+
+    for (std::uint32_t len = 1; len <= 4; ++len) {
+        storage.fill(std::byte{0xaa});
+        const auto lenWords = sceAgcDriverNopDataWritePacket(storage.data() + 4, 0xaabbccddU, data.data(), len);
+        std::memcpy(&header, storage.data() + 4, sizeof(header));
+        std::memcpy(&address, storage.data() + 8, sizeof(address));
+        if (lenWords != 3 || header != 0xc0011000U || address != 0xaabbccddU) return 9 + static_cast<int>(len);
+        if (!std::equal(data.begin(), data.begin() + len, storage.begin() + 12)) return 14 + static_cast<int>(len);
+        for (std::size_t pad = 12 + len; pad < 16; ++pad) {
+            if (storage[pad] != std::byte{0}) return 19 + static_cast<int>(len);
+        }
+        if (storage[3] != std::byte{0xaa} || storage[16] != std::byte{0xaa}) return 24 + static_cast<int>(len);
+    }
     return 0;
 }

@@ -1,22 +1,12 @@
+#include "prx/libSceMove/include/Api.hpp"
+#include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceMoveInit(void);
-int APS5_VABI sceMoveTerm(void);
-int APS5_VABI sceMoveOpen(std::int32_t userId, std::int32_t type, std::int32_t index);
-int APS5_VABI sceMoveClose(std::int32_t handle);
-int APS5_VABI sceMoveGetDeviceInfo(std::int32_t handle, void* info);
-int APS5_VABI sceMoveGetExtensionPortInfo(std::int32_t handle, void* data);
-int APS5_VABI sceMoveReadStateLatest(std::int32_t handle, void* data);
-int APS5_VABI sceMoveReadStateRecent(std::int32_t handle, std::int64_t timestamp, void* data, std::int32_t* outCount);
-int APS5_VABI sceMoveSetVibration(std::int32_t handle, std::uint8_t motor);
-int APS5_VABI sceMoveSetLightSphere(std::int32_t handle, std::uint8_t red, std::uint8_t green, std::uint8_t blue);
-int APS5_VABI sceMoveResetLightSphere(std::int32_t handle);
-}
 
 namespace {
 
@@ -33,6 +23,22 @@ constexpr std::int32_t kUserId = 0x10000000;
 constexpr std::int32_t kFirstHandle = 0x30B0100;
 constexpr std::int32_t kHandleStep = 0x100;
 constexpr std::uint8_t kFill = 0x5A;
+constexpr std::uint32_t kLastSdkAllowingNullData = 0x03ffffff;
+constexpr std::uint32_t kFirstSdkRequiringData = 0x04000000;
+
+alignas(16) std::array<std::byte, 0x40> process{};
+
+void InstallProcessParameters() {
+    const std::uint64_t size = process.size();
+    const std::uint32_t magic = 0x4942524f;
+    std::memcpy(process.data(), &size, sizeof(size));
+    std::memcpy(process.data() + 8, &magic, sizeof(magic));
+    Require(ProcessParametersFixture::Install(process.data(), process.size()));
+}
+
+void SetCompiledSdkVersion(std::uint32_t version) {
+    std::memcpy(process.data() + 0x10, &version, sizeof(version));
+}
 
 struct Buffer {
     std::uint8_t bytes[128];
@@ -66,6 +72,9 @@ void RequireNotInit(std::int32_t handle) {
     Require(sceMoveGetExtensionPortInfo(handle, buffer.bytes) == kNotInit);
     Require(sceMoveReadStateLatest(handle, buffer.bytes) == kNotInit);
     Require(sceMoveReadStateRecent(handle, 0, buffer.bytes, &count) == kNotInit);
+    SetCompiledSdkVersion(kLastSdkAllowingNullData);
+    Require(sceMoveReadStateRecent(handle, 0, nullptr, &count) == kNotInit);
+    SetCompiledSdkVersion(kFirstSdkRequiringData);
     Require(sceMoveSetVibration(handle, 0xFF) == kNotInit);
     Require(sceMoveSetLightSphere(handle, 0xFF, 0, 0) == kNotInit);
     Require(sceMoveResetLightSphere(handle) == kNotInit);
@@ -97,6 +106,8 @@ void RequireUnknownHandle(std::int32_t handle) {
 }
 
 int main() {
+    InstallProcessParameters();
+    SetCompiledSdkVersion(kFirstSdkRequiringData);
     RequireNotInit(kFirstHandle);
 
     Require(sceMoveInit() == kOk);
@@ -123,6 +134,15 @@ int main() {
     Require(sceMoveReadStateRecent(first, -1, buffer.bytes, &count) == kInvalidArg);
     Require(sceMoveReadStateRecent(first, 0, nullptr, &count) == kInvalidArg);
     Require(sceMoveReadStateRecent(first, 0, buffer.bytes, nullptr) == kInvalidArg);
+
+    SetCompiledSdkVersion(kLastSdkAllowingNullData);
+    Require(sceMoveReadStateRecent(first, 0, nullptr, &count) == kNoControllerConnected);
+    Require(sceMoveReadStateRecent(first, -1, nullptr, &count) == kInvalidArg);
+    Require(sceMoveReadStateRecent(first, 0, nullptr, nullptr) == kInvalidArg);
+    Require(sceMoveReadStateRecent(first + 1, 0, nullptr, &count) == kInvalidHandle);
+    Require(count == -7);
+    SetCompiledSdkVersion(kFirstSdkRequiringData);
+    Require(sceMoveReadStateRecent(first, 0, nullptr, &count) == kInvalidArg);
 
     Require(sceMoveGetDeviceInfo(first, buffer.bytes) == kNoControllerConnected);
     Require(sceMoveGetExtensionPortInfo(first, buffer.bytes) == kNoControllerConnected);

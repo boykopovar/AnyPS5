@@ -1,3 +1,5 @@
+#include "prx/libc/include/exceptions/Runtime.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Unwind.hpp"
 
 #include <cstdint>
@@ -5,11 +7,6 @@
 #include <cstdlib>
 #include <string>
 
-extern "C" _Unwind_Reason_Code APS5_VABI _Unwind_Backtrace_nid_postfix(_Unwind_Trace_Fn trace, void* argument);
-extern "C" _Unwind_Reason_Code APS5_VABI _Unwind_ForcedUnwind_nid_postfix(_Unwind_Exception* exception, _Unwind_Stop_Fn stop, void* argument);
-extern "C" _Unwind_Ptr APS5_VABI _Unwind_GetRegionStart_nid_postfix(_Unwind_Context* context);
-extern "C" void* APS5_VABI __cxa_begin_catch_nid_postfix(void* exception);
-extern "C" void APS5_VABI __cxa_end_catch_nid_postfix();
 extern "C" [[gnu::noinline]] void BacktraceFromHere();
 extern "C" [[gnu::noinline]] void ForceUnwindFromHere();
 
@@ -85,6 +82,7 @@ void CheckDeleteException() {
     exception.exception_class = ForeignClass;
     exception.exception_cleanup = GuestCleanup;
     _Unwind_DeleteException_nid_postfix(&exception);
+
     CheckCleanup(exception);
 }
 
@@ -94,6 +92,7 @@ void CheckEndCatch(std::uint64_t exceptionClass, Cleanup function) {
     exception.exception_cleanup = function;
     __cxa_begin_catch_nid_postfix(&exception);
     __cxa_end_catch_nid_postfix();
+
     CheckCleanup(exception);
 }
 
@@ -110,6 +109,7 @@ extern "C" void ForceUnwindFromHere() {
     _Unwind_Exception exception {};
     exception.exception_class = ForeignClass;
     _Unwind_ForcedUnwind_nid_postfix(&exception, Stop, &stopArgument);
+
     Require(stop.count == 1, "_Unwind_ForcedUnwind calls the stop function once");
     Require(stop.version == 1, "the stop function gets version 1");
     Require(stop.actions == (_UA_CLEANUP_PHASE | _UA_FORCE_UNWIND), "the stop function gets _UA_CLEANUP_PHASE | _UA_FORCE_UNWIND");

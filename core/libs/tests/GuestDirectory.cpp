@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
@@ -15,21 +17,12 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-extern "C" {
-void* APS5_VABI opendir_nid_postfix(const char*);
-GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void*);
-int APS5_VABI readdir_r_nid_postfix(void*, GuestDirectoryEntry*, GuestDirectoryEntry**);
-int APS5_VABI closedir_nid_postfix(void*);
-void APS5_VABI rewinddir_nid_postfix(void*);
-std::int64_t APS5_VABI telldir_nid_postfix(void*);
-void APS5_VABI seekdir_nid_postfix(void*, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 static std::map<std::string, std::uint32_t> ReadFileNumbers(void* directory) {
     std::map<std::string, std::uint32_t> numbers;
     rewinddir_nid_postfix(directory);
+
     while (auto* entry = readdir_nid_postfix(directory)) {
         Require(entry->fileNumber != 0);
         numbers[entry->name] = entry->fileNumber;
@@ -105,10 +98,12 @@ int main() {
     Require(entries.at("subdirectory") == 4);
     Require(entries.at(".") == 4 && entries.at("..") == 4);
     rewinddir_nid_postfix(directory);
+
     std::size_t count = 0;
     while (readdir_nid_postfix(directory)) ++count;
     Require(count == entries.size());
     rewinddir_nid_postfix(directory);
+
     std::map<std::string, int> copies;
     GuestDirectoryEntry buffer;
     GuestDirectoryEntry* result = nullptr;
@@ -129,6 +124,7 @@ int main() {
     result = &buffer;
     Require(readdir_r_nid_postfix(directory, &buffer, &result) == 0 && result == nullptr);
     rewinddir_nid_postfix(directory);
+
     *__error_nid_postfix() = 13;
     auto* first = readdir_nid_postfix(directory);
     Require(first != nullptr);
@@ -141,6 +137,7 @@ int main() {
     bool nullEntryThrows = false;
     try {
         readdir_r_nid_postfix(directory, nullptr, &result);
+
     } catch (const std::invalid_argument&) {
         nullEntryThrows = true;
     }
@@ -148,11 +145,13 @@ int main() {
     bool nullResultThrows = false;
     try {
         readdir_r_nid_postfix(directory, &buffer, nullptr);
+
     } catch (const std::invalid_argument&) {
         nullResultThrows = true;
     }
     Require(nullResultThrows);
     rewinddir_nid_postfix(directory);
+
     Require(readdir_nid_postfix(directory) != nullptr);
     const std::int64_t second = telldir_nid_postfix(directory);
     Require(second != -1);
@@ -161,6 +160,7 @@ int main() {
     const std::string secondName = entryAfterTell->name;
     while (readdir_nid_postfix(directory)) {}
     seekdir_nid_postfix(directory, second);
+
     auto* entryAfterSeek = readdir_nid_postfix(directory);
     Require(entryAfterSeek != nullptr && secondName == entryAfterSeek->name);
     Require(entryAfterSeek->fileNumber == fileNumbers.at(secondName));
@@ -168,12 +168,25 @@ int main() {
     Require(telldir_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
     *__error_nid_postfix() = 0;
     seekdir_nid_postfix(nullptr, second);
+
     Require(*__error_nid_postfix() == 9);
     Require(closedir_nid_postfix(directory) == 0);
     Require(opendir_nid_postfix((root / "missing").string().c_str()) == nullptr);
     Require(*__error_nid_postfix() == 2);
-#ifndef _WIN32
     const auto symlinkLoop = root / "symlink-loop";
+#ifdef _WIN32
+    if (links) {
+        Require(CreateSymbolicLinkW(symlinkLoop.c_str(), L"symlink-loop", SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0);
+        Require(opendir_nid_postfix(symlinkLoop.string().c_str()) == nullptr);
+        Require(*__error_nid_postfix() == 62);
+        Require(DeleteFileW(symlinkLoop.c_str()) != 0);
+        const auto directoryLoop = root / "directory-loop";
+        Require(CreateSymbolicLinkW(directoryLoop.c_str(), L"directory-loop", SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0);
+        Require(opendir_nid_postfix(directoryLoop.string().c_str()) == nullptr);
+        Require(*__error_nid_postfix() == 62);
+        Require(RemoveDirectoryW(directoryLoop.c_str()) != 0);
+    }
+#else
     std::filesystem::create_symlink("symlink-loop", symlinkLoop);
     Require(opendir_nid_postfix(symlinkLoop.string().c_str()) == nullptr);
     Require(*__error_nid_postfix() == 62);

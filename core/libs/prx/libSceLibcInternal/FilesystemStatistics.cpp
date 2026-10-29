@@ -1,9 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceLibcInternal/include/Statvfs.hpp"
 #include <cstring>
-
-extern "C" int APS5_VABI _fstatfs_nid_postfix(int, KernelStatfs*);
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 extern "C" int APS5_VABI fstatvfs_nid_postfix(int descriptor, LibcStatvfs* output) {
     int* const error = __error_nid_postfix();

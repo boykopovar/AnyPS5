@@ -1,3 +1,4 @@
+#include "prx/libScePlayGoDialog/include/Api.hpp"
 #include <atomic>
 #include <algorithm>
 #include <iterator>
