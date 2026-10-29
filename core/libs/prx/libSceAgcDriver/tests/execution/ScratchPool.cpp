@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #include <spirv/unified1/spirv.hpp>
@@ -15,6 +17,15 @@
 #include <span>
 #include <string>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+    static std::pair<VkBuffer, std::uint64_t> HeaderOf(const VulkanDevice& device, const ShaderRecompiler::RecompileResult& shader) { return device.scratchPoolHeader(shader); }
+};
+
+}
 
 namespace {
 
@@ -361,6 +372,62 @@ void RunContention(AgcDriver::VulkanDevice& device, const char* label, const Wor
     }
 }
 
+void RunDiscardedInitialization(AgcDriver::VulkanDevice& device) {
+    const std::string name = "scratch pool initialization after a discarded batch";
+    constexpr std::uint32_t waveSize = 32u;
+    constexpr std::uint32_t threads = waveSize * 2u;
+    const auto code = ContentionKernel(waveSize);
+    const auto lanes = ContentionGroups * threads;
+    std::vector<std::uint32_t> output(static_cast<std::size_t>(lanes) * 4u, 0xdeadbeefu);
+    std::vector<std::uint32_t> userData(4, 0u);
+    const auto outputDescriptor = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size() * 4u));
+    std::copy(outputDescriptor.begin(), outputDescriptor.end(), userData.begin());
+    const auto result = Compile(device, code, userData, waveSize, threads, true, ContentionScratchDwords);
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const std::uint64_t slotBytes = (static_cast<std::uint64_t>(result.scratchPoolSlotDwords) + 2u) * 4u;
+    const std::uint64_t slots = std::clamp<std::uint64_t>(std::max<std::uint64_t>((1u << 20u) / slotBytes, 1u), 1u, ContentionGroups);
+    const std::size_t poolBytes = static_cast<std::size_t>(slots * slotBytes);
+    {
+        AgcDriver::Graphics::DeviceBuffer dirty(context, poolBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        AgcDriver::Graphics::CommandBatch batch(context);
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(batch.Handle(), dirty.Handle(), 0, poolBytes, 0xffffffffu);
+        batch.SubmitAndWait();
+    }
+    AgcDriver::Graphics::Recorder::FailNextSubmitsForTest(1u);
+    bool discarded = false;
+    try {
+        device.Dispatch(result, ContentionGroups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.Dispatch(result, ContentionGroups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device.WaitIdle();
+    } catch (const std::exception& error) {
+        discarded = std::string(error.what()).find("injected failure") != std::string::npos;
+    }
+    AgcDriver::Graphics::Recorder::FailNextSubmitsForTest(0u);
+    Require(discarded, name + ": the first batch was not discarded");
+    const auto [header, headerBytes] = AgcDriver::VulkanDeviceTestAccess::HeaderOf(device, result);
+    Require(header != VK_NULL_HANDLE && headerBytes != 0u, name + ": the dispatches created no scratch pool");
+    AgcDriver::Graphics::Buffer readback(context, headerBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    {
+        AgcDriver::Graphics::CommandBatch batch(context);
+        AgcDriver::Graphics::CopyBuffer(context, batch.Handle(), header, 0, readback.Handle(), 0, headerBytes);
+        AgcDriver::Graphics::RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+    }
+    readback.Invalidate();
+    const auto* words = reinterpret_cast<const std::uint32_t*>(readback.Bytes().data());
+    for (std::uint64_t word = 0; word < headerBytes / 4u; ++word) {
+        Require(words[word] == 0u, name + ": header word " + std::to_string(word) + " reads " + Hex(words[word]) + " after the discarded batch");
+    }
+    device.Dispatch(result, ContentionGroups, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    for (std::uint32_t lane = 0; lane < lanes; ++lane) {
+        for (std::uint32_t k = 0; k < 4u; ++k) {
+            const auto value = output[static_cast<std::size_t>(lane) * 4u + k];
+            Require(value == lane * 4u + k, name + ": lane " + std::to_string(lane) + " dword " + std::to_string(k) + " read " + Hex(value) + " after the retry");
+        }
+    }
+}
+
 }
 
 int main() {
@@ -374,6 +441,7 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const bool wave64 = device->Target().subgroupSize >= 32u;
         RunPlain(*device);
+        RunDiscardedInitialization(*device);
         for (const std::uint32_t waveSize : {32u, 64u}) {
             if (waveSize == 64u && !wave64) continue;
             for (const Form form : {Form::Table, Form::Literal, Form::Computed}) {
