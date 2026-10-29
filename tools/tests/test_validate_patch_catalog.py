@@ -166,6 +166,8 @@ class CatalogValidatorTests(unittest.TestCase):
                                  "--catalog", str(loop)], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 2)
         self.assertIn("Catalog validation:", result.stderr)
+        self.assertIn("Symlink loop", result.stderr)
+        self.assertNotIn("index.json", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertTrue(loop.is_symlink())
 
