@@ -1069,7 +1069,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             results.push_back(ShaderRecompiler::BuildBarycentricGeometryShader(*programResults[0], *programResults[1], localDevice->Target(), geometryLimits));
             stages.insert(stages.begin() + 1, Graphics::CompiledShader{Stage::Geometry, &results.back(), 0});
         } else {
-            require((graphics.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || graphics.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP) && !graphics.primitiveRestart, "a pixel shader that reads barycentrics without VK_KHR_fragment_shader_barycentric or geometry shaders needs a triangle list or strip without primitive restart");
+            require((graphics.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!graphics.primitiveRestart || !localDevice->PrimitiveListRestart())) || (graphics.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && (!graphics.primitiveRestart || !drawParameters.indexed)), "a pixel shader that reads barycentrics without VK_KHR_fragment_shader_barycentric or geometry shaders needs a triangle list, with primitive restart only on a device without VK_EXT_primitive_topology_list_restart, or a triangle strip, with primitive restart only in a non-indexed draw");
             auto patches = ShaderRecompiler::BuildBarycentricTessellationShaders(*programResults[0], *programResults[1], localDevice->Target(), localDevice->MaxFragmentInputComponents(), graphics.provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT ? 2u : 0u);
             const auto first = results.size();
             results.push_back(std::move(patches.control));

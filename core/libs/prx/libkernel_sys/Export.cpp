@@ -751,6 +751,26 @@ int APS5_VABI kldunload_nid_postfix(int fileid) {
     return static_cast<int>(Fail(GuestEperm));
 }
 
+int APS5_VABI kldstat_nid_postfix(int fileid, void* stat) {
+    struct FileStatus {
+        std::int32_t version;
+        char name[GuestPathMax];
+        std::int32_t refs;
+        std::int32_t id;
+        std::uint64_t address;
+        std::uint64_t size;
+        char pathname[GuestPathMax];
+    };
+    constexpr auto Version1 = static_cast<std::int32_t>(offsetof(FileStatus, pathname));
+    constexpr auto Version2 = static_cast<std::int32_t>(sizeof(FileStatus));
+    static_assert(Version1 == 1056 && Version2 == 2080);
+    std::int32_t version = 0;
+    if (!GuestCopyIn_nid_no_patch(&version, stat, sizeof(version))) return static_cast<int>(Fail(GuestEfault));
+    if (version != Version1 && version != Version2) return static_cast<int>(Fail(GuestEinval));
+    (void)fileid;
+    return static_cast<int>(Fail(GuestEnoent));
+}
+
 int APS5_VABI kldsym_nid_postfix(int fileid, int cmd, void* data) {
     struct SymbolLookup {
         std::int32_t version;

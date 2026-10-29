@@ -1,5 +1,6 @@
 add_library(libSceFreeTypeOt SHARED EXCLUDE_FROM_ALL Export.cpp ../libSceFreeType/src/OutlineBorders.cpp)
 target_include_directories(libSceFreeTypeOt PRIVATE ${LIBS_INCLUDE_DIR})
+include("${CMAKE_CURRENT_LIST_DIR}/Stream.cmake")
 configure_windows_unwind(libSceFreeTypeOt)
 
 if(BUILD_TESTING)

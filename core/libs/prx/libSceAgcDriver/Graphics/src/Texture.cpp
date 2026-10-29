@@ -3432,7 +3432,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
             const auto& import = *segments[segment].import;
             auto pieceEnd = std::min(guestEnd, segments[segment].end);
             if (UnitShadowEnabled()) pieceEnd = std::min(pieceEnd, SlabBoundary(import, guestBegin));
-            const auto destination = ShadowDestinationFor(context, import, guestBegin, pieceEnd);
+            const auto destination = guestBytes <= SmallStoreBytes ? std::optional<ShadowDestination>{} : ShadowDestinationFor(context, import, guestBegin, pieceEnd);
             if (destination.has_value()) {
                 if (slabPieces.empty() || slabPieces.back().slab != destination->slab) slabPieces.push_back({destination->slab, destination->pin, {}});
                 slabPieces.back().copies.push_back({scratchOffset, destination->offset, pieceEnd - guestBegin});
@@ -6131,6 +6131,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         // Outside the write watch the stored bytes are what the next store compares with.
         const auto saveUnits = GuestMemory::Watched(firstStored, static_cast<std::size_t>(lastStored - firstStored)) ? std::vector<std::uint32_t>{} : prepareStoredSave(layers, skippedLayer);
         if (blockUnits) {
+            if (guestBytes <= SmallStoreBytes) PublishShadow(firstStored, static_cast<std::size_t>(lastStored - firstStored), PublishScope::PartialUnits, PublishReason::Upload);
             // The kept blocks alone pass through the retiler (windows of their slices).
             const auto storedBytes = writeBackWindows(segments, keep, firstStored, lastStored, shadowed, imported, saveUnits.empty() ? nullptr : savedBytes.get());
             countStorageWriteBack(storedBytes, true);

@@ -281,6 +281,7 @@ export class DirectoryWriter {
       await this.destination.directory(name);
       return;
     }
+    if (!(source instanceof ReadableStream)) await source.init();
     const output = await this.destination.file(name);
     if (source instanceof ReadableStream) {
       let completed = 0;
@@ -306,7 +307,6 @@ export class DirectoryWriter {
         writer.releaseLock();
       }
     } else {
-      await source.init();
       const writer = output.getWriter();
       try {
         for (let offset = 0; offset < source.size; offset += 65536) {

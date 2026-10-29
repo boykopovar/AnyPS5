@@ -32,6 +32,8 @@ int main() {
     Require(sceRegMgrGetStr(0x1001, strBuf, -1) == static_cast<int>(0x80820001));
     Require(sceRegMgrGetBin(0x1002, nullptr, 10) == static_cast<int>(0x80820001));
     Require(sceRegMgrGetBin(0x1002, binBuf, -1) == static_cast<int>(0x80820001));
+    Require(sceRegMgrGetStr(0x1001, nullptr, -1) == static_cast<int>(0x80820001));
+    Require(sceRegMgrGetBin(0x1002, nullptr, -1) == static_cast<int>(0x80820001));
 
     intVal = 0x55AA;
     Require(sceRegMgrGetInt(888888, &intVal) == static_cast<int>(0x80820002));
@@ -41,6 +43,15 @@ int main() {
     Require(std::strcmp(strBuf, "CANARY") == 0);
     binBuf[0] = 0x77;
     Require(sceRegMgrGetBin(888888, binBuf, sizeof(binBuf)) == static_cast<int>(0x80820002));
+    Require(binBuf[0] == 0x77);
+    Require(sceRegMgrGetInt(0, &intVal) == static_cast<int>(0x80820002));
+    Require(sceRegMgrGetInt(-1, &intVal) == static_cast<int>(0x80820002));
+    Require(intVal == 0x55AA);
+    Require(sceRegMgrGetStr(0, strBuf, 1) == static_cast<int>(0x80820002));
+    Require(sceRegMgrGetStr(-1, strBuf, 1) == static_cast<int>(0x80820002));
+    Require(std::strcmp(strBuf, "CANARY") == 0);
+    Require(sceRegMgrGetBin(0, binBuf, 1) == static_cast<int>(0x80820002));
+    Require(sceRegMgrGetBin(-1, binBuf, 1) == static_cast<int>(0x80820002));
     Require(binBuf[0] == 0x77);
 
     return 0;

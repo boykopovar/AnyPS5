@@ -85,3 +85,20 @@ test('server retains GET HEAD allowlist and method behavior', {timeout: 15000}, 
     assert.match(await rawRequest(port, '/package.json'), /^HTTP\/1\.1 404 /u);
     assert.match(await rawRequest(port, '/', 'POST'), /^HTTP\/1\.1 405 /u);
 });
+
+test('invalid configured ports fail without leaking a stack trace', {timeout: 15000}, async () => {
+    for (const invalidPort of ['abc', '-1', '65536', '1.5']) {
+        const child = spawn(process.execPath, [fileURLToPath(new URL('../serve.js', import.meta.url))], {
+            env: {...process.env, PORT: invalidPort}, stdio: ['ignore', 'pipe', 'pipe']
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+        child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+        const [code] = await once(child, 'exit');
+        assert.equal(code, 1);
+        assert.equal(stdout, '');
+        assert.match(stderr, /options\.port should be >= 0 and < 65536/u);
+        assert.doesNotMatch(stderr, /RangeError|ERR_SOCKET_BAD_PORT|^\s+at\s+/mu);
+    }
+});

@@ -115,11 +115,6 @@ int APS5_VABI kldload_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI kldstat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI kmq_notify_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -2007,9 +2002,8 @@ int APS5_VABI scePthreadMutexGetprioceiling(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadMutexInitForInternalLibc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadMutexInitForInternalLibc(PthreadMutex* mutex, const PthreadMutexattr* attr) {
+    return SceResult(pthread_mutex_init_nid_postfix(mutex, attr));
 }
 
 int APS5_VABI scePthreadMutexIsowned(void) {
@@ -2027,9 +2021,8 @@ int APS5_VABI scePthreadMutexattrGetgen(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadMutexattrInitForInternalLibc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadMutexattrInitForInternalLibc(PthreadMutexattr* attr) {
+    return SceResult(pthread_mutexattr_init_nid_postfix(attr));
 }
 
 int APS5_VABI scePthreadMutexattrSetgen(void) {
@@ -2086,11 +2079,6 @@ int APS5_VABI sched_setscheduler_nid_postfix(int pid, int policy, const KernelSc
     if (policy != 1 && policy != 2 && policy != 3) return fail(22);
     if (scePthreadSetschedparam(scePthreadSelf(), policy, param) != 0)
         NotImplemented_nid_no_patch("sched_setscheduler: a policy and priority scePthreadSetschedparam does not accept, where FreeBSD answers EPERM or EINVAL and the console's answer is unverified");
-    return 0;
-}
-
-int APS5_VABI sem_setname_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

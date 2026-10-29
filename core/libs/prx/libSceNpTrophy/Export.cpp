@@ -14,6 +14,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -165,6 +166,8 @@ int CopyIcon(const Context& context, const std::string& name, void* buffer, std:
     if (*size < entry->second.size) return NP_TROPHY_ERROR_INSUFFICIENT_BUFFER;
     std::ifstream file(context.package, std::ios::binary);
     file.seekg(static_cast<std::streamoff>(entry->second.offset));
+    const GuestArena::HostWrite destination(buffer, entry->second.size);
+    if (!destination.Open()) throw std::runtime_error("sceNpTrophy: the icon buffer is not writable");
     if (!file.read(static_cast<char*>(buffer), static_cast<std::streamsize>(entry->second.size))) return NP_TROPHY_ERROR_INVALID_TRP_FILE_FORMAT;
     *size = entry->second.size;
     return 0;

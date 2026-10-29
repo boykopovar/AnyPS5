@@ -14,6 +14,7 @@ import zipfile
 from package_release import WEB_FILES
 
 ROOT = Path(__file__).resolve().parent.parent
+REQUIRED_WEB_FILES = ("index.html", "app.mjs", "worker.mjs", "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 MAX_EXPANDED_BYTES = 512 * 1024 * 1024
 
 
@@ -169,8 +170,10 @@ def publish_release(output):
         staging.mkdir()
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             files = archive.infolist()
-            expected = {*WEB_FILES, "web-release.json"}
-            if len(files) != len(expected) or {file.filename for file in files} != expected:
+            names = [file.filename for file in files]
+            allowed = {*WEB_FILES, "web-release.json"}
+            if len(set(names)) != len(names) or not allowed.issuperset(names) \
+                    or not {*REQUIRED_WEB_FILES, "web-release.json"}.issubset(names):
                 raise ValueError("Invalid web release archive layout")
             if any(file.flag_bits & 1 for file in files):
                 raise ValueError(f"Encrypted release archive {asset['name']} is not supported")

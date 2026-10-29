@@ -20,6 +20,7 @@
 #include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "SaveData.hpp"
@@ -581,6 +582,10 @@ static int getSaveDataMemory2(SaveDataMemoryGet2* get_param) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
         f.seekg(static_cast<std::streamoff>(d->offset));
+        const GuestArena::HostWrite destination(d->buf, d->buf_size);
+        if (!destination.Open()) {
+            throw std::runtime_error("SaveData: the memory buffer is not writable");
+        }
         f.read(static_cast<char*>(d->buf), static_cast<std::streamsize>(d->buf_size));
         if (!f) {
             return SAVE_DATA_ERROR_INTERNAL;
@@ -1006,6 +1011,9 @@ int APS5_VABI sceSaveDataGetConvertProgress(float* progress) {
 }
 
 int APS5_VABI sceSaveDataCancel(std::uint32_t cancelArgument) {
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

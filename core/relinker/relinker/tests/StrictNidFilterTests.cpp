@@ -772,6 +772,134 @@ void duplicatePointerRelocations() {
                    "Strict filter accepted a pointer relocation overlapping an import slot");
 }
 
+void constructorArrayBounds() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    auto bytes = elfFixture(input);
+    bytes.resize(0xA00);
+    write<std::uint16_t>(bytes, 56, 4);
+    write<std::uint32_t>(bytes, 176, 2);
+    write<std::uint32_t>(bytes, 180, 6);
+    write<std::uint64_t>(bytes, 184, 0x300);
+    write<std::uint64_t>(bytes, 192, 0x2000);
+    write<std::uint64_t>(bytes, 208, 0x80);
+    write<std::uint64_t>(bytes, 216, 0x80);
+    write<std::uint64_t>(bytes, 224, 8);
+    write<std::uint32_t>(bytes, 232, 0x61000000);
+    write<std::uint32_t>(bytes, 236, 4);
+    write<std::uint64_t>(bytes, 240, 0x500);
+    write<std::uint64_t>(bytes, 264, 0x500);
+    write<std::uint64_t>(bytes, 272, 0x500);
+    write<std::uint64_t>(bytes, 280, 0x10);
+    write<std::int64_t>(bytes, 0x300, 25);
+    write<std::uint64_t>(bytes, 0x308, 0x2060);
+    write<std::int64_t>(bytes, 0x310, 27);
+    write<std::uint64_t>(bytes, 0x318, 8);
+    write<std::uint64_t>(bytes, 0x360, 0x1000);
+    const std::vector<Relinker::NidReference> references = {{"live", {}, 6, 0x2040, 0x2000, 0}};
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).empty(),
+            "Strict filter retained uncalled import");
+
+    auto outsideCode = bytes;
+    write<std::uint64_t>(outsideCode, 0x360, 0x5000);
+    requireFailure([&] { (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, outsideCode, input.Text, input.TextVaddr); },
+                   "Strict filter accepted constructor entry outside code");
+
+    auto missingSize = outsideCode;
+    write<std::int64_t>(missingSize, 0x310, 0);
+    write<std::uint64_t>(missingSize, 0x318, 0);
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, missingSize, input.Text, input.TextVaddr).empty(),
+            "Strict filter inspected constructor array when size was omitted");
+
+    auto missingArray = bytes;
+    write<std::int64_t>(missingArray, 0x300, 0x6100003F);
+    write<std::uint64_t>(missingArray, 0x308, 0);
+    try {
+        (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, missingArray, input.Text, input.TextVaddr);
+        require(false, "Strict filter accepted constructor size without an array pointer");
+    } catch (const Relinker::RelinkerException& error) {
+        require(std::string(error.what()).find("incomplete constructor array metadata") != std::string::npos,
+                "Constructor size without array was rejected for an unexpected reason");
+    }
+
+    auto invalidSize = bytes;
+    write<std::uint64_t>(invalidSize, 0x318, 12);
+    try {
+        (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, invalidSize, input.Text, input.TextVaddr);
+        require(false, "Strict filter accepted constructor size not divisible by 8");
+    } catch (const Relinker::RelinkerException& error) {
+        require(std::string(error.what()).find("invalid constructor array size") != std::string::npos,
+                "Invalid constructor array size was rejected for an unexpected reason");
+        require(error.FailureOffset == 0x2060, "Invalid constructor array size failure offset was incorrect");
+    }
+
+    auto overflow = bytes;
+    write<std::int64_t>(overflow, 0x300, 0x6100002F);
+    write<std::uint64_t>(overflow, 0x308, 0x400);
+    write<std::int64_t>(overflow, 0x310, 0x61000031);
+    write<std::uint64_t>(overflow, 0x318, 48);
+    write<std::int64_t>(overflow, 0x320, 0x61000033);
+    write<std::uint64_t>(overflow, 0x328, 24);
+    write<std::int64_t>(overflow, 0x330, 25);
+    write<std::uint64_t>(overflow, 0x338, std::numeric_limits<std::uint64_t>::max() - 7);
+    write<std::int64_t>(overflow, 0x340, 27);
+    write<std::uint64_t>(overflow, 0x348, 16);
+    write<std::uint64_t>(overflow, 0x900, std::numeric_limits<std::uint64_t>::max() - 7);
+    write<std::uint64_t>(overflow, 0x908, 8);
+    write<std::uint64_t>(overflow, 0x910, 0x1000);
+    write<std::uint64_t>(overflow, 0x918, 0);
+    write<std::uint64_t>(overflow, 0x920, 8);
+    write<std::uint64_t>(overflow, 0x928, 0x1000);
+    try {
+        (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, overflow, input.Text, input.TextVaddr);
+        require(false, "Strict filter accepted an overflowing constructor array address");
+    } catch (const Relinker::RelinkerException& error) {
+        require(std::string(error.what()).find("constructor array address overflow") != std::string::npos,
+                "Constructor array address overflow was rejected for an unexpected reason");
+        require(error.FailureOffset == std::numeric_limits<std::uint64_t>::max() - 7,
+                "Constructor array address overflow failure offset was incorrect");
+    }
+
+    auto finiOverflow = overflow;
+    write<std::int64_t>(finiOverflow, 0x330, 26);
+    write<std::int64_t>(finiOverflow, 0x340, 28);
+    try {
+        (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, finiOverflow, input.Text, input.TextVaddr);
+        require(false, "Strict filter accepted an overflowing destructor array address");
+    } catch (const Relinker::RelinkerException& error) {
+        require(std::string(error.what()).find("constructor array address overflow") != std::string::npos,
+                "Destructor array address overflow was rejected for an unexpected reason");
+        require(error.FailureOffset == std::numeric_limits<std::uint64_t>::max() - 7,
+                "Destructor array address overflow failure offset was incorrect");
+    }
+
+    auto preinitOverflow = overflow;
+    write<std::int64_t>(preinitOverflow, 0x330, 32);
+    write<std::int64_t>(preinitOverflow, 0x340, 33);
+    try {
+        (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, preinitOverflow, input.Text, input.TextVaddr);
+        require(false, "Strict filter accepted an overflowing preinit array address");
+    } catch (const Relinker::RelinkerException& error) {
+        require(std::string(error.what()).find("constructor array address overflow") != std::string::npos,
+                "Preinit array address overflow was rejected for an unexpected reason");
+        require(error.FailureOffset == std::numeric_limits<std::uint64_t>::max() - 7,
+                "Preinit array address overflow failure offset was incorrect");
+    }
+
+    auto sceOverflow = overflow;
+    write<std::int64_t>(sceOverflow, 0x330, 0x60000019);
+    write<std::int64_t>(sceOverflow, 0x340, 0x6000001B);
+    try {
+        (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, sceOverflow, input.Text, input.TextVaddr);
+        require(false, "Strict filter accepted an overflowing SCE constructor array address");
+    } catch (const Relinker::RelinkerException& error) {
+        require(std::string(error.what()).find("constructor array address overflow") != std::string::npos,
+                "SCE constructor array address overflow was rejected for an unexpected reason");
+        require(error.FailureOffset == std::numeric_limits<std::uint64_t>::max() - 7,
+                "SCE constructor array address overflow failure offset was incorrect");
+    }
+}
+
 }
 
 int main() {
@@ -798,6 +926,7 @@ int main() {
         relativeRelocationTableBounds();
         sceDynlibDataOffsets();
         duplicatePointerRelocations();
+        constructorArrayBounds();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

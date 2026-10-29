@@ -3,6 +3,8 @@
 ### Unknown function info
 - [FT_New_Size, FT_Activate_Size and FT_Done_Size](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console signatures, errors and generic-finalizer ordering are unverified; the LP64 guest adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). Private size fields are bridge-owned. Sizes created outside the bridge throw when selected.
 
+- [FT_Get_PS_Font_Info and FT_Has_PS_Glyph_Names](../../../core/libs/prx/libSceFreeType/src/PostScriptInfo.cpp) (libSceFreeType) - console ABI, backend version and errors are unverified; these follow bundled FreeType 2.13.3. Font information uses an LP64 guest record with borrowed strings valid until the face is destroyed. Glyph-name reliability is queried from the font driver rather than inferred from the face flags.
+
 - [FT_Reference_Face](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console signature, reference-counter limits and finalizer behavior are unverified; the LP64 guest adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). Counter overflow and reentrant finalization have not been measured on the console.
 
 - [FT_Stroker_New](../../../core/libs/prx/libSceFreeType/src/Stroker.cpp) (libSceFreeType) - console signature is unverified; the adapter forwards to bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftstroke.c). The returned stroker is a native object allocated through the guest library; the guest treats it as an opaque handle
