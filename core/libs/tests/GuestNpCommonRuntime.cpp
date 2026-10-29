@@ -344,7 +344,8 @@ void TestRingBuf() {
     _ZN3sce2np7RingBufC1Ev(&ring);
     const void* const* ringVtable = ring.vtable;
 
-    Require(ring.buf == nullptr && ring.bufSize == 0 && _ZNK3sce2np7RingBuf6IsFullEv(&ring), "a new ring buffer is empty and full");
+    Require(ring.buf == nullptr && ring.bufSize == 0 && _ZNK3sce2np7RingBuf7IsEmptyEv(&ring) && _ZNK3sce2np7RingBuf11GetFreeSizeEv(&ring) == 0,
+        "a new ring buffer has no storage");
     Require(_ZN3sce2np7RingBuf4InitEPvm(&ring, storage, sizeof(storage)) == 0 && _ZNK3sce2np7RingBuf7IsEmptyEv(&ring)
             && _ZNK3sce2np7RingBuf11GetFreeSizeEv(&ring) == 8,
         "a ring buffer takes the caller's storage");
@@ -383,9 +384,10 @@ void TestRingBuf() {
     auto* memory = static_cast<NpRingBufMemory*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpRingBufMemory), &objectAllocator));
     _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(memory, &heapAllocator);
 
-    Require(!_ZN3sce2np13RingBufMemory6IsInitEv(memory) && memory->allocator == &heapAllocator && memory->ringBuf.vtable != ringVtable,
+    Require(memory->ringBuf.buf == nullptr && memory->allocator == &heapAllocator && memory->ringBuf.vtable != ringVtable,
         "a memory ring buffer keeps its allocator");
-    Require(_ZN3sce2np13RingBufMemory4InitEm(memory, 4) == 0 && _ZN3sce2np13RingBufMemory6IsInitEv(memory), "a memory ring buffer allocates its storage");
+    Require(_ZN3sce2np13RingBufMemory4InitEm(memory, 4) == 0 && memory->ringBuf.buf != nullptr && memory->ringBuf.bufSize == 4,
+        "a memory ring buffer allocates its storage");
     Require(_ZN3sce2np7RingBuf5WriteEPKvm(&memory->ringBuf, "abc", 3) == 0 && _ZN3sce2np7RingBuf4ReadEPvm(&memory->ringBuf, out, 2) == 0
             && _ZN3sce2np7RingBuf5WriteEPKvm(&memory->ringBuf, "de", 2) == 0,
         "a memory ring buffer wraps like a plain one");

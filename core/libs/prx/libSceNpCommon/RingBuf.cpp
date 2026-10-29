@@ -137,10 +137,6 @@ void APS5_VABI _ZN3sce2np7RingBuf5ClearEv(NpRingBuf* self) {
     self->size = 0;
 }
 
-bool APS5_VABI _ZNK3sce2np7RingBuf6IsFullEv(const NpRingBuf* self) {
-    return self->size == self->bufSize;
-}
-
 bool APS5_VABI _ZNK3sce2np7RingBuf7IsEmptyEv(const NpRingBuf* self) {
     return self->size == 0;
 }
@@ -268,10 +264,6 @@ int APS5_VABI _ZN3sce2np13RingBufMemory4InitEm(NpRingBufMemory* self, std::size_
 void APS5_VABI _ZN3sce2np13RingBufMemory7DestroyEv(NpRingBufMemory* self) {
     ReleaseBuffer(*self);
     ClearFields(self->ringBuf);
-}
-
-bool APS5_VABI _ZN3sce2np13RingBufMemory6IsInitEv(const NpRingBufMemory* self) {
-    return self->ringBuf.buf != nullptr;
 }
 
 int APS5_VABI _ZN3sce2np13RingBufMemory6ExpandEm(NpRingBufMemory* self, std::size_t extraSize) {

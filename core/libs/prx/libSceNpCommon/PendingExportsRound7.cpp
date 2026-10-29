@@ -361,6 +361,11 @@ int APS5_VABI _ZN3sce2np9RefObjectC1Ev(void) {
     return 0;
 }
 
+int APS5_VABI _ZNK3sce2np7RingBuf6IsFullEv(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -527,6 +532,11 @@ int APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2np13RingBufMemory6IsInitEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
