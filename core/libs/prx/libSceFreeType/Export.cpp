@@ -6,6 +6,7 @@
 
 #include FT_GASP_H
 #include FT_CID_H
+#include FT_SIZES_H
 
 #include <algorithm>
 #include <bit>
@@ -33,14 +34,17 @@ void FinalizeSlot(void* object) {
 
 void FinalizeSize(void* object) {
     auto* host = static_cast<FT_Size>(object);
-    auto* face = static_cast<GuestFace*>(host->generic.data);
-    if (face->size.generic.finalizer) face->size.generic.finalizer(&face->size);
-    face->rec.size = nullptr;
+    auto* rec = static_cast<GuestSizeRec*>(host->generic.data);
+    auto* face = static_cast<GuestFace*>(host->face->generic.data);
+    SyncSizeRecord_nid_no_patch(*face, *rec, host);
+    SyncSizePointer_nid_no_patch(*face);
+    if (rec->generic.finalizer) rec->generic.finalizer(rec);
 }
 
 void FinalizeFace(void* object) {
     auto* host = static_cast<FT_Face>(object);
     auto* face = static_cast<GuestFace*>(host->generic.data);
+    SyncSizePointer_nid_no_patch(*face);
     if (face->rec.generic.finalizer) face->rec.generic.finalizer(&face->rec);
     face->finalized = true;
 }
@@ -54,7 +58,7 @@ void PublishFace(GuestLibrary* library, std::unique_ptr<GuestFace> face, FT_Face
     library->faces.push_back(std::move(face));
     host->generic = {owner, FinalizeFace};
     if (host->glyph) host->glyph->generic = {owner, FinalizeSlot};
-    if (host->size) host->size->generic = {owner, FinalizeSize};
+    if (host->size) host->size->generic = {&owner->size, FinalizeSize};
     *aface = &owner->rec;
     hostOwner.release();
 }
@@ -162,6 +166,60 @@ int APS5_VABI FT_Done_Face_nid_postfix(GuestFaceRec* face) {
     const FT_Error error = FT_Done_Face(owner ? owner->host : nullptr);
     if (error == 0 && owner->finalized) owner->library->faces.remove_if([owner](const auto& entry) { return entry.get() == owner; });
     return error;
+}
+
+int APS5_VABI FT_New_Size_nid_postfix(GuestFaceRec* face, GuestSizeRec** asize) {
+    GuestFace* owner = FaceOf(face);
+    FT_Face hostFace = owner ? owner->host : nullptr;
+    if (!hostFace || !asize || !hostFace->driver) {
+        FT_Size unused = nullptr;
+        return FT_New_Size(hostFace, asize ? &unused : nullptr);
+    }
+    const bool activates = asize == &owner->rec.size;
+    *asize = nullptr;
+    if (activates) hostFace->size = nullptr;
+    try {
+        owner->sizes.emplace_back();
+    } catch (const std::bad_alloc&) {
+        return FT_Err_Out_Of_Memory;
+    }
+    auto entry = std::prev(owner->sizes.end());
+    FT_Size host = nullptr;
+    const FT_Error error = FT_New_Size(hostFace, activates ? &hostFace->size : &host);
+    if (activates) host = hostFace->size;
+    if (error != 0) {
+        owner->sizes.erase(entry);
+        SyncSizePointer_nid_no_patch(*owner);
+        return error;
+    }
+    entry->host = host;
+    SyncSizeRecord_nid_no_patch(*owner, entry->rec, host);
+    host->generic = {&entry->rec, FinalizeSize};
+    *asize = &entry->rec;
+    SyncSizePointer_nid_no_patch(*owner);
+    return 0;
+}
+
+int APS5_VABI FT_Activate_Size_nid_postfix(GuestSizeRec* size) {
+    FT_Size host = size ? static_cast<FT_Size>(size->internal) : nullptr;
+    const FT_Error error = FT_Activate_Size(host);
+    if (error == 0) SyncSize(*static_cast<GuestFace*>(host->face->generic.data));
+    return error;
+}
+
+int APS5_VABI FT_Done_Size_nid_postfix(GuestSizeRec* size) {
+    FT_Size host = size ? static_cast<FT_Size>(size->internal) : nullptr;
+    auto* owner = host && host->face ? static_cast<GuestFace*>(host->face->generic.data) : nullptr;
+    const FT_Error error = FT_Done_Size(host);
+    if (error != 0) return error;
+    if (host == owner->initialSize) {
+        owner->initialSize = nullptr;
+        owner->size.internal = nullptr;
+    } else {
+        owner->sizes.remove_if([host](const auto& entry) { return entry.host == host; });
+    }
+    SyncSize(*owner);
+    return 0;
 }
 
 int APS5_VABI FT_Set_Pixel_Sizes_nid_postfix(GuestFaceRec* face, std::uint32_t pixel_width, std::uint32_t pixel_height) {

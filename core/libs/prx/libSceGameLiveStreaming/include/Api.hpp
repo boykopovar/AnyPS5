@@ -6,6 +6,31 @@
 
 struct GameLiveStreamingProgramInfo;
 
+struct GameLiveStreamingSpoilerTag {
+    char text[193];
+    std::uint8_t reserved[31];
+};
+
+static_assert(offsetof(GameLiveStreamingSpoilerTag, reserved) == 193);
+static_assert(sizeof(GameLiveStreamingSpoilerTag) == 224);
+
+struct GameLiveStreamingPresetCommand {
+    std::uint8_t body[197];
+    std::uint8_t reserved[31];
+};
+
+static_assert(offsetof(GameLiveStreamingPresetCommand, reserved) == 197);
+static_assert(sizeof(GameLiveStreamingPresetCommand) == 228);
+
+struct GameLiveStreamingCameraFrameSetting {
+    std::uint8_t head[9];
+    std::uint8_t reserved[31];
+};
+
+static_assert(offsetof(GameLiveStreamingCameraFrameSetting, reserved) == 9);
+
+struct GameLiveStreamingFeedbackMessage;
+
 struct GameLiveStreamingStatus {
     std::uint8_t opaque00[12];
     std::uint8_t reserved[60];
@@ -38,25 +63,25 @@ int APS5_VABI sceGameLiveStreamingScreenCloseSeparateMode(void);
 int APS5_VABI sceGameLiveStreamingScreenConfigureSeparateMode(void);
 int APS5_VABI sceGameLiveStreamingScreenOpenSeparateMode(void);
 int APS5_VABI sceGameLiveStreamingScreenSetMode(void);
-int APS5_VABI sceGameLiveStreamingPermitLiveStreaming(void);
-int APS5_VABI sceGameLiveStreamingSetMaxBitrate(void);
+int APS5_VABI sceGameLiveStreamingPermitLiveStreaming(bool permit);
+int APS5_VABI sceGameLiveStreamingSetMaxBitrate(std::uint32_t bitrate);
 int APS5_VABI sceGameLiveStreamingGetCurrentStatus(GameLiveStreamingStatus* status);
-int APS5_VABI sceGameLiveStreamingEnableSocialFeedback(void);
-int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessagesCount(void);
-int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessages(void);
-int APS5_VABI sceGameLiveStreamingPermitServerSideRecording(void);
-int APS5_VABI sceGameLiveStreamingSetMetadata(void);
-int APS5_VABI sceGameLiveStreamingSetSpoilerTag(void);
+int APS5_VABI sceGameLiveStreamingEnableSocialFeedback(bool enable);
+int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessagesCount(int type, std::uint32_t* count);
+int APS5_VABI sceGameLiveStreamingGetSocialFeedbackMessages(int type, size_t capacity, GameLiveStreamingFeedbackMessage* messages, size_t* acquired);
+int APS5_VABI sceGameLiveStreamingPermitServerSideRecording(bool permit);
+int APS5_VABI sceGameLiveStreamingSetMetadata(const char* metadata);
+int APS5_VABI sceGameLiveStreamingSetSpoilerTag(size_t count, const GameLiveStreamingSpoilerTag* tags);
 int APS5_VABI sceGameLiveStreamingClearSpoilerTag(void);
-int APS5_VABI sceGameLiveStreamingSetPresetSocialFeedbackCommands(void);
+int APS5_VABI sceGameLiveStreamingSetPresetSocialFeedbackCommands(size_t count, const GameLiveStreamingPresetCommand* commands);
 int APS5_VABI sceGameLiveStreamingClearPresetSocialFeedbackCommands(void);
-int APS5_VABI sceGameLiveStreamingSetPresetSocialFeedbackCommandsDescription(void);
-int APS5_VABI sceGameLiveStreamingClearSocialFeedbackMessages(void);
-int APS5_VABI sceGameLiveStreamingPostSocialMessage(void);
-int APS5_VABI sceGameLiveStreamingSetCameraFrameSetting(void);
+int APS5_VABI sceGameLiveStreamingSetPresetSocialFeedbackCommandsDescription(const char* description);
+int APS5_VABI sceGameLiveStreamingClearSocialFeedbackMessages(int type);
+int APS5_VABI sceGameLiveStreamingPostSocialMessage(const char* message);
+int APS5_VABI sceGameLiveStreamingSetCameraFrameSetting(const GameLiveStreamingCameraFrameSetting* setting);
 int APS5_VABI sceGameLiveStreamingSetServiceProviderPermission(void);
 int APS5_VABI sceGameLiveStreamingSetDefaultServiceProviderPermission(void);
-int APS5_VABI sceGameLiveStreamingSetInvitationSessionId(void);
+int APS5_VABI sceGameLiveStreamingSetInvitationSessionId(const char* sessionId);
 int APS5_VABI sceGameLiveStreamingStartGenerateStandbyScreenResource(void);
 int APS5_VABI sceGameLiveStreamingStopGenerateStandbyScreenResource(void);
 int APS5_VABI sceGameLiveStreamingRegisterCallback(void);
