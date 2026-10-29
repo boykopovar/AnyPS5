@@ -445,6 +445,15 @@ public:
         return (ResolveTextureFormat(resource.format) == expected || depthBits || UnormStencilView(resource)) && oneSlice && resource.width == target.extent.width && resource.height == target.extent.height && resource.baseLevel == 0 && resource.lastLevel == 0 && resource.baseArray == 0;
     }
 
+    bool PlaneTextureAccepts(const GuestTextureResource& resource, bool depthBits) const {
+        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+        const auto format = ResolveTextureFormat(resource.format);
+        const auto copyFormat = d16 && format == VK_FORMAT_R16_UINT && !depthBits ? VK_FORMAT_R16_UINT : d16 ? VK_FORMAT_R16_UNORM : VK_FORMAT_R32_SFLOAT;
+        const bool cube = resource.dimension == TextureDimension::kCube;
+        const bool layered = cube || (resource.dimension == TextureDimension::k2DArray && resource.depthOrLastArray != 0);
+        return (format == copyFormat || depthBits) && resource.width == target.extent.width && resource.height == target.extent.height && resource.baseLevel == 0 && resource.lastLevel == 0 && !(resource.baseArray != 0 && (cube || !layered || resource.baseArray > resource.depthOrLastArray)) && !(cube && resource.depthOrLastArray != 0 && resource.depthOrLastArray != 5) && (resource.dimension == TextureDimension::k2D || resource.dimension == TextureDimension::k2DArray || cube);
+    }
+
     std::shared_ptr<Texture> Sampled(std::span<const std::uint32_t> words, const GuestTextureResource& resource, VkComponentMapping components, bool drawn = false, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D, bool copySource = false) {
         if (!copySource) CheckCurrent();
         CheckResource(resource);
@@ -2490,6 +2499,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     const bool stencil = base.stencilAddress != 0 && resource.baseAddress == base.stencilAddress;
     if (stencil && BytesPerElement(resource.format) != 1u) return nullptr;
     if (base.samples != 1u || resource.dimension == TextureDimension::k2DMsaa) {
+        const LookupOutcomes::Scope refreshTiming(LookupOutcomes::DepthRefresh);
         Require(base.samples > 1u, "multisample reader overlaps a single-sample depth attachment");
         auto* recorder = RecorderFor(context);
         Require(recorder != nullptr, "a native multisampled depth target is sampled only by recorded draws and dispatches");
@@ -2514,12 +2524,12 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     const bool cube = resource.dimension == TextureDimension::kCube;
     const bool layered = cube || (resource.dimension == TextureDimension::k2DArray && resource.depthOrLastArray != 0);
     const bool sampled = stencil || (!layered && !integer);
-    const auto copyFormat = integer ? VK_FORMAT_R16_UINT : d16 ? VK_FORMAT_R16_UNORM : VK_FORMAT_R32_SFLOAT;
-    const bool planes = (format == copyFormat || depthBits) && resource.width == base.extent.width && resource.height == base.extent.height && resource.baseLevel == 0 && resource.lastLevel == 0 && !(resource.baseArray != 0 && (cube || !layered || resource.baseArray > resource.depthOrLastArray)) && !(cube && resource.depthOrLastArray != 0 && resource.depthOrLastArray != 5) && (resource.dimension == TextureDimension::k2D || resource.dimension == TextureDimension::k2DArray || cube);
+    const bool planes = found->PlaneTextureAccepts(resource, depthBits);
     if (!(sampled ? found->SampledAccepts(words, resource) : planes) && found->OverwrittenInMemory()) {
         retireStoringStale(*found);
         return nullptr;
     }
+    const LookupOutcomes::Scope refreshTiming(LookupOutcomes::DepthRefresh);
     found->ApplyFastClear();
     if (sampled) return found->Sampled(words, resource, components, found == drawnDepth);
     Require(found->hostFormat == base.format, "sampling several slices or an integer view of a depth plane that the device stores in another depth format is not implemented");
@@ -2562,6 +2572,15 @@ bool DepthSurfaceHolds(const Context& context, const GuestTextureResource& resou
     if (!depthCopySourceActive) found->CheckCurrent();
     found->CheckResource(resource);
     return true;
+}
+
+bool DepthSurfaceCanSample(const Context& context, const GuestTextureResource& resource) {
+    std::lock_guard lock(surfacesMutex());
+    const auto* found = planeSurface(context.device, resource.baseAddress);
+    if (found == nullptr || found->target.samples != 1u) return false;
+    if (found->SampledAccepts({}, resource)) return true;
+    if (resource.baseAddress == found->target.stencilAddress) return false;
+    return found->hostFormat == found->target.format && found->PlaneTextureAccepts(resource, false) && !DescribeSurface(resource).levelMajor;
 }
 
 void RequireNoNativeDepthFeedback_nid_no_patch(const Context& context, const DepthTarget& target, std::span<const std::shared_ptr<Texture>> sampled) {
@@ -2740,9 +2759,9 @@ bool DepthSurfaceAt(std::uint64_t address) {
     return std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->active->load(std::memory_order_acquire) && !surface->retired && (surface->target.address == address || surface->target.stencilAddress == address); });
 }
 
-bool DepthSurfaceOverlaps(VkDevice device, std::uint64_t address, std::uint64_t bytes) {
+bool DepthSurfaceOverlaps(VkDevice device, std::uint64_t address, std::uint64_t bytes, bool multisampledOnly) {
     std::lock_guard lock(surfacesMutex());
-    return std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->active->load(std::memory_order_acquire) && !surface->retired && surface->context.device == device && surface->Overlaps(address, bytes); });
+    return std::any_of(surfaces().begin(), surfaces().end(), [&](const auto& surface) { return surface->active->load(std::memory_order_acquire) && !surface->retired && surface->context.device == device && (!multisampledOnly || surface->target.samples > 1u) && surface->Overlaps(address, bytes); });
 }
 
 void RetireDepthSurfaces(VkDevice device, std::uint64_t address, std::uint64_t bytes) {
