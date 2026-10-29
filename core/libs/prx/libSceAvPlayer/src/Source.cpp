@@ -404,9 +404,12 @@ public:
     }
 
     void Resume() override {
-        std::lock_guard lock(mutex);
-        paused = false;
-        presentationClock.Resume();
+        {
+            std::lock_guard lock(mutex);
+            paused = false;
+            presentationClock.Resume();
+        }
+        condition.notify_all();
     }
 
     void Jump(std::uint64_t milliseconds) override {
@@ -435,7 +438,13 @@ public:
         condition.notify_all();
     }
 
-    void SetSyncMode(std::uint32_t mode) override { syncMode = mode; }
+    void SetSyncMode(std::uint32_t mode) override {
+        {
+            std::lock_guard lock(mutex);
+            syncMode = mode;
+        }
+        condition.notify_all();
+    }
 
     void SetDemuxVideoBufferSize(std::uint32_t bytes) override {
         {
@@ -1023,7 +1032,8 @@ private:
             return stopping || !decoder.free.empty() || epoch < minEpoch;
         };
         while (!ready()) {
-            if (decoder.video && followsClockLocked()) condition.wait_for(lock, std::chrono::milliseconds(std::max<std::uint64_t>(frameDuration(), 1)));
+            const auto period = decoder.video && followsClockLocked() ? frameDuration() : 0;
+            if (period != 0) condition.wait_for(lock, std::chrono::milliseconds(period));
             else condition.wait(lock);
         }
         if (stopping) return Acquire::Stopping;
