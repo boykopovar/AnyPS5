@@ -5,6 +5,8 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace {
@@ -23,7 +25,13 @@ const bool InstanceLockChecked = [] {
     if (ParseInstanceLockMode(std::getenv("ANYPS5_INSTANCE_LOCK")) == InstanceLockMode::Off) return false;
     const auto root = std::filesystem::current_path();
     if (!HasTitleMetadata(root)) return false;
-    const auto titleId = GetAppTitleId_nid_postfix();
+    AppTitleId titleId{};
+    try {
+        titleId = GetAppTitleId_nid_postfix();
+    } catch (const std::exception& error) {
+        throw std::runtime_error(std::string("cannot read the title ID of the title in ") + root.string() + " for the instance lock: " + error.what() + ". Set " +
+            InstanceLockVariable + "=off to skip this check.");
+    }
     auto backend = MakeHostInstanceLockBackend();
     AcquireInstanceLock(*backend, root, std::string_view(titleId.value, strnlen(titleId.value, sizeof(titleId.value))));
     HeldBackend() = std::move(backend);
