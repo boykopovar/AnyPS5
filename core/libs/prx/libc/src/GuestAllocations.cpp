@@ -32,6 +32,9 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
+#endif
 
 namespace GuestAllocations {
 namespace {
@@ -524,6 +527,52 @@ bool GuestAllocationsForRegistered_nid_postfix(void*, const void* pointer, std::
     return any;
 }
 
+void GuestAllocationsGuestPages_nid_postfix(std::uintptr_t address, std::size_t bytes, std::size_t page, std::uintptr_t* first, std::uintptr_t* end) {
+    std::uintptr_t bias = 0;
+#ifdef __APPLE__
+    struct Search {
+        std::uintptr_t address;
+        std::uintptr_t hostPage;
+        std::uintptr_t bias;
+    } search{address, static_cast<std::uintptr_t>(::sysconf(_SC_PAGESIZE)), 0};
+    dl_iterate_phdr([](dl_phdr_info* image, std::size_t, void* data) {
+        auto& found = *static_cast<Search*>(data);
+        for (unsigned index = 0; index < image->dlpi_phnum; ++index) {
+            const auto& header = image->dlpi_phdr[index];
+            const auto segment = static_cast<std::uintptr_t>(image->dlpi_addr + header.p_vaddr);
+            const auto start = segment & ~(found.hostPage - 1);
+            const auto finish = (segment + header.p_memsz + found.hostPage - 1) & ~(found.hostPage - 1);
+            if (header.p_type == PT_LOAD && found.address >= start && found.address < finish) {
+                found.bias = static_cast<std::uintptr_t>(image->dlpi_addr);
+                return 1;
+            }
+        }
+        return 0;
+    }, &search);
+    bias = search.bias;
+#endif
+    const auto mask = static_cast<std::uintptr_t>(page - 1);
+    *first = bias + ((address - bias) & ~mask);
+    *end = bias + ((address + bytes - bias + mask) & ~mask);
+}
+
+void GuestAllocationsTrimToRegistered_nid_postfix(void*, std::size_t page, const void** pointer, std::size_t* bytes) {
+#ifdef __APPLE__
+    auto start = reinterpret_cast<std::uintptr_t>(*pointer);
+    const auto end = start + *bytes;
+    const auto& ranges = registry().ranges;
+    const auto following = ranges.upper_bound(start);
+    const bool startCovered = following != ranges.begin() && std::prev(following)->first + std::prev(following)->second->bytes > start;
+    if (!startCovered && following != ranges.end() && following->first < end && following->first - start < page) start = following->first;
+    *pointer = reinterpret_cast<const void*>(start);
+    *bytes = end - start;
+#else
+    static_cast<void>(page);
+    static_cast<void>(pointer);
+    static_cast<void>(bytes);
+#endif
+}
+
 bool GuestAllocationsCovers_nid_postfix(void*, const void* pointer, std::size_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
     require(address != 0 && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid guest allocation range");
@@ -611,11 +660,19 @@ RangePatch replaceRange(const void* pointer, std::size_t bytes, bool remove, boo
     return patch;
 }
 
-void applyPatch(const RangePatch& patch) {
-    auto& ranges = registry().ranges;
-    for (const auto key : patch.erased) ranges.erase(key);
-    for (const auto& [key, range] : patch.inserted) ranges.emplace(key, range);
-}
+struct StagedPatch {
+    using Ranges = decltype(Registry::ranges);
+    const RangePatch& patch;
+    Ranges staged;
+    explicit StagedPatch(const RangePatch& source) : patch(source) {
+        for (const auto& [key, range] : patch.inserted) staged.emplace(key, range);
+    }
+    void apply() noexcept {
+        auto& ranges = registry().ranges;
+        for (const auto key : patch.erased) ranges.erase(key);
+        ranges.merge(staged);
+    }
+};
 
 bool allocationRemains(const Range& range, const RangePatch& patch) {
     for (const auto& [key, entry] : patch.inserted) {
@@ -636,8 +693,9 @@ void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, st
     GuestAllocationsRequireUnpinned_nid_postfix(mutation, pointer, bytes);
     recordChange(mutation, pointer, bytes);
     const auto patch = replaceRange(pointer, bytes, false, readable, writable, gpu);
+    StagedPatch staged(patch);
     apply();
-    applyPatch(patch);
+    staged.apply();
 }
 
 void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply) {
@@ -663,8 +721,9 @@ void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std:
         const auto pieceEnd = std::min<std::uint64_t>(end, range.address + range.bytes);
         const auto patch = replaceRange(reinterpret_cast<const void*>(cursor), pieceEnd - cursor, true, false, false, false);
         const bool last = !allocationRemains(range, patch);
+        StagedPatch staged(patch);
         apply(reinterpret_cast<const void*>(cursor), pieceEnd - cursor, reinterpret_cast<const void*>(range.allocationAddress), last);
-        applyPatch(patch);
+        staged.apply();
         if (const auto observer = unmapObserver.load(std::memory_order_acquire)) observer(cursor, pieceEnd - cursor);
         any = true;
         cursor = pieceEnd;
@@ -685,6 +744,42 @@ Lease GuestAllocationsAcquire_nid_postfix() {
         if (range->readable && range->bytes != 0) ranges->push_back(range);
     }
     registry().readableLease = ranges;
+    return Lease(std::move(ranges));
+}
+
+Lease GuestAllocationsAcquireMapped_nid_no_patch(const Mapped& mapped) {
+    std::lock_guard lock(registry().mutex);
+    auto& registered = registry().ranges;
+    std::vector<decltype(registered.begin())> targets;
+    targets.reserve(mapped.size());
+    for (const auto& weak : mapped) {
+        const auto range = weak.lock();
+        if (range == nullptr || !range->readable || range->bytes == 0) continue;
+        const auto found = registered.find(range->address);
+        if (found != registered.end() && found->second == range) targets.push_back(found);
+    }
+    std::sort(targets.begin(), targets.end(), [](const auto& a, const auto& b) { return a->first < b->first; });
+    auto ranges = std::make_shared<Lease::Ranges>();
+    const auto continues = [](const Range& before, const Range& after) {
+        return before.address + before.bytes == after.address && before.readable && after.readable && before.writable == after.writable && before.gpu == after.gpu;
+    };
+    for (const auto target : targets) {
+        if (!ranges->empty() && target->first < ranges->back()->address + ranges->back()->bytes) continue;
+        auto first = target;
+        while (first != registered.begin()) {
+            auto previous = std::prev(first);
+            while (previous != registered.begin() && previous->second->bytes == 0) --previous;
+            if (previous->second->bytes == 0 || !continues(*previous->second, *first->second)) break;
+            first = previous;
+        }
+        for (auto current = first;;) {
+            ranges->push_back(current->second);
+            auto next = std::next(current);
+            while (next != registered.end() && next->second->bytes == 0) ++next;
+            if (next == registered.end() || !continues(*current->second, *next->second)) break;
+            current = next;
+        }
+    }
     return Lease(std::move(ranges));
 }
 

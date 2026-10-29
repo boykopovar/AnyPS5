@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestStacks.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -39,13 +40,22 @@ static_assert(offsetof(RegisterFrame, rsp) == 0x38 && offsetof(RegisterFrame, r8
 static_assert(offsetof(RegisterFrame, rip) == 0x80 && offsetof(RegisterFrame, rflags) == 0x88 && offsetof(RegisterFrame, cs) == 0x90 && offsetof(RegisterFrame, ss) == 0x98);
 static_assert(offsetof(RegisterFrame, fxsave) == 0xa0 && sizeof(RegisterFrame) == 0x2a0);
 
+constexpr int GuestEfault = 14;
 constexpr int GuestEinval = 22;
 constexpr int GuestSigBlock = 1;
 constexpr int GuestSigSetmask = 3;
 constexpr std::uint64_t CarryFlag = 0x1;
 constexpr std::uint32_t McontextFlagMask = 0x7;
+constexpr std::uint32_t McontextHasFpxstate = 0x4;
+constexpr std::uint64_t UserChangeableFlags = 0x254dd5;
+constexpr std::uint64_t UserPrivilegeLevel = 3;
+constexpr std::uint64_t FpFormatNodev = 0x10000;
 constexpr std::uint64_t FpFormatXmm = 0x10002;
+constexpr std::uint64_t FpOwnedNone = 0x20000;
 constexpr std::uint64_t FpOwnedFpu = 0x20001;
+constexpr std::uint64_t FpOwnedPcb = 0x20002;
+constexpr std::uint16_t InitialFpuControlWord = 0x37f;
+constexpr std::uint32_t InitialMxcsr = 0x1f80;
 constexpr std::size_t FxsaveMxcsr = 24;
 constexpr std::size_t FxsaveMxcsrMask = 28;
 constexpr std::uint32_t DefaultMxcsrMask = 0xffbf;
@@ -195,10 +205,14 @@ int APS5_VABI Aps5GetcontextFinish_nid_no_patch(UserUcontext* context, const Reg
     return 0;
 }
 
-int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
-    if (context == nullptr) return Fail(GuestEinval);
+}
+
+namespace {
+
+enum class FpuSource { Context, Current, Initial };
+
+[[noreturn]] void RestoreContext(const UserUcontext* context, FpuSource fpu) {
     const auto& machine = context->mcontext;
-    if (machine.len != sizeof(UserMcontext) || (machine.flags & ~McontextFlagMask) != 0) return Fail(GuestEinval);
     RegisterFrame frame{};
     frame.rax = machine.rax;
     frame.rbx = machine.rbx;
@@ -218,14 +232,46 @@ int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
     frame.r15 = machine.r15;
     frame.rip = machine.rip;
     frame.rflags = machine.rflags;
-    std::memcpy(frame.fxsave, machine.fpstate, sizeof(frame.fxsave));
-    std::uint32_t mxcsr = 0;
-    std::memcpy(&mxcsr, frame.fxsave + FxsaveMxcsr, sizeof(mxcsr));
+    std::uint32_t mxcsr = InitialMxcsr;
+    if (fpu == FpuSource::Context) {
+        std::memcpy(frame.fxsave, machine.fpstate, sizeof(frame.fxsave));
+        std::memcpy(&mxcsr, frame.fxsave + FxsaveMxcsr, sizeof(mxcsr));
+    } else if (fpu == FpuSource::Current) {
+        _fxsave64(frame.fxsave);
+        std::memcpy(&mxcsr, frame.fxsave + FxsaveMxcsr, sizeof(mxcsr));
+    } else {
+        std::memcpy(frame.fxsave, &InitialFpuControlWord, sizeof(InitialFpuControlWord));
+    }
     mxcsr &= HostMxcsrMask();
     std::memcpy(frame.fxsave + FxsaveMxcsr, &mxcsr, sizeof(mxcsr));
     sigprocmask_nid_postfix(GuestSigSetmask, context->sigmask, nullptr);
 
     Aps5ContextRestore_nid_no_patch(&frame);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
+    if (context == nullptr) return Fail(GuestEinval);
+    const auto& machine = context->mcontext;
+    if (machine.len != sizeof(UserMcontext) || (machine.flags & ~McontextFlagMask) != 0) return Fail(GuestEinval);
+    RestoreContext(context, FpuSource::Context);
+}
+
+int SigreturnContext_nid_no_patch(const UserUcontext* context) {
+    if (context == nullptr) return Fail(GuestEfault);
+    const auto& machine = context->mcontext;
+    if ((machine.flags & ~McontextFlagMask) != 0) return Fail(GuestEinval);
+    if (((machine.rflags ^ __builtin_ia32_readeflags_u64()) & ~UserChangeableFlags) != 0) return Fail(GuestEinval);
+    if ((machine.cs & 3) != UserPrivilegeLevel) NotImplemented_nid_no_patch("sigreturn: a %cs that is not a user selector, for which FreeBSD raises SIGBUS");
+    if ((machine.flags & McontextHasFpxstate) != 0) NotImplemented_nid_no_patch("sigreturn: an extended FPU state (_MC_HASFPXSTATE)");
+    if (machine.fpformat == FpFormatNodev) RestoreContext(context, FpuSource::Current);
+    if (machine.fpformat != FpFormatXmm) return Fail(GuestEinval);
+    if (machine.ownedfp == FpOwnedNone) RestoreContext(context, FpuSource::Initial);
+    if (machine.ownedfp != FpOwnedFpu && machine.ownedfp != FpOwnedPcb) return Fail(GuestEinval);
+    RestoreContext(context, FpuSource::Context);
 }
 
 int APS5_VABI Aps5SwapcontextFinish_nid_no_patch(UserUcontext* saved, const UserUcontext* next, const RegisterFrame* frame) {

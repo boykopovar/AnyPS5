@@ -336,13 +336,31 @@ void PadInput::publish(std::uint64_t frame) {
     }
 }
 
+PadInputState PadInput::handOff(int slot, PadInputState state) {
+    auto& held = slots[slot].heldThroughCapture;
+    if (ImeCapturesPad_nid_postfix()) {
+        if (slot == 0) ImePublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
+        held = state.buttons;
+        PadInputState neutral;
+        neutral.hasMotion = false;
+        neutral.deviceKind = state.deviceKind;
+        neutral.intercepted = true;
+        return neutral;
+    }
+    held &= state.buttons;
+    state.buttons &= ~held;
+    if ((held & static_cast<std::uint32_t>(Pad::PadButton::L2)) != 0) state.analogButtonsL2 = 0;
+    if ((held & static_cast<std::uint32_t>(Pad::PadButton::R2)) != 0) state.analogButtonsR2 = 0;
+    return state;
+}
+
 void PadInput::publish(std::uint64_t frame, int slot) {
     if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return;
     if (slot == 0) {
-        const auto state = keyboardMouse.Compose(slots[0].state);
+        const auto state = handOff(0, keyboardMouse.Compose(slots[0].state));
         PadPublishInput_nid_postfix(state);
         if (auto* telemetry = VideoOutTelemetry::Instance(); telemetry != nullptr) VideoOutTelemetry::EmitPadIfChanged(*telemetry, telemetryFilter, frame, state);
     } else {
-        PadPublishInputForPort_nid_postfix(slot, slots[slot].state);
+        PadPublishInputForPort_nid_postfix(slot, handOff(slot, slots[slot].state));
     }
 }

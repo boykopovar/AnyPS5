@@ -151,6 +151,11 @@ struct Ngs2Voice {
     std::uint32_t userFxFlags = 0;
     std::vector<float> samples;
     std::vector<std::vector<float>> customBuffers;
+    std::vector<std::vector<float>> peakMeterHistory;
+    std::uint32_t peakMeterMode = 0;
+    std::uint32_t peakMeterCount = 0;
+    std::uint32_t peakMeterCursor = 0;
+    float peakHeight = 0.0f;
     bool rendering = false;
     bool rendered = false;
     bool hasSamples = false;
@@ -173,6 +178,7 @@ struct Ngs2Rack {
     std::uint32_t maxGrainSamples = 0;
     std::uint32_t maxChannelWorks = 0;
     std::uint32_t maxInputs = 0;
+    std::uint32_t peakMeterBlocks = 8;
     std::uintptr_t userData = 0;
     Ngs2ContextBufferInfo bufferInfo{};
     Ngs2BufferAllocator allocator{};
@@ -200,6 +206,7 @@ struct Ngs2System {
 std::string Ngs2Hex(std::uint32_t value);
 std::size_t Ngs2PcmSampleBytes(std::uint32_t waveformType);
 void Ngs2ReadPcmFrame(std::uint32_t waveformType, std::uint32_t channels, const std::uint8_t* frame, float* output);
+void Ngs2UpdatePeakMeter(Ngs2Voice& voice, std::uint32_t grain);
 const std::uint8_t* Ngs2StreamEnd(const Ngs2Voice& voice, const Ngs2Block& block);
 std::recursive_mutex& Ngs2Mutex();
 

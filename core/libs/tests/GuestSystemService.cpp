@@ -104,6 +104,8 @@ void TestPlayerDialogParam() {
         threw = true;
     }
     Require(threw);
+    Require(sceSystemServiceLaunchPlayerDialog(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceLaunchPlayerDialog(buffer) == SYSTEM_SERVICE_OK);
 }
 
 }

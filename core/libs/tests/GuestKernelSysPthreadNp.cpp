@@ -1,17 +1,20 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
 #include <exception>
 #include <initializer_list>
-#include <stdexcept>
 #include <string_view>
+#include <utility>
 
 namespace {
 
 constexpr int GUEST_EDEADLK = 11;
 constexpr int GUEST_EINVAL = 22;
 constexpr int SCE_FAILED_CALL = static_cast<int>(0x8001ffffu);
+constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
 constexpr unsigned SCE_KERNEL_ERROR_BASE = 0x80020000u;
 constexpr int KIND_ERRORCHECK = 1;
 constexpr int KIND_RECURSIVE = 2;
@@ -29,16 +32,6 @@ void Case(const char* name, TCall call) {
         std::printf("%s: %s\n", name, error.what());
     }
     ++failures;
-}
-
-template<typename TException, typename TCall>
-bool Throws(TCall call) {
-    try {
-        static_cast<void>(call());
-    } catch (const TException&) {
-        return true;
-    }
-    return false;
 }
 
 bool HasKind(const PthreadMutexattr* attr, int kind) {
@@ -63,17 +56,29 @@ void TestKind() {
         }
         if (!LocksTwice(&attr, GUEST_EDEADLK)) return false;
         if (scePthreadMutexattrSetkind(&attr, KIND_RECURSIVE) != 0 || !LocksTwice(&attr, 0)) return false;
-        for (const int kind : {0, 5, -1}) {
-            if (!Throws<std::runtime_error>([&] { return scePthreadMutexattrSetkind(&attr, kind); }) || !HasKind(&attr, KIND_RECURSIVE)) return false;
+        for (const auto [kind, stored] : {std::pair{0, 0}, std::pair{5, 5}, std::pair{-1, -1}, std::pair{0x8000, -32768}, std::pair{0x12345, 0x2345}}) {
+            if (scePthreadMutexattrSetkind(&attr, kind) != 0 || pthread_mutexattr_getkind_np_nid_postfix(attr) != stored) return false;
+            PthreadMutex mutex = nullptr;
+            if (scePthreadMutexInit(&mutex, &attr, nullptr) != SCE_KERNEL_ERROR_EINVAL || mutex != nullptr) return false;
         }
+        if (scePthreadMutexattrSetkind(&attr, 0x10001) != 0 || !HasKind(&attr, KIND_ERRORCHECK) || !LocksTwice(&attr, GUEST_EDEADLK)) return false;
         if (pthread_mutexattr_destroy_nid_postfix(&attr) != 0) return false;
-        return scePthreadMutexattrSetkind(&attr, KIND_NORMAL) == SCE_FAILED_CALL && scePthreadMutexattrSetkind(nullptr, KIND_NORMAL) == SCE_FAILED_CALL;
+        for (PthreadMutexattr* target : {&attr, static_cast<PthreadMutexattr*>(nullptr)}) {
+            for (const int kind : {KIND_NORMAL, 5}) {
+                *__error_nid_postfix() = 0;
+                if (scePthreadMutexattrSetkind(target, kind) != SCE_FAILED_CALL || *__error_nid_postfix() != GUEST_EINVAL) return false;
+            }
+        }
+        return true;
     });
     Case("scePthreadMutexattrGetkind", [] {
         PthreadMutexattr attr = nullptr;
         if (pthread_mutexattr_init_nid_postfix(&attr) != 0) return false;
         for (const int kind : {KIND_RECURSIVE, KIND_NORMAL, KIND_ADAPTIVE, KIND_ERRORCHECK}) {
             if (scePthreadMutexattrSetkind(&attr, kind) != 0 || scePthreadMutexattrGetkind(attr) != static_cast<int>(SCE_KERNEL_ERROR_BASE + static_cast<unsigned>(kind))) return false;
+        }
+        for (const auto [kind, result] : {std::pair{0, 0}, std::pair{5, static_cast<int>(SCE_KERNEL_ERROR_BASE + 5u)}, std::pair{0x12345, static_cast<int>(SCE_KERNEL_ERROR_BASE + 0x2345u)}}) {
+            if (scePthreadMutexattrSetkind(&attr, kind) != 0 || scePthreadMutexattrGetkind(attr) != result) return false;
         }
         if (pthread_mutexattr_destroy_nid_postfix(&attr) != 0) return false;
         return scePthreadMutexattrGetkind(nullptr) == SCE_FAILED_CALL;

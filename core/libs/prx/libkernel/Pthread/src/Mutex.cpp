@@ -5,7 +5,6 @@
 #include "../include/Mutex.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
-#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -13,7 +12,6 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
-#include <string>
 
 namespace {
 
@@ -144,10 +142,7 @@ int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr) {
 }
 
 int APS5_VABI scePthreadMutexattrSetkind(PthreadMutexattr* attr, int kind) {
-    if (!attr || !*attr) return sceKernelError(posixFailure);
-    if (kind < static_cast<int>(MutexType::ErrorCheck) || kind > static_cast<int>(MutexType::Adaptive))
-        NotImplemented_nid_no_patch("scePthreadMutexattrSetkind with a kind other than 1 to 4");
-    return scePthreadMutexattrSettype(attr, kind);
+    return sceKernelError(pthread_mutexattr_setkind_np_nid_postfix(attr, kind));
 }
 
 int APS5_VABI scePthreadMutexattrGetkind(PthreadMutexattr attr) {
@@ -170,6 +165,8 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
 int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char*) {
     if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");
+    if (attr && *attr && ((*attr)->type < MutexType::ErrorCheck || (*attr)->type > MutexType::Adaptive))
+        return SCE_KERNEL_ERROR_EINVAL;
     auto replacement = std::make_unique<PthreadMutexPrivate>();
     if (attr && *attr)
         replacement->SetType((*attr)->type);
@@ -279,8 +276,10 @@ int APS5_VABI scePthreadMutexGetyieldloops(PthreadMutex* mutex, int* count) {
 }
 
 int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count) {
-    if (auto* current = resolveMutex(mutex, true))
-        current->_yieldloops = count;
+    auto* current = resolveMutex(mutex, true);
+    if (!current)
+        return SCE_KERNEL_ERROR_EINVAL;
+    current->_yieldloops = count;
     return 0;
 }
 

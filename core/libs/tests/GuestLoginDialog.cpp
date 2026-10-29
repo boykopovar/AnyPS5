@@ -75,7 +75,13 @@ int main() {
     Require(sceLoginDialogClose() == 0);
     Require(sceLoginDialogTerminate() == 0);
     Require(sceLoginDialogTerminate() == kErrNotInitialized);
+    Require(sceLoginDialogClose() == kErrNotInitialized);
+    Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
+    Require(sceLoginDialogOpen(&param) == kErrNotInitialized);
+    Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceLoginDialogGetResult(&result) == kErrNotInitialized);
     Require(sceLoginDialogGetStatus() == kStatusNone);
+    Require(sceLoginDialogUpdateStatus() == kStatusNone);
 
     Require(sceLoginDialogInitialize() == 0);
     Require(sceLoginDialogGetStatus() == kStatusInitialized);
@@ -85,4 +91,12 @@ int main() {
     Require(sceLoginDialogGetResult(&result) == 0);
     Require(result.result == kResultUserCanceled);
     Require(sceLoginDialogTerminate() == 0);
+    Require(sceLoginDialogTerminate() == kErrNotInitialized);
+    Require(sceLoginDialogClose() == kErrNotInitialized);
+    Require(sceLoginDialogOpen(nullptr) == kErrArgNull);
+    Require(sceLoginDialogOpen(&param) == kErrNotInitialized);
+    Require(sceLoginDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceLoginDialogGetResult(&result) == kErrNotInitialized);
+    Require(sceLoginDialogGetStatus() == kStatusNone);
+    Require(sceLoginDialogUpdateStatus() == kStatusNone);
 }

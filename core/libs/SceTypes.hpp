@@ -1432,7 +1432,9 @@ struct NetEpollEvent {
 
 struct NetCtlNatInfo {
     std::uint32_t size;
-    std::uint8_t opaque[12];
+    std::int32_t stun_status;
+    std::int32_t nat_type;
+    std::uint32_t mapped_addr;
 };
 
 static_assert(sizeof(NetCtlNatInfo) == 16);

@@ -130,6 +130,11 @@ void CheckBandwidthTestShutdownWithDetailedInfo() {
     constexpr int npInvalidArgument = static_cast<int>(0x80550003u);
     Require(sceNpBandwidthTestShutdownWithDetailedInfo() == npInvalidArgument, "sceNpBandwidthTestShutdownWithDetailedInfo", "shutting down a test that never started did not return INVALID_ARGUMENT");
     Require(sceNpBandwidthTestShutdownWithDetailedInfo() == sceNpBandwidthTestShutdown(0, nullptr), "sceNpBandwidthTestShutdownWithDetailedInfo", "the answer differs from sceNpBandwidthTestShutdown");
+    Require(sceNpBandwidthTestAbort(0) == npInvalidArgument, "sceNpBandwidthTestAbort", "aborting a test that never started did not return INVALID_ARGUMENT");
+    int status = -1;
+    Require(sceNpBandwidthTestGetStatus(0, &status) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "the status of a test that never started did not return INVALID_ARGUMENT");
+    Require(status == 0, "sceNpBandwidthTestGetStatus", "the status of a test that never started was not cleared to 0");
+    Require(sceNpBandwidthTestGetStatus(0, nullptr) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "a null status did not return INVALID_ARGUMENT");
 }
 
 }

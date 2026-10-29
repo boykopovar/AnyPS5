@@ -263,6 +263,9 @@ void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         filter.channel_mask = custom.channel_mask;
         if (custom.type == 0) {
             filter = {};
+            filter.index = index;
+            filter.location = 1;
+            filter.type = 0;
         } else if (custom.type == 1) {
             filter.frequency = custom.param.fcq.frequency;
             filter.q = custom.param.fcq.q;

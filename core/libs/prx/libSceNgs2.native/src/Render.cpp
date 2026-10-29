@@ -248,6 +248,48 @@ static void MixInputs(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices, s
     }
 }
 
+void Ngs2UpdatePeakMeter(Ngs2Voice& voice, std::uint32_t grain) {
+    if (voice.peakMeterMode == 0 || voice.channels == 0) {
+        voice.peakHeight = 0.0f;
+        return;
+    }
+    const auto blocks = std::clamp(voice.rack->peakMeterBlocks, 1u, 256u);
+    if (voice.peakMeterHistory.size() != voice.channels ||
+        (!voice.peakMeterHistory.empty() && voice.peakMeterHistory.front().size() != blocks)) {
+        voice.peakMeterHistory.assign(voice.channels, std::vector<float>(blocks, 0.0f));
+        voice.peakMeterCount = 0;
+        voice.peakMeterCursor = 0;
+    }
+    for (std::uint32_t channel = 0; channel < voice.channels; channel++) {
+        float value = 0.0f;
+        if (voice.peakMeterMode == 1) {
+            for (std::uint32_t i = 0; i < grain; i++) value = std::max(value, std::abs(voice.samples[channel * grain + i]));
+        } else {
+            for (std::uint32_t i = 0; i < grain; i++) {
+                const float sample = voice.samples[channel * grain + i];
+                value += sample * sample;
+            }
+        }
+        voice.peakMeterHistory[channel][voice.peakMeterCursor] = value;
+    }
+    voice.peakMeterCursor = (voice.peakMeterCursor + 1) % blocks;
+    voice.peakMeterCount = std::min<std::uint32_t>(voice.peakMeterCount + 1, blocks);
+    float height = 0.0f;
+    for (std::uint32_t channel = 0; channel < voice.channels; channel++) {
+        float channelPeak = 0.0f;
+        if (voice.peakMeterMode == 1) {
+            for (std::uint32_t block = 0; block < voice.peakMeterCount; block++) {
+                channelPeak = std::max(channelPeak, voice.peakMeterHistory[channel][block]);
+            }
+        } else {
+            for (std::uint32_t block = 0; block < voice.peakMeterCount; block++) channelPeak += voice.peakMeterHistory[channel][block];
+            channelPeak = std::sqrt(channelPeak / static_cast<float>(voice.peakMeterCount * grain));
+        }
+        height = std::max(height, channelPeak);
+    }
+    voice.peakHeight = height;
+}
+
 static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices, std::uint32_t grain, std::uint32_t systemRate) {
     if (voice.rendered) return;
     if (voice.rendering) throw std::invalid_argument("NGS2: the voice patches form a cycle");
@@ -268,6 +310,7 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
         if (voice.rack->rackId == SCE_NGS2_RACK_ID_REVERB && voice.reverb) voice.hasSamples = Ngs2ProcessReverb(voice, grain, systemRate);
         Ngs2ProcessLegacyUserFx(voice, grain, systemRate);
         Ngs2ProcessUserFx(voice, grain, systemRate);
+        Ngs2UpdatePeakMeter(voice, grain);
     }
     if (voice.samples.size() != static_cast<std::size_t>(grain) * voice.channels) voice.samples.assign(static_cast<std::size_t>(grain) * voice.channels, 0.0f);
     voice.rendered = true;

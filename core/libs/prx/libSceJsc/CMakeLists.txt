@@ -1,0 +1,15 @@
+add_library(libSceJsc SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceJsc PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceJsc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_jsc_string_tests ${LIBS_INCLUDE_DIR}/tests/GuestJscString.cpp)
+    target_include_directories(guest_jsc_string_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_jsc_string_tests PRIVATE libSceJsc libc)
+    configure_windows_unwind(guest_jsc_string_tests)
+    add_test(NAME guest_jsc_string COMMAND guest_jsc_string_tests)
+    if(WIN32)
+        set_tests_properties(guest_jsc_string PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
+    endif()
+endif()

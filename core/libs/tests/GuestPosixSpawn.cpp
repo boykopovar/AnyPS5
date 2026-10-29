@@ -22,8 +22,11 @@
 #else
 extern "C" int kill(int, int);
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
-#if defined(__linux__)
+#ifndef _WIN32
 extern char** environ;
 #endif
 
@@ -211,6 +214,13 @@ static std::filesystem::path OwnExecutablePath() {
     const DWORD length = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
     own.resize(length);
     return std::filesystem::path(own);
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> executable(size);
+    std::error_code error;
+    if (_NSGetExecutablePath(executable.data(), &size) != 0) return {};
+    return std::filesystem::canonical(executable.data(), error);
 #else
     std::error_code error;
     return std::filesystem::read_symlink("/proc/self/exe", error);
@@ -346,10 +356,12 @@ int main() {
 #ifndef _WIN32
         if (std::strcmp(role, "child-stop") == 0) {
             std::raise(SIGSTOP);
+            std::this_thread::sleep_for(std::chrono::seconds(2));
             std::_Exit(44);
         }
         if (std::strcmp(role, "child-kill-bus") == 0) std::raise(SIGBUS);
         if (std::strcmp(role, "child-kill-sys") == 0) std::raise(SIGSYS);
+        if (std::strcmp(role, "child-kill-usr1") == 0) std::raise(SIGUSR1);
 #endif
         if (std::strcmp(role, "child-sleep") == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -372,6 +384,7 @@ int main() {
     CheckStoppedChild();
     CheckKilledChild("child-kill-bus", 10);
     CheckKilledChild("child-kill-sys", 12);
+    CheckKilledChild("child-kill-usr1", 30);
 #else
     CheckTerminatedChild("child-laze", 0xC0000005u, 11);
     CheckTerminatedChild("child-laze", 0xC0000096u, 4);

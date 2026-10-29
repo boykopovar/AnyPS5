@@ -24,6 +24,15 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "SaveData.hpp"
 #include "prx/libSceSaveData/SaveDataFile.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 static constexpr char SAVE_DIR[] = "_sd";
 
@@ -230,12 +239,20 @@ SaveDataParam load_param(const std::string& real_path) {
     SaveDataParam param{};
     read_param_file(param_path(real_path), &param);
     if (param.mtime == 0) {
+#ifdef _WIN32
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        if (GetFileAttributesExW(std::filesystem::path(real_path).c_str(), GetFileExInfoStandard, &data)) {
+            const auto ticks = static_cast<std::int64_t>((static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime);
+            param.mtime = (ticks - 116444736000000000LL) / 10000000LL;
+        }
+#else
         std::error_code ec;
         const auto written = std::filesystem::last_write_time(real_path, ec);
         if (!ec) {
             const auto system = std::chrono::file_clock::to_sys(written);
             param.mtime = std::chrono::duration_cast<std::chrono::seconds>(system.time_since_epoch()).count();
         }
+#endif
     }
     return param;
 }
@@ -925,7 +942,7 @@ int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* m
 
 static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
     if (cond == nullptr || result == nullptr) {
-        throw std::runtime_error("sceSaveDataDirNameSearchPs4: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     result->hit_num = 0;
     result->set_num = 0;
@@ -934,13 +951,13 @@ static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNa
 
 int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
     const int rc = dirNameSearchPs4(cond, result);
-    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond->user_id, static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond != nullptr ? cond->user_id : -1, static_cast<unsigned>(rc));
     return rc;
 }
 
 static int convert(const SaveDataConvert* param) {
     if (param == nullptr || param->dir_name == nullptr) {
-        throw std::runtime_error("sceSaveDataConvert: null argument");
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     g_convertProgress = 0.0f;
     const auto* nameEnd = static_cast<const char*>(std::memchr(param->dir_name->data, '\0', sizeof(param->dir_name->data)));
@@ -1040,6 +1057,336 @@ int APS5_VABI sceSaveDataDebugTarget() {
     return 0;
 }
 
+int APS5_VABI sceSaveDataAbort() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataBindPsnAccount(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataBindPsnAccountForSystemBackup(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataChangeDatabase(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataChangeInternal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataCheckBackupData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataCheckBackupDataForCdlg(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataCheckBackupDataInternal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataCheckBackupDataLight(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataCheckCloudData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataCheckSaveDataBroken(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataCheckSaveDataVersion(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataCheckSaveDataVersionLatest(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataClearProgress() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataCreateUploadData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataDebugGetThreadId(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataDeleteAllUser(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataDeleteBackupData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataDeleteCloudData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataDeleteProspero(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataDeleteTitle(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataDeleteUser(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataDirNameSearchInternal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataDownload(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetAllSize() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetAppLaunchedUser(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetAutoUploadConditions(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetAutoUploadRequestInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetAutoUploadSetting(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetBoundPsnAccountCount(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetClientThreadPriority(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetCloudQuotaInfo(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetEventInfo() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetMountedSaveDataCount() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetProgress() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetSaveDataCount() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetSaveDataRootDir(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetSaveDataRootPath(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetSaveDataRootUsbPath(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetSavePoint(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataGetUpdatedDataCount(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataInitialize2() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataInitializeForCdlg(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataIsDeletingUsbDb(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataIsMounted() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataManualDelete(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataManualDownload(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataManualUpload(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataMount5() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataMountInternal(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataMountSys(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataRebuildDatabase(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataRegisterEventCallback() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataRestoreBackupData(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataRestoreBackupDataForCdlg(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataRestoreLoadSaveDataMemory(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataSetAutoUploadSetting(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataSetEventInfo() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataSetSaveDataLibraryUser(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataShutdownStart(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataSupportedFakeBrokenStatus(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataSyncCloudList(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataUmountSys(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataUmountWithBackup(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataUnregisterEventCallback() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceSaveDataUpload(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }
 
 namespace {
@@ -1053,7 +1400,7 @@ int APS5_VABI sceSaveDataInitialize(const void* init) {
 }
 
 int APS5_VABI sceSaveDataMount(const SaveDataMountPs4* mount, SaveDataMountResult* mount_result) {
-    if (mount == nullptr || mount->dir_name == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr) return SAVE_DATA_ERROR_PARAMETER;
     if (mount->title_id != nullptr) NotImplemented_nid_no_patch("sceSaveDataMount of another title's save data");
     SaveDataMount3 converted{};
     converted.user_id = mount->user_id;
