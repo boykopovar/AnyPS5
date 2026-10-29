@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include <cstring>
+#include <vector>
 
 namespace {
 
@@ -35,28 +36,41 @@ namespace LibcDetail {
 std::size_t ReadWideScanCharacter(const char* text, char32_t* point) {
     const std::size_t size = DecodeUtf8(text, point);
     if (size == 0) NotImplemented_nid_no_patch("scanf 16-bit wide conversion of input that is not UTF-8");
-    if (*point > 0xFFFF) NotImplemented_nid_no_patch("scanf 16-bit wide conversion of a character outside the BMP");
     return size;
 }
 
+std::size_t EncodeWideScanCharacter(char32_t point, char16_t* units) {
+    if (point <= 0xFFFF) {
+        units[0] = static_cast<char16_t>(point);
+        return 1;
+    }
+    const char32_t value = point - 0x10000;
+    units[0] = static_cast<char16_t>(0xD800 + (value >> 10));
+    units[1] = static_cast<char16_t>(0xDC00 + (value & 0x3FF));
+    return 2;
+}
+
 bool InWideScanset(const std::string& specifier, char32_t point) {
-    std::size_t index = 1;
-    const bool negated = specifier[index] == '^';
-    if (negated) ++index;
     const std::size_t end = specifier.size() - 1;
+    std::vector<char32_t> members;
+    for (std::size_t index = 1; index < end;) {
+        char32_t value = 0;
+        const std::size_t size = DecodeUtf8(specifier.data() + index, &value);
+        if (size == 0 || index + size > end) NotImplemented_nid_no_patch("scanf 16-bit wide scanset that is not UTF-8");
+        members.push_back(value);
+        index += size;
+    }
+    std::size_t first = 0;
+    const bool negated = !members.empty() && members[0] == U'^';
+    if (negated) first = 1;
     bool member = false;
-    for (std::size_t first = index; index < end; ++index) {
-        const auto value = static_cast<unsigned char>(specifier[index]);
-        if (value >= 0x80) NotImplemented_nid_no_patch("scanf 16-bit wide scanset with a character outside ASCII");
-        if (specifier[index] == '-' && index != first && index + 1 < end) {
-            const auto low = static_cast<unsigned char>(specifier[index - 1]);
-            const auto high = static_cast<unsigned char>(specifier[index + 1]);
-            if (high >= 0x80) NotImplemented_nid_no_patch("scanf 16-bit wide scanset with a character outside ASCII");
-            if (point >= low && point <= high) member = true;
+    for (std::size_t index = first; index < members.size(); ++index) {
+        if (members[index] == U'-' && index != first && index + 1 < members.size()) {
+            if (point >= members[index - 1] && point <= members[index + 1]) member = true;
             ++index;
             continue;
         }
-        if (point == value) member = true;
+        if (point == members[index]) member = true;
     }
     return member != negated;
 }
