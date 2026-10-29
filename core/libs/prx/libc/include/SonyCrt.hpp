@@ -29,11 +29,17 @@ inline void APS5_VABI SonyDefaultConstraintHandler(const char* message, void* po
     std::abort();
 }
 
+#if defined(__ELF__) && (defined(__GNUC__) || defined(__clang__))
+[[gnu::visibility("hidden")]]
+#endif
 inline std::mutex& SonyConstraintMutex() {
     static std::mutex mutex;
     return mutex;
 }
 
+#if defined(__ELF__) && (defined(__GNUC__) || defined(__clang__))
+[[gnu::visibility("hidden")]]
+#endif
 inline SonyConstraintHandler& SonyConstraintHandlerSlot() {
     static SonyConstraintHandler handler = SonyDefaultConstraintHandler;
     return handler;

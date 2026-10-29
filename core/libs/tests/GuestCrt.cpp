@@ -233,7 +233,6 @@ int main() {
     known.tm_year = 57 - 1900;
     Require(asctime_s_nid_postfix(text, sizeof(text), &known) == 0 && std::strcmp(text, "Thu Jan  1 00:00:00 0057\n") == 0);
     known.tm_year = 70;
-    known.tm_year = 70;
     known.tm_mday = 32;
     text[0] = 'x';
     Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
@@ -263,6 +262,28 @@ int main() {
     Require(LibcViolation("ctime_s: bad argument"));
     std::memset(libcText, 'x', sizeof(libcText));
     Require(ctime_s_nid_postfix(libcText, std::size_t{1} << 32, &epoch) == 0 && std::strcmp(libcText, text) == 0 && libcText[26] == 'x');
+    Require(asctime_s_nid_postfix(nullptr, sizeof(text), nullptr) == EINVAL);
+    Require(LibcViolation("asctime_s: bad destination argument"));
+    text[0] = 'x';
+    Require(asctime_s_nid_postfix(text, 0, nullptr) == EINVAL && text[0] == 'x');
+    Require(LibcViolation("asctime_s: bad destination argument"));
+    const std::int64_t unconvertible = INT64_MAX;
+    libcText[0] = 'x';
+    Require(ctime_s_nid_postfix(libcText, 25, &unconvertible) == EINVAL && libcText[0] == '\0');
+    Require(LibcViolation("ctime_s: bad argument"));
+    struct FieldLimit { int GuestTm::*field; int low; int high; };
+    for (const FieldLimit limit : {FieldLimit{&GuestTm::tm_sec, 0, 60}, FieldLimit{&GuestTm::tm_min, 0, 59}, FieldLimit{&GuestTm::tm_hour, 0, 23},
+             FieldLimit{&GuestTm::tm_mday, 1, 31}, FieldLimit{&GuestTm::tm_mon, 0, 11}, FieldLimit{&GuestTm::tm_wday, 0, 6},
+             FieldLimit{&GuestTm::tm_yday, 0, 365}, FieldLimit{&GuestTm::tm_year, -1900, 9999 - 1900}}) {
+        for (const int value : {limit.low - 1, limit.low, limit.high, limit.high + 1}) {
+            GuestTm fields = known;
+            fields.*limit.field = value;
+            text[0] = 'x';
+            const bool valid = value >= limit.low && value <= limit.high;
+            Require(asctime_s_nid_postfix(text, sizeof(text), &fields) == (valid ? 0 : EINVAL));
+            Require(valid ? (g_libcConstraintCalls == 0 && std::strlen(text) == 25) : (text[0] == '\0' && LibcViolation("asctime_s: bad argument")));
+        }
+    }
     set_constraint_handler_s_nid_postfix(previousLibcHandler);
     Require(sceAmprCtimeS(text, 25, &epoch) == EINVAL);
     text[0] = 'x';
