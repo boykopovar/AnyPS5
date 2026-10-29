@@ -200,6 +200,32 @@ static std::optional<std::uint64_t> ConstantSyscallNumber(const std::vector<std:
     return std::nullopt;
 }
 
+struct ActivePrefixes {
+    bool OperandSize;
+    std::uint8_t Rex;
+    std::size_t Count;
+};
+
+static ActivePrefixes ActivePrefixesBefore(const std::vector<std::uint8_t>& code, const std::size_t opcode) {
+    ActivePrefixes prefixes{false, 0, 0};
+    std::size_t start = opcode;
+    if (start > 0 && (code[start - 1] & 0xF0) == 0x40) {
+        prefixes.Rex = code[start - 1];
+        --start;
+    }
+    while (start > 0) {
+        const std::uint8_t prefix = code[start - 1];
+        if (prefix == 0x66)
+            prefixes.OperandSize = true;
+        else if (prefix != 0x67 && prefix != 0xF0 && prefix != 0xF2 && prefix != 0xF3 &&
+                 prefix != 0x26 && prefix != 0x2E && prefix != 0x36 && prefix != 0x3E && prefix != 0x64 && prefix != 0x65)
+            break;
+        --start;
+    }
+    prefixes.Count = opcode - start;
+    return prefixes;
+}
+
 static std::optional<std::uint64_t> ConstantRaxSetEndingAt(const std::vector<std::uint8_t>& code, const std::size_t end) {
     if (end >= 10 && code[end - 10] == 0x48 && code[end - 9] == 0xB8) {
         std::uint64_t value = 0;
@@ -212,11 +238,19 @@ static std::optional<std::uint64_t> ConstantRaxSetEndingAt(const std::vector<std
         return static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<std::int32_t>(immediate)));
     }
     if (end >= 5 && code[end - 5] == 0xB8) {
-        std::memcpy(&immediate, code.data() + end - 4, sizeof(immediate));
-        return immediate;
+        const ActivePrefixes prefixes = ActivePrefixesBefore(code, end - 5);
+        if (!prefixes.OperandSize && (prefixes.Rex & 0x09) == 0) {
+            std::memcpy(&immediate, code.data() + end - 4, sizeof(immediate));
+            return immediate;
+        }
     }
-    if (end >= 2 && (code[end - 2] == 0x31 || code[end - 2] == 0x33) && code[end - 1] == 0xC0)
-        return 0;
+    if (end >= 2 && (code[end - 2] == 0x31 || code[end - 2] == 0x33) && code[end - 1] == 0xC0) {
+        const ActivePrefixes prefixes = ActivePrefixesBefore(code, end - 2);
+        const bool wordSized = prefixes.OperandSize && (prefixes.Rex & 0x08) == 0;
+        const bool extendedOperand = (prefixes.Rex & 0x05) != 0;
+        if (!wordSized && !extendedOperand)
+            return 0;
+    }
     return std::nullopt;
 }
 
@@ -227,10 +261,16 @@ struct LowRaxWrite {
 };
 
 static std::optional<LowRaxWrite> ImmediateLowRaxWriteEndingAt(const std::vector<std::uint8_t>& code, const std::size_t end) {
-    if (end >= 2 && code[end - 2] == 0xB0)
-        return LowRaxWrite{2, 0xFF, code[end - 1]};
-    if (end >= 4 && code[end - 4] == 0x66 && code[end - 3] == 0xB8)
-        return LowRaxWrite{4, 0xFFFF, static_cast<std::uint64_t>(code[end - 2]) | static_cast<std::uint64_t>(code[end - 1]) << 8};
+    if (end >= 2 && code[end - 2] == 0xB0) {
+        const ActivePrefixes prefixes = ActivePrefixesBefore(code, end - 2);
+        if ((prefixes.Rex & 0x01) == 0)
+            return LowRaxWrite{prefixes.Count + 2, 0xFF, code[end - 1]};
+        return LowRaxWrite{prefixes.Count + 2, 0, 0};
+    }
+    if (end >= 4 && code[end - 4] == 0x66 && code[end - 3] == 0xB8) {
+        const std::size_t length = end >= 5 && (code[end - 5] & 0xF0) == 0x40 ? 5 : 4;
+        return LowRaxWrite{length, 0xFFFF, static_cast<std::uint64_t>(code[end - 2]) | static_cast<std::uint64_t>(code[end - 1]) << 8};
+    }
     return std::nullopt;
 }
 

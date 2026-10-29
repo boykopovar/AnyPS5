@@ -128,6 +128,11 @@ int main() {
     Require(cleared.form == 0 && cleared.effectWeightX == 1.0f);
     Require(sceFontGetFontMetrics(plain, 1, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     Require(sceFontGetFontMetrics(nullptr, 1, nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontSetEffectWeight(nullptr, 1.0f, 1.0f, 0) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontSetEffectWeight(plain, 1.0f, 1.0f, 1) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontSetEffectSlant(nullptr, 0.0f) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontSetScalePixel(nullptr, 16.0f, 16.0f) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontCloseFont(nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
 
     for (FontHandle font : {plain, typo, versionOne, os2Only}) Require(sceFontCloseFont(font) == SCE_FONT_OK);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);

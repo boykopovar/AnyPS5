@@ -47,6 +47,9 @@ struct String {
     std::uint64_t capacity;
 };
 
+void* AllocateStringStorage(std::size_t bytes);
+void ReleaseStringStorage(String& string);
+
 struct CollateFacet {
     Facet base;
     const void* collation;
@@ -187,5 +190,9 @@ static_assert(offsetof(NumpunctVtable, truename) == 0x40);
 static_assert(alignof(LocinfoStorage) == 8);
 
 }
+
+inline constexpr std::size_t kNumPutCharVtableSlots = 14;
+static_assert(kNumPutCharVtableSlots * sizeof(std::uintptr_t) == 112);
+extern "C" std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots];
 
 #endif

@@ -63,6 +63,9 @@ void CheckUnmountedCalls() {
     SaveDataBackup nullDirBackup{};
     Check(sceSaveDataBackup(&nullDirBackup) == SaveDataErrorParameter, "backup null dir_name is PARAMETER");
     Check(sceSaveDataGetEventResult(nullptr, nullptr) == SaveDataErrorParameter, "getEventResult null event is PARAMETER");
+    SaveDataEvent emptyEvent{};
+    Check(sceSaveDataGetEventResult(nullptr, &emptyEvent) == SaveDataErrorNotFound, "getEventResult on empty queue returns NOT_FOUND");
+    Check(sceSaveDataGetEventResult(&emptyEvent, nullptr) == SaveDataErrorParameter, "getEventResult null result pointer is PARAMETER");
 }
 
 void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
