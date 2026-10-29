@@ -20,6 +20,7 @@
 #include "AudioOutShutdown.hpp"
 #include "AudioOut2PadMix.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "prx/libScePad/include/PadRumbleIntensity.hpp"
 
 static constexpr int PORT_TYPE_MAIN = 0;
 static constexpr int PORT_TYPE_BGM = 1;
@@ -291,7 +292,7 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
         queueSize = checkedBufferSize(port.samplesNum, port.padLayout.channels, sizeof(float));
         const auto pad = prepareVibration(port, data);
         padFrames.resize(static_cast<std::size_t>(port.samplesNum) * port.padLayout.channels);
-        AudioOut2WritePadFrames(pad.data(), port.padLayout, padFrames.data(), port.samplesNum);
+        AudioOut2WritePadFrames(pad.data(), port.padLayout, padFrames.data(), port.samplesNum, Pad::RumblePercent());
         queueData = padFrames.data();
     } else {
         queueData = prepareBuffer(port, data, prepareBuf);

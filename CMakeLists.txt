@@ -65,6 +65,7 @@ option(ANYPS5_ENABLE_ASAN "Build Linux targets with AddressSanitizer and use an 
 option(ANYPS5_ENABLE_TSAN "Build Linux targets with ThreadSanitizer" OFF)
 option(APS5_ENABLE_TIMING_LOG "Write frame timings asynchronously to frame-timing.log" OFF)
 option(APS5_ENABLE_TRACY "Build the Tracy profiler client and report performance timer scopes as Tracy zones" OFF)
+option(ANYPS5_LIBRESSL_ORACLE "Build guest_libressl_oracle, which compares libSceLibreSsl with LibreSSL 2.5.4 downloaded from ftp.openbsd.org" OFF)
 option(ANYPS5_USE_SYSTEM_DEPS "Resolve SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools from the system instead of the bundled submodules" OFF)
 add_compile_definitions(APS5_ENABLE_TIMING_LOG=$<BOOL:${APS5_ENABLE_TIMING_LOG}>)
 include(cmake/SystemDeps.cmake)
