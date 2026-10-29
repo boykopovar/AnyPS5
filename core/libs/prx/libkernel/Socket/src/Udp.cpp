@@ -1205,6 +1205,10 @@ int APS5_VABI setsockopt_nid_postfix(int descriptor, int level, int option,
 }
 int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
                                     void* value, std::uint32_t* length) {
+    int netError = 0;
+    if (!GuestSockets::IsOpen(descriptor) && KernelGetSocketOption_nid_no_patch(descriptor, level, option, value, length, &netError)) {
+        return netError == 0 ? 0 : Fail(netError);
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (level != 0xffff && level != 0 && level != 6 && level != 41) return Fail(22);

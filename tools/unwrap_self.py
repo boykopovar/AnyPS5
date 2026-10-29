@@ -11,16 +11,18 @@ differ inside a container:
     bytes holding flags, data offset, size and the size again. A record with flag
     0x800 holds the data of the program header whose index is in flags bits 20
     and up. Segments the table does not cover are placed by the vaddr to file
-    mapping of the PT_LOAD that contains them. Segments without a vaddr that
-    follow the last recorded one in the ELF are stored right after it, back to
-    back in ELF order, except a PT_NOTE, which the container leaves out and which
-    is emitted without file bytes. Some dumps end right after the recorded ones
-    and leave out the version segment as well, so one that would run past the
-    end of the file is emitted without file bytes too. Other segments without a
-    vaddr carry the shift of the last placed one.
+    mapping of the PT_LOAD that contains them, including a PT_PHDR at vaddr zero.
+    Other segments without a vaddr that follow the last recorded one in the ELF
+    are stored right after it, back to back in ELF order, except a PT_NOTE, which
+    the container leaves out and which is emitted without file bytes. Some dumps
+    end right after the recorded ones and leave out the version segment as well,
+    so one that would run past the end of the file is emitted without file bytes
+    too. Other segments without a vaddr carry the shift of the last placed one.
   - The segments are packed without honouring p_align, while ELF requires
     p_offset % p_align == p_vaddr % p_align. Every region is copied to an offset
-    that satisfies it, which the relinker enforces on guest modules.
+    that satisfies it, which the relinker enforces on guest modules. The ELF
+    header points to the rewritten table at the mapped PT_PHDR offset, when
+    present. A PT_PHDR mapping different bytes from the input table is refused.
 
 Only decrypted containers are handled. A container whose load segments all look
 encrypted is refused instead of copied: the entropy of each load segment is
@@ -50,6 +52,7 @@ MAX_OUTPUT_FACTOR = 4
 MIN_OUTPUT_LIMIT = 256 * 1024 * 1024
 PT_LOAD = 1
 PT_NOTE = 4
+PT_PHDR = 6
 ENTROPY_LIMIT = 7.5
 ENTROPY_SAMPLE = 0x10000
 
@@ -58,7 +61,7 @@ PHDR_NAMES = {
     2: "PT_DYNAMIC",
     3: "PT_INTERP",
     4: "PT_NOTE",
-    6: "PT_PHDR",
+    PT_PHDR: "PT_PHDR",
     7: "PT_TLS",
     0x6474E550: "PT_GNU_EH_FRAME",
     0x6474E551: "PT_GNU_STACK",
@@ -213,7 +216,7 @@ def place_segments(data, headers, records):
             if header["size"] and (tail is None or header["offset"] > tail[0]):
                 tail = (header["offset"], header["source"] - header["offset"])
             continue
-        if header["vaddr"] != 0:
+        if header["vaddr"] != 0 or header["type"] == PT_PHDR:
             host = load_for(header["vaddr"], header["size"])
             if host is None:
                 if header["size"] == 0:
@@ -273,7 +276,23 @@ def unwrap(path, output, verbose=False):
 
     records = read_records(data)
     inner, elf_header, headers = parse_elf(data)
+    phdrs = [header for header in headers if header["type"] == PT_PHDR]
+    if len(phdrs) > 1:
+        raise Refused("more than one PT_PHDR segment")
+    phdr = phdrs[0] if phdrs else None
+    if phdr is not None:
+        if phdr["size"] < len(headers) * 56 or phdr["memory"] < len(headers) * 56:
+            raise Refused("PT_PHDR does not cover the program header table")
+        if any(header["type"] == PT_LOAD and header["index"] < phdr["index"] for header in headers):
+            raise Refused("PT_PHDR must precede the load segments")
     place_segments(data, headers, records)
+    if phdr is not None:
+        if phdr["host"] is None:
+            raise Refused("PT_PHDR is not in a file-backed load segment")
+        table = inner + struct.unpack_from("<Q", elf_header, 0x20)[0]
+        table_size = len(headers) * 56
+        if data[phdr["source"]:phdr["source"] + table_size] != data[table:table + table_size]:
+            raise Refused("PT_PHDR does not map the program header table")
     check_decrypted(data, headers)
 
     regions = []
@@ -357,6 +376,9 @@ def unwrap(path, output, verbose=False):
         if header["new"] + header["size"] > len(result):
             raise Refused("segment %d escaped the output" % header["index"])
 
+    if phdr is not None:
+        program_offset = phdr["new"]
+        struct.pack_into("<Q", elf_header, 0x20, program_offset)
     result[0:0x40] = elf_header
     struct.pack_into("<Q", result, 0x28, 0)
     struct.pack_into("<H", result, 0x3C, 0)

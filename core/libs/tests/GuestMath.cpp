@@ -13,6 +13,7 @@
 #include <cstring>
 #include <limits>
 #include <initializer_list>
+#include <source_location>
 #include <xmmintrin.h>
 
 static_assert(sizeof(GuestFloatingPointEnvironment) == 32);
@@ -51,7 +52,11 @@ extern DinkumwareFloatCharacteristics _Flt_nid_postfix;
 extern DinkumwareFloatCharacteristics _Dbl_nid_postfix;
 extern DinkumwareFloatCharacteristics _Ldbl_nid_postfix;
 }
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
+    std::abort();
+}
 constexpr int StandardExceptions = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
 
 static void CheckSquareRoot() {
@@ -1894,11 +1899,15 @@ static void CheckMissingClassificationExports() {
     Require(isnanf_nid_postfix(0.f) == 0 && isnanf_nid_postfix(-1.f) == 0);
 
     const long double negativeNan = std::copysign(std::numeric_limits<long double>::quiet_NaN(), -1.L);
-    Require(__signbitl_nid_postfix(0.L) == 0 && __signbitl_nid_postfix(-0.L) == 1);
-    Require(__signbitl_nid_postfix(1.L) == 0 && __signbitl_nid_postfix(-1.L) == 1);
+    Require(__signbitl_nid_postfix(0.L) == 0 && __signbitl_nid_postfix(-0.L) == 0x8000);
+    Require(__signbitl_nid_postfix(1.L) == 0 && __signbitl_nid_postfix(-1.L) == 0x8000);
     Require(__signbitl_nid_postfix(std::numeric_limits<long double>::infinity()) == 0);
-    Require(__signbitl_nid_postfix(-std::numeric_limits<long double>::infinity()) == 1);
-    Require(__signbitl_nid_postfix(negativeNan) == 1);
+    Require(__signbitl_nid_postfix(-std::numeric_limits<long double>::infinity()) == 0x8000);
+    Require(__signbitl_nid_postfix(negativeNan) == 0x8000);
+    Require(__signbit_nid_postfix(0.0) == 0 && __signbit_nid_postfix(-0.0) == 0x8000 && __signbit_nid_postfix(-1e-310) == 0x8000);
+    Require(__signbit_nid_postfix(std::copysign(std::numeric_limits<double>::quiet_NaN(), -1.0)) == 0x8000);
+    Require(__signbitf_nid_postfix(1.f) == 0 && __signbitf_nid_postfix(-0.f) == 0x8000 && __signbitf_nid_postfix(-infinity) == 0x8000);
+    Require(__signbitf_nid_postfix(nan) == 0 && __signbitf_nid_postfix(std::copysign(nan, -1.f)) == 0x8000);
 }
 
 static void CheckFloatMathExports() {

@@ -226,6 +226,10 @@ def page(points):
     ]) + "\n"
 
 
+def same_location(first, second):
+    return os.path.normcase(os.path.realpath(first)) == os.path.normcase(os.path.realpath(second))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
@@ -236,10 +240,10 @@ def main(argv=None):
     try:
         for index, path in enumerate(outputs):
             for other in outputs[index + 1:]:
-                if (path.exists() and other.exists() and path.samefile(other)) or path.resolve() == other.resolve():
+                if (path.exists() and other.exists() and path.samefile(other)) or same_location(path, other):
                     raise ValueError(f"generated reports cannot alias each other: {path.name} and {other.name}")
         if args.cache:
-            if any(args.cache.resolve() == path.resolve() or
+            if any(same_location(args.cache, path) or
                    (args.cache.exists() and path.exists() and args.cache.samefile(path)) for path in outputs):
                 raise ValueError("history cache must differ from generated reports")
         points = collect(args.ref, args.cache)

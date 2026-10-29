@@ -97,6 +97,44 @@ def instruction(listing, mnemonic):
     return next(line for line in listing if pattern.search(line))
 
 
+def with_relocation(module, table_offset, index, slot, symbol_index, kind):
+    image = bytearray(module)
+    struct.pack_into("<QQq", image, table_offset + index * 24, slot, (symbol_index << 32) | kind, 0)
+    return bytes(image)
+
+
+class ImportRelocationTests(unittest.TestCase):
+    def test_none_relocations_do_not_read_the_symbol_or_add_a_slot(self):
+        for table in (0x2200, 0x2280):
+            for symbol_index in (0, 1, 0xFFFFFFFF):
+                with self.subTest(table=table, symbol_index=symbol_index):
+                    size_tag = 8 if table == 0x2200 else 2
+                    module = build_module(tags=DEFAULT_TAGS + (7, 8), values={size_tag: 24}, relocations=(), glob_dats=())
+                    module = with_relocation(module, table, 0, SLOT, symbol_index, 0)
+                    self.assertEqual(annotate_module.Module(module).imports(), {})
+
+    def test_none_relocation_does_not_replace_a_real_import(self):
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        for table, kind in ((0x2200, 6), (0x2280, 7)):
+            for none_index in (0, 1):
+                with self.subTest(table=table, none_index=none_index):
+                    size_tag = 8 if table == 0x2200 else 2
+                    module = build_module(tags=DEFAULT_TAGS + (7, 8), values={size_tag: 48}, symbols=symbols,
+                                          relocations=(), glob_dats=())
+                    module = with_relocation(module, table, none_index, SLOT, 3, 0)
+                    module = with_relocation(module, table, 1 - none_index, SLOT, 1, kind)
+                    self.assertEqual(annotate_module.Module(module).imports(), {SLOT: symbol_name(IMPORT_NAME)})
+
+    def test_real_import_with_invalid_symbol_still_fails(self):
+        for table, kind in ((0x2200, 6), (0x2280, 7)):
+            with self.subTest(table=table):
+                size_tag = 8 if table == 0x2200 else 2
+                module = build_module(tags=DEFAULT_TAGS + (7, 8), values={size_tag: 24}, relocations=(), glob_dats=())
+                module = with_relocation(module, table, 0, SLOT, 0xFFFFFFFF, kind)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "symbol index .* is outside"):
+                    annotate_module.Module(module).imports()
+
+
 class ObjdumpDiscoveryTests(unittest.TestCase):
     def discover(self, versions):
         def which(name):
@@ -194,6 +232,26 @@ class AnnotateModuleTests(unittest.TestCase):
     def test_prefixed_stub_is_recognised(self):
         self.annotate(build_module(code=code_bytes(b"\xf2")))
         self.assertTrue(instruction(self.read(".asm").splitlines(), "call").endswith("; -> " + IMPORT_NAME))
+
+    def test_none_relocation_does_not_annotate_a_stub_or_call(self):
+        module = with_relocation(build_module(), 0x2280, 0, SLOT, 1, 0)
+        summary = self.annotate(module)
+        self.assertIn("0 imports, 1 exports, 0 tls, 0 stubs", summary)
+        self.assertEqual(self.read(".imports.txt"), "")
+        listing = self.read(".asm")
+        self.assertNotIn("; GOT ", listing)
+        self.assertNotIn("; -> ", listing)
+        self.assertIn("; ===== export " + EXPORT_NAME, listing)
+
+    def test_none_relocation_keeps_the_real_import_annotation(self):
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        module = build_module(symbols=symbols, relocations=((SLOT, 1), (SLOT, 3)))
+        module = with_relocation(module, 0x2280, 1, SLOT, 3, 0)
+        self.annotate(module)
+        self.assertEqual(self.read(".imports.txt"), "%#x %s %s\n" % (SLOT, symbol_name(IMPORT_NAME), IMPORT_NAME))
+        listing = self.read(".asm").splitlines()
+        self.assertTrue(instruction(listing, "jmp").endswith("; GOT " + IMPORT_NAME))
+        self.assertTrue(instruction(listing, "call").endswith("; -> " + IMPORT_NAME))
 
     def test_tls_symbol_is_listed_but_not_an_address(self):
         symbols = DEFAULT_SYMBOLS + [(TLS_NAME, 1, 0x16, EXPORT_ADDRESS)]

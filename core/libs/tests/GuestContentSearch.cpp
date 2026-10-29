@@ -133,6 +133,13 @@ int main() {
     Require(sceContentSearchCloseMetadata(1) == ErrorInvalidArgument);
 
     Require(sceContentSearchTerm() == 0);
+    Require(sceContentSearchTerm() == ErrorNotInitialized);
+    Require(sceContentSearchOpenMetadata(nullptr, nullptr) == ErrorNotInitialized);
+    Require(sceContentSearchOpenMetadataByContentId(1, nullptr) == ErrorNotInitialized);
+    Require(sceContentSearchGetTotalContentSize(&columnSet, 1, &size, &updateId) == ErrorNotInitialized);
+    Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, &updateId) == ErrorNotInitialized);
+    Require(sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 2, &count, infos, &updateId) == ErrorNotInitialized);
+    Require(sceContentSearchCloseMetadata(1) == ErrorNotInitialized);
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == ErrorNotInitialized);
     Require(updateId == -1);
     constexpr int binderResult = static_cast<int>(0x809D000F);

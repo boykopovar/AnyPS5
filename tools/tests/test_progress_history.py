@@ -268,6 +268,32 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertEqual(report.read_text(encoding="utf-8"), "existing json")
             self.assertEqual(alias.read_text(encoding="utf-8"), "existing json")
 
+    def test_main_symbolic_link_loops_do_not_escape_as_tracebacks(self):
+        point = {"date": "2026-01-01", "commit": "abc1234",
+                 "libraries": {"done": 1, "total": 2, "percent": 50.0},
+                 "shaders": {"done": 3, "total": 4, "percent": 75.0}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            loop = root / "loop"
+            try:
+                os.symlink(loop, loop)
+            except OSError:
+                self.skipTest("symbolic links unavailable")
+            with self.subTest("cache"):
+                output = root / "site"
+                with patch.object(progress_history, "collect", return_value=[point]) as collect:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        progress_history.main([str(output), "--cache", str(loop)])
+                collect.assert_called_once_with("HEAD", loop)
+                self.assertEqual(json.loads((output / "history.json").read_text(encoding="utf-8")), [point])
+            with self.subTest("output"):
+                errors = io.StringIO()
+                with patch.object(progress_history, "collect", return_value=[point]):
+                    with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                        progress_history.main([str(loop), "--cache", str(root / "counts.json")])
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn(str(loop), errors.getvalue())
+
 
 
 if __name__ == "__main__":
