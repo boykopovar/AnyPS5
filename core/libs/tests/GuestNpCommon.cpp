@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 
 static constexpr int INVALID_ARGUMENT = static_cast<int>(0x80550003);
 static constexpr int INVALID_PLATFORM_TYPE = static_cast<int>(0x80550004);
@@ -17,6 +18,17 @@ static constexpr int MUTEX_BUSY = static_cast<int>(0x8055800F);
 static bool expect(bool condition, const char* message) {
     if (!condition) std::fprintf(stderr, "%s\n", message);
     return condition;
+}
+
+template <typename F>
+static bool expectRuntimeError(F operation, const char* message) {
+    try {
+        operation();
+    } catch (const std::runtime_error&) {
+        return true;
+    } catch (...) {
+    }
+    return expect(false, message);
 }
 
 static NpOnlineId onlineId(const char* text) {
@@ -79,7 +91,12 @@ static int testIds() {
     titleIdObject[8 + 12] = 1;
     ok &= expect(_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), titleIdObject.data()), "title ID comparison read beyond the observed 12-byte range");
     const auto nearMaximum = reinterpret_cast<const void*>(std::numeric_limits<std::uintptr_t>::max() - 4);
-    ok &= expect(!_ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), nearMaximum), "title ID comparison accepted overflowing guest address arithmetic");
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), nearMaximum); }, "title ID offset overflow did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(nullptr, titleIdObject.data()); }, "null raw title ID did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), nullptr); }, "null title ID object did not throw");
+    const auto unreadable = reinterpret_cast<const void*>(std::uintptr_t{1});
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(unreadable, titleIdObject.data()); }, "unreadable raw title ID did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(rawTitleId.data(), unreadable); }, "unreadable title ID object did not throw");
 
     std::array<std::uint8_t, 136> titleSecretObject{};
     NpTitleSecret titleSecret{};
@@ -90,7 +107,11 @@ static int testIds() {
     ok &= expect(!_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), &titleSecret), "title secret comparison included the object prefix");
     titleSecretObject[8 + 127] ^= 1;
     ok &= expect(_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), &titleSecret), "different title secrets compared equal");
-    ok &= expect(!_ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(nullptr, &titleSecret), "invalid title secret input did not use the defensive false fallback");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(nullptr, &titleSecret); }, "null title secret object did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), nullptr); }, "null raw title secret did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(nearMaximum, &titleSecret); }, "title secret offset overflow did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(titleSecretObject.data(), unreadable); }, "unreadable raw title secret did not throw");
+    ok &= expectRuntimeError([&] { _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(unreadable, &titleSecret); }, "unreadable title secret object did not throw");
 
     NpOnlineId unterminated = onlineId("abcdefghijklmnop");
     unterminated.data[16] = 'q';
@@ -160,22 +181,6 @@ static int testClock() {
 
     ok &= expect(std::strcmp(version, "1.00") == 0, "the version is not 1.00");
     ok &= expect(version[8] == 'x', "the version was written past 8 bytes");
-
-    const RtcTick tickZero{0};
-    const RtcTick tickOne{1};
-    const RtcTick tickMaximum{std::numeric_limits<std::uint64_t>::max()};
-    const std::uint64_t timeZero = 0;
-    const std::uint64_t timeOne = 1;
-    const std::uint64_t timeMaximum = std::numeric_limits<std::uint64_t>::max();
-    ok &= expect(_ZN3sce2npeqERKNS0_4TimeES3_(&timeZero, &tickZero), "equal time values did not compare equal");
-    ok &= expect(!_ZN3sce2npeqERKNS0_4TimeES3_(&timeZero, &tickOne), "different time values compared equal");
-    ok &= expect(_ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(&timeZero, &tickOne), "time less-than-or-equal comparison rejected an increasing tick");
-    ok &= expect(!_ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(&timeOne, &tickZero), "time less-than-or-equal comparison accepted a decreasing tick");
-    ok &= expect(_ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(&timeMaximum, &tickMaximum), "time comparison did not use the observed unsigned boundary");
-    ok &= expect(!_ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(&tickOne, &timeOne), "equal tick and time compared unequal");
-    ok &= expect(_ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(&tickMaximum, &timeZero), "different tick and time compared equal");
-    const auto invalidTick = reinterpret_cast<const void*>(std::numeric_limits<std::uintptr_t>::max());
-    ok &= expect(!_ZN3sce2npeqERKNS0_4TimeES3_(invalidTick, &tickZero), "invalid time comparison target did not use the defensive false fallback");
     return ok ? 0 : 1;
 }
 

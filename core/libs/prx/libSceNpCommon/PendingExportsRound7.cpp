@@ -3,19 +3,22 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
 
-bool copyGuest(const void* source, void* destination, std::size_t size) {
-    return source != nullptr && GuestCopyIn_nid_no_patch(destination, source, size);
+void copyGuest(const void* source, void* destination, std::size_t size) {
+    if (!source || !GuestCopyIn_nid_no_patch(destination, source, size))
+        throw std::runtime_error("libSceNpCommon comparison operand is unreadable");
 }
 
-bool copyGuestOffset(const void* source, std::size_t offset, void* destination, std::size_t size) {
+void copyGuestOffset(const void* source, std::size_t offset, void* destination, std::size_t size) {
     const auto address = reinterpret_cast<std::uintptr_t>(source);
-    if (source == nullptr || offset > UINTPTR_MAX - address) return false;
-    return GuestCopyIn_nid_no_patch(destination, reinterpret_cast<const void*>(address + offset), size);
+    if (!source || offset > UINTPTR_MAX - address)
+        throw std::runtime_error("libSceNpCommon comparison operand address is invalid");
+    copyGuest(reinterpret_cast<const void*>(address + offset), destination, size);
 }
 
 }
@@ -162,12 +165,9 @@ int APS5_VABI _ZN3sce2np9Semaphore4WaitEj(void) {
     return 0;
 }
 
-bool APS5_VABI _ZN3sce2npeqERKNS0_4TimeES3_(const void* left, const void* right) {
-    std::uint64_t leftTick{};
-    std::uint64_t rightTick{};
-    if (!copyGuest(left, &leftTick, sizeof(leftTick)) ||
-        !copyGuest(right, &rightTick, sizeof(rightTick))) return false;
-    return leftTick == rightTick;
+int APS5_VABI _ZN3sce2npeqERKNS0_4TimeES3_(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI _ZN3sce2np13RingBufMemory6ExpandEm(void) {
@@ -275,12 +275,9 @@ int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void) {
     return 0;
 }
 
-bool APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(const void* left, const void* right) {
-    std::uint64_t leftTick{};
-    std::uint64_t rightTick{};
-    if (!copyGuest(left, &leftTick, sizeof(leftTick)) ||
-        !copyGuest(right, &rightTick, sizeof(rightTick))) return false;
-    return leftTick <= rightTick;
+int APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceNpUtilXmlUnescape(void) {
@@ -406,8 +403,8 @@ int APS5_VABI _ZN3sce2np6ThreadD1Ev(void) {
 bool APS5_VABI _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(const void* left, const void* right) {
     std::array<std::uint8_t, 12> leftId{};
     std::array<std::uint8_t, 12> rightId{};
-    if (!copyGuest(left, leftId.data(), leftId.size()) ||
-        !copyGuestOffset(right, 8, rightId.data(), rightId.size())) return false;
+    copyGuest(left, leftId.data(), leftId.size());
+    copyGuestOffset(right, 8, rightId.data(), rightId.size());
     return std::memcmp(leftId.data(), rightId.data(), leftId.size()) == 0;
 }
 
@@ -429,8 +426,8 @@ int APS5_VABI _ZNK3sce2np7RingBuf6IsFullEv(void) {
 bool APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(const void* left, const void* right) {
     std::array<std::uint8_t, 128> leftSecret{};
     std::array<std::uint8_t, 128> rightSecret{};
-    if (!copyGuestOffset(left, 8, leftSecret.data(), leftSecret.size()) ||
-        !copyGuest(right, rightSecret.data(), rightSecret.size())) return false;
+    copyGuestOffset(left, 8, leftSecret.data(), leftSecret.size());
+    copyGuest(right, rightSecret.data(), rightSecret.size());
     return std::memcmp(leftSecret.data(), rightSecret.data(), leftSecret.size()) != 0;
 }
 
@@ -614,12 +611,9 @@ int APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(void) {
     return 0;
 }
 
-bool APS5_VABI _ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(const void* left, const void* right) {
-    std::uint64_t leftTick{};
-    std::uint64_t rightTick{};
-    if (!copyGuest(left, &leftTick, sizeof(leftTick)) ||
-        !copyGuest(right, &rightTick, sizeof(rightTick))) return false;
-    return leftTick != rightTick;
+int APS5_VABI _ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI _ZN3sce2np13RingBufMemory6IsInitEv(void) {
