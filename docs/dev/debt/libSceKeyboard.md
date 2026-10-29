@@ -2,7 +2,7 @@
 
 ### Functional
 
-- [sceKeyboardGetKey2Char](../../../core/libs/prx/libSceKeyboard/src/keyboard_impl.cpp): the original validates HID usages 4 through 231 before the handle and preserves unconverted HID usages in the output with `processed == 0`. The host instead accepts out-of-range usages and writes zero for unconverted keys. The original ignores the Kana LED, while the host throws for it. This partially implemented function contains `NotImplemented_nid_no_patch(__func__)`; its body is preserved under the requested restriction. One title (PPSA15246) disassembled for this entry calls it once with an output buffer cleared to 24 bytes, uses a character only when the result is 0 and the first output byte is nonzero, and then reads the 16-bit value at offset 8, which agrees with `processed` and `char_code` as laid out here. Which other output fields it reads and what its other arguments mean are not shown.
+- [sceKeyboardGetKey2Char](../../../core/libs/prx/libSceKeyboard/src/keyboard_impl.cpp): initialization, output length and reserved bytes remain unverified on a console; unconverted keys retain the host's length of 0. One title (PPSA15246) disassembled for this entry calls it after clearing the first 20 bytes of its output buffer (16-byte store 0x69942d, 32-bit store 0x699435; no size argument), uses a character only when the result is 0 and the first output byte is nonzero, and then reads the 16-bit value at offset 8. Which other output fields it reads and what its other arguments mean are not shown.
 
 ### Unknown function info
 

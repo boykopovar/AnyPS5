@@ -1,6 +1,8 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceLibreSsl3/include/Key.hpp"
+#include "prx/libSceLibreSsl/include/Api.hpp"
 
 extern "C" {
 
@@ -14,7 +16,7 @@ int APS5_VABI DH_get0_key_nid_postfix(void);
 int APS5_VABI DH_get0_pqg_nid_postfix(void);
 int APS5_VABI DSA_get0_key_nid_postfix(void);
 int APS5_VABI DSA_get0_pqg_nid_postfix(void);
-int APS5_VABI EC_KEY_up_ref_nid_postfix(void);
+int APS5_VABI EC_KEY_up_ref_nid_postfix(LibreSsl3EcKey* key);
 int APS5_VABI ERR_load_crypto_strings_nid_postfix(void);
 int APS5_VABI ERR_peek_last_error_nid_postfix(void);
 int APS5_VABI ERR_print_errors_cb_nid_postfix(void);
@@ -38,7 +40,7 @@ int APS5_VABI EVP_PKEY_get0_RSA_nid_postfix(void);
 int APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(void);
 int APS5_VABI EVP_PKEY_set1_EC_KEY_nid_postfix(void);
 int APS5_VABI EVP_PKEY_size_nid_postfix(void);
-int APS5_VABI EVP_PKEY_up_ref_nid_postfix(void);
+int APS5_VABI EVP_PKEY_up_ref_nid_postfix(LibreSsl3EvpPkey* key);
 int APS5_VABI EVP_SignFinal_nid_postfix(void);
 int APS5_VABI EVP_VerifyFinal_nid_postfix(void);
 int APS5_VABI EVP_aes_128_wrap_nid_postfix(void);
@@ -81,7 +83,7 @@ int APS5_VABI X509_get_version_nid_postfix(void);
 int APS5_VABI X509_getm_notAfter_nid_postfix(void);
 int APS5_VABI X509_getm_notBefore_nid_postfix(void);
 int APS5_VABI X509_up_ref_nid_postfix(void);
-int APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void);
+void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char** input, std::int64_t length);
 int APS5_VABI d2i_ECParameters_nid_postfix(void);
 int APS5_VABI d2i_PKCS7_nid_postfix(void);
 int APS5_VABI d2i_PKCS8_PRIV_KEY_INFO_bio_nid_postfix(void);

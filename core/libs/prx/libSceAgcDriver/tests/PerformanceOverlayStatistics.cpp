@@ -1,4 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -10,6 +14,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -161,9 +166,10 @@ void lowRateTests() {
 
 void settingsTests() {
     const auto hidden = AgcDriver::ParseOverlaySettings(nullptr, nullptr);
-    require(!hidden.visible && hidden.corner == OverlayCorner::TopLeft, "the overlay is not off and top-left by default");
-    require(!AgcDriver::ParseOverlaySettings("", "").visible && !AgcDriver::ParseOverlaySettings("0", nullptr).visible, "an empty or 0 ANYPS5_OVERLAY shows the overlay");
-    require(AgcDriver::ParseOverlaySettings("1", nullptr).visible, "ANYPS5_OVERLAY=1 does not show the overlay");
+    require(hidden.page == 0 && hidden.corner == OverlayCorner::TopLeft, "the overlay is not off and top-left by default");
+    require(AgcDriver::ParseOverlaySettings("", "").page == 0 && AgcDriver::ParseOverlaySettings("0", nullptr).page == 0, "an empty or 0 ANYPS5_OVERLAY shows the overlay");
+    require(AgcDriver::ParseOverlaySettings("1", nullptr).page == 1, "ANYPS5_OVERLAY=1 does not start on page 1");
+    require(AgcDriver::ParseOverlaySettings("2", "br").page == 2 && AgcDriver::ParseOverlaySettings("2", "br").corner == OverlayCorner::BottomRight, "ANYPS5_OVERLAY=2 does not start on page 2 in the chosen corner");
     const std::pair<const char*, OverlayCorner> corners[] = {{"tl", OverlayCorner::TopLeft}, {"tr", OverlayCorner::TopRight}, {"bl", OverlayCorner::BottomLeft}, {"br", OverlayCorner::BottomRight}};
     for (const auto& [name, corner] : corners) require(AgcDriver::ParseOverlaySettings("1", name).corner == corner, std::string("ANYPS5_OVERLAY_POS=") + name + " picks another corner");
     const auto refused = [](const char* enabled, const char* position, const char* variable) {
@@ -174,7 +180,12 @@ void settingsTests() {
         }
         return false;
     };
-    require(refused("yes", nullptr, "ANYPS5_OVERLAY") && refused("2", nullptr, "ANYPS5_OVERLAY"), "an ANYPS5_OVERLAY value other than 1 or 0 was accepted or not named");
+    require(refused("yes", nullptr, "ANYPS5_OVERLAY") && refused("3", nullptr, "ANYPS5_OVERLAY") && refused("02", nullptr, "ANYPS5_OVERLAY") && refused("-1", nullptr, "ANYPS5_OVERLAY"), "an ANYPS5_OVERLAY value other than 0, 1 or 2 was accepted or not named");
+    try {
+        static_cast<void>(AgcDriver::ParseOverlaySettings("3", nullptr));
+    } catch (const std::exception& error) {
+        require(std::string(error.what()).find("0, 1 or 2") != std::string::npos, std::string("the ANYPS5_OVERLAY error does not list 0, 1 and 2: ") + error.what());
+    }
     require(refused("1", "center", "ANYPS5_OVERLAY_POS") && refused(nullptr, "TL", "ANYPS5_OVERLAY_POS"), "an unknown ANYPS5_OVERLAY_POS was accepted or not named");
 }
 
@@ -431,6 +442,211 @@ void fullPanelLayoutTests() {
     }
 }
 
+void fontTests() {
+    const auto characters = AgcDriver::OverlayFontCharacters();
+    for (const char character : characters) {
+        const auto& glyph = AgcDriver::OverlayGlyph(character);
+        require(std::all_of(glyph.begin(), glyph.end(), [](std::uint8_t row) { return row <= 0x1f; }), std::string("the glyph of '") + character + "' is wider than 5 pixels");
+        require(character == ' ' || std::any_of(glyph.begin(), glyph.end(), [](std::uint8_t row) { return row != 0; }), std::string("the glyph of '") + character + "' is empty");
+        for (const char other : characters) {
+            if (other != character) require(glyph != AgcDriver::OverlayGlyph(other), std::string("'") + character + "' and '" + other + "' have the same glyph");
+        }
+    }
+    for (const char letter : std::string("JQYZ%+-_")) require(characters.find(letter) != std::string_view::npos, std::string("the font lists no '") + letter + "'");
+    for (const char missing : std::string("qjy(>,#")) {
+        bool refused = false;
+        try {
+            static_cast<void>(AgcDriver::OverlayGlyph(missing));
+        } catch (const std::exception&) {
+            refused = true;
+        }
+        require(refused && characters.find(missing) == std::string_view::npos, std::string("'") + missing + "' is drawn or listed although the font has no glyph for it");
+    }
+}
+
+void widePanelTests() {
+    OverlayContent wide;
+    wide.columns = 48;
+    wide.graph = false;
+    for (int i = 0; i < 20; ++i) wide.below.push_back(std::string(48, i % 2 == 0 ? 'W' : 'Z'));
+    const VkExtent2D small{1280, 720};
+    const auto layout = AgcDriver::LayOutOverlay(wide, small, OverlayCorner::TopLeft);
+    const auto s = layout.scale;
+    require(layout.bounds.width == (48 * OverlayMetrics::Advance - 1 + 2 * OverlayMetrics::Padding) * s, "a 48-column panel is " + std::to_string(layout.bounds.width) + " pixels wide at scale " + std::to_string(s));
+    require(layout.bounds.height == (2 * OverlayMetrics::Padding + 20 * OverlayMetrics::LinePitch - (OverlayMetrics::LinePitch - OverlayMetrics::GlyphHeight)) * s, "a panel without a graph keeps the graph's rows");
+    const auto text = coverage(layout, static_cast<std::uint32_t>(AgcDriver::OverlayColor::Text));
+    for (std::size_t line = 0; line < wide.below.size(); ++line) requireLineDrawn(layout, text, wide.below[line], OverlayMetrics::Padding + static_cast<std::int32_t>(line) * OverlayMetrics::LinePitch);
+    for (const auto& rect : layout.rects) require(rect.color != static_cast<std::uint32_t>(AgcDriver::OverlayColor::Graph), "a panel without a graph draws graph bars");
+    const std::pair<VkExtent2D, std::int32_t> scales[] = {{{1280, 720}, 2}, {{1920, 1080}, 2}, {{3840, 2160}, 5}, {{320, 180}, 1}};
+    for (const auto& [extent, scale] : scales) require(AgcDriver::OverlayScale(extent, wide) == scale, "a 48-column panel at " + std::to_string(extent.width) + "x" + std::to_string(extent.height) + " is drawn at scale " + std::to_string(AgcDriver::OverlayScale(extent, wide)) + ", not " + std::to_string(scale));
+    auto widest = wide;
+    widest.columns = 140;
+    require(AgcDriver::OverlayScale({3840, 2160}, widest) == 4, "a 140-column panel at 3840x2160 is not shrunk from scale 5 to 4");
+    const auto refused = [](const OverlayContent& content) {
+        try {
+            static_cast<void>(AgcDriver::LayOutOverlay(content, {1920, 1080}, OverlayCorner::TopLeft));
+        } catch (const std::exception&) {
+            return true;
+        }
+        return false;
+    };
+    auto longer = wide;
+    longer.below.push_back(std::string(49, 'W'));
+    require(refused(longer), "a line longer than the panel's columns was drawn");
+    auto graphless = wide;
+    graphless.frameTimes = {16.0};
+    require(refused(graphless), "frame times were laid out on a panel without a graph");
+    OverlayContent cramped{{"FPS: 60.0"}, {16.0}, {}};
+    cramped.columns = 20;
+    require(refused(cramped), "a graph of 120 frames was laid out on a 20-column panel");
+    cramped.columns = 21;
+    require(!refused(cramped), "a 21-column panel cannot hold the graph");
+}
+
+void pageCycleTests() {
+    for (std::uint32_t start = 0; start < AgcDriver::OverlayPageCount; ++start) {
+        for (std::uint64_t presses = 0; presses <= 3; ++presses) {
+            const auto page = AgcDriver::OverlayPageAfter(start, presses);
+            require(page == (start + presses) % 3, "starting on page " + std::to_string(start) + ", " + std::to_string(presses) + " presses of F10 show page " + std::to_string(page));
+        }
+    }
+    require(AgcDriver::OverlayPageAfter(2, ~std::uint64_t{0}) == 2 && AgcDriver::OverlayPageAfter(1, ~std::uint64_t{0} - 1) == 0, "the page wraps wrongly after 2^64 presses");
+    bool refused = false;
+    try {
+        static_cast<void>(AgcDriver::OverlayPageAfter(3, 0));
+    } catch (const std::exception&) {
+        refused = true;
+    }
+    require(refused, "a starting page 3 was accepted");
+}
+
+AgcDriver::OverlayDetailSample fullDetailSample() {
+    AgcDriver::OverlayDetailSample sample;
+    sample.fps = 59.94;
+    sample.frameMs = 16.7;
+    sample.busy = {{"Q0", 63.4}, {"Q20", 4.2}, {"COMMIT", 12}, {"FINISH", 3}, {"PRESENT", 5.5}, {"Q21", 100}, {"Q22", 0}};
+    sample.phases = {{"Driver.Packet", 3.21}, {"Vulkan.GraphicsPipelineLibrary.shader_compile_and_link", 12.5}, {"Recorder.Sync", 0.4}, {"GpuMutex.wait.draw", 0.06}, {"Driver.Draw.capture_resources", 0.9}};
+    sample.queueWaits = AgcDriver::OverlayQueueWaits{0.4, 0.2, 1.3};
+    sample.renderPassesPerFrame = 12;
+    sample.pipelinesCompiling = 3;
+    sample.pipelinesPerSecond = 12;
+    sample.drawCacheHitPercent = 97.1;
+    sample.pipelineCacheHitPercent = 99.9;
+    sample.flipsPerSecond = 60;
+    sample.presentsPerSecond = 59.94;
+    sample.droppedFrames = 1;
+    sample.repeatedPresents = 2;
+    sample.commit = AgcDriver::OverlayMemory{static_cast<std::uint64_t>(12.3 * GiB), static_cast<std::uint64_t>(31.9 * GiB)};
+    sample.pageFaultsPerSecond = 1234;
+    sample.hostImports = 123;
+    sample.hostImportBytes = AgcDriver::OverlayMemory{static_cast<std::uint64_t>(1.2 * GiB), 6 * GiB};
+    sample.cpuCopyMegabytesPerSecond = 12.3;
+    sample.addressCopyCapPercent = 3;
+    sample.unimplementedPerSecond = 0;
+    sample.unimplementedTotal = 4;
+    sample.refusedShaders = 2;
+    sample.title = "PPSA01234";
+    sample.presentMode = "fifo_latest_ready";
+    return sample;
+}
+
+void requireDrawable(const OverlayContent& content, const std::string& what) {
+    const auto font = AgcDriver::OverlayFontCharacters();
+    for (const auto* lines : {&content.above, &content.below}) {
+        for (const auto& line : *lines) {
+            require(line.size() <= static_cast<std::size_t>(content.columns), what + ": '" + line + "' is wider than its " + std::to_string(content.columns) + " columns");
+            for (const char character : line) {
+                require(font.find(character) != std::string_view::npos, what + ": '" + line + "' has '" + std::string(1, character) + "', which the font cannot draw");
+                static_cast<void>(AgcDriver::OverlayGlyph(character));
+            }
+        }
+    }
+}
+
+void pageTwoComposeTests() {
+    const auto full = AgcDriver::ComposeOverlayDetails(fullDetailSample());
+    require(full.columns == OverlayMetrics::DetailColumns && !full.graph && full.above.empty() && full.frameTimes.empty(), "page 2 is not a 46-column panel without a graph");
+    const auto phase = [](const std::string& name, const std::string& amount) { return name + std::string(46 - name.size() - amount.size(), ' ') + amount; };
+    const std::vector<std::string> expected{
+        "FPS: 59.9  FRAME: 16.7 MS",
+        "BUSY %: Q0 63 Q20 4 COMMIT 12 FINISH 3",
+        "        PRESENT 6 Q21 100 Q22 0",
+        phase("DRIVER.PACKET", " 3.2 MS/FRAME"),
+        "VULKAN.GRAPHICSPIPELINELIBRARY.S 12.5 MS/FRAME",
+        phase("RECORDER.SYNC", " 0.4 MS/FRAME"),
+        phase("GPUMUTEX.WAIT.DRAW", " 0.1 MS/FRAME"),
+        phase("DRIVER.DRAW.CAPTURE_RESOURCES", " 0.9 MS/FRAME"),
+        "Q0 WAIT MS/FRAME: MEM 0.4 LOCK 0.2 GPU 1.3",
+        "RENDER PASSES/FRAME: 12.0",
+        "PIPELINES: COMPILING 3  NEW/S 12",
+        "HIT %: DRAW CACHE 97.1  PIPELINES 99.9",
+        "FLIPS/S: 60.0  PRESENTS/S: 59.9",
+        "DROPPED/S: 1  REPEATED/S: 2",
+        "COMMIT: 12.3/31.9 GB  FAULTS/S: 1234",
+        "HOST IMPORTS: 123  1.2/6.0 GB",
+        "CPU COPIES: 12.3 MB/S  CAP: 3.0%",
+        "UNIMPLEMENTED: 0/S  4 TOTAL",
+        "REFUSED SHADERS: 2",
+        "TITLE: PPSA01234  PRESENT: FIFO_LATEST_READY",
+    };
+    require(full.below.size() == expected.size(), "page 2 of a full sample has " + std::to_string(full.below.size()) + " lines, not " + std::to_string(expected.size()));
+    for (std::size_t line = 0; line < expected.size(); ++line) require(full.below[line] == expected[line], "page 2 line " + std::to_string(line) + " reads '" + full.below[line] + "', not '" + expected[line] + "'");
+    requireDrawable(full, "page 2 of a full sample");
+
+    const auto empty = AgcDriver::ComposeOverlayDetails({});
+    require(empty.below == std::vector<std::string>{"FPS: 0.0  FRAME: 0.0 MS"}, "page 2 of an empty sample shows " + std::to_string(empty.below.size()) + " lines, the last '" + empty.below.back() + "'");
+
+    auto partial = fullDetailSample();
+    partial.flipsPerSecond.reset();
+    partial.commit.reset();
+    partial.title.clear();
+    partial.repeatedPresents.reset();
+    partial.cpuCopyMegabytesPerSecond.reset();
+    const auto some = AgcDriver::ComposeOverlayDetails(partial);
+    const auto has = [&](const std::string& line) { return std::find(some.below.begin(), some.below.end(), line) != some.below.end(); };
+    require(has("PRESENTS/S: 59.9") && has("DROPPED/S: 1") && has("FAULTS/S: 1234") && has("PRESENT: FIFO_LATEST_READY") && has("CPU COPIES: CAP: 3.0%"), "a line with a missing source does not show the rest of its values alone");
+
+    AgcDriver::OverlayDetailSample odd;
+    odd.busy = {{"queue worker 0x57", 1e9}, {"q(1)", 1}};
+    odd.phases = {{"Weird<name>#with,symbols/and lower case and a very long tail beyond the panel", 1e9}};
+    odd.title = "ab-cd_12";
+    odd.presentMode = "mailbox";
+    const auto sanitized = AgcDriver::ComposeOverlayDetails(odd);
+    requireDrawable(sanitized, "page 2 of names the font cannot draw");
+    require(AgcDriver::OverlayText("abc-XYZ_09(%)é") == "ABC-XYZ_09 %   ", "OverlayText maps '" + AgcDriver::OverlayText("abc-XYZ_09(%)é") + "'");
+    for (const auto& line : sanitized.below) require(line.size() <= 46, "'" + line + "' is wider than page 2");
+
+    OverlayStatistics statistics = countedStatistics();
+    auto details = fullDetails();
+    details.display = {12345, 12345};
+    details.window = {16384, 16384};
+    requireDrawable(AgcDriver::ComposeOverlay(statistics, true, true, details), "page 1 of a full panel");
+}
+
+void pageTwoLayoutTests() {
+    const auto content = AgcDriver::ComposeOverlayDetails(fullDetailSample());
+    const auto lines = static_cast<std::int32_t>(content.below.size());
+    const auto width = 46 * OverlayMetrics::Advance - 1 + 2 * OverlayMetrics::Padding;
+    const auto height = 2 * OverlayMetrics::Padding + lines * OverlayMetrics::LinePitch - (OverlayMetrics::LinePitch - OverlayMetrics::GlyphHeight);
+    require(width + 2 * OverlayMetrics::Margin <= 1280 && height + 2 * OverlayMetrics::Margin <= 720, "page 2 does not fit 1280x720 at scale 1");
+    const std::pair<VkExtent2D, std::int32_t> scales[] = {{{1280, 720}, 2}, {{1920, 1080}, 2}, {{3840, 2160}, 5}, {{640, 360}, 1}};
+    for (const auto& [extent, scale] : scales) {
+        for (const auto corner : {OverlayCorner::TopLeft, OverlayCorner::BottomRight}) {
+            const auto layout = AgcDriver::LayOutOverlay(content, extent, corner);
+            require(layout.scale == scale, "page 2 at " + std::to_string(extent.width) + "x" + std::to_string(extent.height) + " is drawn at scale " + std::to_string(layout.scale) + ", not " + std::to_string(scale));
+            require(layout.bounds.width == width * scale && layout.bounds.height == height * scale, "page 2's panel is " + std::to_string(layout.bounds.width) + "x" + std::to_string(layout.bounds.height) + " at scale " + std::to_string(scale));
+            require(layout.bounds.x >= 0 && layout.bounds.y >= 0 && layout.bounds.x + layout.bounds.width <= static_cast<std::int32_t>(extent.width) && layout.bounds.y + layout.bounds.height <= static_cast<std::int32_t>(extent.height), "page 2 leaves " + std::to_string(extent.width) + "x" + std::to_string(extent.height));
+            for (const auto& rect : layout.rects) require(rect.color != static_cast<std::uint32_t>(AgcDriver::OverlayColor::Graph), "page 2 draws graph bars");
+            if (corner != OverlayCorner::TopLeft) continue;
+            const auto text = coverage(layout, static_cast<std::uint32_t>(AgcDriver::OverlayColor::Text));
+            for (std::size_t line = 0; line < content.below.size(); ++line) requireLineDrawn(layout, text, content.below[line], OverlayMetrics::Padding + static_cast<std::int32_t>(line) * OverlayMetrics::LinePitch);
+        }
+    }
+    auto stretched = content;
+    while (stretched.below.size() < 60) stretched.below.push_back("PIPELINES: COMPILING 3  NEW/S 12");
+    require(AgcDriver::OverlayScale({3840, 2160}, stretched) == 3, "a 60-line page 2 at 3840x2160 is not shrunk to scale 3");
+}
+
 void sampleTests() {
     require(AgcDriver::OverlaySampleDue(std::nullopt, Start), "the first frame is not sampled");
     require(!AgcDriver::OverlaySampleDue(Start, Start + 999ms) && AgcDriver::OverlaySampleDue(Start, Start + 1000ms), "memory is sampled more than once a second, or not after a second");
@@ -444,6 +660,191 @@ void sampleTests() {
     const auto after = AgcDriver::ReadProcessPrivateBytes();
     require(after.has_value() && *after >= *before + Bytes * 3 / 4, "touching 64 MiB raised the private memory from " + std::to_string(*before) + " to " + std::to_string(after.value_or(0)) + " bytes");
     require(touched[Bytes - 1] == 0x5a, "the touched block was not written");
+}
+
+constexpr const char* PacketScope = "Driver.Packet";
+constexpr const char* WorkerWaitScope = "Driver.WorkerWait";
+constexpr const char* LockScope = "GpuMutex.wait";
+constexpr const char* SyncScope = "Recorder.Sync";
+constexpr const char* SerialScope = "Recorder.WaitSerial";
+constexpr const char* WaitScope = "Graphics.Wait";
+constexpr const char* FinishScope = "Driver.DrawFinish";
+constexpr const char* MemoryStage = "memory_wait";
+constexpr const char* RenderingStage = "rendering_wait";
+constexpr const char* DrawSite = "draw";
+constexpr const char* PresentSite = "present";
+constexpr const char* FenceStage = "fence_wait";
+
+AgcDriver::TraceThread::Total total(const char* scope, const char* stage, std::chrono::milliseconds length, std::uint64_t count) {
+    return AgcDriver::TraceThread::Total{scope, stage, std::chrono::duration_cast<Clock::duration>(length), count};
+}
+
+void traceDeltaTests() {
+    using AgcDriver::TraceThreadTotals;
+    const std::vector<TraceThreadTotals> before{
+        {"queue worker 0x0", {total(PacketScope, nullptr, 100ms, 10), total(PacketScope, MemoryStage, 5ms, 1), total(WorkerWaitScope, nullptr, 50ms, 2)}},
+        {"queue worker 0x1", {total(PacketScope, nullptr, 10ms, 1)}},
+    };
+    const std::vector<TraceThreadTotals> now{
+        {"queue worker 0x0", {total(PacketScope, nullptr, 500ms, 60), total(PacketScope, MemoryStage, 35ms, 3), total(PacketScope, RenderingStage, 10ms, 1), total(LockScope, DrawSite, 20ms, 4), total(LockScope, PresentSite, 5ms, 1), total(SyncScope, nullptr, 6ms, 2), total(SerialScope, nullptr, 4ms, 1), total(WaitScope, FenceStage, 5ms, 1), total(WaitScope, nullptr, 9ms, 1), total(WorkerWaitScope, nullptr, 450ms, 40)}},
+        {"queue worker 0x1", {total(PacketScope, nullptr, 110ms, 2)}},
+        {"queue worker 0xa", {total(PacketScope, nullptr, 50ms, 1)}},
+        {"draw committer", {total(AgcDriver::PerformanceTrace::RenderPassScope, nullptr, 0ms, 120), total(FinishScope, nullptr, 80ms, 40), total(SyncScope, nullptr, 7ms, 1)}},
+    };
+    const auto figures = AgcDriver::OverlayTraceDeltas(before, now, 1s, 40, true);
+    require(figures.busy.size() == 3 && figures.busy[0].name == "Q0" && figures.busy[1].name == "Q1" && figures.busy[2].name == "Qa", "the busy queues are not Q0, Q1 and Qa in that order");
+    require(within(figures.busy[0].percent, 40) && within(figures.busy[1].percent, 10) && within(figures.busy[2].percent, 5), "the busy shares over a second are not 40, 10 and 5 %");
+    const std::vector<std::pair<std::string, double>> phases{{"Driver.Packet", 13.75}, {"Driver.DrawFinish", 2}, {"Driver.Packet.memory_wait", 0.75}, {"GpuMutex.wait.draw", 0.5}, {"Recorder.Sync", 0.325}};
+    require(figures.phases.size() == phases.size(), "page 2 does not keep the top 5 phases");
+    for (std::size_t index = 0; index < phases.size(); ++index) require(figures.phases[index].name == phases[index].first && within(figures.phases[index].msPerFrame, phases[index].second), "phase " + std::to_string(index) + " is " + figures.phases[index].name + " at " + std::to_string(figures.phases[index].msPerFrame) + " ms per frame, not " + phases[index].first);
+    require(figures.queueWaits && within(figures.queueWaits->memoryMs, 1.0) && within(figures.queueWaits->lockMs, 0.625) && within(figures.queueWaits->gpuMs, 0.375), "queue 0's waits per frame are not 1 ms on memory, 0.625 ms on the lock and 0.375 ms on the GPU");
+    require(figures.renderPassesPerFrame && within(*figures.renderPassesPerFrame, 3), "120 render passes over 40 frames are not 3 per frame");
+    require(!AgcDriver::OverlayTraceDeltas(before, now, 1s, 40, false).renderPassesPerFrame, "render passes are shown while they are not counted");
+    const auto noFrames = AgcDriver::OverlayTraceDeltas(before, now, 1s, 0, true);
+    require(noFrames.busy.size() == 3 && noFrames.phases.empty() && !noFrames.queueWaits && !noFrames.renderPassesPerFrame, "per-frame figures are shown for a second without frames");
+    require(AgcDriver::OverlayTraceDeltas(before, now, Clock::duration{}, 40, true).busy.empty(), "busy shares are shown for no elapsed time");
+    const auto noQueue = AgcDriver::OverlayTraceDeltas({}, std::vector<TraceThreadTotals>{now[3]}, 1s, 40, true);
+    require(noQueue.busy.empty() && !noQueue.queueWaits && noQueue.renderPassesPerFrame, "a trace without queue workers shows busy shares or queue waits");
+    AgcDriver::OverlayDetailSample sample;
+    sample.busy = figures.busy;
+    sample.phases = figures.phases;
+    sample.queueWaits = figures.queueWaits;
+    sample.renderPassesPerFrame = figures.renderPassesPerFrame;
+    requireDrawable(AgcDriver::ComposeOverlayDetails(sample), "page 2 from trace totals");
+}
+
+void hitRateTests() {
+    require(within(AgcDriver::OverlayHitPercent({100, 80}, {300, 230}).value_or(-1), 75), "150 hits of 200 lookups are not 75 %");
+    require(within(AgcDriver::OverlayHitPercent({1000, 900}, {200, 150}).value_or(-1), 75), "counters that restarted (the draw cache's 10 s report) are not read from zero");
+    require(!AgcDriver::OverlayHitPercent({5, 5}, {5, 5}), "a hit rate is shown without lookups");
+    require(!AgcDriver::OverlayHitPercent({0, 0}, {4, 5}), "more hits than lookups give a hit rate");
+}
+
+void presentModeTests() {
+    require(AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_FIFO_KHR) == "fifo" && AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_FIFO_LATEST_READY_KHR) == "fifo_latest_ready" && AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_MAILBOX_KHR) == "mailbox" && AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_IMMEDIATE_KHR) == "immediate", "the present modes are not named as ANYPS5_PRESENT_MODE names them");
+    require(AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_FIFO_RELAXED_KHR).empty() && AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_MAX_ENUM_KHR).empty(), "a present mode the driver never selects has a name");
+    AgcDriver::OverlayDetailSample sample;
+    sample.title = "PPSA01234";
+    sample.presentMode = AgcDriver::OverlayPresentModeName(VK_PRESENT_MODE_FIFO_LATEST_READY_KHR);
+    const auto content = AgcDriver::ComposeOverlayDetails(sample);
+    require(content.below.back() == "TITLE: PPSA01234  PRESENT: FIFO_LATEST_READY", "the longest present mode is drawn as '" + content.below.back() + "'");
+}
+
+void operatingSystemTests() {
+    const auto parsed = AgcDriver::ParseCommitCharge("MemTotal:       16318412 kB\nCommitLimit:     8159204 kB\nCommitted_AS:   12345678 kB\nVmallocTotal:   34359738367 kB\n");
+    require(parsed && parsed->used == 12345678ull * 1024 && parsed->budget == 8159204ull * 1024, "Committed_AS and CommitLimit are not read from /proc/meminfo's text");
+    require(!AgcDriver::ParseCommitCharge("Committed_AS:   12345678 kB\n"), "a commit charge is shown without its limit");
+    require(!AgcDriver::ParseCommitCharge("CommitLimit:     8159204 kB\nCommitted_AS:   12 MB\n"), "a value in another unit is read as kB");
+    require(!AgcDriver::ParseCommitCharge(""), "an empty /proc/meminfo gives a commit charge");
+    const auto commit = AgcDriver::ReadCommitCharge();
+#ifdef __APPLE__
+    require(!commit, "a commit charge is read on macOS, which reports none");
+#else
+    require(commit && commit->used != 0 && commit->budget != 0, "the system's commit charge and limit cannot be read");
+#endif
+    static std::uint8_t* volatile touched = nullptr;
+    const auto before = AgcDriver::ReadPageFaults();
+    require(before.has_value(), "the process's page faults cannot be read");
+    constexpr std::size_t Bytes = std::size_t{16} << 20u;
+    const auto block = std::make_unique<std::uint8_t[]>(Bytes);
+    touched = block.get();
+    std::memset(touched, 0x3c, Bytes);
+    const auto after = AgcDriver::ReadPageFaults();
+    require(after && *after > *before, "touching 16 MiB of new memory did not raise the page faults from " + std::to_string(*before));
+    require(touched[Bytes - 1] == 0x3c, "the touched block was not written");
+}
+
+void addressCopyFoldTests() {
+    using AgcDriver::Graphics::AddressCopyCounters;
+    const auto start = AddressCopyCounters::Fold();
+    auto& counters = AddressCopyCounters::ThisThread();
+    require(&counters == &AddressCopyCounters::ThisThread(), "one thread got two address copy counters");
+    counters.Count(std::uint64_t{3} << 20u);
+    counters.Count(std::uint64_t{1} << 20u);
+    bool separate = false;
+    std::thread worker([&] {
+        auto& own = AddressCopyCounters::ThisThread();
+        separate = &own != &counters;
+        own.Count(std::uint64_t{5} << 20u);
+    });
+    worker.join();
+    require(separate, "two builders share address copy counters");
+    const auto folded = AddressCopyCounters::Fold();
+    require(folded.bytes - start.bytes == std::uint64_t{9} << 20u && folded.largest == std::uint64_t{5} << 20u, "two builders' 9 MiB of copies with a largest build of 5 MiB fold to " + std::to_string(folded.bytes - start.bytes) + " bytes, largest " + std::to_string(folded.largest));
+    const auto idle = AddressCopyCounters::Fold();
+    require(idle.bytes == folded.bytes && idle.largest == 0, "a second without copies keeps the previous second's largest build");
+    std::thread next([] { AddressCopyCounters::ThisThread().Count(std::uint64_t{2} << 20u); });
+    next.join();
+    const auto reused = AddressCopyCounters::Fold();
+    require(reused.bytes == idle.bytes + (std::uint64_t{2} << 20u) && reused.largest == std::uint64_t{2} << 20u, "the copies of a builder that ended were lost, or a new builder restarted them");
+    if (std::getenv("APS5_ADDRESS_COPY_MAX_MIB") == nullptr) require(AddressCopyCounters::Limit() == std::uint64_t{64} << 20u, "the address copy cap is not 64 MiB by default");
+    AgcDriver::Graphics::SetAddressCopyLimit(std::uint64_t{8} << 20u);
+    require(AddressCopyCounters::Limit() == std::uint64_t{8} << 20u, "the cap in use is not the one set");
+    AgcDriver::Graphics::SetAddressCopyLimit(0);
+}
+
+void driverSourceTests() {
+    const auto before = NotImplementedCalls_nid_no_patch();
+    try {
+        NotImplemented_nid_no_patch("performance overlay test");
+    } catch (const std::runtime_error&) {
+    }
+    require(NotImplementedCalls_nid_no_patch() == before + 1, "an unimplemented-function call is not counted");
+    if (std::getenv("APS5_SKIP_REFUSED_DRAWS") == nullptr) require(!AgcDriver::DriverDetail::RefusedShaderCount(), "refused shaders are counted while a refused shader still stops the title");
+    require(AgcDriver::DriverDetail::RegistrationPreparationsPending() == std::optional<std::size_t>{0}, "a process that prepared no shaders has a compile backlog");
+}
+
+void traceSwitchTests() {
+    using AgcDriver::PerformanceOverlay;
+    using AgcDriver::PerformanceTrace;
+    require(!PerformanceTrace::Configured(), "the overlay statistics test runs with APS5_TRACE_* set");
+    require(PerformanceOverlay::Page() == 0 && !PerformanceTrace::Recording() && !PerformanceTrace::OverlayTotals(), "the trace records before page 2 is shown");
+    std::string failure;
+    std::thread([&] {
+        if (PerformanceTrace::Thread() != nullptr) failure = "a thread is bound to the trace while nothing records";
+    }).join();
+    require(failure.empty(), failure);
+    PerformanceOverlay::Toggle();
+    require(PerformanceOverlay::Page() == 1 && !PerformanceTrace::Recording() && !PerformanceTrace::OverlayTotals(), "page 1 turns the trace on");
+    PerformanceOverlay::Toggle();
+    require(PerformanceOverlay::Page() == 2 && PerformanceTrace::Recording() && PerformanceTrace::OverlayTotals(), "page 2 does not turn the trace totals on");
+    std::thread([&] {
+        PerformanceTrace::BindThread("queue worker 0x5");
+        auto* thread = PerformanceTrace::Thread();
+        if (thread == nullptr || thread != PerformanceTrace::Thread()) {
+            failure = "a named worker is not bound once while page 2 shows";
+            return;
+        }
+        const auto begin = Clock::now();
+        thread->Add(PacketScope, nullptr, begin, begin + 3ms);
+        PerformanceTrace::Count(AgcDriver::PerformanceTrace::RenderPassScope);
+        PerformanceTrace::Count(AgcDriver::PerformanceTrace::RenderPassScope);
+        const auto snapshot = thread->Collect();
+        if (!snapshot.slices.empty() || snapshot.dropped) failure = "page 2's trace totals buffer slices";
+    }).join();
+    require(failure.empty(), failure);
+    std::thread([&] {
+        if (PerformanceTrace::Thread() != nullptr) failure = "a thread that never named itself is bound while page 2 shows";
+    }).join();
+    require(failure.empty(), failure);
+    const auto threads = PerformanceTrace::ThreadTotals();
+    require(threads.has_value(), "the trace totals cannot be read");
+    const auto worker = std::find_if(threads->begin(), threads->end(), [](const AgcDriver::TraceThreadTotals& thread) { return thread.name == "queue worker 0x5"; });
+    require(worker != threads->end(), "the named worker's totals are missing");
+    std::uint64_t passes = 0;
+    Clock::duration packets{};
+    for (const auto& entry : worker->totals) {
+        if (std::string_view(entry.scope) == AgcDriver::PerformanceTrace::RenderPassScope) passes += entry.count;
+        if (std::string_view(entry.scope) == PacketScope && entry.stage == nullptr) packets += entry.length;
+    }
+    require(passes == 2 && packets == 3ms, "the worker's totals hold " + std::to_string(passes) + " render passes and " + std::to_string(std::chrono::duration<double, std::milli>(packets).count()) + " ms of packets, not 2 and 3 ms");
+    PerformanceOverlay::Toggle();
+    require(PerformanceOverlay::Page() == 0 && !PerformanceTrace::Recording() && !PerformanceTrace::OverlayTotals(), "leaving page 2 leaves the trace totals on");
+    std::thread([&] {
+        PerformanceTrace::Count(AgcDriver::PerformanceTrace::RenderPassScope);
+        if (PerformanceTrace::Thread() != nullptr) failure = "a thread is bound to the trace after page 2 was left";
+    }).join();
+    require(failure.empty(), failure);
 }
 
 void costReport() {
@@ -489,9 +890,21 @@ int main() {
         countFormatTests();
         detailComposeTests();
         fullPanelLayoutTests();
+        fontTests();
+        widePanelTests();
+        pageCycleTests();
+        pageTwoComposeTests();
+        pageTwoLayoutTests();
         sampleTests();
+        traceDeltaTests();
+        hitRateTests();
+        presentModeTests();
+        operatingSystemTests();
+        addressCopyFoldTests();
+        driverSourceTests();
+        traceSwitchTests();
         costReport();
-        std::cout << "performance overlay statistics, layout, palette, packet, pipeline, memory and resolution tests passed\n";
+        std::cout << "performance overlay statistics, layout, palette, packet, pipeline, memory, resolution, page 2 source and trace switch tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

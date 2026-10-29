@@ -259,6 +259,16 @@ void TestJsonText() {
     Require(sceNpUtilJsonEscape(escaped, sizeof(escaped), "yz", 2) == 0 && Equals(escaped, "xyz"), "escaping appends to the buffer");
     Require(sceNpUtilJsonEscape(escaped, 6, "a", 1) == NpUtilBufferTooSmall, "escaping needs room for one escape");
     Require(sceNpUtilJsonEscape(escaped, sizeof(escaped), nullptr, 1) == NpUtilInvalid, "escaping needs a source");
+    struct Guarded {
+        char buffer[16];
+        char canary[16];
+    } guarded{};
+    std::strcpy(guarded.buffer, "0123456789");
+    Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "\n\n\n", 3) == NpUtilBufferTooSmall && guarded.canary[0] == 0,
+        "escaping into a partly filled buffer counts the text already in it");
+    std::memset(guarded.buffer, 'x', sizeof(guarded.buffer));
+    Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "a", 1) == NpUtilBufferTooSmall && guarded.canary[0] == 0,
+        "escaping into a buffer without a terminator is refused");
 
     char text[32] = {};
     std::size_t length = 0;
@@ -271,6 +281,8 @@ void TestJsonText() {
         "a bad unicode escape is copied and reported");
     Require(sceNpUtilJsonUnescape(nullptr, sizeof(text), "abc", 3, &length) == 0 && length == 4, "a null buffer reports the size");
     Require(sceNpUtilJsonUnescape(text, 3, "abc", 3, &length) == NpUtilBufferTooSmall, "unescaping needs room for the terminator");
+    length = 0;
+    Require(sceNpUtilJsonUnescape(nullptr, 0, "abc", 3, &length) == 0 && length == 4, "a size query with no buffer and no size reports the size");
 
     char one[4] = {};
     std::size_t consumed = 0;
@@ -284,6 +296,8 @@ void TestJsonText() {
         "a cut UTF-8 character reports its full length");
     Require(sceNpUtilJsonGetOneChar(one, 1, "\xC3\xA9", 2, &length, &consumed) == NpUtilBufferTooSmall && length == 2,
         "a short buffer still reports the decoded size");
+    Require(sceNpUtilJsonGetOneChar(one, sizeof(one), "\\ud83dXXde00", 12, &length, &consumed) == NpUtilBufferTooSmall,
+        "a high surrogate without a second unicode escape is not combined");
 
     const char* character = nullptr;
     const char* japanese = "\xE6\x97\xA5" "a";
