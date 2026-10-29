@@ -20,6 +20,7 @@
 #include "prx/libScePad/include/HostVolumeControl.hpp"
 #include "AudioOutShutdown.hpp"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
+#include "prx/libSceAudioOut/include/HostPause.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadRumbleIntensity.hpp"
 
@@ -269,6 +270,7 @@ static void DeviceCallback(void* userdata, Uint8* stream, int length) {
         context.priming = true;
         context.primes++;
     }
+    AudioOutSilenceFloatsWhilePaused(out, samples);
 }
 
 static void TraceSummary(AudioOut2Context& context, Clock::time_point now) {
