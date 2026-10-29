@@ -532,7 +532,7 @@ int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint* mount_point, Sav
 }
 
 static int getParam(const SaveDataMountPoint* mount_point, uint32_t param_type, void* param_buf, size_t param_buf_size, size_t* got_size) {
-    if (mount_point == nullptr || param_buf == nullptr) {
+    if (mount_point == nullptr || std::memchr(mount_point->data, '\0', sizeof(mount_point->data)) == nullptr || param_buf == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -554,7 +554,7 @@ static int getParam(const SaveDataMountPoint* mount_point, uint32_t param_type, 
 
 int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, void* param_buf, size_t param_buf_size, size_t* got_size) {
     const int rc = getParam(mount_point, param_type, param_buf, param_buf_size, got_size);
-    SAVEDATA_TRACE("getParam point=%s type=%u size=%zu -> 0x%08x got=%zu", mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size, static_cast<unsigned>(rc), got_size != nullptr ? *got_size : static_cast<size_t>(0));
+    SAVEDATA_TRACE("getParam point=%.*s type=%u size=%zu -> 0x%08x got=%zu", static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size, static_cast<unsigned>(rc), got_size != nullptr ? *got_size : static_cast<size_t>(0));
     return rc;
 }
 
@@ -714,7 +714,7 @@ int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint* mount_point, c
 }
 
 static int setParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf, size_t param_buf_size) {
-    if (mount_point == nullptr || param_buf == nullptr) {
+    if (mount_point == nullptr || std::memchr(mount_point->data, '\0', sizeof(mount_point->data)) == nullptr || param_buf == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -745,7 +745,7 @@ static int setParam(const SaveDataMountPoint* mount_point, uint32_t param_type, 
 
 int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf, size_t param_buf_size) {
     const int rc = setParam(mount_point, param_type, param_buf, param_buf_size);
-    SAVEDATA_TRACE("setParam point=%s type=%u size=%zu -> 0x%08x", mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size, static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("setParam point=%.*s type=%u size=%zu -> 0x%08x", static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size, static_cast<unsigned>(rc));
     return rc;
 }
 
