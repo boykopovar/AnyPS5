@@ -224,4 +224,9 @@ void APS5_VABI sceNpGetSdkVersion(char* version) {
     std::snprintf(version, 8, "%u.%02u", ((hex >> 24) & 0xF) + (hex >> 28) * 10, ((hex >> 16) & 0xF) + ((hex >> 20) & 0xF) * 10);
 }
 
+void APS5_VABI sceNpGetNavSdkVersion(char* version) {
+    constexpr char NAV_SDK_VERSION[8] = "00.82";
+    std::memcpy(version, NAV_SDK_VERSION, sizeof(NAV_SDK_VERSION));
+}
+
 }

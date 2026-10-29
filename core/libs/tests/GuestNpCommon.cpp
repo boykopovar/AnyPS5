@@ -169,6 +169,12 @@ static int testClock() {
 
     ok &= expect(std::strcmp(version, "1.00") == 0, "the version is not 1.00");
     ok &= expect(version[8] == 'x', "the version was written past 8 bytes");
+
+    std::memset(version, 'x', sizeof(version));
+    sceNpGetNavSdkVersion(version);
+
+    ok &= expect(std::memcmp(version, "00.82\0\0\0", 8) == 0, "the nav SDK version is not 00.82 padded with zeros");
+    ok &= expect(version[8] == 'x', "the nav SDK version was written past 8 bytes");
     return ok ? 0 : 1;
 }
 

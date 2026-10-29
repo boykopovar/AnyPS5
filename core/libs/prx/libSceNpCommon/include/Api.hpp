@@ -95,7 +95,7 @@ int APS5_VABI sceNpJoinThread(Pthread thread, void** retval);
 int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec);
 void APS5_VABI sceNpGetSdkVersion(char* version);
 int APS5_VABI sceNpCloseSema(void);
-int APS5_VABI sceNpGetNavSdkVersion(void);
+void APS5_VABI sceNpGetNavSdkVersion(char* version);
 int APS5_VABI sceNpIntGetPlatformType(const NpIdFull* npId);
 int APS5_VABI sceNpIntSetPlatformType(NpIdFull* npId, std::uint32_t platformType);
 int APS5_VABI sceNpJsonParse(void);
