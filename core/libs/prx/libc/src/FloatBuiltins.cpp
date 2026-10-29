@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <type_traits>
 
 #include "prx/libc/include/General.hpp"
@@ -593,31 +594,31 @@ __complex__ long double APS5_VABI conjl_nid_postfix(__complex__ long double z) {
 
 __complex__ double APS5_VABI cproj_nid_postfix(__complex__ double z) {
     if (std::isinf(__real__ z) || std::isinf(__imag__ z)) {
-        return MakeComplex(static_cast<double>(INFINITY), std::copysign(0.0, __imag__ z));
+        return MakeComplex(std::numeric_limits<double>::infinity(), std::copysign(0.0, __imag__ z));
     }
     return z;
 }
 
 __complex__ float APS5_VABI cprojf_nid_postfix(__complex__ float z) {
     if (std::isinf(__real__ z) || std::isinf(__imag__ z)) {
-        return MakeComplex(static_cast<float>(INFINITY), std::copysign(0.0f, __imag__ z));
+        return MakeComplex(std::numeric_limits<float>::infinity(), std::copysign(0.0f, __imag__ z));
     }
     return z;
 }
 
 __complex__ long double APS5_VABI cprojl_nid_postfix(__complex__ long double z) {
     if (std::isinf(__real__ z) || std::isinf(__imag__ z)) {
-        return MakeComplex(static_cast<long double>(INFINITY), std::copysign(0.0L, __imag__ z));
+        return MakeComplex(std::numeric_limits<long double>::infinity(), std::copysign(0.0L, __imag__ z));
     }
     return z;
 }
 
-double APS5_VABI carg_nid_postfix(__complex__ double z) { return std::atan2(__imag__ z, __real__ z); }
-float APS5_VABI cargf_nid_postfix(__complex__ float z) { return std::atan2(__imag__ z, __real__ z); }
-long double APS5_VABI cargl_nid_postfix(__complex__ long double z) { return std::atan2(__imag__ z, __real__ z); }
+double APS5_VABI carg_nid_postfix(__complex__ double z) { return atan2_nid_postfix(__imag__ z, __real__ z); }
+float APS5_VABI cargf_nid_postfix(__complex__ float z) { return atan2f_nid_postfix(__imag__ z, __real__ z); }
+long double APS5_VABI cargl_nid_postfix(__complex__ long double z) { return atan2l_nid_postfix(__imag__ z, __real__ z); }
 
-double APS5_VABI cabs_nid_postfix(__complex__ double z) { return std::hypot(__real__ z, __imag__ z); }
-float APS5_VABI cabsf_nid_postfix(__complex__ float z) { return std::hypot(__real__ z, __imag__ z); }
-long double APS5_VABI cabsl_nid_postfix(__complex__ long double z) { return std::hypot(__real__ z, __imag__ z); }
+double APS5_VABI cabs_nid_postfix(__complex__ double z) { return hypot_nid_postfix(__real__ z, __imag__ z); }
+float APS5_VABI cabsf_nid_postfix(__complex__ float z) { return hypotf_nid_postfix(__real__ z, __imag__ z); }
+long double APS5_VABI cabsl_nid_postfix(__complex__ long double z) { return hypotl_nid_postfix(__real__ z, __imag__ z); }
 
 }
