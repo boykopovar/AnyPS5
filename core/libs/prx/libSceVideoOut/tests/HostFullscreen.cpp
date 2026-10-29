@@ -166,6 +166,9 @@ static void ParseTest() {
     bool unrecognized = true;
     ParseHostFullscreenMode(nullptr, &unrecognized);
     Require(!unrecognized, "unset was flagged");
+    const std::string warning = HostFullscreenWarning("yes please");
+    Require(warning.find("ANYPS5_FULLSCREEN") != std::string::npos && warning.find("'yes please'") != std::string::npos, "the warning did not name the variable and the value");
+    Require(warning.find('\n') == std::string::npos, "the warning was not one line");
 }
 
 static bool Fullscreen(const DisplayWindow& window) {
