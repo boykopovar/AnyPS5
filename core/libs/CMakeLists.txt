@@ -480,6 +480,11 @@ if(BUILD_TESTING)
         add_test(NAME guest_kernel_sys_threads_${case} COMMAND guest_kernel_sys_threads_tests ${UNPATCHED_DIR} unpatched ${case})
         add_test(NAME guest_kernel_sys_threads_${case}_patched COMMAND guest_kernel_sys_threads_tests ${PATCHED_DIR} patched ${case})
         set_tests_properties(guest_kernel_sys_threads_${case} guest_kernel_sys_threads_${case}_patched PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            get_filename_component(kernelSysThreadsRuntimeDirectory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            set_tests_properties(guest_kernel_sys_threads_${case} guest_kernel_sys_threads_${case}_patched PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${kernelSysThreadsRuntimeDirectory}")
+        endif()
     endforeach()
 
     add_test_executable(guest_gnm_neo_packets_tests tests/GuestGnmNeoPackets.cpp)

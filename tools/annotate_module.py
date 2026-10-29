@@ -32,6 +32,7 @@ STT_TLS = 6
 DT_GNU_HASH = 0x6ffffef5
 SYMBOL_SIZE = 24
 RELA_SIZE = 24
+R_X86_64_NONE = 0
 
 LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
 STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)?jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%rip\)\s+# 0x([0-9a-f]+)")
@@ -159,6 +160,8 @@ class Module:
             start = self.address(table)
             for position in range(start, start + size, RELA_SIZE):
                 offset, info, _ = self.unpack("<QQq", position)
+                if (info & 0xFFFFFFFF) == R_X86_64_NONE:
+                    continue
                 if info >> 32:
                     slots[offset] = self.symbol(info >> 32)[0]
         return slots

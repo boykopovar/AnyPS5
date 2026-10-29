@@ -1613,9 +1613,34 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
     return *samplerState | (reference << EmulatedCompare::ReferenceShift) | (singleLevel ? EmulatedCompare::SingleLevel : 0u);
 }
 
+bool disabledBufferDescriptor(const BufferResource& buffer, const DescriptorValue& descriptor) {
+    const auto decoded = decodeBufferDescriptor(descriptor);
+    const auto format = decoded.RawFormat();
+    if (decoded.Type() == 0u) return format == 0u;
+    return (decoded.Type() == 2u || decoded.Type() == 3u) && format <= static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) && !buffer.read;
+}
+
+bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, const DescriptorValue& descriptor) {
+    const auto& buffer = plan.info.buffers[index];
+    if (GcnGuestShaders() || buffer.atomic || buffer.scalar || buffer.imageAlias != BufferResource::NoImageAlias || !disabledBufferDescriptor(buffer, descriptor)) return false;
+    const bool measuredOnly = decodeBufferDescriptor(descriptor).Type() != 0u;
+    bool accessed = false;
+    for (const auto& memory : plan.memoryInfo) {
+        if (memory.kind != ResourceKind::Buffer || memory.resource != index) continue;
+        if (memory.typed || memory.gpuDescriptor) return false;
+        if (measuredOnly && (memory.dataDwords != 1u || memory.componentCount != 1u)) return false;
+        accessed = true;
+    }
+    return accessed;
+}
+
 void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     for (std::uint32_t i = 0u; i < plan.info.buffers.size(); ++i) {
         const auto& buffer = plan.info.buffers[i];
+        if (disabledBufferAccesses(plan, i, snapshot.buffers.at(i))) {
+            auto& words = snapshot.buffers.at(i).dwords;
+            std::fill(words.begin(), words.begin() + 4, 0u);
+        }
         const bool scalarOnly = buffer.scalar && !buffer.written && !buffer.atomic && !buffer.formatted && buffer.imageAlias == BufferResource::NoImageAlias
             && std::none_of(plan.memoryInfo.begin(), plan.memoryInfo.end(), [i](const MemoryInfo& memory) { return memory.kind == ResourceKind::Buffer && memory.resource == i; });
         if (scalarOnly) {
