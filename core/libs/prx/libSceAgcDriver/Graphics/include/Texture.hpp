@@ -106,6 +106,8 @@ public:
     VkImageLayout Layout() const { return layout; }
     VkDeviceSize AllocationBytes() const { return allocationBytes; }
     VkFormat ViewFormat() const { return viewFormat; }
+    VkExtent3D ImageExtent() const { return extent; }
+    float ViewMinLod() const { return viewMinLod; }
     // Whether this texture is a view of a storage image (no snapshot of its own).
     bool ViewsStorageImage() const { return storageSource != nullptr; }
     const StorageTexture* StorageSource() const { return storageSource.get(); }
@@ -150,6 +152,8 @@ private:
     VkDeviceSize allocationBytes = 0;
     VkDeviceSize countedBytes = 0;
     VkFormat viewFormat = VK_FORMAT_UNDEFINED;
+    VkExtent3D extent{};
+    float viewMinLod = 0.0f;
     std::shared_ptr<ResidentColor> source;
     std::shared_ptr<StorageTexture> storageSource;
     std::unique_ptr<CommandBatch> upload;

@@ -31,6 +31,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
+#include <string_view>
 #include <stdexcept>
 #include <vector>
 #include <atomic>
@@ -336,9 +337,19 @@ std::uint64_t SampledTextureMemory() {
     return SampledMemoryCounter().load(std::memory_order_relaxed);
 }
 
+static std::uint32_t DownscaleSetting(const char* name, std::uint32_t unset, std::uint32_t largest) {
+    const char* text = std::getenv(name);
+    if (text == nullptr || *text == '\0') return unset;
+    const std::string_view value(text);
+    const bool digits = value.size() <= 9u && std::all_of(value.begin(), value.end(), [](char c) { return c >= '0' && c <= '9'; });
+    const auto number = digits ? std::strtoul(text, nullptr, 10) : 0ul;
+    Require(digits && number <= largest, std::string(name) + " is '" + text + "', not a whole number from 0 to " + std::to_string(largest));
+    return static_cast<std::uint32_t>(number);
+}
+
 static std::uint32_t DownscaleLevels(const GuestTextureResource& descriptor, bool depthCompare) {
-    static const std::uint32_t levels = [] { const char* text = std::getenv("APS5_TEXTURE_DOWNSCALE"); return text ? std::min<std::uint32_t>(static_cast<std::uint32_t>(std::strtoul(text, nullptr, 10)), 3u) : 0u; }();
-    static const std::uint32_t minimum = [] { const char* text = std::getenv("APS5_TEXTURE_DOWNSCALE_MIN"); return text ? static_cast<std::uint32_t>(std::strtoul(text, nullptr, 10)) : 1024u; }();
+    static const std::uint32_t levels = DownscaleSetting("APS5_TEXTURE_DOWNSCALE", 0u, 3u);
+    static const std::uint32_t minimum = DownscaleSetting("APS5_TEXTURE_DOWNSCALE_MIN", 1024u, 16384u);
     if (levels == 0 || depthCompare || !IsBlockCompressed(descriptor.format)) return 0;
     if (descriptor.dimension != TextureDimension::k2D && descriptor.dimension != TextureDimension::k2DArray) return 0;
     if (std::max(descriptor.width, descriptor.height) < minimum || descriptor.baseLevel != 0) return 0;
@@ -393,6 +404,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         imageInfo.format = vkFormat;
         imageInfo.extent = {std::max(descriptor.width >> skip, 1u), depth1D ? 1u : std::max(descriptor.height >> skip, 1u), geometry.imageDepth};
         imageInfo.mipLevels = imageLevels;
+        extent = imageInfo.extent;
         Require(geometry.imageLayers <= context.limits.maxImageArrayLayers, "a texture array with more layers than maxImageArrayLayers is not implemented");
         imageInfo.arrayLayers = geometry.imageLayers;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -597,6 +609,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         VkImageViewMinLodCreateInfoEXT minLod{VK_STRUCTURE_TYPE_IMAGE_VIEW_MIN_LOD_CREATE_INFO_EXT};
         ChainMinLod(context, descriptor, viewInfo, minLod);
         if (skip != 0) minLod.minLod = std::max(0.0f, minLod.minLod - static_cast<float>(skip));
+        viewMinLod = viewInfo.pNext == &minLod ? minLod.minLod : 0.0f;
 
         Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView");
         viewRange = {viewInfo.viewType, viewInfo.subresourceRange.levelCount, viewInfo.subresourceRange.layerCount};
