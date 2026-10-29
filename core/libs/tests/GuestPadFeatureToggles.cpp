@@ -39,7 +39,9 @@ int main() {
     Require(scePadEnableAutoDetect(true) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadEnableSpecificDeviceClass(0) == PAD_ERROR_NOT_INITIALIZED);
 
-    Require(scePadInit_nid_postfix() == PAD_OK);
+    Require(scePadInit_nid_postfix() == PAD_OK);
+    const int pad = scePadOpen_nid_postfix(0x10000000, 0, 0, nullptr);
+    Require(pad > 0);
     for (int handle : {-1, 0, 2, 12345}) {
         Require(scePadDisableDataConversion(handle, true) == PAD_ERROR_INVALID_HANDLE);
         Require(scePadDisableDataConversion(handle, false) == PAD_ERROR_INVALID_HANDLE);
@@ -49,16 +51,16 @@ int main() {
         Require(scePadEnableControllerIndicator(handle) == PAD_ERROR_INVALID_HANDLE);
         Require(scePadEnableProfileIndicator(handle) == PAD_ERROR_INVALID_HANDLE);
     }
-    Require(scePadDisableDataConversion(PAD_HANDLE, false) == PAD_OK);
-    RequireThrows([] { (void)scePadDisableDataConversion(PAD_HANDLE, true); });
-    Require(scePadDisableActiveProfileChange(PAD_HANDLE, false) == PAD_OK);
-    Require(scePadDisableActiveProfileChange(PAD_HANDLE, true) == PAD_OK);
+    Require(scePadDisableDataConversion(pad, false) == PAD_OK);
+    RequireThrows([] { (void)scePadDisableDataConversion(pad, true); });
+    Require(scePadDisableActiveProfileChange(pad, false) == PAD_OK);
+    Require(scePadDisableActiveProfileChange(pad, true) == PAD_OK);
     for (int deviceId : {-1, 0, 1, 123456})
         Require(scePadDisableActiveProfileChangeByDeviceId(deviceId, true) == PAD_OK);
-    Require(scePadEnablePs4CompatibleMode(PAD_HANDLE, false) == PAD_OK);
-    RequireThrows([] { (void)scePadEnablePs4CompatibleMode(PAD_HANDLE, true); });
-    Require(scePadEnableControllerIndicator(PAD_HANDLE) == PAD_OK);
-    Require(scePadEnableProfileIndicator(PAD_HANDLE) == PAD_OK);
+    Require(scePadEnablePs4CompatibleMode(pad, false) == PAD_OK);
+    RequireThrows([] { (void)scePadEnablePs4CompatibleMode(pad, true); });
+    Require(scePadEnableControllerIndicator(pad) == PAD_OK);
+    Require(scePadEnableProfileIndicator(pad) == PAD_OK);
     for (bool value : {false, true}) {
         Require(scePadDisableTrackingLedBatterySaver(value) == PAD_OK);
         Require(scePadDisableTransportButtons(value) == PAD_OK);
