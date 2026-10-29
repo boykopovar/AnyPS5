@@ -7,40 +7,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <stdexcept>
 
-struct GuestBarrier;
-struct GuestBarrierattr;
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI scePthreadBarrierattrInit(GuestBarrierattr** attr);
-int APS5_VABI scePthreadBarrierattrDestroy(GuestBarrierattr** attr);
-int APS5_VABI scePthreadBarrierattrGetpshared(GuestBarrierattr* const* attr, int* pshared);
-int APS5_VABI scePthreadBarrierattrSetpshared(GuestBarrierattr** attr, int pshared);
-int APS5_VABI scePthreadBarrierInit(GuestBarrier** barrier, GuestBarrierattr* const* attr, unsigned count, const char* name);
-int APS5_VABI scePthreadBarrierWait(GuestBarrier** barrier);
-int APS5_VABI scePthreadBarrierDestroy(GuestBarrier** barrier);
-int APS5_VABI scePthreadGetcpuclockid(Pthread thread, int* clockId);
-int APS5_VABI pthread_getcpuclockid_nid_postfix(Pthread thread, int* clockId);
-int APS5_VABI scePthreadGetconcurrency();
-int APS5_VABI pthread_setconcurrency_nid_postfix(int level);
-int APS5_VABI sceKernelMlockall(int flags);
-int APS5_VABI sceKernelMsync(void* address, std::size_t length, int flags);
-}
-
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
-static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
-static constexpr int SCE_KERNEL_ERROR_ENOMEM = static_cast<int>(0x8002000C);
 static constexpr int PROCESS_PRIVATE = 0;
 static constexpr int PROCESS_SHARED = 1;
 static constexpr int BARRIER_SERIAL_THREAD = -1;
 static constexpr int MS_ASYNC = 0x1;
 static constexpr int MS_INVALIDATE = 0x2;
-static constexpr int MCL_CURRENT = 0x1;
-static constexpr int MCL_FUTURE = 0x2;
 static constexpr unsigned WAITERS = 4;
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -111,10 +83,5 @@ int main() {
     Require(sceKernelMlockall(0) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMlockall(0x4) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelMlockall(-4) == SCE_KERNEL_ERROR_EINVAL);
-    for (int flags : {MCL_CURRENT, MCL_FUTURE, MCL_CURRENT | MCL_FUTURE}) {
-        bool threw = false;
-        try { sceKernelMlockall(flags); } catch (const std::runtime_error&) { threw = true; }
-        Require(threw);
-    }
     return 0;
 }

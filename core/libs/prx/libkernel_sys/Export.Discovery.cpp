@@ -14,25 +14,6 @@
 #include <initializer_list>
 #include <optional>
 
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI pthread_barrier_init_nid_postfix(void** barrier, void* const* attr, unsigned count);
-int APS5_VABI pthread_barrier_wait_nid_postfix(void** barrier);
-int APS5_VABI pthread_barrier_destroy_nid_postfix(void** barrier);
-int APS5_VABI pthread_barrierattr_init_nid_postfix(void** attr);
-int APS5_VABI pthread_barrierattr_destroy_nid_postfix(void** attr);
-int APS5_VABI pthread_barrierattr_getpshared_nid_postfix(void* const* attr, int* pshared);
-int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(void** attr, int pshared);
-int APS5_VABI pthread_getcpuclockid_nid_postfix(void* thread, int* clockId);
-int APS5_VABI pthread_getconcurrency_nid_postfix();
-int APS5_VABI pthread_setconcurrency_nid_postfix(int level);
-int APS5_VABI pthread_attr_getscope_nid_postfix(void* const* attr, int* scope);
-int APS5_VABI pthread_attr_setscope_nid_postfix(void** attr, int scope);
-int APS5_VABI pthread_atfork_nid_postfix(void (APS5_VABI* prepare)(), void (APS5_VABI* parent)(), void (APS5_VABI* child)());
-int APS5_VABI mlockall_nid_postfix(int flags);
-int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags);
-}
-
 namespace {
 
 int SceResult(int error) {
