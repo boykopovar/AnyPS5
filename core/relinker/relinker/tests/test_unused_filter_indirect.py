@@ -29,11 +29,12 @@ def build(code, relative=(), data=(), code_vaddr=CODE, slot_vaddr=SLOT):
     for slot in range(3, 8):
         struct.pack_into("<IIQQQQQQ", image, 64 + slot * 56, 0x6fffff01, 0, 0, 0, 0, 0, 0, 1)
     relocations = [(slot_vaddr, (1 << 32) | 6, 0)] + [(slot, 8, target) for slot, target in relative]
-    tags = [(1, 4), (5, 0x600), (10, 12), (6, 0x620), (11, 24), (7, 0x700), (8, 24 * len(relocations)),
+    tags = [(1, 5), (5, 0x600), (10, 12), (6, 0x620), (11, 24), (7, 0x700), (8, 24 * len(relocations)),
             (9, 24), (0x6100003f, 48), (0, 0)]
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, 0x400 + index * 16, *tag)
-    image[0x600:0x600 + 11] = b"foo\0lib.so\0"
+    image[0x600:0x600 + 12] = b"\0foo\0lib.so\0"
+    struct.pack_into("<I", image, 0x638, 1)
     for index, relocation in enumerate(relocations):
         struct.pack_into("<QQq", image, 0x700 + index * 24, *relocation)
     for offset, value in data:

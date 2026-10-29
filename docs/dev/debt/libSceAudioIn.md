@@ -20,8 +20,8 @@
 - [sceAudioInChangeAppModuleState](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetSparkParam](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetSparkSideTone](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInSetCompressorPreGain](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature; the PS5 12.00 module returns 0 without reading any argument, and so does this one
-- [sceAudioInSetNoiseGateThreshold](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature; the PS5 12.00 module returns 0 without reading any argument, and so does this one
+- [sceAudioInSetCompressorPreGain](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature; the PS5 13.60 module returns 0 without reading any argument, and so does this one
+- [sceAudioInSetNoiseGateThreshold](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature; the PS5 13.60 module returns 0 without reading any argument, and so does this one
 - [sceAudioInSetMicLevel](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetDeviceMuteStatus](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetDevConnection](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
@@ -36,6 +36,15 @@
 - [sceAudioInSetMode2](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInExtCtrl](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInInputs](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
+
+- 6 additional pending imports in [InventoryExports.cpp](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) are listed in the local PS5 3.20 export inventory `libSceAudioIn.c`. Their signatures and behavior are unverified; each uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`, for import resolution only.
+
+- `sceAudioInExtClose` — NID `kFKJ3MVcDuo` — [`sceAudioInPending_001_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- `sceAudioInExtInput` — NID `KpBKoHKVKEc` — [`sceAudioInPending_002_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- `sceAudioInExtOpen` — NID `YZ+3seW7CyY` — [`sceAudioInPending_003_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- `sceAudioInExtSetAecMode` — NID `FVGWf8JaHOE` — [`sceAudioInPending_004_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- `sceAudioInSetConnectionsForUser` — NID `thLNHvkWSeg` — [`sceAudioInPending_005_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- `sceAudioInSetFocusForUser` — NID `iN3KqF-8R-w` — [`sceAudioInPending_006_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
 
 ### Functional
 

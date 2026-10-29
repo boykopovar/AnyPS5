@@ -27,8 +27,8 @@ def main(argv=None):
         parser.error(f"archive module does not exist: {archive}")
     try:
         subprocess.run(["node", "--test", *(str(ROOT / "demo/web/tests" / name) for name in (
-            "app.test.mjs", "batch.test.mjs", "output-directory.test.mjs"
-        ))], check=True)
+            "app.test.mjs", "batch.test.mjs", "failure-report.test.mjs", "output-directory.test.mjs"
+        ) + ("directory-writer.test.mjs",))], check=True)
         with tempfile.TemporaryDirectory(prefix="anyps5-web-") as directory:
             fixture = Path(directory)
             (fixture / "main.elf").write_bytes(main_fixture())
@@ -44,8 +44,9 @@ def main(argv=None):
             environment = dict(os.environ, ANYPS5_TEST_ZIP_URL=url, ANYPS5_TEST_ZIP_PATH=library.as_uri())
             subprocess.run(["node", str(ROOT / "demo/web/tests/archive-root.test.mjs"), str(args.build.resolve() / "web")], env=environment, check=True)
             subprocess.run(["node", str(ROOT / "demo/web/tests/archive-windows.test.mjs"), str(args.build.resolve() / "web")], env=environment, check=True)
+            subprocess.run(["node", str(ROOT / "demo/web/tests/archive-reserved.test.mjs"), str(args.build.resolve() / "web")], env=environment, check=True)
             subprocess.run(["node", str(ROOT / "demo/web/tests/archive.test.mjs"), str(args.build.resolve() / "web"), str(fixture)], env=environment, check=True)
-    except (subprocess.CalledProcessError, urllib.error.URLError, OSError) as error:
+    except (subprocess.CalledProcessError, urllib.error.URLError, OSError, UnicodeDecodeError) as error:
         parser.error(str(error))
     return 0
 

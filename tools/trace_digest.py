@@ -4,6 +4,7 @@ import collections
 import gzip
 import html
 import json
+import math
 import sys
 import zlib
 from pathlib import Path
@@ -26,6 +27,36 @@ def is_wait(name):
     return "wait" in name.lower()
 
 
+def _event_value(value, label, index):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"trace event {index}: {label} must be a finite number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"trace event {index}: {label} must be a finite number") from None
+    if not math.isfinite(number) or abs(number) >= 1e300:
+        raise ValueError(f"trace event {index}: {label} must be a finite number")
+    return number
+
+
+def _event_number(event, key, index):
+    return _event_value(event.get(key), key, index)
+
+
+def _event_tid(event, index):
+    tid = event.get("tid")
+    if isinstance(tid, bool) or not isinstance(tid, int):
+        raise ValueError(f"trace event {index}: tid must be an integer")
+    return tid
+
+
+def _event_args(event, index):
+    args = event.get("args", {})
+    if not isinstance(args, dict):
+        raise ValueError(f"trace event {index}: args must be an object")
+    return args
+
+
 class Trace:
     def __init__(self, document):
         self.threads = {}
@@ -43,16 +74,30 @@ class Trace:
                 raise ValueError(f"trace event {index} must be an object")
             phase = event.get("ph")
             if phase == "M" and event.get("name") == "thread_name":
-                self.threads[event["tid"]] = event["args"]["name"]
+                tid = _event_tid(event, index)
+                name = _event_args(event, index).get("name")
+                if not isinstance(name, str):
+                    raise ValueError(f"trace event {index}: args.name must be a string")
+                self.threads[tid] = name
             elif phase == "X":
-                self.slices[event["tid"]].append([float(event["ts"]), float(event["dur"]), event["name"], 0, False])
-                batch = event.get("args", {}).get("batch")
-                if batch:
-                    self.batched.append((event["tid"], float(event["ts"]), float(event["dur"]), event["name"], batch))
+                tid = _event_tid(event, index)
+                name = event.get("name")
+                if not isinstance(name, str):
+                    raise ValueError(f"trace event {index}: name must be a string")
+                ts = _event_number(event, "ts", index)
+                dur = _event_number(event, "dur", index)
+                self.slices[tid].append([ts, dur, name, 0, False])
+                args = _event_args(event, index)
+                if "batch" in args:
+                    batch = args["batch"]
+                    if isinstance(batch, bool) or not isinstance(batch, (int, str)):
+                        raise ValueError(f"trace event {index}: args.batch must be an integer or a string")
+                    self.batched.append((tid, ts, dur, name, batch))
             elif phase == "i" and event.get("name") == "present":
-                self.presents.append((float(event["ts"]), event.get("args", {}).get("present")))
+                self.presents.append((_event_number(event, "ts", index), _event_args(event, index).get("present")))
             elif phase == "C":
-                self.folded[event["tid"]] += sum(float(value) for value in event.get("args", {}).values())
+                tid = _event_tid(event, index)
+                self.folded[tid] += sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())
         self.presents.sort()
         for slices in self.slices.values():
             slices.sort(key=lambda entry: (entry[0], -entry[1]))
@@ -90,10 +135,14 @@ class Trace:
 def load_trace(path):
     opener = gzip.open if str(path).endswith(".gz") else open
     with opener(path, "rt", encoding="utf-8-sig") as handle:
-        return Trace(json.load(handle))
+        try:
+            document = json.load(handle)
+        except RecursionError as error:
+            raise ValueError(f"{path}: trace JSON nesting is too deep: {error}") from error
+        return Trace(document)
 
 
-def load_summary_lines(path):
+def load_summary_lines(path, numbered=False):
     records = []
     for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
         if not line.strip():
@@ -102,9 +151,11 @@ def load_summary_lines(path):
             record = json.loads(line)
         except json.JSONDecodeError as error:
             raise ValueError(f"{path}:{number}: invalid JSON: {error.msg}") from error
+        except RecursionError as error:
+            raise ValueError(f"{path}:{number}: JSON nesting is too deep") from error
         if not isinstance(record, dict):
             raise ValueError(f"{path}:{number}: summary record must be an object")
-        records.append(record)
+        records.append((number, record) if numbered else record)
     return records
 
 
@@ -299,8 +350,49 @@ def markdown(result):
 
 
 def load_intervals(path):
-    lines = load_summary_lines(path)
-    return [line for line in lines if "interval_start_s" in line]
+    lines = []
+    for number, record in load_summary_lines(path, numbered=True):
+        if "interval_start_s" not in record:
+            continue
+        try:
+            validate_interval(record)
+        except ValueError as error:
+            raise ValueError(f"{path}:{number}: {error}") from error
+        lines.append(record)
+    return lines
+
+
+def interval_number(value, field):
+    try:
+        valid = type(value) in (int, float) and math.isfinite(value) and value >= 0
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise ValueError(f"{field} must be a finite non-negative number")
+    return value
+
+
+def validate_interval(record):
+    start = interval_number(record.get("interval_start_s"), "interval_start_s")
+    end = interval_number(record.get("interval_end_s"), "interval_end_s")
+    if end < start:
+        raise ValueError("interval_end_s must not precede interval_start_s")
+    if type(record.get("presents")) is not int or record["presents"] < 0:
+        raise ValueError("presents must be a non-negative integer")
+    frames = record.get("frame_ms")
+    if not isinstance(frames, dict):
+        raise ValueError("frame_ms must be an object")
+    for field in ("p50", "p90", "p99", "max"):
+        interval_number(frames.get(field), f"frame_ms.{field}")
+    interval_number(record.get("gpu_busy_ms_per_present"), "gpu_busy_ms_per_present")
+    for field in ("worker_busy_pct", "top_phases_ms_per_frame"):
+        values = record.get(field, {})
+        if not isinstance(values, dict):
+            raise ValueError(f"{field} must be an object")
+        for name, value in values.items():
+            interval_number(value, f"{field}.{name}")
+    if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
+        raise ValueError("trace_dropped must be a boolean")
 
 
 def sparkline(values):

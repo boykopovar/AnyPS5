@@ -32,6 +32,7 @@ class TraceThread;
 
 extern "C" bool AgcDriverTraceRecording_nid_postfix();
 extern "C" AgcDriver::TraceThread* AgcDriverTraceThread_nid_postfix();
+extern "C" void AgcDriverTraceCount_nid_postfix(const char* scope);
 
 namespace AgcDriver {
 
@@ -769,8 +770,15 @@ private:
     }
 };
 
+struct TraceThreadTotals {
+    std::string name;
+    std::vector<TraceThread::Total> totals;
+};
+
 class PerformanceTrace {
 public:
+    static constexpr const char* RenderPassScope = "Graphics.RenderPass";
+
     static bool Configured() {
         static const bool configured = std::getenv("APS5_TRACE_FRAMES") != nullptr || std::getenv("APS5_TRACE_SECONDS") != nullptr || std::getenv("APS5_TRACE_SUMMARY_EVERY") != nullptr || std::getenv("APS5_TRACE_BENCH") != nullptr;
         return configured;
@@ -797,11 +805,21 @@ public:
         return AgcDriverTraceThread_nid_postfix();
     }
 
+    static void Count(const char* scope) {
+        if (Recording()) AgcDriverTraceCount_nid_postfix(scope);
+    }
+
+    static void SetOverlayTotals(bool on);
+    static bool OverlayTotals();
+    static std::optional<std::vector<TraceThreadTotals>> ThreadTotals();
     static void StopOutput();
 
 private:
     friend bool ::AgcDriverTraceRecording_nid_postfix();
     friend TraceThread* ::AgcDriverTraceThread_nid_postfix();
+    friend void ::AgcDriverTraceCount_nid_postfix(const char* scope);
+
+    static TraceThread* bindNamed();
 
     static void OpenInterval(std::chrono::steady_clock::time_point now, std::uint64_t present);
     static void FlushInterval(std::chrono::steady_clock::time_point now, std::uint32_t width, std::uint32_t height, const VulkanDevice* device);
@@ -810,6 +828,8 @@ private:
     inline static std::atomic<bool> buffering{false};
     inline static std::atomic<std::uint64_t> presentCount{0};
     static thread_local TraceThread* local;
+    static thread_local const char* localName;
+    static std::atomic<TraceThread* (*)()> binder;
     inline static std::mutex gpuMutex;
     inline static std::vector<TraceGpuRange> gpuRanges;
     inline static std::uint64_t gpuLost = 0;

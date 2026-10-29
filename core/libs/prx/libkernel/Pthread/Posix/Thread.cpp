@@ -16,11 +16,14 @@
 #include <atomic>
 #include <mutex>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include <thread>
 
 extern "C" {
 
 int APS5_VABI JoinThread_nid_no_patch(Pthread thread, void** retval, const KernelTimespec* abstime);
+bool IsInitialPthread_nid_no_patch();
 
 }
 
@@ -182,7 +185,61 @@ int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, Ker
     return PosixThread::ToErrno(scePthreadGetschedparam(thread, policy, param));
 }
 
+static Pthread SchedTarget(int pid, const char* function) {
+    if (pid == 0) return scePthreadSelf();
+    if (pid != getpid_nid_postfix()) return nullptr;
+    if (IsInitialPthread_nid_no_patch()) return scePthreadSelf();
+    throw std::runtime_error(std::string(function) + ": the main thread is selected by the own pid from another thread, which is not modelled");
+}
+
+static int SchedFailure(int error) {
+    *__error_nid_postfix() = error;
+    return -1;
+}
+
+static bool InSchedRange(int policy, int priority) {
+    return priority >= sched_get_priority_min_nid_postfix(policy) && priority <= sched_get_priority_max_nid_postfix(policy);
+}
+
+int APS5_VABI sched_getparam_nid_postfix(int pid, KernelSchedParam* param) {
+    const Pthread thread = SchedTarget(pid, "sched_getparam");
+    if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
+    int policy = 0;
+    KernelSchedParam current{};
+    if (const int error = PosixThread::ToErrno(scePthreadGetschedparam(thread, &policy, &current))) return SchedFailure(error);
+    if (!param) return SchedFailure(PosixThread::GUEST_EFAULT);
+    *param = current;
+    return 0;
+}
+
+int APS5_VABI sched_getscheduler_nid_postfix(int pid) {
+    const Pthread thread = SchedTarget(pid, "sched_getscheduler");
+    if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
+    int policy = 0;
+    KernelSchedParam current{};
+    if (const int error = PosixThread::ToErrno(scePthreadGetschedparam(thread, &policy, &current))) return SchedFailure(error);
+    return policy;
+}
+
+int APS5_VABI sched_setparam_nid_postfix(int pid, const KernelSchedParam* param) {
+    if (!param) return SchedFailure(PosixThread::GUEST_EFAULT);
+    const Pthread thread = SchedTarget(pid, "sched_setparam");
+    if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
+    const auto live = LockLiveGuestThread(thread);
+    if (!live.owns_lock()) return SchedFailure(PosixThread::GUEST_ESRCH);
+    const int policy = thread->schedPolicy.load(std::memory_order_relaxed);
+    if (policy != GUEST_SCHED_FIFO && policy != GUEST_SCHED_RR)
+        throw std::runtime_error("sched_setparam: the thread's policy " + std::to_string(policy) + " is neither SCHED_FIFO nor SCHED_RR, for which the answer of a PS5 is unmeasured");
+    if (!InSchedRange(policy, param->sched_priority)) return SchedFailure(PosixThread::GUEST_EPERM);
+    thread->priority.store(param->sched_priority, std::memory_order_relaxed);
+    return 0;
+}
+
 int APS5_VABI pthread_getprio_nid_postfix(Pthread thread) {
+    if (!thread) {
+        *__error_nid_postfix() = PosixThread::GUEST_EINVAL;
+        return -1;
+    }
     const auto lock = LockLiveGuestThread(thread);
     if (!lock.owns_lock()) {
         *__error_nid_postfix() = PosixThread::GUEST_ESRCH;
@@ -234,6 +291,7 @@ struct RegisterPthreadOnLoad {
         RegisterPthreadCreate_nid_no_patch(reinterpret_cast<PthreadCreateFn_nid_no_patch>(pthread_create_nid_postfix));
         RegisterPthreadJoin_nid_no_patch(reinterpret_cast<PthreadJoinFn_nid_no_patch>(pthread_join_nid_postfix));
         RegisterPthreadDetach_nid_no_patch(reinterpret_cast<PthreadDetachFn_nid_no_patch>(pthread_detach_nid_postfix));
+        RegisterProcessorCount_nid_no_patch(static_cast<unsigned>(std::popcount(DEFAULT_THREAD_AFFINITY)));
         static const ThreadForwards_nid_no_patch forwards{
             reinterpret_cast<decltype(forwards.once)>(scePthreadOnce),
             reinterpret_cast<decltype(forwards.keyCreate)>(scePthreadKeyCreate),
