@@ -20,6 +20,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <span>
@@ -43,8 +44,10 @@ constexpr std::uint32_t SetShReg = 0x76u;
 constexpr std::uint32_t SetUconfigReg = 0x79u;
 constexpr std::uint32_t DrawIndexAuto = 0x2du;
 constexpr std::uint32_t Float11_11_10Info = 0x4171cu;
+constexpr std::uint32_t Unorm8x4Info = 0x8028u;
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t PremultipliedOver = 0x40000501u;
+constexpr std::uint32_t Additive = 0x40000101u;
 constexpr std::uint32_t LateKill = 0x40u;
 constexpr std::uint32_t DepthTest = 0x2u;
 constexpr std::uint32_t DepthWrite = 0x4u;
@@ -55,6 +58,7 @@ constexpr std::uint32_t Always = 7u << 4u;
 constexpr std::array<std::uint32_t, 5> CheckerboardKill{0x7e040f00u, 0x7e060f01u, 0x3a040702u, 0x36040481u, 0x7da40480u};
 
 std::byte* ColorMemory = nullptr;
+std::byte* SecondMemory = nullptr;
 alignas(256) std::array<std::byte, 65536> DepthMemory{};
 
 std::byte* AllocateWatched(std::size_t bytes) {
@@ -104,7 +108,7 @@ alignas(256) constexpr auto Middle = Screen(0.5f);
 alignas(256) constexpr auto ProbeLess = Screen(0.75f);
 alignas(256) constexpr auto ProbeGreater = Screen(0.25f);
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 6> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 64>, 7> Programs{};
 
 struct RegisteredShader {
     Shader shader;
@@ -112,7 +116,7 @@ struct RegisteredShader {
 };
 RegisteredShader VertexShader{};
 RegisteredShader CountingVertexShader{};
-std::array<RegisteredShader, 6> PixelShaders{};
+std::array<RegisteredShader, 7> PixelShaders{};
 
 void Register(RegisteredShader& registered, const void* code, std::uint32_t bytes, std::uint8_t type) {
     registered.shader.file_header = 0x34333231u;
@@ -125,7 +129,7 @@ void Register(RegisteredShader& registered, const void* code, std::uint32_t byte
     AgcDriverRegisterShader_nid_postfix(&registered.shader);
 }
 
-const std::uint32_t* PixelProgram(std::size_t index, std::array<float, 4> rgba, bool kill, bool counting = false) {
+const std::uint32_t* PixelProgram(std::size_t index, std::array<float, 4> rgba, bool kill, bool counting = false, bool second = false) {
     auto& code = Programs[index];
     std::size_t at = 0;
     if (kill) {
@@ -138,7 +142,11 @@ const std::uint32_t* PixelProgram(std::size_t index, std::array<float, 4> rgba, 
         code[at++] = 0x7e0002ffu | ((4u + vgpr) << 17u);
         code[at++] = std::bit_cast<std::uint32_t>(rgba[vgpr]);
     }
-    code[at++] = 0xf800180fu;
+    if (second) {
+        code[at++] = 0xf800000fu;
+        code[at++] = 0x07060504u;
+    }
+    code[at++] = second ? 0xf800181fu : 0xf800180fu;
     code[at++] = 0x07060504u;
     code[at++] = 0xbf810000u;
     Register(PixelShaders[index], code.data(), static_cast<std::uint32_t>(at * sizeof(std::uint32_t)), 1);
@@ -202,6 +210,7 @@ struct Pass {
     std::uint32_t blendControl;
     const std::uint32_t* vertex = VertexCode.data();
     bool counter = false;
+    bool second = false;
 };
 
 void Submit(const Pass& pass, const char* what) {
@@ -236,6 +245,17 @@ void Submit(const Pass& pass, const char* what) {
     std::vector<std::uint32_t> words;
     SetRegister(words, SetUconfigReg, 0x242, 4u);
     for (const auto& [offset, value] : context) SetRegister(words, SetContextReg, offset, value);
+    const auto second = reinterpret_cast<std::uintptr_t>(SecondMemory);
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>> secondTarget{
+        {0x8f, 0xff}, {0x1c5, 0x99}, {0x1e1, Additive},
+        {0x327, static_cast<std::uint32_t>(second >> 8u)}, {0x391, static_cast<std::uint32_t>(second >> 40u)},
+        {0x32a, 0}, {0x32b, Unorm8x4Info}, {0x32c, 0}, {0x3b1, ((Width - 1u) << 14u) | (Height - 1u)}, {0x3b9, TiledAttrib3},
+    };
+    if (pass.second) {
+        for (const auto& [offset, value] : secondTarget) SetRegister(words, SetContextReg, offset, value);
+    } else {
+        SetRegister(words, SetContextReg, 0x32b, 0u);
+    }
     SetRegister(words, SetShReg, 0x008, static_cast<std::uint32_t>(pixel >> 8u));
     SetRegister(words, SetShReg, 0x009, static_cast<std::uint32_t>(pixel >> 40u));
     SetRegister(words, SetShReg, 0x00b, pass.counter ? 4u << 1u : 0u);
@@ -257,8 +277,8 @@ void Submit(const Pass& pass, const char* what) {
     AgcDriverWaitIdle_nid_postfix();
 }
 
-std::vector<std::uint32_t> ReadBack(std::size_t bytes) {
-    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(ColorMemory));
+std::vector<std::uint32_t> ReadBack(std::size_t bytes, const std::byte* memory = ColorMemory) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(memory));
     AgcDriver::Graphics::StorageTexture::FlushPending(address, bytes, nullptr, "test read-back");
     AgcDriverWaitIdle_nid_postfix();
     std::vector<std::uint32_t> stored(bytes / 4u);
@@ -302,7 +322,7 @@ struct Case {
     std::span<const Vertex> probe;
 };
 
-void Run(const ColorTargetLayout& layout, const Case& run, const std::uint32_t* killing, const std::uint32_t* plain, const std::uint32_t* probe) {
+void Run(const ColorTargetLayout& layout, const Case& run, const std::uint32_t* killing, const std::uint32_t* plain, const std::uint32_t* probe, const std::uint32_t* killingBoth = nullptr) {
     const std::array<float, 4> splitColor{0.5f, 0.25f, 0.125f, 0.5f};
     const std::array<float, 4> probeColor{1.0f, 0.5f, 0.25f, 1.0f};
     std::vector<std::uint32_t> before(layout.Bytes() / 4u);
@@ -312,10 +332,13 @@ void Run(const ColorTargetLayout& layout, const Case& run, const std::uint32_t* 
         before[index] = field(0u, 5u) | (field(8u, 6u) << 10u) | (field(17u, 6u) << 21u);
     }
     std::memcpy(ColorMemory, before.data(), layout.Bytes());
-    const std::string what = std::string("a late-test merge split under ") + run.name;
+    std::vector<std::uint32_t> secondBefore(layout.Bytes() / 4u);
+    for (std::size_t index = 0; index < secondBefore.size(); ++index) secondBefore[index] = 0x20202020u + static_cast<std::uint32_t>((index * 0x0b070503u) & 0x1f1f1f1fu);
+    if (killingBoth != nullptr) std::memcpy(SecondMemory, secondBefore.data(), layout.Bytes());
+    const std::string what = std::string("a late-test merge split ") + (killingBoth != nullptr ? "beside an additively blended RGBA8 target " : "") + "under " + run.name;
     Submit({run.background, plain, DepthTest | DepthWrite | Always, 0u, 0u, 0u}, (what + ", the background depth").c_str());
     Submit({run.occluder, plain, DepthTest | DepthWrite | Always, 0u, 0u, 0u}, (what + ", the left occluder").c_str());
-    Submit({Middle, killing, DepthTest | DepthWrite | run.compare, LateKill, 0xfu, PremultipliedOver}, (what + ", the split draw").c_str());
+    Submit({Middle, killingBoth != nullptr ? killingBoth : killing, DepthTest | DepthWrite | run.compare, LateKill, killingBoth != nullptr ? 0xffu : 0xfu, PremultipliedOver, VertexCode.data(), false, killingBoth != nullptr}, (what + ", the split draw").c_str());
     Submit({run.probe, probe, DepthTest | run.compare, 0u, 0xfu, 0u}, (what + ", the depth probe").c_str());
     const auto stored = ReadBack(layout.Bytes());
     for (std::uint32_t y = 0; y < Height; ++y) {
@@ -328,6 +351,27 @@ void Run(const ColorTargetLayout& layout, const Case& run, const std::uint32_t* 
             if (stored[index] == expected) continue;
             char detail[224];
             std::snprintf(detail, sizeof(detail), ": pixel (%u, %u) %s holds 0x%08x, expected 0x%08x (it held 0x%08x)", x, y, x < Half ? "behind the occluder" : kept ? "kept by the kill" : "killed", stored[index], expected, before[index]);
+            throw std::runtime_error(what + detail);
+        }
+    }
+    if (killingBoth == nullptr) return;
+    const auto second = ReadBack(layout.Bytes(), SecondMemory);
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            const auto index = layout.Offset(x, y) / 4u;
+            const bool drawn = x >= Half && ((x ^ y) & 1u) == 0u;
+            bool matches = second[index] == secondBefore[index];
+            if (drawn) {
+                matches = true;
+                for (std::uint32_t channel = 0; channel < 4u; ++channel) {
+                    const auto value = static_cast<int>((second[index] >> (8u * channel)) & 0xffu);
+                    const auto stored = static_cast<int>((secondBefore[index] >> (8u * channel)) & 0xffu);
+                    matches = matches && std::abs(value - stored - static_cast<int>(std::lround(splitColor[channel] * 255.0f))) <= 1;
+                }
+            }
+            if (matches) continue;
+            char detail[224];
+            std::snprintf(detail, sizeof(detail), ": second-target pixel (%u, %u) %s holds 0x%08x (it held 0x%08x)", x, y, drawn ? "drawn by the depth pass" : "not drawn by the depth pass", second[index], secondBefore[index]);
             throw std::runtime_error(what + detail);
         }
     }
@@ -348,6 +392,7 @@ int main(int argc, char** argv) {
         const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 4);
         Require(layout.Bytes() <= BlockBytes, "the 11_11_10 target fits one watched block");
         ColorMemory = AllocateWatched(BlockBytes);
+        SecondMemory = AllocateWatched(BlockBytes);
         Register(VertexShader, VertexCode.data(), sizeof(VertexCode), 2);
         Register(CountingVertexShader, CountingVertexCode.data(), sizeof(CountingVertexCode), 2);
         if (argc == 2 && (std::string(argv[1]) == "--counting-pixel" || std::string(argv[1]) == "--counting-vertex")) {
@@ -360,13 +405,16 @@ int main(int argc, char** argv) {
         const auto* killing = PixelProgram(0, {0.5f, 0.25f, 0.125f, 0.5f}, true);
         const auto* plain = PixelProgram(1, {0.0f, 0.0f, 0.0f, 1.0f}, false);
         const auto* probe = PixelProgram(2, {1.0f, 0.5f, 0.25f, 1.0f}, false);
+        const auto* killingBoth = PixelProgram(6, {0.5f, 0.25f, 0.125f, 0.5f}, true, false, true);
         for (int round = 0; round < 2; ++round) {
             Run(layout, {"LESS", Less, BackgroundLess, OccluderLess, ProbeLess}, killing, plain, probe);
             Run(layout, {"GREATER", Greater, BackgroundGreater, OccluderGreater, ProbeGreater}, killing, plain, probe);
             Run(layout, {"GEQUAL", GreaterEqual, BackgroundGreater, OccluderGreater, ProbeGreater}, killing, plain, probe);
         }
+        Run(layout, {"LESS", Less, BackgroundLess, OccluderLess, ProbeLess}, killing, plain, probe, killingBoth);
+        Run(layout, {"GREATER", Greater, BackgroundGreater, OccluderGreater, ProbeGreater}, killing, plain, probe, killingBoth);
         AgcDriverShutdown_nid_postfix();
-        std::puts("late-test merge splits through the driver passed");
+        std::puts("late-test merge splits through the driver passed, an additively blended second target drawn once by the depth pass");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
