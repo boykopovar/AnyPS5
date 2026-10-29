@@ -2,6 +2,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontDriver.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include "tests/FontFixture.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -36,6 +37,26 @@ static int APS5_VABI DestroyRenderer(Font::RendererNative*) {
 
 static std::uint64_t APS5_VABI QueryRenderer(Font::RendererNative*, std::uint8_t*, std::int64_t*, std::uint8_t*) {
     return 0;
+}
+
+static void CheckRebindRenderer(FontMemory* memory, FontRenderer renderer) {
+    Require(sceFontRebindRenderer(nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Font::FontHandleNative unopened{};
+    Require(sceFontRebindRenderer(reinterpret_cast<FontHandle>(&unopened)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+
+    FontLibrary library = nullptr;
+    Require(sceFontCreateLibrary(memory, sceFontSelectLibraryFt(0), &library) == SCE_FONT_OK);
+    Require(sceFontSupportExternalFonts(library, 1, 0x52) == SCE_FONT_OK);
+    const std::vector<unsigned char> fontData = FontFixture::BuildFont(1, {});
+    FontHandle font = nullptr;
+    Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &font) == SCE_FONT_OK);
+    Require(sceFontRebindRenderer(font) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
+    Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
+    Require(sceFontRebindRenderer(font) == SCE_FONT_OK);
+    Require(sceFontUnbindRenderer(font) == SCE_FONT_OK);
+    Require(sceFontRebindRenderer(font) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
+    Require(sceFontCloseFont(font) == SCE_FONT_OK);
+    Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
 }
 
 int main() {
@@ -102,6 +123,7 @@ int main() {
     Require(sceFontRendererSetOutlineBufferPolicy(static_cast<FontRenderer>(&notARenderer), 0, 0, 0) == SCE_FONT_ERROR_INVALID_RENDERER);
 
     Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), &renderer) == SCE_FONT_OK && renderer != nullptr);
+    CheckRebindRenderer(&memory, renderer);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK && renderer == nullptr);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_ERROR_INVALID_RENDERER);
     Require(sceFontDestroyRenderer(nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
