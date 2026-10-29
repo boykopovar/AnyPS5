@@ -28,6 +28,9 @@ namespace {
     struct PadSlot {
         PadInputState state;
         PadOutputState output;
+        std::array<std::uint8_t, 2> liveTriggerEffects{};
+        std::array<std::uint8_t, 2> liveTriggerStatuses{};
+        bool liveTriggerStatusValid = false;
         std::deque<QueuedInput> queue;
         Quat orientation;
         std::uint64_t lastFuseTime = 0;
@@ -132,6 +135,19 @@ namespace {
     std::uint8_t scaleStrength(std::uint8_t s) {
         return s == 0 ? 0 : static_cast<std::uint8_t>(std::min(255, 32 * std::min<int>(s, 8)));
     }
+
+    std::int32_t triggerState(std::uint8_t effect, std::uint8_t status) {
+        switch (effect) {
+            case 1:
+                return status == 0 ? 1 : status == 1 ? 2 : 0;
+            case 2:
+                return status == 0 ? 3 : status == 1 ? 4 : status == 2 ? 5 : 0;
+            case 3:
+                return status == 0 ? 6 : status == 1 ? 7 : 0;
+            default:
+                return 0;
+        }
+    }
 }
 
 void Pad::Initialize() {
@@ -147,6 +163,11 @@ void Pad::Initialize() {
             slots[i].lastReadAt = 0;
             slots[i].readInterval = 0;
         }
+    }
+    for (auto& slot : slots) {
+        slot.liveTriggerEffects.fill(0);
+        slot.liveTriggerStatuses.fill(0);
+        slot.liveTriggerStatusValid = false;
     }
     initialized = true;
 }
@@ -412,12 +433,25 @@ void Pad::SetTriggerCommand(int port, int trigger, const std::uint8_t* command) 
     std::lock_guard lock(stateMutex);
     auto& output = slots[port].output;
     output.trigger[trigger] = req;
-    output.triggerTouched = true;
+    output.triggerTouched[trigger] = true;
     ++output.sequence;
 }
 
 void Pad::SetTriggerCommand(int trigger, const std::uint8_t* command) {
     SetTriggerCommand(0, trigger, command);
+}
+
+void Pad::SetTriggerEffectsDisabled(int port, bool disabled) {
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& output = slots[port].output;
+    if (output.triggerDisabled == disabled) return;
+    output.triggerDisabled = disabled;
+    ++output.sequence;
+}
+
+void Pad::SetTriggerEffectsDisabled(bool disabled) {
+    SetTriggerEffectsDisabled(0, disabled);
 }
 
 void Pad::ResetOrientation(int port) {
@@ -524,6 +558,41 @@ extern "C" bool PadFetchOutputForPort_nid_postfix(int port, std::uint32_t* seenS
 
 extern "C" bool PadFetchOutput_nid_postfix(std::uint32_t* seenSequence, PadOutputState* out) {
     return PadFetchOutputForPort_nid_postfix(0, seenSequence, out);
+}
+
+extern "C" void PadPublishTriggerStatus_nid_postfix(int port, std::uint8_t leftEffect, std::uint8_t leftStatus, std::uint8_t rightEffect, std::uint8_t rightStatus) {
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& slot = slots[port];
+    if (slot.liveTriggerStatusValid && slot.liveTriggerEffects[0] == leftEffect && slot.liveTriggerStatuses[0] == leftStatus &&
+        slot.liveTriggerEffects[1] == rightEffect && slot.liveTriggerStatuses[1] == rightStatus) return;
+    slot.liveTriggerEffects[0] = leftEffect;
+    slot.liveTriggerEffects[1] = rightEffect;
+    slot.liveTriggerStatuses[0] = leftStatus;
+    slot.liveTriggerStatuses[1] = rightStatus;
+    slot.liveTriggerStatusValid = true;
+}
+
+extern "C" void PadClearTriggerStatus_nid_postfix(int port) {
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& slot = slots[port];
+    slot.liveTriggerEffects.fill(0);
+    slot.liveTriggerStatuses.fill(0);
+    slot.liveTriggerStatusValid = false;
+}
+
+extern "C" void PadGetTriggerEffectState_nid_postfix(int port, std::int32_t* states) {
+    if (states == nullptr || port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& slot = slots[port];
+    if (!slot.liveTriggerStatusValid) {
+        states[0] = 0;
+        states[1] = 0;
+        return;
+    }
+    states[0] = triggerState(slot.liveTriggerEffects[0], slot.liveTriggerStatuses[0]);
+    states[1] = triggerState(slot.liveTriggerEffects[1], slot.liveTriggerStatuses[1]);
 }
 
 extern "C" void PadSubmitAudioHapticsForPort_nid_postfix(int port, std::uint8_t large, std::uint8_t small) {
