@@ -209,8 +209,8 @@ private:
     static bool drawPrecheck();
     std::optional<DrawVerdict> precheckDraw(const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect);
     static std::uint32_t drawUserWord(const DrawProgram& program, std::int32_t sgpr);
-    DrawVerdict draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected);
-    DrawVerdict drawLateTestMergeSplit(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected);
+    DrawVerdict draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected, std::uint32_t& splitTargets);
+    DrawVerdict drawLateTestMergeSplit(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::uint32_t targets, std::string& rejected);
     DrawVerdict finishDraw(DrawTail& tail, PerformanceTimer& timing);
     void addDriverPhases(DispatchClass which, const std::array<double, DriverPhaseCount>& ms, bool hit, bool validated);
     static PendingDispatchPhases& pendingDispatchPhases();
@@ -412,7 +412,6 @@ private:
     std::list<std::uint64_t> dispatchOrder;
     AgcDriver::Mutex dispatchCacheMutex;
     std::uint64_t dispatchCacheHits = 0;
-    std::uint32_t lateTestSplitTargets = 0;
     std::uint64_t dispatchCacheEvictions = 0;
 
     std::uint64_t dispatchCacheVariants = 0;
