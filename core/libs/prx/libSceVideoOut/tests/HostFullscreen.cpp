@@ -109,6 +109,40 @@ static void FailureTest() {
     Require(window.fullscreen, "toggle did not work after a refused transition");
 }
 
+static void CursorTest() {
+    FakeWindow window;
+    HostFullscreenState state(window);
+    state.Adopt(HostFullscreenMode::Windowed, window.size);
+    state.Refresh(false);
+    state.Refresh(true);
+    Require(window.cursorCalls == 0 && window.cursorShown, "a windowed run touched the cursor");
+    state.Toggle();
+    state.Refresh(true);
+    Require(window.cursorCalls == 0 && window.cursorShown, "the cursor was hidden for a title that reads the mouse");
+    state.Refresh(false);
+    Require(window.cursorCalls == 1 && !window.cursorShown, "the cursor stayed visible in fullscreen with no mouse in use");
+    state.Refresh(false);
+    Require(window.cursorCalls == 1, "an unchanged policy touched the cursor again");
+    state.Refresh(true);
+    Require(window.cursorCalls == 2 && window.cursorShown, "the cursor stayed hidden after the title opened the mouse");
+    state.Refresh(false);
+    Require(!window.cursorShown, "the cursor was not hidden again");
+    state.Toggle();
+    state.Refresh(false);
+    Require(window.cursorShown, "the cursor stayed hidden after leaving fullscreen");
+    const int calls = window.cursorCalls;
+    state.Refresh(false);
+    state.Release();
+    Require(window.cursorCalls == calls, "Release touched a cursor that was already shown");
+    state.Toggle();
+    state.Refresh(false);
+    Require(!window.cursorShown, "the cursor was not hidden on the second fullscreen");
+    state.Release();
+    Require(window.cursorShown, "Release did not show the cursor it hid");
+    state.Release();
+    Require(window.cursorCalls == calls + 2, "a second Release touched the cursor");
+}
+
 static void ParseTest() {
     Require(ParseHostFullscreenMode(nullptr) == HostFullscreenMode::Windowed, "unset did not stay windowed");
     Require(ParseHostFullscreenMode("") == HostFullscreenMode::Windowed, "empty did not stay windowed");
@@ -133,5 +167,6 @@ int main() {
     RestoreSizeTest();
     AdoptTest();
     FailureTest();
+    CursorTest();
     return 0;
 }
