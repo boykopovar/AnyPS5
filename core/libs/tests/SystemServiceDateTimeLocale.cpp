@@ -144,6 +144,37 @@ void RequireLdmlDatesWithoutConsoleFormat() {
     RequireLdmlDate("%d/%m/%Y", std::nullopt);
 }
 
+void RequireLdmlTime(const char* pattern, std::optional<int> expected) {
+    const auto actual = SystemServiceDateTime::TimeFormatOfLdml(pattern);
+    Require(actual == expected, std::string("pattern time \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
+}
+
+void RequireLdmlTimes() {
+    using namespace SystemServiceDateTime;
+    RequireLdmlTime("h:mm:ss tt", TIME_FORMAT_12HOUR);
+    RequireLdmlTime("hh:mm:ss tt", TIME_FORMAT_12HOUR);
+    RequireLdmlTime("h:mm a", TIME_FORMAT_12HOUR);
+    RequireLdmlTime("K:mm a", TIME_FORMAT_12HOUR);
+    RequireLdmlTime("tt h:mm:ss", TIME_FORMAT_12HOUR);
+    RequireLdmlTime("HH:mm:ss", TIME_FORMAT_24HOUR);
+    RequireLdmlTime("H:mm", TIME_FORMAT_24HOUR);
+    RequireLdmlTime("k:mm", TIME_FORMAT_24HOUR);
+    RequireLdmlTime("H.mm.ss", TIME_FORMAT_24HOUR);
+    RequireLdmlTime("HH'\xE6\x99\x82'mm'\xE5\x88\x86'ss'\xE7\xA7\x92'", TIME_FORMAT_24HOUR);
+    RequireLdmlTime("HH:mm:ss 'at' zzzz", TIME_FORMAT_24HOUR);
+    RequireLdmlTime("HH:mm 'h' 'a'", TIME_FORMAT_24HOUR);
+    RequireLdmlTime("HH''mm", TIME_FORMAT_24HOUR);
+}
+
+void RequireLdmlTimesWithoutConsoleFormat() {
+    RequireLdmlTime("H:mm a", std::nullopt);
+    RequireLdmlTime("h:mm H", std::nullopt);
+    RequireLdmlTime("mm:ss", std::nullopt);
+    RequireLdmlTime("'h' 'H'", std::nullopt);
+    RequireLdmlTime("", std::nullopt);
+    RequireLdmlTime("dd/MM/yyyy", std::nullopt);
+}
+
 }
 
 int main() {
@@ -153,6 +184,8 @@ int main() {
     RequireStrftimeTimesWithoutConsoleFormat();
     RequireLdmlDates();
     RequireLdmlDatesWithoutConsoleFormat();
+    RequireLdmlTimes();
+    RequireLdmlTimesWithoutConsoleFormat();
     if (failures != 0) return 1;
     std::puts("system service date and time locale: all checks passed");
     return 0;
