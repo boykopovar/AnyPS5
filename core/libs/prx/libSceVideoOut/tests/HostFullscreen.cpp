@@ -20,6 +20,7 @@ public:
     bool fullscreen = false;
     bool restoresSize = true;
     bool failTransition = false;
+    bool failCursor = false;
     HostWindowSize size{1280, 720};
     HostWindowSize desktop{1920, 1080};
     HostWindowSize beforeFullscreen{};
@@ -47,6 +48,7 @@ public:
     }
     void ShowCursor(bool show) override {
         cursorCalls++;
+        if (failCursor) throw std::runtime_error("cursor refused");
         cursorShown = show;
     }
 };
@@ -144,6 +146,24 @@ static void CursorTest() {
     Require(window.cursorShown, "Release did not show the cursor it hid");
     state.Release();
     Require(window.cursorCalls == calls + 2, "a second Release touched the cursor");
+}
+
+static void ReleaseFailureTest() {
+    FakeWindow window;
+    HostFullscreenState state(window);
+    state.Adopt(HostFullscreenMode::Windowed, window.size);
+    state.Toggle();
+    state.Refresh(false);
+    Require(!window.cursorShown, "the cursor was not hidden before the failing release");
+    window.failCursor = true;
+    const int calls = window.cursorCalls;
+    state.Release();
+    Require(window.cursorCalls == calls + 1, "Release did not try to show the cursor");
+    state.Release();
+    Require(window.cursorCalls == calls + 1, "Release kept retrying after a refused cursor");
+    window.failCursor = false;
+    state.Refresh(false);
+    Require(!window.cursorShown && window.cursorCalls == calls + 2, "the cursor policy did not recover after a refused release");
 }
 
 static void ParseTest() {
@@ -245,5 +265,6 @@ int main(int argc, char** argv) {
     AdoptTest();
     FailureTest();
     CursorTest();
+    ReleaseFailureTest();
     return 0;
 }
