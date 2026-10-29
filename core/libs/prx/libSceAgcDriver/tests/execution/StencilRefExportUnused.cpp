@@ -201,16 +201,23 @@ void StencilAttachmentExport(std::string_view name) {
     const bool depthFail = name == "attachment-depth-fail";
     const bool scissor = name == "attachment-scissor";
     const bool partial = name == "attachment-partial-mask";
+    const bool featureRefusal = name == "attachment-feature-refusal";
+    const std::string_view expectedError = featureRefusal ? "requires enabled independentBlend" : "full-byte pass replacement";
+    const auto stencil = StencilMemory;
     if (depthFail) { options.depthControl = 0x717u; options.shaderControl = 0x45u; }
     if (scissor) options.scissorRight = 32u;
     if (partial) options.front = options.back = 0x007fff25u;
     bool refused = false;
     try { SubmitDraw(depthFail ? std::span<const std::uint32_t>(depthPositionStencil) : std::span<const std::uint32_t>(positionStencil), options); }
     catch (const std::exception& error) {
-        if (!partial || std::string_view(error.what()).find("full-byte pass replacement") == std::string_view::npos) throw;
+        if ((!partial && !featureRefusal) || std::string_view(error.what()).find(expectedError) == std::string_view::npos) throw;
         refused = true;
     }
-    if (partial) {
+    if (featureRefusal) {
+        Require(refused, "a stencil attachment draw without enabled independentBlend was admitted");
+        Require(std::all_of(ColorMemory.begin(), ColorMemory.end(), [](auto value) { return value == Kept; }), "a draw refused for missing independentBlend wrote color");
+        Require(StencilMemory == stencil, "a draw refused for missing independentBlend changed stencil memory");
+    } else if (partial) {
         Require(refused, "a partial stencil mask was admitted to attachment export");
         Require(std::all_of(ColorMemory.begin(), ColorMemory.end(), [](auto value) { return value == Kept; }), "a refused attachment draw changed color");
     } else if (depthFail) {
@@ -232,9 +239,9 @@ void StencilAttachmentExport(std::string_view name) {
     }
     try { AgcDriverShutdown_nid_postfix(); }
     catch (const std::exception& error) {
-        if (!partial || std::string_view(error.what()).find("full-byte pass replacement") == std::string_view::npos) throw;
+        if ((!partial && !featureRefusal) || std::string_view(error.what()).find(expectedError) == std::string_view::npos) throw;
     }
-    std::puts(partial ? "partial stencil masks retain an explicit refusal" : depthFail ? "depth-failed fragments preserve the original stencil readback" : scissor ? "dynamic stencil readback preserves pixels outside the scissor" : "dynamic stencil attachment readback passed");
+    std::puts(featureRefusal ? "missing independentBlend refused attachment export before color or stencil writes" : partial ? "partial stencil masks retain an explicit refusal" : depthFail ? "depth-failed fragments preserve the original stencil readback" : scissor ? "dynamic stencil readback preserves pixels outside the scissor" : "dynamic stencil attachment readback passed");
 }
 
 void DependentReference(std::string_view name) {
@@ -264,10 +271,12 @@ void DependentReference(std::string_view name) {
 int main(int argc, char** argv) {
     try {
         bool nativeStencilExport = false;
+        bool independentBlend = false;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
             nativeStencilExport = TargetHasCapability(device->Target(), spv::CapabilityStencilExportEXT);
+            independentBlend = device->graphicsContext().independentBlend;
         }
         bool expectedRefusal = false;
         if (argc == 3 && std::string_view(argv[1]) == "--case") {
@@ -275,6 +284,15 @@ int main(int argc, char** argv) {
             if (name.starts_with("attachment")) {
                 if (nativeStencilExport) {
                     std::puts("skipped: the stencil attachment fallback requires a device without native stencil export");
+                    return VulkanTestSkipped;
+                }
+                if (name == "attachment-feature-refusal") {
+                    if (independentBlend) {
+                        std::puts("skipped: the feature refusal control requires disabled independentBlend");
+                        return VulkanTestSkipped;
+                    }
+                } else if (!independentBlend) {
+                    std::puts("skipped: stencil attachment export requires enabled independentBlend from prerequisite #6782");
                     return VulkanTestSkipped;
                 }
                 StencilAttachmentExport(name);
