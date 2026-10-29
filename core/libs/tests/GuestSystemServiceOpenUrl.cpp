@@ -1,10 +1,24 @@
 #include "prx/libSceSystemService/HostUrl.hpp"
+#include "prx/libSceSystemService/HostUrlPolicy.hpp"
+#include <stdexcept>
+#ifdef _WIN32
+#include <stdlib.h>
+#endif
 #include <cstdlib>
 #include <string>
 
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
+
+void SetEnvironment(const char* name, const char* value) {
+#ifdef _WIN32
+    Require(_putenv_s(name, value == nullptr ? "" : value) == 0);
+#else
+    if (value == nullptr) Require(unsetenv(name) == 0);
+    else Require(setenv(name, value, 1) == 0);
+#endif
+}
 
 void CheckValidator() {
     Require(ValidateHostUrl("http://example.com") == HostUrlVerdict::Ok);
@@ -105,6 +119,48 @@ void CheckLength() {
     Require(ValidateHostUrl(std::string(100000, 'a')) == HostUrlVerdict::TooLong);
 }
 
+bool ModeThrows(const char* value, std::string& message) {
+    try {
+        static_cast<void>(ParseOpenUrlMode(value, "caller"));
+    } catch (const std::runtime_error& error) {
+        message = error.what();
+        return true;
+    }
+    return false;
+}
+
+void CheckMode() {
+    Require(ParseOpenUrlMode(nullptr, "caller") == OpenUrlMode::Never);
+    Require(ParseOpenUrlMode("", "caller") == OpenUrlMode::Never);
+    Require(ParseOpenUrlMode("never", "caller") == OpenUrlMode::Never);
+    Require(ParseOpenUrlMode("ask", "caller") == OpenUrlMode::Ask);
+    Require(ParseOpenUrlMode("always", "caller") == OpenUrlMode::Always);
+    for (const char* invalid : {"Ask", "ALWAYS", "1", "yes", "ask ", " ask", "never,ask", "0", "on"}) {
+        std::string message;
+        Require(ModeThrows(invalid, message));
+        Require(message.find("ANYPS5_OPEN_URLS") != std::string::npos);
+        Require(message.find("caller") != std::string::npos);
+        Require(message.find(invalid) != std::string::npos);
+    }
+    SetEnvironment("ANYPS5_OPEN_URLS", nullptr);
+    Require(OpenUrlModeFromEnvironment("caller") == OpenUrlMode::Never);
+    SetEnvironment("ANYPS5_OPEN_URLS", "");
+    Require(OpenUrlModeFromEnvironment("caller") == OpenUrlMode::Never);
+    SetEnvironment("ANYPS5_OPEN_URLS", "ask");
+    Require(OpenUrlModeFromEnvironment("caller") == OpenUrlMode::Ask);
+    SetEnvironment("ANYPS5_OPEN_URLS", "always");
+    Require(OpenUrlModeFromEnvironment("caller") == OpenUrlMode::Always);
+    SetEnvironment("ANYPS5_OPEN_URLS", "bogus");
+    bool threw = false;
+    try {
+        static_cast<void>(OpenUrlModeFromEnvironment("caller"));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw);
+    SetEnvironment("ANYPS5_OPEN_URLS", nullptr);
+}
+
 }
 
 int main() {
@@ -116,5 +172,6 @@ int main() {
     CheckCredentials();
     CheckPort();
     CheckLength();
+    CheckMode();
     return 0;
 }
