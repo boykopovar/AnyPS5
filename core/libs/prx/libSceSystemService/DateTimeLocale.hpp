@@ -1,11 +1,15 @@
 #ifndef CORE_LIBS_PRX_LIBSCESYSTEMSERVICE_DATETIMELOCALE_HPP
 #define CORE_LIBS_PRX_LIBSCESYSTEMSERVICE_DATETIMELOCALE_HPP
 
+#include <charconv>
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #if defined(_WIN32)
@@ -289,6 +293,52 @@ inline HostPatterns HostPatternsOfThisHost() {
 #else
     return PosixHostPatterns([](const char* name) { return std::getenv(name); }, ReadLangInfo);
 #endif
+}
+
+inline bool EqualsAuto(std::string_view text) {
+    constexpr std::string_view automatic = "auto";
+    if (text.size() != automatic.size()) return false;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const char letter = text[index] >= 'A' && text[index] <= 'Z' ? static_cast<char>(text[index] - 'A' + 'a') : text[index];
+        if (letter != automatic[index]) return false;
+    }
+    return true;
+}
+
+inline int ParseSetting(const char* configured, std::string_view variable, std::string_view description, int last, int fallback, const std::function<int()>& host, std::string_view caller) {
+    if (configured == nullptr || configured[0] == '\0') return fallback;
+    const std::string_view text(configured);
+    if (EqualsAuto(text)) return host();
+    int value = -1;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc{} || end != text.data() + text.size() || value < 0 || value > last) {
+        throw std::runtime_error(std::string(caller) + ": " + std::string(variable) + " must be a console " + std::string(description) + " number from 0 to " +
+            std::to_string(last) + " or auto, not \"" + std::string(text) + "\"");
+    }
+    return value;
+}
+
+inline const HostPatterns& HostPatternsOnce() {
+    static const HostPatterns patterns = HostPatternsOfThisHost();
+    return patterns;
+}
+
+inline void PrintNotice(const std::string& line) {
+    std::fprintf(stderr, "%s\n", line.c_str());
+}
+
+inline int ConsoleDateFormat(std::string_view caller) {
+    return ParseSetting(std::getenv("ANYPS5_DATE_FORMAT"), "ANYPS5_DATE_FORMAT", "date format", DATE_FORMAT_MMDDYYYY, DATE_FORMAT_DDMMYYYY, [] {
+        static const int format = ResolveHostDateFormat(HostPatternsOnce(), PrintNotice);
+        return format;
+    }, caller);
+}
+
+inline int ConsoleTimeFormat(std::string_view caller) {
+    return ParseSetting(std::getenv("ANYPS5_TIME_FORMAT"), "ANYPS5_TIME_FORMAT", "time format", TIME_FORMAT_24HOUR, TIME_FORMAT_24HOUR, [] {
+        static const int format = ResolveHostTimeFormat(HostPatternsOnce(), PrintNotice);
+        return format;
+    }, caller);
 }
 
 }
