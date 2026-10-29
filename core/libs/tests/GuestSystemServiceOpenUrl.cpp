@@ -1,3 +1,4 @@
+#include "GuestSystemServiceOpenUrlFakes.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libSceSystemService/HostUrl.hpp"
 #include "prx/libSceSystemService/HostUrlPolicy.hpp"
@@ -330,60 +331,66 @@ void CheckLaunchWebBrowser() {
     const std::string good = "https://example.com/store?id=1";
     RecordingLauncher launcher;
     ScriptedConfirmation confirmation;
-    SystemServiceSetUrlHandlers_nid_no_patch(&launcher, &confirmation);
+    FakeClock clock;
+    SystemServiceSetUrlHandlers_nid_no_patch(&launcher, &confirmation, &clock);
+    const auto call = [&](const char* uri) {
+        const int result = sceSystemServiceLaunchWebBrowser(uri);
+        clock.Advance(std::chrono::seconds(700));
+        return result;
+    };
 
     SetEnvironment("ANYPS5_OPEN_URLS", nullptr);
-    Require(sceSystemServiceLaunchWebBrowser(good.c_str()) == unavailable);
+    Require(call(good.c_str()) == unavailable);
     SetEnvironment("ANYPS5_OPEN_URLS", "never");
-    Require(sceSystemServiceLaunchWebBrowser(good.c_str()) == unavailable);
+    Require(call(good.c_str()) == unavailable);
     Require(launcher.launched.empty() && confirmation.asked.empty());
 
     SetEnvironment("ANYPS5_OPEN_URLS", "ask");
-    Require(sceSystemServiceLaunchWebBrowser(good.c_str()) == 0);
+    Require(call(good.c_str()) == 0);
     Require(confirmation.asked == std::vector<std::string>{good} && launcher.launched == std::vector<std::string>{good});
     confirmation.answer = false;
-    Require(sceSystemServiceLaunchWebBrowser(good.c_str()) == unavailable);
+    Require(call(good.c_str()) == unavailable);
     Require(confirmation.asked.size() == 2 && launcher.launched.size() == 1);
     confirmation.answer = true;
     launcher.result = false;
-    Require(sceSystemServiceLaunchWebBrowser(good.c_str()) == unavailable);
+    Require(call(good.c_str()) == unavailable);
     launcher.result = true;
     Require(launcher.launched.size() == 2);
 
     SetEnvironment("ANYPS5_OPEN_URLS", "always");
     confirmation.answer = false;
-    Require(sceSystemServiceLaunchWebBrowser(good.c_str()) == 0);
+    Require(call(good.c_str()) == 0);
     Require(confirmation.asked.size() == 3 && launcher.launched.size() == 3);
     confirmation.answer = true;
 
     const std::size_t asked = confirmation.asked.size();
     const std::size_t launched = launcher.launched.size();
     for (const char* refused : {"psno:", "http:", "https:", "http://", "https://user:pw@example.com/", "http://exa mple.com/", "https://example.com:0/", "https://example.com/%00"})
-        Require(sceSystemServiceLaunchWebBrowser(refused) == unavailable);
-    Require(sceSystemServiceLaunchWebBrowser("") == static_cast<int>(0x80a10008));
-    Require(sceSystemServiceLaunchWebBrowser("HTTP://example.com/") == static_cast<int>(0x80a10008));
-    Require(sceSystemServiceLaunchWebBrowser("file:///etc/passwd") == static_cast<int>(0x80a10008));
-    Require(sceSystemServiceLaunchWebBrowser(nullptr) == static_cast<int>(0x80a10003));
+        Require(call(refused) == unavailable);
+    Require(call("") == static_cast<int>(0x80a10008));
+    Require(call("HTTP://example.com/") == static_cast<int>(0x80a10008));
+    Require(call("file:///etc/passwd") == static_cast<int>(0x80a10008));
+    Require(call(nullptr) == static_cast<int>(0x80a10003));
     const std::string tooLong = "https://example.com/" + std::string(5990, 'a');
-    Require(sceSystemServiceLaunchWebBrowser(tooLong.c_str()) == unavailable);
+    Require(call(tooLong.c_str()) == unavailable);
     const std::string overLimit = "https://example.com/" + std::string(6000, 'a') + std::string(100, 'a');
-    Require(sceSystemServiceLaunchWebBrowser(overLimit.c_str()) == static_cast<int>(0x80a10007));
+    Require(call(overLimit.c_str()) == static_cast<int>(0x80a10007));
     Require(confirmation.asked.size() == asked && launcher.launched.size() == launched);
 
     SetEnvironment("ANYPS5_OPEN_URLS", "bogus");
     bool threw = false;
     try {
-        static_cast<void>(sceSystemServiceLaunchWebBrowser(good.c_str()));
+        static_cast<void>(call(good.c_str()));
     } catch (const std::runtime_error& error) {
         threw = std::string(error.what()).find("ANYPS5_OPEN_URLS") != std::string::npos;
     }
     Require(threw);
-    Require(sceSystemServiceLaunchWebBrowser("") == static_cast<int>(0x80a10008));
+    Require(call("") == static_cast<int>(0x80a10008));
     Require(launcher.launched.size() == launched);
 
     SetEnvironment("ANYPS5_OPEN_URLS", nullptr);
-    SystemServiceSetUrlHandlers_nid_no_patch(nullptr, nullptr);
-    Require(sceSystemServiceLaunchWebBrowser(good.c_str()) == unavailable);
+    SystemServiceSetUrlHandlers_nid_no_patch(nullptr, nullptr, nullptr);
+    Require(call(good.c_str()) == unavailable);
 }
 
 }

@@ -90,6 +90,8 @@ public:
     void Reset(IUrlClock& replacement) {
         const std::lock_guard lock(state);
         clock = &replacement;
+        attempts.clear();
+        suppressed = false;
     }
 
     OpenUrlGateOutcome Run(OpenUrlMode mode, std::string_view url, IUrlLauncher& launcher, IUrlConfirmation& confirmation) {
