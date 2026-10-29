@@ -362,6 +362,26 @@ void TestXmlText() {
     Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), nullptr, 1, &length) == NpUtilInvalid, "xml unescaping needs a source");
     Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "a", 0, &length) == NpUtilInvalid, "xml unescaping needs a source length");
     Require(sceNpUtilXmlUnescape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml unescaping needs a buffer or a length");
+    struct {
+        char buffer[4];
+        char canary[4];
+    } bounded {};
+    Require(sceNpUtilXmlEscape(bounded.buffer, 3, "ab&", 3, &length) == NpUtilBufferTooSmall && std::memcmp(bounded.buffer, "ab\0", 3) == 0
+            && bounded.buffer[3] == 0 && bounded.canary[0] == 0,
+        "xml escaping keeps the pieces that fit and writes nothing past the buffer");
+    Require(sceNpUtilXmlEscape(bounded.buffer, 4, "<", 1, &length) == NpUtilBufferTooSmall && std::memcmp(bounded.buffer, "&lt;", 4) == 0
+            && bounded.canary[0] == 0,
+        "an entity that fits stays written when the terminator does not");
+    std::memset(&bounded, 0, sizeof(bounded));
+    Require(sceNpUtilXmlUnescape(bounded.buffer, 2, "abc", 3, &length) == NpUtilBufferTooSmall && std::memcmp(bounded.buffer, "ab\0", 3) == 0
+            && bounded.canary[0] == 0,
+        "xml unescaping keeps the characters that fit and writes nothing past the buffer");
+    Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "&amp;", 2, &length) == 0 && Equals(unescaped, "&") && length == 2,
+        "an entity is matched past the source length");
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "\xF7\xBF\xBF\xBF\xED\xA0\x80", 7, &length) == 0 && length == 8,
+        "xml escaping accepts lead bytes up to 0xF7 and does not check surrogates");
+    length = 99;
+    Require(sceNpUtilXmlEscape(escaped, 2, "ab", 2, &length) == NpUtilBufferTooSmall && length == 99, "a failed xml escape leaves the length untouched");
 }
 
 void TestTitleIds() {
