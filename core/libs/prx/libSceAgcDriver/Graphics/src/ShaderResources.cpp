@@ -1514,7 +1514,7 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
     bool storageSkipped = false;
     bool storageRecentKept = false;
     const bool hostFallback = ReclaimHasHostFallback();
-    const bool keepRecent = hostFallback && sampledRoom.load(std::memory_order_relaxed) != 0;
+    bool keepRecent = hostFallback && sampledRoom.load(std::memory_order_relaxed) != 0;
     const auto present = Recorder::Presents();
     {
         auto& cache = Textures();
@@ -1523,6 +1523,7 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         if ((inherited && (!newImage || sampledCacheReclaimable == 0)) || (!inherited && !lock.try_lock())) {
             sampledSkipped = true;
         } else {
+            keepRecent = hostFallback && cache.spill != 0;
             bool recentSeen = false;
             for (auto it = cache.entries.end(); it != cache.entries.begin() && freed < bytes;) {
                 --it;
