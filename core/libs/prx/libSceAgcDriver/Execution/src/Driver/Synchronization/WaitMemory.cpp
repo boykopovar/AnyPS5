@@ -135,9 +135,14 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             if (bump) bumpEpoch(&EpochBumps::waits);
         }
     } epochPoint;
+    const auto storedByOwnLabel = [&] {
+        std::uint32_t writer = queue;
+        return !requireMemory && storedSince(packet, awaited, awaitedBytes, received, &writer) && writer == queue;
+    };
     GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), awaitedBytes, awaitedBytes);
     if (Pm4::WaitSatisfiedUnchecked(packet)) {
         ++outcomes.atEntry;
+        if (storedByOwnLabel()) epochPoint.bump = false;
         return;
     }
     if (heldAtSubmit) return;
@@ -322,6 +327,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
 
     if (entryTryFailed && pollService(false)) return;
 
+    noteWaitFields(queue, packet);
     noteWaitBlocked(queue, awaited, true);
     struct BlockedWait {
         Driver& driver;
@@ -405,6 +411,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
     }
     ++outcomes.polled;
+    if (storedByOwnLabel()) epochPoint.bump = false;
 }
 
 }

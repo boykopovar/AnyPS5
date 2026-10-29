@@ -22,6 +22,8 @@ struct TileMipLayout {
     bool tail;
     std::uint32_t tailX;
     std::uint32_t tailY;
+    bool gcnMicroTiled = false;
+    std::uint32_t gcnSplitStride = 0;
 };
 
 std::vector<TileMipLayout> ComputeMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount);
@@ -67,6 +69,10 @@ struct SurfaceGeometry {
     std::uint32_t blockDepth = 1;
     std::uint64_t layerBytes = 0;
 
+    bool levelMajor = false;
+    std::uint64_t GuestOffset(std::uint32_t layer, const TileMipLayout& mip) const {
+        return levelMajor ? mip.tiledOffset + static_cast<std::uint64_t>(layer) * mip.tiledSize : GuestLayerOffset(layer) + mip.tiledOffset;
+    }
     std::uint64_t GuestLayerOffset(std::uint32_t layer) const { return thick ? static_cast<std::uint64_t>(layer / blockDepth) * layerBytes : static_cast<std::uint64_t>(layer) * layerBytes; }
     std::uint64_t LinearLayerOffset(std::uint32_t layer) const { return static_cast<std::uint64_t>(layer) * sliceLinearBytes; }
     std::uint32_t CopyLayer(std::uint32_t layer) const { return imageDepth > 1 ? 0u : layer; }
@@ -74,8 +80,19 @@ struct SurfaceGeometry {
     bool HasLayer(std::uint32_t level, std::uint32_t layer) const { return imageDepth <= 1 || layer < std::max(imageDepth >> level, 1u); }
 };
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor);
+std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t pitch, bool pow2Pad, std::uint32_t mipCount, bool linearGeneral = false, std::uint32_t layers = 1);
+struct GcnTileGeometry {
+    std::uint32_t blockBytes;
+    std::uint32_t blockWidth;
+    std::uint32_t blockHeight;
+    std::array<std::uint32_t, 16> equation;
+    std::uint32_t splitSlices = 1;
+    std::array<std::uint32_t, 4> splitMasks{};
+};
+GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElement);
+inline TextureTileMode MipTileMode(TextureTileMode tileMode, const TileMipLayout& mip) { return mip.gcnMicroTiled ? GcnMicroTileMode(tileMode) : tileMode; }
 bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t levels);
-GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed);
+GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed, bool keysReadAsStored);
 GuestTextureResource ArrayLayerWindow(const GuestTextureResource& viewed, std::uint32_t maxArrayLayers);
 
 }

@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <bit>
@@ -6,13 +7,6 @@
 #include <cstdint>
 
 static_assert(sizeof(int) == 4 && std::endian::native == std::endian::little);
-
-extern "C" {
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI putc_unlocked_nid_postfix(int, FileStream*);
-void APS5_VABI flockfile_nid_postfix(FileStream*);
-void APS5_VABI funlockfile_nid_postfix(FileStream*);
-}
 
 namespace {
 

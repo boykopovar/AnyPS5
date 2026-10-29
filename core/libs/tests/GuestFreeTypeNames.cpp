@@ -1,3 +1,4 @@
+#include "prx/libSceFreeType/include/Api.hpp"
 #include "FontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -12,12 +13,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-extern "C" {
-int APS5_VABI FT_Get_Glyph_Name_nid_postfix(GuestFaceRec*, std::uint32_t, void*, std::uint32_t);
-std::uint32_t APS5_VABI FT_Get_Name_Index_nid_postfix(GuestFaceRec*, const char*);
-const char* APS5_VABI FT_Get_Postscript_Name_nid_postfix(GuestFaceRec*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {

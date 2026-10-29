@@ -74,14 +74,35 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             mix(pixel.orderedPixelShader);
             mix(pixel.stencilRefExportEnable);
             mix(pixel.stencilOperationValueExport);
+            mix(std::bit_cast<std::uint32_t>(pixel.depthExportMin));
+            mix(std::bit_cast<std::uint32_t>(pixel.depthExportMax));
             for (const auto value : pixel.targetOutputMode) mix(value);
             for (const auto value : pixel.targetExportMapping) mix(value);
             for (const auto value : pixel.targetExportPacking) mix(static_cast<std::uint64_t>(value));
             mix(pixel.dualSourceBlend);
             mix(pixel.reversedBlend);
+            mix(pixel.targetMerge.target);
+            mix(pixel.targetMerge.mask);
+            mix(pixel.targetMerge.samples);
+            for (const auto word : pixel.targetMerge.descriptor) mix(word);
+            mix(pixel.targetMerge.depthStencilWrites);
+            mix(pixel.targetMerge.depthStencilTests);
+            if (pixel.targetMerge.blend.enabled) {
+                const auto& blend = pixel.targetMerge.blend;
+                mix(blend.snorm);
+                mix(blend.colorSource);
+                mix(blend.colorDestination);
+                mix(blend.colorOperation);
+                mix(blend.alphaSource);
+                mix(blend.alphaDestination);
+                mix(blend.alphaOperation);
+                mix(blend.writeMask);
+                for (const auto word : blend.constants) mix(word);
+            }
             mix(pixel.alphaToCoverage);
             mix(static_cast<std::uint64_t>(pixel.rasterPrimitive));
             mix(pixel.ditheredAlphaToCoverage);
+            mix(pixel.ditheredAlphaSamples);
             mix(pixel.quadPixelMask);
             for (const auto mask : pixel.quadSampleMask) mix(mask);
             mix(pixel.iteratesSamples);

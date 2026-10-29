@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <ctime>
@@ -86,20 +88,17 @@ static int AppendRead(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std:
 }
 
 static std::uint64_t NopBytes(std::uint32_t dwords) {
-    return sizeof(Apr::CommandHeader) + std::uint64_t{dwords} * 4u;
+    return std::uint64_t{dwords} * 4u;
 }
 
-static int AppendNop(Apr::CommandBufferObject* buffer, std::uint32_t dwords, const std::uint32_t* data) {
-    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    const std::uint64_t bytes = NopBytes(dwords);
-    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (bytes > RemainingCommandBytes(*buffer)) return SCE_KERNEL_ERROR_EBUSY;
-    const Apr::CommandHeader header{Apr::Opcode::Nop, static_cast<std::uint32_t>(bytes)};
-    std::uint8_t* destination = buffer->base + buffer->offset;
+static int AppendNop(Apr::CommandBufferObject& buffer, std::uint32_t header, const std::uint32_t* data) {
+    const std::uint64_t bytes = NopBytes(Apr::NopDwords(header));
+    if (bytes > RemainingCommandBytes(buffer)) return SCE_KERNEL_ERROR_EBUSY;
+    std::uint8_t* destination = buffer.base + buffer.offset;
     std::memcpy(destination, &header, sizeof(header));
-    if (data) std::memcpy(destination + sizeof(header), data, std::uint64_t{dwords} * 4u);
-    buffer->offset += static_cast<std::uint32_t>(bytes);
-    ++buffer->numCommands;
+    if (data) std::memcpy(destination + sizeof(header), data, bytes - sizeof(header));
+    buffer.offset += static_cast<std::uint32_t>(bytes);
+    ++buffer.numCommands;
     return 0;
 }
 
@@ -131,14 +130,11 @@ static bool InMap(const Apr::CommandBufferObject* buffer) {
     return buffer && (buffer->recording & Apr::MapActive) != 0u;
 }
 
-static bool ValidMapRange(std::uint64_t address, std::uint64_t size) {
-    constexpr std::uint64_t pageMask = 0x3FFFu;
-    return address != 0u && size != 0u && ((address | size) & pageMask) == 0u && address + size > address;
-}
-
-static bool ValidMap(std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::int32_t protection) {
-    return ValidMapRange(address, size) && (directOffset & 0x3FFFu) == 0u && (static_cast<std::uint32_t>(protection) & 0xFFFFFC0Cu) == 0u;
-}
+using Apr::ValidMapRange;
+using Apr::ValidMap;
+using Apr::ValidAmmProtection;
+using Apr::ValidRemap;
+using Apr::ValidProtect;
 
 static constexpr std::int64_t AmmMeasureInvalid = SCE_KERNEL_ERROR_EINVAL;
 
@@ -150,37 +146,25 @@ static int AppendAmm(Apr::CommandBufferObject* buffer, const void* command, std:
 static int RecordAmmMap(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::int32_t type, std::int32_t protection) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidMap(address, directOffset, size, protection)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmMapCommand command{{opcode, sizeof(command)}, address, directOffset, size, type, protection};
-    return AppendAmm(buffer, &command, sizeof(command));
-}
-
-static bool ValidAmmProtection(std::int32_t protection) {
-    return (static_cast<std::uint32_t>(protection) & 0xFFFFFC0Cu) == 0u;
-}
-
-static bool ValidRemap(std::uint64_t address, std::uint64_t source, std::uint64_t size, std::int32_t protection) {
-    return ValidMapRange(address, size) && ValidMapRange(source, size) && ValidAmmProtection(protection);
-}
-
-static bool ValidProtect(std::uint64_t address, std::uint64_t size, std::int32_t protection, std::int32_t mask) {
-    return ValidMapRange(address, size) && ValidAmmProtection(protection) && ValidAmmProtection(mask);
+    const auto command = Apr::EncodeAmmMap(opcode, address, directOffset, size, type, protection);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 static int RecordAmmRemap(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::int32_t protection) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidRemap(address, source, size, protection)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmRemapCommand command{{opcode, sizeof(command)}, address, source, size, protection, 0};
-    return AppendAmm(buffer, &command, sizeof(command));
+    const auto command = Apr::EncodeAmmRemap(opcode, address, source, size, protection);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 static int RecordAmmProtect(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection, std::int32_t mask) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidProtect(address, size, protection, mask)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmProtectCommand command{{opcode, sizeof(command)}, address, size, type, protection, mask, 0};
-    return AppendAmm(buffer, &command, sizeof(command));
+    const auto command = Apr::EncodeAmmProtect(opcode, address, size, type, protection, mask);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 static constexpr std::int32_t PrtAllocationMask = 1019;
@@ -226,22 +210,11 @@ static int RecordWriteAddressFromCounterPair(Apr::CommandBufferObject* buffer, v
 
 static std::atomic_flag sharedPtrSpinLock;
 
-struct AmmUsageStatsData {
-    std::uint64_t sizeInBytes;
-    std::uint16_t numPageTablePoolEntries;
-    std::uint16_t allocatedPageTablePoolEntries;
-    std::uint16_t highWatermarkAllocatedEntries;
-    std::uint16_t reserved;
-    std::uint32_t ringIdleFlags;
-};
 static_assert(sizeof(AmmUsageStatsData) == 0x18);
 static constexpr std::uint16_t AmmPageTablePoolEntries = 512;
 static constexpr std::uint32_t AmmRingIdleFlags = 0x7;
 
 extern "C" {
-int APS5_VABI _Cnd_init_nid_postfix(void** handle);
-int APS5_VABI wcstombs_s_nid_postfix(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit);
-[[noreturn]] void APS5_VABI __cxa_call_terminate_nid_postfix(void* exception);
 
 int APS5_VABI sceAmprCommandBufferWriteAddressOnCompletion(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint64_t value) {
     if (!ValidWriteAddress(address)) return SCE_KERNEL_ERROR_EINVAL;
@@ -377,19 +350,21 @@ int APS5_VABI sceAmprCommandBufferConstructMarker(Apr::CommandBufferObject* buff
 }
 
 int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject* buffer, std::int16_t type, const void* payload, std::uint32_t payloadBytes, const std::uint32_t* word) {
-    (void)type;
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
     if (payloadBytes > (word ? 56u : 60u)) return SCE_KERNEL_ERROR_EINVAL;
     if (payloadBytes != 0u && !payload) throw std::invalid_argument("sceAmprCommandBufferConstructNop: null payload");
     const std::uint32_t dwords = (payloadBytes + 3u) / 4u + (word ? 1u : 0u);
-    const std::uint32_t offset = buffer ? buffer->offset : 0u;
-    const int result = AppendNop(buffer, dwords, nullptr);
+    const std::uint32_t offset = buffer->offset;
+    const int result = AppendNop(*buffer, Apr::NopHeader(dwords, static_cast<std::uint32_t>(type)), nullptr);
     if (result != 0) return result;
-    std::uint8_t* data = buffer->base + offset + sizeof(Apr::CommandHeader);
+    std::uint8_t* data = buffer->base + offset + Apr::NopHeaderBytes;
     if (word) {
         std::memcpy(data, word, sizeof(*word));
         data += sizeof(*word);
     }
     if (payloadBytes != 0u) std::memcpy(data, payload, payloadBytes);
+    std::memset(data + payloadBytes, 0, (4u - payloadBytes % 4u) % 4u);
     return 0;
 }
 
@@ -425,13 +400,17 @@ uint32_t APS5_VABI sceAmprCommandBufferGetType(const Apr::CommandBufferObject* b
 }
 
 int APS5_VABI sceAmprCommandBufferNop(Apr::CommandBufferObject* buffer, std::uint32_t dwords) {
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
     if (dwords == 0u || dwords > 16u) return SCE_KERNEL_ERROR_EINVAL;
-    return AppendNop(buffer, dwords, nullptr);
+    return AppendNop(*buffer, Apr::NopHeader(dwords - 1u), nullptr);
 }
 
 int APS5_VABI sceAmprCommandBufferNopWithData(Apr::CommandBufferObject* buffer, std::uint32_t dwords, const std::uint32_t* data) {
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
     if (dwords > 15u) return SCE_KERNEL_ERROR_EINVAL;
-    return AppendNop(buffer, dwords, data);
+    return AppendNop(*buffer, Apr::NopHeader(dwords), data);
 }
 
 int APS5_VABI sceAmprCommandBufferPopMarker(Apr::CommandBufferObject* buffer) {
@@ -537,7 +516,7 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeNop(std::uint32_t dwords) {
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeNopWithData(std::uint32_t dwords) {
     if (dwords == 0u || dwords > 16u) return MeasureInvalid;
-    return NopBytes(dwords - 1u);
+    return NopBytes(dwords);
 }
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePopMarker() {
@@ -624,11 +603,6 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueue_04_00(std
     return sizeof(Apr::WriteKernelEventQueueCommand);
 }
 
-struct AmmSubmitResult {
-    std::int32_t result;
-    std::uint32_t errorOffset;
-};
-
 int APS5_VABI sceAmprAmmCommandBufferConstructor(Apr::CommandBufferObject* buffer) {
     (void)buffer;
     return 0;
@@ -660,9 +634,9 @@ int APS5_VABI sceAmprAmmCommandBufferMapDirectWithGpuMaskId(Apr::CommandBufferOb
 int APS5_VABI sceAmprAmmCommandBufferUnmap(Apr::CommandBufferObject* buffer, std::uint64_t address, std::uint64_t size) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidMapRange(address, size)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmUnmapCommand command{{Apr::Opcode::AmmUnmap, sizeof(command)}, address, size};
-    return AppendAmm(buffer, &command, sizeof(command));
+    const auto command = Apr::EncodeAmmUnmap(address, size);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMap(std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection) {
@@ -867,8 +841,8 @@ void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void) {
     while (sharedPtrSpinLock.test_and_set(std::memory_order_acquire)) std::this_thread::yield();
 }
 
-
 [[noreturn]] void APS5_VABI __cxa_call_unexpected_nid_postfix(void* unwindException) {
+
     __cxa_call_terminate_nid_postfix(unwindException);
 }
 

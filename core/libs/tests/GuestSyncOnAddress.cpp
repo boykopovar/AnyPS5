@@ -1,35 +1,21 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
-#include <stdexcept>
+#include <cstring>
 #include <thread>
 #include <vector>
 
-extern "C" {
-int APS5_VABI sceKernelSyncOnAddressWait(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait32(std::uint32_t* address, std::uint32_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait64(std::uint64_t* address, std::uint64_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait8(std::uint8_t* address, std::uint8_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWait16(std::uint16_t* address, std::uint16_t expected, const KernelUseconds* timeout, const char* name);
-int APS5_VABI sceKernelSyncOnAddressWake(void* address, std::int32_t count);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
 static constexpr KernelUseconds FAILSAFE_TIMEOUT = 10000000;
+static constexpr KernelUseconds SHORT_TIMEOUT = 1000;
 static constexpr auto SETTLE = std::chrono::milliseconds(100);
 
 static void Require(bool value) { if (!value) std::abort(); }
-
-template <class TCall>
-static bool Rejects(TCall call) {
-    try { call(); }
-    catch (const std::invalid_argument&) { return true; }
-    return false;
-}
 
 static void AwaitCount(const std::atomic<int>& counter, int value) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -39,81 +25,93 @@ static void AwaitCount(const std::atomic<int>& counter, int value) {
     }
 }
 
-static void ReturnsWhenTheValueDiffers() {
+static void FailsAgainWhenTheValueDiffers() {
     std::uint32_t word = 2;
-    Require(sceKernelSyncOnAddressWait(&word, 1, nullptr, "differs") == SCE_OK);
-    const KernelUseconds timeout = 0;
-    Require(sceKernelSyncOnAddressWait(&word, 1, &timeout, nullptr) == SCE_OK);
+    Require(sceKernelSyncOnAddressWait(&word, 1, nullptr, "differs") == SCE_KERNEL_ERROR_EAGAIN);
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait(&word, 1, &timeout, nullptr) == SCE_KERNEL_ERROR_EAGAIN && timeout == SHORT_TIMEOUT);
+    timeout = 0;
+    Require(sceKernelSyncOnAddressWait(&word, 1, &timeout, nullptr) == SCE_KERNEL_ERROR_ETIMEDOUT);
 }
 
 static void TimesOutWhileTheValueMatches() {
     std::uint32_t word = 1;
-    const KernelUseconds none = 0;
-    Require(sceKernelSyncOnAddressWait(&word, 1, &none, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT);
+    KernelUseconds none = 0;
+    Require(sceKernelSyncOnAddressWait(&word, 1, &none, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT && none == 0);
 
-    const KernelUseconds timeout = 20000;
+    KernelUseconds timeout = 20000;
     const auto start = std::chrono::steady_clock::now();
     Require(sceKernelSyncOnAddressWait(&word, 1, &timeout, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
-    Require(sceKernelSyncOnAddressWake(&word, INT_MAX) == SCE_OK);
+    Require(timeout == 0);
+    Require(sceKernelSyncOnAddressWake(&word, INT_MAX) == 0);
 }
 
-static void WakeReleasesAWaiterWithoutAValueChange() {
+static void WakeReleasesAWaiterAndReportsTheTimeLeft() {
     std::uint32_t word = 1;
+    std::atomic<int> started{0};
     std::atomic<int> finished{0};
     int result = -1;
+    KernelUseconds timeout = FAILSAFE_TIMEOUT;
     std::thread waiter([&] {
-        result = sceKernelSyncOnAddressWait(&word, 1, &FAILSAFE_TIMEOUT, "wake");
+        ++started;
+        result = sceKernelSyncOnAddressWait(&word, 1, &timeout, "wake");
         ++finished;
     });
+    AwaitCount(started, 1);
+    std::this_thread::sleep_for(SETTLE);
+    int woken = 0;
     while (finished.load() == 0) {
-        Require(sceKernelSyncOnAddressWake(&word, 1) == SCE_OK);
+        woken += sceKernelSyncOnAddressWake(&word, 1);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     waiter.join();
-    Require(result == SCE_OK);
+    Require(result == SCE_OK && woken == 1);
+    Require(timeout > 0 && timeout < FAILSAFE_TIMEOUT);
 }
 
-static void WakeHonoursTheCountAndTheAddress() {
+static void WakeCountsOfOneOrLessWakeOneWaiter() {
     std::uint32_t word = 1;
     std::uint32_t other = 1;
     std::atomic<int> started{0};
     std::atomic<int> finished{0};
     std::atomic<int> otherFinished{0};
-    std::vector<int> results(3, -1);
+    std::vector<int> results(5, -1);
     int otherResult = -1;
 
     std::vector<std::thread> waiters;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 5; ++i) {
         waiters.emplace_back([&, i] {
             ++started;
-            results[i] = sceKernelSyncOnAddressWait(&word, 1, &FAILSAFE_TIMEOUT, "count");
+            KernelUseconds timeout = FAILSAFE_TIMEOUT;
+            results[i] = sceKernelSyncOnAddressWait(&word, 1, &timeout, "count");
             ++finished;
         });
     }
     std::thread otherWaiter([&] {
         ++started;
-        otherResult = sceKernelSyncOnAddressWait(&other, 1, &FAILSAFE_TIMEOUT, "other");
+        KernelUseconds timeout = FAILSAFE_TIMEOUT;
+        otherResult = sceKernelSyncOnAddressWait(&other, 1, &timeout, "other");
         ++otherFinished;
     });
-    AwaitCount(started, 4);
+    AwaitCount(started, 6);
     std::this_thread::sleep_for(SETTLE);
 
-    Require(sceKernelSyncOnAddressWake(&word, 0) == SCE_OK);
-    std::this_thread::sleep_for(SETTLE);
-    Require(finished.load() == 0);
+    int expected = 0;
+    for (const std::int32_t count : {0, -1, 1}) {
+        Require(sceKernelSyncOnAddressWake(&word, count) == 1);
+        AwaitCount(finished, ++expected);
+        std::this_thread::sleep_for(SETTLE);
+        Require(finished.load() == expected);
+    }
 
-    Require(sceKernelSyncOnAddressWake(&word, 1) == SCE_OK);
-    AwaitCount(finished, 1);
-    std::this_thread::sleep_for(SETTLE);
-    Require(finished.load() == 1);
-
-    Require(sceKernelSyncOnAddressWake(&word, INT_MAX) == SCE_OK);
-    AwaitCount(finished, 3);
+    Require(sceKernelSyncOnAddressWake(&word, INT_MAX) == 2);
+    AwaitCount(finished, 5);
     std::this_thread::sleep_for(SETTLE);
     Require(otherFinished.load() == 0);
+    Require(sceKernelSyncOnAddressWake(&word, INT_MAX) == 0);
 
-    Require(sceKernelSyncOnAddressWake(&other, 1) == SCE_OK);
+    Require(sceKernelSyncOnAddressWake(&other, 1) == 1);
     for (auto& waiter : waiters) waiter.join();
     otherWaiter.join();
     for (const int result : results) Require(result == SCE_OK);
@@ -125,38 +123,42 @@ static void WaitsOnTheLowHalfOfAnOnceState() {
     auto* word = reinterpret_cast<std::uint32_t*>(&state);
     std::thread waiter([&] {
         while (state.load() == 1) {
-            Require(sceKernelSyncOnAddressWait(word, 1, nullptr, "once") == SCE_OK);
+            const int result = sceKernelSyncOnAddressWait(word, 1, nullptr, "once");
+            Require(result == SCE_OK || result == SCE_KERNEL_ERROR_EAGAIN);
         }
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
     state.store(2);
-    Require(sceKernelSyncOnAddressWake(word, INT_MAX) == SCE_OK);
+    Require(sceKernelSyncOnAddressWake(word, INT_MAX) >= 0);
     waiter.join();
 }
 
 static void SizedWaitsTimeOutWhileTheValueMatches() {
     std::uint32_t word = 5;
     std::uint64_t value = 0x500000005ULL;
-    const KernelUseconds none = 0;
-    Require(sceKernelSyncOnAddressWait32(&word, 4, &none, "differs") == SCE_OK);
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait32(&word, 4, &timeout, "differs") == SCE_KERNEL_ERROR_EAGAIN);
+    KernelUseconds none = 0;
+    Require(sceKernelSyncOnAddressWait32(&word, 4, &none, "differs") == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(sceKernelSyncOnAddressWait32(&word, 5, &none, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT);
     Require(sceKernelSyncOnAddressWait64(&value, 0x500000005ULL, &none, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT);
 
-    const KernelUseconds timeout = 20000;
+    timeout = 20000;
     auto start = std::chrono::steady_clock::now();
-    Require(sceKernelSyncOnAddressWait32(&word, 5, &timeout, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelSyncOnAddressWait32(&word, 5, &timeout, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT && timeout == 0);
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
+    timeout = 20000;
     start = std::chrono::steady_clock::now();
-    Require(sceKernelSyncOnAddressWait64(&value, 0x500000005ULL, &timeout, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelSyncOnAddressWait64(&value, 0x500000005ULL, &timeout, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT && timeout == 0);
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15));
 }
 
 static void Wait64ComparesTheHighHalf() {
     std::uint64_t value = 0x100000001ULL;
-    const KernelUseconds none = 0;
-    Require(sceKernelSyncOnAddressWait64(&value, 0x1ULL, &none, "high") == SCE_OK);
-    Require(sceKernelSyncOnAddressWait64(&value, 0x200000001ULL, &none, "high") == SCE_OK);
-    Require(sceKernelSyncOnAddressWait64(&value, 0x100000001ULL, &none, "high") == SCE_KERNEL_ERROR_ETIMEDOUT);
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait64(&value, 0x1ULL, &timeout, "high") == SCE_KERNEL_ERROR_EAGAIN);
+    Require(sceKernelSyncOnAddressWait64(&value, 0x200000001ULL, &timeout, "high") == SCE_KERNEL_ERROR_EAGAIN);
+    Require(sceKernelSyncOnAddressWait64(&value, 0x100000001ULL, &timeout, "high") == SCE_KERNEL_ERROR_ETIMEDOUT);
 }
 
 static void WakeReleasesWaitersOfEverySize() {
@@ -169,23 +171,26 @@ static void WakeReleasesWaitersOfEverySize() {
     std::vector<std::thread> waiters;
     waiters.emplace_back([&] {
         ++started;
-        results[0] = sceKernelSyncOnAddressWait(word, 1, &FAILSAFE_TIMEOUT, "sized");
+        KernelUseconds timeout = FAILSAFE_TIMEOUT;
+        results[0] = sceKernelSyncOnAddressWait(word, 1, &timeout, "sized");
         ++finished;
     });
     waiters.emplace_back([&] {
         ++started;
-        results[1] = sceKernelSyncOnAddressWait32(word, 1, &FAILSAFE_TIMEOUT, "sized");
+        KernelUseconds timeout = FAILSAFE_TIMEOUT;
+        results[1] = sceKernelSyncOnAddressWait32(word, 1, &timeout, "sized");
         ++finished;
     });
     waiters.emplace_back([&] {
         ++started;
-        results[2] = sceKernelSyncOnAddressWait64(&value, 1, &FAILSAFE_TIMEOUT, "sized");
+        KernelUseconds timeout = FAILSAFE_TIMEOUT;
+        results[2] = sceKernelSyncOnAddressWait64(&value, 1, &timeout, "sized");
         ++finished;
     });
     AwaitCount(started, 3);
     std::this_thread::sleep_for(SETTLE);
 
-    Require(sceKernelSyncOnAddressWake(&value, 1) == SCE_OK);
+    Require(sceKernelSyncOnAddressWake(&value, 1) == 1);
     AwaitCount(finished, 1);
     std::this_thread::sleep_for(SETTLE);
     Require(finished.load() == 1);
@@ -193,7 +198,7 @@ static void WakeReleasesWaitersOfEverySize() {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (finished.load() != 3) {
         Require(std::chrono::steady_clock::now() < deadline);
-        Require(sceKernelSyncOnAddressWake(&value, INT_MAX) == SCE_OK);
+        Require(sceKernelSyncOnAddressWake(&value, INT_MAX) >= 0);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     for (auto& waiter : waiters) waiter.join();
@@ -201,14 +206,15 @@ static void WakeReleasesWaitersOfEverySize() {
 }
 
 static void NarrowWaitsCompareOnlyTheirWidth() {
-    const KernelUseconds none = 0;
+    KernelUseconds timeout = SHORT_TIMEOUT;
     alignas(4) std::uint8_t bytes[4] = {1, 5, 7, 7};
-    Require(sceKernelSyncOnAddressWait8(&bytes[1], 4, &none, "differs") == SCE_OK);
-    Require(sceKernelSyncOnAddressWait8(&bytes[1], 5, &none, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelSyncOnAddressWait8(&bytes[1], 4, &timeout, "differs") == SCE_KERNEL_ERROR_EAGAIN);
+    Require(sceKernelSyncOnAddressWait8(&bytes[1], 5, &timeout, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT);
 
+    timeout = SHORT_TIMEOUT;
     alignas(4) std::uint16_t halves[2] = {1, 0x0705};
-    Require(sceKernelSyncOnAddressWait16(&halves[1], 0x0005, &none, "high") == SCE_OK);
-    Require(sceKernelSyncOnAddressWait16(&halves[1], 0x0705, &none, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelSyncOnAddressWait16(&halves[1], 0x0005, &timeout, "high") == SCE_KERNEL_ERROR_EAGAIN);
+    Require(sceKernelSyncOnAddressWait16(&halves[1], 0x0705, &timeout, "timeout") == SCE_KERNEL_ERROR_ETIMEDOUT);
 }
 
 static void WakeReleasesNarrowWaitersAtTheirOwnAddress() {
@@ -224,26 +230,28 @@ static void WakeReleasesNarrowWaitersAtTheirOwnAddress() {
 
     std::thread byteWaiter([&] {
         ++started;
-        byteResult = sceKernelSyncOnAddressWait8(&bytes[1], 3, &FAILSAFE_TIMEOUT, "byte");
+        KernelUseconds timeout = FAILSAFE_TIMEOUT;
+        byteResult = sceKernelSyncOnAddressWait8(&bytes[1], 3, &timeout, "byte");
         ++byteFinished;
     });
     std::thread halfWaiter([&] {
         ++started;
-        halfResult = sceKernelSyncOnAddressWait16(half, 9, &FAILSAFE_TIMEOUT, "half");
+        KernelUseconds timeout = FAILSAFE_TIMEOUT;
+        halfResult = sceKernelSyncOnAddressWait16(half, 9, &timeout, "half");
         ++halfFinished;
     });
     AwaitCount(started, 2);
     std::this_thread::sleep_for(SETTLE);
 
-    Require(sceKernelSyncOnAddressWake(&bytes[0], INT_MAX) == SCE_OK);
-    Require(sceKernelSyncOnAddressWake(&bytes[3], INT_MAX) == SCE_OK);
+    Require(sceKernelSyncOnAddressWake(&bytes[0], INT_MAX) == 0);
+    Require(sceKernelSyncOnAddressWake(&bytes[3], INT_MAX) == 0);
     std::this_thread::sleep_for(SETTLE);
     Require(byteFinished.load() == 0 && halfFinished.load() == 0);
 
-    Require(sceKernelSyncOnAddressWake(&bytes[1], 1) == SCE_OK);
+    Require(sceKernelSyncOnAddressWake(&bytes[1], 1) == 1);
     AwaitCount(byteFinished, 1);
     Require(halfFinished.load() == 0);
-    Require(sceKernelSyncOnAddressWake(half, 1) == SCE_OK);
+    Require(sceKernelSyncOnAddressWake(half, 1) == 1);
     AwaitCount(halfFinished, 1);
 
     byteWaiter.join();
@@ -251,36 +259,87 @@ static void WakeReleasesNarrowWaitersAtTheirOwnAddress() {
     Require(byteResult == SCE_OK && halfResult == SCE_OK);
 }
 
-static void RejectsInvalidArguments() {
-    std::uint32_t words[2] = {1, 1};
-    auto* misaligned = reinterpret_cast<std::uint32_t*>(reinterpret_cast<unsigned char*>(words) + 1);
-    Require(Rejects([&] { sceKernelSyncOnAddressWait(nullptr, 1, nullptr, nullptr); }));
-    Require(Rejects([&] { sceKernelSyncOnAddressWait(misaligned, 1, nullptr, nullptr); }));
-    Require(Rejects([&] { sceKernelSyncOnAddressWait32(nullptr, 1, nullptr, nullptr); }));
-    Require(Rejects([&] { sceKernelSyncOnAddressWait32(misaligned, 1, nullptr, nullptr); }));
-    Require(Rejects([&] { sceKernelSyncOnAddressWake(nullptr, 1); }));
-    Require(sceKernelSyncOnAddressWake(misaligned, 1) == SCE_OK);
-    Require(Rejects([&] { sceKernelSyncOnAddressWait8(nullptr, 1, nullptr, nullptr); }));
-    Require(Rejects([&] { sceKernelSyncOnAddressWait16(nullptr, 1, nullptr, nullptr); }));
-    Require(Rejects([&] { sceKernelSyncOnAddressWait16(reinterpret_cast<std::uint16_t*>(reinterpret_cast<unsigned char*>(words) + 1), 1, nullptr, nullptr); }));
-    Require(Rejects([&] { sceKernelSyncOnAddressWake(words, -1); }));
+static void MisalignedAddressesWaitAndWake() {
+    alignas(16) unsigned char storage[16] = {};
+    auto* word = reinterpret_cast<std::uint32_t*>(storage + 1);
+    auto* quad = reinterpret_cast<std::uint64_t*>(storage + 4);
+    const std::uint32_t wordValue = 0x11223344;
+    std::memcpy(word, &wordValue, sizeof(wordValue));
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait32(word, 1, &timeout, "misaligned") == SCE_KERNEL_ERROR_EAGAIN);
+    Require(sceKernelSyncOnAddressWait32(word, wordValue, &timeout, "misaligned") == SCE_KERNEL_ERROR_ETIMEDOUT && timeout == 0);
+    timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait64(quad, 1, &timeout, "misaligned") == SCE_KERNEL_ERROR_EAGAIN);
+    timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait16(reinterpret_cast<std::uint16_t*>(storage + 9), 1, &timeout, "misaligned") == SCE_KERNEL_ERROR_EAGAIN);
 
-    std::uint64_t values[2] = {1, 1};
-    auto* wordAligned = reinterpret_cast<std::uint64_t*>(reinterpret_cast<unsigned char*>(values) + sizeof(std::uint32_t));
-    Require(Rejects([&] { sceKernelSyncOnAddressWait64(nullptr, 1, nullptr, nullptr); }));
-    Require(Rejects([&] { sceKernelSyncOnAddressWait64(wordAligned, 1, nullptr, nullptr); }));
+    std::atomic<int> started{0};
+    int result = -1;
+    std::thread waiter([&] {
+        ++started;
+        KernelUseconds waitTimeout = FAILSAFE_TIMEOUT;
+        result = sceKernelSyncOnAddressWait32(word, wordValue, &waitTimeout, "misaligned");
+    });
+    AwaitCount(started, 1);
+    std::this_thread::sleep_for(SETTLE);
+    Require(sceKernelSyncOnAddressWake(storage, INT_MAX) == 0);
+    Require(sceKernelSyncOnAddressWake(word, 1) == 1);
+    waiter.join();
+    Require(result == SCE_OK);
+
+    auto* shared = reinterpret_cast<std::uint64_t*>(storage + 3);
+    std::atomic<bool> stop{false};
+    std::atomic<int> rounds{0};
+    std::thread changer([&] {
+        std::uint64_t next = 1;
+        while (!stop.load()) {
+            __atomic_store_n(reinterpret_cast<unsigned char*>(shared), static_cast<unsigned char>(next), __ATOMIC_RELAXED);
+            ++next;
+            sceKernelSyncOnAddressWake(shared, INT_MAX);
+        }
+    });
+    for (int round = 0; round < 2000; ++round) {
+        unsigned char bytes[sizeof(std::uint64_t)];
+        bytes[0] = __atomic_load_n(reinterpret_cast<unsigned char*>(shared), __ATOMIC_RELAXED);
+        std::memcpy(bytes + 1, reinterpret_cast<unsigned char*>(shared) + 1, sizeof(bytes) - 1);
+        std::uint64_t seen = 0;
+        std::memcpy(&seen, bytes, sizeof(seen));
+        KernelUseconds waitTimeout = SHORT_TIMEOUT;
+        const int waited = sceKernelSyncOnAddressWait64(shared, seen, &waitTimeout, "changing");
+        Require(waited == SCE_OK || waited == SCE_KERNEL_ERROR_EAGAIN || waited == SCE_KERNEL_ERROR_ETIMEDOUT);
+        ++rounds;
+    }
+    stop.store(true);
+    changer.join();
+    Require(rounds.load() == 2000);
+}
+
+static void NullAddresses() {
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait(nullptr, 1, &timeout, nullptr) == SCE_KERNEL_ERROR_EFAULT && timeout == SHORT_TIMEOUT);
+    Require(sceKernelSyncOnAddressWait8(nullptr, 1, nullptr, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelSyncOnAddressWait16(nullptr, 1, nullptr, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelSyncOnAddressWait32(nullptr, 1, nullptr, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelSyncOnAddressWait64(nullptr, 1, nullptr, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    KernelUseconds none = 0;
+    Require(sceKernelSyncOnAddressWait32(nullptr, 1, &none, nullptr) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelSyncOnAddressWake(nullptr, 1) == 0);
+    Require(sceKernelSyncOnAddressWake(nullptr, 0) == 0);
+    std::uint32_t word = 0;
+    Require(sceKernelSyncOnAddressWake(&word, -1) == 0);
 }
 
 int main() {
-    ReturnsWhenTheValueDiffers();
+    FailsAgainWhenTheValueDiffers();
     TimesOutWhileTheValueMatches();
-    WakeReleasesAWaiterWithoutAValueChange();
-    WakeHonoursTheCountAndTheAddress();
+    WakeReleasesAWaiterAndReportsTheTimeLeft();
+    WakeCountsOfOneOrLessWakeOneWaiter();
     WaitsOnTheLowHalfOfAnOnceState();
     SizedWaitsTimeOutWhileTheValueMatches();
     Wait64ComparesTheHighHalf();
     WakeReleasesWaitersOfEverySize();
     NarrowWaitsCompareOnlyTheirWidth();
     WakeReleasesNarrowWaitersAtTheirOwnAddress();
-    RejectsInvalidArguments();
+    MisalignedAddressesWaitAndWake();
+    NullAddresses();
 }

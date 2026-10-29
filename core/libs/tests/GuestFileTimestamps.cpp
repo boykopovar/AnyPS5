@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstdio>
@@ -9,22 +11,6 @@
 #include <windows.h>
 #include <io.h>
 #endif
-
-extern "C" {
-int APS5_VABI utimes_nid_postfix(const char*, const KernelTimeval*);
-int APS5_VABI lutimes_nid_postfix(const char*, const KernelTimeval*);
-int APS5_VABI futimes_nid_postfix(int, const KernelTimeval*);
-int APS5_VABI sceKernelUtimes_nid_postfix(const char*, const KernelTimeval*);
-int APS5_VABI stat_nid_postfix(const char*, FileStat*);
-int APS5_VABI lstat_nid_postfix(const char*, FileStat*);
-int APS5_VABI sceKernelFstat(int, FileStat*);
-std::int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int, FileStat*);
-std::int64_t APS5_VABI _fstat_nid_postfix(int, FileStat*);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -60,6 +46,70 @@ static void CheckTimes(const std::string& path, int fd, const KernelTimeval* exp
 #endif
 }
 
+#ifdef _WIN32
+static std::uint64_t Ticks(const FILETIME& time) {
+    return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+}
+
+static void CheckBirthtime(const std::string& path, int fd, std::uint64_t expected) {
+    FILETIME creation{};
+    Require(GetFileTime(reinterpret_cast<HANDLE>(_get_osfhandle(fd)), &creation, nullptr, nullptr), "native creation time");
+    Require(Ticks(creation) == expected, "native birth time follows an earlier mtime and never advances");
+    FileStat byPath{}, byFd{};
+    Require(stat_nid_postfix(path.c_str(), &byPath) == 0, "stat birth time");
+    Require(sceKernelFstat(fd, &byFd) == 0, "fstat birth time");
+    for (const auto* status : {&byPath, &byFd}) {
+        Require(status->st_birthtim.tv_sec == static_cast<std::int64_t>(expected / 10000000) - 11644473600LL &&
+            status->st_birthtim.tv_nsec == static_cast<std::int64_t>(expected % 10000000) * 100, "guest birth time matches native metadata");
+    }
+}
+
+template<typename TUpdate>
+static void CheckBirthtimeUpdates(const std::string& path, int fd, TUpdate update) {
+    const auto handle = CreateFileW(std::filesystem::path(path).c_str(), FILE_WRITE_ATTRIBUTES | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Require(handle != INVALID_HANDLE_VALUE, "open birth time fixture");
+    constexpr std::uint64_t initial = 116444736000000000ULL + 2000000000ULL * 10000000 + 1234567;
+    const FILETIME creation{static_cast<DWORD>(initial), static_cast<DWORD>(initial >> 32)};
+    Require(SetFileTime(handle, &creation, nullptr, nullptr), "seed native birth time");
+    const KernelTimeval later[2]{{1900000000, 654321}, {2100000000, 123456}};
+    Require(update(later) == 0, "update later modification time");
+    CheckTimes(path, fd, later);
+    CheckBirthtime(path, fd, initial);
+    const KernelTimeval earlier[2]{{1800000000, 1}, {2000000000, 123456}};
+    Require(update(earlier) == 0, "update modification time less than a microsecond before birth");
+    CheckTimes(path, fd, earlier);
+    constexpr std::uint64_t lowered = initial - 7;
+    CheckBirthtime(path, fd, lowered);
+    const KernelTimeval equal[2]{{1700000000, 999999}, earlier[1]};
+    Require(update(equal) == 0, "update equal modification time");
+    CheckTimes(path, fd, equal);
+    CheckBirthtime(path, fd, lowered);
+    const KernelTimeval invalid[2]{{1600000000, 0}, {std::numeric_limits<std::int64_t>::max(), 0}};
+    Require(update(invalid) != 0, "reject invalid modification time before changing birth");
+    CheckTimes(path, fd, equal);
+    CheckBirthtime(path, fd, lowered);
+    FILETIME future{};
+    GetSystemTimePreciseAsFileTime(&future);
+    const auto futureTicks = Ticks(future) + 600ULL * 10000000;
+    future = {static_cast<DWORD>(futureTicks), static_cast<DWORD>(futureTicks >> 32)};
+    Require(SetFileTime(handle, &future, nullptr, nullptr), "seed future birth time");
+    Require(CloseHandle(handle), "close birth time fixture");
+    const auto before = std::chrono::system_clock::now();
+    Require(update(nullptr) == 0, "current time lowers a future birth time");
+    const auto after = std::chrono::system_clock::now();
+    FILETIME nativeCreation{}, access{}, modified{};
+    Require(GetFileTime(reinterpret_cast<HANDLE>(_get_osfhandle(fd)), &nativeCreation, &access, &modified), "read current native times");
+    Require(Ticks(nativeCreation) == Ticks(access) && Ticks(access) == Ticks(modified), "current times share one snapshot including lowered birth");
+    CheckBirthtime(path, fd, Ticks(modified));
+    FileStat status{};
+    Require(sceKernelFstat(fd, &status) == 0, "fstat current birth time");
+    const auto recorded = std::chrono::seconds(status.st_birthtim.tv_sec) + std::chrono::nanoseconds(status.st_birthtim.tv_nsec);
+    Require(recorded >= before.time_since_epoch() - std::chrono::seconds(1) &&
+        recorded <= after.time_since_epoch() + std::chrono::seconds(1), "current birth time uses host clock");
+}
+#endif
+
 int main() {
     const auto root = std::filesystem::path("anyps5-file-times-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root), "create fixture directory");
@@ -67,6 +117,15 @@ int main() {
     { std::ofstream file(path); file << "timestamp fixture"; }
     const int fd = open_nid_postfix(path.c_str(), 0, 0);
     Require(fd >= 0, "open read-only descriptor");
+
+#ifdef _WIN32
+    for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix, sceKernelUtimes_nid_postfix}) {
+        CheckBirthtimeUpdates(path, fd, [&](const KernelTimeval* times) { return update(path.c_str(), times); });
+    }
+    for (const auto update : {futimes_nid_postfix, sceKernelFutimes}) {
+        CheckBirthtimeUpdates(path, fd, [&](const KernelTimeval* times) { return update(fd, times); });
+    }
+#endif
 
     const KernelTimeval first[2]{{1000000000, 123456}, {1000000001, 500000}};
     Require(utimes_nid_postfix(path.c_str(), first) == 0, "utimes fractional timestamp");
@@ -145,6 +204,14 @@ int main() {
     Require(std::filesystem::create_directory(directory), "create timestamp directory");
     const int directoryFd = open_nid_postfix(directory.c_str(), 0, 0);
     Require(directoryFd >= 0, "open directory descriptor");
+#ifdef _WIN32
+    for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix, sceKernelUtimes_nid_postfix}) {
+        CheckBirthtimeUpdates(directory, directoryFd, [&](const KernelTimeval* times) { return update(directory.c_str(), times); });
+    }
+    for (const auto update : {futimes_nid_postfix, sceKernelFutimes}) {
+        CheckBirthtimeUpdates(directory, directoryFd, [&](const KernelTimeval* times) { return update(directoryFd, times); });
+    }
+#endif
     Require(utimes_nid_postfix(directory.c_str(), first) == 0, "directory utimes");
     FileStat directoryStatus{};
     Require(stat_nid_postfix(directory.c_str(), &directoryStatus) == 0 && Same(directoryStatus.st_mtim, first[1]), "directory stat precision");
@@ -159,7 +226,14 @@ int main() {
     Require(utimes_nid_postfix(path.c_str(), second) == 0, "utimes target to second");
     std::error_code symlinkError;
     const auto linkPath = (root / "link.txt").string();
+#ifdef _WIN32
+    if (!CreateSymbolicLinkW(std::filesystem::path(linkPath).c_str(), std::filesystem::path(path).c_str(),
+            SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        symlinkError = std::error_code(GetLastError(), std::system_category());
+    }
+#else
     std::filesystem::create_symlink(path, linkPath, symlinkError);
+#endif
     if (!symlinkError) {
         Require(lutimes_nid_postfix(linkPath.c_str(), first) == 0, "lutimes modifies symlink");
         FileStat targetStatus{};
@@ -181,6 +255,7 @@ int main() {
         FileStat linkStatus{};
         Require(lstat_nid_postfix(linkPath.c_str(), &linkStatus) == 0 && Same(linkStatus.st_mtim, first[1]), "symlink mtime updated");
 #endif
+        Require(unlink_nid_postfix(linkPath.c_str()) == 0, "remove the symlink");
     }
     int pipe[2];
     Require(pipe_nid_postfix(pipe) == 0, "create pipe");
@@ -189,6 +264,49 @@ int main() {
 #ifdef _WIN32
     Require(futimes_nid_postfix(pipe[0], first) == -1 && *__error_nid_postfix() == 22, "pipe timestamp update fails");
 #endif
+    const KernelTimeval invalidUsec[2] = {{first[0].tv_sec, -1}, {first[1].tv_sec, 0}};
+    Require(futimes_nid_postfix(pipe[0], invalidUsec) == -1 && *__error_nid_postfix() == 22, "negative usec rejected in futimes");
+    Require(futimes_nid_postfix(-1, first) == -1 && *__error_nid_postfix() == 9, "bad file descriptor in futimes");
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0, "close pipe");
+    const auto throughFile = (root / "file.txt" / "child").string();
+    for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix}) {
+        Require(update(throughFile.c_str(), first) == -1 && *__error_nid_postfix() == 20, "a path through a file reports ENOTDIR");
+    }
+#ifdef _WIN32
+    const auto fileLink = (root / "file-link.txt").string();
+    const auto directoryLink = (root / "directory-link").string();
+    const auto danglingLink = (root / "dangling-link").string();
+    const auto createLink = [](const std::string& link, const std::string& target, DWORD flags) {
+        wchar_t full[MAX_PATH];
+        GetFullPathNameW(std::filesystem::path(target).c_str(), MAX_PATH, full, nullptr);
+        return CreateSymbolicLinkW(std::filesystem::path(link).c_str(), full, flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+    };
+    if (createLink(fileLink, path, 0) && createLink(directoryLink, directory, SYMBOLIC_LINK_FLAG_DIRECTORY) &&
+        createLink(danglingLink, (root / "missing").string(), 0)) {
+        const auto modified = [](const char* name, bool link) {
+            FileStat status{};
+            Require((link ? lstat_nid_postfix(name, &status) : stat_nid_postfix(name, &status)) == 0, "stat a link fixture");
+            return status.st_mtim.tv_sec;
+        };
+        Require(utimes_nid_postfix(fileLink.c_str(), first) == 0 && modified(path.c_str(), false) == first[1].tv_sec, "utimes follows a file link");
+        Require(modified(fileLink.c_str(), true) != first[1].tv_sec, "utimes leaves the file link alone");
+        Require(utimes_nid_postfix(directoryLink.c_str(), second) == 0 && modified(directory.c_str(), false) == second[1].tv_sec,
+            "utimes follows a directory link");
+        Require(utimes_nid_postfix(danglingLink.c_str(), first) == -1 && *__error_nid_postfix() == 2, "utimes through a dangling link reports ENOENT");
+        Require(lutimes_nid_postfix(directoryLink.c_str(), first) == 0 && modified(directoryLink.c_str(), true) == first[1].tv_sec &&
+            modified(directory.c_str(), false) == second[1].tv_sec, "lutimes changes a directory link and not its target");
+        Require(lutimes_nid_postfix(danglingLink.c_str(), first) == 0 && modified(danglingLink.c_str(), true) == first[1].tv_sec,
+            "lutimes changes a dangling link");
+        const auto throughLink = fileLink + "/child";
+        for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix}) {
+            Require(update(throughLink.c_str(), first) == -1 && *__error_nid_postfix() == 20, "a path through a file link reports ENOTDIR");
+        }
+        Require(RemoveDirectoryW(std::filesystem::path(directoryLink).c_str()) && DeleteFileW(std::filesystem::path(fileLink).c_str()) &&
+            DeleteFileW(std::filesystem::path(danglingLink).c_str()), "remove the link fixtures");
+    }
+#endif
+#ifdef _WIN32
+    DeleteFileW(std::filesystem::path(linkPath).c_str());
+#endif
     std::filesystem::remove_all(root);
 }

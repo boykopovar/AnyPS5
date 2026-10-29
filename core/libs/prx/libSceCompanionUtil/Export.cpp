@@ -1,3 +1,4 @@
+#include "prx/libSceCompanionUtil/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -5,7 +6,7 @@
 
 extern "C" {
 
-int APS5_VABI sceCompanionUtilGetEvent() {
+int APS5_VABI sceCompanionUtilGetEvent(void* outEvent) {
     return static_cast<int>(0x80AD0008);
 }
 

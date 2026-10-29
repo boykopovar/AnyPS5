@@ -32,7 +32,7 @@ MemoryInfo sharedMemoryInfoFromInstruction(const RdnaInstruction& inst) {
 
 bool TranslationContext::dsAtomic(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue) {
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
-    memory.flushDenormals = sharedFloatFlush(opcode);
+    memory.flushDenormals = floatAtomicFlush(opcode);
     memory.flushDenormalResults = opcode == IrOpcode::SharedAtomicFAdd32 && (!floatMode.has_value() || ((floatMode->floatMode >> 5u) & 1u) == 0u);
     const IrU32 address = readU32(inst.source0);
     const IrU32 value = readU32(inst.source1);
@@ -213,25 +213,9 @@ bool TranslationContext::dsSrc2(const RdnaInstruction& inst, IrOpcode opcode) {
     return true;
 }
 
-bool TranslationContext::sharedFloatFlush(IrOpcode opcode) const {
-    switch (opcode) {
-    case IrOpcode::SharedAtomicFMin32:
-    case IrOpcode::SharedAtomicFMax32:
-    case IrOpcode::SharedAtomicCmpstF32:
-    case IrOpcode::SharedAtomicFAdd32:
-        return !floatMode.has_value() || ((floatMode->floatMode >> 4u) & 1u) == 0u;
-    case IrOpcode::SharedAtomicFMin64:
-    case IrOpcode::SharedAtomicFMax64:
-    case IrOpcode::SharedAtomicCmpstF64:
-        return floatMode.has_value() && ((floatMode->floatMode >> 6u) & 1u) == 0u;
-    default:
-        return false;
-    }
-}
-
 bool TranslationContext::dsAtomic2(const RdnaInstruction& inst, IrOpcode opcode, bool returnsValue) {
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
-    memory.flushDenormals = sharedFloatFlush(opcode);
+    memory.flushDenormals = floatAtomicFlush(opcode);
     const IrU32 address = readU32(inst.source0);
     const IrU32 data0 = readU32(inst.source1);
     const IrU32 data1 = readU32(inst.source2);
@@ -246,7 +230,7 @@ bool TranslationContext::dsAtomic64(const RdnaInstruction& inst, IrOpcode opcode
         throw std::runtime_error("64-bit GDS atomics are not supported");
     }
     MemoryInfo memory = sharedMemoryInfoFromInstruction(inst);
-    memory.flushDenormals = sharedFloatFlush(opcode);
+    memory.flushDenormals = floatAtomicFlush(opcode);
     const IrU32 address = readU32(inst.source0);
     const IrU64 data0 = readU64(inst.source1);
     IrValue& active = ir.GetExec();

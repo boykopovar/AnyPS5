@@ -65,6 +65,15 @@ std::size_t Driver::drawCacheEntries() {
     return entries;
 }
 
+std::uint64_t Driver::DrawCacheBytes() {
+    static const std::uint64_t bytes = [] {
+        const char* text = std::getenv("APS5_DRAW_CACHE_BYTES");
+        const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
+        return parsed != 0 ? static_cast<std::uint64_t>(parsed) : std::uint64_t{256} << 20u;
+    }();
+    return bytes;
+}
+
 void Driver::accountDrawVariant(const DispatchVariant& variant, bool added) {
     if (added) {
         ++drawCacheVariants;
@@ -123,10 +132,24 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
     return drawShapeSightings->SeenBefore(shape);
 }
 
-void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape) {
+void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape, bool replaceShape) {
     std::lock_guard cacheLock(drawCacheMutex);
     auto& counters = drawEntryCounters;
-    ++counters.inserts;
+    if (replaceShape && shape != 0) {
+        ++counters.shapeUpdates;
+        if (const auto shapeOf = drawShapes.find(shape); shapeOf != drawShapes.end() && shapeOf->second != key) {
+            if (const auto previous = drawCache.find(shapeOf->second); previous != drawCache.end()) {
+                for (const auto& variants : previous->second->stages) {
+                    for (const auto& variant : variants) accountDrawVariant(*variant, false);
+                }
+                drawOrder.erase(previous->second->order);
+                drawCache.erase(previous);
+            }
+            drawShapes.erase(shapeOf);
+        }
+    } else {
+        ++counters.inserts;
+    }
     const auto found = drawCache.find(key);
     auto replacement = std::make_shared<DrawEntry>();
     replacement->stages.resize(fresh.size());
@@ -166,7 +189,8 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         drawOrder.splice(drawOrder.begin(), drawOrder, replacement->order);
         found->second = std::move(replacement);
     }
-    while (drawCache.size() > drawCacheEntries()) {
+    while (drawCache.size() > drawCacheEntries() || (drawCache.size() > 1 && drawCacheVariantBytes > DrawCacheBytes())) {
+        const bool overBytes = drawCache.size() <= drawCacheEntries();
         const auto last = drawCache.find(drawOrder.back());
         for (const auto& variants : last->second->stages) {
             for (const auto& variant : variants) accountDrawVariant(*variant, false);
@@ -177,6 +201,10 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
         drawCache.erase(last);
         ++drawCacheEvictions;
         ++counters.evictions;
+        if (overBytes) {
+            ++drawCacheByteEvictions;
+            ++counters.byteEvictions;
+        }
     }
 }
 

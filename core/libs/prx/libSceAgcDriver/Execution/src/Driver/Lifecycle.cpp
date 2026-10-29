@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -14,6 +15,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "ShaderDiskCache.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -87,6 +89,9 @@ void MapDriverMemory() {
     auto* slot = reinterpret_cast<std::uint64_t*>(FsTableAddress);
     slot[0] = (FsRoutineTableAddress & 0xffffffffffffull) | 16ull << 48u;
     slot[1] = FsTableDword3 << 32u | FsRoutineRecords;
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, DriverMemoryBytes);
+#endif
     GuestAllocations::Mutation mutation;
     mutation.Add(mapped, DriverMemoryBytes, true, true, true);
 }
@@ -161,7 +166,13 @@ void Driver::stop() {
     for (auto& [queue, worker] : workers) {
         if (worker.thread.joinable()) worker.thread.join();
     }
+    try {
+        DrawFinisher::Get().Drain();
+    } catch (...) {
+    }
     DrawPipeline::Queue0().Stop();
+    DrawPipeline::Queue0().ReleaseRetired();
+    DrawFinisher::Get().ReleaseRan();
     StopWorkerSampler();
     CloseRegistrationPreparation();
     Graphics::StopPipelineLibraryWorker();
@@ -220,6 +231,7 @@ Driver::Driver() {
         gpuMapImportThreads.fetch_add(1, std::memory_order_relaxed);
         host.join();
     });
+    PerformanceOverlay::SetDriverCounters([] { return Driver::Get().OverlayCounters(); });
 }
 
 void Driver::WaitIdle() {
@@ -235,6 +247,40 @@ void Driver::WaitIdle() {
     }
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+}
+
+bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {
+    require(!onWorkerThread(), "worker cannot wait for itself");
+    std::unique_lock lock(mutex);
+    const auto target = accepted;
+    ++idleWaiters;
+    const bool idle = changed.wait_for(lock, timeout, [&] { return failure != nullptr || stopping || completed >= target; });
+    --idleWaiters;
+    rethrowFailure();
+    checkStopping();
+    return idle;
+}
+
+std::vector<AwaitedWait> Driver::AwaitedWaits() {
+    std::vector<AwaitedWait> result;
+    for (const auto& slot : awaitedSlots) {
+        const auto address = slot.address.load(std::memory_order_acquire);
+        if (address == 0) continue;
+        AwaitedWait wait;
+        wait.address = address;
+        wait.reference = slot.reference.load(std::memory_order_relaxed);
+        wait.mask = slot.mask.load(std::memory_order_relaxed);
+        const auto shape = slot.shape.load(std::memory_order_relaxed);
+        wait.function = static_cast<std::uint32_t>(shape);
+        wait.bytes = static_cast<std::uint32_t>(shape >> 32u);
+        if (slot.address.load(std::memory_order_acquire) == address) result.push_back(wait);
+    }
+    return result;
+}
+
+std::pair<std::uint64_t, std::uint64_t> Driver::SerialProgress() {
+    std::lock_guard lock(mutex);
+    return {accepted, completed};
 }
 
 void Driver::CheckFailure() {

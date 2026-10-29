@@ -46,7 +46,12 @@ void noteAccess(const void* pointer, std::size_t bytes) {
 }
 
 constexpr std::uintptr_t GuestArenaOffset = GuestArena::GuestAddressOffset;
-constexpr std::uintptr_t ArenaStart = 0x0000000200000000ull + GuestArenaOffset;
+constexpr std::uintptr_t DefaultAllocationStart = 0x0000000200000000ull + GuestArenaOffset;
+#ifdef __APPLE__
+constexpr std::uintptr_t ArenaStart = DefaultAllocationStart;
+#else
+constexpr std::uintptr_t ArenaStart = GuestArenaOffset == 0 ? 0x10000ull : DefaultAllocationStart;
+#endif
 constexpr std::uintptr_t SystemReservedStart = 0x00000007FFFFC000ull + GuestArenaOffset;
 constexpr std::uintptr_t SystemReservedEnd = 0x0000001000000000ull + GuestArenaOffset;
 constexpr std::uintptr_t ApplicationAreaEnd = 0x000000FC00000000ull + GuestArenaOffset;
@@ -86,7 +91,7 @@ public:
         RequireAllocatable(alignment);
         std::lock_guard lock(_lock);
         auto candidate = hint < _end ? FindAtOrAbove(hint, bytes, alignment) : 0;
-        if (candidate == 0 && hint > _base) candidate = FindAtOrAbove(_base, bytes, alignment);
+        if (candidate == 0 && hint > _base) candidate = FindAtOrAbove(hint < DefaultAllocationStart ? _base : DefaultAllocationStart, bytes, alignment);
         return Claim(candidate, bytes);
     }
 
@@ -273,6 +278,10 @@ private:
             const int failed = ReserveNoReplace(cursor, end - cursor);
             if (failed == 0) continue;
             if (failed != EEXIST) {
+                if (cursor < DefaultAllocationStart && (failed == EACCES || failed == EPERM)) {
+                    occupied.emplace_back(cursor, end);
+                    continue;
+                }
                 char message[128];
                 std::snprintf(message, sizeof(message), "guest arena: cannot reserve 0x%llx+0x%llx",
                     static_cast<unsigned long long>(cursor), static_cast<unsigned long long>(end - cursor));
@@ -309,7 +318,7 @@ private:
     }
 
     std::uintptr_t FindAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) const {
-        std::uintptr_t candidate = alignUp(std::max(_base, hint), alignment);
+        std::uintptr_t candidate = alignUp(hint == 0 ? DefaultAllocationStart : std::max(_base, hint), alignment);
         auto it = _used.upper_bound(candidate);
         if (it != _used.begin() && std::prev(it)->second > candidate) --it;
         for (; it != _used.end(); ++it) {
@@ -341,6 +350,26 @@ public:
         }
         return false;
     }
+
+#ifndef _WIN32
+    void ReleaseHostRegion(const void* pointer, std::size_t bytes) {
+        Release(pointer, bytes);
+        std::lock_guard lock(_lock);
+        const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+        const auto end = start + bytes;
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> kept;
+        for (const auto& [regionStart, regionEnd] : _hostRegions) {
+            if (regionEnd <= start || regionStart >= end) {
+                kept.emplace_back(regionStart, regionEnd);
+                continue;
+            }
+            if (regionStart < start) kept.emplace_back(regionStart, start);
+            if (regionEnd > end) kept.emplace_back(end, regionEnd);
+        }
+        _hostRegions = std::move(kept);
+        static_cast<void>(ReserveNoReplace(start, bytes));
+    }
+#endif
 };
 
 const bool g_reserved = (Arena::Get(), true);
@@ -510,6 +539,22 @@ bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t byte
     return WindowsMappings::Get().ResidentSpan(address, bytes, start, end);
 }
 
+void GuestArenaCompareWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    WindowsMappings::Get().CompareWhenShared(address, bytes);
+}
+
+void GuestArenaCompareResidentWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    WindowsMappings::Get().CompareWhenShared(address, bytes, true);
+}
+
+void GuestArenaComparedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count) {
+    WindowsMappings::Get().ComparedPages(address, bytes, pages, count, false);
+}
+
+void GuestArenaTakeUnreportedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count) {
+    WindowsMappings::Get().ComparedPages(address, bytes, pages, count, true);
+}
+
 void GuestArenaForgetSection_nid_postfix(void* section) {
     WindowsMappings::Get().ForgetSection(section);
 }
@@ -636,6 +681,14 @@ bool GuestArenaWriteSharedBacking_nid_no_patch(std::uintptr_t address, const voi
 bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
     const auto resolver = sharedBackingResolver.load(std::memory_order_acquire);
     return resolver != nullptr && resolver(address, bytes, file, offset);
+}
+
+bool GuestArenaOverlapsHostRegion_nid_no_patch(std::uintptr_t address, std::size_t bytes) {
+    return Arena::Get().OverlapsHostRegion(address, bytes);
+}
+
+void GuestArenaReleaseHostRegion_nid_no_patch(const void* pointer, std::size_t bytes) {
+    Arena::Get().ReleaseHostRegion(pointer, bytes);
 }
 #endif
 

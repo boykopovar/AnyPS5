@@ -7,6 +7,12 @@
 #include <cstdint>
 #include <mutex>
 
+#ifdef __APPLE__
+#include <dispatch/dispatch.h>
+#elif !defined(_WIN32)
+#include <semaphore.h>
+#endif
+
 namespace TimedWait {
 
 bool Coarse();
@@ -21,9 +27,6 @@ void WakeChangeSleepers();
 
 struct Waiter;
 
-#ifdef _WIN32
-constexpr unsigned PARK_SPINS = 1000;
-
 class DeliveryDeferral {
 public:
     DeliveryDeferral();
@@ -33,6 +36,10 @@ public:
 };
 
 void DeliverDeferred();
+
+#ifdef _WIN32
+constexpr unsigned PARK_SPINS = 1000;
+
 void SpinPause();
 Waiter* BeginPark(const void* key);
 bool FinishPark(const void* key, Waiter* waiter, const std::uint64_t* deadlineNanos);
@@ -131,6 +138,51 @@ private:
 #endif
     std::condition_variable_any coarse;
 };
+
+#ifdef _WIN32
+using SingleWaiterCondition = Condition;
+#else
+bool DeferDelivery(int signum);
+
+class SingleWaiterCondition {
+public:
+    SingleWaiterCondition();
+    ~SingleWaiterCondition();
+    SingleWaiterCondition(const SingleWaiterCondition&) = delete;
+    SingleWaiterCondition& operator=(const SingleWaiterCondition&) = delete;
+
+    void NotifyOne();
+
+    template <class TLock, class TPredicate>
+    void Wait(TLock& lock, TPredicate predicate) {
+        while (!predicate()) {
+            lock.unlock();
+            waitSignal(nullptr);
+            lock.lock();
+        }
+    }
+
+    template <class TLock, class TPredicate>
+    bool WaitUntil(TLock& lock, std::uint64_t deadlineNanos, TPredicate predicate) {
+        while (!predicate()) {
+            lock.unlock();
+            const bool signaled = waitSignal(&deadlineNanos);
+            lock.lock();
+            if (!signaled) return predicate();
+        }
+        return true;
+    }
+
+private:
+    bool waitSignal(const std::uint64_t* deadlineNanos);
+
+#ifdef __APPLE__
+    dispatch_semaphore_t semaphore;
+#else
+    sem_t semaphore;
+#endif
+};
+#endif
 
 }  // namespace TimedWait
 

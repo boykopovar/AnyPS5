@@ -1,3 +1,4 @@
+#include "prx/libSceVoice/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -427,9 +428,8 @@ int APS5_VABI sceVoiceDisableChat(void) {
     Fail(__func__, "audio chat backend is not implemented");
 }
 
-int APS5_VABI sceVoiceInitHQ(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceVoiceInitHQ(const VoiceInitParam* param, std::int32_t version) {
+    return sceVoiceInit(param, version);
 }
 
 int APS5_VABI sceVoiceGetMemorySize(void) {
@@ -447,7 +447,7 @@ int APS5_VABI sceVoiceQAEnableRecording(void) {
     return 0;
 }
 
-int APS5_VABI sceVoiceVADAdjustment(void) {
+int APS5_VABI sceVoiceVADAdjustment(float, float) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -457,9 +457,8 @@ int APS5_VABI sceVoiceVADPVTAdjustment(void) {
     return 0;
 }
 
-int APS5_VABI sceVoiceVADSetVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceVoiceVADSetVersion(std::int32_t version) {
+    return version == 0 || version == 1 ? 0 : InvalidArgument;
 }
 
 int APS5_VABI sceVoiceSetMuteFlagAll(bool muted) {

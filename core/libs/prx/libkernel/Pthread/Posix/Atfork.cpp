@@ -1,3 +1,4 @@
+#include "prx/libkernel/Pthread/include/Atfork.hpp"
 #include "../include/Atfork.hpp"
 #include <mutex>
 #include <new>
