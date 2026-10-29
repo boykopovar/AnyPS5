@@ -209,6 +209,10 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_read_encoding.py)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
+        if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
+            add_test(NAME validate_patch_catalog COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_validate_patch_catalog.py)
+        endif()
         if(NOT APPLE)
             add_test(NAME annotate_module COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
@@ -228,10 +232,16 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_comments.py --shard ${shard}/12)
             set_tests_properties(${conventions_test_name} PROPERTIES TIMEOUT 120)
         endforeach()
+        add_test(NAME performance_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_csv.py)
+        set_tests_properties(performance_csv PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_wrapped_declarations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_wrapped_declarations.py)
         add_test(NAME conventions_ci_gate COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_ci_gate.py)
+        add_test(NAME preview_pad_timeline COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_preview_pad_timeline.py)
+        set_tests_properties(preview_pad_timeline PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_git_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_git.py)
         add_test(NAME conventions_doc_links COMMAND ${Python3_EXECUTABLE}
@@ -291,6 +301,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen_stdout_newlines.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_hw_oracle.py)
+        add_test(NAME job_reference_errors COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_job_reference_errors.py)
+        set_tests_properties(job_reference_errors PROPERTIES TIMEOUT 20)
         add_test(NAME hardware_oracle_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/hw-oracle/test_compare_results.py)
         set_tests_properties(hardware_oracle_compare PROPERTIES TIMEOUT 120)
@@ -517,7 +530,7 @@ set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 include(cmake/ZArchive.cmake)
 include(cmake/Opus.cmake)
-if(WIN32)
+if(WIN32 OR APPLE)
     set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
     set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)

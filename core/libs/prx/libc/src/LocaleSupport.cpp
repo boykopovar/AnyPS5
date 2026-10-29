@@ -100,15 +100,6 @@ void ValidateCharacterRange(const char* first, const char* last, const char* fun
     if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid character range");
 }
 
-void* AllocateStringStorage(std::size_t bytes) {
-    if (bytes < GuestStringLargeAllocation) return _Znwm_nid_postfix(bytes);
-    if (bytes > std::numeric_limits<std::size_t>::max() - GuestLargeAllocationPadding) throw std::bad_alloc();
-    auto* raw = static_cast<unsigned char*>(_Znwm_nid_postfix(bytes + GuestLargeAllocationPadding));
-    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + GuestLargeAllocationPadding) & ~(GuestLargeAllocationAlignment - 1);
-    reinterpret_cast<void**>(aligned)[-1] = raw;
-    return reinterpret_cast<void*>(aligned);
-}
-
 void APS5_VABI DestroyCollate(GuestLocale::Facet*) {}
 
 void APS5_VABI DeleteCollate(GuestLocale::Facet* self) {
@@ -148,7 +139,7 @@ GuestLocale::String* APS5_VABI CollateTransform(GuestLocale::String* result, con
     std::size_t capacity = GuestStringInlineCapacity;
     if (length > GuestStringInlineCapacity) {
         capacity = length | GuestStringCapacityMask;
-        data = static_cast<char*>(AllocateStringStorage(capacity + 1));
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, first, length);
     data[length] = 0;
@@ -203,7 +194,7 @@ GuestLocale::String* APS5_VABI WideCollateTransform(GuestLocale::String* result,
     std::size_t capacity = GuestWideInlineCapacity;
     if (length > GuestWideInlineCapacity) {
         capacity = length | GuestWideInlineCapacity;
-        data = static_cast<char*>(AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
     }
     if (length != 0) std::memcpy(data, characters, bytes);
     data[bytes] = 0;
@@ -257,7 +248,7 @@ GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const 
     std::size_t capacity = GuestStringInlineCapacity;
     if (length > GuestStringInlineCapacity) {
         capacity = length | GuestStringCapacityMask;
-        data = static_cast<char*>(AllocateStringStorage(capacity + 1));
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
     }
     if (length != 0) std::memcpy(data, source, length);
     data[length] = 0;
@@ -568,6 +559,25 @@ int ConvertCharacter(int value, bool upper) {
     return static_cast<unsigned char>(upper ? facet.toupper(character) : facet.tolower(character));
 }
 
+}
+
+void* GuestLocale::AllocateStringStorage(std::size_t bytes) {
+    if (bytes < GuestStringLargeAllocation) return _Znwm_nid_postfix(bytes);
+    if (bytes > std::numeric_limits<std::size_t>::max() - GuestLargeAllocationPadding) throw std::bad_alloc();
+    auto* raw = static_cast<unsigned char*>(_Znwm_nid_postfix(bytes + GuestLargeAllocationPadding));
+    const auto aligned = (reinterpret_cast<std::uintptr_t>(raw) + GuestLargeAllocationPadding) & ~(GuestLargeAllocationAlignment - 1);
+    reinterpret_cast<void**>(aligned)[-1] = raw;
+    return reinterpret_cast<void*>(aligned);
+}
+
+void GuestLocale::ReleaseStringStorage(String& string) {
+    if (string.capacity > GuestStringInlineCapacity) {
+        void* storage = string.pointer;
+        if (string.capacity + 1 >= GuestStringLargeAllocation) storage = static_cast<void**>(storage)[-1];
+        _ZdlPv_nid_postfix(storage);
+    }
+    string = {};
+    string.capacity = GuestStringInlineCapacity;
 }
 
 extern "C" {

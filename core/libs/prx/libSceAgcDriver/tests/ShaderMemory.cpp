@@ -757,7 +757,7 @@ void verifyPlanConditionPruning() {
     require(plan.controlFlow[1].condition != nullptr && plan.controlFlow[2].condition != nullptr, "plan pruning: a condition the evaluator can read was dropped");
     const auto copiedLoad = std::ranges::find_if(plan.valueStorage, [](const IrValue& value) { return value.Opcode() == IrOpcode::LoadBufferU32; });
     require(copiedLoad != plan.valueStorage.end() && copiedLoad->ArgumentCount() == 0u, "plan pruning: the unevaluable load was not kept as a leaf");
-    require(std::ranges::all_of(plan.valueStorage, [](const IrValue& value) { return !value.HasUses() && value.OperandUses().empty() && value.Arguments().capacity() == value.ArgumentCount(); }), "plan compaction: a plan value keeps use lists or spare operand capacity");
+    require(std::ranges::all_of(plan.valueStorage, [](const IrValue& value) { return !value.HasUses() && value.OperandUses().empty() && value.Arguments().capacity() == std::max(value.ArgumentCount(), IrOperands::InlineCapacity); }), "plan compaction: a plan value keeps use lists or spare heap operand capacity");
     const std::array<std::uint32_t, 4> data{0x100u, 7u, static_cast<std::uint32_t>(wordAddress), static_cast<std::uint32_t>(wordAddress >> 32u)};
     SrtRuntime runtime{data};
     Detail::Evaluator evaluator(plan, runtime);
@@ -6216,6 +6216,30 @@ void verifyPixelRequestSerialization() {
         depthTestingMerge.context.pixel->targetMerge.depthStencilTests = true;
         RecompileCacheKey::Build(depthTestingMerge, replayKey);
         require(key != replayKey, "the merge draw's depth or stencil tests did not change the static shader identity");
+        auto blending = request;
+        blending.context.pixel->targetMerge.blend = {true, false, 6u, 7u, 0u, 1u, 0u, 0u, 0xfu, {}};
+        RecompileCacheKey::Build(blending, replayKey);
+        require(key != replayKey && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(blending), "an unclamped color target blend did not change the static shader identity");
+        const auto blendKey = replayKey;
+        for (const auto change : {0, 1, 2, 3, 4, 5, 6, 7, 8}) {
+            auto other = blending;
+            auto& blend = other.context.pixel->targetMerge.blend;
+            if (change == 0) blend.snorm = true;
+            if (change == 1) blend.colorSource = 2u;
+            if (change == 2) blend.colorDestination = 2u;
+            if (change == 3) blend.colorOperation = 1u;
+            if (change == 4) blend.alphaSource = 2u;
+            if (change == 5) blend.alphaDestination = 2u;
+            if (change == 6) blend.alphaOperation = 1u;
+            if (change == 7) blend.writeMask = 0x5u;
+            if (change == 8) blend.constants[2] = 0x3f800000u;
+            RecompileCacheKey::Build(other, replayKey);
+            require(blendKey != replayKey, "a field of the unclamped color target blend did not change the static shader identity");
+        }
+        auto disabled = blending;
+        disabled.context.pixel->targetMerge.blend.enabled = false;
+        RecompileCacheKey::Build(disabled, replayKey);
+        require(key == replayKey && RecompileCacheKey::ContextHash(request) == RecompileCacheKey::ContextHash(disabled), "a disabled color target blend changed the static shader identity");
         auto withoutMerge = request;
         withoutMerge.context.pixel->targetMerge = {};
         RecompileCacheKey::Build(withoutMerge, replayKey);
@@ -6229,6 +6253,17 @@ void verifyPixelRequestSerialization() {
         RecompileCacheKey::Build(withoutStencilRef, replayKey);
         require(key != replayKey && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(withoutStencilRef), "the stencil reference export did not change the static shader identity");
     }
+    auto blendedDepth = request;
+    blendedDepth.context.pixel = pixel;
+    blendedDepth.context.pixel->depthExportEnable = true;
+    blendedDepth.context.pixel->depthExportMin = -0.25f;
+    blendedDepth.context.pixel->depthExportMax = 0.75f;
+    blendedDepth.context.pixel->targetMerge.blend = {true, true, 6u, 7u, 1u, 2u, 3u, 4u, 0xau, {0x3f800000u, 0x40000000u, 0x40400000u, 0x40800000u}};
+    const auto blendedReplay = serializer.Deserialize(serializer.Serialize(blendedDepth));
+    require(blendedReplay.request.context.pixel.has_value() && fields(*blendedReplay.request.context.pixel) == fields(*blendedDepth.context.pixel), "a pixel request with a target blend and depth export bounds lost pixel fields in serialization");
+    require(blendedReplay.request.context.pixel->targetMerge.blend == blendedDepth.context.pixel->targetMerge.blend, "the target blend did not round-trip beside the depth export bounds");
+    require(blendedReplay.request.context.pixel->depthExportMin == -0.25f && blendedReplay.request.context.pixel->depthExportMax == 0.75f, "the depth export bounds did not round-trip beside the target blend");
+    require(blendedReplay.request.context.vertex.has_value() && blendedReplay.request.context.vertex->fetchAttribReg == 17u && blendedReplay.request.context.memory.size() == 1u && blendedReplay.request.context.memory[0].guestAddress == 0x60000u, "a target blend with depth export bounds displaced the following guest context");
     request.context.pixel.reset();
     request.shader.stage = ShaderStage::Vertex;
     const auto withoutPixel = serializer.Deserialize(serializer.Serialize(request));
@@ -6646,6 +6681,15 @@ void verifyVertexInfoVersion19() {
     const auto mergingBytes = decodeBase64(serializer.Serialize(merging));
     require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 40 bytes the version 46 pixel info adds after the sample order");
     require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerge == merging.context.pixel->targetMerge, "a serialized request lost its color target merge");
+    auto blendMerging = pixel;
+    blendMerging.context.pixel->targetMerge = {1u, 0xffffu, 1u, {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, true, false, {true, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {0x3fc00000u, 0xbe800000u, 0x3f000000u, 0x40000000u}}};
+    const auto blendMergingBytes = decodeBase64(serializer.Serialize(blendMerging));
+    constexpr std::size_t blendPayloadBytes = 24u;
+    require(blendMergingBytes.size() == plainPixel.size() + blendPayloadBytes && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, blendMergingBytes.begin()) && blendMergingBytes[mergeOffset] == 1u && blendMergingBytes[mergeOffset + 1] == 0xffu && blendMergingBytes[mergeOffset + 2] == 0xffu && blendMergingBytes[mergeOffset + 3] == 0x01u && blendMergingBytes[mergeOffset + 4] == 0x00u, "a color target blend is not flagged in the merge mask word, or changed the bytes before the merge");
+    require(serializer.Deserialize(serializer.Serialize(blendMerging)).request.context.pixel->targetMerge == blendMerging.context.pixel->targetMerge, "a serialized request lost its color target blend");
+    auto disabledBlend = merging;
+    disabledBlend.context.pixel->targetMerge.blend = {false, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {1u, 2u, 3u, 4u}};
+    require(serializer.Serialize(disabledBlend) == serializer.Serialize(merging), "a disabled color target blend changed the serialized request");
     // A version 43 request: no color target merge, and no fused arithmetic flag, pixel function LDS flag, storage size or barycentric built-ins flag at the end.
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
         require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");

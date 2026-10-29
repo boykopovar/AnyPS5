@@ -564,7 +564,7 @@ void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
     ImageResource image;
     image.source = std::numeric_limits<std::uint32_t>::max();
     image.resourceClass = ImageResourceClass::Storage;
-    image.numericClass = IrTextureNumericClass::Uint;
+    image.numericClass = pixel.mergeBlend.enabled ? IrTextureNumericClass::Float : IrTextureNumericClass::Uint;
     image.dimension = pixel.mergeSamples > 1u ? RdnaImageDimension::Dim2DMsaa : RdnaImageDimension::Dim2D;
     image.read = true;
     image.written = true;

@@ -343,8 +343,9 @@ def probe(pr):
         if status != "A":
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
-        return files, set(), existing
-    return files, exports(git("diff", "-U0", "--no-color", f"refs/pr/base...{pr['ref']}", "--", "core/libs/prx/*.cpp")), existing
+        return files, (set(), {}), existing
+    diff = git("diff", "-U0", "--no-color", f"refs/pr/base...{pr['ref']}", "--", "core/libs/prx/*.cpp")
+    return files, (exports(diff), source_changed_exports(diff, "+")), existing
 
 
 def related(prs, executor):
@@ -353,11 +354,15 @@ def related(prs, executor):
     others = {n: pr for n, pr in prs.items() if n}
     base_paths = set(git("ls-tree", "-r", "--name-only", "-z", "refs/pr/base").split("\0"))
     chosen = {}
+    mine_files = mine["files"]
+    mine_exports = mine["exports"]
+    mine_keys = set(mine.get("added_exports", {}))
     for index, ((n, pr), (files, found, existing)) in enumerate(zip(others.items(), executor.map(probe, others.values())), 1):
-        if files & mine["files"] or found & mine["exports"] or existing - base_paths:
+        found_exports, found_added = found
+        if files & mine_files or (found_exports & mine_exports) or (set(found_added) & mine_keys) or existing - base_paths:
             chosen[n] = pr
         else:
-            pr.update(tree=None, files=set(), added=set(), exports=set())
+            pr.update(tree=None, files=set(), added=set(), exports=set(), added_exports={}, removed_exports={})
         if index % PROGRESS_EVERY == 0 or index == len(others):
             progress(f"probed {index}/{len(others)} pull requests, {len(chosen)} share files or exports with the branch")
     return chosen
@@ -418,7 +423,12 @@ def overlaps(prs, a, b):
     found = {"added": (pa["added"] & pb["added"]).difference(*(pr["added"] for pr in shared))}
     if pa["author"] != pb["author"]:
         found["conflicts"] = conflicts(pa, pb)
-        found["exports"] = (pa["exports"] & pb["exports"]).difference(*(pr["exports"] for pr in shared))
+        same_exports = (pa.get("exports", set()) & pb.get("exports", set())).difference(*(pr.get("exports", set()) for pr in shared))
+        shared_keys = set().union(*(pr.get("added_exports", {}) for pr in shared))
+        for key in (set(pa.get("added_exports", {})) & set(pb.get("added_exports", {}))) - shared_keys:
+            same_exports.update(pa["added_exports"][key])
+            same_exports.update(pb["added_exports"][key])
+        found["exports"] = same_exports
         if not (pa["tree"] and pb["tree"]):
             uncompared = pa.get("files", set()) & pb.get("files", set())
             if uncompared:

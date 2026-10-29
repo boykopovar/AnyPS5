@@ -281,6 +281,42 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
         self.assertEqual(result.returncode, 1)
         self.assertIn("src/foo.cpp:1:1: error: no", result.stderr)
 
+    def test_symbolic_link_loops_are_reported_without_a_traceback(self):
+        loop = self.root / "loop.cpp"
+        other = self.root / "other.cpp"
+        try:
+            loop.symlink_to(other)
+            other.symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        source = self.source("unit.cpp")
+        script = self.compiler("import sys\nsys.exit(0)\n")
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{source}"'),
+                       self.entry("other.cpp", f'"{sys.executable}" "{script}" "{other}"')])
+        result = self.tool("unit.cpp", "loop.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("loop.cpp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        looping_build = self.root / "looping-build"
+        looping_build.symlink_to(looping_build)
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{source}"'),
+                       {"directory": str(looping_build), "file": "other.cpp", "command": "cc other.cpp"},
+                       {"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(loop), str(source), "--", str(loop)]}])
+        result = self.tool("unit.cpp")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 translation units compile", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        response = self.build / "flags.rsp"
+        response.symlink_to(response)
+        self.manifest([{"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), "@flags.rsp", str(source)]}])
+        result = self.tool("unit.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("flags.rsp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_a_new_untracked_translation_unit_is_checked(self):
         self.source("base.cpp")
         subprocess.run(["git", "-C", str(self.root), "add", "base.cpp"], check=True)

@@ -151,5 +151,45 @@ class AbSplitTests(unittest.TestCase):
             self.assertIn("FAIL: no [ab] phase lines", failed.stderr)
 
 
+    def test_nonfinite_inputs_and_overflowing_statistics_fail_without_json(self):
+        huge = "9" * 400
+        for kind, line in (("present", f"[present] 1 presents ({huge} dropped GPU busy 1 ms idle gaps 1 ms"),
+                           ("gputime", f"[gputime] 1 ms of GPU time; 1 presents; by program: 0x1 x1 {huge}ms; by class:"),
+                           ("gputime", f"[gputime] 1 ms of GPU time; 1 presents; by program: 0x1 x1 1ms; by class: color x1 {huge}ms 1MiB (per present"),
+                           ("draw", f"[draw] pipelined: 1 commits at 1 us each; 1 enqueued behind waiting 1 us per draw for room; drains: a 1 ({huge} ms)"),
+                           ("syncwait", f"[syncwait] (x): a 1/{huge}ms")):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "non-finite"):
+                ab_split.parse_report(kind, line)
+        phase = lambda k, i: f"[ab] phase {k} {i} settled at present 1 (t 1 s)"
+        lines = []
+        for k, i, busy in (("A", 0, "1"), ("B", 1, "9" * 308), ("A", 2, "1"), ("B", 3, "1")):
+            lines += [f"[ab] phase {k} {i} begins at present 0 (t 0 s)", phase(k, i),
+                      "[present] warmup", f"[present] 1 presents (0 dropped GPU busy {busy} ms idle gaps 1 ms"]
+        with self.assertRaises(ValueError):
+            ab_split.split(lines)
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "invalid.log"
+            log.write_text("\n".join(lines), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(log), "--json"], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("Traceback", result.stderr)
+
+
+    def test_finite_input_weights_cannot_overflow_into_a_zero_metric(self):
+        for value in (1.0, 1e-300):
+            rows = [{"weight": 9e307, "value": value}] * 3
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "non-finite"):
+                ab_split.weighted(rows, "value", "weight")
+
+    def test_overflowing_change_percentage_fails(self):
+        lines = []
+        for k, i, busy in (("A", 0, "0." + "0" * 300 + "1"), ("B", 1, "1" + "0" * 300)):
+            lines += [f"[ab] phase {k} {i} begins at present 0 (t 0 s)", f"[ab] phase {k} {i} settled at present 1 (t 1 s)",
+                      "[present] warmup", f"[present] 1 presents (0 dropped GPU busy {busy} ms idle gaps 1 ms"]
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.split(lines)
+
+
 if __name__ == "__main__":
     unittest.main()

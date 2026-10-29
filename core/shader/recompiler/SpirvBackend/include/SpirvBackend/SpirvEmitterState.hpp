@@ -237,6 +237,7 @@ struct SpirvEmitterState {
     const IrBlock* currentBlock = nullptr;
     std::uint32_t pixelValidMaskVariable = 0;
     std::uint32_t mergeWordVariable = 0;
+    std::uint32_t mergeTexelVariable = 0;
     std::uint32_t mergePendingVariable = 0;
     std::uint32_t quadPixelUncovered = 0;
     std::uint32_t sampleMaskInputVariable = 0;
