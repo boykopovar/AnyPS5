@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -322,6 +323,42 @@ void RequireRealLangInfo() {
 }
 #endif
 
+void RequireSetting(const char* configured, int expected, const std::string& what) {
+    int hostCalls = 0;
+    const auto host = [&hostCalls] {
+        ++hostCalls;
+        return 7;
+    };
+    const int value = SystemServiceDateTime::ParseSetting(configured, "ANYPS5_TEST", "test value", 2, 1, host, "caller");
+    Require(value == expected, what + ": gave " + std::to_string(value));
+    Require(hostCalls == (expected == 7 ? 1 : 0), what + ": host calls " + std::to_string(hostCalls));
+}
+
+void RequireRefused(const char* configured) {
+    bool refused = false;
+    try {
+        SystemServiceDateTime::ParseSetting(configured, "ANYPS5_TEST", "test value", 2, 1, [] { return 7; }, "caller");
+    } catch (const std::runtime_error& error) {
+        const std::string expected = std::string("caller: ANYPS5_TEST must be a console test value number from 0 to 2 or auto, not \"") + configured + "\"";
+        refused = expected == error.what();
+    }
+    Require(refused, std::string("refused with the variable's name: \"") + configured + "\"");
+}
+
+void RequireSettings() {
+    RequireSetting(nullptr, 1, "unset");
+    RequireSetting("", 1, "empty");
+    RequireSetting("0", 0, "0");
+    RequireSetting("1", 1, "1");
+    RequireSetting("2", 2, "2");
+    RequireSetting("00", 0, "leading zeros");
+    RequireSetting("auto", 7, "auto");
+    RequireSetting("AUTO", 7, "AUTO");
+    RequireSetting("Auto", 7, "Auto");
+    RequireSetting("aUtO", 7, "aUtO");
+    for (const char* text : {"3", "-1", "+1", " 1", "1 ", "1x", "0x1", "1.0", "99999999999", "auto ", " auto", "autoo", "aut", "-auto", "au to", "yes", "\t", "\xC3\xA4uto", "x"}) RequireRefused(text);
+}
+
 }
 
 int main() {
@@ -339,6 +376,7 @@ int main() {
 #if !defined(_WIN32) && !defined(__APPLE__)
     RequireRealLangInfo();
 #endif
+    RequireSettings();
     if (failures != 0) return 1;
     std::puts("system service date and time locale: all checks passed");
     return 0;
