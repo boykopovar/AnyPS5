@@ -263,12 +263,18 @@ static void PollsAStreamWhosePeerClosed() {
     Require(server >= 0);
 
     Require(shutdown_nid_postfix(client, 1) == 0);
-    GuestPollDescriptor wait{server, In, 0};
+    GuestPollDescriptor wait{client, static_cast<short>(In | Out), 0};
+    Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == Out);
+    wait = {server, In, 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == In);
     wait = {server, static_cast<short>(In | Out), 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == (In | Out));
     wait = {server, ReadNormal, 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == ReadNormal);
+#ifndef _WIN32
+    wait = {server, static_cast<short>(In | Priority | ReadBand), 0};
+    Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == In);
+#endif
     wait = {server, Out, 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == Out);
     char byte;

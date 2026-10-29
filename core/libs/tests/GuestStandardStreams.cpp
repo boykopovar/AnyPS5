@@ -678,6 +678,21 @@ static int CheckUpdateStandardOutput() {
     return 0;
 }
 
+static void CheckSetvbufInvalidMode() {
+    FileStream stream(std::tmpfile());
+    for (const int mode : {3, -1, INT_MAX}) Require(setvbuf_nid_postfix(&stream, nullptr, mode, 0) == EOF);
+    char buffer[16];
+    std::memset(buffer, 'z', sizeof(buffer));
+    Require(setvbuf_nid_postfix(&stream, buffer, 3, sizeof(buffer)) == EOF);
+    Require(fputc_nid_postfix('A', &stream) == 'A');
+    Require(buffer[0] == 'z');
+    Require(fflush_nid_postfix(&stream) == 0);
+    std::rewind(stream.GetHandle());
+    Require(fgetc_nid_postfix(&stream) == 'A');
+    Require(fgetc_nid_postfix(&stream) == EOF);
+    stream.Close();
+}
+
 #ifdef _WIN32
 static void CheckStandardStreamDeleteSharing() {
     int index = 0;
@@ -705,6 +720,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]) == "--reopen-closed-stdout") return CheckReopenedClosedStandardOutput();
     CheckClosedStreamWrites();
     CheckClosedStreamReopen();
+    CheckSetvbufInvalidMode();
     CheckDescriptorAccessModes();
     Require(_Getmbcurmax_nid_postfix() == 3 && ___mb_cur_max_nid_postfix() == 1);
     CheckFlushWhileReading();

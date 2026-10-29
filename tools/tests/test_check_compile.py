@@ -73,6 +73,8 @@ class CheckCompileTests(CheckCompileFixture):
         self.assertEqual(result.returncode, 0)
         self.assertIn("1 translation units compile", result.stdout)
 
+
+class CheckCompileRecordedCommandTests(CheckCompileFixture):
     def test_the_command_is_rewritten_to_syntax_only_without_object_or_dependency_files(self):
         source = self.source("unit.cpp")
         script = self.compiler(
@@ -254,6 +256,8 @@ class CheckCompileTests(CheckCompileFixture):
                         else:
                             self.assertIn("1 translation units compile", result.stdout)
 
+
+class CheckCompilePathSelectionTests(CheckCompileFixture):
     def test_a_changed_file_with_a_non_ascii_name_is_checked(self):
         self.failing("caf\u00e9.cpp")
         subprocess.run(["git", "-C", str(self.root), "add", "caf\u00e9.cpp"], check=True)

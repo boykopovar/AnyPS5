@@ -235,6 +235,18 @@ private:
         append(key, value.targetMerge.samples);
         append(key, value.targetMerge.depthStencilWrites);
         append(key, value.targetMerge.depthStencilTests);
+        if (value.targetMerge.blend.enabled) {
+            const auto& blend = value.targetMerge.blend;
+            append(key, blend.snorm);
+            append(key, blend.colorSource);
+            append(key, blend.colorDestination);
+            append(key, blend.colorOperation);
+            append(key, blend.alphaSource);
+            append(key, blend.alphaDestination);
+            append(key, blend.alphaOperation);
+            append(key, blend.writeMask);
+            append(key, blend.constants);
+        }
         append(key, value.sampleOrder);
     }
 

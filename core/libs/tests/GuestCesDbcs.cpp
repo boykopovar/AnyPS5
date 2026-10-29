@@ -402,6 +402,15 @@ int main() {
     Require(sceCesUtf16ToUhc(highSurrogate, 2, &read, uhc, out, 2, &size) == invalidEncode);
     Require(out[0] == 0x55 && out[1] == 0x55 && size == 0 && read == 77);
 
+    Require(sceCesUtf16beToEucKr(nullptr, 0, nullptr, uhc, nullptr, 0, nullptr) == invalidParameter);
+    Require(sceCesUtf16beToEucKr(nullptr, 0, nullptr, eucKr, nullptr, 0, nullptr) == invalidSrcBuffer);
+    Require(sceCesUtf16beToEucKr(&unit, 0, nullptr, eucKr, nullptr, 0, nullptr) == srcBufferEnd);
+    Require(sceCesUtf16beToEucKr(&unit, 1, nullptr, eucKr, nullptr, 0, nullptr) == invalidDstBuffer);
+    Require(sceCesUtf16leToUhc(nullptr, 0, nullptr, eucKr, nullptr, 0, nullptr) == invalidParameter);
+    Require(sceCesUtf16leToUhc(nullptr, 0, nullptr, uhc, nullptr, 0, nullptr) == invalidSrcBuffer);
+    Require(sceCesUtf16leToUhc(&unit, 0, nullptr, uhc, nullptr, 0, nullptr) == srcBufferEnd);
+    Require(sceCesUtf16leToUhc(&unit, 1, nullptr, uhc, nullptr, 0, nullptr) == invalidDstBuffer);
+
     std::memcpy(&unit, "\xAC\x00", 2);
     Require(sceCesUtf16beToEucKr(&unit, 1, &read, eucKr, out, 2, &size) == 0 && read == 1 && size == 2 && std::memcmp(out, "\xB0\xA1", 2) == 0);
     std::memcpy(&unit, "\x00\xAC", 2);

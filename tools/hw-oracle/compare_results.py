@@ -14,7 +14,10 @@ def integer(value, minimum, maximum):
 
 
 def read_report(path):
-    report = json.loads(path.read_text(encoding="utf-8-sig"))
+    try:
+        report = json.loads(path.read_text(encoding="utf-8-sig"))
+    except RecursionError as error:
+        raise ValueError(f"{path}: JSON nested too deeply") from error
     if not isinstance(report, dict):
         raise ValueError(f"{path}: expected a JSON object")
     required = {"schema_version", "assembly_target", "rows", *SETTINGS}

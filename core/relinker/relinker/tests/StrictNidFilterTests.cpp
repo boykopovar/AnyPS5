@@ -434,6 +434,62 @@ void filterAndPltCompaction() {
     requireFailure([&] { Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, exceptional, input.Text, input.TextVaddr); }, "Exception metadata was ignored");
 }
 
+void relativeTableTargetsBounds() {
+    using Relinker::UnusedNidFilter::StrictDataRegion;
+    using Relinker::UnusedNidFilter::ReadRelativeTableTargets;
+
+    std::vector<std::uint8_t> tableBytes(16);
+    write<std::int32_t>(tableBytes, 0, 0x100);
+    write<std::int32_t>(tableBytes, 4, -0x80);
+    write<std::int32_t>(tableBytes, 8, 0x500);
+    write<std::int32_t>(tableBytes, 12, 0x20);
+
+    const std::vector<StrictDataRegion> data = {
+        {0x2000, tableBytes}
+    };
+
+    const auto targets = ReadRelativeTableTargets(data, 0x2000, 0x1000, 0x2000);
+    require(targets == std::vector<std::uint64_t>{0x2100, 0x1F80, 0x2500, 0x2020},
+            "Valid relative table targets were not read");
+
+    const auto bounded = ReadRelativeTableTargets(data, 0x2000, 0x1000, 0x1200);
+    require(bounded == std::vector<std::uint64_t>{0x2100, 0x1F80},
+            "Relative table reading did not terminate when target fell outside the text section");
+
+    requireFailure([&] {
+        ReadRelativeTableTargets(data, 0x2000, 0x1000, 0);
+    }, "Zero text size was accepted by relative table reader");
+
+    requireFailure([&] {
+        ReadRelativeTableTargets(data, 0x2000, std::numeric_limits<std::uint64_t>::max() - 0x10, 0x100);
+    }, "Wrapping text range was accepted by relative table reader");
+
+    std::vector<std::uint8_t> discBytes(4);
+    write<std::int32_t>(discBytes, 0, 0x8);
+    const std::vector<StrictDataRegion> discData = {
+        {std::numeric_limits<std::uint64_t>::max() - 0x20, discBytes}
+    };
+    requireFailure([&] {
+        ReadRelativeTableTargets(discData, std::numeric_limits<std::uint64_t>::max() - 0x20, std::numeric_limits<std::uint64_t>::max() - 0x30, 0x100);
+    }, "Wrapping text range was accepted by relative table reader");
+
+    const auto missingBase = ReadRelativeTableTargets(data, 0x3000, 0x1000, 0x2000);
+    require(missingBase.empty(), "Table base outside data regions returned targets");
+
+    const auto unalignedEnd = ReadRelativeTableTargets(data, 0x200D, 0x1000, 0x2000);
+    require(unalignedEnd.empty(), "Table base with fewer than four bytes remaining returned targets");
+
+    std::vector<std::uint8_t> wrapBytes(8);
+    write<std::int32_t>(wrapBytes, 0, 0x1080);
+    write<std::int32_t>(wrapBytes, 4, -0x200);
+    const std::vector<StrictDataRegion> wrapData = {
+        {std::numeric_limits<std::uint64_t>::max() - 0x7F, wrapBytes}
+    };
+    const auto modularWrap = ReadRelativeTableTargets(wrapData, std::numeric_limits<std::uint64_t>::max() - 0x7F, 0x1000, 0x200);
+    require(modularWrap == std::vector<std::uint64_t>{0x1000},
+            "Modular two's-complement displacement wrapping across the address boundary was lost");
+}
+
 void relativeRelocationTableBounds() {
     std::vector<std::uint8_t> bytes(0x400, 0);
     bytes[0] = 0x7F;
@@ -738,6 +794,7 @@ int main() {
         exceptionDataWithoutPersonality();
         filterCallbackDataImports();
         filterAndPltCompaction();
+        relativeTableTargetsBounds();
         relativeRelocationTableBounds();
         sceDynlibDataOffsets();
         duplicatePointerRelocations();
