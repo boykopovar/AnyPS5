@@ -1,9 +1,9 @@
 # libSceFreeType technical debt
 
 ### Unknown function info
-- [FT_Alloc, FT_QAlloc and FT_Free](../../../core/libs/prx/libSceFreeType/src/MemoryAllocation.cpp) (libSceFreeType) - console signatures and callback/error behavior are unverified; the LP64 guest adapter follows the legacy allocator contract in [FreeType 2.4.12](https://github.com/freetype/freetype/blob/cecf93ef90c660a8b0b45e5adbbfb5ea443fb6b9/src/base/ftutil.c#L49-L89). Null records or outputs make the allocating helpers throw; the reference implementation dereferences them. FT_Free ignores null records, output pointers and blocks. The matching inventory helpers in the distinct physical Ol/Ot providers still throw.
-
 - [FT_New_Size, FT_Activate_Size and FT_Done_Size](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console signatures, errors and generic-finalizer ordering are unverified; the LP64 guest adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). Private size fields are bridge-owned. Sizes created outside the bridge throw when selected.
+
+- [FT_Alloc, FT_QAlloc and FT_Free](../../../core/libs/prx/libSceFreeType/src/MemoryAllocation.cpp) (libSceFreeType) - console signatures and callback/error behavior are unverified; the LP64 guest adapter follows the legacy allocator contract in [FreeType 2.4.12](https://github.com/freetype/freetype/blob/cecf93ef90c660a8b0b45e5adbbfb5ea443fb6b9/src/base/ftutil.c#L49-L89). Null records or outputs make the allocating helpers throw; the reference implementation dereferences them. FT_Free ignores null records, output pointers and blocks. The matching inventory helpers in the distinct physical Ol/Ot providers still throw.
 
 - [FT_Reference_Face](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console signature, reference-counter limits and finalizer behavior are unverified; the LP64 guest adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). Counter overflow and reentrant finalization have not been measured on the console.
 
