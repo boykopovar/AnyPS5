@@ -1,3 +1,4 @@
+#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include "Ngs2Test.hpp"
 
 #include <cmath>
@@ -151,6 +152,7 @@ static void RequireRejected(uintptr_t voice, const Ngs2SamplerVoiceFilterParam& 
     bool rejected = false;
     try {
         sceNgs2VoiceControl(voice, &param.header);
+
     } catch (const TError&) {
         rejected = true;
     }
@@ -181,6 +183,7 @@ static void TestRateChangeUnderFilter() {
     bool rejected = false;
     try {
         sceNgs2SystemSetSampleRate(system, 96000);
+
     } catch (const std::runtime_error&) {
         rejected = true;
     }

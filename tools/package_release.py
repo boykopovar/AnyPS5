@@ -4,23 +4,27 @@ import os
 import re
 import shutil
 import stat
+import sys
 import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "output-directory.mjs", "worker.mjs",
+WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "output-directory.mjs", "worker.mjs",
              "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 
 
 def windows_runtime(build):
-    for line in (build / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
+    cache = build / "CMakeCache.txt"
+    if not cache.is_file():
+        raise RuntimeError(f"Missing CMakeCache.txt in build directory: {build}")
+    for line in cache.read_text(encoding="utf-8-sig").splitlines():
         if line.startswith("CMAKE_CXX_COMPILER:"):
             compiler = line.partition("=")[2]
             if compiler and not compiler.endswith("-NOTFOUND"):
                 return Path(compiler).parent
-    raise RuntimeError(f"CMAKE_CXX_COMPILER is not configured in {build / 'CMakeCache.txt'}")
+    raise RuntimeError(f"CMAKE_CXX_COMPILER is not configured in {cache}")
 
 
 def tracy_runtime(platform, build):
@@ -52,6 +56,11 @@ def package(platform, build, output, version):
     licenses = []
     if "libSceAjm.native.prx" in expected:
         licenses.append((ROOT / "3rdparty/vgmstream/COPYING", "libs/licenses/vgmstream.txt"))
+    if "libSceVorbisDec.prx" in expected:
+        licenses.append((ROOT / "3rdparty/ogg/COPYING", "libs/licenses/ogg.txt"))
+        licenses.append((ROOT / "3rdparty/vorbis/COPYING", "libs/licenses/vorbis.txt"))
+    if expected & {"libSceOpusDec.prx", "libSceOpusCeltDec.prx"}:
+        licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
@@ -76,7 +85,7 @@ def package(platform, build, output, version):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".release-", dir=output) as temporary:
         staging = Path(temporary)
-        with zipfile.ZipFile(staging / f"prx-{platform}-{version}.zip", "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        with zipfile.ZipFile(staging / f"prx-{platform}-{version}.zip", "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
             for file in files:
                 archive.write(file, arcname=f"libs/{file.name}")
             for source, destination in licenses:
@@ -92,6 +101,8 @@ def package(platform, build, output, version):
 
 
 def collect_docs(source, output):
+    if not source.is_dir():
+        raise RuntimeError(f"Documentation source is not a directory: {source}")
     documents = sorted(document for document in source.rglob("*.md") if document.is_file())
     if not documents:
         raise RuntimeError(f"No Markdown documents found in {source}")
@@ -101,8 +112,12 @@ def collect_docs(source, output):
             raise RuntimeError(f"Duplicate release asset name: {document.name}")
         names.add(document.name.casefold())
     output.mkdir(parents=True, exist_ok=True)
-    for document in documents:
-        shutil.copy2(document, output / document.name)
+    with tempfile.TemporaryDirectory(prefix=".docs-", dir=output) as temporary:
+        staging = Path(temporary)
+        for document in documents:
+            shutil.copy2(document, staging / document.name)
+        for document in documents:
+            (staging / document.name).replace(output / document.name)
 
 
 def package_web(build, output, version, revision):
@@ -122,14 +137,18 @@ def package_web(build, output, version, revision):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".release-", dir=output) as temporary:
         asset = Path(temporary) / name
-        with zipfile.ZipFile(asset, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        with zipfile.ZipFile(asset, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
             for file in WEB_FILES:
                 archive.write(source / file, arcname=file)
             archive.writestr("web-release.json", json.dumps({"tag": version, "revision": revision}) + "\n")
         asset.replace(destination)
 
 
-def main():
+def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser()
     parser.add_argument("--platform", choices=("linux", "windows", "web"))
     parser.add_argument("--build", type=Path)
@@ -137,23 +156,27 @@ def main():
     parser.add_argument("--revision")
     parser.add_argument("--docs", type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    args = parser.parse_args()
-    if args.docs is not None:
-        if args.platform is not None or args.build is not None or args.version is not None or args.revision is not None:
-            parser.error("--docs cannot be combined with --platform, --build, --version or --revision")
-        collect_docs(args.docs, args.output)
-    else:
-        if args.platform is None or args.build is None or args.version is None:
-            parser.error("--platform, --build and --version are required when --docs is not specified")
-        if args.platform == "web":
-            if args.revision is None:
-                parser.error("--revision is required for --platform web")
-            package_web(args.build, args.output, args.version, args.revision)
+    args = parser.parse_args(argv)
+    try:
+        if args.docs is not None:
+            if args.platform is not None or args.build is not None or args.version is not None or args.revision is not None:
+                parser.error("--docs cannot be combined with --platform, --build, --version or --revision")
+            collect_docs(args.docs, args.output)
         else:
-            if args.revision is not None:
-                parser.error("--revision requires --platform web")
-            package(args.platform, args.build, args.output, args.version)
+            if args.platform is None or args.build is None or args.version is None:
+                parser.error("--platform, --build and --version are required when --docs is not specified")
+            if args.platform == "web":
+                if args.revision is None:
+                    parser.error("--revision is required for --platform web")
+                package_web(args.build, args.output, args.version, args.revision)
+            else:
+                if args.revision is not None:
+                    parser.error("--revision requires --platform web")
+                package(args.platform, args.build, args.output, args.version)
+    except (RuntimeError, ValueError, OSError) as error:
+        parser.error(str(error))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

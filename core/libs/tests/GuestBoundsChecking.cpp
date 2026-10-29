@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -8,19 +9,8 @@
 #include <fstream>
 #include <string>
 
-using GuestContextCompare = int (APS5_VABI*)(const void*, const void*, void*);
-
 extern "C" {
-void* APS5_VABI set_constraint_handler_s_nid_postfix(void*);
-void* APS5_VABI bsearch_s_nid_postfix(const void*, const void*, std::size_t, std::size_t, GuestContextCompare, void*);
-std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t*, std::size_t*, const std::uint16_t*, std::uint16_t**);
-int APS5_VABI wctomb_s_nid_postfix(int*, char*, std::size_t, std::uint16_t);
-int APS5_VABI wcrtomb_s_nid_postfix(std::size_t*, char*, std::size_t, std::uint16_t, void*);
-int APS5_VABI mbstowcs_s_nid_postfix(std::size_t*, std::uint16_t*, std::size_t, const char*, std::size_t);
-int APS5_VABI mbsrtowcs_s_nid_postfix(std::size_t*, std::uint16_t*, std::size_t, const char**, std::size_t, void*);
-char* APS5_VABI gets_s_nid_postfix(char*, std::size_t);
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
+
 extern FileStream* __stdinp_nid_postfix;
 }
 
@@ -90,6 +80,9 @@ void CheckBsearch() {
     before = constraintCalls;
     Require(bsearch_s_nid_postfix(&key, values, 0, tooLarge, CompareInts, &calls) == nullptr, "bsearch_s accepted an oversized element");
     RequireViolation(before, "bsearch_s: bad argument", 22);
+    before = constraintCalls;
+    Require(bsearch_s_nid_postfix(&key, values, 7, 0, CompareInts, &calls) == nullptr, "bsearch_s accepted a zero element size");
+    RequireViolation(before, "bsearch_s: bad argument", 22);
 }
 
 void CheckWcstok() {
@@ -130,7 +123,14 @@ void CheckWideToMultibyte() {
     int status = 7;
     char bytes[4] = {'x', 'x', 'x', 'x'};
     Require(wctomb_s_nid_postfix(&status, bytes, sizeof(bytes), 'A') == 0 && status == 1 && bytes[0] == 'A', "wctomb_s did not convert");
-    Require(wctomb_s_nid_postfix(&status, bytes, sizeof(bytes), 0x263a) == 86 && status == -1, "wctomb_s converted an unrepresentable character");
+    Require(wctomb_s_nid_postfix(&status, bytes, sizeof(bytes), 0x263a) == 0 && status == 3 && std::memcmp(bytes, "\xE2\x98\xBA", 3) == 0,
+        "wctomb_s did not convert U+263A to UTF-8");
+    std::memset(bytes, 'x', sizeof(bytes));
+    status = 7;
+    int smallBefore = constraintCalls;
+    Require(wctomb_s_nid_postfix(&status, bytes, 2, 0x263a) == 34 && status == 7 && std::memcmp(bytes, "xxxx", 4) == 0,
+        "wctomb_s wrote past a two-byte buffer");
+    RequireViolation(smallBefore, "wctomb_s: buffer too small", 34);
     Require(wctomb_s_nid_postfix(&status, nullptr, 0, 'A') == 0 && status == 0, "wctomb_s reported state dependence");
     status = 7;
     int before = constraintCalls;
@@ -144,7 +144,13 @@ void CheckWideToMultibyte() {
     std::size_t result = 7;
     Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 'B', state) == 0 && result == 1 && bytes[0] == 'B', "wcrtomb_s did not convert");
     Require(wcrtomb_s_nid_postfix(&result, nullptr, 0, 'B', state) == 0 && result == 1, "wcrtomb_s did not measure the reset sequence");
-    Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 0x263a, state) == 86 && result == failed, "wcrtomb_s converted an unrepresentable character");
+    Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 0x263a, state) == 0 && result == 3 && std::memcmp(bytes, "\xE2\x98\xBA", 3) == 0,
+        "wcrtomb_s did not convert U+263A to UTF-8");
+    std::memset(bytes, 'x', sizeof(bytes));
+    before = constraintCalls;
+    Require(wcrtomb_s_nid_postfix(&result, bytes, 2, 0x263a, state) == 34 && result == failed && bytes[0] == 0 && std::memcmp(bytes + 1, "xxx", 3) == 0,
+        "wcrtomb_s wrote past a two-byte buffer");
+    RequireViolation(before, "wcrtomb_s: buffer too small", 34);
     before = constraintCalls;
     bytes[0] = 'x';
     Require(wcrtomb_s_nid_postfix(&result, bytes, sizeof(bytes), 'B', nullptr) == 22 && result == failed && bytes[0] == 0, "wcrtomb_s accepted a null state");
@@ -225,6 +231,7 @@ void CheckGets(const char* path) {
     RequireViolation(before, "gets_s: bad argument", 22);
     __stdinp_nid_postfix = saved;
     fclose_nid_postfix(stream);
+
     std::remove(path);
 }
 
@@ -233,6 +240,7 @@ void CheckGets(const char* path) {
 int main(int argc, char** argv) {
     Require(argc > 1, "usage: guest_bounds_checking_tests <scratch file>");
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(RecordConstraint));
+
     CheckBsearch();
     CheckWcstok();
     CheckWideToMultibyte();

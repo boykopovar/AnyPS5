@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
@@ -150,6 +151,30 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
         device.WaitIdle();
         Require(Output == baseline, "vector or mixed buffer read changed with reserved bit 30 set");
     }
+    request.shader.code = scalarCode;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(scalarCode.data());
+    struct BoundsCase {
+        std::uint32_t stride;
+        std::uint32_t records;
+        bool inBounds;
+    };
+    constexpr std::array<BoundsCase, 8> bounds{{
+        {0u, 0u, false}, {0u, 7u, false}, {0u, 8u, true}, {1u, 7u, false},
+        {2u, 3u, false}, {2u, 4u, true}, {4u, 0x40000000u, true}, {0x3fffu, 0xffffffffu, true},
+    }};
+    GuestAllocations::Mutation().Add(Input.data(), Input.size(), true, false, true);
+    for (const auto& test : bounds) {
+        auto input = BufferDescriptor(Input.data(), test.records);
+        input[1] |= test.stride << 16u;
+        std::copy(input.begin(), input.end(), userData.begin());
+        Output.fill(Fill);
+        const auto result = ShaderRecompiler::Recompile(request);
+        device.Dispatch(result, 1, 1, 1);
+        device.WaitIdle();
+        const auto value = test.inBounds ? expected : 0u;
+        Require(std::all_of(Output.begin(), Output.end(), [value](std::uint32_t word) { return word == value; }), "scalar buffer bounds differ for stride " + std::to_string(test.stride) + " records " + std::to_string(test.records));
+    }
+    GuestAllocations::Mutation().Remove(Input.data());
 }
 
 }

@@ -248,6 +248,7 @@ inline bool ValidateCommonDialogBaseParam(const CommonDialogBaseParam& param) {
 }
 
 constexpr int COMMON_DIALOG_OK = 0;
+constexpr int COMMON_DIALOG_ERROR_ALREADY_SYSTEM_INITIALIZED = static_cast<int>(0x80B80002);
 constexpr int COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80B80004);
 
 #endif

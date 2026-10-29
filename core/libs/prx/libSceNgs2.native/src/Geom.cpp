@@ -41,9 +41,9 @@ Vector PerpendicularHint(const Vector& front) {
 }
 
 int Ngs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWork* outWork, std::uint32_t flags) {
-    if (param == nullptr) APS5_INVALID_ARG_EX;
+    if (param == nullptr) return SCE_NGS2_ERROR_INVALID_GEOM_LISTENER_ADDRESS;
     if (outWork == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
-    if (flags > 1) throw std::runtime_error("NGS2: unknown listener coordinate flags");
+    if (flags > 1) return SCE_NGS2_ERROR_INVALID_GEOM_FLAG;
     if (!std::isfinite(param->sound_speed) || param->sound_speed <= 0.0f) APS5_INVALID_ARG_EX;
     const Vector position = ReadVector(param->position);
     ReadVector(param->velocity);

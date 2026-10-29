@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -7,24 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-std::int64_t APS5_VABI send_nid_postfix(int, const void*, std::uint64_t, int);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-std::int64_t APS5_VABI sendto_nid_postfix(int, const void*, std::uint64_t, int, const void*, std::uint32_t);
-int APS5_VABI getpeername_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI shutdown_nid_postfix(int, int);
-std::int64_t APS5_VABI recvfrom_nid_postfix(int, void*, std::uint64_t, int, void*, std::uint32_t*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool condition) {
     if (!condition) std::abort();
@@ -179,7 +163,9 @@ static void WaitAllReceivesTheWholeRequest() {
 }
 
 static void ReceiveAnsweredWithoutTheHost() {
+    constexpr int Peek = 0x02;
     constexpr int DontWait = 0x80;
+    constexpr std::uint64_t ReadableBytes = 0x4004667f;
     const int listener = socket_nid_postfix(2, 1, 0);
     Require(listener >= 0);
     std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
@@ -201,15 +187,19 @@ static void ReceiveAnsweredWithoutTheHost() {
     std::uint32_t senderSize = sender.size();
     Require(recvfrom_nid_postfix(accepted, &byte, 0, 0, sender.data(), &senderSize) == 0 && senderSize == 0);
 
-#ifdef _WIN32
-    Require(shutdown_nid_postfix(accepted, 0) == 0);
-    Require(send_nid_postfix(client, "x", 1, 0) == 1);
     char received[4];
+    Require(send_nid_postfix(client, "x", 1, 0) == 1);
+    Require(recv_nid_postfix(accepted, received, 1, Peek) == 1);
+    Require(shutdown_nid_postfix(accepted, 0) == 0);
+    int queued = -1;
+    Require(ioctl_nid_postfix(accepted, ReadableBytes, &queued) == 0 && queued == 0);
     Require(recv_nid_postfix(accepted, received, sizeof(received), 0) == 0);
     Require(recv_nid_postfix(accepted, received, sizeof(received), DontWait) == 0);
     senderSize = sender.size();
     Require(recvfrom_nid_postfix(accepted, received, sizeof(received), 0, sender.data(), &senderSize) == 0 && senderSize == 0);
-#endif
+    KernelIovec vector{received, sizeof(received)};
+    GuestMsghdr message{sender.data(), static_cast<std::uint32_t>(sender.size()), &vector, 1, nullptr, 0, -1};
+    Require(recvmsg_nid_postfix(accepted, &message, 0) == 0 && message.nameLength == 0 && message.flags == 0);
     for (const int descriptor : {unconnected, client, accepted, listener}) Require(close_nid_postfix(descriptor) == 0);
 }
 
@@ -277,11 +267,9 @@ int main() {
     Require(send_nid_postfix(client, request, sizeof(request), 0x20000) == -1 && *__error_nid_postfix() == 32);
 
     Require(close_nid_postfix(accepted) == 0);
-#ifndef _WIN32
     std::int64_t sent = 0;
     for (int i = 0; i < 100 && sent >= 0; ++i) sent = send_nid_postfix(client, request, sizeof(request), 0x20000);
     Require(sent == -1 && *__error_nid_postfix() == 32);
-#endif
     Require(close_nid_postfix(client) == 0);
     Require(close_nid_postfix(listener) == 0);
     Require(close_nid_postfix(listener) == -1 && *__error_nid_postfix() == 9);

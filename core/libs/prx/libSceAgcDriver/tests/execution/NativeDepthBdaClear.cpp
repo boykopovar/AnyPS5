@@ -16,6 +16,12 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#ifdef __linux__
+#include <fcntl.h>
+#include <unistd.h>
+#include <map>
+#include <iterator>
+#endif
 #endif
 #include <algorithm>
 #include <array>
@@ -25,7 +31,9 @@
 #include <cstring>
 #include <exception>
 #include <mutex>
+#include <optional>
 #include <span>
+#include <utility>
 
 namespace AgcDriver {
 
@@ -42,6 +50,34 @@ namespace Memory = AgcDriver::GuestMemory;
 
 constexpr std::size_t BlockBytes = 1048576;
 
+#ifdef __linux__
+struct SharedBacking {
+    int file;
+    std::uint64_t offset;
+    std::size_t resolverReturns = 0;
+};
+std::map<std::uintptr_t, SharedBacking> sharedBlocks;
+
+bool ResolveSharedBlock(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset) {
+    if (bytes == 0) return false;
+    const auto next = sharedBlocks.upper_bound(address);
+    if (next == sharedBlocks.begin()) return false;
+    const auto entry = std::prev(next);
+    const auto lead = address - entry->first;
+    if (lead >= BlockBytes || bytes > BlockBytes - lead) return false;
+    *file = fcntl(entry->second.file, F_DUPFD_CLOEXEC, 0);
+    *offset = entry->second.offset + lead;
+    if (*file < 0) return false;
+    ++entry->second.resolverReturns;
+    return true;
+}
+
+struct SharedBackingScope {
+    SharedBackingScope() { GuestArena::GuestArenaSetSharedBacking_nid_postfix(ResolveSharedBlock); }
+    ~SharedBackingScope() { GuestArena::GuestArenaSetSharedBacking_nid_postfix(nullptr); }
+};
+#endif
+
 class GuestBlock {
 public:
     GuestBlock() {
@@ -53,13 +89,27 @@ public:
         Require(section != nullptr, "cannot create the native depth BDA clear backing");
         GuestArena::GuestArenaMapDirect_nid_postfix(block, BlockBytes, section, 0, PAGE_READWRITE);
 #else
+#ifdef __linux__
+        backing = memfd_create("native-depth-bda-clear", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        Require(backing >= 0, "cannot create the native depth BDA clear backing");
+        if (ftruncate(backing, 2 * BlockBytes) != 0 || fcntl(backing, F_ADD_SEALS, F_SEAL_SHRINK) != 0) {
+            close(backing);
+            Require(false, "cannot size or seal the native depth BDA clear backing");
+        }
+        void* raw = mmap(nullptr, 2 * BlockBytes, PROT_READ | PROT_WRITE, MAP_SHARED, backing, 0);
+        if (raw == MAP_FAILED) close(backing);
+#else
         void* raw = mmap(nullptr, 2 * BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
         Require(raw != MAP_FAILED, "cannot map the native depth BDA clear block");
         const auto begin = reinterpret_cast<std::uintptr_t>(raw);
         const auto aligned = (begin + BlockBytes - 1) & ~(static_cast<std::uintptr_t>(BlockBytes) - 1);
         if (aligned != begin) munmap(raw, aligned - begin);
         if (aligned != begin + BlockBytes) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + BlockBytes - aligned);
         block = reinterpret_cast<std::uint8_t*>(aligned);
+#ifdef __linux__
+        sharedBlocks.emplace(aligned, SharedBacking{backing, aligned - begin});
+#endif
         GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
 #endif
         Require(Memory::Watched(Address(), BlockBytes), "the native depth BDA clear block is not watched");
@@ -75,8 +125,12 @@ public:
         GuestArena::GuestArenaForgetSection_nid_postfix(section);
         CloseHandle(section);
 #else
-        munmap(block, BlockBytes);
         GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
+#ifdef __linux__
+        sharedBlocks.erase(Address());
+        close(backing);
+#endif
+        munmap(block, BlockBytes);
 #endif
     }
 
@@ -85,15 +139,22 @@ public:
     std::uint64_t Address() const { return reinterpret_cast<std::uintptr_t>(block); }
     const std::uint8_t* Data() const { return block; }
     void FillWith(std::uint8_t value) const { std::memset(block, value, BlockBytes); }
+#ifdef __linux__
+    std::size_t SharedBackingResolverReturns() const { return sharedBlocks.at(Address()).resolverReturns; }
+#endif
 
 private:
     std::uint8_t* block = nullptr;
 #ifdef _WIN32
     HANDLE section = nullptr;
+#elif defined(__linux__)
+    int backing = -1;
 #endif
 };
 
-int RunNativeClear(AgcDriver::VulkanDevice& device) {
+enum class ClearConsumer { Owner, Texture, Attachment };
+
+int RunNativeClear(AgcDriver::VulkanDevice& device, ClearConsumer consumer) {
     using namespace ShaderRecompiler;
     using namespace AgcDriver::Graphics;
     const std::lock_guard lock(Memory::GpuMutex());
@@ -126,8 +187,14 @@ int RunNativeClear(AgcDriver::VulkanDevice& device) {
     device.Dispatch(compile(), groups, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     Require(std::all_of(metadata.Data(), metadata.Data() + BlockBytes, [](auto value) { return value == 0u; }), "the warm-up native clear did not retain zero metadata");
-    if (!Memory::Watched(depth.Address(), BlockBytes) || !Memory::Watched(metadata.Address(), BlockBytes)) {
-        std::puts("skipped, the device does not retain guest write watching for native clear imports");
+    const bool depthWatched = Memory::Watched(depth.Address(), BlockBytes);
+    const bool metadataWatched = Memory::Watched(metadata.Address(), BlockBytes);
+    if (!depthWatched || !metadataWatched) {
+        std::printf("skipped, the device does not retain guest write watching for native clear imports after warm-up (depth watched=%u, metadata watched=%u", static_cast<unsigned>(depthWatched), static_cast<unsigned>(metadataWatched));
+#ifdef __linux__
+        std::printf(", Linux shared backing present, resolver fd returns: depth=%zu metadata=%zu", depth.SharedBackingResolverReturns(), metadata.SharedBackingResolverReturns());
+#endif
+        std::puts(")");
         return VulkanTestSkipped;
     }
     const auto context = AgcDriver::VulkanDeviceTestAccess::Context(device);
@@ -153,10 +220,28 @@ int RunNativeClear(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
     target.clearDepth = 1.0f;
     Require(DepthSurfaceView(context, target) == view, "changing the native clear value replaced its attachment");
-    NoteHtileDepthClear(target.htileAddress, metadataBytes, metadataBytes);
+    std::optional<std::pair<std::uint64_t, std::size_t>> htileClear;
+    if (NoteHtileDepthClear(target.htileAddress, metadataBytes, metadataBytes)) htileClear.emplace(target.htileAddress, metadataBytes);
+    Require(htileClear.has_value(), "the full BDA clear was not registered for completion");
     const auto generation = Memory::TrackerGeneration();
     userData[4] = 0xfffffff0u;
-    device.Dispatch(compile(), groups, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.Dispatch(compile(), groups, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(code.data()), nullptr, nullptr, htileClear);
+    std::puts("Native full BDA clear: checking sampled owner before explicit WaitIdle");
+    Require(context.recorder->PendingWriteOverlaps(target.htileAddress, metadataBytes), "the recognized HTILE clear is missing its pending write range");
+    switch (consumer) {
+        case ClearConsumer::Owner:
+            Require(DepthSurfaceHolds(context, DecodeTextureResource(words), sampled.get()), "a pending full BDA clear lost its native sampled owner");
+            break;
+        case ClearConsumer::Texture:
+            Require(CachedSampledTexture(context, words) == sampled, "a pending full BDA clear lost its native sampled view");
+            break;
+        case ClearConsumer::Attachment:
+            Require(DepthSurfaceView(context, target) == view, "a pending full BDA clear lost its native attachment");
+            break;
+    }
+    std::printf("Native full BDA clear: consumer=%u settled the recognized clear before WaitIdle\n", static_cast<unsigned>(consumer));
+    Require(!context.recorder->PendingWriteOverlaps(target.htileAddress, metadataBytes), "the native HTILE consumer did not settle its clear's pending write");
+    Require(Memory::StoredAllSince_nid_no_patch(target.htileAddress, metadataBytes, generation), "the native HTILE consumer did not complete its recognized clear");
     device.WaitIdle();
     for (std::size_t offset = 0; offset < BlockBytes; offset += 4u) {
         std::uint32_t value = 0;
@@ -164,6 +249,7 @@ int RunNativeClear(AgcDriver::VulkanDevice& device) {
         Require(value == (offset < metadataBytes ? 0xfffffff0u : 0u), "the native GPU clear did not write its exact metadata range");
     }
     std::printf("Native full BDA clear: exact %zu-byte metadata readback passed; complete=%d\n", metadataBytes, Memory::StoredAllSince_nid_no_patch(target.htileAddress, metadataBytes, generation));
+    Require(Memory::StoredAllSince_nid_no_patch(target.htileAddress, metadataBytes, generation), "the completed recognized native clear did not record exact coverage");
     Require(CachedSampledTexture(context, words) == sampled, "a completed full BDA clear lost its native sampled view");
     Require(DepthSurfaceView(context, target) == view, "a completed full BDA clear replaced its native attachment");
     device.WaitIdle();
@@ -176,9 +262,16 @@ int RunNativeClear(AgcDriver::VulkanDevice& device) {
 
 int main() {
     try {
+#ifdef __linux__
+        const SharedBackingScope sharedBacking;
+#endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        return RunNativeClear(*device);
+        for (const auto consumer : {ClearConsumer::Owner, ClearConsumer::Texture, ClearConsumer::Attachment}) {
+            const auto result = RunNativeClear(*device, consumer);
+            if (result != 0) return result;
+        }
+        return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

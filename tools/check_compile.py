@@ -11,8 +11,28 @@ from contextlib import nullcontext
 from pathlib import Path
 
 CPP = (".cpp", ".cc", ".cxx", ".c")
-DROP = ("-c", "-MD", "-MMD", "-MP")
+DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only", "-save-temps", "--save-temps",
+        "-save-temps=cwd", "-save-temps=obj", "--save-temps=cwd", "--save-temps=obj")
 DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
+PREPROCESSING = ("-E", "--preprocess", "-M", "--dependencies", "-MM", "--user-dependencies",
+                 "-MG", "--print-missing-file-dependencies", "-P", "--no-line-commands",
+                 "-C", "-CC", "-dM", "-dD", "-dI")
+DRIVER_QUERIES = ("--version", "--help", "-help", "--help-hidden", "--target-help", "-###", "-fdriver-only",
+                  "-dumpversion", "-dumpfullversion", "-dumpmachine", "-dumpspecs", "-ccc-print-phases", "-ccc-print-bindings",
+                  "-print-file-name", "-print-prog-name", "-print-search-dirs", "-print-libgcc-file-name", "-print-multiarch",
+                  "-print-multi-directory", "-print-multi-lib", "-print-multi-os-directory", "-print-sysroot",
+                  "-print-sysroot-headers-suffix", "-print-cxx-stdlib", "-print-cxx-stdlib-include-dirs",
+                  "-print-diagnostic-categories", "-print-diagnostic-options", "-print-effective-triple", "-print-enabled-extensions",
+                  "-print-library-module-manifest-path", "-print-multi-flags-experimental", "-print-resource-dir",
+                  "-print-rocm-search-dirs", "-print-runtime-dir", "-print-supported-cpus", "-print-supported-extensions", "-print-target-triple", "-print-targets")
+WITH_VALUE = ("-I", "-L", "-F", "-B", "-D", "-U", "-x", "-include", "--include", "-imacros", "--imacros",
+              "--define-macro", "--undefine-macro", "-iquote", "-isystem", "-idirafter", "-iprefix",
+              "-iwithprefix", "-iwithprefixbefore", "-isysroot", "--sysroot", "-target", "--target",
+              "-arch", "-std", "-T", "-u", "-e", "--param", "-Xclang", "-Xpreprocessor", "-Xassembler", "-Xlinker")
+WITHOUT_VALUE = (*DROP, *PREPROCESSING, "-S", "-fsyntax-only", "-Werror", "-Wall", "-Wextra",
+                 "-pedantic", "-pedantic-errors", "-pthread", "-pipe", "-v")
+JOINED_OPTIONS = ("-I", "-L", "-F", "-B", "-D", "-U", "-O", "-g", "-W")
+MAX_RESPONSE_FILE_DEPTH = 20
 
 
 def capture(command, cwd=None, encoding="utf-8"):
@@ -40,19 +60,53 @@ def repository():
     return Path(result.stdout.strip())
 
 
+def validate_arguments(arguments):
+    if not isinstance(arguments, list) or not arguments or any(not isinstance(argument, str) for argument in arguments) or not arguments[0]:
+        raise ValueError("arguments must be a nonempty list of strings with an executable")
+
+
+def compilation_database(text, source, skip_empty_commands=False):
+    database = json.loads(text)
+    if not isinstance(database, list):
+        raise ValueError(f"{source}: expected an array of command objects")
+    commands = []
+    for index, entry in enumerate(database):
+        context = f"{source}: entry {index}"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{context}: expected a command object")
+        for field in ("directory", "file"):
+            if field not in entry:
+                raise ValueError(f"{context}: missing {field}")
+            if not isinstance(entry[field], str) or not entry[field]:
+                raise ValueError(f"{context}: {field} must be a nonempty string")
+        if skip_empty_commands and "arguments" not in entry and entry.get("command") == "":
+            continue
+        if "arguments" in entry:
+            try:
+                validate_arguments(entry["arguments"])
+            except ValueError as error:
+                raise ValueError(f"{context}: {error}") from error
+        elif "command" not in entry:
+            raise ValueError(f"{context}: expected arguments or command")
+        elif not isinstance(entry["command"], str) or not entry["command"].strip():
+            raise ValueError(f"{context}: command must be a nonempty string")
+        commands.append(entry)
+    return commands
+
+
 def entries(build):
     if not build.is_dir():
         raise ValueError(f"{build} is not a directory; configure the build first")
     manifest = build / "compile_commands.json"
     if manifest.is_file():
-        return json.loads(manifest.read_text(encoding="utf-8"))
+        return compilation_database(manifest.read_text(encoding="utf-8-sig"), manifest)
     ninja = shutil.which("ninja")
     if ninja is None:
         raise ValueError(f"no {manifest} and ninja is not on PATH")
     result = capture([ninja, "-C", str(build), "-t", "compdb", "-x"], encoding=ninja_encoding(ninja))
     if result.returncode != 0:
         raise ValueError(f"ninja -t compdb: {result.stderr.strip()}")
-    return json.loads(result.stdout)
+    return compilation_database(result.stdout, "ninja -t compdb", skip_empty_commands=True)
 
 
 def entry_key(entry, root):
@@ -115,33 +169,146 @@ def syntax_only(entry, source):
     return syntax_arguments(arguments, directory, source)
 
 
-def syntax_arguments(arguments, directory, source):
-    if not isinstance(arguments, list) or not arguments or any(not isinstance(argument, str) for argument in arguments) or not arguments[0]:
-        raise ValueError("arguments must be a nonempty list of strings with an executable")
-    for argument in arguments[1:]:
-        if argument.startswith("@"):
-            raise ValueError(f"unexpanded response file {argument[1:]}; provide expanded compile arguments before checking syntax")
-    wanted = source.resolve()
-    trimmed = []
+def response_arguments(text):
+    if "\0" in text or "\x1a" in text:
+        raise ValueError("unsupported response-file control character")
+    quote = None
     index = 0
-    while index < len(arguments):
-        argument = arguments[index]
-        if argument in DROP_WITH_VALUE:
+    while index < len(text):
+        character = text[index]
+        if quote is None and character in "\v\f":
+            raise ValueError("unsupported response-file control character")
+        if quote is not None and character == "\r" and text[index + 1:index + 2] == "\n":
+            raise ValueError("quoted response-file CRLF has compiler-specific meanings")
+        if character == "\\":
+            following = text[index + 1:index + 2]
+            if quote == "'" or following in ("\r", "\n") or (quote == '"' and following not in ('"', "\\", "")):
+                raise ValueError("response-file escape has different GCC and Clang meanings")
             index += 2
             continue
-        if argument in DROP or argument.startswith(("-MT", "-MF", "-MQ", "-MJ")):
+        if character == quote:
+            quote = None
+        elif quote is None and character in ("'", '"'):
+            quote = character
+        index += 1
+    if text.startswith("\ufeff"):
+        raise ValueError("response-file byte order marks have different GCC and Clang meanings")
+    arguments = shlex.split(text)
+    if "" in arguments:
+        raise ValueError("empty response-file options have different GCC and Clang meanings")
+    return arguments
+
+
+def expand_response_files(arguments, directory, seen=frozenset()):
+    expanded = []
+    for argument in arguments:
+        if argument.startswith("@") and len(argument) > 1:
+            response = Path(argument[1:])
+            if not response.is_absolute():
+                response = directory / response
+            resolved = response.resolve()
+            if resolved in seen:
+                raise ValueError(f"response file cycle at {resolved}")
+            if len(seen) >= MAX_RESPONSE_FILE_DEPTH:
+                raise ValueError(f"response file nesting exceeds {MAX_RESPONSE_FILE_DEPTH} levels at {resolved}")
+            nested = response_arguments(response.read_bytes().decode("utf-8"))
+            expanded.extend(expand_response_files(nested, directory, seen | {resolved}))
+        else:
+            expanded.append(argument)
+    return expanded
+
+
+def preprocessor_arguments(argument):
+    forwarded = argument[4:].split(",")
+    if any(option.startswith("@") for option in forwarded):
+        raise ValueError(f"unsupported forwarded compiler option response file in {argument}")
+    options = iter(forwarded)
+    kept = []
+    for option in options:
+        if option in ("-MD", "-MMD", "-MF", "-MT", "-MQ", "--write-dependencies", "--write-user-dependencies"):
+            if not next(options, None):
+                raise ValueError(f"missing value for {option} in {argument}")
+            continue
+        if option in ("-M", "-MM", "-MG", "-MP", "--dependencies", "--user-dependencies",
+                      "--print-missing-file-dependencies") or option.startswith(("-MF", "-MT", "-MQ")):
+            continue
+        kept.append(option)
+        if option in ("-D", "-U", "-I", "-F", "-include", "--include", "-imacros", "--imacros",
+                      "-isystem", "-iquote", "-idirafter", "-isysroot"):
+            value = next(options, None)
+            if not value:
+                raise ValueError(f"missing operand for {option} in {argument}")
+            kept.append(value)
+        elif not (option.startswith(("-D", "-U", "-I", "-F")) and len(option) > 2):
+            raise ValueError(f"unsupported forwarded compiler option {option} in {argument}")
+    return "-Wp," + ",".join(kept) if kept else None
+
+
+def syntax_arguments(arguments, directory, source):
+    validate_arguments(arguments)
+    if any(argument.startswith("@") for argument in arguments[1:]):
+        compiler = Path(arguments[0]).stem.lower()
+        if compiler in ("cl", "clang-cl") or any(argument in ("--driver-mode=cl", "--rsp-quoting=windows") for argument in arguments):
+            raise ValueError("Windows-style compiler response files are unsupported; provide expanded arguments")
+    arguments = [arguments[0], *expand_response_files(arguments[1:], directory)]
+    wanted = source.resolve()
+    trimmed = [arguments[0]]
+    index = 1
+    positional = False
+    syntax_added = False
+    while index < len(arguments):
+        argument = arguments[index]
+        if not syntax_added and argument.startswith("-"):
+            trimmed.append("-fsyntax-only")
+            syntax_added = True
+        if not positional and argument == "--":
+            positional = True
+            trimmed.append(argument)
             index += 1
             continue
-        if not argument.startswith("-"):
+        if not positional and (argument in ("-Xclang", "-Xpreprocessor") or argument.startswith(("-Xclang=", "-Xpreprocessor="))):
+            raise ValueError(f"unsupported forwarded compiler option {argument}")
+        if not positional and argument in (*DROP_WITH_VALUE, *WITH_VALUE):
+            if index + 1 == len(arguments):
+                raise ValueError(f"missing operand for {argument}")
+            if argument in WITH_VALUE:
+                trimmed.extend(arguments[index:index + 2])
+            index += 2
+            continue
+        if not positional and argument.startswith("-Wp,"):
+            if forwarded := preprocessor_arguments(argument):
+                trimmed.append(forwarded)
+            index += 1
+            continue
+        if not positional and argument.startswith(("-save-temps=", "--save-temps=")) and argument not in DROP:
+            raise ValueError(f"unsupported saved-temporary mode in {argument}")
+        if not positional and (argument in (*DROP, *PREPROCESSING) or argument.startswith(("-MT", "-MF", "-MQ", "-MJ"))):
+            index += 1
+            continue
+        query, _, value = argument.partition("=")
+        if query.startswith("--print-"):
+            query = query[1:]
+        if not positional and (query in DRIVER_QUERIES or (query in ("-mcpu", "-mtune") and value == "help")):
+            raise ValueError(f"compiler option {argument} bypasses compilation")
+        if positional or not argument.startswith("-"):
             candidate = Path(argument)
             if not candidate.is_absolute():
                 candidate = directory / candidate
             if candidate.resolve() == wanted:
                 index += 1
                 continue
+            if positional:
+                trimmed.append(str(candidate.resolve()))
+                index += 1
+                continue
+        elif (argument not in WITHOUT_VALUE and not argument.startswith(JOINED_OPTIONS) and "=" not in argument and index + 1 < len(arguments)
+              and arguments[index + 1] in PREPROCESSING):
+            raise ValueError(f"unknown operand count for {argument} before {arguments[index + 1]}")
         trimmed.append(argument)
         index += 1
-    trimmed += ["-fsyntax-only", str(wanted)]
+    if not syntax_added:
+        trimmed.append("-fsyntax-only")
+    trimmed.append(str(wanted))
     return trimmed
 
 

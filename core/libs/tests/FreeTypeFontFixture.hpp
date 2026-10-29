@@ -20,7 +20,8 @@ static void PutAll16(std::vector<unsigned char>& out, std::initializer_list<int>
     for (const int value : values) Put16(out, static_cast<std::uint32_t>(static_cast<std::uint16_t>(value)));
 }
 
-static std::vector<unsigned char> SquareGlyphFont(std::uint32_t codepoint, int width, bool symbolMap = false) {
+static std::vector<unsigned char> SquareGlyphFont(std::uint32_t codepoint, int width, bool symbolMap = false,
+                                                 const std::vector<unsigned char>* gasp = nullptr) {
     std::vector<unsigned char> head;
     Put32(head, 0x00010000u);
     Put32(head, 0x00010000u);
@@ -53,11 +54,19 @@ static std::vector<unsigned char> SquareGlyphFont(std::uint32_t codepoint, int w
         const int symbol = static_cast<int>(codepoint + 0xF000);
         PutAll16(cmap, {4, 32, 0, 4, 4, 1, 0, symbol, 0xFFFF, 0, symbol, 0xFFFF, 1 - symbol, 1, 0, 0});
     }
-    const std::vector<std::pair<const char*, const std::vector<unsigned char>*>> tables = {
+    std::vector<std::pair<const char*, const std::vector<unsigned char>*>> tables = {
         {"cmap", &cmap}, {"glyf", &glyf}, {"head", &head}, {"hhea", &hhea}, {"hmtx", &hmtx}, {"loca", &loca}, {"maxp", &maxp}};
+    if (gasp) tables.insert(tables.begin() + 1, {"gasp", gasp});
+    unsigned power = 1;
+    unsigned selector = 0;
+    while (power <= tables.size() / 2) {
+        power *= 2;
+        ++selector;
+    }
     std::vector<unsigned char> font;
     Put32(font, 0x00010000u);
-    PutAll16(font, {static_cast<int>(tables.size()), 64, 2, static_cast<int>(tables.size()) * 16 - 64});
+    PutAll16(font, {static_cast<int>(tables.size()), static_cast<int>(power * 16), static_cast<int>(selector),
+                    static_cast<int>(tables.size() * 16 - power * 16)});
     std::uint32_t offset = 12 + static_cast<std::uint32_t>(tables.size()) * 16;
     for (const auto& [tag, data] : tables) {
         font.insert(font.end(), tag, tag + 4);
