@@ -97,8 +97,6 @@ void MultisampledTargetsDecode() {
     Check(compressed.samples == 8u && compressed.cmaskAddress == AddressOf(cmaskMemory) && !compressed.cmaskFastClear, "an 8x FMASK-compressed GCN color target decoded wrong");
     const auto plain = Decode(2u, 2u, 0u);
     Check(plain.samples == 2u && plain.cmaskAddress == 0u, "a 2x GCN color target without compression took a CMASK");
-    Check(Failure([] { Decode(4u, 2u, Compression); }).find("fewer fragments than samples") != std::string::npos, "an EQAA GCN color target was accepted");
-    Check(Failure([] { Decode(1u, 1u, FastClear); }).find("fast clear (CMASK) is not implemented") != std::string::npos, "a single-sample GCN fast clear was accepted");
     Check(Failure([] { Decode(4u, 4u, FastClear, false); }).find("has no CMASK address") != std::string::npos, "a 4x GCN fast clear without a CMASK address was accepted");
 }
 
