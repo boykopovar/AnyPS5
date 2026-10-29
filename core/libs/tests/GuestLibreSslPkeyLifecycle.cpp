@@ -1,0 +1,34 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
+#include <cstddef>
+#include <cstdio>
+#include <cstring>
+#include <exception>
+
+namespace {
+void Require(bool condition, const char* message) {
+    if (condition) return;
+    std::fprintf(stderr, "failed: %s\n", message);
+    std::terminate();
+}
+}
+
+int main() {
+    void* const api[10]{};
+    ApplicationHeapRegister_nid_no_patch(api);
+    void* pkey = EVP_PKEY_new_nid_postfix();
+    Require(pkey != nullptr, "allocates a key");
+    int fields[3];
+    std::memcpy(fields, pkey, sizeof(fields));
+    Require(fields[0] == 0 && fields[1] == 0, "a new key has type and save_type EVP_PKEY_NONE");
+    Require(fields[2] == 1, "a new key holds one reference");
+    const int extra = 2;
+    std::memcpy(static_cast<std::byte*>(pkey) + 8, &extra, sizeof(extra));
+    EVP_PKEY_free_nid_postfix(pkey);
+    std::memcpy(fields, pkey, sizeof(fields));
+    Require(fields[2] == 1, "freeing a shared key only drops one reference");
+    EVP_PKEY_free_nid_postfix(pkey);
+    EVP_PKEY_free_nid_postfix(nullptr);
+    return 0;
+}
