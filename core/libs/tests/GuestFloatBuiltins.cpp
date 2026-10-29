@@ -175,8 +175,9 @@ static void CheckComplex() {
     const __complex__ double z = TestComplex(3., 4.);
     Require(creal_nid_postfix(z) == 3. && cimag_nid_postfix(z) == 4.);
     Require(cabs_nid_postfix(z) == 5.);
-    Require(carg_nid_postfix(TestComplex(1., 1.)) == std::atan2(1., 1.));
-    Require(carg_nid_postfix(TestComplex(-1., 0.)) == std::atan2(0., -1.));
+    Require(Bits(carg_nid_postfix(TestComplex(1., 1.))) == 0x3FE921FB54442D18ull);
+    Require(Bits(carg_nid_postfix(TestComplex(-1., 0.))) == 0x400921FB54442D18ull);
+    Require(Bits(carg_nid_postfix(TestComplex(-1., -0.))) == 0xC00921FB54442D18ull);
     const __complex__ double cj = conj_nid_postfix(z);
     Require(__real__ cj == 3. && __imag__ cj == -4.);
     const __complex__ double cjZero = conj_nid_postfix(TestComplex(0.0, 0.0));
@@ -197,15 +198,14 @@ static void CheckComplex() {
     const __complex__ float zf = TestComplex(3.f, -4.f);
     Require(crealf_nid_postfix(zf) == 3.f && cimagf_nid_postfix(zf) == -4.f);
     Require(cabsf_nid_postfix(zf) == 5.f);
-    Require(cargf_nid_postfix(TestComplex(0.f, 1.f)) == std::atan2(1.f, 0.f));
+    Require(Bits(cargf_nid_postfix(TestComplex(0.f, 1.f))) == 0x3FC90FDBu);
     Require(cargf_nid_postfix(TestComplex(0x1.e3465ap-1f, 0x1.319e92p-3f)) == 0x1.412088p-3f);
     Require(cargf_nid_postfix(TestComplex(-0x1.00924ap+6f, -0x1.5eaaaap+6f)) == -0x1.19ea4p+1f);
     const __complex__ float cjf = conjf_nid_postfix(zf);
     Require(__real__ cjf == 3.f && __imag__ cjf == 4.f);
     const __complex__ float pjf = cprojf_nid_postfix(TestComplex(std::numeric_limits<float>::infinity(), -1.f));
     Require(std::isinf(__real__ pjf) && std::signbit(__imag__ pjf));
-    const __complex__ float pjf2 = cprojf_nid_postfix(TestComplex(std::numeric_limits<float>::infinity(), -1.f));
-    Require(__imag__ pjf2 == 0.f && std::signbit(__imag__ pjf2));
+    Require(__imag__ pjf == 0.f);
     const __complex__ float pfnorm = cprojf_nid_postfix(zf);
     Require(__real__ pfnorm == 3.f && __imag__ pfnorm == -4.f);
 
@@ -213,7 +213,7 @@ static void CheckComplex() {
     Require(creall_nid_postfix(zl) == 5.L && cimagl_nid_postfix(zl) == 12.L);
     Require(cabsl_nid_postfix(zl) == 13.L);
     Require(cabsl_nid_postfix(TestComplex(3e3000L, 4e3000L)) == 5e3000L);
-    Require(cargl_nid_postfix(TestComplex(-1.L, 0.L)) == std::atan2(0.L, -1.L));
+    Require(cargl_nid_postfix(TestComplex(-1.L, 0.L)) == 3.14159265358979323846264338327950288L);
     const __complex__ long double cjl = conjl_nid_postfix(zl);
     Require(__real__ cjl == 5.L && __imag__ cjl == -12.L);
     const __complex__ long double pjl = cprojl_nid_postfix(TestComplex(-std::numeric_limits<long double>::infinity(), 1.L));
