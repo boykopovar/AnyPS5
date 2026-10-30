@@ -250,23 +250,6 @@ struct LibreSslX509StoreContext {
     void* exData;
 };
 
-struct LibreSslUi {
-    const void* meth;
-    void* strings;
-    void* userData;
-    void* exData;
-    int flags;
-};
-
-struct LibreSslUiString {
-    int type;
-    const char* outString;
-    int inputFlags;
-    char* resultBuf;
-    unsigned char data[24];
-    int flags;
-};
-
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
