@@ -1,8 +1,9 @@
 # libSceLibreSsl3 technical debt
 
+- [OBJ_cmp](../../../core/libs/prx/libSceLibreSsl3/src/ObjCmp.cpp) (libSceLibreSsl3) - PS5 behavior and the library's LibreSSL version are not verified. The 40-byte LP64 `ASN1_OBJECT` layout and the comparison (length difference first, then the first differing byte as a difference of unsigned values) follow the public [LibreSSL source](https://github.com/libressl/openbsd/blob/bc9483725c5815efb64b6d9acc52fc5fba139212/src/lib/libcrypto/objects/obj_lib.c); the magnitude of a byte mismatch is the byte difference rather than whatever the console's `memcmp` returns. Null objects, null data with a nonzero length and negative lengths throw. LibreSSL subtracts unequal lengths before reading data, so unequal negative lengths do not necessarily fault; only equal negative lengths reach its byte comparison.
 ### Unknown function info
 
-- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 81 named callable exports, excluding `CRYPTO_memcmp`, `MD5`, `SHA1`, `d2i_ASN1_INTEGER`, `EVP_PKEY_up_ref` and `EC_KEY_up_ref`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 80 named callable exports, excluding `CRYPTO_memcmp`, `EC_KEY_up_ref`, `EVP_PKEY_up_ref`, `MD5`, `OBJ_cmp`, `SHA1` and `d2i_ASN1_INTEGER`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
 ### Functional
 
