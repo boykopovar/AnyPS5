@@ -10,6 +10,21 @@ from pathlib import Path
 BODY_LIMIT = 125000
 
 
+def resolve_output_path(path):
+    path = Path(path)
+    try:
+        resolved = Path(os.path.realpath(path))
+    except OSError as error:
+        raise ValueError(str(error)) from error
+    if resolved.is_symlink():
+        try:
+            resolved.stat()
+        except OSError as error:
+            raise ValueError(f"{path}: release note output is a symbolic link loop: {error}") from error
+        raise ValueError(f"{path}: release note output is a symbolic link loop")
+    return resolved
+
+
 def release_body(notes):
     if len(notes) <= BODY_LIMIT:
         return notes
@@ -41,18 +56,19 @@ def prepare_notes(source, body, full):
     if len(body_text) > BODY_LIMIT:
         raise ValueError(f"Release notes body exceeds {BODY_LIMIT} characters after removing What's Changed")
     for destination in (body, full):
+        target = resolve_output_path(destination)
         try:
-            destination.stat()
+            target.stat()
         except FileNotFoundError:
             pass
-        if destination.is_dir():
+        if target.is_dir():
             raise IsADirectoryError(str(destination))
-        if os.name == "nt" and destination.exists() and destination.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
+        if os.name == "nt" and target.exists() and target.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
             raise PermissionError(f"Release note destination is read-only: {destination}")
     staged = []
     try:
         for destination, text in ((full, notes), (body, body_text)):
-            target = destination.resolve()
+            target = resolve_output_path(destination)
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.parent / (".release-notes-" + secrets.token_hex(16))
             with temporary.open("xb") as output:
