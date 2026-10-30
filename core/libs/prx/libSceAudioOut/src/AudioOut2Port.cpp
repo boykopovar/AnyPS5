@@ -86,7 +86,7 @@ static void AccumulatePadPort(const AudioOut2Port& port, const void* data, Audio
     }
 }
 
-static void AccumulatePort(const AudioOut2Port& port, const void* data, float* out, std::uint32_t frames, const float* volume) {
+static void AccumulatePort(const AudioOut2Port& port, const void* data, float* out, std::uint32_t frames, const float* volume, float gain) {
     const auto& fold = *port.fold;
     float in[AUDIO_OUT2_PORT_CHANNELS_MAX];
     for (std::uint32_t frame = 0; frame < frames; frame++) {
@@ -98,8 +98,8 @@ static void AccumulatePort(const AudioOut2Port& port, const void* data, float* o
             if (fold.left[c] != 0.0f) left += sample * fold.left[c];
             if (fold.right[c] != 0.0f) right += sample * fold.right[c];
         }
-        out[frame * AUDIO_OUT2_OUTPUT_CHANNELS] += left;
-        out[frame * AUDIO_OUT2_OUTPUT_CHANNELS + 1] += right;
+        out[frame * AUDIO_OUT2_OUTPUT_CHANNELS] += left * gain;
+        out[frame * AUDIO_OUT2_OUTPUT_CHANNELS + 1] += right * gain;
     }
 }
 
@@ -146,7 +146,8 @@ std::uint32_t AudioOut2MixPorts(const AudioOut2Context& context, const AudioOut2
         if (!port.used || port.generation != generation || port.context != &context || port.channels == 0) continue;
         const auto route = AudioOut2RouteForPort(port.type, port.channels);
         const float* volume = captured.pcm.empty() ? port.volume : captured.volume.data();
-        if (route == AudioOut2Route::Main || (context.padDevice == 0 && route == AudioOut2Route::PadSpeaker)) AccumulatePort(port, data, out, frames, volume);
+        if (route == AudioOut2Route::Main) AccumulatePort(port, data, out, frames, volume, 1.0f);
+        else if (context.padDevice == 0 && route == AudioOut2Route::PadSpeaker) AccumulatePort(port, data, out, frames, volume, context.padSpeakerFallbackGain);
         else if (padOut != nullptr) AccumulatePadPort(port, data, route, padOut, frames, volume);
         mixed++;
     }

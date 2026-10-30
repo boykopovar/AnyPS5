@@ -950,6 +950,26 @@ int main() {
     Require(info.connectedCount[0] == 1);
     Require(info.padTypeInfo[0].connectPort == 0);
 
+    const PadVibrationParam vibZero{0, 0};
+    const PadVibrationParam vibFull{255, 255};
+    const PadVibrationParam vibMixed{128, 64};
+    Require(scePadSetVibration(handle2, &vibZero) == PAD_OK);
+    Require(scePadSetVibration(handle2, &vibFull) == PAD_OK);
+    Require(scePadSetVibration(handle2, &vibMixed) == PAD_OK);
+    Require(scePadSetVibration(handle2 + 99, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(-1, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
+
+    const PadLightBarParam lightOff{0, 0, 0};
+    const PadLightBarParam lightFull{255, 255, 255};
+    const PadLightBarParam lightColor{100, 150, 200};
+    Require(scePadSetLightBar(handle2, &lightOff) == PAD_OK);
+    Require(scePadSetLightBar(handle2, &lightFull) == PAD_OK);
+    Require(scePadSetLightBar(handle2, &lightColor) == PAD_OK);
+    Require(scePadSetLightBar(handle2 + 99, &lightColor) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBar(-1, &lightColor) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBar(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
+
     Require(scePadClose_nid_postfix(handle2) == 0);
     Require(scePadGetHandle(user2, 0, 0) == noHandle);
     Require(!scePadIsValidHandle(handle2, PAD_PORT_TYPE_STANDARD));

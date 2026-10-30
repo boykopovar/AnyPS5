@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "prx/libSceAudioOut/src/AudioOut2Internal.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
 #include <chrono>
@@ -25,6 +26,14 @@ static void SetEnvironment(const char* name, const std::string& value) {
     _putenv_s(name, value.c_str());
 #else
     setenv(name, value.c_str(), 1);
+#endif
+}
+
+static void UnsetEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
 #endif
 }
 
@@ -355,6 +364,7 @@ void TestLowLatencyQueueLevelFillsToTheDepth() {
 }
 
 int main() {
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     TestReadAtNextPush();
     TestRecreatedPort();

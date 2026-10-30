@@ -81,6 +81,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_HOST_REPORT` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 0 | prints the host report to stderr once when the presenting device is chosen: 1 prints it; 0, empty or unset prints nothing, and any other value stops the start with an error naming the variable |
 | `ANYPS5_OVERLAY` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceOverlay.cpp` | 0 | the performance overlay's page at start: 1 the overlay, 2 its detailed page; 0 or unset hides it, and any other value is refused |
 | `ANYPS5_OVERLAY_POS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceOverlay.cpp` | tl | the overlay's corner: tl, tr, bl or br |
+| `ANYPS5_PAD_STATUS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PadStatusOverlay.cpp` | 0 | 1 shows the controller status panel for 4 seconds when a controller connects, disconnects or enters a lower battery class; 0 or unset never shows it on its own (the `ShowPadStatus` key still does), and any other value is refused |
 | `ANYPS5_PRESENT_MODE` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | fifo | selects the swapchain present mode: fifo, fifo_latest_ready, mailbox or immediate |
 | `ANYPS5_REQUIRE_DESCRIPTOR_BINDING_FLAGS` | presence | `core/libs/prx/libSceAgcDriver/tests/ComputePipelineReplay.cpp` |  | fails the replay test instead of accepting a device that refuses descriptor binding flags |
 | `ANYPS5_REQUIRE_ROBUST2` | presence | `core/libs/prx/libSceAgcDriver/tests/execution/LdsMixedWidthAtomics.cpp` |  | fails the LDS lock-budget test when the device does not enable robustBufferAccess2, instead of only printing it |
@@ -93,6 +94,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_ALL_BUFFERS_WRITTEN` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | notes every shader buffer element as written, as before bufferWritten existed |
 | `APS5_ASSERT_GPU_LOCK` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp` |  | aborts when a guarded path is reached without holding GuestMemory::GpuMutex |
 | `APS5_ATOMIC_STAGE_MAX_KIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` | 1024 | size cap in KiB on an atomic shader element covered by device-local staging |
+| `APS5_BACKGROUND_COMPILE_KIB` | integer | `core/libs/prx/libSceAgcDriver/Execution/include/CompileBudget.hpp` | 8192 | KiB of SPIR-V that compute pipelines built ahead of their dispatch (dispatch prebuilds and the pipeline journal's replay) may be compiling at once; a build that does not fit waits, one larger than the limit builds alone, and 0 builds them one at a time. Dispatches that need a pipeline now are not limited |
 | `APS5_BARRIER_VALIDATE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | counts the barriers a hazard-tracking validator would emit and skip, by class and hazard kind |
 | `APS5_BATCH_CAP` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/DeferredLabels.cpp` | 64 | recorded work since the last submit at which a label batch, flush or reap is forced (0 disables the cap) |
 | `APS5_BDA_FLUSH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | also flushes pending storage results over address-based shader regions, which are otherwise exempt |
@@ -379,7 +381,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_PM4_RING` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/SubmissionRing.cpp` | 16 | number of submissions the PM4 ring keeps for dumps, from 0 to 4096; 0 disables the ring |
 | `APS5_POLL_REAP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | reaps completions on every poll tick |
 | `APS5_POLL_TRY_EACH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | tries the poll service on every tick instead of at the poll interval |
-| `APS5_PREBUILD_THREADS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderRegistry.cpp` |  | threads in the pool that prebuilds registration-form shader libraries; unset uses half the hardware threads, at least two |
+| `APS5_PREBUILD_THREADS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderRegistry.cpp` |  | threads in the pool that prebuilds registration-form shader libraries and compute pipelines; unset uses half the hardware threads, at least two. Compute pipeline prebuilds, which wait for `APS5_BACKGROUND_COMPILE_KIB`, run on at most half of them (at least one) |
 | `APS5_PRESENT_POLL_FENCE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | polls the present fence every 50 us instead of blocking on it |
 | `APS5_PROBE_DISPATCH` | string | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | probes one dispatch at a hex program address (optionally `:index`) with debug output |
 | `APS5_PROFILE_DRAW` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` |  | prints the per-phase driver and draw timing totals |
@@ -506,6 +508,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `APS5_PAD_SPEAKER_FALLBACK_DB` | string | `core/libs/prx/libSceAudioOut/src/AudioOut2PadMix.cpp` | 0 | gain in dB for AudioOut2 controller-speaker ports folded into the main mix when no controller speaker is present; accepts a number from -60 to 0 or mute/off/-inf, and the default 0 leaves the mix unchanged; any other value, including an out-of-range number, stops the title with an error naming the variable and the value |
 | `APS5_TRACE_AUDIOOUT` | presence | `core/libs/prx/libSceAudioOut/src/AudioOut.cpp` |  | logs each audio-out port opened with its type, sample count, frequency and format |
 | `APS5_TRACE_AUDIOOUT2` | presence | `core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp` |  | prints the title's AudioOut2 context and port parameters and stream activity |
 
@@ -613,6 +616,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `ANYPS5_LOADEXEC_ARGV_SKIP` | string | `core/libs/prx/libkernel/System/src/Process.cpp` |  | on Windows, set to `1` to drop the first process argument and clear the variable |
 | `APS5_COARSE_TIMED_WAITS` | presence | `core/libs/prx/libkernel/Time/TimedWait.cpp` |  | on Windows, rounds timed waits up to the scheduler tick |
+| `APS5_GAME_MODE` | string | `core/libs/prx/libkernel/System/src/HostPerformanceProcess.cpp` | off | asks the host for its game or performance mode while the title runs, read when libkernel loads: `off`, `on` or `auto`; on Linux it requests Feral GameMode (`libgamemode.so.0`, loaded with dlopen) and on macOS it holds a user-initiated, latency-critical `NSProcessInfo` activity; `on` logs a missing library or backend once, `auto` stays silent about it, and a refused request is logged once in both; nothing here is fatal, and any other value stops the title with an error naming the variable |
 | `APS5_JOB_AFFINITY` | presence | `core/libs/prx/libkernel/Pthread/src/Thread.cpp` |  | on Windows, pins the title's job worker threads to the efficiency cores of a hybrid CPU |
 | `APS5_JOB_AFFINITY_MASK` | integer | `core/libs/prx/libkernel/Pthread/src/Thread.cpp` |  | on Windows, hex core mask that job worker threads are pinned to |
 | `APS5_MIMALLOC` | presence | `core/libs/prx/libkernel/System/src/MimallocMacOs.cpp` |  | makes the process allocate through mimalloc instead of the system allocator: on Windows the entry stub (`core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp`) loads `mimalloc.dll`, on macOS libkernel restarts the title with `libmimalloc.dylib` in `DYLD_INSERT_LIBRARIES` |

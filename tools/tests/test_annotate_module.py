@@ -104,6 +104,34 @@ def with_relocation(module, table_offset, index, slot, symbol_index, kind):
 
 
 class ImportRelocationTests(unittest.TestCase):
+    def test_tables_cannot_read_file_padding_past_the_load_segment(self):
+        for tag in (5, 6, 23):
+            with self.subTest(tag=tag):
+                data = build_module(values={tag: DATA_ADDRESS + 0x800})
+                with self.assertRaisesRegex(annotate_module.ModuleError, "PT_LOAD"):
+                    module = annotate_module.Module(data)
+                    module.imports()
+
+    def test_an_exact_load_boundary_is_readable(self):
+        data = build_module(values={23: DATA_ADDRESS + 0x7F8})
+        data = with_relocation(data, 0x27F8, 0, SLOT, 1, 7)
+        module = annotate_module.Module(data)
+        self.assertEqual(module.imports(), {SLOT: symbol_name(IMPORT_NAME)})
+
+    def test_contiguous_load_segments_can_cover_one_table_without_a_gap(self):
+        for gap in (0, 1):
+            with self.subTest(gap=gap):
+                data = bytearray(build_module())
+                struct.pack_into("<H", data, 0x38, 4)
+                struct.pack_into("<QQ", data, 64 + 56 + 32, 0x110, 0x110)
+                struct.pack_into("<IIQQQQQQ", data, 64 + 3 * 56, 1, 6, 0x2110 + gap,
+                                 DATA_ADDRESS + 0x110 + gap, 0, 0x700 - gap, 0x700 - gap, 1)
+                if gap:
+                    with self.assertRaisesRegex(annotate_module.ModuleError, "PT_LOAD"):
+                        annotate_module.Module(bytes(data))
+                else:
+                    self.assertEqual(annotate_module.Module(bytes(data)).imports(), {SLOT: symbol_name(IMPORT_NAME)})
+
     def test_none_relocations_do_not_read_the_symbol_or_add_a_slot(self):
         for table in (0x2200, 0x2280):
             for symbol_index in (0, 1, 0xFFFFFFFF):
@@ -312,6 +340,29 @@ class AnnotateModuleTests(unittest.TestCase):
         first, second = listing.index("; ===== segment 0x1000"), listing.index("; ===== segment 0x3000")
         self.assertLess(first, second)
         self.assertTrue(any(re.match(r"^\s*3000:\s+ret\b", line) for line in listing[second:]))
+
+    def test_zero_run_preserves_instructions_and_export_label(self):
+        code = b"\x90" + bytes(16) + b"\xc3"
+        address = CODE_ADDRESS + 9
+        symbols = [(EXPORT_NAME, 1, 0x12, address)]
+        self.annotate(build_module(code=code, symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        addresses = [int(match.group(1), 16) for line in listing
+                     if (match := annotate_module.LINE_ADDRESS.match(line))]
+        self.assertEqual(addresses, [CODE_ADDRESS] + list(range(CODE_ADDRESS + 1, CODE_ADDRESS + 17, 2)) + [CODE_ADDRESS + 17])
+        header = listing.index("; ===== export " + EXPORT_NAME)
+        self.assertRegex(listing[header + 1], r"^\s*1009:\s+add\s")
+        self.assertIn("%#x %s %s\n" % (address, symbol_name(EXPORT_NAME), EXPORT_NAME), self.read(".exports.txt"))
+
+    def test_all_zero_executable_segment_is_disassembled(self):
+        symbols = [(EXPORT_NAME, 1, 0x12, 0x3008)]
+        self.annotate(build_module(code=b"\xc3", extra_code=bytes(16), symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        addresses = [int(match.group(1), 16) for line in listing
+                     if (match := annotate_module.LINE_ADDRESS.match(line))]
+        self.assertEqual(addresses, [CODE_ADDRESS] + list(range(0x3000, 0x3010, 2)))
+        header = listing.index("; ===== export " + EXPORT_NAME)
+        self.assertRegex(listing[header + 1], r"^\s*3008:\s+add\s")
 
     def test_missing_hash_fails(self):
         self.assert_fails(build_module(tags=(5, 6, 10, 11, 23, 2, 20)), "neither DT_HASH nor DT_GNU_HASH")

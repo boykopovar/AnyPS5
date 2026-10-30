@@ -93,7 +93,6 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
         Require(!isAnisoFilter(xyMagFilter) && !isAnisoFilter(xyMinFilter), "guest sampler descriptor uses unnormalized coordinates with anisotropic filtering, which is not implemented");
         Require(clampX == 0u || clampX == 2u || clampX == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only clamp-to-last-texel and clamp-to-border are implemented");
         Require(clampY == 0u || clampY == 2u || clampY == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampY) + " on Y; only clamp-to-last-texel and clamp-to-border are implemented");
-        Require(!truncCoord, "guest sampler descriptor uses unnormalized coordinates with TRUNC_COORD, which is not implemented");
         Require(!mcCoordTrunc, "guest sampler descriptor uses unnormalized coordinates with MC_COORD_TRUNC, which is not implemented");
     } else {
         Require(!unnormalizedProven, "guest sampler descriptor is bound as unnormalized without FORCE_UNNORMALIZED");

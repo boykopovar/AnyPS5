@@ -2245,12 +2245,10 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     state.pendingImports.insert(base);
 #ifdef _WIN32
     if (deferredSettles.load(std::memory_order_relaxed) && entry.alias == nullptr && state.watchPrivateImports && writable) {
-        if (base % settleBlockBytes != 0 || bytes % settleBlockBytes != 0) {
-            entry.settleOnDemand = entry.unwatched;
-        } else if (entry.unwatched) {
+        if (entry.unwatched) {
             state.pendingSettles.insert_or_assign(base, PendingSettle{});
             state.settleWanted.push_back(base);
-        } else if (settled && !GuestMemory::Watched(base, static_cast<std::size_t>(bytes))) {
+        } else if (base % settleBlockBytes == 0 && bytes % settleBlockBytes == 0 && settled && !GuestMemory::Watched(base, static_cast<std::size_t>(bytes))) {
             entry.unwatched = true;
             state.pendingSettles.insert_or_assign(base, PendingSettle{SettlePhase::Settled, 0});
             state.settleReady.push_back(base);
@@ -3750,6 +3748,12 @@ void ClearHostImports(VkDevice device) {
         state.settles.erase(found);
     }
     if (state.device != device) return;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unwatched;
+    GuestAllocations::Lease lease;
+    if (std::any_of(state.imports.begin(), state.imports.end(), [](const auto& import) { return import.second.unwatched; })) {
+        lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        for (const auto& [address, entry] : state.imports) noteRetiredUnwatched(unwatched, entry, lease);
+    }
     for (const auto& [address, entry] : state.imports) {
         state.destroyBuffer(state.device, entry.buffer, nullptr);
         state.freeMemory(state.device, entry.memory, nullptr);
@@ -3758,6 +3762,7 @@ void ClearHostImports(VkDevice device) {
 #endif
     }
     state.imports.clear();
+    rewatchRetired(state, std::move(unwatched));
     state.pendingImports.clear();
     state.liveBytes = 0;
     state.failed.clear();

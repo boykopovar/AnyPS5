@@ -374,7 +374,7 @@ static void CheckSetGrainSamples() {
         Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
         Require(info.num_grain_samples == grain);
     }
-    for (const std::uint32_t grain : {0u, 513u, 576u, 2048u, 0xffffffffu}) {
+    for (const std::uint32_t grain : {0u, 1u, 8u, 63u, 65u, 511u, 513u, 576u, 2048u, 0xffffffffu}) {
         Status(sceNgs2SystemSetGrainSamples(system, grain), grainError, "an invalid grain was accepted");
         Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
         Require(info.num_grain_samples == 512);
