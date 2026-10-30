@@ -10,6 +10,7 @@
 static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EFAULT = 14;
+static constexpr int GUEST_EINVAL = 22;
 static constexpr int SCHED_FIFO_POLICY = 1;
 static constexpr int SCHED_RR_POLICY = 3;
 
@@ -78,6 +79,14 @@ static void CheckTargets() {
     REQUIRE(FailsWith(sched_setparam_nid_postfix(self + 1, nullptr), GUEST_EFAULT));
     *__error_nid_postfix() = 0;
     REQUIRE(FailsWith(sched_setparam_nid_postfix(self + 1, reinterpret_cast<const KernelSchedParam*>(0x10)), GUEST_EFAULT));
+    int validPolicy = 0;
+    KernelSchedParam validParam{};
+    REQUIRE(pthread_getschedparam_nid_postfix(scePthreadSelf(), nullptr, &validParam) == GUEST_EINVAL);
+    REQUIRE(pthread_getschedparam_nid_postfix(scePthreadSelf(), &validPolicy, nullptr) == GUEST_EINVAL);
+    REQUIRE(pthread_getschedparam_nid_postfix(scePthreadSelf(), reinterpret_cast<int*>(0x10), &validParam) == GUEST_EFAULT);
+    REQUIRE(pthread_getschedparam_nid_postfix(scePthreadSelf(), &validPolicy, reinterpret_cast<KernelSchedParam*>(0x10)) == GUEST_EFAULT);
+    REQUIRE(pthread_setschedparam_nid_postfix(scePthreadSelf(), 1, nullptr) == GUEST_EINVAL);
+    REQUIRE(pthread_setschedparam_nid_postfix(scePthreadSelf(), 1, reinterpret_cast<const KernelSchedParam*>(0x10)) == GUEST_EFAULT);
 }
 
 static constexpr int WorkerPriority = 700;
