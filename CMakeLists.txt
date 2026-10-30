@@ -458,6 +458,8 @@ if(BUILD_TESTING)
                 endif()
             endif()
         endforeach()
+        add_test(NAME tools_headers_manifest COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_public_headers_manifest.py)
+        set_tests_properties(tools_headers_manifest PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}
