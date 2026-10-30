@@ -242,6 +242,7 @@ if(WIN32)
     if(BUILD_TESTING)
         set_target_properties(windows_dependency_diagnostics_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
         add_test(NAME windows_dependency_diagnostics COMMAND windows_dependency_diagnostics_tests)
+        set_tests_properties(windows_dependency_diagnostics PROPERTIES TIMEOUT 300)
     endif()
 
     if(NOT ANYPS5_RELINKER_ONLY)
