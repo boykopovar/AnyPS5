@@ -1,5 +1,8 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 
 extern "C" {
 
@@ -83,8 +86,14 @@ int APS5_VABI __sys_namedobj_delete_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI __sys_nanosleep_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI __sys_nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+    int oldCancelState = 0;
+    scePthreadSetcancelstate(1, &oldCancelState);
+    const int result = sceKernelNanosleep(rqtp, rmtp);
+    scePthreadSetcancelstate(oldCancelState, nullptr);
+    if (result == 0) return 0;
+    *__error_nid_postfix() = result & 0xFFFF;
+    return -1;
 }
 
 int APS5_VABI __sys_netabort_nid_postfix() {
