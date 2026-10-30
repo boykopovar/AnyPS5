@@ -951,3 +951,5 @@
 | `Unknown` | `kYFBv6Hq2qI` |
 | `Unknown` | `lTtap+n+GpI` |
 | `Unknown` | `qFzDK1mmkmk` |
+
+- [Older callable NIDs](../../../core/libs/prx/libmonosgen-2.0/Export.cpp): 33 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.
