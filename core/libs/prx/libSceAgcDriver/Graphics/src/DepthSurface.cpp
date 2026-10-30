@@ -739,7 +739,7 @@ public:
         stencilWritesSeen = writes;
         const auto bytes = DepthSliceBytes(target.extent, 1u);
         auto storage = StorageTexture::FindPending(target.stencilAddress, bytes);
-        if (storage == nullptr || storage == stencilMirror.storage) return;
+        if (storage == nullptr || storage == stencilMirror.storage || storage->Device() != context.device) return;
         const auto& described = storage->Descriptor();
         const auto format = ResolveTextureFormat(described.format);
         if (described.baseAddress != target.stencilAddress || described.width != target.extent.width || described.height != target.extent.height || (format != VK_FORMAT_R8_UINT && format != VK_FORMAT_R8_UNORM)) return;

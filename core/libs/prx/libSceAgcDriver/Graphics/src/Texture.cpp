@@ -4727,6 +4727,10 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPending(std::uint64_t addres
     return containing != nullptr ? containing->weak_from_this().lock() : nullptr;
 }
 
+VkDevice StorageTexture::Device() const {
+    return context.device;
+}
+
 std::shared_ptr<StorageTexture> StorageTexture::FindPendingSlice(std::uint64_t address, std::uint64_t bytes) {
     if (auto whole = FindPending(address, bytes)) return whole;
     auto& pending = Pending();
