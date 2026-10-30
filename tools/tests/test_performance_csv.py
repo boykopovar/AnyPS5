@@ -93,6 +93,19 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
         self.assertNotIn(b"Traceback", result.stderr)
 
+    def test_duplicate_json_field_does_not_emit_an_ambiguous_csv(self):
+        baseline = json.dumps(self.before).replace(
+            '"commit": "abc123"', '"commit": "wrong", "commit": "abc123"', 1)
+        self.baseline.write_text(baseline + "\n", encoding="utf-8")
+        self.candidate.write_text(json.dumps(self.after) + "\n", encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(Path(performance_csv.__file__)), str(self.baseline), str(self.candidate)],
+            capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, b"")
+        self.assertIn(b"duplicate JSON field: 'commit'", result.stderr)
+        self.assertNotIn(b"Traceback", result.stderr)
+
     def test_trace_selection_uses_the_existing_jsonl_selection_contract(self):
         self.baseline.write_text(json.dumps(self.before) + "\n" + json.dumps(self.after) + "\n", encoding="utf-8")
         self.candidate.write_bytes(self.baseline.read_bytes())

@@ -111,7 +111,7 @@ class PeModule:
 
     def export_symbols(self, data, rva, size):
         directory = self.offset(rva)
-        _, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", data, directory + 20)
+        functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", data, directory + 20)
         function_table = self.offset(function_rva)
         result = []
         if names:
@@ -119,6 +119,8 @@ class PeModule:
             ordinal_table = self.offset(ordinal_rva)
             for index in range(names):
                 ordinal = struct.unpack_from("<H", data, ordinal_table + index * 2)[0]
+                if ordinal >= functions:
+                    raise ValueError("PE export ordinal is outside the export address table")
                 address = struct.unpack_from("<I", data, function_table + ordinal * 4)[0]
                 if rva <= address < rva + size:
                     continue
