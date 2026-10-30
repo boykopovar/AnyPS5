@@ -56,7 +56,6 @@
 | `__sys_workaround8849` | `jTPE1AS7uak` |
 | `__ubsan_handle_cfi_check_fail` | `K4M0IhFb88Q` |
 | `__ubsan_handle_cfi_check_fail_abort` | `sPU6b2LaPqg` |
-| `_dup2` | `W8f1adVl+48` |
 | `_execve` | `-3nj+K1elI0` |
 | `_execvpe` | `ScfDTOqLOMw` |
 | `_wait4` | `RFlsu7nfopM` |
@@ -385,6 +384,7 @@
 - [sceKernelGetProcessType](../../../core/libs/prx/libkernel_sys/Export.cpp) (libkernel_sys) - not measured on a console; as in shadPS4, the title's own pid, -1 and 0 are type 0 (big application) and any other pid is `ESRCH`
 - [cpuset, cpuset_getid, cpuset_setid](../../../core/libs/prx/libkernel_sys/Cpuset.cpp) (libkernel_sys) - console root IDs and inheritance are unverified; non-process scopes (TID, CPUSET, JAIL) throw as unmodelled as per-thread cpusets and hierarchy visibility are not tracked. CPU set assignment and queries follow FreeBSD 11.4 [kern_cpuset.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/kern_cpuset.c): cpuset allocates sequential IDs from 2; cpuset_setid supports CPU_WHICH_PID for known IDs (or root 0, default 1); dynamic sets are single-process referenced and unlinked when vacated, returning ESRCH on lookup; cpuset_getid returns root 0 for CPU_LEVEL_ROOT and the assigned ID for CPU_LEVEL_CPUSET. Output writes use GuestCopyOut_nid_no_patch (EFAULT on bad pointers), with level/which/id errors returned before copyout; levels outside 1 to 3 return EINVAL where FreeBSD returns 0 with the base set ID; other which return EINVAL, unknown pids return ESRCH
 - [sceKernelSettimeofday](../../../core/libs/prx/libkernel_sys/Export.Discovery.cpp) (libkernel_sys) - forwards to `settimeofday` and returns its result, or `0x80020000` plus `errno` for a failure, as shadPS4's [`sceKernelSettimeofday`](https://github.com/shadps4-emu/shadPS4/blob/7ea677e56d75bf3d90ace2b0a5144a665d1f38b6/src/core/libraries/kernel/time.cpp#L565-L571) maps its call through `ErrnoToSceKernelError`; that branch passes the call's return value, and shadPS4's own `settimeofday` never fails, so the errno form the other sce wrappers here use is taken. Nothing is measured on the console, and a valid time inherits `settimeofday`'s refusal to set the host clock
+- [_dup2](../../../core/libs/prx/libkernel_sys/AdditionalExports.cpp) (libkernel_sys) follows FreeBSD 11.4's [_dup2](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/sys/dup.2) and POSIX.1-2008 dup2: it forwards to libkernel's dup2, returning the target descriptor or setting errno and returning -1 on failure. It inherits libkernel dup2's limits (duplicating kqueue/ksem descriptors, or moving guest sockets onto standard descriptors, throws) and console behaviour is unverified.
 
 ### Unknown function info
 
@@ -402,7 +402,7 @@
 
 The NID set is from the inspected `libkernel_sys` ELF function-export table (defined `STT_FUNC` entries), not the older 3.20 inventory. The module-parameter words at `0x10` and `0x14` are `0x13590001` and `0x13600007`; the earlier 13.60 label refers to SDK-formatted metadata, not independently authenticated retail firmware or an introduction date. The [reproducible static audit](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298) finds 1551 unique function NIDs with set digest `5f1668cc9c69e2950722a83151f31cf7aa94fb1552ab883e5067f43c94d63b16` and confirms all 328 proposed entries. The digest hashes sorted unique ASCII NIDs, each followed by LF. Named declarations are candidate spellings whose repository-computed NID exactly matches an observed function NID; the hashed table establishes neither plaintext spelling nor C ABI.
 
-The 35 formerly literal aliases are named by the [repository-pinned aerolib table](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). There are now 168 named declarations and 160 unresolved NID aliases; every one of the 328 entries remains a throwing placeholder.
+The 35 formerly literal aliases are named by the [repository-pinned aerolib table](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). There are now 167 named declarations and 160 unresolved NID aliases; every one of the 327 entries remains a throwing placeholder.
 
 The following eight candidate spellings are absent from that aerolib revision. Their name/NID pairs occur in the [public ps5rs identity database at commit `2304be5131221bae0dac24b9767cabffda33f747`](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv) and independently recompute to the function NIDs in the inspected table. This database supports candidate spelling only; it does not establish firmware membership, introduction version or ABI.
 

@@ -50,7 +50,7 @@ int APS5_VABI __sys_test_debug_rwmem_nid_postfix();
 int APS5_VABI __sys_workaround8849_nid_postfix();
 int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_postfix();
 int APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix();
-int APS5_VABI _dup2_nid_postfix();
+int APS5_VABI _dup2_nid_postfix(int from, int to);
 int APS5_VABI _execve_nid_postfix();
 int APS5_VABI _execvpe_nid_postfix();
 int APS5_VABI _wait4_nid_postfix();
