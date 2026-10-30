@@ -719,4 +719,24 @@ int APS5_VABI sceDebugWriteThreadRegister() {
     return 0;
 }
 
+int APS5_VABI sceDebugGetAmprCounterInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMdbgFinalizeForShellCore() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMdbgInitForShellCore() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMdbgReceiveEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMdbgSetResult() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

@@ -15,6 +15,10 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#include <algorithm>
+#include <cstdio>
+#include <atomic>
+#include <exception>
 #include <fcntl.h>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -100,6 +104,99 @@ static void CheckExclusiveCppOpen(const std::string& base) {
         const auto winners = static_cast<int>(created[0] != nullptr) + static_cast<int>(created[1] != nullptr);
         for (auto* opened : created) if (opened) Require(fclose_nid_postfix(opened) == 0);
         Require(winners == 1 && std::remove(path.c_str()) == 0);
+    }
+}
+
+static int APS5_VABI ScanShortCharacterList(FileStream* stream, const char* format, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+#else
+    std::va_list args;
+    va_start(args, format);
+#endif
+    const int result = vfscanf_s_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+#ifdef _WIN32
+    __builtin_sysv_va_end(args);
+#else
+    va_end(args);
+#endif
+    return result;
+}
+
+static void CheckShortCharacterScanLocking() {
+    constexpr std::size_t bytes = 1u << 20;
+    using Scanner = int (APS5_VABI*)(FileStream*, const char*, ...);
+    for (const Scanner scan : {fscanf_s_nid_postfix, ScanShortCharacterList}) {
+        auto* native = std::tmpfile();
+        Require(native != nullptr);
+        const std::vector<char> input(bytes, 'a');
+        Require(std::fwrite(input.data(), 1, input.size(), native) == input.size());
+        std::rewind(native);
+        FileStream stream(native);
+        std::vector<char> output(bytes + 1, 'Z');
+        int result = -1, consumed = -1;
+        std::exception_ptr failure;
+        std::atomic<bool> finished{false};
+        std::barrier start(2);
+        std::thread reader([&] {
+            start.arrive_and_wait();
+            try {
+                result = scan(&stream, "%1048576c%n", output.data(), output.size(), &consumed);
+            } catch (...) {
+                failure = std::current_exception();
+            }
+            finished.store(true);
+        });
+        start.arrive_and_wait();
+        bool releasedDuringField = false;
+        while (!finished.load()) {
+            if (ftrylockfile_nid_postfix(&stream) == 0) {
+                const auto position = ftell_nid_postfix(&stream);
+                releasedDuringField = releasedDuringField || (position > 0 && position < static_cast<long>(bytes));
+                funlockfile_nid_postfix(&stream);
+            }
+            std::this_thread::yield();
+        }
+        reader.join();
+        if (failure) std::rethrow_exception(failure);
+        Require(ftrylockfile_nid_postfix(&stream) == 0, "Short stream character scan retained its file lock after returning");
+        funlockfile_nid_postfix(&stream);
+        Require(std::fclose(native) == 0);
+        Require(!releasedDuringField, "Short stream character scan released its file lock during a field");
+        Require(result == 1 && consumed == static_cast<int>(bytes) && output.back() == 'Z');
+        Require(std::memcmp(output.data(), input.data(), bytes) == 0);
+    }
+}
+
+static void CheckShortCharacterScans() {
+    CheckShortCharacterScanLocking();
+    using Scanner = int (APS5_VABI*)(FileStream*, const char*, ...);
+    for (const Scanner scan : {fscanf_s_nid_postfix, ScanShortCharacterList}) {
+        for (const std::string input : {std::string(), std::string("a"), std::string("ab"), std::string("a\0b", 3), std::string("a b")}) {
+            for (const unsigned width : {1u, 2u, 8u}) {
+                const auto taken = std::min<std::size_t>(input.size(), width);
+                for (const bool suppress : {false, true}) {
+                    auto* native = std::tmpfile();
+                    Require(native != nullptr && std::fwrite(input.data(), 1, input.size(), native) == input.size());
+                    std::rewind(native);
+                    FileStream stream(native);
+                    std::array<char, 32> output;
+                    output.fill('Z');
+                    int consumed = -1;
+                    const std::string format = std::string("%") + (suppress ? "*" : "") + std::to_string(width) + "c%n";
+                    const int result = suppress ? scan(&stream, format.c_str(), &consumed) : scan(&stream, format.c_str(), output.data(), 32u, &consumed);
+                    Require(result == (taken == 0 ? EOF : (suppress ? 0 : 1)) && consumed == (taken == 0 ? -1 : static_cast<int>(taken)), "Short stream character scan result or consumption");
+                    const auto written = suppress ? 0 : taken;
+                    Require(std::memcmp(output.data(), input.data(), written) == 0);
+                    for (std::size_t i = written; i < output.size(); ++i) Require(output[i] == 'Z', "Short stream character scan destination guard");
+                    Require(ftell_nid_postfix(&stream) == static_cast<long>(taken));
+                    Require((feof_nid_postfix(&stream) != 0) == (input.size() < width));
+                    Require(ferror_nid_postfix(&stream) == 0);
+                    Require(std::fclose(native) == 0);
+                }
+            }
+        }
     }
 }
 
@@ -292,6 +389,7 @@ static void CheckZeroSizedTransfers(const std::string& base) {
 int main(int argc, char** argv) {
     Require(argc == 2);
     CheckExclusiveCppOpen(argv[1]);
+    CheckShortCharacterScans();
     CheckZeroSizedTransfers(argv[1]);
     CheckUpdateStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
