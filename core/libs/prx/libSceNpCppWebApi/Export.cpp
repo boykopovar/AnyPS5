@@ -2388,8 +2388,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERSB_(const void* self, void* response) {
     (void)self;
     (void)response;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return TransactionNotStarted;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(void* self) {
@@ -2403,8 +2402,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_1
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_(const void* self, void* response) {
     (void)self;
     (void)response;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return TransactionNotStarted;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_17TitleCloudStorage2V132GetMultiDataStatusesResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(void* self) {
@@ -4034,16 +4032,14 @@ int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresenceC1EPNS1_6Common
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V118GetFriendsResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return TransactionNotStarted;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V114PersonalDetailEED1Ev(IntrusivePtr* self) {
     ReleaseIntrusivePtr(self, 0x00, __func__);
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V118GetFriendsResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V118GetFriendsResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
     return 0;
 }
 
@@ -4235,8 +4231,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V125GetPublicProfilesResponse11g
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V124GetBlockingUsersResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V124GetBlockingUsersResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
     return 0;
 }
 
@@ -4250,8 +4245,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFr
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V124GetBlockingUsersResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return TransactionNotStarted;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetBlockingUsersResponseEEC1Ev(IntrusivePtr* self) {
@@ -4280,8 +4274,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRest
     CopyIntrusivePtr(self, source, 0x00);
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V125GetBasicPresencesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V125GetBasicPresencesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
     return 0;
 }
 
@@ -4304,16 +4297,14 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_12IntrusivePtrINS1_
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V125GetBasicPresencesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return TransactionNotStarted;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers8setlimitEi() {
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
-    NotImplemented_nid_no_patch(__func__);
+std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5getIdEv() {
     return 0;
 }
 
@@ -4335,8 +4326,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence15setOnlineStat
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5abortEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return TransactionNotStarted;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEEdeEv() {
