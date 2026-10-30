@@ -39,7 +39,7 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/c5c2b80f9df9b48496fbf773b2aa307a/7143affa622c9b33588346e8c08f3ff49b65e808#file-npcommon-callable-identities-768-json) records a 768-entry superset of the module, library, symbol type and NIDs for the declarations in [InventoryExports.cpp](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp); it is a metadata summary rather than independent verification. For the 420 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/c5c2b80f9df9b48496fbf773b2aa307a/7143affa622c9b33588346e8c08f3ff49b65e808#file-npcommon-catalogue-absent-420-json) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `516d3c70069d1cc3aeed837cf5907fdb6a5834c33b34d60e3f43e0d0356e6e7b`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp) - 744 declarations throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 744; 324 match the public 3.20 catalogue, while 420 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp) - 734 declarations throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 734; 316 match the public 3.20 catalogue, while 418 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -159,16 +159,6 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 | `_ZN3sce2np12StreamBufferD1Ev` | `KqAWYOx1tvs` |
 | `_ZN3sce2np12StreamBufferD2Ev` | `1PoGuVoyG3o` |
 | `_ZN3sce2np12StreamBufferixEi` | `jr0OcEeQJ8o` |
-| `_ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPNS0_9StreamCtxEPvmPm` | `2SKuIvr9sYU` |
-| `_ZN3sce2np12StreamReader7SkipAllEPNS0_6HandleEPNS0_9StreamCtxEPl` | `3LiihJpByZE` |
-| `_ZN3sce2np12StreamReader7SkipAllEPNS0_6HandleEPl` | `PaTX0Vdfzc4` |
-| `_ZN3sce2np12StreamReader8ReadDataEPNS0_6HandleEPNS0_9StreamCtxEPvmPm` | `z8qO7hql4Fs` |
-| `_ZN3sce2np12StreamReader8ReadDataEPNS0_6HandleEPvmPm` | `oNqSobbGC80` |
-| `_ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleEPNS0_9StreamCtxElPl` | `fJB07vDf7no` |
-| `_ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEPNS0_9StreamCtxEcl` | `SP2010+gtqw` |
-| `_ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEcl` | `etMUeqIhN+w` |
-| `_ZN3sce2np12StreamWriter5WriteEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm` | `Z1MRG-L+V0o` |
-| `_ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm` | `u9s1aUWSZB0` |
 | `_ZN3sce2np12WorkerThread10ThreadMainEv` | `gimH2zdBANg` |
 | `_ZN3sce2np12WorkerThreadC1EPNS0_9WorkQueueE` | `YKz2oBW3ZkM` |
 | `_ZN3sce2np12WorkerThreadC2EPNS0_9WorkQueueE` | `L9Ty-fG1IM4` |
