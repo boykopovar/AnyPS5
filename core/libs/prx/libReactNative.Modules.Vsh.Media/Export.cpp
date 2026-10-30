@@ -103,7 +103,7 @@ int APS5_VABI RemoveMediaSource() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI Seek() {
+int APS5_VABI Seek_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

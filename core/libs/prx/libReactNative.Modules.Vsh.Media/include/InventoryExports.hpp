@@ -29,7 +29,7 @@ int APS5_VABI MASSValueSizeMax();
 int APS5_VABI PlayUri();
 int APS5_VABI PlaybackCommand();
 int APS5_VABI RemoveMediaSource();
-int APS5_VABI Seek();
+int APS5_VABI Seek_nid_postfix();
 int APS5_VABI ServiceSupported();
 int APS5_VABI SetCurrentSrcId();
 int APS5_VABI SetCurrentTime();
