@@ -352,6 +352,14 @@ int Disconnect(const Socket& socket) {
     sockaddr_storage unspecified{};
     unspecified.ss_family = local.ss_family;
     if (::connect(socket.value, reinterpret_cast<sockaddr*>(&unspecified), localSize) != 0) return Fail(NativeError());
+#elif defined(__APPLE__)
+    sockaddr unspecified{};
+    unspecified.sa_family = AF_UNSPEC;
+    if (::connect(socket.value, &unspecified, sizeof(unspecified)) != 0) {
+        const int error = NativeError();
+        peerSize = sizeof(peer);
+        if (::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &peerSize) == 0 || errno != ENOTCONN) return Fail(error);
+    }
 #else
     sockaddr unspecified{};
     unspecified.sa_family = AF_UNSPEC;
@@ -1158,18 +1166,21 @@ int APS5_VABI fcntl_nid_postfix(int descriptor, int command, ...) {
         return 0;
     }
     if (command == 3) return 2 | (socket->options.nonblocking ? 4 : 0); // F_GETFL, O_RDWR
-    if (command != 4) return Fail(22);
-    const int flags = static_cast<int>(argument);
-    if ((flags & ~7) != 0) return Fail(45);
+    if (command == 4) {
+        const int flags = static_cast<int>(argument);
+        if ((flags & ~7) != 0) return Fail(45);
 #ifdef _WIN32
-    unsigned long enabled = (flags & 4) != 0;
-    if (ioctlsocket(socket->value, FIONBIO, &enabled)) return Fail(NativeError());
+        unsigned long enabled = (flags & 4) != 0;
+        if (ioctlsocket(socket->value, FIONBIO, &enabled)) return Fail(NativeError());
 #else
-    int enabled = (flags & 4) != 0;
-    if (::ioctl(socket->value, FIONBIO, &enabled)) return Fail(NativeError());
+        int enabled = (flags & 4) != 0;
+        if (::ioctl(socket->value, FIONBIO, &enabled)) return Fail(NativeError());
 #endif
-    socket->options.nonblocking = enabled != 0;
-    return 0;
+        socket->options.nonblocking = enabled != 0;
+        return 0;
+    }
+    if ((command >= 7 && command <= 9) || (command >= 11 && command <= 13) || command == 15 || command == 16) return Fail(9);
+    return Fail(22);
 }
 int APS5_VABI _fcntl_nid_postfix(int descriptor, int command, ...) {
 #ifdef _WIN32
@@ -1860,7 +1871,7 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
         if (const int error = SendIovecs(*socket, headers->trailers, headers->trailerCount, sent)) return finish(error);
     return finish(0);
 }
-int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
+static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
     if (timeout < -1) return Fail(22);
     if (count && !descriptors) return Fail(14);
     std::vector<std::shared_ptr<void>> held;
@@ -2041,6 +2052,17 @@ int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t c
             return ready;
         }
     }
+}
+
+int APS5_VABI poll_nid_postfix(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
+    if (timeout < -1) return Fail(22);
+    if (count && !descriptors) return Fail(14);
+    std::vector<GuestPollDescriptor> local(count);
+    const auto bytes = local.size() * sizeof(GuestPollDescriptor);
+    if (count && !GuestCopyIn_nid_no_patch(local.data(), descriptors, bytes)) return Fail(14);
+    const int result = PollDescriptors(local.data(), count, timeout);
+    if (result >= 0 && count && !GuestCopyOut_nid_no_patch(descriptors, local.data(), bytes)) return Fail(14);
+    return result;
 }
 }
 

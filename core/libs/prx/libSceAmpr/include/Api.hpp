@@ -30,6 +30,9 @@ int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterOnCompletion(Apr::Comma
 int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterPairOnCompletion(Apr::CommandBufferObject* buffer, volatile std::uint64_t* address, std::uint8_t counter);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressOnCompletion();
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteCounterOnCompletion();
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromTimeCounterOnCompletion(volatile std::uint64_t* address);
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromCounterOnCompletion(volatile std::uint64_t* address, std::uint8_t counter);
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion(volatile std::uint64_t* address, std::uint8_t counter);
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWaitOnAddress();
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWaitOnCounter();
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompletion();

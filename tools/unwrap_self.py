@@ -34,6 +34,7 @@ usage: unwrap_self.py <input.self> <output.elf> [--verbose]
 import argparse
 import io
 import math
+import os
 import secrets
 import struct
 import sys
@@ -264,8 +265,12 @@ def check_decrypted(data, headers):
 
 
 def unwrap(path, output, verbose=False):
-    source, destination = Path(path), Path(output).resolve()
-    if source.resolve() == destination or (destination.exists() and source.samefile(destination)):
+    source, destination = Path(path), Path(os.path.realpath(output))
+    try:
+        aliased = source.samefile(destination)
+    except FileNotFoundError:
+        aliased = False
+    if os.path.realpath(source) == str(destination) or aliased:
         raise Refused("output aliases the input container")
     data = bytes(source.read_bytes())
     if len(data) < FIRST_REGION:
