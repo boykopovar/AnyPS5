@@ -9,6 +9,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <string>
 
 namespace {
 
@@ -35,6 +36,34 @@ void CheckStod(const char* text, std::int64_t pten, double expected, long consum
     const double value = _Stod_nid_postfix(text, &end, pten);
     const bool same = std::isnan(expected) ? std::isnan(value) : value == expected && std::signbit(value) == std::signbit(expected);
     Require(same && end - text == consumed && *__error_nid_postfix() == error, message);
+}
+
+template<typename TFloat>
+void CheckHexRange(TFloat (APS5_VABI *parse)(const char*, char**, std::int64_t, int*), TFloat (APS5_VABI *simple)(const char*, char**, std::int64_t), const char* overflow, const char* underflow) {
+    for (const bool negative : {false, true}) for (const bool overflows : {false, true}) for (const int saved : {7, RangeError}) {
+        const std::string text = std::string(negative ? " \t-" : "+") + (overflows ? overflow : underflow) + "tail";
+        const auto matches = [&](TFloat value) {
+            return (overflows ? std::isinf(value) : value == 0) && std::signbit(value) == negative;
+        };
+        char* end = nullptr;
+        int error = 123;
+        *__error_nid_postfix() = saved;
+        const auto value = parse(text.c_str(), &end, 0, &error);
+        Require(matches(value) && end == text.c_str() + text.size() - 4 && error == 0 && *__error_nid_postfix() == saved, "unscaled hexadecimal range result preserves errno and clears error");
+        end = nullptr;
+        *__error_nid_postfix() = saved;
+        const auto plain = simple(text.c_str(), &end, 0);
+        Require(matches(plain) && end == text.c_str() + text.size() - 4 && *__error_nid_postfix() == saved, "unscaled hexadecimal range wrapper preserves errno");
+    }
+}
+
+void TestHexRange() {
+    std::fenv_t saved;
+    Require(std::fegetenv(&saved) == 0 && std::fesetround(FE_TONEAREST) == 0, "save hexadecimal range test environment");
+    CheckHexRange(_Stofx_nid_postfix, _Stof_nid_postfix, "0X1p128", "0X1p-150");
+    CheckHexRange(_Stodx_nid_postfix, _Stod_nid_postfix, "0x1p1024", "0x1p-1075");
+    CheckHexRange(_Stoldx_nid_postfix, _Stold_nid_postfix, "0x1p16384", "0x1p-16446");
+    Require(std::fesetenv(&saved) == 0, "restore hexadecimal range test environment");
 }
 
 void CheckExp(double x, double y, short offset, double expected, short expectedKind, int expectedErrno, int expectedFlags, const char* message) {
@@ -530,6 +559,7 @@ void TestLongLogAt53Bits() {
 
 int main() {
     TestStod();
+    TestHexRange();
     TestStoll();
     TestDoubleHelpers();
     TestFloatingRounds();

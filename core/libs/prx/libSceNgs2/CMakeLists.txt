@@ -1,5 +1,6 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/../libSceNgs2.native/Ngs2Library.cmake)
 add_sce_ngs2_library(libSceNgs2)
+target_compile_definitions(libSceNgs2 PRIVATE APS5_NGS2_PS4_LIBRARY)
 target_sources(libSceNgs2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/PendingExports.cpp)
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/PendingExports.cpp PROPERTIES COMPILE_OPTIONS -fvisibility=default)
 
@@ -38,4 +39,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNgs2>")
     endif()
     add_sce_ngs2_test(libSceNgs2 ngs2_core_pcm Ngs2Pcm.cpp)
+    add_sce_ngs2_test(libSceNgs2 ngs2_core_ps4_voice_state Ngs2Ps4VoiceState.cpp)
 endif()

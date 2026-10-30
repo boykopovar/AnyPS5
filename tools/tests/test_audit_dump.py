@@ -400,6 +400,31 @@ class AuditDumpTests(unittest.TestCase):
         self.assertIn("bad input", errors)
         audit.assert_not_called()
 
+    def test_relinker_launch_errors_return_2_without_auditing(self):
+        for error in (PermissionError(13, "Permission denied", str(self.relinker)),
+                      FileNotFoundError(2, "No such file or directory", str(self.relinker))):
+            with self.subTest(error=type(error).__name__):
+                with mock.patch.object(subprocess, "run", side_effect=error), mock.patch.object(audit_dump.import_audit, "main") as audit:
+                    code, errors = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs")
+                self.assertEqual(code, 2)
+                self.assertIn("cannot run relinker", errors)
+                self.assertIn(str(self.relinker.resolve()), errors)
+                self.assertIn(error.strerror, errors)
+                audit.assert_not_called()
+                self.assertEqual((self.dump / "eboot.bin").read_bytes(), SELF)
+
+    def test_an_invalid_relinker_executable_is_reported_without_a_traceback(self):
+        (self.dump / "eboot.bin").write_bytes(ELF)
+        result = subprocess.run([sys.executable, audit_dump.__file__, str(self.dump),
+                                 "--relinker", str(self.relinker), "--libs", str(self.root / "missing-libs")],
+                                capture_output=True, text=True, encoding="utf-8",
+                                env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("cannot run relinker", result.stderr)
+        self.assertIn(str(self.relinker.resolve()), result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual((self.dump / "eboot.bin").read_bytes(), ELF)
+
     def test_a_dump_without_eboot_or_a_missing_relinker_is_an_argument_error(self):
         (self.dump / "eboot.bin").unlink()
         with self.assertRaises(SystemExit):

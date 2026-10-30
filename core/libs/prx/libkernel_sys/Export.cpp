@@ -446,8 +446,9 @@ int APS5_VABI sceKernelIsPs4Process(void) {
 int APS5_VABI get_authinfo_nid_postfix(int pid, KernelAuthInfo* info) {
     if (info == nullptr) return static_cast<int>(Fail(GuestEperm));
     if (pid != 0 && pid != getpid_nid_postfix()) return static_cast<int>(Fail(GuestEsrch));
-    *info = {};
-    info->capabilities[0] = 0x2000000000000000;
+    KernelAuthInfo local{};
+    local.capabilities[0] = 0x2000000000000000;
+    if (!GuestCopyOut_nid_no_patch(info, &local, sizeof(local))) return static_cast<int>(Fail(GuestEfault));
     return 0;
 }
 

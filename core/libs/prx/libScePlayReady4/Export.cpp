@@ -181,4 +181,25 @@ int APS5_VABI scePlayReadyProfileStop() {
     return 0;
 }
 
+
+int APS5_VABI scePlayReadyCdmiProcessLicenseAckResponse() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePlayReadyCdmiGetSessionId2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePlayReadyCdmiGenerateLicenseAckRequest() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePlayReadyCdmiGenerateRequest2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePlayReadyDomainJoinProcessResponse2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

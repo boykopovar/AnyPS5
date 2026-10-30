@@ -80,12 +80,16 @@ def read_log(lines):
     for line in lines:
         text = line.rstrip("\r\n")
         if text.startswith("[ab] in-run A/B:"):
+            if config is not None or phases:
+                raise ValueError("multiple A/B runs in one log; split the captures before comparing phases")
             config = text
             continue
         match = PHASE.match(text)
         if match:
             kind, index, event, present, seconds = match.group(1), int(match.group(2)), match.group(3), int(match.group(4)), finite(float(match.group(5)))
             if event == "begins":
+                if phases and index <= phases[-1]["index"]:
+                    raise ValueError("phase index restarts in one log (multiple A/B runs); split the captures before comparing phases")
                 if current is not None:
                     current["end"] = (present, seconds)
                 current = {"kind": kind, "index": index, "begin": (present, seconds), "settled": None, "end": None,

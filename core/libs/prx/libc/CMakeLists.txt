@@ -86,6 +86,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StandardStreams.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StreamPurge.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestAllocations.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/MemoryResource.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestArena.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestStacks.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestWriteWatch.cpp
@@ -235,6 +236,22 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        enable_language(ASM)
+        add_test_executable(guest_memory_resource_tests
+            ${LIBS_INCLUDE_DIR}/tests/GuestMemoryResource.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Exceptions.S)
+        target_include_directories(guest_memory_resource_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_memory_resource_tests PRIVATE libc)
+        configure_windows_unwind(guest_memory_resource_tests)
+        add_test(NAME guest_memory_resource COMMAND guest_memory_resource_tests)
+        set_tests_properties(guest_memory_resource PROPERTIES TIMEOUT 10)
+        if(WIN32)
+            set_tests_properties(guest_memory_resource PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
+
     add_test_executable(guest_index_tests ${LIBS_INCLUDE_DIR}/tests/GuestIndex.cpp)
     target_include_directories(guest_index_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_index_tests PRIVATE libc ${CMAKE_DL_LIBS})
@@ -247,7 +264,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_allocating_strings_tests ${LIBS_INCLUDE_DIR}/tests/GuestAllocatingStrings.cpp)
     target_include_directories(guest_allocating_strings_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_allocating_strings_tests PRIVATE libc)
+    target_link_libraries(guest_allocating_strings_tests PRIVATE libc libkernel)
     configure_windows_unwind(guest_allocating_strings_tests)
     add_test(NAME guest_allocating_strings COMMAND guest_allocating_strings_tests)
     if(WIN32)

@@ -2667,6 +2667,7 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
         retireStoringStale(*found);
         return nullptr;
     }
+    if (sampled && !stencil && mirrorable(base)) found->SyncFromMemory(mirrorResource(base));
     found->ApplyFastClear();
     if (sampled) return found->Sampled(words, resource, components, found == drawnDepth);
     Require(found->hostFormat == base.format, "sampling several slices or an integer view of a depth plane that the device stores in another depth format is not implemented");

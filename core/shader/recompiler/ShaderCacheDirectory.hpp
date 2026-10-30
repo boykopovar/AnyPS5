@@ -37,7 +37,7 @@ std::filesystem::path ShaderCacheDirectory();
 inline std::filesystem::path NativeCachePath_nid_no_patch(const std::filesystem::path& path, std::error_code& error) {
     auto native = path;
     native.make_preferred();
-    if (native.native().starts_with(L"\\\\?\\") || native.native().starts_with(L"\\\\.\\")) return native;
+    if (native.native().starts_with(L"\\\\?\\")) return native;
     const auto capacity = GetFullPathNameW(native.c_str(), 0, nullptr, nullptr);
     if (capacity == 0) { error = std::error_code(GetLastError(), std::system_category()); return {}; }
     std::wstring absolute(capacity, L'\0');
@@ -47,6 +47,10 @@ inline std::filesystem::path NativeCachePath_nid_no_patch(const std::filesystem:
         return {};
     }
     absolute.resize(size);
+    if (absolute.starts_with(L"\\\\.\\")) {
+        if (absolute.size() >= 6 && absolute[5] == L':') return std::filesystem::path(L"\\\\?\\" + absolute.substr(4));
+        return std::filesystem::path(absolute);
+    }
     if (absolute.starts_with(L"\\\\")) return std::filesystem::path(L"\\\\?\\UNC\\" + absolute.substr(2));
     return std::filesystem::path(L"\\\\?\\" + absolute);
 }

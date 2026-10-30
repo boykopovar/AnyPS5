@@ -472,6 +472,37 @@ void testToggleRequests() {
     check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F12, false), now).screenshot, "releasing F12 asks for nothing");
 }
 
+void testShowPadStatus() {
+    const auto now = Pad::KeyboardMouse::Clock::now();
+    Pad::KeyboardMouse keyboardMouse(defaults());
+    const auto pressed = keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F9, true), now);
+    check(pressed.showPadStatus, "F9 asks to show the pad status");
+    check(!pressed.toggleFullscreen && !pressed.togglePerformanceOverlay && !pressed.screenshot && !pressed.toggleMouse, "F9 asks for more than the pad status");
+    check(keyboardMouse.Compose(PadInputState{}).buttons == 0, "F9 presses a pad button");
+    auto repeated = KeyEvent(SDL_SCANCODE_F9, true);
+    repeated.key.repeat = 1;
+    check(!keyboardMouse.HandleEvent(repeated, now).showPadStatus, "a repeated F9 asks again");
+    check(!keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F9, false), now).showPadStatus, "releasing F9 asks for the pad status");
+    check(keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F9, true), now).showPadStatus, "pressing F9 again does not ask again");
+    keyboardMouse.HandleEvent(KeyEvent(SDL_SCANCODE_F9, false), now);
+    for (const auto key : {SDL_SCANCODE_F10, SDL_SCANCODE_F11, SDL_SCANCODE_F12, SDL_SCANCODE_F7, SDL_SCANCODE_F8, SDL_SCANCODE_F6, SDL_SCANCODE_F5}) {
+        check(!keyboardMouse.HandleEvent(KeyEvent(key, true), now).showPadStatus, "another function key asks for the pad status");
+        keyboardMouse.HandleEvent(KeyEvent(key, false), now);
+    }
+    check(!keyboardMouse.HandleEvent(PadSimulation::ButtonEvent(SDL_BUTTON_MIDDLE, true), now).showPadStatus, "a mouse button asks for the pad status");
+    auto moved = defaults();
+    std::erase_if(moved.bindings, [](const Pad::InputBinding& binding) { return binding.control == Pad::InputControl::ShowPadStatus; });
+    moved.bindings.push_back({SDL_SCANCODE_F4, Pad::MouseButton::None, Pad::InputControl::ShowPadStatus});
+    Pad::KeyboardMouse rebound(moved);
+    check(!rebound.HandleEvent(KeyEvent(SDL_SCANCODE_F9, true), now).showPadStatus, "the old key still asks after a rebind");
+    check(rebound.HandleEvent(KeyEvent(SDL_SCANCODE_F4, true), now).showPadStatus, "the new key does not ask after a rebind");
+    auto shared = defaults();
+    shared.bindings.push_back({SDL_SCANCODE_F10, Pad::MouseButton::None, Pad::InputControl::ShowPadStatus});
+    Pad::KeyboardMouse conflicting(shared);
+    const auto both = conflicting.HandleEvent(KeyEvent(SDL_SCANCODE_F10, true), now);
+    check(both.showPadStatus && both.togglePerformanceOverlay, "a key shared with the overlay does not do both");
+}
+
 void testDefaultL2() {
     const auto l2 = static_cast<std::uint32_t>(Pad::PadButton::L2);
     const auto r2 = static_cast<std::uint32_t>(Pad::PadButton::R2);
@@ -559,6 +590,7 @@ int main() {
             {"focus loss releases the mouse", testFocusLossReleasesMouse},
             {"shake", testShake},
             {"toggle requests", testToggleRequests},
+            {"show pad status", testShowPadStatus},
             {"default L2", testDefaultL2},
             {"title reads the mouse", testTitleReadsMouse},
         };

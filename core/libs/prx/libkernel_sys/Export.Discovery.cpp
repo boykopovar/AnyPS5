@@ -1023,9 +1023,8 @@ int APS5_VABI sceKernelGetUniversalMode(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetUpdVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelGetUpdVersion(std::uint32_t* version) {
+    return sysKernelGetUpdVersion_nid_postfix(version);
 }
 
 int APS5_VABI sceKernelGetUtokenDataExecutionForRcmgr(void) {

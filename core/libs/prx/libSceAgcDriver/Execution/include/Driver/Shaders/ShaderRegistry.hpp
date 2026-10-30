@@ -224,6 +224,7 @@ void SubmitRegistrationPreparation(std::function<void()> task, const PreparedSha
 void PrioritizeRegistrationPreparation(PreparedShaders& prepared);
 void AwaitRegistrationPreparation();
 void SubmitLibraryPrebuild(std::function<void()> task);
+void SubmitComputePrebuild(std::function<void()> task);
 void AwaitLibraryPrebuilds();
 void CloseRegistrationPreparation();
 unsigned RegistrationPreparationThreads();
