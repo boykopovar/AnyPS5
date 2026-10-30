@@ -1,0 +1,70 @@
+# libpng16 technical debt
+
+### Callable exports
+
+- [Callable exports](../../../core/libs/prx/libpng16/Export.cpp) - 62 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libpng16.c) and the [selected export metadata](https://gist.github.com/kyon-eth/8ae846265340fb0a1076550d295b72c2/5e39bf8cde7fdaa2013824cbf39a1e5cc9461bb3) from an older `libpng16` image and a later `libSceVshPng` image (SHA-256 `c13b4dd457fed2a469118f148c842061c383addec7ed8c54d08e07f21f5fbb0b`). The later image has a different module and library identity; matching NIDs do not establish forwarding or equivalent behavior. The version labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+
+| Name | NID |
+| --- | --- |
+| `png_create_info_struct` | `Ce9OAueql30` |
+| `png_create_read_struct` | `pgrAmiR9KXc` |
+| `png_create_write_struct` | `d0FY5xvaA28` |
+| `png_destroy_read_struct` | `WqDYv9bWc1E` |
+| `png_destroy_write_struct` | `bF8-X1KRT+s` |
+| `png_error` | `3esC3xhwwac` |
+| `png_get_IHDR` | `joDkiMqALkM` |
+| `png_get_PLTE` | `MIwCdFQOMJM` |
+| `png_get_bit_depth` | `1FDLh7g440s` |
+| `png_get_channels` | `8VoOXhaFbp8` |
+| `png_get_color_type` | `THO0RsxD6hY` |
+| `png_get_error_ptr` | `ntw5MF+O8pg` |
+| `png_get_gAMA` | `AWHt8gDYjEU` |
+| `png_get_iCCP` | `nWwBEkoMtCE` |
+| `png_get_image_height` | `5BlrhmRn+ww` |
+| `png_get_image_width` | `zFwPB6djiUE` |
+| `png_get_interlace_type` | `0ztgt9yYb1s` |
+| `png_get_io_ptr` | `zo2La0t9A5E` |
+| `png_get_progressive_ptr` | `FTvuO6kEYc8` |
+| `png_get_tRNS` | `amUx1Imsa9E` |
+| `png_get_user_chunk_ptr` | `bxAfmsH5wS4` |
+| `png_get_valid` | `5ux94o4IbC0` |
+| `png_init_io` | `tZdMwygCW2w` |
+| `png_process_data` | `eIphLYOgAWM` |
+| `png_process_data_pause` | `dQJAe3CGHPo` |
+| `png_progressive_combine_row` | `yZ4EJ0rUh9c` |
+| `png_read_end` | `n+JGk7gk9gs` |
+| `png_read_image` | `b3DGdzmYGzE` |
+| `png_read_info` | `UcyA+RDgXHg` |
+| `png_read_row` | `0wc3eo2S-RE` |
+| `png_read_update_info` | `S+plqe4pVgs` |
+| `png_save_uint_16` | `V5ojK9mvCJI` |
+| `png_save_uint_32` | `N7gzoBpy+vc` |
+| `png_set_IHDR` | `6-KDz3WqEAc` |
+| `png_set_bKGD` | `4B9olYHnHnQ` |
+| `png_set_chunk_malloc_max` | `yI6EdumLZDY` |
+| `png_set_crc_action` | `W0yjXro3i4E` |
+| `png_set_expand` | `-4KVgXHGMdw` |
+| `png_set_expand_gray_1_2_4_to_8` | `3uKk4puCQoQ` |
+| `png_set_filler` | `JmOLVFL6pEY` |
+| `png_set_filter` | `4BuSoL+GHSE` |
+| `png_set_gAMA` | `k6eJxKaYRro` |
+| `png_set_gamma` | `7RUwcMgn2J4` |
+| `png_set_gray_to_rgb` | `68d4tUskfS0` |
+| `png_set_interlace_handling` | `SSI2xRfgKJo` |
+| `png_set_keep_unknown_chunks` | `a+Ns-FwjHwM` |
+| `png_set_longjmp_fn` | `0rfZ5SbLBN4` |
+| `png_set_packing` | `-9BHlFnLjVg` |
+| `png_set_packswap` | `SexflgihwlY` |
+| `png_set_palette_to_rgb` | `PosyHI1Qm2A` |
+| `png_set_progressive_read_fn` | `r3SJxnlaTlg` |
+| `png_set_read_fn` | `CxxHgMg2FS0` |
+| `png_set_read_user_chunk_fn` | `j-zFZRfydsU` |
+| `png_set_read_user_transform_fn` | `H8-HSuGeyy0` |
+| `png_set_strip_16` | `RnOtQ1-DQSs` |
+| `png_set_swap` | `0YEXGwJHdY4` |
+| `png_set_tRNS_to_alpha` | `NYQSe+APp8U` |
+| `png_set_write_fn` | `djm5QUVG74A` |
+| `png_set_write_user_transform_fn` | `2MwwGOkHrvA` |
+| `png_write_end` | `0teUd1yBOKg` |
+| `png_write_image` | `nleYBZY-BsY` |
+| `png_write_info` | `Bdn6SlO1+NQ` |
