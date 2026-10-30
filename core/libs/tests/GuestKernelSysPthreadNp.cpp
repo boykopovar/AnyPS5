@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
 #include <exception>
@@ -21,6 +22,8 @@ constexpr int KIND_RECURSIVE = 2;
 constexpr int KIND_NORMAL = 3;
 constexpr int KIND_ADAPTIVE = 4;
 
+using MutexInit = int (APS5_VABI*)(PthreadMutex*, const PthreadMutexattr*);
+
 int failures = 0;
 
 template<typename TCall>
@@ -39,9 +42,9 @@ bool HasKind(const PthreadMutexattr* attr, int kind) {
     return pthread_mutexattr_gettype_nid_postfix(attr, &type) == 0 && type == kind;
 }
 
-bool LocksTwice(const PthreadMutexattr* attr, int secondLock) {
+bool LocksTwice(const PthreadMutexattr* attr, int secondLock, MutexInit init = pthread_mutex_init_nid_postfix) {
     PthreadMutex mutex = nullptr;
-    if (pthread_mutex_init_nid_postfix(&mutex, attr) != 0) return false;
+    if (init(&mutex, attr) != 0 || mutex == nullptr) return false;
     const bool locked = pthread_mutex_lock_nid_postfix(&mutex) == 0 && pthread_mutex_lock_nid_postfix(&mutex) == secondLock;
     if (secondLock == 0) pthread_mutex_unlock_nid_postfix(&mutex);
     return locked && pthread_mutex_unlock_nid_postfix(&mutex) == 0 && pthread_mutex_destroy_nid_postfix(&mutex) == 0;
@@ -82,6 +85,21 @@ void TestKind() {
         }
         if (pthread_mutexattr_destroy_nid_postfix(&attr) != 0) return false;
         return scePthreadMutexattrGetkind(nullptr) == SCE_FAILED_CALL;
+    });
+    Case("scePthreadMutexattrInitForInternalLibc", [] {
+        PthreadMutexattr attr = nullptr;
+        if (scePthreadMutexattrInitForInternalLibc(&attr) != 0 || !HasKind(&attr, KIND_ERRORCHECK)) return false;
+        if (!LocksTwice(&attr, GUEST_EDEADLK, scePthreadMutexInitForInternalLibc)) return false;
+        return pthread_mutexattr_destroy_nid_postfix(&attr) == 0;
+    });
+    Case("scePthreadMutexInitForInternalLibc", [] {
+        PthreadMutexattr attr = nullptr;
+        if (!LocksTwice(nullptr, GUEST_EDEADLK, scePthreadMutexInitForInternalLibc) || !LocksTwice(&attr, GUEST_EDEADLK, scePthreadMutexInitForInternalLibc)) return false;
+        if (pthread_mutexattr_init_nid_postfix(&attr) != 0) return false;
+        if (scePthreadMutexattrSetkind(&attr, KIND_RECURSIVE) != 0 || !LocksTwice(&attr, 0, scePthreadMutexInitForInternalLibc)) return false;
+        PthreadMutex mutex = nullptr;
+        if (scePthreadMutexattrSetkind(&attr, 5) != 0 || scePthreadMutexInitForInternalLibc(&mutex, &attr) != SCE_KERNEL_ERROR_EINVAL || mutex != nullptr) return false;
+        return pthread_mutexattr_destroy_nid_postfix(&attr) == 0;
     });
 }
 

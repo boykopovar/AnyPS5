@@ -14,12 +14,10 @@
 
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_OK = 0;
 static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT = -2141900542;
+static constexpr int SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_EVENT = -2141900522;
 
 static constexpr int NP_UNIVERSAL_DATA_SYSTEM_CONTEXT_DEFAULT = 1;
 static constexpr int NP_UNIVERSAL_DATA_SYSTEM_HANDLE_DEFAULT  = 1;
-
-static constexpr const char* NP_UNIVERSAL_DATA_SYSTEM_EMPTY_JSON = "{}";
-static constexpr size_t NP_UNIVERSAL_DATA_SYSTEM_EMPTY_EVENT_SIZE = 3;
 
 namespace Uds {
 

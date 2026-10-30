@@ -14,6 +14,7 @@ import zipfile
 from package_release import WEB_FILES
 
 ROOT = Path(__file__).resolve().parent.parent
+REQUIRED_WEB_FILES = ("index.html", "app.mjs", "worker.mjs", "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 MAX_EXPANDED_BYTES = 512 * 1024 * 1024
 
 
@@ -68,10 +69,17 @@ def library_assets(release):
     return assets
 
 
+def load_release(response):
+    try:
+        return json.load(response)
+    except RecursionError as error:
+        raise ValueError(f"Invalid release metadata: {error}") from error
+
+
 def publish_libraries(output, release=None):
     if release is None:
         with request("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest") as response:
-            release = json.load(response)
+            release = load_release(response)
     release = release_metadata(release)
     tag = release["tag_name"]
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", tag):
@@ -104,6 +112,10 @@ def publish_libraries(output, release=None):
                     raise ValueError("Invalid library archive")
                 if any(file.flag_bits & 1 for file in files):
                     raise ValueError(f"Encrypted release archive {asset['name']} is not supported")
+                if any(file.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for file in files):
+                    raise ValueError("Library ZIP archive compression must be Store or Deflate")
+                if any((file.external_attr >> 16) & 0o170000 not in (0, 0o100000, 0o040000) for file in files):
+                    raise ValueError("Library ZIP links and special files are not supported")
                 names = {}
                 for file in files:
                     if (file.orig_filename != file.filename or not file.filename.startswith("libs/")
@@ -136,7 +148,7 @@ def publish_libraries(output, release=None):
 
 def publish_release(output):
     with request("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest") as response:
-        release = json.load(response)
+        release = load_release(response)
     release = release_metadata(release)
     tag = release["tag_name"]
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", tag) or tag.endswith("."):
@@ -165,14 +177,16 @@ def publish_release(output):
         staging.mkdir()
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             files = archive.infolist()
-            expected = {*WEB_FILES, "web-release.json"}
-            if len(files) != len(expected) or {file.filename for file in files} != expected:
+            names = [file.filename for file in files]
+            allowed = {*WEB_FILES, "web-release.json"}
+            if len(set(names)) != len(names) or not allowed.issuperset(names) \
+                    or not {*REQUIRED_WEB_FILES, "web-release.json"}.issubset(names):
                 raise ValueError("Invalid web release archive layout")
             if any(file.flag_bits & 1 for file in files):
                 raise ValueError(f"Encrypted release archive {asset['name']} is not supported")
             if any(file.file_size == 0 for file in files) or sum(file.file_size for file in files) > 128 * 1024 * 1024:
                 raise ValueError("Invalid expanded web release archive size")
-            metadata = json.loads(archive.read("web-release.json"))
+            metadata = load_release(archive.open("web-release.json"))
             if (not isinstance(metadata, dict) or metadata.get("tag") != tag
                     or not isinstance(metadata.get("revision"), str)
                     or not re.fullmatch(r"[0-9a-f]{40}", metadata["revision"])):
@@ -224,6 +238,8 @@ def main(argv=None):
         for name in ("relinker_wasm.mjs", "relinker_wasm.wasm"):
             if not (output / "native" / name).is_file():
                 parser.error(f"Build relinker_wasm first: missing {name}")
+            if (output / "native" / name).stat().st_size == 0:
+                parser.error(f"Build relinker_wasm first: empty {name}")
         copy_sources(output)
         print(output)
         return 0

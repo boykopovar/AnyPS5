@@ -2027,6 +2027,19 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("padded.prx"), image),
                          ({"alpha": False}, set(), {"libc.prx"}))
 
+    def test_sectionless_dynamic_segment_size_is_bounded_by_dt_null_not_by_16(self):
+        original = build_sectionless_elf([("alpha", 0, GLOBAL_FUNCTION)], ["libc.prx"])
+        _, size_field = elf_dynamic_range_fields(original)
+        size = struct.unpack_from("<Q", original, size_field)[0]
+        extended = bytearray(original + bytes(8))
+        struct.pack_into("<QQ", extended, size_field, size + 8, size + 8)
+        self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("extended.prx"), extended),
+                         ({"alpha": False}, set(), {"libc.prx"}))
+        cut = bytearray(original)
+        struct.pack_into("<QQ", cut, size_field, size - 8, size - 8)
+        with self.assertRaisesRegex(import_audit.AuditError, "not terminated by DT_NULL"):
+            import_audit.elf_program_dynamic_symbols(Path("cut.prx"), cut)
+
     def test_module_dependencies_stop_at_dynamic_terminator(self):
         work = self.work
         (work.libs / "libc.prx").write_bytes(exporting())
@@ -2548,6 +2561,23 @@ class ImportAuditTests(unittest.TestCase):
                      + STUB_SOURCE.format(name="sceUnreferencedPending"))
         self.assertEqual(self.work.run(registry, "--strict-stubs")[0], 0)
 
+    def test_conditional_stubs_reads_utf8_source_with_explicit_encoding(self):
+        original_read_text = Path.read_text
+        recorded_calls = []
+
+        def recording_read_text(path_self, *args, **kwargs):
+            recorded_calls.append((path_self, kwargs))
+            return original_read_text(path_self, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            lib_dir = Path(directory)
+            cpp_file = lib_dir / "Export.cpp"
+            cpp_file.write_bytes(f"// Non-ASCII \u2014 em-dash\n{DONE_SOURCE.format(name='sceCustomStub')}".encode("utf-8"))
+            with patch.object(Path, "read_text", side_effect=recording_read_text, autospec=True):
+                stubs = import_audit.conditional_stubs(lib_dir)
+            self.assertEqual(stubs, {"sceCustomStub"})
+            self.assertTrue(recorded_calls)
+            self.assertEqual(recorded_calls[0][1].get("encoding"), "utf-8")
 
 
 class StrictProviderTests(unittest.TestCase):

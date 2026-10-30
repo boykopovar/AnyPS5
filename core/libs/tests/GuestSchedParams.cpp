@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 
+static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int SCHED_FIFO_POLICY = 1;
@@ -108,9 +109,50 @@ static void CheckOtherThread() {
     REQUIRE(sched_setparam_nid_postfix(0, &original) == 0);
 }
 
+static void CheckOutOfRange() {
+    KernelSchedParam original{};
+    REQUIRE(sched_getparam_nid_postfix(0, &original) == 0);
+    const int policy = sched_getscheduler_nid_postfix(0);
+    for (const int priority : {900, 959}) {
+        REQUIRE(scePthreadSetprio(scePthreadSelf(), priority) == 0);
+        KernelSchedParam reported{-1};
+        REQUIRE(sched_getparam_nid_postfix(0, &reported) == 0 && reported.sched_priority == priority);
+        REQUIRE(sched_getscheduler_nid_postfix(0) == policy);
+    }
+    const KernelSchedParam inRange{700};
+    REQUIRE(sched_setparam_nid_postfix(0, &inRange) == 0);
+    for (const int priority : {255, 768}) {
+        const KernelSchedParam rejected{priority};
+        *__error_nid_postfix() = 0;
+        REQUIRE(FailsWith(sched_setparam_nid_postfix(0, &rejected), GUEST_EPERM));
+        KernelSchedParam reported{-1};
+        REQUIRE(sched_getparam_nid_postfix(0, &reported) == 0 && reported.sched_priority == 700);
+    }
+    REQUIRE(sched_setparam_nid_postfix(0, &original) == 0);
+}
+
+#ifndef __APPLE__
+static void CheckOwnPid() {
+    KernelSchedParam original{};
+    REQUIRE(sched_getparam_nid_postfix(0, &original) == 0);
+    const KernelSchedParam mainParam{600};
+    REQUIRE(sched_setparam_nid_postfix(0, &mainParam) == 0);
+    const int self = getpid_nid_postfix();
+    const int policy = sched_getscheduler_nid_postfix(0);
+    KernelSchedParam reported{-1};
+    REQUIRE(sched_getparam_nid_postfix(self, &reported) == 0 && reported.sched_priority == 600);
+    REQUIRE(sched_getscheduler_nid_postfix(self) == policy);
+    REQUIRE(sched_setparam_nid_postfix(self, &original) == 0);
+}
+#endif
+
 int main() {
     CheckCallingThread();
     CheckTargets();
     CheckOtherThread();
+    CheckOutOfRange();
+#ifndef __APPLE__
+    CheckOwnPid();
+#endif
     return 0;
 }

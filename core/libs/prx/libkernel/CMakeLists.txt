@@ -20,6 +20,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/SandboxCertificates.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Stdio.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libc/src/Rename.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/SyncOnAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp
@@ -69,6 +70,10 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Process.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Sandbox.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostCpu.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformance.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformanceProcess.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformanceStartup.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MimallocMacOs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SystemConfiguration.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Login.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Getlogin.cpp
@@ -89,6 +94,9 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
 )
 if(APPLE)
     target_link_libraries(libkernel PRIVATE "-framework CoreFoundation")
+    target_sources(libkernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MacActivity.cpp)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(libkernel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/System/src/GameModeClient.cpp)
 endif()
 
 target_include_directories(libkernel PRIVATE ${LIBS_INCLUDE_DIR})
@@ -139,7 +147,7 @@ if(BUILD_TESTING)
     set_target_properties(guest_exec_host PROPERTIES PREFIX "" SUFFIX ".prx" BUILD_RPATH "$ORIGIN")
     configure_windows_unwind(guest_exec_host)
     find_package(Python3 COMPONENTS Interpreter QUIET)
-    if(Python3_FOUND)
+    if(Python3_FOUND AND ANYPS5_RELINKER_CLI)
         add_test(NAME exec_arguments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/core/relinker/relinker/tests/test_exec_arguments.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_exec_host>
@@ -239,9 +247,11 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME guest_process_time_tsc COMMAND guest_process_time_tests tsc)
     add_test(NAME guest_process_time_tsc_scaled COMMAND guest_process_time_tests tsc)
-    set_tests_properties(guest_process_time_tsc_scaled PROPERTIES ENVIRONMENT "APS5_TIME_SCALE=0.5")
+    add_test(NAME guest_process_time_rdtsc COMMAND guest_process_time_tests rdtsc)
+    add_test(NAME guest_process_time_rdtsc_scaled COMMAND guest_process_time_tests rdtsc)
+    set_tests_properties(guest_process_time_tsc_scaled guest_process_time_rdtsc_scaled PROPERTIES ENVIRONMENT "APS5_TIME_SCALE=0.5")
     if(WIN32)
-        set_tests_properties(guest_process_time_tsc guest_process_time_tsc_scaled PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_process_time_tsc guest_process_time_tsc_scaled guest_process_time_rdtsc guest_process_time_rdtsc_scaled PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_process_arguments_tests ${LIBS_INCLUDE_DIR}/tests/GuestProcessArguments.cpp)
@@ -254,7 +264,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     find_package(Python3 QUIET COMPONENTS Interpreter)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND Python3_Interpreter_FOUND)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND Python3_Interpreter_FOUND AND ANYPS5_RELINKER_CLI)
         add_test_executable(guest_runtime_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestRuntimeLifecycle.cpp)
         target_include_directories(guest_runtime_lifecycle_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_runtime_lifecycle_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
@@ -589,6 +599,13 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_kernel_is_stack PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    if(APPLE)
+        add_test_executable(guest_main_stack_move_tests ${LIBS_INCLUDE_DIR}/tests/GuestMainStackMove.cpp)
+        target_include_directories(guest_main_stack_move_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_main_stack_move_tests PRIVATE libkernel libc)
+        add_test(NAME guest_main_stack_move COMMAND guest_main_stack_move_tests)
+        set_tests_properties(guest_main_stack_move PROPERTIES TIMEOUT 20)
     endif()
     add_test_executable(guest_app_icon_tests ${LIBS_INCLUDE_DIR}/tests/GuestAppIcon.cpp)
     target_include_directories(guest_app_icon_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -1532,6 +1549,13 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         set_tests_properties(guest_shm_open PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        add_test_executable(guest_named_shm_windows_mapping_tests ${LIBS_INCLUDE_DIR}/tests/GuestNamedShmWindowsMapping.cpp)
+        target_include_directories(guest_named_shm_windows_mapping_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_named_shm_windows_mapping_tests PRIVATE libkernel libc)
+        configure_windows_unwind(guest_named_shm_windows_mapping_tests)
+        add_test(NAME guest_named_shm_windows_mapping COMMAND guest_named_shm_windows_mapping_tests)
+        set_tests_properties(guest_named_shm_windows_mapping PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_jit_shared_memory_tests ${LIBS_INCLUDE_DIR}/tests/GuestJitSharedMemory.cpp)
     target_include_directories(guest_jit_shared_memory_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -1559,6 +1583,18 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_system_configuration PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    if(APPLE AND TARGET mimalloc)
+        add_test_executable(mimalloc_restart_tests ${LIBS_INCLUDE_DIR}/tests/MimallocRestart.cpp)
+        target_link_libraries(mimalloc_restart_tests PRIVATE libkernel libc)
+        add_custom_command(TARGET mimalloc_restart_tests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> $<TARGET_FILE_DIR:libkernel>/libmimalloc.dylib)
+        add_test(NAME mimalloc_restart_off COMMAND mimalloc_restart_tests off)
+        set_tests_properties(mimalloc_restart_off PROPERTIES ENVIRONMENT_MODIFICATION "APS5_MIMALLOC=unset:")
+        add_test(NAME mimalloc_restart_on COMMAND mimalloc_restart_tests on)
+        set_tests_properties(mimalloc_restart_on PROPERTIES ENVIRONMENT "APS5_MIMALLOC=1")
+        add_test(NAME mimalloc_restart_once COMMAND mimalloc_restart_tests once)
+        set_tests_properties(mimalloc_restart_once PROPERTIES ENVIRONMENT "APS5_MIMALLOC=1;APS5_MIMALLOC_RESTARTED=1")
     endif()
     add_test_executable(guest_software_version_tests ${LIBS_INCLUDE_DIR}/tests/GuestSoftwareVersion.cpp)
     target_include_directories(guest_software_version_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -1628,6 +1664,21 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_udp_tests)
     add_test(NAME guest_udp COMMAND guest_udp_tests)
     set_tests_properties(guest_udp PROPERTIES TIMEOUT 20)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(guest_udp_name_concurrency_tests ${LIBS_INCLUDE_DIR}/tests/GuestUdpNameConcurrency.cpp)
+        target_include_directories(guest_udp_name_concurrency_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_udp_name_concurrency_tests PRIVATE libkernel libc)
+        target_link_options(guest_udp_name_concurrency_tests PRIVATE LINKER:--export-dynamic-symbol=connect)
+        add_test(NAME guest_udp_name_concurrency COMMAND guest_udp_name_concurrency_tests)
+        set_tests_properties(guest_udp_name_concurrency PROPERTIES TIMEOUT 10)
+        add_test_executable(guest_udp_disconnect_result_tests ${LIBS_INCLUDE_DIR}/tests/GuestUdpDisconnectResult.cpp)
+        target_include_directories(guest_udp_disconnect_result_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_udp_disconnect_result_tests PRIVATE libkernel libc)
+        target_link_options(guest_udp_disconnect_result_tests PRIVATE
+            LINKER:--export-dynamic-symbol=connect LINKER:--export-dynamic-symbol=getpeername)
+        add_test(NAME guest_udp_disconnect_result COMMAND guest_udp_disconnect_result_tests)
+        set_tests_properties(guest_udp_disconnect_result PROPERTIES TIMEOUT 10)
+    endif()
     if(WIN32)
         set_tests_properties(guest_udp PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
@@ -1752,9 +1803,11 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_kqueue_tests)
     add_test(NAME guest_kqueue COMMAND guest_kqueue_tests)
     set_tests_properties(guest_kqueue PROPERTIES TIMEOUT 20)
+    add_test(NAME guest_kqueue_cleared_race COMMAND guest_kqueue_tests cleared-race)
+    set_tests_properties(guest_kqueue_cleared_race PROPERTIES TIMEOUT 30)
     if(WIN32)
         target_link_libraries(guest_kqueue_tests PRIVATE advapi32)
-        set_tests_properties(guest_kqueue PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_kqueue guest_kqueue_cleared_race PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_socket_descriptors_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocketDescriptors.cpp)
@@ -1854,8 +1907,12 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME guest_memory COMMAND guest_memory_tests)
     add_test(NAME guest_mmap_fixed_anonymous COMMAND guest_memory_tests fixed-anonymous)
+    if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME guest_mmap_executable COMMAND guest_memory_tests executable-mappings)
+        set_tests_properties(guest_mmap_executable PROPERTIES TIMEOUT 20)
+    endif()
     if(WIN32)
-        set_tests_properties(guest_memory guest_mmap_fixed_anonymous PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_memory guest_mmap_fixed_anonymous guest_mmap_executable PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     if(NOT ANYPS5_ENABLE_ASAN AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
@@ -2072,6 +2129,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_fstat_fault PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_posix_mutex_trylock_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixMutexTrylock.cpp)
+    target_include_directories(guest_posix_mutex_trylock_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_posix_mutex_trylock_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_posix_mutex_trylock_tests)
+    add_test(NAME guest_posix_mutex_trylock COMMAND guest_posix_mutex_trylock_tests)
+    set_tests_properties(guest_posix_mutex_trylock PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_posix_mutex_trylock PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
     add_test_executable(guest_posix_specific_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixSpecific.cpp)
     target_include_directories(guest_posix_specific_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_posix_specific_tests PRIVATE libkernel libc)
@@ -2244,7 +2311,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_timed_join_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_timed_join_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_timed_join_tests)
-    if(WIN32 AND Python3_Interpreter_FOUND)
+    if(WIN32 AND Python3_Interpreter_FOUND AND ANYPS5_RELINKER_CLI)
         foreach(joinProvider IN ITEMS libkernel_sys libkernel_web)
             add_test(NAME guest_timed_join_import_${joinProvider} COMMAND ${Python3_EXECUTABLE}
                 ${LIBS_INCLUDE_DIR}/tests/test_windows_timed_join_imports.py $<TARGET_FILE:relinker> ${PATCHED_DIR}
@@ -2302,4 +2369,96 @@ if(BUILD_TESTING)
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         endif()
     endforeach()
+    add_test_executable(host_performance_session_tests
+        ${LIBS_INCLUDE_DIR}/tests/HostPerformanceSession.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformance.cpp)
+    target_include_directories(host_performance_session_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    find_package(Threads REQUIRED)
+    target_link_libraries(host_performance_session_tests PRIVATE Threads::Threads)
+    set_target_properties(host_performance_session_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_host_test_executable(host_performance_session_tests)
+    add_test(NAME host_performance_session COMMAND host_performance_session_tests)
+    set_tests_properties(host_performance_session PROPERTIES TIMEOUT 20)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_library(game_mode_fixture SHARED ${LIBS_INCLUDE_DIR}/tests/GameModeFixtureLibrary.cpp)
+        add_library(game_mode_fixture_no_end SHARED ${LIBS_INCLUDE_DIR}/tests/GameModeFixtureLibrary.cpp)
+        target_compile_definitions(game_mode_fixture_no_end PRIVATE FIXTURE_OMIT_END)
+        add_library(game_mode_fixture_no_error_string SHARED ${LIBS_INCLUDE_DIR}/tests/GameModeFixtureLibrary.cpp)
+        target_compile_definitions(game_mode_fixture_no_error_string PRIVATE FIXTURE_OMIT_ERROR_STRING)
+        set_target_properties(game_mode_fixture game_mode_fixture_no_end game_mode_fixture_no_error_string PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${ANYPS5_TEST_OUTPUT_DIRECTORY}")
+        add_test_executable(host_performance_game_mode_tests
+            ${LIBS_INCLUDE_DIR}/tests/HostPerformanceGameMode.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformance.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/System/src/GameModeClient.cpp)
+        target_include_directories(host_performance_game_mode_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(host_performance_game_mode_tests PRIVATE ${CMAKE_DL_LIBS})
+        set_target_properties(host_performance_game_mode_tests PROPERTIES CXX_EXTENSIONS OFF)
+        add_dependencies(host_performance_game_mode_tests game_mode_fixture game_mode_fixture_no_end game_mode_fixture_no_error_string)
+        add_test(NAME host_performance_game_mode COMMAND host_performance_game_mode_tests
+            $<TARGET_FILE:game_mode_fixture> $<TARGET_FILE:game_mode_fixture_no_end>
+            $<TARGET_FILE:game_mode_fixture_no_error_string>
+            ${CMAKE_CURRENT_BINARY_DIR}/no-such-libgamemode.so)
+        set_tests_properties(host_performance_game_mode PROPERTIES TIMEOUT 20)
+    endif()
+    if(UNIX)
+        set(objcFixtureLibraries "")
+        foreach(objcFixture IN ITEMS objc_fixture:FIXTURE_COMPLETE objc_fixture_no_class:FIXTURE_NO_CLASS objc_fixture_nil_activity:FIXTURE_NIL_ACTIVITY objc_fixture_no_pool:FIXTURE_OMIT_POOL)
+            string(REPLACE ":" ";" objcFixture ${objcFixture})
+            list(GET objcFixture 0 objcFixtureName)
+            add_library(${objcFixtureName} SHARED ${LIBS_INCLUDE_DIR}/tests/ObjcFixtureLibrary.cpp)
+            set_target_properties(${objcFixtureName} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${ANYPS5_TEST_OUTPUT_DIRECTORY}")
+            list(GET objcFixture 1 objcFixtureDefinition)
+            target_compile_definitions(${objcFixtureName} PRIVATE ${objcFixtureDefinition})
+            list(APPEND objcFixtureLibraries ${objcFixtureName})
+        endforeach()
+        add_test_executable(host_performance_mac_activity_tests
+            ${LIBS_INCLUDE_DIR}/tests/HostPerformanceMacActivity.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MacActivity.cpp)
+        target_include_directories(host_performance_mac_activity_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(host_performance_mac_activity_tests PRIVATE ${CMAKE_DL_LIBS})
+        set_target_properties(host_performance_mac_activity_tests PROPERTIES CXX_EXTENSIONS OFF)
+        add_dependencies(host_performance_mac_activity_tests ${objcFixtureLibraries})
+        add_test(NAME host_performance_mac_activity COMMAND host_performance_mac_activity_tests
+            $<TARGET_FILE:objc_fixture> $<TARGET_FILE:objc_fixture_no_class>
+            $<TARGET_FILE:objc_fixture_nil_activity> $<TARGET_FILE:objc_fixture_no_pool>
+            ${CMAKE_CURRENT_BINARY_DIR}/no-such-libobjc.dylib)
+        set_tests_properties(host_performance_mac_activity PROPERTIES TIMEOUT 20)
+    endif()
+    add_test_executable(host_performance_process_tests
+        ${LIBS_INCLUDE_DIR}/tests/HostPerformanceProcess.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformance.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformanceProcess.cpp)
+    target_include_directories(host_performance_process_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(host_performance_process_tests PRIVATE libc Threads::Threads ${CMAKE_DL_LIBS})
+    set_target_properties(host_performance_process_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_windows_unwind(host_performance_process_tests)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(host_performance_process_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/System/src/GameModeClient.cpp)
+    elseif(APPLE)
+        target_sources(host_performance_process_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MacActivity.cpp)
+    endif()
+    function(add_host_performance_process_test name pattern)
+        add_test(NAME host_performance_process_${name} COMMAND host_performance_process_tests ${ARGN})
+        set_tests_properties(host_performance_process_${name} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "${pattern}")
+        if(WIN32)
+            set_tests_properties(host_performance_process_${name} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endfunction()
+    add_host_performance_process_test(exit "begin called.release ran at exit" exit)
+    add_host_performance_process_test(exit_without_handlers "begin called.release ran at exit" exit-without-handlers)
+    add_host_performance_process_test(refused "begin called" refused)
+    set_tests_properties(host_performance_process_refused PROPERTIES FAIL_REGULAR_EXPRESSION "release ran")
+    add_host_performance_process_test(off "off left the backend alone" off)
+    set_tests_properties(host_performance_process_off PROPERTIES FAIL_REGULAR_EXPRESSION "begin called")
+    add_host_performance_process_test(twice "second session refused" twice)
+    add_host_performance_process_test(environment "environment accepted" environment)
+    add_test(NAME host_performance_process_invalid COMMAND host_performance_process_tests environment)
+    set_tests_properties(host_performance_process_invalid PROPERTIES TIMEOUT 20 ENVIRONMENT "APS5_GAME_MODE=bogus"
+        PASS_REGULAR_EXPRESSION "invalid value rejected by name")
+    if(WIN32)
+        set_tests_properties(host_performance_process_invalid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()

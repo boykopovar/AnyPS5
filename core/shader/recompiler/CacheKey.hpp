@@ -230,11 +230,25 @@ private:
         append(key, value.positionLocation);
         append(key, value.sampleLocations);
         append(key, value.targetOutputMode);
-        append(key, value.targetMerge.target);
-        append(key, value.targetMerge.mask);
-        append(key, value.targetMerge.samples);
-        append(key, value.targetMerge.depthStencilWrites);
-        append(key, value.targetMerge.depthStencilTests);
+        append(key, value.targetMerges.size());
+        for (const auto& merge : value.targetMerges) {
+            append(key, merge.target);
+            append(key, merge.mask);
+            append(key, merge.samples);
+            append(key, merge.depthStencilWrites);
+            append(key, merge.depthStencilTests);
+            if (!merge.blend.enabled) continue;
+            const auto& blend = merge.blend;
+            append(key, blend.snorm);
+            append(key, blend.colorSource);
+            append(key, blend.colorDestination);
+            append(key, blend.colorOperation);
+            append(key, blend.alphaSource);
+            append(key, blend.alphaDestination);
+            append(key, blend.alphaOperation);
+            append(key, blend.writeMask);
+            append(key, blend.constants);
+        }
         append(key, value.sampleOrder);
     }
 
@@ -343,6 +357,7 @@ private:
         append(key, value.pixelFunctionStorageDwords);
         append(key, value.deviceScopeLdsMemoryBarriers);
         append(key, value.ldsLockFences);
+        append(key, value.meshWindowBuffer);
     }
 };
 

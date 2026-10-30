@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <cmath>
 #include <cwchar>
 #include <cstdio>
 #include <limits>
@@ -183,6 +184,49 @@ TFloat NanValue(const NanSubject& subject, const char*& end) {
     }
 }
 
+struct HexadecimalSubject {
+    std::uint64_t significand;
+    long long exponent;
+};
+
+constexpr long long HexadecimalExponentLimit = 1ll << 62;
+
+HexadecimalSubject ReadHexadecimalSubject(const char* digits, const char* parsedEnd) {
+    std::uint64_t significand = 0;
+    long long exponent = 0;
+    bool fraction = false;
+    bool sticky = false;
+    const char* cursor = digits;
+    for (; cursor < parsedEnd && (*cursor | 0x20) != 'p'; ++cursor) {
+        if (*cursor == '.') {
+            fraction = true;
+            continue;
+        }
+        const unsigned digit = HexNanDigit(static_cast<unsigned char>(*cursor)) & 0xf;
+        if (significand >> 60 == 0) {
+            significand = significand << 4 | digit;
+            if (fraction) exponent -= 4;
+        } else {
+            sticky = sticky || digit != 0;
+            if (!fraction) exponent += 4;
+        }
+    }
+    if (cursor < parsedEnd) {
+        ++cursor;
+        const bool negative = *cursor == '-';
+        if (*cursor == '+' || *cursor == '-') ++cursor;
+        long long scale = 0;
+        for (; cursor < parsedEnd; ++cursor) {
+            const int digit = *cursor - '0';
+            scale = scale > (HexadecimalExponentLimit - digit) / 10 ? HexadecimalExponentLimit : scale * 10 + digit;
+        }
+        exponent += negative ? -scale : scale;
+    }
+    if (significand == 0) return {0, 0};
+    const int shift = std::countl_zero(significand);
+    return {(significand << shift) | (sticky ? 1u : 0u), exponent - shift};
+}
+
 template<typename TParse>
 auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
     const std::string prefix = AsciiPrefix(text);
@@ -226,11 +270,16 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
     }
     if (!hexadecimal) return value;
     if constexpr (std::is_same_v<TFloat, double>) {
-        constexpr double smallest = std::numeric_limits<double>::denorm_min();
-        if ((value < 0 ? -value : value) == smallest) {
-            const long double exact = std::strtold(text, nullptr);
-            if ((exact < 0 ? -exact : exact) < smallest) errno = ERANGE;
+        const HexadecimalSubject exact = ReadHexadecimalSubject(subject + 2, parsedEnd);
+        const long long leadingExponent = exact.exponent + 63;
+        if (exact.significand == 0 || leadingExponent > -1075) {
+            if (std::isfinite(value)) errno = saved;
+            return value;
         }
+        errno = ERANGE;
+        const bool smallest = leadingExponent == -1075 && (exact.significand & 0x7fffffffffffffffull) >= (1ull << 11);
+        const double magnitude = smallest ? std::numeric_limits<double>::denorm_min() : 0.0;
+        return std::signbit(value) ? -magnitude : magnitude;
     } else if (errno == ERANGE) {
         errno = saved;
     }
@@ -749,17 +798,18 @@ size_t APS5_VABI wcscspn_nid_postfix(const char16_t* s, const char16_t* reject) 
 }
 
 char16_t* APS5_VABI wcstok_nid_postfix(char16_t* text, const char16_t* delimiters, char16_t** last) {
+    static const char16_t exhausted[] = u"";
     if (text == nullptr) text = *last;
     if (text == nullptr) return nullptr;
     while (*text != 0 && Contains(delimiters, *text)) ++text;
     if (*text == 0) {
-        *last = nullptr;
+        *last = const_cast<char16_t*>(exhausted);
         return nullptr;
     }
     char16_t* end = text;
     while (*end != 0 && !Contains(delimiters, *end)) ++end;
     if (*end == 0) {
-        *last = nullptr;
+        *last = end;
     } else {
         *end = 0;
         *last = end + 1;

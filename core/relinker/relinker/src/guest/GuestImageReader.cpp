@@ -125,8 +125,20 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     if (strSize == 0 || bytes[strOffset] != 0 || get(11, 0x6100003b) != 24) fail("Invalid string or symbol table");
     std::uint64_t symSize = 0;
     if (tags.contains(0x6100003f)) symSize = tags.at(0x6100003f);
-    else if (tags.contains(4)) symSize = static_cast<std::uint64_t>(Io::ReadU32(bytes, translate(tags.at(4), 8) + 4)) * 24;
-    else if (tags.contains(0x6ffffef5)) {
+    else if (tags.contains(4)) {
+        const auto address = tags.at(4);
+        const auto header = translate(address, 8);
+        const auto nbucket = Io::ReadU32(bytes, header);
+        const auto nchain = Io::ReadU32(bytes, header + 4);
+        if (nbucket == 0 || nchain == 0) fail("Invalid SysV hash header");
+        const std::uint64_t hashSize = 8 + static_cast<std::uint64_t>(nbucket) * 4 + static_cast<std::uint64_t>(nchain) * 4;
+        const auto start = translate(address, hashSize);
+        for (std::uint64_t index = 0; index < nbucket; ++index) {
+            const auto bucket = Io::ReadU32(bytes, start + 8 + index * 4);
+            if (bucket >= nchain) fail("Invalid SysV hash bucket index");
+        }
+        symSize = static_cast<std::uint64_t>(nchain) * 24;
+    } else if (tags.contains(0x6ffffef5)) {
         const auto address = tags.at(0x6ffffef5);
         const auto header = translate(address, 16);
         const auto bucketCount = Io::ReadU32(bytes, header);
@@ -135,6 +147,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (bucketCount == 0 || bloomCount == 0 || firstSymbol == 0) fail("Invalid GNU hash header");
         const std::uint64_t bucketOffset = 16 + static_cast<std::uint64_t>(bloomCount) * 8;
         const auto chainOffset = bucketOffset + static_cast<std::uint64_t>(bucketCount) * 4;
+        if (chainOffset > std::numeric_limits<std::uint64_t>::max() - address) fail("Invalid GNU hash header");
         const auto start = translate(address, chainOffset);
         std::uint64_t lastBucket = 0;
         for (std::uint64_t index = 0; index < bucketCount; ++index) {
@@ -146,10 +159,12 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (lastBucket != 0) {
             symbolCount = lastBucket;
             for (;;) {
+                if (symbolCount - firstSymbol > (std::numeric_limits<std::uint64_t>::max() - chainOffset) / 4) fail("Invalid GNU hash chain");
                 const auto offset = chainOffset + (symbolCount - firstSymbol) * 4;
                 if (offset > std::numeric_limits<std::uint64_t>::max() - address) fail("Invalid GNU hash chain");
                 const auto chain = Io::ReadU32(bytes, translate(address + offset, 4));
                 ++symbolCount;
+                if (symbolCount > std::numeric_limits<std::uint32_t>::max()) fail("Invalid GNU hash chain");
                 if (chain & 1) break;
             }
         }

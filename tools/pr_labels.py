@@ -79,6 +79,7 @@ def decode_pages(out):
     decoder = json.JSONDecoder()
     offset = 0
     items = []
+    pages = 0
     while offset < len(out):
         while offset < len(out) and out[offset].isspace():
             offset += 1
@@ -87,7 +88,10 @@ def decode_pages(out):
         page, offset = decoder.raw_decode(out, offset)
         if not isinstance(page, list):
             raise ValueError("gh api --paginate returned a non-array page")
+        pages += 1
         items.extend(page)
+    if not pages:
+        raise ValueError("gh api --paginate returned no JSON pages")
     return items
 
 
@@ -140,6 +144,8 @@ def main(argv=None):
             prs = [pull(data) for data in decode_pages(gh("api", "--paginate", f"repos/{repo}/pulls?state=open&base=main&per_page=100"))]
     except subprocess.CalledProcessError as error:
         parser.error((error.stderr or str(error)).strip())
+    except (ValueError, RecursionError) as error:
+        parser.error(f"cannot read pull requests: {error}")
     failed = []
     for pr in prs:
         try:

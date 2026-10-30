@@ -1009,21 +1009,14 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
     if (std::ranges::find(state.supportedCapabilities, spv::CapabilityInt64) == state.supportedCapabilities.end()) context.Fail(instruction, "scalar buffer bounds require shaderInt64");
     state.module.EmitCapability(spv::CapabilityInt64);
     const auto resource = descriptor(context, instruction);
-    const auto u32 = TypeU32(state);
-    const auto stride = Select(state, u32, equal(state, resource.stride, ConstantU32(state, 0u)), ConstantU32(state, 1u), resource.stride);
-    const auto size = state.module.AllocateId();
-    const auto low = state.module.AllocateId();
-    const auto high = state.module.AllocateId();
-    state.module.AddFunction(spv::OpUMulExtended, state.module.Type(spv::OpTypeStruct, u32, u32), size, stride, resource.records);
-    state.module.AddFunction(spv::OpCompositeExtract, u32, low, size, 0u);
-    state.module.AddFunction(spv::OpCompositeExtract, u32, high, size, 1u);
+    const auto u64 = TypeScalarU64(state);
+    const auto size = Select(state, u64, equal(state, resource.stride, ConstantU32(state, 0u)), Unary(state, spv::OpUConvert, u64, resource.records), Binary(state, spv::OpIMul, u64, Unary(state, spv::OpUConvert, u64, resource.stride), Unary(state, spv::OpUConvert, u64, resource.records)));
     const auto address = EmitAddU32(state, context.Arg(instruction, 1u), ConstantU32(state, context.Memory(instruction).offset));
     const auto noCarry = Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), address, context.Arg(instruction, 1u));
     const auto byte = EmitAndConstant(state, address, ~3u);
-    const auto fits = Binary(state, spv::OpLogicalOr, TypeBool(state), nonzero(state, high), Binary(state, spv::OpULessThan, TypeBool(state), byte, EmitAndConstant(state, low, ~3u)));
-    const auto inBounds = both(state, noCarry, both(state, resource.valid, fits));
+    const auto offset = Unary(state, spv::OpUConvert, u64, byte);
+    const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThanEqual, TypeBool(state), Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, 4u)), size)));
     if (!context.Memory(instruction).gpuDescriptor) return readBuffer(context, instruction, byte, 32u, inBounds);
-    const auto offset = Unary(state, spv::OpUConvert, TypeScalarU64(state), byte);
     return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, AddBdaAddress(context, instruction, resource.base, offset, false), 32u); });
 }
 

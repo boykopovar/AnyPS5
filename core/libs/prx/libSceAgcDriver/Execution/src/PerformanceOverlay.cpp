@@ -15,6 +15,7 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -25,6 +26,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -683,6 +687,20 @@ std::optional<std::uint64_t> ReadPageFaults() {
     rusage usage{};
     if (getrusage(RUSAGE_SELF, &usage) != 0) return std::nullopt;
     return static_cast<std::uint64_t>(usage.ru_minflt) + static_cast<std::uint64_t>(usage.ru_majflt);
+#endif
+}
+
+std::optional<std::uint64_t> ReadPhysicalMemoryBytes() {
+#ifdef _WIN32
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (::GlobalMemoryStatusEx(&status) == 0) return std::nullopt;
+    return static_cast<std::uint64_t>(status.ullTotalPhys);
+#else
+    const auto pages = ::sysconf(_SC_PHYS_PAGES);
+    const auto pageSize = ::sysconf(_SC_PAGESIZE);
+    if (pages <= 0 || pageSize <= 0) return std::nullopt;
+    return static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize);
 #endif
 }
 
