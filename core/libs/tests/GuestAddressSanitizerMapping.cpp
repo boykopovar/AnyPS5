@@ -36,8 +36,26 @@ int main(int argc, char* argv[]) {
         if (prep != reinterpret_cast<void*>(REGION_BASE)) return 2;
         constexpr uint32_t SENTINEL = 0xDEADBEEF;
         *reinterpret_cast<volatile uint32_t*>(prep) = SENTINEL;
-        if (AsanRuntime::InitializeShadow_nid_no_patch()) return 3;
+        if (!AsanRuntime::InitializeShadow_nid_no_patch()) return 3;
+        try {
+            __asan_poison_memory_region(reinterpret_cast<const volatile void*>(0x100), 8);
+            return 5;
+        } catch (const std::exception&) {
+        }
+        try {
+            __asan_load1(0x100);
+            return 6;
+        } catch (const std::exception&) {
+        }
         if (*reinterpret_cast<volatile uint32_t*>(prep) != SENTINEL) return 4;
+        constexpr std::uintptr_t app = 0x30000000;
+        __asan_poison_memory_region(reinterpret_cast<const volatile void*>(app), 8);
+        if (!__asan_address_is_poisoned(reinterpret_cast<const volatile void*>(app))) return 7;
+        __asan_unpoison_memory_region(reinterpret_cast<const volatile void*>(app), 8);
+        if (__asan_address_is_poisoned(reinterpret_cast<const volatile void*>(app))) return 8;
+        auto* last = reinterpret_cast<volatile std::uint8_t*>(REGION_BASE + REGION_SIZE - 1);
+        *last = 0x7a;
+        if (*last != 0x7a) return 9;
         return 0;
     }
     if (argc > 2 && std::string_view(argv[1]) == "report") {
