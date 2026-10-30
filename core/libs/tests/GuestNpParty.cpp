@@ -1,4 +1,4 @@
-#include "prx/libSceNpParty/include/Api.hpp"
+#include "prx/libSceNpParty/libSceNpParty.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -34,11 +34,14 @@ bool lifecycleTests() {
     return check(sceNpPartyTerminate() == kNotInitialized, "terminate before initialize did not fail")
         && check(sceNpPartyCheckCallback() == kNotInitialized, "check callback before initialize did not fail")
         && check(sceNpPartyRegisterHandlerA(handlers, nullptr) == kNotInitialized, "register handler before initialize did not fail")
+        && check(sceNpPartyRegisterHandler(handlers, nullptr) == kNotInitialized, "the plain register handler before initialize did not fail")
         && check(sceNpPartyInitialize(nullptr) == kInvalidArgument, "a null initialize param was not refused")
         && check(sceNpPartyInitialize(param) == 0, "initialize failed")
         && check(sceNpPartyInitialize(param) == kAlreadyInitialized, "a second initialize did not fail")
         && check(sceNpPartyRegisterHandlerA(nullptr, nullptr) == kInvalidArgument, "null handlers were not refused")
         && check(sceNpPartyRegisterHandlerA(handlers, param) == 0, "register handler failed")
+        && check(sceNpPartyRegisterHandler(nullptr, nullptr) == kInvalidArgument, "null plain handlers were not refused")
+        && check(sceNpPartyRegisterHandler(handlers, param) == 0, "the plain register handler failed")
         && check(sceNpPartyCheckCallback() == 0, "check callback failed")
         && check(sceNpPartyTerminate() == 0, "terminate failed")
         && check(sceNpPartyTerminate() == kNotInitialized, "a second terminate did not fail")
@@ -55,6 +58,10 @@ bool notInPartyTests() {
         && check(sceNpPartyGetMembersA(out) == kNotInParty, "get members did not report NOT_IN_PARTY")
         && check(sceNpPartyGetMemberInfoA(1, nullptr) == kInvalidArgument, "a null member info was not refused")
         && check(sceNpPartyGetMemberInfoA(1, out) == kNotInParty, "get member info did not report NOT_IN_PARTY")
+        && check(sceNpPartyGetMembers(nullptr) == kInvalidArgument, "a null plain member list was not refused")
+        && check(sceNpPartyGetMembers(out) == kNotInParty, "the plain get members did not report NOT_IN_PARTY")
+        && check(sceNpPartyGetMemberInfo(1, nullptr) == kInvalidArgument, "a null plain member info was not refused")
+        && check(sceNpPartyGetMemberInfo(1, out) == kNotInParty, "the plain get member info did not report NOT_IN_PARTY")
         && check(sceNpPartyGetMemberSessionInfo(1, nullptr) == kInvalidArgument, "a null session info was not refused")
         && check(sceNpPartyGetMemberSessionInfo(1, out) == kNotInParty, "get session info did not report NOT_IN_PARTY")
         && check(sceNpPartyGetMemberVoiceInfo(1, 2, nullptr) == kInvalidArgument, "a null voice state was not refused")

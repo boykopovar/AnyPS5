@@ -117,6 +117,7 @@ void repackedFormatTests() {
     Require(IsRepackedTextureFormat(guest) && !IsRepackedTextureFormat(36u) && !IsRepackedTextureFormat(20u), "only texture format 43 is sampled through a repacked copy");
     Context context{};
     Require(SampledTextureFormat(context, guest) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && ResolveTextureFormat(guest) == VK_FORMAT_R32_UINT, "format 43 must be sampled as B10G11R11_UFLOAT and stored as R32_UINT");
+    Require(SampledTextureFormat(context, 36u) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && ResolveTextureFormat(36u) == VK_FORMAT_R32_UINT, "format 36 must be sampled as B10G11R11_UFLOAT and stored as R32_UINT");
     const auto field = [](std::uint32_t word, VkComponentSwizzle channel) -> std::pair<std::uint32_t, std::uint32_t> {
         switch (channel) {
             case VK_COMPONENT_SWIZZLE_R: return {word & 0x7ffu, 6u};
@@ -217,11 +218,22 @@ void packedFloatDccClearTests() {
             for (const auto texel : texels) Require(texel == expected, "packed float DCC clear did not encode RGB zero or one");
         }
     }
-    alignas(64) std::array<std::uint8_t, 4> keys{0xc0, 0xc0, 0xc0, 0xc0};
+    Require(DccClearTextureFormat(36u) == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && DccClearTextureFormat(43u) == VK_FORMAT_B10G11R11_UFLOAT_PACK32, "formats 36 and 43 DCC clears must use native packed float layout");
+    alignas(64) std::array<std::uint8_t, 4> keys{};
     GuestTextureResource resource{};
-    resource.format = 36;
     resource.dccAddress = reinterpret_cast<std::uint64_t>(keys.data());
-    Require(TextureClearKeys(resource, 1024) == DccKeys::Clear1111, "packed float texture discarded its white fast-clear keys");
+    for (const std::uint32_t format : {36u, 43u}) {
+        resource.format = format;
+        keys.fill(0xc0);
+        Require(TextureClearKeys(resource, 1024) == DccKeys::Clear1111, "packed float texture format " + std::to_string(format) + " discarded its white fast-clear keys");
+        keys.fill(0x80);
+        Require(TextureClearKeys(resource, 1024) == DccKeys::Clear1110, "packed float texture format " + std::to_string(format) + " discarded its 1110 fast-clear keys");
+        for (const auto [keysVal, expected] : {std::pair{DccKeys::Clear1111, 0x781e03c0u}, {DccKeys::Clear1110, 0x781e03c0u}, {DccKeys::Clear0000, 0u}}) {
+            std::array<std::uint32_t, 4> surface{};
+            ReadTextureSurface(resource, keysVal, std::as_writable_bytes(std::span(surface)));
+            for (const auto texel : surface) Require(texel == expected, "packed float format " + std::to_string(format) + " DCC clear surface read produced unexpected texel value");
+        }
+    }
 }
 
 void fillContractTests() {
@@ -238,6 +250,24 @@ void fillContractTests() {
     Require(FillDccClear(VK_FORMAT_B10G11R11_UFLOAT_PACK32, DccKeys::Clear1111, false, partial), "packed float fast clear was not encoded");
     const std::array<std::byte, 4> white{std::byte{0xc0}, std::byte{0x03}, std::byte{0x1e}, std::byte{0x78}};
     for (std::size_t index = 0; index < partial.size(); ++index) Require(partial[index] == (index < 8u ? white[index % 4u] : std::byte{0}), "a clear fill over a partial trailing element did not zero the tail");
+}
+
+void guestFormatLookupTests() {
+    Require(FindGuestTextureFormat(VK_FORMAT_R8_UNORM, 1) == 1u, "format 1 must look up from R8_UNORM");
+    Require(FindGuestTextureFormat(VK_FORMAT_R8G8B8A8_UNORM, 4) == 56u, "format 56 must look up from R8G8B8A8_UNORM");
+    Require(FindGuestTextureFormat(VK_FORMAT_R8G8B8A8_SNORM, 4) == 57u, "format 57 must look up from R8G8B8A8_SNORM");
+    Require(FindGuestTextureFormat(VK_FORMAT_R16G16B16A16_SFLOAT, 8) == 71u, "format 71 must look up from R16G16B16A16_SFLOAT");
+    Require(!FindGuestTextureFormat(VK_FORMAT_B8G8R8A8_UNORM, 4).has_value(), "B8G8R8A8_UNORM is not a native texture format");
+    Require(!FindGuestTextureFormat(VK_FORMAT_B8G8R8A8_SNORM, 4).has_value(), "B8G8R8A8_SNORM is not a native texture format");
+    Require(!FindGuestTextureFormat(VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 8).has_value(), "block-compressed formats must not look up as texture formats");
+    Require(!FindGuestTextureFormat(VK_FORMAT_R8_UNORM, 2).has_value(), "mismatched element bytes must reject texture format lookup");
+
+    Require(FindGuestColorTargetFormat(VK_FORMAT_B8G8R8A8_UNORM, 4) == 56u, "B8G8R8A8_UNORM color target must map to guest format 56");
+    Require(FindGuestColorTargetFormat(VK_FORMAT_B8G8R8A8_SNORM, 4) == 57u, "B8G8R8A8_SNORM color target must map to guest format 57");
+    Require(FindGuestColorTargetFormat(VK_FORMAT_B8G8R8A8_SRGB, 4) == 130u, "B8G8R8A8_SRGB color target must map to guest format 130");
+    Require(FindGuestColorTargetFormat(VK_FORMAT_A2R10G10B10_UNORM_PACK32, 4) == 50u, "A2R10G10B10_UNORM color target must map to guest format 50");
+    Require(FindGuestColorTargetFormat(VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4) == 50u, "A2B10G10R10_UNORM color target must map to guest format 50");
+    Require(!FindGuestColorTargetFormat(VK_FORMAT_B8G8R8A8_SNORM, 8).has_value(), "mismatched element bytes must reject color target format lookup");
 }
 
 }
@@ -306,4 +336,5 @@ void RunTextureFormatTests() {
     packedFloatDccClearTests();
     fillContractTests();
     gcnBufferFormatTests();
+    guestFormatLookupTests();
 }
