@@ -92,7 +92,9 @@ void GpuLabel(AgcDriver::VulkanDevice& device, const GuestBlock& block, std::siz
         const auto before = Recorder::LookupLabel(address, 4, 10, &refusal);
         Require(Recorder::LateTrust() ? before && before->late && before->value == label[0] : !before && refusal == Recorder::LabelRefusal::TrustOff, "the GPU label's initial late lookup is wrong");
     }
+    const auto syncs = AgcDriver::VulkanDevice::FillCompletionSyncCount();
     Require(device.FillBuffer(fill, fillBytes, pattern), "the fill over the GPU label was not recorded");
+    Require(AgcDriver::VulkanDevice::FillCompletionSyncCount() == syncs, "a GPU-ordered label incremented the fill completion-wait counter");
     Require(!*ran, "the fill drained an unrelated CPU completion because of a GPU label");
     const bool overlaps = address < fill + fillBytes && address + labelBytes > fill;
     if (labelBytes <= Recorder::LabelTableBytes) {
@@ -140,7 +142,9 @@ void CpuLabel(AgcDriver::VulkanDevice& device, const GuestBlock& block, const st
     const auto ran = std::make_shared<bool>(false);
     Require(device.AfterRecordedWork([ran] { *ran = true; }, false), "the completion observer was not queued");
     Require(recorder->CompletionLabelIn(address, 4), "the CPU label is not pending");
+    const auto syncs = AgcDriver::VulkanDevice::FillCompletionSyncCount();
     Require(device.FillBuffer(fill, 4096, pattern), "the fill following the CPU label was not recorded");
+    Require(AgcDriver::VulkanDevice::FillCompletionSyncCount() == syncs + (overlaps ? 1 : 0), "the fill completion-wait counter did not match CPU-label overlap");
     Require(*ran == overlaps, "the fill did not wait exactly for an overlapping CPU completion");
     device.WaitIdle();
     CheckFill(block, 4096, pattern);
