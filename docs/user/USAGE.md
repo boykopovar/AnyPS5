@@ -278,7 +278,7 @@ A Windows executable started without a standard output or error handle, such as 
 
 ### Display resolution and window size
 
-The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen; set `ANYPS5_FULLSCREEN` to a non-empty value other than `0` to open the window fullscreen from the start. Changing the window size does not change the game's render resolution. AnyPS5 does not currently provide a global render-resolution override; use a game's own display setting when it offers one.
+The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen and returns the window to the size it had before. Set `ANYPS5_FULLSCREEN` to `1` or `borderless` to open the window fullscreen at the desktop resolution from the start, or to `0` or `windowed` (the default) to keep it windowed. Any other non-empty value, such as `true` or `yes`, still opens it fullscreen as before, and a warning on stderr names the value. Fullscreen goes to the display the window is on, which is the one `ANYPS5_DISPLAY_INDEX` selects at start. The mouse cursor is hidden while the window is fullscreen unless the game has opened a mouse. Changing the window size does not change the game's render resolution. AnyPS5 does not currently provide a global render-resolution override; use a game's own display setting when it offers one.
 
 ### VR compatibility
 

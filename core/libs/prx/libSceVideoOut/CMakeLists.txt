@@ -6,6 +6,7 @@ add_library(libSceVideoOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Output.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoOutDriver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DisplayWindow.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HostFullscreen.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PadInput.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PadStatusSdl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Telemetry.cpp
@@ -70,6 +71,16 @@ target_link_libraries(video_out_flip_tests PRIVATE libSceVideoOut libSceAgcDrive
 set_target_properties(video_out_flip_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(video_out_flip_tests)
 if(BUILD_TESTING)
+    add_test_executable(video_out_host_fullscreen_tests tests/HostFullscreen.cpp)
+    target_include_directories(video_out_host_fullscreen_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_link_libraries(video_out_host_fullscreen_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc SDL2-static)
+    configure_windows_unwind(video_out_host_fullscreen_tests)
+    add_test(NAME video_out_host_fullscreen COMMAND video_out_host_fullscreen_tests)
+    set_tests_properties(video_out_host_fullscreen PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(video_out_host_fullscreen PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(video_out_output_mode_policy_tests tests/OutputModePolicy.cpp)
     target_include_directories(video_out_output_mode_policy_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
     target_link_libraries(video_out_output_mode_policy_tests PRIVATE libSceVideoOut libc libkernel)
@@ -98,6 +109,14 @@ if(BUILD_TESTING)
     endif()
     set(ANYPS5_VIDEO_OUT_TEST_DRIVER "${videoOutTestDriver}" CACHE STRING
         "SDL video driver for VideoOut flip tests")
+    add_test(NAME video_out_host_fullscreen_window COMMAND video_out_host_fullscreen_tests window)
+    set_tests_properties(video_out_host_fullscreen_window PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
+    add_test(NAME video_out_host_fullscreen_failed_create COMMAND video_out_host_fullscreen_tests failedcreate)
+    set_tests_properties(video_out_host_fullscreen_failed_create PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER}")
+    if(WIN32)
+        set_tests_properties(video_out_host_fullscreen_window video_out_host_fullscreen_failed_create PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
     foreach(flipMode IN ITEMS labels labels_main)
         add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests ${flipMode})

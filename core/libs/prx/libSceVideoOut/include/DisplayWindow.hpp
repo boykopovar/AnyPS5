@@ -1,7 +1,9 @@
 #ifndef CORE_LIBS_PRX_LIBSCEVIDEOOUT_INCLUDE_DISPLAYWINDOW_HPP
 #define CORE_LIBS_PRX_LIBSCEVIDEOOUT_INCLUDE_DISPLAYWINDOW_HPP
 
+#include "prx/libSceVideoOut/include/HostFullscreen.hpp"
 #include <cstdint>
+#include <memory>
 #include "SDL.h"
 
 inline constexpr std::uint32_t DisplayWindowMinimumWidth = 320;
@@ -33,6 +35,8 @@ private:
     static std::intptr_t windowProc(void* hwnd, unsigned int message, std::uintptr_t wParam, std::intptr_t lParam, std::uintptr_t subclassId, std::uintptr_t referenceData);
 
     SDL_Window* window = nullptr;
+    std::unique_ptr<IHostFullscreenWindow> hostWindow;
+    std::unique_ptr<HostFullscreenState> fullscreen;
     std::uint32_t aspectWidth = 0;
     std::uint32_t aspectHeight = 0;
     std::uint64_t frameNum = 0;
