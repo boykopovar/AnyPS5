@@ -58,8 +58,12 @@ inline void AppendPointer_nid_no_patch(std::string& out, std::uintptr_t value) {
     out += buffer;
 }
 
+inline const char* ReportSeparator_nid_no_patch() {
+    return "=================================================================\n";
+}
+
 inline void AppendReportHeader_nid_no_patch(std::string& out, const char* bug, std::uintptr_t address, std::uintptr_t pc, std::uintptr_t bp, std::uintptr_t sp, bool isWrite, std::uintptr_t accessSize) {
-    out += "=================================================================\n";
+    out += ReportSeparator_nid_no_patch();
     out += "ERROR: AddressSanitizer: ";
     out += bug;
     out += " on address ";

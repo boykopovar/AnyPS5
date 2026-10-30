@@ -85,7 +85,7 @@ int main(int argc, char* argv[]) {
             __asan_load1(base + 4);
         } else if (mode == "report_error") {
             reportExpected = base + 20;
-            __asan_report_error(reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x2000), reinterpret_cast<void*>(0x3000), reinterpret_cast<void*>(base + 20), 1, 2);
+            __asan_report_error(reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x2000), reinterpret_cast<void*>(0x3000), reinterpret_cast<void*>(base + 20), 1, 2, 0);
         }
         return 2;
     }
