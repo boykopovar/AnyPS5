@@ -7,6 +7,7 @@ namespace {
 constexpr std::uint16_t VersionLength = 4;
 constexpr std::int32_t VersionStringLength = 20;
 constexpr char VersionDelimiter = '.';
+constexpr const char* IcuVersion = "78.1";
 
 char* WriteField(char* text, std::uint8_t field) {
     if (field >= 100) {
@@ -64,6 +65,10 @@ void APS5_VABI u_versionToString_nid_postfix(const std::uint8_t* version, char* 
         text = WriteField(text, version[part]);
     }
     *text = 0;
+}
+
+void APS5_VABI u_getVersion_nid_postfix(std::uint8_t* version) {
+    u_versionFromString_nid_postfix(version, IcuVersion);
 }
 
 }
