@@ -671,10 +671,14 @@ class HsaRunnerTests(unittest.TestCase):
                 (["missing.co", "1x", "missing.in", "missing.out", "16"], "THREADS"),
                 (["missing.co", "0", "missing.in", "missing.out", "16"], "THREADS"),
                 (["missing.co", "1025", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "-18446744073709551615", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", " -18446744073709551615", "missing.in", "missing.out", "16"], "THREADS"),
                 (["missing.co", "1", "missing.in", "missing.out", "not-an-int"], "OUT_DWORDS"),
                 (["missing.co", "1", "missing.in", "missing.out", "1x"], "OUT_DWORDS"),
                 (["missing.co", "1", "missing.in", "missing.out", "0"], "OUT_DWORDS"),
                 (["missing.co", "1", "missing.in", "missing.out", "17"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "-18446744073709551600"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", " -18446744073709551600"], "OUT_DWORDS"),
             )
             for arguments, name in cases:
                 with self.subTest(arguments=arguments):

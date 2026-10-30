@@ -1,5 +1,6 @@
 #include <hsa/hsa.h>
 #include <hsa/hsa_ext_amd.h>
+#include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,6 +52,9 @@ static hsa_status_t findCpu(hsa_agent_t agent, void* data) {
 
 static int parseRange(const char* text, uint32_t minimum, uint32_t maximum, uint32_t* result) {
     char* end;
+    const char* number = text;
+    while (isspace((unsigned char)*number)) ++number;
+    if (*number == '-') return 0;
     errno = 0;
     const unsigned long value = strtoul(text, &end, 10);
     if (errno != 0 || end == text || *end != '\0' || value < minimum || value > maximum) return 0;
