@@ -118,7 +118,7 @@ void CheckDefaultHandler() {
     std::ifstream written(filename, std::ios::binary);
     const std::string text{std::istreambuf_iterator<char>(written), std::istreambuf_iterator<char>()};
     written.close();
-    Require(text == "strerror_s\nstrerror_s\n", "default handler writes the message and a newline to stderr");
+    Require(text == "strerror_s: bad argument\nstrerror_s: bad argument\n", "default handler writes the message and a newline to stderr");
     set_constraint_handler_s_nid_postfix(previous);
     std::remove(filename.c_str());
 }
