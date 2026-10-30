@@ -32,6 +32,10 @@ constexpr std::size_t MaximumCapacity = 4096;
 constexpr std::size_t MaximumStallSeconds = 86400;
 constexpr std::size_t PayloadWordsShown = 8;
 
+std::chrono::steady_clock::time_point realStallClock() { return std::chrono::steady_clock::now(); }
+
+std::atomic<StallClock> stallClock{realStallClock};
+
 struct Entry {
     std::uint64_t tenthsOfMs = 0;
     std::uint64_t serial = 0;
@@ -224,6 +228,10 @@ std::chrono::seconds StallWatchdogPeriod() {
     return value;
 }
 
+void SetStallClock(StallClock clock) {
+    stallClock.store(clock != nullptr ? clock : realStallClock);
+}
+
 bool ReadSubmissionRingSettings() {
     StallWatchdogPeriod();
     return SubmissionRingCapacity() != 0;
@@ -266,7 +274,7 @@ void StallWatch::Check(const char* waiter, std::uint64_t value) {
     if (dumped) return;
     const auto period = StallWatchdogPeriod();
     if (period.count() == 0) return;
-    const auto now = std::chrono::steady_clock::now();
+    const auto now = stallClock.load()();
     if (since == std::chrono::steady_clock::time_point{}) {
         since = now;
         return;

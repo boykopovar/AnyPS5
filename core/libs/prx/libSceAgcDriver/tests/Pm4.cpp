@@ -1790,6 +1790,29 @@ void testStallWatchdog() {
     check(std::any_of(lines.begin(), lines.end(), [](const std::string& line) { return line.find("+0x0000 WAIT_REG_MEM 00000013") != std::string::npos; }), "the stall dump does not decode the stalled submission");
 }
 
+int stallDumpCount(const CapturedStderr& capture) {
+    const auto lines = capture.RingLines();
+    return static_cast<int>(std::count_if(lines.begin(), lines.end(), [](const std::string& line) { return line.find("has not progressed") != std::string::npos; }));
+}
+
+void testStallClock() {
+    static auto now = std::chrono::steady_clock::time_point(std::chrono::seconds(1000));
+    AgcDriver::DriverDetail::SetStallClock([] { return now; });
+    CapturedStderr capture;
+    AgcDriver::DriverDetail::StallWatch stall(0);
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    now += std::chrono::milliseconds(999);
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    check(stallDumpCount(capture) == 0, "a wait dumped the rings before the watchdog period");
+    now += std::chrono::milliseconds(1);
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    check(stallDumpCount(capture) == 1, "a wait that expired on the injected clock did not dump the rings once");
+    now += std::chrono::seconds(5);
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    check(stallDumpCount(capture) == 1, "a wait dumped the rings more than once on the injected clock");
+    AgcDriver::DriverDetail::SetStallClock(nullptr);
+}
+
 void testStallWatchdogRewind() {
     alignas(8) static std::uint32_t done = 0;
     static std::vector<std::uint32_t> words;
@@ -2119,7 +2142,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"rewind-trace", testRewindTailTrace}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"rewind-trace", testRewindTailTrace}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
