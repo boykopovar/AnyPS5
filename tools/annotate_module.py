@@ -195,12 +195,12 @@ class Module:
     def code_segments(self):
         segments = []
         for vaddr, offset, size, flags in sorted(self.loads):
-            if flags & PF_X:
+            if flags & PF_X and size:
                 if offset + size > len(self.data):
                     raise ModuleError("the executable PT_LOAD segment at %#x extends past the end of the file" % vaddr)
                 segments.append((vaddr, self.data[offset:offset + size]))
         if not segments:
-            raise ModuleError("no executable PT_LOAD segment")
+            raise ModuleError("no executable PT_LOAD segment with file-backed data")
         return segments
 
 

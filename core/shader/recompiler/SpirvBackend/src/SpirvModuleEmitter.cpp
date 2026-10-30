@@ -1660,6 +1660,10 @@ std::uint32_t EmitClassMaskF32(SpirvEmitterState& state, std::uint32_t value, st
 }
 
 std::uint32_t EmitMinMaxF32Value(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs, bool maxValue) {
+    if (maxValue && lhs == ConstantF32(state, 0u)) {
+        const auto positive = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), rhs, lhs);
+        return Select(state, TypeF32(state), positive, rhs, lhs);
+    }
     const auto lhsClass = EmitClassifyF32(state, lhs);
     const auto rhsClass = EmitClassifyF32(state, rhs);
 

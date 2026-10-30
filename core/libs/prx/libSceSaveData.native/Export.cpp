@@ -1400,6 +1400,34 @@ int APS5_VABI sceSaveDataUpload(void) {
     return 0;
 }
 
+int APS5_VABI sceSaveDataCheckPremiumMember() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataCheckSyncStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataGetAllSizeProspero() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataGetAutoSyncInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataGetCloudInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataNotifySaveDataDownload() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataSetAutoSyncSettings() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
 
 namespace {

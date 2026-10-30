@@ -341,6 +341,34 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertLess(first, second)
         self.assertTrue(any(re.match(r"^\s*3000:\s+ret\b", line) for line in listing[second:]))
 
+    def test_empty_executable_segments_do_not_abort_other_disassembly(self):
+        for memory_size in (0, 0x1000):
+            for address in (0, 0x3000):
+                with self.subTest(memory_size=memory_size, address=address):
+                    module = bytearray(build_module(extra_code=b""))
+                    struct.pack_into("<Q", module, 64 + 3 * 56 + 16, address)
+                    struct.pack_into("<Q", module, 64 + 3 * 56 + 40, memory_size)
+                    if address == 0:
+                        module[64:64 + 4 * 56] = module[64 + 3 * 56:64 + 4 * 56] + module[64:64 + 3 * 56]
+                    summary = self.annotate(bytes(module))
+                    self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+                    listing = self.read(".asm")
+                    self.assertEqual(listing.count("; ===== segment"), 1)
+                    self.assertIn("; ===== segment 0x1000", listing)
+                    self.assertIn("; -> " + IMPORT_NAME, listing)
+                    self.assertIn("; ===== export " + EXPORT_NAME, listing)
+
+    def test_only_empty_executable_segments_fail_before_writing_reports(self):
+        self.assert_fails(build_module(code=b"", extra_code=b"", symbols=[DEFAULT_SYMBOLS[0]]),
+                          "no executable PT_LOAD segment with file-backed data")
+        for suffix in (".asm", ".imports.txt", ".exports.txt"):
+            self.assertFalse((self.root / ("out" + suffix)).exists())
+
+    def test_nonempty_executable_segment_past_end_of_file_is_still_rejected(self):
+        module = bytearray(build_module(extra_code=b"\xc3"))
+        struct.pack_into("<Q", module, 64 + 3 * 56 + 32, 2)
+        self.assert_fails(bytes(module), "extends past the end of the file")
+
     def test_zero_run_preserves_instructions_and_export_label(self):
         code = b"\x90" + bytes(16) + b"\xc3"
         address = CODE_ADDRESS + 9

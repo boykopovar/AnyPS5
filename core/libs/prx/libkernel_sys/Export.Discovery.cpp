@@ -4,6 +4,7 @@
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -250,13 +251,16 @@ int APS5_VABI pthread_mutex_setprioceiling_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_mutexattr_getgen_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_mutexattr_getgen_np_nid_postfix(const PthreadMutexattr* attr, int* generation) {
+    if (!attr || !*attr || !generation) return PosixThread::GUEST_EINVAL;
+    *generation = (*attr)->generation & 1;
     return 0;
 }
 
-int APS5_VABI pthread_mutexattr_setgen_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_mutexattr_setgen_np_nid_postfix(PthreadMutexattr* attr, int generation) {
+    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
+    if (generation != 0 && generation != 1) return PosixThread::GUEST_ENOTSUP;
+    (*attr)->generation = generation;
     return 0;
 }
 
@@ -2008,18 +2012,16 @@ int APS5_VABI scePthreadMutexSetprioceiling(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadMutexattrGetgen(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadMutexattrGetgen(const PthreadMutexattr* attr, int* generation) {
+    return SceResult(pthread_mutexattr_getgen_np_nid_postfix(attr, generation));
 }
 
 int APS5_VABI scePthreadMutexattrInitForInternalLibc(PthreadMutexattr* attr) {
     return SceResult(pthread_mutexattr_init_nid_postfix(attr));
 }
 
-int APS5_VABI scePthreadMutexattrSetgen(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadMutexattrSetgen(PthreadMutexattr* attr, int generation) {
+    return SceResult(pthread_mutexattr_setgen_np_nid_postfix(attr, generation));
 }
 
 int APS5_VABI scePthreadResume(Pthread thread) {

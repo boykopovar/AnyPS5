@@ -20,6 +20,7 @@ inline constexpr std::uint8_t PrefixAddressSize = 0x67;
 inline constexpr std::uint8_t RexMin = 0x40;
 inline constexpr std::uint8_t RexMax = 0x4F;
 inline constexpr std::uint8_t RexWBit = 0x08;
+inline constexpr std::uint8_t RexBBit = 0x01;
 
 inline constexpr std::uint8_t TwoByteOpcodeEscape = 0x0F;
 
@@ -108,6 +109,8 @@ inline constexpr std::uint8_t OneByteLoopMax = 0xE2;
 inline constexpr std::uint8_t OneByteInOutImm8Min = 0xE4;
 inline constexpr std::uint8_t OneByteInOutImm8Max = 0xE7;
 inline constexpr std::uint8_t OneByteInt = 0xCD;
+inline constexpr std::uint8_t OneByteInt3 = 0xCC;
+inline constexpr std::uint8_t OneByteNop = 0x90;
 inline constexpr std::uint8_t OneByteRetImm16 = 0xC2;
 inline constexpr std::uint8_t OneByteRetFarImm16 = 0xCA;
 inline constexpr std::uint8_t OneByteEnter = 0xC8;
