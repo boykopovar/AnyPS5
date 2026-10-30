@@ -22,3 +22,5 @@
 | `Unknown` | `xe8itWXpOZM` |
 | `Unknown` | `yJ4a7GYY9kA` |
 | `Unknown` | `zgDNUrp0A+U` |
+
+- [Older callable NIDs](../../../core/libs/prx/libSceMediaAppSharedStorage/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Four use the Ma qualifier and three use MaDbg; qualified guest import resolution is unverified.
