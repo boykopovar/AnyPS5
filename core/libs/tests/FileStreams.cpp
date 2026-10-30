@@ -2,6 +2,8 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <iterator>
+#include <algorithm>
 #include <barrier>
 #include <cerrno>
 #include <cstdarg>
@@ -226,6 +228,43 @@ static std::string ReadWhole(const std::string& path) {
     return std::string(buffer.data(), size);
 }
 
+static int APS5_VABI ScanSafeList(FileStream* stream, const char* format, ...) {
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    const int result = vfscanf_s_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
+    __builtin_sysv_va_end(args);
+    return result;
+}
+
+static void CheckCharacterScanLengths() {
+    using Scanner = int (APS5_VABI*)(FileStream*, const char*, ...);
+    const Scanner scanners[]{fscanf_nid_postfix, ScanList, fscanf_s_nid_postfix, ScanSafeList};
+    for (std::size_t api = 0; api < std::size(scanners); ++api) {
+#ifdef _WIN32
+        if (api < 2) continue;
+#endif
+        for (const char* length : {"hh", "h", "ll", "j", "z", "t", "L"}) {
+            for (const char* conversion : {"s", "c", "[a-z]"}) {
+                auto* native = std::tmpfile();
+                Require(native != nullptr && std::fputs("ab", native) >= 0);
+                std::rewind(native);
+                FileStream stream(native);
+                std::array<char, 32> output;
+                output.fill('Z');
+                int consumed = -1;
+                const std::string format = std::string("%2") + length + conversion + "%n";
+                const auto scan = scanners[api];
+                const int result = api >= 2 ? scan(&stream, format.c_str(), output.data(), 32u, &consumed) : scan(&stream, format.c_str(), output.data(), &consumed);
+                Require(result == 1 && consumed == 2, "Stream character scan ignored-length consumption");
+                const bool single = conversion[0] == 'c';
+                Require(output[0] == 'a' && output[1] == 'b' && (single || output[2] == 0), "Stream character scan ignored length stored wide data");
+                Require(std::all_of(output.begin() + (single ? 2 : 3), output.end(), [](char value) { return value == 'Z'; }));
+                Require(std::fclose(native) == 0);
+            }
+        }
+    }
+}
+
 template<typename TRead>
 static void CheckReadAfterWrite(const std::string& path, const char* mode, const char* expected, TRead read) {
     auto* stream = fopen_nid_postfix(path.c_str(), "wb");
@@ -307,6 +346,7 @@ static void CheckWriteAfterRead(const std::string& path, const char* mode, const
 }
 
 static void CheckStreamWritesAfterReads(const std::string& base) {
+    CheckCharacterScanLengths();
     const std::string path = base + ".written";
     constexpr char appended[] = "0123456789XY";
 #if defined(__GLIBC__)
