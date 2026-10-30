@@ -214,6 +214,49 @@ static void TestUserFxChain() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestWideCustomSubmixer() {
+    calls = {};
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 2);
+    auto option = RackOption(nullptr, 0);
+    option.max_channels = 12;
+    const auto rack = CustomRack(system, option);
+    const auto custom = Voice(rack);
+    Require(ControlThrows<std::invalid_argument>(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 12, 12, 0, 0}));
+    Control(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 8, 8, 0, 0});
+    const std::vector<float> toMaster {
+        1, 0, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0,
+    };
+    Control(custom, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, static_cast<std::uint32_t>(toMaster.size()), toMaster.data()});
+    Patch(custom, master);
+    Control(custom, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
+    Event(custom, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    std::vector<std::int16_t> pcm(Grain * 2 * 8, 16384);
+    const auto sampler = Sampler(system, pcm);
+    const std::vector<float> toCustom {
+        1, 0,
+        0, 1,
+        0, 0,
+        0, 0,
+        0, 0,
+        0, 0,
+        0, 0,
+        0, 0,
+    };
+    Control(sampler, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, static_cast<std::uint32_t>(toCustom.size()), toCustom.data()});
+    Patch(sampler, custom);
+    Control(sampler, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, 0});
+    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    auto out = Render(system);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == (i < 3 ? 0.0f : 0.5f) && out[i * 2 + 1] == (i < 3 ? 0.0f : 0.5f));
+
+    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestRackOptions() {
     calls = {};
     const auto system = CreateSystem();
@@ -520,10 +563,12 @@ static void TestCustomRackChecks() {
     option = good;
     option.max_channels = SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS + 1;
     Require(create(option) == SCE_NGS2_ERROR_INVALID_NUM_CHANNELS);
+    option = good;
+    option.custom_rack_option.num_modules = 0;
     option.max_channels = 16;
-    Require(CreateThrows<std::runtime_error>(option));
+    Require(sceNgs2RackDestroy(CustomRack(system, option), nullptr) == SCE_NGS2_OK);
     option.max_channels = SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS;
-    Require(CreateThrows<std::runtime_error>(option));
+    Require(sceNgs2RackDestroy(CustomRack(system, option), nullptr) == SCE_NGS2_OK);
 
     Require(create(BuiltInRackOption(userFx2, 0x19, nullptr, 4)) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
     Require(!CreateThrows<std::runtime_error>(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_GAIN, nullptr, 0)));
@@ -978,6 +1023,7 @@ int main() {
         }
     }
     TestUserFxChain();
+    TestWideCustomSubmixer();
     TestRackOptions();
     TestCustomRackChecks();
     TestCustomFilterResetIndex();

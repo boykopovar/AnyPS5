@@ -24,9 +24,9 @@ constexpr std::uint32_t Instructions = 5;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
-alignas(256) constexpr std::array<std::uint32_t, 18> Code{
+alignas(256) constexpr std::array<std::uint32_t, 19> Code{
     0x34020084u, 0x34040086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x1e140b04u, 0x20160b04u, 0xd551000cu,
-    0x041a0b04u, 0xd554000du, 0x041a0b04u, 0xd557000eu, 0x041a0b04u, 0xe0781000u, 0x80010a02u, 0xe0701010u,
+    0x041a0b04u, 0xd554000du, 0x041a0b04u, 0xd557000eu, 0x041a0b04u, 0x201e0880u, 0xe0781000u, 0x80010a02u, 0xe0781010u,
     0x80010e02u, 0xbf810000u,
 };
 
@@ -155,6 +155,10 @@ void Check(std::uint32_t denormals, bool ieee) {
                                             Hex(vector.operands[0]) + ", " + Hex(vector.operands[1]) + ", " + Hex(vector.operands[2]) + " is " + Hex(actual) +
                                             ", expected " + Hex(expected));
         }
+        const auto value = vector.operands[0];
+        const bool tiny = denormals != 1u && (value & 0x7f800000u) == 0u;
+        const auto zeroMax = value <= 0x7f800000u && !tiny ? value : 0u;
+        Require(Output[lane * Results + 5u] == zeroMax, "v_max_f32 v15, 0, v4 denormal result for " + Hex(value));
     }
 }
 

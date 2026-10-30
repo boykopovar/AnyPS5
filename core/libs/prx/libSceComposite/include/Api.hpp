@@ -83,4 +83,28 @@ int APS5_VABI sceCompsoitorGetGpuClock();
 int APS5_VABI sceCompsoitorGetProcessRenderingTime();
 int APS5_VABI sceCompsoitorGetRenderingTime();
 
+int APS5_VABI sceCompositorGetMemoryPoolAddress();
+int APS5_VABI sceCompositorGetMemoryPoolSize();
+int APS5_VABI sceCompositorGetNullCanvasHandle();
+int APS5_VABI sceCompositorGetSecondaryMemoryAddress();
+int APS5_VABI sceCompositorGetSecondaryMemorySize();
+int APS5_VABI sceCompositorGetTFRing();
+int APS5_VABI sceCompositorGetVirtualCanvasHandle();
+int APS5_VABI sceCompositorIsVirtualCanvasHandle();
+int APS5_VABI sceCompositorMemoryPoolCommit();
+int APS5_VABI sceCompositorMemoryPoolCreate();
+int APS5_VABI sceCompositorPermanentMemoryCreate();
+int APS5_VABI sceCompositorSecondaryMemoryCreate();
+int APS5_VABI sceCompositorSetCanvasIdToCanvasHandle();
+int APS5_VABI sceCompositorSetFlipCommand3();
+int APS5_VABI sceCompositorSetMainPort();
+int APS5_VABI sceCompositorSetMainPortPixelFormat();
+int APS5_VABI sceCompositorSetMetaIdToCanvasHandle();
+int APS5_VABI sceCompositorSetNativeVrVideoOutMode();
+int APS5_VABI sceCompositorSetTFRing();
+int APS5_VABI sceCompositorSetVirtualCanvasRenderTargetCommand();
+int APS5_VABI sceCompositorStartSeeThroughBuffer();
+int APS5_VABI sceCompositorStopSeeThroughBuffer();
+int APS5_VABI sceCompositorWaitEndOfRenderingIfGpuWorking();
+
 }
