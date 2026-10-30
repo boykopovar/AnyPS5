@@ -60,6 +60,8 @@ void MtbufKeepsItsFormat() {
     Check(instruction.memoryOffset == 0x10u && instruction.idxen && !instruction.offen, "MTBUF offset or index flags changed");
     const std::array<std::uint32_t, 2> load{Mtbuf(0u, 4u, 4u, false), MtbufOperands};
     Check(Decode(load).op == RdnaOpcode::TbufferLoadFormatX, "tbuffer_load_format_x did not decode as its RDNA opcode");
+    const std::array<std::uint32_t, 2> reserved{Mtbuf(0u, 4u, 4u, false), MtbufOperands | (1u << 21u)};
+    Check(Decode(reserved).op == RdnaOpcode::TbufferLoadFormatX, "MTBUF word 1 bit 21, reserved on GCN, changed the RDNA opcode");
     const std::array<std::uint32_t, 2> addr64{Mtbuf(7u, dataFormat, numberFormat, true), MtbufOperands};
     Check(Throws(addr64), "an ADDR64 MTBUF was accepted");
     const std::array<std::uint32_t, 2> invalid{Mtbuf(7u, 0u, numberFormat, false), MtbufOperands};
