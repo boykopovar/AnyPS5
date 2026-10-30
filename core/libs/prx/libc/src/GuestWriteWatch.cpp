@@ -593,11 +593,14 @@ private:
         if (page >= it->second.end) return false;
         auto& state = it->second.pages[(page - it->first) / _page];
         if ((state & Protected) != 0) {
+            if (::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask) != 0) return false;
             state = static_cast<std::uint8_t>((state & (ProtectionMask | Fresh)) | Written);
-            ::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask);
             return true;
         }
-        return (state & PROT_WRITE) != 0;
+        if ((state & PROT_WRITE) == 0) return false;
+        std::uint8_t value = 0;
+        mach_vm_size_t copied = 0;
+        return mach_vm_read_overwrite(mach_task_self(), address, sizeof(value), reinterpret_cast<mach_vm_address_t>(&value), &copied) == KERN_SUCCESS && copied == sizeof(value);
     }
 
     std::uintptr_t pageStart(std::uintptr_t address) const {

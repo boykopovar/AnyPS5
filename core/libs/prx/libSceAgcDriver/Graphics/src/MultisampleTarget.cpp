@@ -142,6 +142,12 @@ void recordCommands(const Context& context, Record&& record) {
     if (batch) batch->SubmitAndWait();
 }
 
+struct TargetUse {
+    std::atomic<bool> hostOnly{true};
+    std::atomic<std::uint64_t> writes{0};
+    std::atomic<bool> claimed{false};
+};
+
 class MultisampleTarget : public std::enable_shared_from_this<MultisampleTarget> {
 public:
     MultisampleTarget(const Context& context, const ColorTarget& target) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target) {
@@ -535,7 +541,7 @@ public:
 
     Context context;
     std::shared_ptr<std::atomic<bool>> active = std::make_shared<std::atomic<bool>>(true);
-    std::shared_ptr<std::atomic<bool>> hostOnly = std::make_shared<std::atomic<bool>>(true);
+    std::shared_ptr<TargetUse> use = std::make_shared<TargetUse>();
     std::shared_ptr<std::atomic<bool>> metadataValid;
     ColorTarget target;
     VkImage image = VK_NULL_HANDLE;
@@ -763,7 +769,7 @@ struct GuardedRange {
     std::uint32_t samples;
     std::shared_ptr<std::atomic<bool>> active;
     std::shared_ptr<std::atomic<bool>> metadataValid;
-    std::shared_ptr<std::atomic<bool>> hostOnly;
+    std::shared_ptr<TargetUse> use;
     bool fmask = false;
 };
 
@@ -838,7 +844,7 @@ void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
-void guard(const Context& context, const ColorTarget& target, const std::shared_ptr<std::atomic<bool>>& active, const std::shared_ptr<std::atomic<bool>>& metadataValid, const std::shared_ptr<std::atomic<bool>>& hostOnly) {
+std::uint64_t guardedColorBytes(const ColorTarget& target) {
     auto bytes = std::max<std::uint64_t>(target.bytes * target.samples, static_cast<std::uint64_t>(target.extent.width) * target.extent.height * target.elementBytes * target.samples);
     if (MultisampledBlockLog2(target.tileMode) == 16u && target.tileMode != ColorTileMode::Standard64KB && std::has_single_bit(target.elementBytes) && std::has_single_bit(target.samples)) {
         const auto log2Samples = std::countr_zero(target.samples);
@@ -849,12 +855,32 @@ void guard(const Context& context, const ColorTarget& target, const std::shared_
         const auto align = [](std::uint32_t extent, std::uint32_t block) { return (static_cast<std::uint64_t>(extent) + block - 1u) / block * block; };
         bytes = align(target.extent.width, blockWidth) * align(target.extent.height, blockHeight) * target.elementBytes * target.samples;
     }
+    return bytes;
+}
+
+void claimOverlapping(std::uint64_t address, std::uint64_t bytes, const TargetUse* claimant) {
+    for (const auto& range : guarded()) {
+        if (!range.fmask && range.use.get() != claimant && address < range.address + range.bytes && range.address < address + bytes) range.use->claimed.store(true, std::memory_order_release);
+    }
+}
+
+void stampUse(TargetUse& use, std::uint64_t address, std::uint64_t bytes) {
+    use.claimed.store(false, std::memory_order_release);
+    if (bytes == 0) return;
+    if (GuestMemory::Watched(address, static_cast<std::size_t>(bytes))) use.writes.store(GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes)), std::memory_order_release);
+    std::shared_lock lock(guardedMutex());
+    claimOverlapping(address, bytes, &use);
+}
+
+void guard(const Context& context, const ColorTarget& target, const std::shared_ptr<std::atomic<bool>>& active, const std::shared_ptr<std::atomic<bool>>& metadataValid, const std::shared_ptr<TargetUse>& use) {
+    const auto bytes = guardedColorBytes(target);
+    stampUse(*use, target.address, bytes);
     std::unique_lock lock(guardedMutex());
-    guarded().push_back({context.device, target.address, bytes, target.samples, active, nullptr, hostOnly});
+    guarded().push_back({context.device, target.address, bytes, target.samples, active, nullptr, use});
     if (target.dccAddress != 0) {
-        guarded().push_back({context.device, target.dccAddress, MultisampledDccBytes(target), target.samples, active, metadataValid, hostOnly});
-        if (target.cmaskAddress != 0) guarded().push_back({context.device, target.cmaskAddress, target.cmaskBytes, target.samples, active, metadataValid, hostOnly});
-        if (target.samples == 8u && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes, target.samples, active, metadataValid, hostOnly});
+        guarded().push_back({context.device, target.dccAddress, MultisampledDccBytes(target), target.samples, active, metadataValid, use});
+        if (target.cmaskAddress != 0) guarded().push_back({context.device, target.cmaskAddress, target.cmaskBytes, target.samples, active, metadataValid, use});
+        if (target.samples == 8u && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes, target.samples, active, metadataValid, use});
     }
     anyGuarded().store(true, std::memory_order_release);
     InstallResidentImageReadGuard_nid_no_patch();
@@ -875,9 +901,12 @@ void discardRetiredTargets() {
 }
 
 bool holdHostOnly(const MultisampleTarget& target) {
-    std::unique_lock lock(guardedMutex());
-    if (!target.active->load(std::memory_order_acquire)) return false;
-    target.hostOnly->store(true, std::memory_order_release);
+    {
+        std::unique_lock lock(guardedMutex());
+        if (!target.active->load(std::memory_order_acquire)) return false;
+        target.use->hostOnly.store(true, std::memory_order_release);
+    }
+    stampUse(*target.use, target.target.address, guardedColorBytes(target.target));
     return true;
 }
 
@@ -896,15 +925,15 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested)
                 anyGuarded().store(!guarded().empty(), std::memory_order_release);
             }
             target->Recreate(use);
-            target->hostOnly->store(true, std::memory_order_release);
-            guard(context, use, target->active, target->metadataValid, target->hostOnly);
+            target->use->hostOnly.store(true, std::memory_order_release);
+            guard(context, use, target->active, target->metadataValid, target->use);
             target->ApplyFastClear(use);
             return *target;
         }
         {
             std::unique_lock lock(guardedMutex());
             if (!target->active->load(std::memory_order_acquire)) continue;
-            target->hostOnly->store(true, std::memory_order_release);
+            target->use->hostOnly.store(true, std::memory_order_release);
         }
         if (target->fromTexture && use.cmaskAddress != 0) {
             target->fromTexture = false;
@@ -914,6 +943,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested)
         target->Keep();
         target->SettleStorageWrites();
         target->ApplyFastClear(use);
+        stampUse(*target->use, target->target.address, guardedColorBytes(target->target));
         return *target;
     }
     const auto& use = requested;
@@ -921,7 +951,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested)
     target->Keep();
     targets().push_back(std::move(target));
     auto& created = *targets().back();
-    guard(context, use, created.active, created.metadataValid, created.hostOnly);
+    guard(context, use, created.active, created.metadataValid, created.use);
     if (use.cmaskFastClear && use.dccAddress == 0) created.cmask.SeedCode(CurrentUniformMetadataByte(use.cmaskAddress, static_cast<std::size_t>(use.cmaskBytes)));
     created.ApplyFastClear(use);
     created.Keep();
@@ -995,8 +1025,8 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     target->Keep();
     targets().push_back(std::move(target));
     auto& created = *targets().back();
-    created.hostOnly->store(written, std::memory_order_release);
-    guard(context, use, created.active, created.metadataValid, created.hostOnly);
+    created.use->hostOnly.store(written, std::memory_order_release);
+    guard(context, use, created.active, created.metadataValid, created.use);
     created.colorFill.NoteFill(use.address, static_cast<std::size_t>(bytes), value);
     created.fromTexture = true;
     created.htileAddress = resource.dccAddress;
@@ -1452,12 +1482,18 @@ void ClearMultisampleTargets(VkDevice device) {
     UpdateResidentImageUnmapObserver_nid_no_patch();
 }
 
+void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes) {
+    if (bytes == 0 || !anyGuarded().load(std::memory_order_acquire)) return;
+    std::shared_lock lock(guardedMutex());
+    claimOverlapping(address, bytes, nullptr);
+}
+
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {
     const auto bits = static_cast<std::uint64_t>(target.extent.width) * target.extent.height * target.coverageSamples;
     const auto bytes = std::max<std::uint64_t>((bits / 8u + 0xffffu) & ~0xffffull, 0x10000u);
     std::unique_lock lock(guardedMutex());
     const bool known = std::ranges::any_of(guarded(), [&](const auto& range) { return range.fmask && range.device == context.device && range.address == target.fmaskAddress && range.bytes == bytes; });
-    if (!known) guarded().push_back({context.device, target.fmaskAddress, bytes, target.coverageSamples, std::make_shared<std::atomic<bool>>(true), nullptr, std::make_shared<std::atomic<bool>>(true), true});
+    if (!known) guarded().push_back({context.device, target.fmaskAddress, bytes, target.coverageSamples, std::make_shared<std::atomic<bool>>(true), nullptr, std::make_shared<TargetUse>(), true});
     anyGuarded().store(true, std::memory_order_release);
     lock.unlock();
     InstallResidentImageReadGuard_nid_no_patch();
@@ -1480,12 +1516,20 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
         std::snprintf(text, sizeof(text), "AGC graphics: %s of 0x%llx+0x%zx overlaps multisampled color target 0x%llx+0x%llx (%u samples), whose samples are only on the host: guest access to it is not implemented", access, static_cast<unsigned long long>(address), bytes, static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), range.samples);
         throw std::runtime_error(text);
     };
+    const auto canRetire = [&](const GuardedRange& range) {
+        if (!range.use->hostOnly.load(std::memory_order_acquire) || range.use->claimed.load(std::memory_order_acquire)) return true;
+        if (range.metadataValid) return false;
+        const auto used = range.use->writes.load(std::memory_order_acquire);
+        const auto begin = std::max(address, range.address);
+        const auto overlap = static_cast<std::size_t>(std::min(address + bytes, range.address + range.bytes) - begin);
+        return used != 0 && GuestMemory::Watched(begin, overlap) && !GuestMemory::UnchangedSinceCollected(begin, overlap, used);
+    };
     {
         std::shared_lock lock(guardedMutex());
         bool retirable = false;
         for (const auto& range : guarded()) {
             if (!overlaps(range)) continue;
-            if (range.hostOnly->load(std::memory_order_acquire)) refuse(range);
+            if (!canRetire(range)) refuse(range);
             retirable = true;
         }
         if (!retirable) return;
@@ -1494,7 +1538,7 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
     std::vector<std::shared_ptr<std::atomic<bool>>> retired;
     for (const auto& range : guarded()) {
         if (!overlaps(range)) continue;
-        if (range.hostOnly->load(std::memory_order_acquire)) refuse(range);
+        if (!canRetire(range)) refuse(range);
         retired.push_back(range.active);
     }
     for (const auto& active : retired) active->store(false, std::memory_order_release);
@@ -1508,7 +1552,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::u
     if (bytes != 0 && anyGuarded().load(std::memory_order_acquire)) {
         std::shared_lock lock(guardedMutex());
         for (const auto& range : guarded()) {
-            if (address < range.address + range.bytes && range.address < address + bytes && range.hostOnly->load(std::memory_order_acquire)) ranges.emplace_back(range.address, range.bytes);
+            if (address < range.address + range.bytes && range.address < address + bytes && range.use->hostOnly.load(std::memory_order_acquire)) ranges.emplace_back(range.address, range.bytes);
         }
     }
     std::ranges::sort(ranges);

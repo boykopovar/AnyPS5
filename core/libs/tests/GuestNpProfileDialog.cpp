@@ -143,8 +143,11 @@ int main() {
 
     Require(sceNpProfileDialogTerminate() == 0);
     Require(sceNpProfileDialogTerminate() == kErrNotInitialized);
-    Require(sceNpProfileDialogGetStatus() == kStatusNone);
+    Require(sceNpProfileDialogClose() == kErrNotInitialized);
     Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == kErrNotInitialized);
+    Require(sceNpProfileDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceNpProfileDialogGetStatus() == kStatusNone);
+    Require(sceNpProfileDialogUpdateStatus() == kStatusNone);
 
     Require(sceNpProfileDialogInitialize() == 0);
     std::memset(result, kSentinel, sizeof(result));
@@ -155,5 +158,11 @@ int main() {
     Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == 0);
     RequireCanceled(result, &first);
     Require(sceNpProfileDialogTerminate() == 0);
+    Require(sceNpProfileDialogTerminate() == kErrNotInitialized);
+    Require(sceNpProfileDialogClose() == kErrNotInitialized);
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == kErrNotInitialized);
+    Require(sceNpProfileDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceNpProfileDialogGetStatus() == kStatusNone);
+    Require(sceNpProfileDialogUpdateStatus() == kStatusNone);
     return 0;
 }

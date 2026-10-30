@@ -6,6 +6,10 @@
 
 extern "C" {
 
+int APS5_VABI sceVdecCoreQueryMemorySizeSvp() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceVdecCoreAnalyzeStream() {
     NotImplemented_nid_no_patch(__func__);
     return 0;

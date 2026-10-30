@@ -12,10 +12,11 @@
 - [EVP_PKEY_up_ref and EC_KEY_up_ref](../../../core/libs/prx/libSceLibreSsl3/src/Key.cpp) - console layouts and retain/release interoperability are unverified. The 32-byte EVP and 64-byte EC layouts, with counters at offsets 4 and 48, follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `evp/evp_local.h`, `evp/p_lib.c`, `ec/ec_local.h` and `ec/ec_key.c`. Atomic retains replace its internal mutex; future releases must synchronize with the same counters. With no key constructors/destructors in this module, tests use caller-owned objects without validating allocator or destruction compatibility. Null keys and signed-counter overflow, undefined upstream, throw without mutation. Closes when: console layouts and lifetime interoperability are measured.
 
 - [Parent export forwarding](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) exposes 395 parent-library exports on Windows through IAT tail jumps without changing their ABI. Non-Windows hosts use their existing dependency lookup. Static COFF inspection verifies names, parent imports and tail jumps; Windows loading and runtime behavior remain unverified. Parent functions retain their existing implementation limitations.
+- [sk_new, sk_push and sk_free](../../../core/libs/prx/libSceLibreSsl3/src/Stack.cpp) (libSceLibreSsl3) - follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/stack/stack.c) `stack.c` with libSceLibreSsl's 32-byte `_STACK` layout, which `stack_local.h` keeps there. Stacks and element arrays come from the guest heap, so the forwarded `sk_pop_free` can release them. Nothing is checked on the console. Where LibreSSL faults or overflows, they throw: `sk_push` on a null stack, on a negative element count, on a null element array it does not regrow, or when the element array cannot double without overflowing `int`
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 183 callable exports: 57 named and 126 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 180 callable exports: 54 named and 126 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -150,7 +151,6 @@
 | `unknown` | `iHetf873n+4` |
 | `unknown` | `je-ydGAbgFg` |
 | `unknown` | `k1AHUWet-oU` |
-| `sk_new` | `kJ+Y+ppuuRg` |
 | `unknown` | `kO-jQ3HS9kE` |
 | `unknown` | `kPCJUQuguzE` |
 | `BIO_set_flags` | `lLHlEb1nt5U` |
@@ -163,14 +163,12 @@
 | `tls_server` | `nCOh70mg3K0` |
 | `unknown` | `o0dpw6ZZ6K0` |
 | `unknown` | `o3Q8yQAMT-k` |
-| `sk_push` | `oXlgRDLB+w8` |
 | `EVP_PKEY_derive_set_peer` | `ovH4WphWIQQ` |
 | `unknown` | `pW329hq95Hc` |
 | `unknown` | `pdxCm9+CCc4` |
 | `EVP_CIPHER_key_length` | `qAG7o03bkkM` |
 | `unknown` | `qGsc6uT6p1E` |
 | `EVP_PKEY_verify_init` | `qseLIVbdvMQ` |
-| `sk_free` | `rI4q1FM+0gQ` |
 | `unknown` | `rJZ-aiNIYCA` |
 | `unknown` | `s8WMaKNjwvE` |
 | `unknown` | `sENJFZ7WbLU` |

@@ -9341,6 +9341,9 @@ void verifyVolumeArrayLoadMode() {
     require(sampled.dimension == RdnaImageDimension::Dim3D && !sampled.cube, "2D-array image sample on a 3D T# did not select a volume runtime mode");
     const DescriptorValue arrayDescriptor{{0x02466600u, 0x01400000u, 0u, 0xd0500204u, 1u, 0x00700000u, 0u, 0u}, 8u};
     require(sampleModes[ResourceMaterializer::RuntimeImageMode(image, arrayDescriptor, sampleModes)].dimension == RdnaImageDimension::Dim2DArray, "2D-array image sample on a 2D-array T# no longer selects the 2D-array runtime mode");
+    image.adjustedSample = true;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, ResourceMaterializer::RuntimeImageModes(image))); }, "incompatible with the static runtime image interface", "a 2D-array image_sample_a on a 3D T# selected a volume runtime mode");
+    image.adjustedSample = false;
     image.volumeArraySampleCompatible = false;
     ImageResource store{};
     store.resourceClass = ImageResourceClass::Storage;
@@ -9375,6 +9378,12 @@ void verifyMultisamplePlaneReadMode() {
     auto other = image;
     other.cubeFaceCompatible = false;
     refused(other, "a 2D read of a 2D MSAA T# through a mip, gather, bias, gradient or offset access was accepted");
+    other = image;
+    other.adjustedSample = true;
+    require(modes[ResourceMaterializer::RuntimeImageMode(other, descriptor, ResourceMaterializer::RuntimeImageModes(other))].dimension == RdnaImageDimension::Dim2D, "a 2D image_sample_a of a 2D MSAA T# did not select the 2D runtime mode");
+    const DescriptorValue cube{{0x02143930u, 71u << 20u, 0u, 0xb1b00facu, 5u, 0u, 0u, 0u}, 8u};
+    require(modes[ResourceMaterializer::RuntimeImageMode(image, cube, modes)].cube, "a 2D sample of a cube T# did not select a cube face runtime mode");
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(other, cube, ResourceMaterializer::RuntimeImageModes(other))); }, "incompatible with the static runtime image interface", "a 2D image_sample_a of a cube T# selected a cube face runtime mode");
     other = image;
     other.depthCompare = true;
     refused(other, "a 2D depth comparison of a 2D MSAA T# was accepted");
