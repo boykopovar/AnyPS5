@@ -1038,6 +1038,50 @@ static void CheckMtypeprotect() {
     Require(sceKernelReleaseDirectMemory(phys, page * 3) == 0);
 }
 
+static void CheckMemoryPoolArguments() {
+    constexpr std::size_t page = 0x4000;
+    constexpr int einval = static_cast<int>(0x80020016u);
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    void* mapped = nullptr;
+    Require(sceKernelMapDirectMemory(&mapped, page * 2, 3, 0, phys, 0) == 0);
+    auto* bytes = static_cast<unsigned char*>(mapped);
+    Require(sceKernelMemoryPoolCommit(nullptr, page, 0, 3, 0) == einval);
+    Require(sceKernelMemoryPoolCommit(bytes, 0, 0, 3, 0) == einval);
+    Require(sceKernelMemoryPoolCommit(bytes + 1, page, 0, 3, 0) == einval);
+    Require(sceKernelMemoryPoolCommit(bytes, page + 1, 0, 3, 0) == einval);
+    Require(sceKernelMemoryPoolDecommit(nullptr, page, 0) == einval);
+    Require(sceKernelMemoryPoolDecommit(bytes, 0, 0) == einval);
+    Require(sceKernelMemoryPoolDecommit(bytes + 1, page, 0) == einval);
+    Require(sceKernelMemoryPoolDecommit(bytes, page + 1, 0) == einval);
+    VirtualQueryInfo info{};
+    Require(sceKernelVirtualQuery(bytes, 0, &info, sizeof(info)) == 0 && info.protection == 3);
+
+    KernelMemoryPoolBatchEntry entries[2]{};
+    int processed = -1;
+    Require(sceKernelMemoryPoolBatch(nullptr, 1, &processed, 0) == einval);
+    Require(sceKernelMemoryPoolBatch(entries, -1, &processed, 0) == einval);
+    Require(sceKernelMemoryPoolBatch(entries, 0, &processed, 0) == 0 && processed == 0);
+    for (const std::uint32_t op : {0u, 9u}) {
+        entries[0] = {};
+        entries[0].op = op;
+        processed = -1;
+        Require(sceKernelMemoryPoolBatch(entries, 1, &processed, 0) == einval && processed == 0);
+    }
+    entries[0] = {};
+    entries[0].op = 3;
+    entries[0].protect.addr = bytes;
+    entries[0].protect.len = page;
+    entries[0].protect.prot = 1;
+    entries[1] = {};
+    entries[1].op = 9;
+    processed = -1;
+    Require(sceKernelMemoryPoolBatch(entries, 2, &processed, 0) == einval && processed == 1);
+    Require(sceKernelVirtualQuery(bytes, 0, &info, sizeof(info)) == 0 && info.protection == 1);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapped), page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
+}
+
 static void CheckDirectMemoryGpuProtBits() {
     constexpr std::size_t page = 0x4000;
     std::int64_t phys = 0;
@@ -3855,6 +3899,7 @@ int main(int argc, char** argv) {
     CheckGetDirectMemoryType();
     CheckDirectMemoryQuery();
     CheckMtypeprotect();
+    CheckMemoryPoolArguments();
     CheckHeapAlignment();
     CheckHeapReallocWithinTheBlock();
     CheckHeapAfterMappingReuse();

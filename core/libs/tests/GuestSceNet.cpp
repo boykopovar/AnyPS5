@@ -29,6 +29,7 @@
 #include <cstring>
 #include <future>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -309,6 +310,22 @@ static void CheckPoolStats() {
     Require(Failed(sceNetGetMemoryPoolStats(pool, nullptr), 22));
     Require(sceNetPoolDestroy(pool) == 0);
     Require(Failed(sceNetGetMemoryPoolStats(pool, &stats), 9));
+}
+
+static void CheckPoolErrors() {
+    for (const int size : {0, -1, std::numeric_limits<int>::min()}) {
+        *sceNetErrnoLoc() = 33;
+        Require(Failed(sceNetPoolCreate("bad", size, 0), 22));
+    }
+    const int first = sceNetPoolCreate("first", 0x1000, 0);
+    const int second = sceNetPoolCreate("second", 0x1000, 0);
+    Require(first > 0 && second > 0 && first != second);
+    Require(sceNetPoolDestroy(first) == 0);
+    for (const int id : {first, 0, -1, std::numeric_limits<int>::max()}) {
+        *sceNetErrnoLoc() = 33;
+        Require(Failed(sceNetPoolDestroy(id), 9));
+    }
+    Require(sceNetPoolDestroy(second) == 0);
 }
 
 static void CheckStatisticsInfo() {
@@ -2196,6 +2213,7 @@ int main() {
     CheckSocketHostErrors();
     CheckSocketArgumentErrors();
     CheckPoolStats();
+    CheckPoolErrors();
     CheckStatisticsInfo();
     CheckIfName();
     CheckRandom();

@@ -6806,6 +6806,9 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
         {"64 KiB R_X 200x150 off a 64 KiB boundary, 3 mips", TextureTileMode::kR64KBX, 200, 150, 3, 4096},
         {"4 KiB S 100x70, 2 mips", TextureTileMode::kStandard4KB, 100, 70, 2, 0},
         {"linear 200x150", TextureTileMode::kLinear, 200, 150, 1, 0},
+        {"linear 240x135, 2 mips", TextureTileMode::kLinear, 240, 135, 2, 0},
+        {"linear 1000x700", TextureTileMode::kLinear, 1000, 700, 1, 0},
+        {"linear 1900x1100, 2 mips", TextureTileMode::kLinear, 1900, 1100, 2, 0},
         {"64 KiB R_X 512x512, 3 mips, no padding below the tail", TextureTileMode::kR64KBX, 512, 512, 3, 0, true},
         {"64 KiB R_X 1000x700", TextureTileMode::kR64KBX, 1000, 700, 1, 0, true},
         {"64 KiB R_X 1900x1100, across two 8 MiB slabs", TextureTileMode::kR64KBX, 1900, 1100, 1, 0, true},
@@ -6891,12 +6894,15 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
                 image->MarkDirty();
                 const auto slabRetilesBefore = StorageTexture::SlabRetiles();
+                const auto paddingSeedsBefore = StorageTexture::PaddingSeedCopies();
                 image->WriteBack();
                 recorder.Submit();
                 device.WaitQueue();
                 recorder.Sync();
                 const auto slabRetiled = StorageTexture::SlabRetiles() - slabRetilesBefore;
                 if (test.direct && watched && UnitShadowEnabled() && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && slabRetiled == 0) failures += what + ": no window was retiled straight into its unit-shadow slab\n";
+                const auto paddingSeeded = StorageTexture::PaddingSeedCopies() - paddingSeedsBefore;
+                if (test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && paddingSeeded != 0) failures += what + ": the write-back copied " + std::to_string(paddingSeeded) + " pieces of row padding from the import through its scratch\n";
                 std::vector<std::byte> read(bytes);
                 if (watched) AgcDriver::GuestMemory::Read(blockAddress, read);
                 else std::memcpy(read.data(), memory, bytes);
