@@ -24,7 +24,7 @@ int APS5_VABI __sys_is_development_mode_nid_postfix();
 int APS5_VABI __sys_kqueueex_nid_postfix();
 int APS5_VABI __sys_namedobj_create_nid_postfix();
 int APS5_VABI __sys_namedobj_delete_nid_postfix();
-int APS5_VABI __sys_nanosleep_nid_postfix();
+int APS5_VABI __sys_nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp);
 int APS5_VABI __sys_netabort_nid_postfix();
 int APS5_VABI __sys_netcontrol_nid_postfix();
 int APS5_VABI __sys_netgetiflist_nid_postfix();
