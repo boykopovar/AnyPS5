@@ -16,14 +16,17 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadInputTypes.hpp"
+#include "prx/libScePad/include/PadRumbleIntensity.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
 
 PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
 }
 
 PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)) {
+    static_cast<void>(Pad::RumblePercent());
     openAvailableControllers();
 }
 
@@ -125,8 +128,11 @@ void PadInput::applyOutput() {
         const bool isPs5 = SDL_GameControllerGetType(controller) == SDL_CONTROLLER_TYPE_PS5;
         const auto large = std::max(slots[slot].outputState.vibrationLarge, slots[slot].outputState.audioVibrationLarge);
         const auto small = std::max(slots[slot].outputState.vibrationSmall, slots[slot].outputState.audioVibrationSmall);
-        const bool rumbling = large != 0 || small != 0;
-        const bool triggerRumble = slots[slot].outputState.trigger[0].fallback != 0 || slots[slot].outputState.trigger[1].fallback != 0;
+        const unsigned rumblePercent = Pad::RumblePercent();
+        const auto motors = Pad::MakeRumbleCommand(large, small, rumblePercent, 2000);
+        const auto triggers = Pad::MakeRumbleCommand(slots[slot].outputState.trigger[0].fallback, slots[slot].outputState.trigger[1].fallback, rumblePercent, 2000);
+        const bool rumbling = motors.Active();
+        const bool triggerRumble = triggers.Active();
         if (SDL_GameControllerHasLED(controller) == SDL_TRUE) {
             struct PlayerLedColor { Uint8 r, g, b; };
             static constexpr PlayerLedColor defaultColors[4] = {
@@ -147,8 +153,7 @@ void PadInput::applyOutput() {
         }
         slots[slot].outputPending = false;
         slots[slot].nextRumbleRefresh = now + std::chrono::milliseconds(700);
-        constexpr Uint32 rumbleMs = 2000;
-        SDL_GameControllerRumble(controller, static_cast<Uint16>(large * 257), static_cast<Uint16>(small * 257), rumbling ? rumbleMs : 0);
+        SDL_GameControllerRumble(controller, motors.low, motors.high, motors.durationMs);
         if (slots[slot].outputState.triggerTouched) {
             if (isPs5) {
                 TriggerEffectCache::Effect effect{};
@@ -159,7 +164,7 @@ void PadInput::applyOutput() {
                     slots[slot].triggerEffect.Result(effect, SDL_GameControllerSendEffect(controller, effect.data(), static_cast<int>(effect.size())) == 0);
                 }
             } else if (SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) {
-                SDL_GameControllerRumbleTriggers(controller, static_cast<Uint16>(slots[slot].outputState.trigger[0].fallback * 257), static_cast<Uint16>(slots[slot].outputState.trigger[1].fallback * 257), triggerRumble ? rumbleMs : 0);
+                SDL_GameControllerRumbleTriggers(controller, triggers.low, triggers.high, triggers.durationMs);
             }
         }
     }
@@ -289,6 +294,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP;
     if (!input || ignoreInput) return;
     if (event.type == SDL_KEYDOWN && ImeCapturesKeyboard_nid_postfix()) return;
+    if (event.type != SDL_KEYUP && event.type != SDL_MOUSEBUTTONUP && ModalDialogCapturesInput_nid_postfix()) return;
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
     if (requests.toggleFullscreen && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) window.ToggleFullscreen();
@@ -338,8 +344,10 @@ void PadInput::publish(std::uint64_t frame) {
 
 PadInputState PadInput::handOff(int slot, PadInputState state) {
     auto& held = slots[slot].heldThroughCapture;
-    if (ImeCapturesPad_nid_postfix()) {
-        if (slot == 0) ImePublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
+    const bool imeCaptures = ImeCapturesPad_nid_postfix();
+    if (imeCaptures || ModalDialogCapturesInput_nid_postfix()) {
+        if (slot == 0 && imeCaptures) ImePublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
+        else if (slot == 0) ModalDialogPublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
         held = state.buttons;
         PadInputState neutral;
         neutral.hasMotion = false;

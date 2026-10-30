@@ -1,6 +1,5 @@
-add_library(libSceSaveData.native SHARED EXCLUDE_FROM_ALL Export.cpp)
-target_include_directories(libSceSaveData.native PRIVATE ${LIBS_INCLUDE_DIR})
-configure_windows_unwind(libSceSaveData.native)
+include(${CMAKE_CURRENT_SOURCE_DIR}/SaveDataLibrary.cmake)
+add_sce_savedata_library(libSceSaveData.native)
 
 if(BUILD_TESTING)
     add_test_executable(guest_savedata_search_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataSearch.cpp)

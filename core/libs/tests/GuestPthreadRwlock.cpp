@@ -420,7 +420,49 @@ static void CheckAttrType() {
     Require(Throws([&] { scePthreadRwlockattrGettype(&unset, &type); }));
 }
 
+static void CheckSceAttrLifecycle() {
+    PthreadRwlockattr attr = nullptr;
+    Require(scePthreadRwlockattrInit(&attr) == SCE_OK && attr != nullptr);
+    PthreadRwlock lock = nullptr;
+    Require(scePthreadRwlockInit(&lock, &attr, "sce attr") == SCE_OK && lock != nullptr);
+    Require(pthread_rwlock_wrlock_nid_postfix(&lock) == 0);
+    Require(pthread_rwlock_tryrdlock_nid_postfix(&lock) == GUEST_EBUSY);
+    Require(pthread_rwlock_unlock_nid_postfix(&lock) == 0);
+    Require(pthread_rwlock_destroy_nid_postfix(&lock) == 0);
+    Require(scePthreadRwlockattrDestroy(&attr) == SCE_OK && attr == nullptr);
+    const auto throws = [](auto&& call) {
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+    Require(throws([&] { scePthreadRwlockattrDestroy(&attr); }));
+    Require(throws([] { scePthreadRwlockattrDestroy(nullptr); }));
+    Require(throws([] { scePthreadRwlockattrInit(nullptr); }));
+}
+
+static void CheckSceTryLocks() {
+    PthreadRwlock lock = nullptr;
+    Require(scePthreadRwlockInit(&lock, nullptr, "sce try") == SCE_OK && lock != nullptr);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTrywrlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockTryrdlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockUnlock(&lock) == SCE_OK);
+    Require(scePthreadRwlockDestroy(&lock) == SCE_OK);
+}
+
 int main() {
+    CheckSceAttrLifecycle();
+    CheckSceTryLocks();
     CheckAttrSettype();
     CheckAttrProcessSharing();
     CheckAttrType();

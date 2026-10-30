@@ -45,7 +45,7 @@ Without an `anyps5-input.ini`, or for actions the file does not mention, these b
 | `TogglePerformanceOverlay` | F10 |
 | `Screenshot` | F12 |
 
-For example, this changes Cross to F or Space, moves the left stick to IJKL, uses the mouse buttons for Square and R2, and keeps all other built-in bindings:
+For example, this changes Cross to F or Space, moves the left stick to IJKL, uses the mouse buttons for Square and R2, makes the middle mouse button the only `ToggleMouse` input (the line replaces F7), and keeps all other built-in bindings:
 
 ```ini
 Cross = KEY:F
@@ -97,6 +97,10 @@ Events start relative to when the application first observes the new command. Bu
 
 The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
 
+## Controller vibration strength
+
+Vibration is not part of the input mapping file. The host-side strength of a controller's vibration is set with `ANYPS5_RUMBLE`, described in [Controller vibration strength](USAGE.md#controller-vibration-strength); `0` turns it off for every connected controller.
+
 ## Analog keyboard input
 
 `StickModifier` has no built-in binding. While a key or mouse button bound to it is held, the keyboard stick bindings tilt the stick by `StickModifierScale` of its range instead of fully, for walking or fine aim. Controller sticks and the mouse stick are not affected, and opposite keys still cancel each other.
@@ -130,7 +134,7 @@ MouseCurve = 1.3
 
 Earlier versions sampled the mouse every 33 ms and tilted the stick at least halfway for any movement. `MouseDeadzoneOffset = 0.5`, `MouseSmoothingMs = 0` and `MouseDecayMs = 33` come close to that behavior.
 
-An invalid line reports the file and line number and stops input initialization. If the configured file does not exist or cannot be read, AnyPS5 reports an error. With no `anyps5-input.ini` and no `ANYPS5_INPUT_CONFIG`, the built-in mapping is used.
+An invalid line stops the game when video output starts, with an error that names the file and line number. If the file named by `ANYPS5_INPUT_CONFIG` does not exist, or the configuration file cannot be read, the game stops with an error. With no `anyps5-input.ini` and no `ANYPS5_INPUT_CONFIG`, the built-in mapping is used.
 
 ## Web configurator
 

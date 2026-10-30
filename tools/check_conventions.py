@@ -67,7 +67,7 @@ CONSTANT = re.compile(rf"\bconstexpr\b[^;=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s
 NAMESPACE = re.compile(r"\bnamespace\s+((?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*(?:inline\s+)?)*[A-Za-z_][A-Za-z0-9_]*)\s*$|\bnamespace\s*$")
 LINKAGE = re.compile(r'\bextern\s*""\s*$')
 ALIGNMENT_LIMIT = 8192
-LINK = re.compile(r"\[[^\]]+\]\(([^)\s]+)")
+LINK = re.compile(r"\[[^\]]+\]\((<[^<>\r\n]*>|(?!<)[^)\s]+)")
 FENCE = re.compile(r"^ {0,3}(```|~~~).*?^ {0,3}\1[ \t]*\r?$|^ {0,3}(?:```|~~~).*\Z", re.S | re.M)
 INLINE = re.compile(r"`[^`\n]*`")
 SECTION = re.compile(r"^###(?!#)\s*(.+?)\s*$", re.M)
@@ -178,6 +178,7 @@ class Check:
         for path, lines in self.files(lambda p: p.suffix in CPP):
             core = path.startswith("core/") and "tests" not in PurePosixPath(path).parts
             source = self.show(path).split("\n")
+            expanded = expand_abi_aliases(cpp_text("\n".join(source))).split("\n")
             masked = cpp_text("\n".join(source), preserve_comments=True).split("\n")
             assembly = asm_exports("\n".join(source)) if core and path.startswith("core/libs/prx/") else {}
             constants, starts = None, None
@@ -196,6 +197,7 @@ class Check:
                         self.report("alignment", path, number, alignment)
                 if core and TITLE.search(text):
                     self.report("title-specific", path, number, TITLE.search(text).group(0))
+                bare = expanded[number - 1]
                 if core and path.startswith("core/libs/prx/"):
                     unknowns.extend((nid, name, path, number) for nid, name in source_aliases(text) if "unknown" in name.lower())
                     symbols.extend((symbol, path, number) for symbol in nid_symbols(text))
@@ -232,7 +234,7 @@ class Check:
             text = self.show(path)
             if "APS5_VABI" not in text and "ASM_FUNCTION" not in text:
                 continue
-            source = cpp_text(text).split("\n")
+            source = expand_abi_aliases(cpp_text(text)).split("\n")
             assembly = asm_exports(text)
             for number, line in enumerate(source):
                 names = [match.group(1) for match in EXPORT.finditer(line)
@@ -438,7 +440,9 @@ def links(path, text):
     result = []
     text = INLINE.sub("code", FENCE.sub("", text))
     for target in LINK.findall(text):
-        if re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
+        if target.startswith("<"):
+            target = target[1:-1]
+        if not target or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:|//|#", target):
             continue
         target = target.split("#", 1)[0].split("?", 1)[0]
         decoded = unquote(target)
@@ -642,14 +646,50 @@ def cmake_comments(text):
     return lines
 
 
-def cpp_text(text, preserve_comments=False):
-    def mask(match):
-        if match.group("code") is not None or preserve_comments and match.group("comment") is not None:
-            return match.group()
-        blank = re.sub(r"[^\n]", " ", match.group())
-        return blank if match.group("comment") is not None else '""' + blank[2:]
+def cpp_mask(match, preserve_comments=False):
+    if match.group("code") is not None or preserve_comments and match.group("comment") is not None:
+        return match.group()
+    blank = re.sub(r"[^\n]", " ", match.group())
+    return blank if match.group("comment") is not None else '""' + blank[2:]
 
-    return CPP_TOKEN.sub(mask, text)
+
+def cpp_text(text, preserve_comments=False):
+    return CPP_TOKEN.sub(lambda match: cpp_mask(match, preserve_comments), text)
+
+
+def cpp_pieces(text):
+    end = 0
+    for match in CPP_TOKEN.finditer(text):
+        yield text[end:match.start()]
+        yield cpp_mask(match)
+        end = match.end()
+    yield text[end:]
+
+
+def expand_abi_aliases(text):
+    aliases = {}
+
+    def expand(match):
+        name = match.group()
+        seen = set()
+        while name in aliases and name not in seen and name != "APS5_VABI":
+            seen.add(name)
+            name = aliases[name]
+        return "APS5_VABI" if name == "APS5_VABI" else match.group()
+
+    lines = []
+    for line in text.split("\n"):
+        directive = re.match(r"^[\s\ufeff]*#\s*(define|undef)\s+([A-Za-z_]\w*)(.*)$", line)
+        if directive:
+            action, name, value = directive.groups()
+            aliases.pop(name, None)
+            replacement = re.fullmatch(r"\s+([A-Za-z_]\w*)\s*", value)
+            if action == "define" and replacement:
+                aliases[name] = replacement.group(1)
+            lines.append(line)
+        else:
+            lines.append(IDENTIFIER.sub(expand, line) if aliases else line)
+    return "\n".join(lines)
 
 
 def integer_literal(text):
@@ -715,15 +755,19 @@ def over_aligned(text, constants=((), ()), offset=0):
 
 
 def function_body(lines, start):
-    text = cpp_text("\n".join(lines[start:start + 400]))
-    brace, semicolon = text.find("{"), text.find(";")
-    if brace < 0 or 0 <= semicolon < brace:
-        return None
-    depth = 0
-    for index in range(brace, len(text)):
-        depth += {"{": 1, "}": -1}.get(text[index], 0)
-        if depth == 0:
-            return re.sub(r"\s+", " ", text[brace + 1:index]).replace(" ", "")
+    body, depth = None, 0
+    for piece in cpp_pieces("\n".join(lines[start:start + 400])):
+        for character in piece:
+            if body is None:
+                if character == ";":
+                    return None
+                if character == "{":
+                    body, depth = [], 1
+                continue
+            depth += {"{": 1, "}": -1}.get(character, 0)
+            if depth == 0:
+                return re.sub(r"\s+", " ", "".join(body)).replace(" ", "")
+            body.append(character)
     return None
 
 
@@ -768,6 +812,20 @@ if __name__ == "__main__":
     parser.add_argument("--body", help="file with the pull request description to check")
     parser.add_argument("--event", default=os.environ.get("GITHUB_EVENT_PATH"), help="GitHub event JSON (set in CI)")
     args = parser.parse_args()
+    event = {}
+    if args.event:
+        try:
+            event = json.loads(Path(args.event).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            parser.error(f"--event {args.event}: {error}")
+        if not isinstance(event, dict):
+            parser.error(f"--event {args.event}: not a JSON object")
+    body = ""
+    if args.body:
+        try:
+            body = Path(args.body).read_text(encoding="utf-8-sig")
+        except (OSError, ValueError) as error:
+            parser.error(f"--body {args.body}: {error}")
     check = Check(args.base, args.head)
     check.code()
     check.build()
@@ -778,9 +836,9 @@ if __name__ == "__main__":
     check.workflows()
     check.commits()
     check.env_reference()
-    pr = json.load(open(args.event, encoding="utf-8")).get("pull_request") if args.event else None
+    pr = event.get("pull_request")
     if pr:
         check.pull_request(pr["title"], pr["body"])
     elif args.title is not None or args.body:
-        check.pull_request(args.title or "", open(args.body, encoding="utf-8-sig").read() if args.body else "")
+        check.pull_request(args.title or "", body)
     raise SystemExit(output(check, os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")))

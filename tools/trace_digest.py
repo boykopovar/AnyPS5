@@ -142,7 +142,7 @@ def load_trace(path):
         return Trace(document)
 
 
-def load_summary_lines(path):
+def load_summary_lines(path, numbered=False):
     records = []
     for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
         if not line.strip():
@@ -151,9 +151,11 @@ def load_summary_lines(path):
             record = json.loads(line)
         except json.JSONDecodeError as error:
             raise ValueError(f"{path}:{number}: invalid JSON: {error.msg}") from error
+        except RecursionError as error:
+            raise ValueError(f"{path}:{number}: JSON nesting is too deep") from error
         if not isinstance(record, dict):
             raise ValueError(f"{path}:{number}: summary record must be an object")
-        records.append(record)
+        records.append((number, record) if numbered else record)
     return records
 
 
@@ -348,8 +350,49 @@ def markdown(result):
 
 
 def load_intervals(path):
-    lines = load_summary_lines(path)
-    return [line for line in lines if "interval_start_s" in line]
+    lines = []
+    for number, record in load_summary_lines(path, numbered=True):
+        if "interval_start_s" not in record:
+            continue
+        try:
+            validate_interval(record)
+        except ValueError as error:
+            raise ValueError(f"{path}:{number}: {error}") from error
+        lines.append(record)
+    return lines
+
+
+def interval_number(value, field):
+    try:
+        valid = type(value) in (int, float) and math.isfinite(value) and value >= 0
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise ValueError(f"{field} must be a finite non-negative number")
+    return value
+
+
+def validate_interval(record):
+    start = interval_number(record.get("interval_start_s"), "interval_start_s")
+    end = interval_number(record.get("interval_end_s"), "interval_end_s")
+    if end < start:
+        raise ValueError("interval_end_s must not precede interval_start_s")
+    if type(record.get("presents")) is not int or record["presents"] < 0:
+        raise ValueError("presents must be a non-negative integer")
+    frames = record.get("frame_ms")
+    if not isinstance(frames, dict):
+        raise ValueError("frame_ms must be an object")
+    for field in ("p50", "p90", "p99", "max"):
+        interval_number(frames.get(field), f"frame_ms.{field}")
+    interval_number(record.get("gpu_busy_ms_per_present"), "gpu_busy_ms_per_present")
+    for field in ("worker_busy_pct", "top_phases_ms_per_frame"):
+        values = record.get(field, {})
+        if not isinstance(values, dict):
+            raise ValueError(f"{field} must be an object")
+        for name, value in values.items():
+            interval_number(value, f"{field}.{name}")
+    if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
+        raise ValueError("trace_dropped must be a boolean")
 
 
 def sparkline(values):

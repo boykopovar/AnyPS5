@@ -9,7 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from import_audit import read_host_imports
+from import_audit import AuditError, read_host_imports
 from unwrap_self import Refused, unwrap
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -144,7 +144,7 @@ def main():
             directory.mkdir(parents=True, exist_ok=False)
         print(f"Artifacts: {directory}", flush=True)
         return run(args, directory)
-    except (OSError, Refused, RuntimeError, subprocess.SubprocessError) as error:
+    except (AuditError, OSError, Refused, RuntimeError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         if isinstance(error, subprocess.CalledProcessError) and error.stderr:
             print(error.stderr.decode(errors="replace"), file=sys.stderr)

@@ -62,10 +62,29 @@ void CheckUnmountedCalls() {
     Check(sceSaveDataBackup(nullptr) == SaveDataErrorParameter, "backup null backup is PARAMETER");
     SaveDataBackup nullDirBackup{};
     Check(sceSaveDataBackup(&nullDirBackup) == SaveDataErrorParameter, "backup null dir_name is PARAMETER");
+    char unterminatedBackup[sizeof(SceSaveDataDirName::data)];
+    std::memset(unterminatedBackup, 'a', sizeof(unterminatedBackup));
+    SaveDataBackup unterminatedBackupParam{};
+    unterminatedBackupParam.user_id = 0x10000000;
+    unterminatedBackupParam.dir_name = reinterpret_cast<const SceSaveDataDirName*>(unterminatedBackup);
+    Check(sceSaveDataBackup(&unterminatedBackupParam) == SaveDataErrorParameter, "backup unterminated dir_name is PARAMETER");
     Check(sceSaveDataGetEventResult(nullptr, nullptr) == SaveDataErrorParameter, "getEventResult null event is PARAMETER");
     SaveDataEvent emptyEvent{};
     Check(sceSaveDataGetEventResult(nullptr, &emptyEvent) == SaveDataErrorNotFound, "getEventResult on empty queue returns NOT_FOUND");
     Check(sceSaveDataGetEventResult(&emptyEvent, nullptr) == SaveDataErrorParameter, "getEventResult null result pointer is PARAMETER");
+    SceSaveDataDirName validDir{};
+    std::snprintf(validDir.data, sizeof(validDir.data), "valid_backup");
+    SaveDataBackup validBackup{};
+    validBackup.user_id = 0x10000000;
+    validBackup.dir_name = &validDir;
+    Check(sceSaveDataBackup(&validBackup) == 0, "backup valid dir_name succeeds");
+    SaveDataEvent backupEvent{};
+    Check(sceSaveDataGetEventResult(nullptr, &backupEvent) == 0, "getEventResult retrieves backup event");
+    Check(backupEvent.type == 2, "backup event type is 2");
+    Check(backupEvent.error_code == 0, "backup event error code is 0");
+    Check(backupEvent.user_id == 0x10000000, "backup event user_id matches");
+    Check(std::strcmp(backupEvent.dir_name.data, "valid_backup") == 0, "backup event dir_name matches");
+    Check(sceSaveDataGetEventResult(nullptr, &emptyEvent) == SaveDataErrorNotFound, "event queue is empty after retrieving backup event");
 }
 
 void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
@@ -80,8 +99,12 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     char readTitle[128]{};
     Check(sceSaveDataUmount2(0, nullptr) == SaveDataErrorParameter, "umount2 null point is PARAMETER");
     Check(sceSaveDataLoadIcon(nullptr, &icon) == SaveDataErrorParameter, "loadIcon null point is PARAMETER");
+    Check(sceSaveDataLoadIcon(&unmounted, &icon) == SaveDataErrorNotMounted, "loadIcon unmounted point is NOT_MOUNTED");
+    Check(sceSaveDataLoadIcon(&unmounted, nullptr) == SaveDataErrorNotMounted, "loadIcon unmounted point with null icon is NOT_MOUNTED");
     Check(sceSaveDataLoadIcon(point, &icon) == 0, "loadIcon on mounted save succeeds");
     Check(sceSaveDataSaveIcon(nullptr, &icon) == SaveDataErrorParameter, "saveIcon null point is PARAMETER");
+    Check(sceSaveDataSaveIcon(&unmounted, &icon) == SaveDataErrorNotMounted, "saveIcon unmounted point is NOT_MOUNTED");
+    Check(sceSaveDataSaveIcon(&unmounted, nullptr) == SaveDataErrorNotMounted, "saveIcon unmounted point with null icon is NOT_MOUNTED");
     Check(sceSaveDataSaveIcon(point, &icon) == 0, "saveIcon on mounted save succeeds");
     Check(sceSaveDataSaveIconByPath(point, "icon.png") == 0, "saveIconByPath on mounted save succeeds");
     Check(sceSaveDataGetMountInfo(nullptr, &info) == SaveDataErrorParameter, "getMountInfo null point is PARAMETER");

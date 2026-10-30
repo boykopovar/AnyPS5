@@ -38,6 +38,12 @@ body:
     validations:
       required: true
   - type: textarea
+    id: host_report
+    attributes:
+      label: Host report
+      description: Start the game with `ANYPS5_HOST_REPORT=1` and paste the block it prints to stderr. It holds the OS, CPU, GPU, driver, Vulkan items the GPU lacks, SDL version and the `APS5_*` switches, without paths or user names. See [Host report](https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#host-report).
+      render: text
+  - type: textarea
     id: steps
     attributes:
       label: Steps to reproduce

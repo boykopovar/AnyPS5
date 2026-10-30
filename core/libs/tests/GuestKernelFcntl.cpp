@@ -110,7 +110,7 @@ static void SocketsKeepTheirPath() {
     Require(sceKernelFcntl(socket, SetFlags, 0) == 0);
     Require(sceKernelFcntl(socket, GetFlags) == ReadWrite);
     GuestLock lock{};
-    Require(sceKernelFcntl(socket, GetLock, &lock) == SceEinval);
+    Require(sceKernelFcntl(socket, GetLock, &lock) == SceEbadf);
     Require(sceKernelFcntl(socket, GetDescriptorFlags) == 0);
     Require(sceKernelFcntl(socket, SetDescriptorFlags, 1) == 0);
     Require(sceKernelFcntl(socket, GetDescriptorFlags) == 1);
@@ -194,6 +194,17 @@ static void SocketsKeepTheirPath() {
     Require(sceKernelFcntl(socket, GetFlags) == ReadWrite);
     Require(sceKernelFcntl(socket, 5) == SceEinval);
     Require(sceKernelFcntl(socket + 4096, GetFlags) == SceEbadf);
+    GuestLock socketLock{0, 0, 0, WriteLock, FromStart, 0};
+    RequireFailure(fcntl_nid_postfix(socket, SetLock, &socketLock), GuestEbadf);
+    RequireFailure(fcntl_nid_postfix(socket, GetLock, &socketLock), GuestEbadf);
+    RequireFailure(fcntl_nid_postfix(socket, SetLockWait, &socketLock), GuestEbadf);
+    Require(sceKernelFcntl(socket, SetLock, &socketLock) == SceEbadf);
+    Require(sceKernelFcntl(socket, GetLock, &socketLock) == SceEbadf);
+    Require(sceKernelFcntl(socket, SetLockWait, &socketLock) == SceEbadf);
+    RequireFailure(fcntl_nid_postfix(socket, ReadAhead, 1), GuestEbadf);
+    RequireFailure(fcntl_nid_postfix(socket, DarwinReadAhead, 1), GuestEbadf);
+    Require(sceKernelFcntl(socket, ReadAhead, 1) == SceEbadf);
+    Require(sceKernelFcntl(socket, DarwinReadAhead, 1) == SceEbadf);
     int queued = -1;
     Require(ioctl_nid_postfix(socket, ReadableRequest, &queued) == 0 && queued == 0);
     RequireMalformedRequestsFail(socket);
@@ -257,6 +268,9 @@ static void FileFlagsRoundTrip() {
     RequireFailure(ioctl_nid_postfix(file, WindowSizeRequest, size), GuestEnotty);
     RequireMalformedRequestsFail(file);
     RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(file, ReadableRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(file, ReadableRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     Require(ThrowsWith([file] { int on = 1; ioctl_nid_postfix(file, AsyncRequest, &on); }, "ioctl: request 0x8004667D on a file is not implemented"));
 
     RequireFailure(fcntl_nid_postfix(file, DuplicateCommand, -1), GuestEinval);
@@ -473,6 +487,8 @@ static void PipeFlagsRoundTrip() {
     int readable = -1;
     Require(ioctl_nid_postfix(pipe[0], ReadableRequest, &readable) == 0 && readable == 3);
     Require(ioctl_nid_postfix(pipe[1], ReadableRequest, &readable) == 0 && readable == 0);
+    RequireFailure(ioctl_nid_postfix(pipe[0], ReadableRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(pipe[0], ReadableRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     Require(read_nid_postfix(pipe[0], buffer, sizeof(buffer)) == 3);
     RequireFailure(static_cast<int>(read_nid_postfix(pipe[0], buffer, sizeof(buffer))), GuestEagain);
 

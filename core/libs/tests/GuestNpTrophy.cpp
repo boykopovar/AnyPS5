@@ -97,6 +97,18 @@ int main() {
     }
     Require(saved == 1, "unlock state saved for the user");
 
+    std::filesystem::create_directories(root / "_trophy/trophy00.1.tmp");
+    bool saveFailed = false;
+    try {
+        sceNpTrophyUnlockTrophy(context, handle, 0, &platinum);
+    } catch (const std::exception&) {
+        saveFailed = true;
+    }
+    std::filesystem::remove_all(root / "_trophy/trophy00.1.tmp");
+    Require(saveFailed, "an unlock whose state cannot be written reports the failure");
+    Require(sceNpTrophyGetTrophyUnlockState(context, handle, reinterpret_cast<TrophyFlagArray*>(flags), &count) == 0 && flags[0] == 2u, "a failed save leaves the trophy locked");
+    Require(sceNpTrophyUnlockTrophy(context, handle, 0, &platinum) == 0, "the unlock succeeds once the state can be written");
+
     Require(sceNpTrophyCreateContext(&missing, 1, 1, 0) == 0, "context for a label without a package");
     Require(sceNpTrophyRegisterContext(missing, handle, 0) == TitleConfNotInstalled, "register without a trophy package");
     Require(sceNpTrophyCreateHandle(nullptr) == InvalidArgument, "null handle creation");
@@ -104,6 +116,18 @@ int main() {
     Require(sceNpTrophyGetGameIcon(context, handle, icon, nullptr) == InvalidArgument, "null game icon size pointer");
     Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null group icon size pointer");
     Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
+    Require(sceNpTrophyGetGameInfo(context, handle, nullptr, nullptr) == InvalidArgument, "null game info pointers");
+    Require(sceNpTrophyGetGroupInfo(context, handle, 0, nullptr, nullptr) == InvalidArgument, "null group info pointers");
+    Require(sceNpTrophyGetTrophyInfo(context, handle, 0, nullptr, nullptr) == InvalidArgument, "null trophy info pointers");
+    GameDetails badGameDetails{};
+    badGameDetails.size = 1;
+    Require(sceNpTrophyGetGameInfo(context, handle, &badGameDetails, nullptr) == InvalidArgument, "invalid game details size");
+    GroupDetails badGroupDetails{};
+    badGroupDetails.size = 1;
+    Require(sceNpTrophyGetGroupInfo(context, handle, 0, &badGroupDetails, nullptr) == InvalidArgument, "invalid group details size");
+    TrophyDetails badTrophyDetails{};
+    badTrophyDetails.size = 1;
+    Require(sceNpTrophyGetTrophyInfo(context, handle, 0, &badTrophyDetails, nullptr) == InvalidArgument, "invalid trophy details size");
     Require(sceNpTrophyDestroyHandle(-1) == InvalidHandle, "invalid handle destruction");
     Require(sceNpTrophyDestroyContext(missing) == 0, "destroy the second context");
     int live = 0;

@@ -40,6 +40,7 @@ struct GuestTimeval {
 std::atomic<KernelSocketPoll::Poller> g_socketPoller{nullptr};
 std::atomic<KernelSocketPoll::Closer> g_socketCloser{nullptr};
 std::atomic<KernelSocketPoll::OptionSetter> g_socketOptionSetter{nullptr};
+std::atomic<KernelSocketPoll::OptionGetter> g_socketOptionGetter{nullptr};
 std::atomic<KernelSocketPoll::StatusControl> g_socketStatusControl{nullptr};
 std::atomic<KernelSocketPoll::NativeLookup> g_socketNativeLookup{nullptr};
 
@@ -166,6 +167,15 @@ void KernelSetSocketOptionSetter_nid_no_patch(KernelSocketPoll::OptionSetter set
     g_socketOptionSetter.store(setter);
 }
 
+void KernelSetSocketOptionGetter_nid_no_patch(KernelSocketPoll::OptionGetter getter) {
+    g_socketOptionGetter.store(getter);
+}
+
+bool KernelGetSocketOption_nid_no_patch(int descriptor, int level, int option, void* value, std::uint32_t* length, int* error) {
+    const auto getter = g_socketOptionGetter.load();
+    return getter != nullptr && getter(descriptor, level, option, value, length, error);
+}
+
 bool KernelSetSocketOption_nid_no_patch(int descriptor, int level, int option, const void* value, std::uint32_t length, int* error) {
     const auto setter = g_socketOptionSetter.load();
     return setter != nullptr && setter(descriptor, level, option, value, length, error);
@@ -210,7 +220,7 @@ int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* 
             kernel.entries.push_back({descriptor, events, 0});
             kernel.slots.push_back(requested.size());
             requested.push_back({descriptor, events, 0});
-        } else if (IsKqueueDescriptor(descriptor)) {
+        } else if (IsKqueueDescriptor_nid_no_patch(descriptor)) {
             kqueues.entries.push_back({descriptor, events, 0});
             kqueues.slots.push_back(requested.size());
             requested.push_back({descriptor, events, 0});

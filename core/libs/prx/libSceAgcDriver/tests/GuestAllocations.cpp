@@ -10,6 +10,7 @@
 #include <memory>
 #include <thread>
 #include <array>
+#include <span>
 #include <algorithm>
 #include <utility>
 #include <vector>
@@ -27,6 +28,62 @@ void reject(TAction action) {
     try { action(); }
     catch (const std::runtime_error&) { return; }
     throw std::runtime_error("expected guest allocation ownership rejection");
+}
+
+void heapHeaderTests() {
+    for (const auto [alignment, bytes] : std::array<std::pair<std::size_t, std::size_t>, 4>{{{32, 32}, {256, 32}, {32, 131072}, {32, 0}}}) {
+        void* pointer = GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+        void* neighbor = GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+        auto& raw = reinterpret_cast<void**>(pointer)[-2];
+        auto& blockBytes = reinterpret_cast<std::size_t*>(pointer)[-1];
+        void* savedRaw = raw;
+        const auto savedBytes = blockBytes;
+        void* forgedRaw = static_cast<std::byte*>(pointer) - 2 * sizeof(void*);
+        if (forgedRaw == savedRaw) forgedRaw = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(savedRaw) - sizeof(void*));
+        raw = forgedRaw;
+        reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+        reject([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 64); });
+        reject([&] { GuestHeap::GuestHeapRealign_nid_postfix(pointer, 64, 256); });
+        reject([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 0); });
+        reject([&] { GuestHeap::GuestHeapRealign_nid_postfix(pointer, 0, alignment); });
+        {
+            const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+            Require(lease.size() == (bytes == 0 ? 0u : 2u), "rejected heap operation changed the registered allocations");
+            const auto found = std::find_if(lease.begin(), lease.end(), [&](const auto& range) { return range->address == reinterpret_cast<std::uintptr_t>(pointer); });
+            Require(bytes == 0 || (found != lease.end() && (*found)->bytes == bytes), "rejected free lost the original registered range");
+        }
+        Require(GuestHeap::GuestHeapUsableSize_nid_postfix(pointer) == bytes && GuestHeap::GuestHeapUsableSize_nid_postfix(neighbor) == bytes, "rejected free lost a registered allocation");
+        void* next = GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+        void* nextRaw = reinterpret_cast<void**>(next)[-2];
+        const auto nextBytes = reinterpret_cast<std::size_t*>(next)[-1];
+        const auto start = reinterpret_cast<std::uintptr_t>(savedRaw);
+        const auto nextStart = reinterpret_cast<std::uintptr_t>(nextRaw);
+        Require(nextRaw != forgedRaw && (nextStart >= start + savedBytes || start >= nextStart + nextBytes), "same-class allocation received a forged overlapping block");
+        GuestHeap::GuestHeapFree_nid_postfix(next);
+        raw = savedRaw;
+        for (const auto corruptedBytes : {std::size_t{0}, savedBytes * 2}) {
+            blockBytes = corruptedBytes;
+            reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+            Require(GuestHeap::GuestHeapUsableSize_nid_postfix(pointer) == bytes, "size corruption removed the allocation");
+        }
+        blockBytes = savedBytes;
+        raw = reinterpret_cast<void**>(neighbor)[-2];
+        reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+        raw = savedRaw;
+        GuestHeap::GuestHeapFree_nid_postfix(pointer);
+        GuestHeap::GuestHeapFree_nid_postfix(neighbor);
+        Require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().empty(), "restored heap allocations remain registered");
+    }
+    alignas(32) std::array<std::byte, 128> mapping{};
+    void* pointer = mapping.data() + 32;
+    reinterpret_cast<void**>(pointer)[-2] = mapping.data();
+    reinterpret_cast<std::size_t*>(pointer)[-1] = mapping.size();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(pointer, 32, true, true, false);
+    }
+    reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+    GuestAllocations::Mutation().Remove(pointer);
 }
 
 void leaseSnapshotTests() {
@@ -170,6 +227,7 @@ void RunGuestAllocationTests() {
     Require(static_cast<unsigned char*>(pointer)[31] == 0x66, "aligned guest realloc lost data");
     GuestHeap::GuestHeapFree_nid_postfix(pointer);
     Require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().empty(), "freed guest allocations remain registered");
+    heapHeaderTests();
     std::array<std::byte, 128> mapping{};
     {
         GuestAllocations::Mutation mutation;
@@ -326,5 +384,36 @@ void RunUnmappedGapTests() {
     GuestArena::GuestArenaReset_nid_postfix(spare, page);
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(spareAddress, page);
     GuestArena::GuestArenaRelease_nid_postfix(spare, page);
+#endif
+}
+
+void RunVanishedPageReadTests() {
+#ifdef _WIN32
+    namespace GuestMemory = AgcDriver::GuestMemory;
+    Require(GuestArena::GuestArenaAvailable_nid_postfix(), "released-page read fixture needs the guest arena");
+    constexpr std::size_t page = 4096;
+    constexpr std::uint32_t ReadWriteProtection = 0x04;
+    auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * page, page));
+    const auto address = reinterpret_cast<std::uintptr_t>(block);
+    GuestArena::GuestArenaCommit_nid_postfix(block, page, ReadWriteProtection, page);
+    GuestArena::GuestArenaCommit_nid_postfix(block + page, page, ReadWriteProtection, page);
+    std::memset(block, 0x5a, 2 * page);
+    Require(GuestMemory::Accessible(block, 2 * page), "committed arena test pages are not readable");
+    GuestArena::GuestArenaReset_nid_postfix(block + page, page);
+    std::array<std::byte, 2 * page> read{};
+    read.fill(std::byte{0xff});
+    GuestMemory::ReadCommitted(address, read);
+    const auto filled = [](std::span<const std::byte> bytes, std::byte value) { return std::all_of(bytes.begin(), bytes.end(), [&](std::byte byte) { return byte == value; }); };
+    Require(filled(std::span(read).first(page), std::byte{0x5a}) && filled(std::span(read).subspan(page), std::byte{0}), "a committed read of a page released after it was checked did not read it as uncommitted");
+    std::array<std::byte, 2 * page> expected{};
+    std::fill(expected.begin(), expected.begin() + page, std::byte{0x5a});
+    std::fill(expected.begin() + page, expected.end(), std::byte{0x77});
+    Require(GuestMemory::EqualsCommitted(address, expected), "a committed compare of a page released after it was checked did not skip it");
+    expected[page - 1] = std::byte{0};
+    Require(!GuestMemory::EqualsCommitted(address, expected), "a committed compare missed a difference before a page released after it was checked");
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 2 * page);
+    GuestArena::GuestArenaReset_nid_postfix(block, page);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 2 * page);
+    GuestArena::GuestArenaRelease_nid_postfix(block, 2 * page);
 #endif
 }
