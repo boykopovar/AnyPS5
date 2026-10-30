@@ -72,7 +72,7 @@ def convert(relinker, source, output, extra, windows):
     for relative in extra:
         command += ["--module-dir", relative]
     command += [str(source / "eboot.elf"), str(output)]
-    return subprocess.run(command, capture_output=True, text=True)
+    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def comparison_path(path, links=frozenset()):
@@ -155,7 +155,11 @@ def main(argv=None):
             if generated.exists() or generated.is_symlink():
                 print(f"FAIL: cannot empty {generated}: it still exists", file=sys.stderr)
                 return 2
-        output.mkdir(parents=True, exist_ok=True)
+        try:
+            output.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            print(f"FAIL: cannot create {output}: {error}", file=sys.stderr)
+            return 2
         try:
             module_directories, extra = prepare(dump, source)
         except (unwrap_self.Refused, OSError) as error:

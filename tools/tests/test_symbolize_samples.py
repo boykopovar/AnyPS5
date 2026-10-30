@@ -317,6 +317,19 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertEqual(module.name(0x1030), "~first_func")
         self.assertEqual(module.name(0x1070), "~second_func")
 
+    def test_export_ordinals_stay_inside_the_declared_address_table(self):
+        path = self.libs / "libwinpthread-1.dll"
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 0x600 + 20, 1)
+        path.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "export ordinal"):
+            symbolize_samples.PeModule(path)
+        warnings = []
+        symbolizer = symbolize_samples.Symbolizer([self.libs], {}, unverified=True, warn=warnings.append)
+        frame = "libwinpthread-1.dll+0x1070"
+        self.assertEqual(symbolizer.frame(frame), frame)
+        self.assertTrue(any("export ordinal" in warning for warning in warnings))
+
     def test_frames_keep_unknown_modules_and_out_of_range_addresses(self):
         symbolizer = symbolize_samples.Symbolizer([self.libs], {}, warn=lambda text: None, unverified=True)
         self.assertEqual(symbolizer.frame("libSceAgcDriver.prx+0x1046"), "libSceAgcDriver.prx!AgcDriver_long_function_name")

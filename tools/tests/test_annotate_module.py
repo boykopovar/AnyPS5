@@ -104,6 +104,14 @@ def with_relocation(module, table_offset, index, slot, symbol_index, kind):
 
 
 class ImportRelocationTests(unittest.TestCase):
+    def test_symbol_entry_size_must_match_elf64(self):
+        for size in (None, 0, 16, 32):
+            with self.subTest(size=size):
+                tags = tuple(tag for tag in DEFAULT_TAGS if tag != 11 or size is not None)
+                data = build_module(tags=tags, values={} if size is None else {11: size})
+                with self.assertRaisesRegex(annotate_module.ModuleError, "DT_SYMENT"):
+                    annotate_module.Module(data)
+
     def test_tables_cannot_read_file_padding_past_the_load_segment(self):
         for tag in (5, 6, 23):
             with self.subTest(tag=tag):

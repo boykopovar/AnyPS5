@@ -75,6 +75,15 @@ def validate(summary):
     return summary
 
 
+def unique_json_object(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError(f"duplicate JSON field: {name!r}")
+        result[name] = value
+    return result
+
+
 def load_summary(path, trace=None):
     records = []
     with Path(path).open(encoding="utf-8-sig") as source:
@@ -82,7 +91,7 @@ def load_summary(path, trace=None):
             if not line.strip():
                 continue
             try:
-                record = json.loads(line)
+                record = json.loads(line, object_pairs_hook=unique_json_object)
                 if not isinstance(record, dict):
                     raise ValueError("summary must be an object")
             except (ValueError, RecursionError) as error:
