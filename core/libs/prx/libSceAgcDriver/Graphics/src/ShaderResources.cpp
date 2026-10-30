@@ -5740,7 +5740,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
     return moved;
 }
 
-bool ShaderResources::BindsVertexRange(std::span<const CompiledShader> shaders, std::optional<std::uint32_t> maxVertex) const {
+bool ShaderResources::BindsVertexRange(std::span<const CompiledShader> shaders, const ColorTarget* target, std::optional<std::uint32_t> maxVertex) const {
     for (const auto& shader : shaders) {
         if (shader.program == nullptr) return false;
         for (const auto& binding : shader.program->bindings) {
@@ -5753,7 +5753,9 @@ bool ShaderResources::BindsVertexRange(std::span<const CompiledShader> shaders, 
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
                 const auto& item = allocations[kept->allocations[element]];
                 if (!item.guest) continue;
-                if (item.address != descriptor.Base48() || item.size != guestBufferBytes(std::span<const std::uint32_t>(words, 4), VertexBoundBytes(binding, element, maxVertex))) return false;
+                const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
+                const auto bytes = guestBufferBytes(std::span<const std::uint32_t>(words, 4), VertexBoundBytes(binding, element, maxVertex));
+                if (item.address != descriptor.Base48() || item.size != BytesUpToTarget(descriptor.Base48(), bytes, descriptor.Stride(), written ? nullptr : target)) return false;
             }
         }
     }

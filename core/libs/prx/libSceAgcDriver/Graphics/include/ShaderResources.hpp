@@ -214,7 +214,7 @@ public:
     };
     std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false) const;
     std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, std::optional<std::uint32_t> maxVertex = std::nullopt) const;
-    bool BindsVertexRange(std::span<const CompiledShader> shaders, std::optional<std::uint32_t> maxVertex) const;
+    bool BindsVertexRange(std::span<const CompiledShader> shaders, const ColorTarget* target, std::optional<std::uint32_t> maxVertex) const;
     static std::uint64_t VertexBoundBytes(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element, std::optional<std::uint32_t> maxVertex);
     static std::uint64_t BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target);
     enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };

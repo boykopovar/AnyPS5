@@ -3817,7 +3817,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         return miss(DrawRecipeMiss::Proof);
     }
     const auto maxVertex = drawVertexBound(state, draw, inputs);
-    if (!resources->BindsVertexRange(shaders, maxVertex)) {
+    if (!resources->BindsVertexRange(shaders, &state.color, maxVertex)) {
         timer.phase(PhaseLookup);
         return miss(DrawRecipeMiss::VertexRange);
     }
