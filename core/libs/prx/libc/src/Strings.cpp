@@ -296,6 +296,12 @@ bool HasHexadecimalPrefix(const char* text, const char* parsedEnd) {
 
 extern "C" {
 
+const char* NanSubjectEnd_nid_no_patch(const char* text) {
+    if (text == nullptr) return nullptr;
+    const auto subject = FindNanSubject(text);
+    return subject.tail == nullptr ? nullptr : NanSequenceEnd(subject.tail);
+}
+
 void* APS5_VABI memset_nid_postfix(void* s, int c, size_t n) {
     // APS5_LOG_OUT("s=%p c=%d n=%zu", s, c, n);
     return std::memset(s, c, n);
