@@ -170,6 +170,50 @@ int EncodeTransforms(AcmBatchInfo* batch, bool inverse, std::int32_t transformSi
 
 extern "C" {
 
+int APS5_VABI sceAcmChain_Audio3dPO1_Clear() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderObject() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO1_Activate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO1_Output() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcm_ConvReverb_SharedIr_2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderAmbisonicsChannel() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO2_Activate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderPassthroughObject() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmChain_Audio3dPO2_RenderDelay() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcmGetTelemetry() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAcm_ConvReverb_SharedInput_2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batch_commands, size_t batch_size, AcmBatchError* batch_error, AcmBatchId* batch) {
     (void)batch_commands;
     (void)batch_size;

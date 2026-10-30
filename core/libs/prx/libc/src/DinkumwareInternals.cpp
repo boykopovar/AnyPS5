@@ -41,6 +41,10 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
     char* stop = nullptr;
     TFloat value = parse(text, &stop);
     if (end != nullptr) *end = stop;
+    if (pten == 0 && Hexadecimal(text)) {
+        guestErrno = saved;
+        return value;
+    }
     const bool overflowed = std::isinf(value) && guestErrno == RangeError;
     if (pten != 0 && stop != text && (std::isfinite(value) || overflowed)) {
         if (Hexadecimal(text)) NotImplemented_nid_no_patch(function);
