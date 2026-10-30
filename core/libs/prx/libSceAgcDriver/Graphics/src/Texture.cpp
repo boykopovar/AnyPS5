@@ -4395,6 +4395,9 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
                 for (const auto& texture : flush) texture->appendStoredLayers(address, bytes, stored);
             }
             const bool publishes = !wholeRange && scope != PublishScope::None;
+            if (publishes) {
+                for (const auto& range : LiveShadowedRanges(address, bytes, scope)) stored.push_back(range);
+            }
             const auto pendingWriter = [&](const Recorder& active) {
                 constexpr std::uint64_t block = 65536;
                 std::uint64_t writer = 0;

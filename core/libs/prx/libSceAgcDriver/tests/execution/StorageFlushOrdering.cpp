@@ -44,6 +44,7 @@ constexpr std::size_t FarDword = 100u * Width;
 constexpr std::uint32_t Filled = 0x33333333u;
 constexpr std::size_t FillBytes = 4096u;
 constexpr std::size_t FillPast = 0x10000u;
+constexpr std::size_t ShadowUnitBytes = 0x10000u;
 
 alignas(256) constexpr std::array<std::uint32_t, 11> StoreImageCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, Stored, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 7> StoreGlobalCode{0x7e000208u, 0x7e020209u, 0x7e0402ffu, Overwritten, 0xdc708100u, 0x007d0200u, 0xbf810000u};
@@ -175,6 +176,31 @@ void RunWriterInsideLayer(AgcDriver::VulkanDevice& device, const GuestBlock& gue
     Require(words[FarDword] == Stored, what + "the pending image's texel away from the newer fill was not stored");
 }
 
+void RunShadowedUnitUnderWriter(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
+    const std::string what = "storage flush ordering, shadowed unit under a writer outside the flushed image's layers: ";
+    if (!AgcDriver::Graphics::UnitShadowEnabled()) {
+        std::puts("unit shadows are off: the shadowed-unit case is skipped");
+        return;
+    }
+    const auto* shadowedWords = guest.Words();
+    const auto* flushedWords = guest.Words() + (BlockBytes / 2u) / 4u;
+    const auto shadowedImage = StoreImage(device, guest, 0);
+    Require(AgcDriver::Graphics::StorageTexture::FlushPending(shadowedImage, ImageBytes, nullptr, "test", AgcDriver::Graphics::PublishScope::None), what + "the first image's store left no results pending");
+    if (!AgcDriver::Graphics::AnyShadowedOverlaps(shadowedImage, ShadowUnitBytes)) {
+        std::puts("the write-back did not retile into the unit shadow: the shadowed-unit case is skipped");
+        return;
+    }
+    Fill(device, shadowedImage, ShadowUnitBytes, what);
+    const auto flushedImage = StoreImage(device, guest, BlockBytes / 2u);
+    Require(AgcDriver::Graphics::StorageTexture::FlushPending(shadowedImage, static_cast<std::size_t>(flushedImage + ImageBytes - shadowedImage), nullptr, "test"), what + "the second image's store left no results pending");
+    Require(!OpenBatchWrites(shadowedImage, ShadowUnitBytes), what + "the flush did not wait for the writer over the shadowed unit it publishes");
+    device.WaitIdle();
+    Require(shadowedWords[OverwrittenDword] == Filled, what + "the publish put the shadowed unit's older texels over a newer fill");
+    Require(shadowedWords[ShadowUnitBytes / 4u - 1u] == Filled, what + "the fill's last dword did not land");
+    Require(shadowedWords[FarDword] == Stored, what + "the shadowed unit the fill did not touch was not published");
+    Require(flushedWords[FarDword] == Stored, what + "the flushed image's texel was not stored");
+}
+
 void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, bool submit, const char* name) {
     const auto* words = guest.Words() + offset / 4u;
     const auto image = guest.Address() + offset;
@@ -213,6 +239,8 @@ int main() {
         Run(*device, guest, BlockBytes / 2u, false, "writer in the open batch");
         RunWriterOutsideLayers(*device, guest, BlockBytes / 4u);
         RunWriterInsideLayer(*device, guest, 3u * BlockBytes / 4u);
+        GuestBlock shadowed(watched);
+        RunShadowedUnitUnderWriter(*device, shadowed);
         std::puts("storage flush ordering tests passed");
         return 0;
     } catch (const std::exception& error) {
