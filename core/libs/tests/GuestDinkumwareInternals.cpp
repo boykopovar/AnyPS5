@@ -212,6 +212,42 @@ void TestFloatErrors() {
     Require(std::isnan(_Stodx_nid_postfix("nan", &end, 2, &error)) && error == 0 && end[0] == '\0', "_Stodx NaN");
 }
 
+void TestScaledNan() {
+    struct Case { const char* text; std::size_t consumed; };
+    const Case cases[] = {{"nan", 3}, {"  -NaNtail", 6}, {"-nan(0x123)", 11}, {"nan(a_b9)", 9}, {"nan()", 5}, {"nan(abc", 3}, {"nan(1.0)", 3}, {"nan(a b)", 3}, {"nan((a))", 3}, {"\t+NAN(Az_0)", 11}};
+    std::fenv_t saved;
+    Require(std::feholdexcept(&saved) == 0, "save scaled NaN environment");
+    const auto check = [&]<typename TFloat>(auto parse, auto alias) {
+        const TFloat expected = std::numeric_limits<TFloat>::quiet_NaN();
+        constexpr std::size_t bytes = sizeof(TFloat) == 16 ? 10 : sizeof(TFloat);
+        for (const auto& entry : cases) for (const auto power : {std::numeric_limits<std::int64_t>::min(), std::int64_t{-400}, std::int64_t{-1}, std::int64_t{0}, std::int64_t{1}, std::int64_t{400}, std::numeric_limits<std::int64_t>::max()}) {
+            for (const int rounding : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) for (const int sticky : {0, FE_DIVBYZERO | FE_INEXACT, FE_INVALID}) for (unsigned pointers = 0; pointers != 4; ++pointers) {
+                Require(std::fesetround(rounding) == 0, "select scaled NaN rounding");
+                std::feclearexcept(FE_ALL_EXCEPT);
+                if (sticky != 0) std::feraiseexcept(sticky);
+                *__error_nid_postfix() = 97;
+                int error = 123;
+                char* end = nullptr;
+                const TFloat value = parse(entry.text, (pointers & 1u) != 0 ? nullptr : &end, power, (pointers & 2u) != 0 ? nullptr : &error);
+                const int raised = std::fetestexcept(FloatingExceptions);
+                Require(std::memcmp(&value, &expected, bytes) == 0, "scaled NaN value bits");
+                Require((pointers & 1u) != 0 || end == entry.text + entry.consumed, "scaled NaN consumed subject");
+                Require((pointers & 2u) != 0 || error == 0, "scaled NaN error output");
+                Require(*__error_nid_postfix() == 97 && raised == sticky && std::fegetround() == rounding, "scaled NaN preserves errno and floating environment");
+                std::feclearexcept(FE_ALL_EXCEPT);
+                if (sticky != 0) std::feraiseexcept(sticky);
+                const TFloat other = alias(entry.text, &end, power);
+                const int aliasRaised = std::fetestexcept(FloatingExceptions);
+                Require(std::memcmp(&other, &expected, bytes) == 0 && end == entry.text + entry.consumed && *__error_nid_postfix() == 97 && aliasRaised == sticky, "scaled NaN alias");
+            }
+        }
+    };
+    check.operator()<float>(_Stofx_nid_postfix, _Stof_nid_postfix);
+    check.operator()<double>(_Stodx_nid_postfix, _Stod_nid_postfix);
+    check.operator()<long double>(_Stoldx_nid_postfix, _Stold_nid_postfix);
+    Require(std::fesetenv(&saved) == 0, "restore scaled NaN environment");
+}
+
 void TestIntegerErrors() {
     char* end = nullptr;
     int error = 99;
@@ -564,6 +600,7 @@ int main() {
     TestDoubleHelpers();
     TestFloatingRounds();
     TestFloatErrors();
+    TestScaledNan();
     TestIntegerErrors();
     TestArithmetic();
     TestDispatch();

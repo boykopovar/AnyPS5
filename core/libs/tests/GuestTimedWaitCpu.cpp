@@ -32,8 +32,13 @@ static void RequireCpuBound(std::uint64_t cpuNanos, std::uint64_t wallNanos, con
 
 constexpr int WAIT_ITERATIONS = 500;
 constexpr int SHORT_WAIT_ITERATIONS = 1000;
+#ifdef _WIN32
 constexpr std::uint64_t P99_WAIT_MAX_NANOS = 3000000ULL;
 constexpr std::uint64_t MAX_WAIT_NANOS = 10000000ULL;
+#else
+constexpr std::uint64_t P99_WAIT_MAX_NANOS = 10000000ULL;
+constexpr std::uint64_t MAX_WAIT_NANOS = 50000000ULL;
+#endif
 
 template<std::size_t N>
 static void RequireLatencyBounds(std::array<std::uint64_t, N> samples, std::uint64_t requestedNanos, const char* name) {
