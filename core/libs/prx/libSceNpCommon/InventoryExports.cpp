@@ -2068,22 +2068,6 @@ int APS5_VABI _ZN3sce2np9LocalFileD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce2np9RefObject6AddRefEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np9RefObjectC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np9RefObjectD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np9RefObjectD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3sce2np9WorkQueue16WorkItemFinishedEPNS0_8WorkItemEi() {
     NotImplemented_nid_no_patch(__func__);
 }

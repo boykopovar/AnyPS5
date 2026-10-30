@@ -39,7 +39,7 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/c5c2b80f9df9b48496fbf773b2aa307a/7143affa622c9b33588346e8c08f3ff49b65e808#file-npcommon-callable-identities-768-json) records a 768-entry superset of the module, library, symbol type and NIDs for the declarations in [InventoryExports.cpp](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp); it is a metadata summary rather than independent verification. For the 415 declarations absent from the public catalogue, the 420-entry superset of [per-image ELF records](https://gist.github.com/kyon-eth/c5c2b80f9df9b48496fbf773b2aa307a/7143affa622c9b33588346e8c08f3ff49b65e808#file-npcommon-catalogue-absent-420-json) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `516d3c70069d1cc3aeed837cf5907fdb6a5834c33b34d60e3f43e0d0356e6e7b`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp) - 711 declarations throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 711; 296 match the public 3.20 catalogue, while 415 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp) - 707 declarations throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 707; 292 match the public 3.20 catalogue, while 415 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -559,10 +559,6 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 | `_ZN3sce2np9LocalFileC2Ev` | `HP4jsVYqBKg` |
 | `_ZN3sce2np9LocalFileD1Ev` | `3eoh4hjcYag` |
 | `_ZN3sce2np9LocalFileD2Ev` | `s-C88O6Y8iU` |
-| `_ZN3sce2np9RefObject6AddRefEv` | `zurkNUps5o8` |
-| `_ZN3sce2np9RefObjectC2Ev` | `JRtw5pROOiM` |
-| `_ZN3sce2np9RefObjectD0Ev` | `8DrClRz7Z2U` |
-| `_ZN3sce2np9RefObjectD2Ev` | `417JucZaE3g` |
 | `_ZN3sce2np9WorkQueue16WorkItemFinishedEPNS0_8WorkItemEi` | `UYAD7sUQcYU` |
 | `_ZN3sce2np9WorkQueue17ProcFinishedItemsENS0_14WorkItemStatusE` | `-9cU3y6rXVM` |
 | `_ZN3sce2np9WorkQueue18RemoveFinishedItemEPNS0_8WorkItemE` | `ovc4ZvD0YjY` |
