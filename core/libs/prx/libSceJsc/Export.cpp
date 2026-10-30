@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceJsc/include/InventoryExports.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
@@ -2185,5 +2186,14 @@ int APS5_VABI _ZNK9Inspector18InjectedScriptHost16savedResultAliasEv() {
 int APS5_VABI _ZNK9Inspector22RemoteInspectionTarget22remoteDebuggingAllowedEv() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceJscInventory_TYvNAgirhfM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("TYvNAgirhfM", libSceJscInventory_TYvNAgirhfM_nid_no_patch);
 
 }

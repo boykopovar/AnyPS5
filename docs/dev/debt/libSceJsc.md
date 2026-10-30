@@ -374,3 +374,7 @@
 | `_ZNK9Inspector18InjectedScriptBase27callFunctionWithEvalEnabledERN10Deprecated18ScriptFunctionCallE` | `69Ng45oazLY` |
 | `_ZNK9Inspector18InjectedScriptHost16savedResultAliasEv` | `1EYcTwBoE4w` |
 | `_ZNK9Inspector22RemoteInspectionTarget22remoteDebuggingAllowedEv` | `nYbNPPMMWik` |
+
+### Additional unidentified export
+
+- [NID `TYvNAgirhfM`](../../../core/libs/prx/libSceJsc/Export.cpp) is a throwing placeholder. Its name, signature and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.

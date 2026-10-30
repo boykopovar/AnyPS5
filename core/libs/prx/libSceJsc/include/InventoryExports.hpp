@@ -361,4 +361,6 @@ int APS5_VABI _ZNK9Inspector18InjectedScriptBase27callFunctionWithEvalEnabledERN
 int APS5_VABI _ZNK9Inspector18InjectedScriptHost16savedResultAliasEv();
 int APS5_VABI _ZNK9Inspector22RemoteInspectionTarget22remoteDebuggingAllowedEv();
 
+int APS5_VABI libSceJscInventory_TYvNAgirhfM_nid_no_patch();
+
 }
