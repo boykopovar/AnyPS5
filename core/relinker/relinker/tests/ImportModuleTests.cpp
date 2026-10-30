@@ -62,6 +62,9 @@ int main() {
     if (!Domain::ImportModule("nid#A#B", json, jsonOther).empty()) return 12;
     try { Domain::ImportModule("nid#A#B", json, jsonAmbiguous); return 13; }
     catch (const Domain::RelinkerException&) {}
+    const std::map<std::uint64_t, std::string> json2{{1, "libSceJson2"}};
+    const std::array<std::string, 1> jsonLegacy{"libSceJson.prx"};
+    if (!Domain::ImportModule("nid#A#B", json2, jsonLegacy).empty()) return 35;
     const auto jsonImage = Relinker::GuestImageReader().Read("json-consumer.prx", Fixture(false, "libSceJson2.prx", "libSceJson"), true);
     if (jsonImage.Symbols.size() != 4 || jsonImage.Symbols[3].Library != "libSceJson2.prx") return 14;
     const std::map<std::uint64_t, std::string> audio{{1, "libSceAudiodec"}};
@@ -74,6 +77,9 @@ int main() {
     if (!Domain::ImportModule("nid#A#B", audio, audioOther).empty()) return 17;
     try { Domain::ImportModule("nid#A#B", audio, audioAmbiguous); return 18; }
     catch (const Domain::RelinkerException&) {}
+    const std::map<std::uint64_t, std::string> audioNativeModule{{1, "libSceAudiodec.native"}};
+    const std::array<std::string, 1> audioLegacy{"libSceAudiodec.prx"};
+    if (!Domain::ImportModule("nid#A#B", audioNativeModule, audioLegacy).empty()) return 36;
     const auto audioImage = Relinker::GuestImageReader().Read("audio-consumer.prx", Fixture(false, "libSceAudiodec.native.prx", "libSceAudiodec"), true);
     if (audioImage.Symbols.size() != 4 || audioImage.Symbols[3].Library != "libSceAudiodec.native.prx") return 19;
     std::cout << "module mapping checks passed\n";
