@@ -27,6 +27,7 @@
 #include <thread>
 
 extern "C" int SslRead_nid_no_patch(int, void*, std::size_t, int);
+extern "C" int SslTrustSystemRoots_nid_no_patch(int);
 
 namespace Http2 {
 namespace {
@@ -162,6 +163,7 @@ private:
                 hints.ai_family = AF_UNSPEC;
                 addrinfo* raw = nullptr;
                 const auto service = std::to_string(job->port);
+                if (const auto hook = LookupHookSlot().load(std::memory_order_acquire)) Require(hook(job->host.c_str()) == 0, "sceHttp2: DNS failed; console error mapping is unknown");
                 const int result = getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
                 std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> addresses(raw, freeaddrinfo);
                 Require(result == 0, "sceHttp2: DNS failed; console error mapping is unknown");
@@ -322,16 +324,18 @@ struct Request::State {
         Require(startup >= 0, "sceHttp2: network initialization failed; console error mapping is unknown");
         Require(sceNetSocketClose(startup) == 0, "sceHttp2: network initialization socket close failed");
 #endif
-        const auto deadline = Deadline(settings.resolveTimeout);
-        const auto job = Dns().Submit(url);
-        {
+        std::shared_ptr<Lookup> job;
+        for (std::int32_t attempt = 0;; ++attempt) {
+            const auto deadline = Deadline(settings.resolveTimeout);
+            job = Dns().Submit(url);
             std::unique_lock lock(job->mutex);
             while (!job->complete) {
                 Check(deadline);
                 job->changed.wait_for(lock, std::chrono::milliseconds(5));
             }
             Check(deadline);
-            if (job->failure) std::rethrow_exception(job->failure);
+            if (!job->failure) break;
+            if (attempt >= settings.resolveRetry) std::rethrow_exception(job->failure);
         }
         const auto connectDeadline = Deadline(settings.connectTimeout);
         int result = 0;
@@ -359,6 +363,7 @@ struct Request::State {
         if (result < 0) return result;
         ssl = sceSslCreateConnection(sslContext, socket, url.host.c_str());
         Require(ssl > 0, "sceHttp2: SSL context or connection unavailable");
+        Require(SslTrustSystemRoots_nid_no_patch(ssl) == 0, "sceHttp2: system CA list unavailable");
         Require(sceSslDisableVerifyOption(ssl, 0x3d) == 0 && sceSslEnableVerifyOption(ssl, settings.verifyFlags) == 0,
             "sceHttp2: SSL verification options rejected");
         Require(sceSslSetAlpn(ssl, "h2") == 0, "sceHttp2: ALPN setup failed");

@@ -1,6 +1,7 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "SceTypes.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <array>
@@ -155,6 +156,92 @@ void TestHeaps() {
     Require(sceNpIpc2ClientTerm() == 0 && sceNpIpc2ClientInit() == 0 && sceNpIpc2ClientTerm() == 0, "the ipc client restarts");
 }
 
+struct AllocatorRecord {
+    std::array<std::uint8_t, 256> block {};
+    std::size_t size = 0;
+    void* released = nullptr;
+    bool fail = false;
+};
+
+void* APS5_VABI RecordAllocate(std::size_t size, void* context) {
+    auto* record = static_cast<AllocatorRecord*>(context);
+    record->size = size;
+    return record->fail ? nullptr : record->block.data();
+}
+
+void APS5_VABI RecordRelease(void* pointer, void* context) {
+    static_cast<AllocatorRecord*>(context)->released = pointer;
+}
+
+void TestObjects() {
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    void* object = _ZN3sce2np6ObjectnwEmR14SceNpAllocator(40, &allocator);
+    NpAllocator* stored = nullptr;
+    std::memcpy(&stored, record.block.data(), sizeof(stored));
+
+    Require(object == record.block.data() + 16 && record.size == 56 && stored == &allocator,
+        "an object is allocated behind a 16-byte header that keeps its allocator");
+    AllocatorRecord other {};
+    NpAllocator otherAllocator {RecordAllocate, nullptr, RecordRelease, &other};
+    _ZN3sce2np6ObjectdlEPvR14SceNpAllocator(object, &otherAllocator);
+
+    Require(record.released == record.block.data() && other.released == nullptr, "an object is freed through the allocator it was allocated with");
+    record.released = nullptr;
+    _ZN3sce2np6ObjectdaEPv(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(0, &allocator));
+
+    Require(record.size == 16 && record.released == record.block.data(), "an array is allocated and freed the same way");
+    NpAllocatorEx allocatorEx {allocator, 0x1234};
+    record.released = nullptr;
+    object = _ZN3sce2np6ObjectnwEmR16SceNpAllocatorEx(8, &allocatorEx);
+    std::memcpy(&stored, record.block.data(), sizeof(stored));
+
+    Require(object == record.block.data() + 16 && stored == &allocatorEx.allocator, "an extended allocator keeps its own address in the header");
+    _ZN3sce2np6ObjectdaEPvR16SceNpAllocatorEx(object, &allocatorEx);
+    Require(record.released == record.block.data(), "an object from an extended allocator is freed through it");
+    record.released = nullptr;
+    _ZN3sce2np6ObjectdlEPv(_ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx));
+    _ZN3sce2np6ObjectdlEPvR16SceNpAllocatorEx(nullptr, &allocatorEx);
+    _ZN3sce2np6ObjectdaEPvR14SceNpAllocator(nullptr, &allocator);
+
+    Require(record.released == record.block.data(), "freeing a null object does nothing");
+    record.fail = true;
+    Require(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnwEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
+        "a failed allocation returns null");
+}
+
+void TestObjectsThroughStoredAllocator() {
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    NpAllocatorEx allocatorEx {allocator, 0x1234};
+    AllocatorRecord other {};
+    NpAllocator otherAllocator {RecordAllocate, nullptr, RecordRelease, &other};
+    NpAllocatorEx otherEx {otherAllocator, 0};
+
+    record.block.fill(0xAA);
+    void* object = _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(24, &allocatorEx);
+    Require(object == record.block.data() + 16 && record.size == 40, "an extended array is allocated behind the header");
+    Require(std::all_of(record.block.begin() + 8, record.block.begin() + 16, [](std::uint8_t b) { return b == 0xAA; }),
+        "the second half of the header is left as the allocator returned it");
+    _ZN3sce2np6ObjectdlEPvR16SceNpAllocatorEx(object, &otherEx);
+    Require(record.released == record.block.data() && other.released == nullptr, "delete with an extended allocator frees through the stored one");
+
+    record.released = nullptr;
+    _ZN3sce2np6ObjectdaEPvR14SceNpAllocator(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(8, &allocator), &otherAllocator);
+    Require(record.released == record.block.data() && other.released == nullptr, "delete[] with an allocator frees through the stored one");
+
+    record.released = nullptr;
+    _ZN3sce2np6ObjectdaEPvR16SceNpAllocatorEx(_ZN3sce2np6ObjectnwEmR16SceNpAllocatorEx(8, &allocatorEx), &otherEx);
+    Require(record.released == record.block.data() && other.released == nullptr, "delete[] with an extended allocator frees through the stored one");
+
+    Require(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(SIZE_MAX - 15, &allocator) == record.block.data() + 16 && record.size == 0,
+        "the size plus the header wraps unchecked, so a succeeding allocator is asked for 0 bytes");
+
+    record.fail = true;
+    Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
+        "a failed array allocation returns null");
+}
+
 struct CalloutRecord {
     std::atomic<int> order {0};
     std::atomic<int> first {0};
@@ -259,6 +346,16 @@ void TestJsonText() {
     Require(sceNpUtilJsonEscape(escaped, sizeof(escaped), "yz", 2) == 0 && Equals(escaped, "xyz"), "escaping appends to the buffer");
     Require(sceNpUtilJsonEscape(escaped, 6, "a", 1) == NpUtilBufferTooSmall, "escaping needs room for one escape");
     Require(sceNpUtilJsonEscape(escaped, sizeof(escaped), nullptr, 1) == NpUtilInvalid, "escaping needs a source");
+    struct Guarded {
+        char buffer[16];
+        char canary[16];
+    } guarded{};
+    std::strcpy(guarded.buffer, "0123456789");
+    Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "\n\n\n", 3) == NpUtilBufferTooSmall && guarded.canary[0] == 0,
+        "escaping into a partly filled buffer counts the text already in it");
+    std::memset(guarded.buffer, 'x', sizeof(guarded.buffer));
+    Require(sceNpUtilJsonEscape(guarded.buffer, sizeof(guarded.buffer), "a", 1) == NpUtilBufferTooSmall && guarded.canary[0] == 0,
+        "escaping into a buffer without a terminator is refused");
 
     char text[32] = {};
     std::size_t length = 0;
@@ -271,6 +368,8 @@ void TestJsonText() {
         "a bad unicode escape is copied and reported");
     Require(sceNpUtilJsonUnescape(nullptr, sizeof(text), "abc", 3, &length) == 0 && length == 4, "a null buffer reports the size");
     Require(sceNpUtilJsonUnescape(text, 3, "abc", 3, &length) == NpUtilBufferTooSmall, "unescaping needs room for the terminator");
+    length = 0;
+    Require(sceNpUtilJsonUnescape(nullptr, 0, "abc", 3, &length) == 0 && length == 4, "a size query with no buffer and no size reports the size");
 
     char one[4] = {};
     std::size_t consumed = 0;
@@ -284,6 +383,8 @@ void TestJsonText() {
         "a cut UTF-8 character reports its full length");
     Require(sceNpUtilJsonGetOneChar(one, 1, "\xC3\xA9", 2, &length, &consumed) == NpUtilBufferTooSmall && length == 2,
         "a short buffer still reports the decoded size");
+    Require(sceNpUtilJsonGetOneChar(one, sizeof(one), "\\ud83dXXde00", 12, &length, &consumed) == NpUtilBufferTooSmall,
+        "a high surrogate without a second unicode escape is not combined");
 
     const char* character = nullptr;
     const char* japanese = "\xE6\x97\xA5" "a";
@@ -403,6 +504,11 @@ void TestHexAndCopies() {
     Require(sceNpStrParseHex("0AF", bytes, 2) == NpInvalidArgument, "odd hex is refused");
     Require(sceNpStrParseHex("0AFE", bytes, 1) == NpBufferTooSmall, "hex parsing checks the output size");
     Require(sceNpStrParseHex("0AG1", bytes, 2) == NpInvalidArgument, "non-hex characters are refused");
+    bytes[1] = 0xFF;
+    Require(sceNpStrParseHex("0A5G", bytes, 2) == NpInvalidArgument && bytes[0] == 0x0A && bytes[1] == 0x50,
+        "a valid high digit is stored before the low digit is refused");
+    bytes[1] = 0xFF;
+    Require(sceNpStrnParseHex("0AG5", 4, bytes, 2) == NpInvalidArgument && bytes[1] == 0xFF, "a refused high digit stores nothing");
     Require(sceNpStrnParseHex("DEADBEEF1234", 8, bytes, 4) == 0 && bytes[0] == 0xDE && bytes[3] == 0xEF, "a hex prefix is read");
 
     char copy[8] = {};
@@ -420,6 +526,8 @@ int main() {
     TestSharedEventFlags();
     TestThreads();
     TestHeaps();
+    TestObjects();
+    TestObjectsThroughStoredAllocator();
     TestBase64();
     TestNumbers();
     TestHexAndCopies();

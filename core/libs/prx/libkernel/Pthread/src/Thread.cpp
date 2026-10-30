@@ -751,9 +751,11 @@ void ThreadCancel::CleanupRestore(void* mark) {
 }
 
 void ThreadCancel::BeginWait(TimedWait::Condition* condition) {
-    if (!CurrentGuestState().current) return;
-    std::lock_guard lock(CurrentGuestState().current->cancelLock);
-    CurrentGuestState().current->cancelWait = condition;
+    auto& state = CurrentGuestState();
+    if (!state.current) return;
+    std::lock_guard lock(state.current->cancelLock);
+    state.current->cancelWait = condition;
+    state.current->cancelWaitExiting = condition && state.exiting;
 }
 
 void ThreadCancel::EndWait() {
@@ -799,7 +801,9 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 #endif
     args.reset();
     self->suspended.wait(true, std::memory_order_acquire);
-#ifndef _WIN32
+#ifdef _WIN32
+    DeliverPendingException_nid_no_patch(self);
+#else
     pthread_sigmask(SIG_SETMASK, &signalMask, nullptr);
 #endif
     finishThread(self, Aps5CallGuestEntry_nid_no_patch(entry, arg));
@@ -945,7 +949,7 @@ static void* StartNativeThread(void* opaque) {
         }
     } guard{self};
     std::jmp_buf exitJump;
-    if (setjmp(exitJump) == 0) {
+    if (_setjmp(exitJump) == 0) {
         threadExitJump = &exitJump;
         RunThread(std::unique_ptr<ThreadArgs>(guest));
     }
@@ -979,6 +983,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     if (name) p->name = name;
     p->createdSuspended = attr && (*attr)->_createSuspended;
     p->suspended.store(p->createdSuspended, std::memory_order_relaxed);
+    p->pendingException.store(0, std::memory_order_relaxed);
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
 #ifdef _WIN32
@@ -1160,7 +1165,7 @@ void APS5_VABI scePthreadExit(void* retval) {
     _endthreadex(0);
 #else
     if (threadExitJump)
-        std::longjmp(*threadExitJump, 1);
+        _longjmp(*threadExitJump, 1);
     pthread_exit(retval);
 #endif
     throw std::runtime_error("Native thread exit returned");
@@ -1227,7 +1232,7 @@ int APS5_VABI scePthreadCancel(Pthread thread) {
     for (;;) {
         {
             std::lock_guard lock(thread->cancelLock);
-            if (!thread->cancelWait) return SCE_OK;
+            if (!thread->cancelWait || thread->cancelWaitExiting) return SCE_OK;
             thread->cancelWait->NotifyAll();
         }
         scePthreadYield();

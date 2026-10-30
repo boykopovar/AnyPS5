@@ -31,4 +31,28 @@ int APS5_VABI sceSystemLogger2Terminate() {
     return 0;
 }
 
+int APS5_VABI sceSystemLogger2GetEventStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2IsAvailableMonitor() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2TerminateWithResourceRelease() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2SetEventAsyncEx2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2SetRnpsEventAsync() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2SetEventAsyncInternal() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

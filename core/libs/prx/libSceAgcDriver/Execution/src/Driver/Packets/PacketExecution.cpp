@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include <atomic>
@@ -273,6 +274,7 @@ void Driver::execute(const Submission& submission) {
         if (APS5_ENABLE_TIMING_LOG && submission.queue == 0 && pendingFrameTiming == nullptr) includeTimingSubmission(submission, false);
         PerformanceContext timingContext(submission.queue == 0 ? pendingFrameTiming.get() : FrameTiming::Async());
         PerformanceTimer timing("Driver.Packet");
+        if (!predicated) noteLabelIssue(packet, submission.queue);
         if (pipelined && !predicated && header != FlipPacketHeader && header != RenderingWaitPacketHeader && !submission.flips.contains(cursor) && (enqueueLabelPacket(packet, opcode, submission.queue) || enqueueDmaPacket(packet, opcode, submission.queue, queue))) {
             traceLabel(packet, submission.queue);
             recent.Record(cursor);
@@ -286,6 +288,7 @@ void Driver::execute(const Submission& submission) {
             if (value.has_value() && Pm4::WaitComparesValue(packet, *value)) {
                 ++waitOutcomes().fromRecorderSameQueue;
                 gateOpened() = true;
+                noteLabelPass(packet, submission.queue);
                 recent.Record(cursor);
                 cursor = nextCursor;
                 continue;
@@ -294,6 +297,7 @@ void Driver::execute(const Submission& submission) {
                 bumpEpoch(&EpochBumps::waits);
                 ++waitOutcomes().atEntry;
                 gateOpened() = true;
+                noteLabelPass(packet, submission.queue);
                 recent.Record(cursor);
                 cursor = nextCursor;
                 continue;
@@ -316,6 +320,7 @@ void Driver::execute(const Submission& submission) {
                 cursor = opcode == 0x3f ? submission.conditionalEnds.at(cursor) : nextCursor;
                 continue;
             }
+            noteLabelIssue(packet, submission.queue);
         }
         if (opcode == 0x3f) {
             cursor = nextCursor;
@@ -407,6 +412,7 @@ void Driver::execute(const Submission& submission) {
             }
             if (!flipInterruptDeferred) deliverFlipEopInterrupt(submission.queue);
             ++flipsCounted;
+            Graphics::NoteHostImportFrame();
             if (batchesAtFlip != 0) flipSerial = batchesAtFlip;
             flipBatchesUnsignaled += unsignaledAtFlip;
             if (Graphics::AbConfigured()) {
@@ -453,6 +459,7 @@ void Driver::execute(const Submission& submission) {
             static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
             const auto waitStart = traceGpu ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             timed(&WorkerProfile::waitMs, [&] { waitMemory(packet, submission.queue, recent, submission.received, submission.heldAtSubmit.contains(cursor)); });
+            noteLabelPass(packet, submission.queue);
             gateOpened() = true;
             if (traceGpu && std::chrono::steady_clock::now() - waitStart > std::chrono::milliseconds(200)) {
 

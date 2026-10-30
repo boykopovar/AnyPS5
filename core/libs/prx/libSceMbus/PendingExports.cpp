@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include <cstddef>
+#include <cstring>
 
 static_assert(sizeof(MbusDeviceFunctionState) == 180);
 
@@ -325,9 +326,8 @@ int APS5_VABI sceMbusEventBusStatusChangeUnsubscribe(std::uint64_t unusedSlot, s
     return 0;
 }
 
-int APS5_VABI sceMbusEventCallbackFuncsInit_(MbusEventCallbacks* callbacks, std::uint32_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceMbusEventCallbackFuncsInit_(MbusEventCallbacks* callbacks, std::uint32_t size) {
+    if (size != 0) std::memset(callbacks, 0, size);
 }
 
 int APS5_VABI sceMbusEventCreate_(std::uint32_t flags, MbusEvent* buffer, std::uint32_t capacity, const MbusEventCallbacks* callbacks, void* userData) {
@@ -582,6 +582,50 @@ int APS5_VABI sceMbusUserLogin(std::int32_t userId) {
 int APS5_VABI sceMbusUserLogout(std::int32_t userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceMbusGetCurrentChatBalanceId() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusGetInitialUser() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusGetSimulatedBusUsableStatusByBusType2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetChatBalance() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetCronosOutputMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetCronosPrimaryUser() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetHmd2SocialScreenAudioMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetVolumeDownForDiscPlayerFG() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusStartAudioOutScreenShare() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusStopAudioOutScreenShare() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

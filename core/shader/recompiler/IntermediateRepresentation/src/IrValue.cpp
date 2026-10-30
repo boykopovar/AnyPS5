@@ -13,7 +13,7 @@ std::uint32_t IrValue::Id() const {
     return id;
 }
 
-const std::vector<IrValue*>& IrValue::Arguments() const {
+const IrOperands& IrValue::Arguments() const {
     return arguments;
 }
 

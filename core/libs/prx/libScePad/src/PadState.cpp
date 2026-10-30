@@ -211,11 +211,19 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
     data.timestamp = changeTime;
 
     std::uint8_t touchNum = 0;
+    const bool injectedContact = !intercepted && injected.hasTouch;
+    if (injectedContact && injected.touchActive) {
+        touchNum = 1;
+        data.touch_data_touch0_x = injected.touchX;
+        data.touch_data_touch0_y = injected.touchY;
+        data.touch_data_touch0_id = injected.touchId;
+    }
     for (int i = 0; i < 2; ++i) {
         const PadTouchPoint& tp = state.touch[i];
         if (!tp.active) { slot.prevTouchActive[i] = false; continue; }
         if (!slot.prevTouchActive[i]) slot.touchIds[i] = static_cast<std::uint8_t>(slot.nextTouchId++ & 0x7F);
         slot.prevTouchActive[i] = true;
+        if (injectedContact) continue;
         if (touchNum == 0) {
             data.touch_data_touch0_x = tp.x; data.touch_data_touch0_y = tp.y; data.touch_data_touch0_id = slot.touchIds[i];
         } else {
@@ -224,7 +232,7 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
         ++touchNum;
     }
     const bool injectedTouch = !intercepted && (injected.touchLeft || injected.touchRight);
-    if (touchNum == 0 && (state.touchLeft || state.touchRight || injectedTouch)) {
+    if (!injectedContact && touchNum == 0 && (state.touchLeft || state.touchRight || injectedTouch)) {
         data.buttons |= 0x100000;
         touchNum = 1;
         data.touch_data_touch0_x = state.touchRight || (!intercepted && injected.touchRight) ? kTouchPadWidth * 3 / 4 : kTouchPadWidth / 4;

@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import package_release
+import package_headers
 import prepare_release_notes
 
 
@@ -27,6 +28,80 @@ def working_directory(path):
         yield
     finally:
         os.chdir(previous)
+
+
+class PublicHeaderPackageTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.source = self.root / "source"
+        self.libs = self.source / "core/libs"
+        self.output = self.root / "output"
+        self.umbrella = self.libs / "prx/libExample/libExample.hpp"
+        self.umbrella.parent.mkdir(parents=True)
+        (self.source / "LICENSE").write_text("project license", encoding="utf-8")
+        self.umbrella.write_text('#include "Api.hpp"\n#include <Common.hpp>\n', encoding="utf-8")
+        self.api = self.umbrella.with_name("Api.hpp")
+        self.api.write_text('#include "libExample.hpp"\n#include <vector>\n#if defined(_WIN32)\n#include "Windows.hpp"\n#endif\n', encoding="utf-8")
+        self.umbrella.with_name("Windows.hpp").write_text('#include <io.h>\n', encoding="utf-8")
+        (self.libs / "Common.hpp").write_text('struct Common {};\n', encoding="utf-8")
+        self.umbrella.with_name("Private.hpp").write_text('#include <vendor.h>\n', encoding="utf-8")
+
+    def test_recursive_headers_keep_paths_and_bytes_without_private_files(self):
+        expected = {"include/anyps5/" + path.relative_to(self.libs).as_posix(): path.read_bytes() for path in (self.umbrella, self.api, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp")}
+        expected["LICENSE"] = (self.source / "LICENSE").read_bytes()
+        package_headers.package(self.source, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+            self.assertEqual({name: archive.read(name) for name in archive.namelist()}, expected)
+            self.assertEqual(len(archive.namelist()), len(expected))
+        with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+            self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, expected)
+
+    def test_forbidden_or_missing_dependencies_preserve_existing_archives(self):
+        self.output.mkdir()
+        previous = self.output / "prx-headers-v1.zip"
+        previous.write_bytes(b"previous")
+        for directive in ('#include "Missing.hpp"', '#include <vendor.h>', '#include "../../../3rdparty/vendor.hpp"', '#include MACRO_HEADER'):
+            with self.subTest(directive=directive):
+                self.api.write_text(directive + "\n", encoding="utf-8")
+                with self.assertRaises(RuntimeError):
+                    package_headers.package(self.source, self.output, "v1")
+                self.assertEqual(list(self.output.iterdir()), [previous])
+                self.assertEqual(previous.read_bytes(), b"previous")
+
+    def test_ambiguous_quoted_include_is_rejected(self):
+        (self.libs / "Api.hpp").write_text("", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertFalse(self.output.exists())
+
+    def test_missing_umbrella_is_rejected(self):
+        self.umbrella.unlink()
+        with self.assertRaisesRegex(RuntimeError, "Missing public header"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertFalse(self.output.exists())
+
+    def test_comments_and_raw_strings_do_not_add_dependencies(self):
+        self.api.write_text('/*\n#include "Missing.hpp"\n*/\nconst char* text = R"test(\n#include "AlsoMissing.hpp"\n)test";\n', encoding="utf-8")
+        self.assertEqual(len(package_headers.public_headers(self.source)), 3)
+
+    def test_external_symlink_is_rejected(self):
+        external = self.root / "external.hpp"
+        external.write_text("", encoding="utf-8")
+        link = self.umbrella.with_name("Linked.hpp")
+        try:
+            link.symlink_to(external)
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Linked.hpp"\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "outside core/libs"):
+            package_headers.package(self.source, self.output, "v1")
+
+    def test_header_command_needs_no_build_directory(self):
+        with patch.object(package_release, "ROOT", self.source):
+            self.assertEqual(package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)]), 0)
+        self.assertTrue((self.output / "prx-headers-v1.zip").is_file())
 
 
 class ReleasePackageTests(unittest.TestCase):
@@ -43,14 +118,77 @@ class ReleasePackageTests(unittest.TestCase):
         libraries.mkdir(parents=True)
         self.library = libraries / "libc.prx"
         self.library.write_bytes(b"library bytes")
+        (libraries / "unpatched").mkdir()
+        self.unpatched = libraries / "unpatched/libc.prx"
+        self.unpatched.write_bytes(b"original exports")
+        (libraries / "implib").mkdir()
+        self.implib = libraries / "implib/libc.dll.a"
+        self.implib.write_bytes(b"import archive")
+        self.manifest = self.build / "core/libs/release-implibs.txt"
+        self.manifest.write_text("libc=" + self.implib.as_posix() + "\n", encoding="utf-8")
         binary = self.build / "core/relinker/relinker"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"relinker bytes")
         self.addCleanup(patch.stopall)
         patch.object(package_release, "ROOT", self.source, create=True).start()
 
+    def test_unpatched_archives_preserve_originals_and_exclude_stale_files(self):
+        (self.unpatched.parent / "libRemoved.prx").write_bytes(b"obsolete")
+        before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (self.library, self.unpatched, self.implib)}
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-unpatched-v1.zip") as archive:
+            self.assertEqual(archive.namelist(), ["libs/libc.prx"])
+            self.assertEqual(archive.read("libs/libc.prx"), b"original exports")
+        with tarfile.open(self.output / "prx-linux-unpatched-v1.tar.gz") as archive:
+            self.assertEqual(archive.getnames(), ["libs/libc.prx"])
+            self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"original exports")
+        for path, (content, timestamp) in before.items():
+            self.assertEqual(path.read_bytes(), content)
+            self.assertEqual(path.stat().st_mtime_ns, timestamp)
+
+    def test_invalid_windows_import_inputs_preserve_existing_output(self):
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
+            (runtime / name).write_bytes(b"runtime")
+        for name in ("mimalloc.dll", "mimalloc-redirect.dll"):
+            (self.library.parent / name).write_bytes(b"allocator")
+        (self.build / "core/relinker/relinker.exe").write_bytes(b"executable")
+        self.output.mkdir()
+        previous = self.output / "prx-windows-v1.zip"
+        previous.write_bytes(b"existing archive")
+        valid = self.manifest.read_text(encoding="utf-8")
+        for manifest in ("", valid + valid, "libc=" + (self.root / "outside.a").as_posix() + "\n", "invalid"):
+            with self.subTest(manifest=manifest), patch.object(package_release, "windows_runtime", return_value=runtime):
+                self.manifest.write_text(manifest, encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "[Ii]mport library"):
+                    package_release.package("windows", self.build, self.output, "v1")
+                self.assertEqual(list(self.output.iterdir()), [previous])
+                self.assertEqual(previous.read_bytes(), b"existing archive")
+        self.manifest.write_text(valid, encoding="utf-8")
+        self.implib.unlink()
+        with patch.object(package_release, "windows_runtime", return_value=runtime), self.assertRaisesRegex(RuntimeError, "Missing or empty release file"):
+            package_release.package("windows", self.build, self.output, "v1")
+        self.assertEqual(previous.read_bytes(), b"existing archive")
+
+    def test_missing_unpatched_input_preserves_existing_outputs(self):
+        for content in (None, b""):
+            with self.subTest(content=content):
+                if content is None:
+                    self.unpatched.unlink()
+                else:
+                    self.unpatched.write_bytes(content)
+                self.output.mkdir(exist_ok=True)
+                previous = self.output / "prx-linux-v1.zip"
+                previous.write_bytes(b"previous release")
+                with self.assertRaisesRegex(RuntimeError, "Missing or empty release file"):
+                    package_release.package("linux", self.build, self.output, "v1")
+                self.assertEqual(list(self.output.iterdir()), [previous])
+                self.assertEqual(previous.read_bytes(), b"previous release")
+
     def test_ajm_vibration_decoder_license_in_archives(self):
         (self.source / "core/libs/prx/libSceAjm.native").mkdir()
+        (self.unpatched.parent / "libSceAjm.native.prx").write_bytes(b"unpatched library")
         (self.build / "core/libs/libs/libSceAjm.native.prx").write_bytes(b"ajm")
         license_file = self.source / "3rdparty/vgmstream/COPYING"
         license_file.parent.mkdir(parents=True)
@@ -63,6 +201,7 @@ class ReleasePackageTests(unittest.TestCase):
 
     def test_vorbis_decoder_licenses_in_archives(self):
         (self.source / "core/libs/prx/libSceVorbisDec").mkdir()
+        (self.unpatched.parent / "libSceVorbisDec.prx").write_bytes(b"unpatched library")
         (self.build / "core/libs/libs/libSceVorbisDec.prx").write_bytes(b"vorbis")
         for name in ("ogg", "vorbis"):
             license_file = self.source / f"3rdparty/{name}/COPYING"
@@ -97,9 +236,17 @@ class ReleasePackageTests(unittest.TestCase):
             for name in names + allocator:
                 self.assertEqual(archive.extractfile("libs/" + name).read(), name.encode())
         self.assertEqual((self.output / "relinker-v1.exe").read_bytes(), b"Windows executable")
+        with zipfile.ZipFile(self.output / "prx-windows-unpatched-v1.zip") as archive:
+            self.assertEqual(archive.read("libs/libc.prx"), b"original exports")
+            self.assertEqual(archive.read("libs/implib/libc.dll.a"), b"import archive")
+            self.assertEqual(set(archive.namelist()), {"libs/libc.prx", "libs/implib/libc.dll.a", *("libs/" + name for name in names + allocator)})
+        with tarfile.open(self.output / "prx-windows-unpatched-v1.tar.gz") as archive:
+            self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"original exports")
+            self.assertEqual(archive.extractfile("libs/implib/libc.dll.a").read(), b"import archive")
 
     def test_opus_library_archives_include_the_bundled_license(self):
         (self.source / "core/libs/prx/libSceOpusDec").mkdir()
+        (self.unpatched.parent / "libSceOpusDec.prx").write_bytes(b"unpatched library")
         (self.library.parent / "libSceOpusDec.prx").write_bytes(b"Opus library bytes")
         license_file = self.source / "3rdparty/opus/COPYING"
         license_file.parent.mkdir(parents=True)
@@ -112,6 +259,7 @@ class ReleasePackageTests(unittest.TestCase):
 
     def test_opus_release_without_its_license_is_rejected(self):
         (self.source / "core/libs/prx/libSceOpusCeltDec").mkdir()
+        (self.unpatched.parent / "libSceOpusCeltDec.prx").write_bytes(b"unpatched library")
         (self.library.parent / "libSceOpusCeltDec.prx").write_bytes(b"CELT library bytes")
         with self.assertRaisesRegex(RuntimeError, "COPYING"):
             package_release.package("linux", self.build, self.output, "v1")
@@ -240,7 +388,7 @@ class ReleasePackageTests(unittest.TestCase):
             package_release.package("linux", self.build, self.output, "v1.0")
 
     def test_directory_destination_preserves_every_existing_asset(self):
-        names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "relinker-v1"]
+        names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"]
         for blocked in names:
             with self.subTest(blocked=blocked), tempfile.TemporaryDirectory() as tmp:
                 output = Path(tmp)
@@ -265,7 +413,7 @@ class ReleasePackageTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows read-only replacement semantics")
     def test_readonly_destinations_preserve_all_existing_assets(self):
-        names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "relinker-v1"]
+        names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"]
         for index, blocked in enumerate(names):
             with self.subTest(blocked=blocked):
                 output = self.output / str(index)
@@ -300,7 +448,7 @@ class ReleasePackageTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows directory junction replacement semantics")
     def test_dangling_directory_junction_preserves_all_existing_assets(self):
-        names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "relinker-v1"]
+        names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"]
         for index, blocked in enumerate(names):
             with self.subTest(blocked=blocked):
                 output = self.output / str(index)
@@ -388,6 +536,29 @@ class ReleasePackageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(RuntimeError, "Missing CMakeCache.txt"):
                 package_release.windows_runtime(Path(tmp))
+
+
+    def test_native_and_web_zip_timestamps_are_clamped_without_changing_files(self):
+        import os
+        for timestamp, year in ((0, 1980), (7258118400, 2107)):
+            with self.subTest(timestamp=timestamp):
+                web = self.build / "web"
+                web.mkdir(exist_ok=True)
+                for name in package_release.WEB_FILES:
+                    (web / name).parent.mkdir(parents=True, exist_ok=True)
+                    (web / name).write_bytes(b"web fixture")
+                    os.utime(web / name, (timestamp, timestamp))
+                os.utime(self.library, (timestamp, timestamp))
+                before = self.library.stat().st_mtime_ns
+                package_release.package("linux", self.build, self.output, "v1")
+                package_release.package_web(self.build, self.output, "v1", "a" * 40)
+                for asset, member, contents in (("prx-linux-v1.zip", "libs/libc.prx", b"library bytes"),
+                                                 ("web-v1.zip", package_release.WEB_FILES[0], b"web fixture")):
+                    with zipfile.ZipFile(self.output / asset) as archive:
+                        self.assertEqual(archive.getinfo(member).date_time[0], year)
+                        self.assertEqual(archive.read(member), contents)
+                self.assertEqual(self.library.stat().st_mtime_ns, before)
+                self.assertEqual((web / package_release.WEB_FILES[0]).stat().st_mtime, timestamp)
 
 
 
@@ -521,11 +692,13 @@ class ReleaseAssetsTests(unittest.TestCase):
             build = root / "build"
             (build / "core/libs/libs").mkdir(parents=True)
             (build / "core/libs/libs/libc.prx").write_bytes(b"new library")
+            (build / "core/libs/libs/unpatched").mkdir()
+            (build / "core/libs/libs/unpatched/libc.prx").write_bytes(b"original library")
             (build / "core/relinker").mkdir(parents=True)
             (build / "core/relinker/relinker").write_bytes(b"new executable")
             output = root / "assets"
             output.mkdir()
-            names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "relinker-v1"]
+            names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"]
             for name in names:
                 (output / name).write_bytes(b"old " + name.encode())
             with working_directory(source), patch.object(package_release, "ROOT", source), \
@@ -549,6 +722,28 @@ class ReleaseNoteDestinationsTests(unittest.TestCase):
                 prepare_release_notes.prepare_notes(source, body, full)
             self.assertEqual(full.read_bytes(), b"previous full notes")
             self.assertEqual(list(body.iterdir()), [])
+
+    def test_symbolic_link_loop_preserves_existing_notes(self):
+        for position in range(3):
+            with self.subTest(position=position), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                paths = [root / name for name in ("notes.json", "body.md", "full.md")]
+                paths[0].write_text(json.dumps({"body": "new release notes"}), encoding="utf-8")
+                paths[1].write_bytes(b"previous body")
+                paths[2].write_bytes(b"previous full notes")
+                paths[position].unlink()
+                try:
+                    paths[position].symlink_to(paths[position].name)
+                except (OSError, NotImplementedError) as error:
+                    self.skipTest(str(error))
+                previous = {path: path.read_bytes() for index, path in enumerate(paths) if index != position}
+                result = subprocess.run([sys.executable, str(Path(prepare_release_notes.__file__)),
+                                         "--input", str(paths[0]), "--body", str(paths[1]), "--full", str(paths[2])],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertTrue(paths[position].is_symlink())
+                self.assertEqual({path: path.read_bytes() for path in previous}, previous)
 
     @unittest.skipUnless(os.name == "nt", "Windows read-only output semantics")
     def test_readonly_output_preserves_both_note_files(self):
@@ -795,6 +990,25 @@ class ReleaseNotesEdgeCaseTests(unittest.TestCase):
                     self.assertEqual(body_path.read_text(encoding="utf-8"), "pre-existing body")
                     self.assertEqual(full_path.read_text(encoding="utf-8"), "pre-existing full")
 
+    def test_main_reports_error_for_json_recursion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source_path = directory / "source.json"
+            source_path.write_text(json.dumps({"body": "notes"}), encoding="utf-8")
+            body_path = directory / "body.md"
+            body_path.write_text("pre-existing body", encoding="utf-8")
+            full_path = directory / "full.md"
+            full_path.write_text("pre-existing full", encoding="utf-8")
+            stderr = io.StringIO()
+            with patch.object(prepare_release_notes.json, "loads", side_effect=RecursionError("decoder recursion")):
+                with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                    prepare_release_notes.main(["--input", str(source_path), "--body", str(body_path), "--full", str(full_path)])
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("response is too deeply nested", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            self.assertEqual(body_path.read_text(encoding="utf-8"), "pre-existing body")
+            self.assertEqual(full_path.read_text(encoding="utf-8"), "pre-existing full")
+
     def test_main_reconfigures_streams(self):
         class Stream:
             def __init__(self):
@@ -883,6 +1097,123 @@ class ReleaseMainTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+
+class ReleaseNotesStagingTests(unittest.TestCase):
+    def test_partial_write_to_either_output_preserves_both_old_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "new notes"}), encoding="utf-8")
+            original_open = Path.open
+            for fail_at in (1, 2):
+                body.write_bytes(b"old body")
+                full.write_bytes(b"old full")
+                writes = 0
+
+                class PartialWriter:
+                    def __init__(self, stream):
+                        self.stream = stream
+
+                    def __enter__(self):
+                        self.stream.__enter__()
+                        return self
+
+                    def __exit__(self, *args):
+                        return self.stream.__exit__(*args)
+
+                    def write(self, data):
+                        self.stream.write(data[:3])
+                        raise OSError("injected partial write")
+
+                def opening(path, mode="r", *args, **kwargs):
+                    nonlocal writes
+                    stream = original_open(path, mode, *args, **kwargs)
+                    if "w" in mode or "x" in mode:
+                        writes += 1
+                        if writes == fail_at:
+                            return PartialWriter(stream)
+                    return stream
+
+                with patch.object(Path, "open", opening), self.assertRaisesRegex(OSError, "injected partial write"):
+                    prepare_release_notes.prepare_notes(source, body, full)
+                self.assertEqual(body.read_bytes(), b"old body")
+                self.assertEqual(full.read_bytes(), b"old full")
+                self.assertEqual(list(root.glob(".release-notes-*")), [])
+                prepare_release_notes.prepare_notes(source, body, full)
+                self.assertEqual(body.read_bytes(), b"new notes")
+                self.assertEqual(full.read_bytes(), b"new notes")
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX file size limits")
+    def test_real_file_size_limit_preserves_outputs_and_removes_staging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "N" * 500}), encoding="utf-8")
+            body.write_bytes(b"old body")
+            full.write_bytes(b"old full")
+            program = ("import resource,signal,sys\nfrom pathlib import Path\n"
+                       "sys.path.insert(0,sys.argv[1])\nimport prepare_release_notes\n"
+                       "resource.setrlimit(resource.RLIMIT_FSIZE,(64,64))\nsignal.signal(signal.SIGXFSZ,signal.SIG_IGN)\n"
+                       "try: prepare_release_notes.prepare_notes(*(Path(p) for p in sys.argv[2:]))\nexcept OSError: sys.exit(2)\n")
+            completed = subprocess.run([sys.executable, "-c", program, str(Path(prepare_release_notes.__file__).parent), str(source), str(body), str(full)], capture_output=True, timeout=10)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertEqual(body.read_bytes(), b"old body")
+            self.assertEqual(full.read_bytes(), b"old full")
+            self.assertEqual(list(root.glob(".release-notes-*")), [])
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX mode bits and umask")
+    def test_existing_modes_and_new_file_umask_are_retained(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "new"}), encoding="utf-8")
+            body.write_bytes(b"old")
+            body.chmod(0o640)
+            old_mask = os.umask(0o027)
+            try:
+                prepare_release_notes.prepare_notes(source, body, full)
+            finally:
+                os.umask(old_mask)
+            self.assertEqual(stat.S_IMODE(body.stat().st_mode), 0o640)
+            self.assertEqual(stat.S_IMODE(full.stat().st_mode), 0o640)
+
+    def test_output_symlink_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full, target = (root / name for name in ("notes.json", "body", "full", "target"))
+            source.write_text(json.dumps({"body": "new"}), encoding="utf-8")
+            target.write_bytes(b"old")
+            try:
+                full.symlink_to(target)
+            except OSError as error:
+                if getattr(error, "winerror", None) == 1314:
+                    self.skipTest("needs symbolic-link creation privilege")
+                raise
+            prepare_release_notes.prepare_notes(source, body, full)
+            self.assertTrue(full.is_symlink())
+            self.assertEqual(target.read_bytes(), b"new")
+
+    def test_promotion_failure_leaves_other_destination_intact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = (root / name for name in ("notes.json", "body", "full"))
+            source.write_text(json.dumps({"body": "new"}), encoding="utf-8")
+            body.write_bytes(b"old body")
+            full.write_bytes(b"old full")
+            original_replace = os.replace
+
+            def replace(first, second):
+                if second == body.resolve():
+                    raise OSError("second promotion failed")
+                return original_replace(first, second)
+
+            with patch.object(prepare_release_notes.os, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+                prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(body.read_bytes(), b"old body")
+            self.assertEqual(full.read_bytes(), b"new")
+            self.assertEqual(list(root.glob(".release-notes-*")), [])
 
 
 if __name__ == "__main__":

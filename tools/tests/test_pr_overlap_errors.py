@@ -28,6 +28,12 @@ class ErrorReportTests(unittest.TestCase):
         error = subprocess.CalledProcessError(1, ["gh", "api"], output="", stderr="")
         self.assertEqual(pr_overlap.describe_failure(error), "pr_overlap: gh api failed with exit code 1: no error output")
 
+    def test_invalid_pagination_reports_a_concise_error(self):
+        with patch.object(pr_overlap, "open_prs", side_effect=ValueError("gh api returned an invalid next page link")):
+            with self.assertRaises(SystemExit) as raised:
+                pr_overlap.main(["--repo", "owner/project", "--branch", "HEAD"])
+        self.assertEqual(str(raised.exception.code), "pr_overlap: gh api returned an invalid next page link")
+
     def test_unknown_base_branch_exits_with_the_git_message_instead_of_a_traceback(self):
         argv = ["pr_overlap.py", "--repo", "owner/project", "--base", "upstream/main", "--branch", "HEAD"]
         with patch.object(subprocess, "run", side_effect=fake_run), patch.object(sys, "argv", argv):
