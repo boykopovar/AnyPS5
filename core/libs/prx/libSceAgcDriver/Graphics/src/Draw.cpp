@@ -2383,6 +2383,11 @@ bool WriteOnlyPasses() {
     return enabled;
 }
 
+bool AtomicPasses() {
+    static const bool enabled = std::getenv("APS5_NO_ATOMIC_PASSES") == nullptr;
+    return enabled;
+}
+
 void recordDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawInputs& inputs, RecordedDraw& record, DrawOutcome& outcome, DrawTimer& timer, double& ownWaitedMs, const DrawTraceContext* trace = nullptr) {
     std::uint32_t subdraw = 0;
     auto* recorder = record.recorder;
@@ -2423,7 +2428,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     auto& passReads = ShaderRecompiler::ThreadOwned(passReadsSlot);
     passReads.clear();
     if (!addressBased) resources.DeviceReads(passReads);
-    const auto deviceReads = passReads.size();
+    auto deviceReads = passReads.size();
     if (gpuIndirect) {
         passReads.emplace_back(args->arguments, args->arguments + args->RangeBytes());
         if (args->countIndirect) passReads.emplace_back(args->countAddress, args->countAddress + 4);
@@ -2456,7 +2461,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
             });
         };
         const auto ownReads = passReads.begin() + static_cast<std::ptrdiff_t>(deviceReads);
-        passReads.erase(std::remove_if(passReads.begin(), ownReads, [&](const auto& range) { return listed(range, true); }), ownReads);
+        const auto kept = std::remove_if(passReads.begin(), ownReads, [&](const auto& range) { return listed(range, true); });
+        deviceReads -= static_cast<std::size_t>(ownReads - kept);
+        passReads.erase(kept, ownReads);
         auto& hazardWrites = ShaderRecompiler::ThreadOwned(hazardWritesSlot);
         hazardWrites.clear();
         for (const auto& range : resources.GpuWrites()) {
@@ -2465,7 +2472,36 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         passWrites = hazardWrites;
         passWriteOnly = writeOnly;
     }
-    const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
+    GuestRangeList passAtomics{};
+    thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* plainWritesSlot = nullptr;
+    thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* atomicOnlySlot = nullptr;
+    auto& atomicOnly = ShaderRecompiler::ThreadOwned(atomicOnlySlot);
+    atomicOnly.clear();
+    if (!unknownMemory && AtomicPasses()) {
+        for (const auto& range : resources.AtomicOnlyRanges()) {
+            if (resources.WrittenInPlace(range.first, static_cast<std::size_t>(range.second - range.first))) atomicOnly.push_back(range);
+        }
+    }
+    if (!atomicOnly.empty()) {
+        const auto listed = [&](const std::pair<std::uint64_t, std::uint64_t>& range, bool aligned) {
+            return std::any_of(atomicOnly.begin(), atomicOnly.end(), [&](const auto& only) {
+                if (!aligned) return only == range;
+                const auto begin = only.first & ~std::uint64_t{3};
+                const auto end = begin == only.first ? only.second : (only.second + 3) & ~std::uint64_t{3};
+                return range.first == begin && range.second == end;
+            });
+        };
+        const auto ownReads = passReads.begin() + static_cast<std::ptrdiff_t>(deviceReads);
+        passReads.erase(std::remove_if(passReads.begin(), ownReads, [&](const auto& range) { return listed(range, true); }), ownReads);
+        auto& plainWrites = ShaderRecompiler::ThreadOwned(plainWritesSlot);
+        plainWrites.clear();
+        for (const auto& range : passWrites) {
+            if (!listed(range, false)) plainWrites.push_back(range);
+        }
+        passWrites = plainWrites;
+        passAtomics = atomicOnly;
+    }
+    const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly, passAtomics};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);

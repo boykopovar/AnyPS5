@@ -24,6 +24,7 @@ struct PassAccess {
     bool anyReads = false;
     bool anyWrites = false;
     GuestRangeList writeOnly = {};
+    GuestRangeList atomics = {};
 };
 
 enum class PassHazard : std::uint8_t { None, ReadAfterWrite, WriteAfterWrite, WriteAfterRead, Image, UnknownRead, UnknownWrite };
@@ -77,6 +78,7 @@ private:
     GuestRangeSet reads;
     GuestRangeSet writes;
     GuestRangeSet writeOnly;
+    GuestRangeSet atomics;
     std::vector<std::pair<VkImage, bool>> images;
     std::vector<Attachment> attachments;
     std::uint64_t pass = 0;
