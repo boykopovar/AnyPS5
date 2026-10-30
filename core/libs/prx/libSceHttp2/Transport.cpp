@@ -27,6 +27,7 @@
 #include <thread>
 
 extern "C" int SslRead_nid_no_patch(int, void*, std::size_t, int);
+extern "C" int SslTrustSystemRoots_nid_no_patch(int);
 
 namespace Http2 {
 namespace {
@@ -34,6 +35,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr int WantRead = static_cast<int>(0x8095f013);
 constexpr int WantWrite = static_cast<int>(0x8095f014);
+constexpr int InvalidValue = static_cast<int>(0x817B11FE);
 
 [[noreturn]] void Unknown(const char* message) {
     NotImplemented_nid_no_patch(message);
@@ -161,6 +163,7 @@ private:
                 hints.ai_family = AF_UNSPEC;
                 addrinfo* raw = nullptr;
                 const auto service = std::to_string(job->port);
+                if (const auto hook = LookupHookSlot().load(std::memory_order_acquire)) Require(hook(job->host.c_str()) == 0, "sceHttp2: DNS failed; console error mapping is unknown");
                 const int result = getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
                 std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> addresses(raw, freeaddrinfo);
                 Require(result == 0, "sceHttp2: DNS failed; console error mapping is unknown");
@@ -214,8 +217,15 @@ void CheckNg(int result) {
 
 }
 
-void AddHeader(Settings& settings, const char* name, const char* value, std::uint32_t mode) {
-    Require(name && value && mode <= 1, "sceHttp2AddRequestHeader: unsupported arguments");
+int AddHeader(Settings& settings, const char* name, const char* value, std::uint32_t mode) {
+    if (!name || !value) {
+        if (name && mode == 0) {
+            const auto key = Lower(name);
+            std::erase_if(settings.headers, [&](const auto& header) { return header.first == key; });
+        }
+        return InvalidValue;
+    }
+    Require(mode <= 1, "sceHttp2AddRequestHeader: unsupported arguments");
     auto key = Lower(name);
     Require(!key.empty() && nghttp2_check_header_name(reinterpret_cast<const std::uint8_t*>(key.data()), key.size()),
         "sceHttp2AddRequestHeader: invalid header name");
@@ -228,6 +238,7 @@ void AddHeader(Settings& settings, const char* name, const char* value, std::uin
     if (mode == 0) std::erase_if(updated, [&](const auto& header) { return header.first == key; });
     updated.emplace_back(std::move(key), value);
     settings.headers = std::move(updated);
+    return 0;
 }
 
 struct Request::State {
@@ -313,16 +324,18 @@ struct Request::State {
         Require(startup >= 0, "sceHttp2: network initialization failed; console error mapping is unknown");
         Require(sceNetSocketClose(startup) == 0, "sceHttp2: network initialization socket close failed");
 #endif
-        const auto deadline = Deadline(settings.resolveTimeout);
-        const auto job = Dns().Submit(url);
-        {
+        std::shared_ptr<Lookup> job;
+        for (std::int32_t attempt = 0;; ++attempt) {
+            const auto deadline = Deadline(settings.resolveTimeout);
+            job = Dns().Submit(url);
             std::unique_lock lock(job->mutex);
             while (!job->complete) {
                 Check(deadline);
                 job->changed.wait_for(lock, std::chrono::milliseconds(5));
             }
             Check(deadline);
-            if (job->failure) std::rethrow_exception(job->failure);
+            if (!job->failure) break;
+            if (attempt >= settings.resolveRetry) std::rethrow_exception(job->failure);
         }
         const auto connectDeadline = Deadline(settings.connectTimeout);
         int result = 0;
@@ -350,6 +363,7 @@ struct Request::State {
         if (result < 0) return result;
         ssl = sceSslCreateConnection(sslContext, socket, url.host.c_str());
         Require(ssl > 0, "sceHttp2: SSL context or connection unavailable");
+        Require(SslTrustSystemRoots_nid_no_patch(ssl) == 0, "sceHttp2: system CA list unavailable");
         Require(sceSslDisableVerifyOption(ssl, 0x3d) == 0 && sceSslEnableVerifyOption(ssl, settings.verifyFlags) == 0,
             "sceHttp2: SSL verification options rejected");
         Require(sceSslSetAlpn(ssl, "h2") == 0, "sceHttp2: ALPN setup failed");

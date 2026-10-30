@@ -15,6 +15,12 @@
 using Message = GuestLocale::String* (APS5_VABI *)(GuestLocale::String*, const LibcException::CategoryObject*, int);
 using Name = const char* (APS5_VABI *)(const LibcException::CategoryObject*);
 using Raise = void (APS5_VABI *)(const LibcException::FutureErrorObject*);
+using What = const char* (APS5_VABI *)(const LibcException::FutureErrorObject*);
+
+static const char* GuestWhat(const std::exception& error) {
+    const auto* object = reinterpret_cast<const LibcException::FutureErrorObject*>(&error);
+    return std::bit_cast<What>(static_cast<const std::uintptr_t*>(object->vtable)[2])(object);
+}
 
 bool failAllocation = false;
 
@@ -141,7 +147,7 @@ static void CheckFutureError() {
     try { _ZSt19_Throw_future_errorRKSt10error_code_nid_postfix(&code); }
     catch (const std::exception& error) {
         caught = true;
-        REQUIRE(error.what() != nullptr && std::strcmp(error.what(), "future already retrieved") == 0);
+        REQUIRE(GuestWhat(error) != nullptr && std::strcmp(GuestWhat(error), "future already retrieved") == 0);
     }
     REQUIRE(caught);
 
@@ -150,7 +156,7 @@ static void CheckFutureError() {
     try { _ZSt19_Throw_future_errorRKSt10error_code_nid_postfix(&code); }
     catch (const std::exception& error) {
         caught = true;
-        REQUIRE(error.what() == nullptr);
+        REQUIRE(GuestWhat(error) == nullptr);
     }
     REQUIRE(caught);
 

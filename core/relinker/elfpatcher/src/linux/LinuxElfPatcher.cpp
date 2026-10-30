@@ -1,4 +1,5 @@
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
+#include <elfpatcher/general/AddressDistance.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutRequest.hpp>
 #include <elfpatcher/general/SectionHeaderTableRequest.hpp>
@@ -136,9 +137,42 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
         return headers[left].MappedAddress < headers[right].MappedAddress;
     });
     for (std::size_t position = 1; position < loads.size(); ++position) {
-        const auto& previous = headers[loads[position - 1]];
-        if (headers[loads[position]].MappedAddress - previous.MappedAddress < previous.MemorySize)
-            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", headers[loads[position]].MappedAddress);
+        auto& previous = headers[loads[position - 1]];
+        const auto& current = headers[loads[position]];
+        if (current.MappedAddress - previous.MappedAddress >= previous.MemorySize)
+            continue;
+        const auto previousEnd = previous.MappedAddress + previous.MemorySize;
+        if (current.MappedAddress == previous.MappedAddress || previousEnd > current.MappedAddress + current.MemorySize)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+        if (((previous.Flags | current.Flags) & (PF_W | PF_X)) == (PF_W | PF_X)
+            && current.MappedAddress % kDefaultLoadAlignment != 0)
+            throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+        const auto previousFileEnd = previous.MappedAddress + previous.FileSize;
+        const auto currentFileEnd = current.MappedAddress + current.FileSize;
+        const auto compareEnd = std::min(previousEnd, std::max(previousFileEnd, currentFileEnd));
+        for (auto address = current.MappedAddress; address < compareEnd;) {
+            const bool previousBacked = address < previousFileEnd;
+            const bool currentBacked = address < currentFileEnd;
+            auto runEnd = compareEnd;
+            if (previousBacked)
+                runEnd = std::min(runEnd, previousFileEnd);
+            if (currentBacked)
+                runEnd = std::min(runEnd, currentFileEnd);
+            const auto length = static_cast<std::size_t>(runEnd - address);
+            const auto previousAt = static_cast<std::size_t>(previous.Offset + (address - previous.MappedAddress));
+            const auto currentAt = static_cast<std::size_t>(current.Offset + (address - current.MappedAddress));
+            const bool congruent = previousBacked && currentBacked
+                ? std::equal(buf.begin() + previousAt, buf.begin() + previousAt + length, buf.begin() + currentAt)
+                : previousBacked
+                    ? std::all_of(buf.begin() + previousAt, buf.begin() + previousAt + length, [](const std::uint8_t byte) { return byte == 0; })
+                    : std::all_of(buf.begin() + currentAt, buf.begin() + currentAt + length, [](const std::uint8_t byte) { return byte == 0; });
+            if (!congruent)
+                throw Domain::RelinkerException("Overlapping PT_LOAD memory ranges", current.MappedAddress);
+            address = runEnd;
+        }
+        previous.MemorySize = current.MappedAddress - previous.MappedAddress;
+        if (previous.FileSize > previous.MemorySize)
+            previous.FileSize = previous.MemorySize;
     }
     for (std::size_t position = 0; position < loads.size(); ++position) {
         auto& load = headers[loads[position]];
@@ -263,8 +297,8 @@ std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::ui
     std::vector<std::uint8_t> code = {0x52, 0x53, 0x41, 0x54, 0x48, 0x83, 0xec, 0x08};
     const auto rip = [&](std::initializer_list<std::uint8_t> opcode, const std::uint64_t target) {
         code.insert(code.end(), opcode);
-        const auto displacement = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(vaddr + code.size() + 4);
-        if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+        std::int64_t displacement = 0;
+        if (!SignedDistance(target, vaddr + code.size() + 4, displacement) || displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
             throw Domain::RelinkerException("Import trace table exceeds rel32 range");
         Io::AppendU32(code, static_cast<std::uint32_t>(displacement));
     };
@@ -352,9 +386,8 @@ void LinuxElfPatcher::_appendTrampoline(
     const auto inRange = [](const std::int64_t displacement) {
         return displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max();
     };
-    const auto returnDisplacement = static_cast<std::int64_t>(site.Address + site.Length) - static_cast<std::int64_t>(bodyVaddr + site.ReturnBranchOffset + kJmpRel32.Size);
-    const auto jumpDisplacement = static_cast<std::int64_t>(bodyVaddr) - static_cast<std::int64_t>(site.Address + kJmpRel32.Size);
-    if (!inRange(returnDisplacement) || !inRange(jumpDisplacement))
+    std::int64_t returnDisplacement = 0, jumpDisplacement = 0;
+    if (!SignedDistance(site.Address + site.Length, bodyVaddr + site.ReturnBranchOffset + kJmpRel32.Size, returnDisplacement) || !SignedDistance(bodyVaddr, site.Address + kJmpRel32.Size, jumpDisplacement) || !inRange(returnDisplacement) || !inRange(jumpDisplacement))
         throw Domain::RelinkerException("AMD-only stub exceeds rel32 range", site.Offset);
     _byteWriter->WriteU32(buf, static_cast<std::size_t>(bodyOff + site.ReturnBranchOffset + 1), static_cast<std::uint32_t>(returnDisplacement));
 
@@ -407,8 +440,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     std::vector<std::uint8_t> buf = std::move(sourceElf);
 
     const std::uint32_t type = _fixedBase ? ET_EXEC : ET_DYN;
-    buf[kEhdrOsAbiOffset] = 0;
-    buf[kEhdrAbiVersionOffset] = 0;
+    std::fill_n(buf.begin() + static_cast<std::ptrdiff_t>(kEhdrOsAbiOffset), 9, std::uint8_t{0});
     buf[kEhdrTypeOffset] = static_cast<std::uint8_t>(type & 0xFF);
     buf[kEhdrTypeOffset + 1] = static_cast<std::uint8_t>((type >> 8) & 0xFF);
     _byteWriter->WriteU64(buf, kEhdrShOffOffset, 0);

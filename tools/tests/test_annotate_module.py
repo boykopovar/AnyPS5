@@ -1,4 +1,5 @@
 import contextlib
+import os
 import io
 import re
 import shutil
@@ -96,6 +97,44 @@ def instruction(listing, mnemonic):
     return next(line for line in listing if pattern.search(line))
 
 
+def with_relocation(module, table_offset, index, slot, symbol_index, kind):
+    image = bytearray(module)
+    struct.pack_into("<QQq", image, table_offset + index * 24, slot, (symbol_index << 32) | kind, 0)
+    return bytes(image)
+
+
+class ImportRelocationTests(unittest.TestCase):
+    def test_none_relocations_do_not_read_the_symbol_or_add_a_slot(self):
+        for table in (0x2200, 0x2280):
+            for symbol_index in (0, 1, 0xFFFFFFFF):
+                with self.subTest(table=table, symbol_index=symbol_index):
+                    size_tag = 8 if table == 0x2200 else 2
+                    module = build_module(tags=DEFAULT_TAGS + (7, 8), values={size_tag: 24}, relocations=(), glob_dats=())
+                    module = with_relocation(module, table, 0, SLOT, symbol_index, 0)
+                    self.assertEqual(annotate_module.Module(module).imports(), {})
+
+    def test_none_relocation_does_not_replace_a_real_import(self):
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        for table, kind in ((0x2200, 6), (0x2280, 7)):
+            for none_index in (0, 1):
+                with self.subTest(table=table, none_index=none_index):
+                    size_tag = 8 if table == 0x2200 else 2
+                    module = build_module(tags=DEFAULT_TAGS + (7, 8), values={size_tag: 48}, symbols=symbols,
+                                          relocations=(), glob_dats=())
+                    module = with_relocation(module, table, none_index, SLOT, 3, 0)
+                    module = with_relocation(module, table, 1 - none_index, SLOT, 1, kind)
+                    self.assertEqual(annotate_module.Module(module).imports(), {SLOT: symbol_name(IMPORT_NAME)})
+
+    def test_real_import_with_invalid_symbol_still_fails(self):
+        for table, kind in ((0x2200, 6), (0x2280, 7)):
+            with self.subTest(table=table):
+                size_tag = 8 if table == 0x2200 else 2
+                module = build_module(tags=DEFAULT_TAGS + (7, 8), values={size_tag: 24}, relocations=(), glob_dats=())
+                module = with_relocation(module, table, 0, SLOT, 0xFFFFFFFF, kind)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "symbol index .* is outside"):
+                    annotate_module.Module(module).imports()
+
+
 class ObjdumpDiscoveryTests(unittest.TestCase):
     def discover(self, versions):
         def which(name):
@@ -120,7 +159,8 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
 
 class AnnotateModuleTests(unittest.TestCase):
     def setUp(self):
-        self.assertIsNotNone(annotate_module.gnu_objdump(), "GNU binutils objdump (objdump or gobjdump) is required to run these tests")
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU binutils objdump (objdump or gobjdump) is required to run these tests")
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
@@ -193,6 +233,26 @@ class AnnotateModuleTests(unittest.TestCase):
         self.annotate(build_module(code=code_bytes(b"\xf2")))
         self.assertTrue(instruction(self.read(".asm").splitlines(), "call").endswith("; -> " + IMPORT_NAME))
 
+    def test_none_relocation_does_not_annotate_a_stub_or_call(self):
+        module = with_relocation(build_module(), 0x2280, 0, SLOT, 1, 0)
+        summary = self.annotate(module)
+        self.assertIn("0 imports, 1 exports, 0 tls, 0 stubs", summary)
+        self.assertEqual(self.read(".imports.txt"), "")
+        listing = self.read(".asm")
+        self.assertNotIn("; GOT ", listing)
+        self.assertNotIn("; -> ", listing)
+        self.assertIn("; ===== export " + EXPORT_NAME, listing)
+
+    def test_none_relocation_keeps_the_real_import_annotation(self):
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        module = build_module(symbols=symbols, relocations=((SLOT, 1), (SLOT, 3)))
+        module = with_relocation(module, 0x2280, 1, SLOT, 3, 0)
+        self.annotate(module)
+        self.assertEqual(self.read(".imports.txt"), "%#x %s %s\n" % (SLOT, symbol_name(IMPORT_NAME), IMPORT_NAME))
+        listing = self.read(".asm").splitlines()
+        self.assertTrue(instruction(listing, "jmp").endswith("; GOT " + IMPORT_NAME))
+        self.assertTrue(instruction(listing, "call").endswith("; -> " + IMPORT_NAME))
+
     def test_tls_symbol_is_listed_but_not_an_address(self):
         symbols = DEFAULT_SYMBOLS + [(TLS_NAME, 1, 0x16, EXPORT_ADDRESS)]
         summary = self.annotate(build_module(symbols=symbols))
@@ -205,12 +265,76 @@ class AnnotateModuleTests(unittest.TestCase):
         self.annotate(build_module(symbols=symbols))
         self.assertEqual("0x0 %s %s\n" % (symbol_name(EXPORT_NAME), EXPORT_NAME), self.read(".exports.txt"))
 
+    def test_export_aliases_are_named_and_counted(self):
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 1, 0x12, EXPORT_ADDRESS)]
+        for kind in ("sysv", "gnu"):
+            with self.subTest(kind=kind):
+                tags = DEFAULT_TAGS if kind == "sysv" else (GNU_HASH,) + DEFAULT_TAGS[1:]
+                summary = self.annotate(build_module(symbols=symbols, tags=tags, kind=kind))
+                self.assertIn("1 imports, 2 exports, 0 tls, 1 stubs", summary)
+                expected = ["%#x %s %s" % (EXPORT_ADDRESS, symbol_name(name), name)
+                            for name in (EXPORT_NAME, SECOND_IMPORT_NAME)]
+                self.assertEqual(self.read(".exports.txt").splitlines(), expected)
+                listing = self.read(".asm").splitlines()
+                header = listing.index("; ===== export " + EXPORT_NAME)
+                self.assertEqual(listing[header + 1], "; ===== export " + SECOND_IMPORT_NAME)
+                self.assertEqual(listing[header + 2], instruction(listing, "ret"))
+
+    def test_export_aliases_without_names_keep_each_nid(self):
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 1, 0x12, EXPORT_ADDRESS)]
+        self.run_tool(build_module(symbols=symbols), "--no-names")
+        for name in (EXPORT_NAME, SECOND_IMPORT_NAME):
+            self.assertIn("%#x %s %s\n" % (EXPORT_ADDRESS, symbol_name(name), nid(name)), self.read(".exports.txt"))
+            self.assertIn("; ===== export " + nid(name), self.read(".asm"))
+
+    def test_tls_aliases_share_an_offset_without_becoming_code_labels(self):
+        symbols = DEFAULT_SYMBOLS + [(TLS_NAME, 1, 0x16, EXPORT_ADDRESS), (SECOND_IMPORT_NAME, 1, 0x16, EXPORT_ADDRESS)]
+        summary = self.annotate(build_module(symbols=symbols))
+        self.assertIn("1 exports, 2 tls", summary)
+        expected = ["%#x %s %s" % (EXPORT_ADDRESS, symbol_name(EXPORT_NAME), EXPORT_NAME)]
+        expected += ["tls+%#x %s %s" % (EXPORT_ADDRESS, symbol_name(name), name)
+                     for name in (TLS_NAME, SECOND_IMPORT_NAME)]
+        self.assertEqual(self.read(".exports.txt").splitlines(), expected)
+        for name in (TLS_NAME, SECOND_IMPORT_NAME):
+            self.assertNotIn("export " + name, self.read(".asm"))
+
+    def test_export_aliases_at_zero_are_sorted_before_other_addresses(self):
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 1, 0x12, 0), (TLS_NAME, 1, 0x12, 0)]
+        summary = self.annotate(build_module(symbols=symbols))
+        self.assertIn("1 imports, 3 exports, 0 tls", summary)
+        expected = ["0x0 %s %s" % (symbol_name(name), name) for name in (SECOND_IMPORT_NAME, TLS_NAME)]
+        expected.append("%#x %s %s" % (EXPORT_ADDRESS, symbol_name(EXPORT_NAME), EXPORT_NAME))
+        self.assertEqual(self.read(".exports.txt").splitlines(), expected)
+
     def test_every_executable_segment_is_disassembled(self):
         self.annotate(build_module(extra_code=b"\xc3"))
         listing = self.read(".asm").splitlines()
         first, second = listing.index("; ===== segment 0x1000"), listing.index("; ===== segment 0x3000")
         self.assertLess(first, second)
         self.assertTrue(any(re.match(r"^\s*3000:\s+ret\b", line) for line in listing[second:]))
+
+    def test_zero_run_preserves_instructions_and_export_label(self):
+        code = b"\x90" + bytes(16) + b"\xc3"
+        address = CODE_ADDRESS + 9
+        symbols = [(EXPORT_NAME, 1, 0x12, address)]
+        self.annotate(build_module(code=code, symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        addresses = [int(match.group(1), 16) for line in listing
+                     if (match := annotate_module.LINE_ADDRESS.match(line))]
+        self.assertEqual(addresses, [CODE_ADDRESS] + list(range(CODE_ADDRESS + 1, CODE_ADDRESS + 17, 2)) + [CODE_ADDRESS + 17])
+        header = listing.index("; ===== export " + EXPORT_NAME)
+        self.assertRegex(listing[header + 1], r"^\s*1009:\s+add\s")
+        self.assertIn("%#x %s %s\n" % (address, symbol_name(EXPORT_NAME), EXPORT_NAME), self.read(".exports.txt"))
+
+    def test_all_zero_executable_segment_is_disassembled(self):
+        symbols = [(EXPORT_NAME, 1, 0x12, 0x3008)]
+        self.annotate(build_module(code=b"\xc3", extra_code=bytes(16), symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        addresses = [int(match.group(1), 16) for line in listing
+                     if (match := annotate_module.LINE_ADDRESS.match(line))]
+        self.assertEqual(addresses, [CODE_ADDRESS] + list(range(0x3000, 0x3010, 2)))
+        header = listing.index("; ===== export " + EXPORT_NAME)
+        self.assertRegex(listing[header + 1], r"^\s*3008:\s+add\s")
 
     def test_missing_hash_fails(self):
         self.assert_fails(build_module(tags=(5, 6, 10, 11, 23, 2, 20)), "neither DT_HASH nor DT_GNU_HASH")
@@ -253,6 +377,73 @@ class AnnotateModuleTests(unittest.TestCase):
 
     def test_wrong_machine_fails(self):
         self.assert_fails(build_module(machine=0xB7), "not an x86-64 ELF")
+
+
+class InputProtectionTests(unittest.TestCase):
+    def test_cli_rejects_alias_without_success_or_partial_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "report.exports.txt"
+            original = build_module()
+            module.write_bytes(original)
+            result = subprocess.run([sys.executable, annotate_module.__file__, str(module), "--out", str(root / "report"), "--no-names"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("separate from the input", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(module.read_bytes(), original)
+            self.assertFalse((root / "report.imports.txt").exists())
+            self.assertFalse((root / "report.asm").exists())
+
+    def test_all_report_outputs_are_checked_before_any_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for suffix in (".imports.txt", ".exports.txt", ".asm"):
+                with self.subTest(suffix=suffix):
+                    prefix = root / suffix[1:].replace(".", "_")
+                    module = Path(str(prefix) + suffix)
+                    original = build_module()
+                    module.write_bytes(original)
+                    with self.assertRaisesRegex(annotate_module.ModuleError, "separate from the input"):
+                        annotate_module.annotate(str(module), str(prefix), annotate_module.Namer({}))
+                    self.assertEqual(module.read_bytes(), original)
+                    for other in (".imports.txt", ".exports.txt", ".asm"):
+                        if other != suffix:
+                            self.assertFalse(Path(str(prefix) + other).exists())
+
+    def test_hardlinked_outputs_preserve_the_input_and_existing_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            original = build_module()
+            module.write_bytes(original)
+            prefix = root / "report"
+            first = root / "report.imports.txt"
+            first.write_bytes(b"previous report")
+            os.link(module, root / "report.asm")
+            with self.assertRaisesRegex(annotate_module.ModuleError, "separate from the input"):
+                annotate_module.annotate(str(module), str(prefix), annotate_module.Namer({}))
+            self.assertEqual(module.read_bytes(), original)
+            self.assertEqual(first.read_bytes(), b"previous report")
+            self.assertFalse((root / "report.exports.txt").exists())
+
+    def test_symlinked_output_is_rejected_where_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / "input.prx"
+            original = build_module()
+            module.write_bytes(original)
+            output = root / "report.asm"
+            try:
+                output.symlink_to(module)
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows symbolic-link privileges unavailable")
+                raise
+            with self.assertRaisesRegex(annotate_module.ModuleError, "separate from the input"):
+                annotate_module.annotate(str(module), str(root / "report"), annotate_module.Namer({}))
+            self.assertEqual(module.read_bytes(), original)
 
 
 if __name__ == "__main__":

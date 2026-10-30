@@ -224,6 +224,7 @@ std::pair<std::uint8_t, std::uint64_t> Locate(const std::vector<Segment>& segmen
         const auto& segment = segments[index];
         if (segment.MemorySize == 0 || rva < segment.Rva || rva - segment.Rva >= segment.MemorySize || size > segment.MemorySize - (rva - segment.Rva)) continue;
         if (index > 15) throw Domain::RelinkerException("Too many Mach-O segments for dyld opcodes", rva);
+        if ((segment.Protection & VmProtWrite) == 0) throw Domain::RelinkerException("Mach-O fixup target is not in a writable segment", rva);
         return {static_cast<std::uint8_t>(index), rva - segment.Rva};
     }
     throw Domain::RelinkerException("Mach-O fixup target is outside the image", rva);
@@ -549,7 +550,6 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     for (std::size_t index = 0; index < input.TlsExports.size(); ++index) {
         const auto& variable = input.TlsExports[index];
         if (!hasTls) throw Domain::RelinkerException("Guest TLS export has no TLS block: " + variable.Symbol);
-        if (variable.Offset >= tls.Tls->MemorySize) throw Domain::RelinkerException("Guest TLS export is outside the TLS block: " + variable.Symbol);
         const auto at = tlsExports + index * 16;
         Io::WriteU64(meta, at, imageBase + descriptor);
         Io::WriteU64(meta, at + 8, variable.Offset);
@@ -892,7 +892,8 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
 
     std::vector<std::uint8_t> file;
     constexpr std::size_t HeaderSize = 32;
-    const auto stubOffset = AlignUp(HeaderSize + commands.size(), 16);
+    constexpr std::size_t LoadCommandReserve = 0x400;
+    const auto stubOffset = AlignUp(HeaderSize + commands.size() + LoadCommandReserve, 16);
     const auto traceJump = input.Executable && input.TraceImports;
     const auto entryOffset = stubOffset + (traceJump ? 5 : 0);
     if (entryOffset + (input.Executable ? sizeof(EntryStub) : 0) > LoadRva)

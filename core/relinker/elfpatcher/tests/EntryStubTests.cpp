@@ -149,13 +149,14 @@ void windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant() 
 void windowsKernelVariantDependenciesLoadCanonicalKernel() {
     using namespace Elfpatcher::Windows;
     for (const auto& variant : {std::string("libkernel_sys.prx"), std::string("libkernel_web.prx")}) {
+        const auto other = variant == "libkernel_sys.prx" ? "libkernel_web.prx" : "libkernel_sys.prx";
         Domain::SysVDynamicSection dynamic;
         dynamic.DynStrData.insert(dynamic.DynStrData.end(), variant.begin(), variant.end());
         dynamic.DynStrData.push_back(0);
         dynamic.DynamicSegmentData.resize(16);
         Io::WriteU64(dynamic.DynamicSegmentData, 0, 1);
         Io::WriteU64(dynamic.DynamicSegmentData, 8, 0);
-        require(WindowsImportBuilder().ReadLibraries(dynamic) == std::vector<std::string>{variant, "libkernel.prx", "libc.prx"},
+        require(WindowsImportBuilder().ReadLibraries(dynamic) == std::vector<std::string>{variant, "libkernel.prx", other, "libc.prx"},
                 variant + ": canonical kernel fallback and its libc provider are not loaded after the requested module");
     }
 }

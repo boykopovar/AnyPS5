@@ -3,7 +3,9 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <set>
 #include <stdexcept>
@@ -15,6 +17,7 @@
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #if !defined(__APPLE__)
@@ -207,6 +210,47 @@ void CheckEmptyRanges() {
     }
 }
 
+void CheckNonWriteFaults(bool execute) {
+    Region region(1);
+#if defined(__aarch64__)
+    const std::uint32_t returnInstruction = 0xd65f03c0;
+    std::memcpy(region.base, &returnInstruction, sizeof(returnInstruction));
+#elif defined(__x86_64__)
+    region.base[0] = 0xc3;
+#endif
+    for (const bool armed : {false, true}) {
+        for (const bool hostWrite : {false, true}) {
+            const auto child = ::fork();
+            Require(child >= 0, "cannot fork a faulting child");
+            if (child == 0) {
+                ::alarm(2);
+                if (!execute) {
+                    char path[] = "/tmp/anyps5-write-watch-XXXXXX";
+                    const int file = ::mkstemp(path);
+                    if (file < 0) ::_exit(2);
+                    ::unlink(path);
+                    if (::ftruncate(file, region.bytes) != 0) ::_exit(2);
+                    if (::mmap(region.base, region.bytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, 0) != region.base) ::_exit(2);
+                    if (::ftruncate(file, 0) != 0) ::_exit(2);
+                    ::close(file);
+                }
+                GuestWriteWatchRegister_nid_postfix(region.base, region.bytes);
+                if (armed) static_cast<void>(region.Collect());
+                if (hostWrite) GuestWriteWatchBeginHostWrite_nid_postfix(region.base, region.bytes);
+                if (execute) reinterpret_cast<void (*)()>(region.base)();
+                else {
+                    const volatile auto value = *static_cast<volatile std::uint8_t*>(region.base);
+                    static_cast<void>(value);
+                }
+                ::_exit(3);
+            }
+            int status = 0;
+            Require(::waitpid(child, &status, 0) == child, "cannot wait for a faulting child");
+            Require(WIFSIGNALED(status) && (WTERMSIG(status) == SIGBUS || WTERMSIG(status) == SIGSEGV), execute ? "a non-executable watched page did not deliver its fault" : "a watched mapping with missing backing did not deliver its read fault");
+        }
+    }
+}
+
 void CheckProtection() {
     Region region(6);
     std::uintptr_t runEnd = 0;
@@ -229,6 +273,18 @@ void CheckProtection() {
     region.base[2 * region.page] = 1;
     region.base[4 * region.page] = 1;
     Require(!GuestWriteWatchCovers_nid_postfix(region.Address(2), region.page), "an unregistered range is covered");
+
+    GuestWriteWatchRegister_nid_postfix(region.base, region.bytes);
+    static_cast<void>(region.Collect());
+    Require(GuestWriteWatchProtect_nid_postfix(region.base, region.page, PROT_READ) == 0, "cannot protect a watched page");
+    Require(KernelProtection(region.base) == PROT_READ, "a protect does not change the host protection");
+    Require(GuestWriteWatchProtection_nid_postfix(region.Address(0), region.Address(6), &runEnd) == PROT_READ && runEnd == region.Address(1), "a protect is not recorded");
+    Require(region.Collect() == std::set<std::size_t>({0}), "a protect is not reported as a write");
+    Require(GuestWriteWatchProtect_nid_postfix(region.base, region.page, PROT_READ | PROT_WRITE) == 0, "cannot restore a watched page");
+    static_cast<void>(region.Collect());
+    region.base[0] = 1;
+    Require(region.Collect() == std::set<std::size_t>({0}), "a write after a protect is not reported");
+    Require(GuestWriteWatchProtect_nid_postfix(region.base + 1, region.page, PROT_READ) == EINVAL, "a misaligned protect does not fail with EINVAL");
 }
 
 void CheckOverlaps() {
@@ -280,11 +336,26 @@ void CheckThreads() {
     Require(region.Collect().empty(), "writes are reported after the writers stopped");
 }
 
+void CheckRaisedSignals() {
+    Require(GuestWriteWatchAvailable_nid_postfix(), "write watch is unavailable");
+    for (const int signal : {SIGBUS, SIGSEGV}) {
+        const pid_t child = ::fork();
+        Require(child >= 0, "cannot fork");
+        if (child == 0) {
+            ::raise(signal);
+            ::_exit(0);
+        }
+        int status = 0;
+        Require(::waitpid(child, &status, 0) == child, "cannot wait for the child");
+        Require(WIFSIGNALED(status) && WTERMSIG(status) == signal, "a raised fault signal does not terminate the process");
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected collect, fresh, armed, register, mapped, host, empty, protection, overlaps or threads");
+        Require(argc == 2, "expected collect, fresh, armed, register, mapped, host, empty, protection, overlaps, threads or raised");
         const std::string_view mode(argv[1]);
         if (mode == "collect") CheckCollect();
         else if (mode == "fresh") CheckFresh();
@@ -292,10 +363,13 @@ int main(int argc, char** argv) {
         else if (mode == "register") CheckRegisterAgain();
         else if (mode == "mapped") CheckRegisterMapped();
         else if (mode == "host") CheckHostWrite();
+        else if (mode == "execute-fault") CheckNonWriteFaults(true);
+        else if (mode == "read-fault") CheckNonWriteFaults(false);
         else if (mode == "empty") CheckEmptyRanges();
         else if (mode == "protection") CheckProtection();
         else if (mode == "overlaps") CheckOverlaps();
         else if (mode == "threads") CheckThreads();
+        else if (mode == "raised") CheckRaisedSignals();
         else throw std::runtime_error("unknown write watch test");
         std::printf("write watch %s passed\n", argv[1]);
         return 0;

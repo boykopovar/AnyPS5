@@ -281,6 +281,7 @@ export class DirectoryWriter {
       await this.destination.directory(name);
       return;
     }
+    if (!(source instanceof ReadableStream)) await source.init();
     const output = await this.destination.file(name);
     if (source instanceof ReadableStream) {
       let completed = 0;
@@ -306,7 +307,6 @@ export class DirectoryWriter {
         writer.releaseLock();
       }
     } else {
-      await source.init();
       const writer = output.getWriter();
       try {
         for (let offset = 0; offset < source.size; offset += 65536) {
@@ -346,6 +346,9 @@ export async function packageArchive(archive, converted, outputName, libraryFile
     if (!libraryEntries.length || libraryEntries.length > 4096) throw new Error("Invalid library archive");
     for (const entry of libraryEntries) {
       if (!entry.filename.startsWith("libs/") || entry.encrypted || ((entry.externalFileAttributes >>> 16) & 0xf000) === 0xa000) throw new Error("Invalid library archive layout");
+      if (entry.compressionMethod !== 0 && entry.compressionMethod !== 8) throw new Error(`Unsupported ZIP compression: ${entry.filename}`);
+      const mode = (entry.externalFileAttributes >>> 16) & 0xf000;
+      if (mode && mode !== 0x8000 && mode !== 0x4000) throw new Error(`Links and special files are not supported: ${entry.filename}`);
       claim(entry.filename);
     }
     const replaced = new Set(converted.modules.map(module => module.name));

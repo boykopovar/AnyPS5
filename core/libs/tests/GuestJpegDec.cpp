@@ -115,6 +115,17 @@ int main() {
     const JpegDecParseParam progressiveParse{progressiveHeader.data(), static_cast<std::uint32_t>(progressiveHeader.size()), 0, 1};
     Require(sceJpegDecParseHeader(&progressiveParse, &info) == 0);
     Require(info.coefficient_mem_size == 448);
+    std::vector<std::uint8_t> hugeProgressive = progressiveHeader;
+    for (std::size_t offset = 2; offset + 8 < hugeProgressive.size();) {
+        if (hugeProgressive[offset + 1] == 0xC2) {
+            hugeProgressive[offset + 5] = hugeProgressive[offset + 6] = hugeProgressive[offset + 7] = hugeProgressive[offset + 8] = 0xFF;
+            break;
+        }
+        offset += 2 + ((static_cast<std::size_t>(hugeProgressive[offset + 2]) << 8) | hugeProgressive[offset + 3]);
+    }
+    const JpegDecParseParam hugeParse{hugeProgressive.data(), static_cast<std::uint32_t>(hugeProgressive.size()), 0, 1};
+    info = {};
+    Require(sceJpegDecParseHeader(&hugeParse, &info) == static_cast<std::int32_t>(0x80650005));
     Require(sceJpegDecParseHeader(&parseParam, &info) == 0);
 
     const JpegDecCreateParam param{sizeof(JpegDecCreateParam), info.suitable_csc_attribute, info.image_width};
