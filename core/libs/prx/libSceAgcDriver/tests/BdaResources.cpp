@@ -3381,6 +3381,10 @@ void RunHeapMirrorUnwatchTests(const Context& context, const BdaTestAccess& acce
         GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
     };
     registry(true);
+#ifdef _WIN32
+    AgcDriver::GuestMemory::Unwatch(idle, idleBytes);
+    AgcDriver::GuestMemory::Unwatch(busy, busyBytes);
+#endif
     auto importing = context;
     importing.hostImportAlignment = block;
     SetHostImportBudget(heapBytes + idleBytes + busyBytes - block);
@@ -3783,6 +3787,196 @@ void RunAddressCopyCapTests(const Context& context, const BdaTestAccess& access,
 #endif
     }
     std::cout << (remembered ? "an address-based build answered from a remembered budget refusal evicts instead of copying a partly unwatched heap past the cap\n" : "an address-based build serves a partly unwatched heap whose import is over the budget\n");
+}
+
+void RunAddressCopyCapMirrorTests(const Context& context, const BdaTestAccess& access, int frames) {
+    constexpr std::size_t block = 65536;
+    constexpr std::size_t unwatchedBytes = 32 * block;
+    constexpr std::size_t mirroredBytes = 16 * block;
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: imports yielding to the address copy cap not tested\n";
+        return;
+    }
+#else
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::cout << "write watch unavailable: imports yielding to the address copy cap not tested\n";
+        return;
+    }
+#endif
+    struct Piece {
+        void* pointer = nullptr;
+        void* mapping = nullptr;
+        std::size_t allocated = 0;
+        std::size_t bytes = 0;
+    };
+    std::array<Piece, 2> pieces{};
+    for (auto& piece : pieces) {
+        piece.allocated = unwatchedBytes + block;
+#ifdef _WIN32
+        piece.pointer = GuestArena::GuestArenaAllocate_nid_postfix(piece.allocated, block);
+        Require(piece.pointer != nullptr, "cannot allocate the yielding import ranges in the guest arena");
+        GuestArena::GuestArenaCommit_nid_postfix(piece.pointer, piece.allocated, PAGE_READWRITE, piece.allocated);
+        piece.mapping = piece.pointer;
+#else
+        piece.mapping = mmap(nullptr, piece.allocated + block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(piece.mapping != MAP_FAILED, "cannot map the yielding import ranges");
+        piece.pointer = reinterpret_cast<void*>((reinterpret_cast<std::uintptr_t>(piece.mapping) + block - 1) & ~std::uintptr_t{block - 1});
+#endif
+        std::memset(piece.pointer, 0x5a, piece.allocated);
+    }
+    if (pieces[1].pointer < pieces[0].pointer) {
+        std::swap(pieces[0].pointer, pieces[1].pointer);
+        std::swap(pieces[0].mapping, pieces[1].mapping);
+        std::swap(pieces[0].allocated, pieces[1].allocated);
+    }
+    pieces[0].bytes = unwatchedBytes;
+    pieces[1].bytes = mirroredBytes;
+    const auto unwatched = reinterpret_cast<std::uintptr_t>(pieces[0].pointer);
+    const auto mirrored = reinterpret_cast<std::uintptr_t>(pieces[1].pointer);
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(pieces[1].pointer, mirroredBytes);
+#endif
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        for (const auto& piece : pieces) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, piece.pointer, piece.bytes, true, false, true);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+#ifdef _WIN32
+    AgcDriver::GuestMemory::Unwatch(unwatched, unwatchedBytes);
+#endif
+    Require(!AgcDriver::GuestMemory::Watched(unwatched, unwatchedBytes) && AgcDriver::GuestMemory::Watched(mirrored, mirroredBytes), "the first range is not outside the write watch or the second is not inside it");
+    auto importing = context;
+    importing.hostImportAlignment = block;
+    SetHostImportBudget(unwatchedBytes + block);
+    for (int frame = 0; frame < frames; ++frame) NoteHostImportFrame();
+    for (int use = 0; use < 300; ++use) Require(HostImportFor(importing, mirrored, 64) != nullptr, "the write-watched range was not imported");
+    Require(HostImportLiveBytes() == mirroredBytes, "the import before the build is not the write-watched range");
+    const auto before = MirrorCounters();
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        Require(HostImportCovers(importing, unwatched, unwatchedBytes), "an address-based build did not import a range that only an import serves in place of a recently used import a mirror can stand in for");
+        Require(!HostImportCovers(importing, mirrored, mirroredBytes) && MirrorCounters().heapMirrors == before.heapMirrors + 1, "the write-watched range whose import yielded is not mirrored");
+        const auto ranges = leased.AddressRanges();
+        const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == mirrored; });
+        Require(found != ranges.end() && found->deviceAddress != 0u, "the write-watched range is missing from the BDA table");
+        Require(access.addressBytes(found->deviceAddress)[mirroredBytes / 2 + 3] == std::byte{0x5a}, "the mirror of the write-watched range does not hold the guest bytes");
+        leased.WriteBack();
+    }
+    SetHostImportBudget(0);
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        for (const auto& piece : pieces) GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, piece.pointer);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    ClearImageMirrors(importing.device);
+    ClearHostImports(importing.device);
+    ClearSnapshotCopies(importing.device);
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[1].pointer, mirroredBytes);
+#endif
+    for (const auto& piece : pieces) {
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(piece.pointer, piece.allocated);
+        GuestArena::GuestArenaRelease_nid_postfix(piece.pointer, piece.allocated);
+#else
+        munmap(piece.mapping, piece.allocated + block);
+#endif
+    }
+    std::cout << "an address-based build past the copy cap takes a range only an import serves from a recently used import a mirror stands in for\n";
+}
+
+void RunUnwatchedMirrorImportTests(const Context& context, const BdaTestAccess& access, int frames) {
+    constexpr std::size_t block = 65536;
+    constexpr std::size_t rangeBytes = 16 * block;
+#ifdef _WIN32
+    if (!GuestArena::GuestArenaAvailable_nid_postfix() || !GuestArena::GuestArenaWriteWatched_nid_postfix()) {
+        std::cout << "guest arena unavailable or not write-watched: imports of heaps whose mirror left the write watch not tested\n";
+        return;
+    }
+#else
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::cout << "write watch unavailable: imports of heaps whose mirror left the write watch not tested\n";
+        return;
+    }
+#endif
+    struct Piece {
+        void* pointer = nullptr;
+        void* mapping = nullptr;
+        std::size_t allocated = rangeBytes + block;
+    };
+    std::array<Piece, 2> pieces{};
+    for (auto& piece : pieces) {
+#ifdef _WIN32
+        piece.pointer = GuestArena::GuestArenaAllocate_nid_postfix(piece.allocated, block);
+        Require(piece.pointer != nullptr, "cannot allocate the mirrored heap ranges in the guest arena");
+        GuestArena::GuestArenaCommit_nid_postfix(piece.pointer, piece.allocated, PAGE_READWRITE, piece.allocated);
+        piece.mapping = piece.pointer;
+#else
+        piece.mapping = mmap(nullptr, piece.allocated + block, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(piece.mapping != MAP_FAILED, "cannot map the mirrored heap ranges");
+        piece.pointer = reinterpret_cast<void*>((reinterpret_cast<std::uintptr_t>(piece.mapping) + block - 1) & ~std::uintptr_t{block - 1});
+#endif
+        std::memset(piece.pointer, 0x5a, piece.allocated);
+#ifndef _WIN32
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(piece.pointer, rangeBytes);
+#endif
+    }
+    const auto leaving = reinterpret_cast<std::uintptr_t>(pieces[0].pointer);
+    const auto staying = reinterpret_cast<std::uintptr_t>(pieces[1].pointer);
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        for (const auto& piece : pieces) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, piece.pointer, rangeBytes, true, false, true);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    Require(AgcDriver::GuestMemory::Watched(leaving, rangeBytes) && AgcDriver::GuestMemory::Watched(staying, rangeBytes), "the heap ranges are not write-watched");
+    auto importing = context;
+    importing.hostImportAlignment = block;
+    SetHostImportBudget(rangeBytes + block);
+    for (int frame = 0; frame < frames; ++frame) NoteHostImportFrame();
+    for (int use = 0; use < 300; ++use) Require(HostImportFor(importing, staying, 64) != nullptr, "the staying range was not imported");
+    const auto build = [&](const char* what) {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        for (const auto address : {leaving, staying}) {
+            const auto found = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == address; });
+            Require(found != ranges.end() && found->deviceAddress != 0u, std::string("a heap range is missing from the BDA table ") + what);
+            Require(HostImportCovers(importing, address, rangeBytes) || access.addressBytes(found->deviceAddress)[rangeBytes / 2 + 3] == std::byte{0x5a}, std::string("the mirror of a heap range does not hold its guest bytes ") + what);
+        }
+        leased.WriteBack();
+    };
+    build("before the write watch left");
+    Require(!HostImportCovers(importing, leaving, rangeBytes) && HostImportCovers(importing, staying, rangeBytes), "the first build did not mirror the heap the budget refused beside the imported one");
+    AgcDriver::GuestMemory::Unwatch(leaving, rangeBytes);
+    Require(!AgcDriver::GuestMemory::Watched(leaving, rangeBytes), "the mirrored heap did not leave the write watch");
+    build("after the write watch left");
+    Require(HostImportCovers(importing, leaving, rangeBytes), "a heap whose mirror left the write watch was not imported in place of an import a mirror can replace");
+    Require(!HostImportCovers(importing, staying, rangeBytes), "the write-watched heap kept its import beside the heap that left the write watch");
+    SetHostImportBudget(0);
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        for (const auto& piece : pieces) GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, piece.pointer);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    ClearImageMirrors(importing.device);
+    ClearHostImports(importing.device);
+    ClearSnapshotCopies(importing.device);
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(pieces[1].pointer, rangeBytes);
+#endif
+    for (const auto& piece : pieces) {
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(piece.pointer, piece.allocated);
+        GuestArena::GuestArenaRelease_nid_postfix(piece.pointer, piece.allocated);
+#else
+        munmap(piece.mapping, piece.allocated + block);
+#endif
+    }
+    std::cout << "a heap whose mirror left the write watch is imported in place of an import a mirror can replace\n";
 }
 
 void hostWriteWatchExclusionTests() {

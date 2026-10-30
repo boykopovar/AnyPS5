@@ -170,6 +170,27 @@ class AuditDumpTests(unittest.TestCase):
         convert.assert_not_called()
         audit.assert_not_called()
 
+    def test_symbolic_link_loops_are_usage_errors_before_input_is_removed(self):
+        loop = self.root / "loop"
+        try:
+            os.symlink(loop, loop)
+        except OSError:
+            self.skipTest("symbolic links unavailable")
+        for name, arguments, expected in (
+            ("work", ("--relinker", self.relinker, "--work", loop), "cannot check work directory against the input dump"),
+            ("relinker", ("--relinker", loop), "no such relinker"),
+        ):
+            with self.subTest(name=name):
+                errors = io.StringIO()
+                with mock.patch.object(audit_dump, "prepare", return_value=([], [])) as prepare, mock.patch.object(audit_dump, "convert", return_value=subprocess.CompletedProcess([], 0)) as convert:
+                    with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as error:
+                        audit_dump.main([str(argument) for argument in (self.dump, "--libs", "libs", *arguments)])
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn(expected, errors.getvalue())
+                prepare.assert_not_called()
+                convert.assert_not_called()
+                self.assertEqual((self.dump / "eboot.bin").read_bytes(), SELF)
+
     def assert_overlap_rejected(self, dump, work):
         marker = dump / "original-marker"
         marker.write_bytes(b"preserve original")

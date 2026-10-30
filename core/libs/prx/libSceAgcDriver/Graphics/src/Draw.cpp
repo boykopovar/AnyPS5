@@ -71,6 +71,33 @@ std::unordered_map<VkDevice, PixelFunctionLdsPool>& PixelLdsPools() {
     return pools;
 }
 
+struct MeshWindowPool {
+    Context context{};
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+};
+
+std::mutex& MeshWindowMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::unordered_map<VkDevice, MeshWindowPool>& MeshWindowPools() {
+    static std::unordered_map<VkDevice, MeshWindowPool> pools;
+    return pools;
+}
+
+void DestroyMeshWindow(MeshWindowPool& pool) {
+    if (pool.descriptorPool != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(pool.context.device, pool.descriptorPool, nullptr);
+    if (pool.buffer != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(pool.context.device, pool.buffer, nullptr);
+    if (pool.memory != VK_NULL_HANDLE) pool.context.Function<PFN_vkFreeMemory>("vkFreeMemory")(pool.context.device, pool.memory, nullptr);
+    if (pool.layout != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(pool.context.device, pool.layout, nullptr);
+    pool = MeshWindowPool{};
+}
+
 void DestroyPixelFunctionLds(PixelFunctionLdsPool& pool) {
     if (pool.header != nullptr) pool.context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")(pool.context.device, pool.memory);
     if (pool.descriptorPool != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(pool.context.device, pool.descriptorPool, nullptr);
@@ -189,6 +216,97 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
     context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, pool.buffer, 0, 4, 0u);
     const VkMemoryBarrier afterFill{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
     context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &afterFill, 0, nullptr, 0, nullptr);
+}
+
+bool UsesMeshWindow(std::span<const CompiledShader> shaders) {
+    return std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->meshWindowBuffer; });
+}
+
+VkDescriptorSetLayout MeshWindowSetLayout(const Context& context) {
+    std::lock_guard lock(MeshWindowMutex());
+    auto& pool = MeshWindowPools()[context.device];
+    if (pool.layout == VK_NULL_HANDLE) {
+        pool.context = context;
+        const VkDescriptorSetLayoutBinding binding{0u, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1u, VK_SHADER_STAGE_MESH_BIT_EXT, nullptr};
+        VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        info.bindingCount = 1u;
+        info.pBindings = &binding;
+        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &info, nullptr, &pool.layout), "vkCreateDescriptorSetLayout mesh window");
+    }
+    return pool.layout;
+}
+
+void PrepareMeshWindow(const Context& context) {
+    std::lock_guard lock(MeshWindowMutex());
+    auto& pool = MeshWindowPools()[context.device];
+    Require(pool.layout != VK_NULL_HANDLE, "mesh window descriptor set layout was not created");
+    if (pool.set != VK_NULL_HANDLE) return;
+    try {
+        const auto bytes = (static_cast<std::uint64_t>(ShaderRecompiler::MeshWindowHeaderDwords) + static_cast<std::uint64_t>(ShaderRecompiler::MeshWindowSlots) * ShaderRecompiler::MeshWindowSlotDwords) * 4ull;
+        Require(bytes <= context.limits.maxStorageBufferRange, "mesh window pool does not fit in the device storage buffer range");
+        VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bufferInfo.size = bytes;
+        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &bufferInfo, nullptr, &pool.buffer), "vkCreateBuffer mesh window");
+        VkMemoryRequirements requirements{};
+        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, pool.buffer, &requirements);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &pool.memory), "vkAllocateMemory mesh window");
+        Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, pool.buffer, pool.memory, 0), "vkBindBufferMemory mesh window");
+        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1u};
+        VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        poolInfo.maxSets = 1u;
+        poolInfo.poolSizeCount = 1u;
+        poolInfo.pPoolSizes = &size;
+        Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &poolInfo, nullptr, &pool.descriptorPool), "vkCreateDescriptorPool mesh window");
+        VkDescriptorSetAllocateInfo sets{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        sets.descriptorPool = pool.descriptorPool;
+        sets.descriptorSetCount = 1u;
+        sets.pSetLayouts = &pool.layout;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &sets, &set), "vkAllocateDescriptorSets mesh window");
+        const VkDescriptorBufferInfo buffer{pool.buffer, 0, bytes};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.dstBinding = 0u;
+        write.descriptorCount = 1u;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = &buffer;
+        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1u, &write, 0u, nullptr);
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, pool.buffer, 0, ShaderRecompiler::MeshWindowHeaderDwords * 4u, 0u);
+        const VkMemoryBarrier afterFill{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &afterFill, 0, nullptr, 0, nullptr);
+        batch.SubmitAndWait();
+        pool.set = set;
+        std::fprintf(stderr, "[gpu] mesh window pool: %u workgroup slots, %llu MiB\n", ShaderRecompiler::MeshWindowSlots, static_cast<unsigned long long>(bytes >> 20u));
+    } catch (...) {
+        const auto layout = pool.layout;
+        pool.layout = VK_NULL_HANDLE;
+        DestroyMeshWindow(pool);
+        pool.context = context;
+        pool.layout = layout;
+        throw;
+    }
+}
+
+void BindMeshWindow(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout) {
+    std::lock_guard lock(MeshWindowMutex());
+    const auto& pool = MeshWindowPools().at(context.device);
+    Require(pool.set != VK_NULL_HANDLE, "mesh window buffer was not prepared");
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, ShaderRecompiler::MeshWindowDescriptorSet, 1, &pool.set, 0, nullptr);
+}
+
+void ReleaseMeshWindow(VkDevice device) {
+    std::lock_guard lock(MeshWindowMutex());
+    const auto found = MeshWindowPools().find(device);
+    if (found == MeshWindowPools().end()) return;
+    DestroyMeshWindow(found->second);
+    MeshWindowPools().erase(found);
 }
 
 std::uint32_t PixelFunctionLdsSubgroup(std::span<const CompiledShader> shaders) {
@@ -2349,6 +2467,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
+    if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
@@ -2433,6 +2552,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout());
     }
     if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
+    if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty());
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
@@ -3262,6 +3382,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         return (begin < args->arguments + args->RangeBytes() && args->arguments < end) || (args->countIndirect && begin < args->countAddress + 4 && args->countAddress < end);
     };
     static_cast<void>(StorageTexture::StoreDrawnLinearTouching("draw access", [&](std::uint64_t begin, std::uint64_t end) { return touches(begin, end) || std::any_of(inputs.inPlaceReads.begin(), inputs.inPlaceReads.end(), [&](const auto& read) { return read.first < end && begin < read.second; }); }, resources->HoldsLease() || resources->UsesAddressTable() || resources->HasCopiedWrites()));
+    if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
     APS5_LOG_CHARS_OUT_DEBUG("Creating CommandBatch");
     std::optional<CommandBatch> batch;
     if (!recorded) {
@@ -3367,6 +3488,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
     resources->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->Layout());
     if (pixelLdsSubgroup != 0u) BindPixelFunctionLds(context, commands, pipeline->Layout());
+    if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty());
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");

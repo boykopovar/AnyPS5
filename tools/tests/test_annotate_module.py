@@ -265,12 +265,76 @@ class AnnotateModuleTests(unittest.TestCase):
         self.annotate(build_module(symbols=symbols))
         self.assertEqual("0x0 %s %s\n" % (symbol_name(EXPORT_NAME), EXPORT_NAME), self.read(".exports.txt"))
 
+    def test_export_aliases_are_named_and_counted(self):
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 1, 0x12, EXPORT_ADDRESS)]
+        for kind in ("sysv", "gnu"):
+            with self.subTest(kind=kind):
+                tags = DEFAULT_TAGS if kind == "sysv" else (GNU_HASH,) + DEFAULT_TAGS[1:]
+                summary = self.annotate(build_module(symbols=symbols, tags=tags, kind=kind))
+                self.assertIn("1 imports, 2 exports, 0 tls, 1 stubs", summary)
+                expected = ["%#x %s %s" % (EXPORT_ADDRESS, symbol_name(name), name)
+                            for name in (EXPORT_NAME, SECOND_IMPORT_NAME)]
+                self.assertEqual(self.read(".exports.txt").splitlines(), expected)
+                listing = self.read(".asm").splitlines()
+                header = listing.index("; ===== export " + EXPORT_NAME)
+                self.assertEqual(listing[header + 1], "; ===== export " + SECOND_IMPORT_NAME)
+                self.assertEqual(listing[header + 2], instruction(listing, "ret"))
+
+    def test_export_aliases_without_names_keep_each_nid(self):
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 1, 0x12, EXPORT_ADDRESS)]
+        self.run_tool(build_module(symbols=symbols), "--no-names")
+        for name in (EXPORT_NAME, SECOND_IMPORT_NAME):
+            self.assertIn("%#x %s %s\n" % (EXPORT_ADDRESS, symbol_name(name), nid(name)), self.read(".exports.txt"))
+            self.assertIn("; ===== export " + nid(name), self.read(".asm"))
+
+    def test_tls_aliases_share_an_offset_without_becoming_code_labels(self):
+        symbols = DEFAULT_SYMBOLS + [(TLS_NAME, 1, 0x16, EXPORT_ADDRESS), (SECOND_IMPORT_NAME, 1, 0x16, EXPORT_ADDRESS)]
+        summary = self.annotate(build_module(symbols=symbols))
+        self.assertIn("1 exports, 2 tls", summary)
+        expected = ["%#x %s %s" % (EXPORT_ADDRESS, symbol_name(EXPORT_NAME), EXPORT_NAME)]
+        expected += ["tls+%#x %s %s" % (EXPORT_ADDRESS, symbol_name(name), name)
+                     for name in (TLS_NAME, SECOND_IMPORT_NAME)]
+        self.assertEqual(self.read(".exports.txt").splitlines(), expected)
+        for name in (TLS_NAME, SECOND_IMPORT_NAME):
+            self.assertNotIn("export " + name, self.read(".asm"))
+
+    def test_export_aliases_at_zero_are_sorted_before_other_addresses(self):
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 1, 0x12, 0), (TLS_NAME, 1, 0x12, 0)]
+        summary = self.annotate(build_module(symbols=symbols))
+        self.assertIn("1 imports, 3 exports, 0 tls", summary)
+        expected = ["0x0 %s %s" % (symbol_name(name), name) for name in (SECOND_IMPORT_NAME, TLS_NAME)]
+        expected.append("%#x %s %s" % (EXPORT_ADDRESS, symbol_name(EXPORT_NAME), EXPORT_NAME))
+        self.assertEqual(self.read(".exports.txt").splitlines(), expected)
+
     def test_every_executable_segment_is_disassembled(self):
         self.annotate(build_module(extra_code=b"\xc3"))
         listing = self.read(".asm").splitlines()
         first, second = listing.index("; ===== segment 0x1000"), listing.index("; ===== segment 0x3000")
         self.assertLess(first, second)
         self.assertTrue(any(re.match(r"^\s*3000:\s+ret\b", line) for line in listing[second:]))
+
+    def test_zero_run_preserves_instructions_and_export_label(self):
+        code = b"\x90" + bytes(16) + b"\xc3"
+        address = CODE_ADDRESS + 9
+        symbols = [(EXPORT_NAME, 1, 0x12, address)]
+        self.annotate(build_module(code=code, symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        addresses = [int(match.group(1), 16) for line in listing
+                     if (match := annotate_module.LINE_ADDRESS.match(line))]
+        self.assertEqual(addresses, [CODE_ADDRESS] + list(range(CODE_ADDRESS + 1, CODE_ADDRESS + 17, 2)) + [CODE_ADDRESS + 17])
+        header = listing.index("; ===== export " + EXPORT_NAME)
+        self.assertRegex(listing[header + 1], r"^\s*1009:\s+add\s")
+        self.assertIn("%#x %s %s\n" % (address, symbol_name(EXPORT_NAME), EXPORT_NAME), self.read(".exports.txt"))
+
+    def test_all_zero_executable_segment_is_disassembled(self):
+        symbols = [(EXPORT_NAME, 1, 0x12, 0x3008)]
+        self.annotate(build_module(code=b"\xc3", extra_code=bytes(16), symbols=symbols, relocations=()))
+        listing = self.read(".asm").splitlines()
+        addresses = [int(match.group(1), 16) for line in listing
+                     if (match := annotate_module.LINE_ADDRESS.match(line))]
+        self.assertEqual(addresses, [CODE_ADDRESS] + list(range(0x3000, 0x3010, 2)))
+        header = listing.index("; ===== export " + EXPORT_NAME)
+        self.assertRegex(listing[header + 1], r"^\s*3008:\s+add\s")
 
     def test_missing_hash_fails(self):
         self.assert_fails(build_module(tags=(5, 6, 10, 11, 23, 2, 20)), "neither DT_HASH nor DT_GNU_HASH")

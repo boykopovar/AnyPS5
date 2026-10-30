@@ -97,6 +97,10 @@ Events start relative to when the application first observes the new command. Bu
 
 The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
 
+## Controller vibration strength
+
+Vibration is not part of the input mapping file. The host-side strength of a controller's vibration is set with `ANYPS5_RUMBLE`, described in [Controller vibration strength](USAGE.md#controller-vibration-strength); `0` turns it off for every connected controller.
+
 ## Analog keyboard input
 
 `StickModifier` has no built-in binding. While a key or mouse button bound to it is held, the keyboard stick bindings tilt the stick by `StickModifierScale` of its range instead of fully, for walking or fine aim. Controller sticks and the mouse stick are not affected, and opposite keys still cancel each other.
