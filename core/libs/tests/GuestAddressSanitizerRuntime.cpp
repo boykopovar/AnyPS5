@@ -420,6 +420,26 @@ static int Heap() {
     return 0;
 }
 
+static int WrapperCallSites() {
+    void* p = __asan_malloc(19);
+    std::uintptr_t trace[1] = {};
+    std::uint32_t tid = 0;
+    char module[512] = {};
+    if (__asan_get_alloc_stack(reinterpret_cast<std::uintptr_t>(p), trace, 1, &tid) != 1) return 1;
+    __sanitizer_symbolize_pc(trace[0], "%m", module, sizeof(module));
+    if (!std::strstr(module, "guest_addresssanitizer_runtime_tests")) return 2;
+    if (!__asan_update_allocation_context(p)) return 3;
+    if (__asan_get_alloc_stack(reinterpret_cast<std::uintptr_t>(p), trace, 1, &tid) != 1) return 4;
+    __sanitizer_symbolize_pc(trace[0], "%m", module, sizeof(module));
+    if (!std::strstr(module, "guest_addresssanitizer_runtime_tests")) return 5;
+    __asan_free(p);
+    if (__asan_get_free_stack(reinterpret_cast<std::uintptr_t>(p), trace, 1, &tid) != 1) return 6;
+    __sanitizer_symbolize_pc(trace[0], "%m", module, sizeof(module));
+    if (!std::strstr(module, "guest_addresssanitizer_runtime_tests")) return 7;
+    __sanitizer_purge_allocator();
+    return 0;
+}
+
 static int HeapAligned() {
     void* a = __asan_memalign(64, 10);
     if (!a || reinterpret_cast<std::uintptr_t>(a) % 64) return 1;
@@ -821,6 +841,7 @@ int main(int argc, char* argv[]) {
         return 2;
     }
     if (mode == "heap") return Heap();
+    if (mode == "wrapper_call_sites") return WrapperCallSites();
     if (mode == "heap_aligned") return HeapAligned();
     if (mode == "heap_stats") return HeapStats();
     if (mode == "heap_double_free") {

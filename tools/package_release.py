@@ -82,6 +82,12 @@ def package(platform, build, output, version):
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
+    if "libSceAddressSanitizer.prx" in expected:
+        licenses.extend((ROOT / source, destination) for source, destination in (
+            ("3rdparty/compiler-rt/LICENSE.TXT", "libs/licenses/compiler-rt.txt"),
+            ("3rdparty/compiler-rt/lib/asan_anyps5/NOTICE", "libs/licenses/compiler-rt-anyps5-notice.txt"),
+            ("3rdparty/compiler-rt/lib/asan_anyps5/LICENSE.GPL-2.0", "libs/licenses/compiler-rt-anyps5-gpl2.txt"),
+        ))
     if "libSceAjm.native.prx" in expected:
         licenses.append((ROOT / "3rdparty/vgmstream/COPYING", "libs/licenses/vgmstream.txt"))
     if "libSceVorbisDec.prx" in expected:
