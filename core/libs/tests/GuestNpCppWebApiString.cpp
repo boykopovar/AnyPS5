@@ -26,7 +26,8 @@ constexpr std::size_t kBufferSizeOffset = 0x10;
 constexpr std::size_t kLibContextOffset = 0x18;
 constexpr unsigned char kFill = 0xA5;
 
-constexpr std::size_t kVectorSize = 0x18;
+constexpr std::size_t kVectorSize = 0x48;
+constexpr std::size_t kVectorReferenceCountOffset = 0x38;
 constexpr std::size_t kObjectOffset = 0x00;
 constexpr std::size_t kBodyMagicOffset = 0x00;
 constexpr std::size_t kBodyReferenceCountOffset = 0x30;
@@ -149,6 +150,9 @@ void TestVectorPushBackCopiesStringContent() {
 
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(vector.bytes), &libContext);
     Require(VectorGuardIntact(vector));
+    std::int32_t referenceCount;
+    std::memcpy(&referenceCount, vector.bytes + kVectorReferenceCountOffset, sizeof(referenceCount));
+    Require(referenceCount == 0);
 
     _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), &libContext);
     Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(element.bytes), "privilege") == 0);
