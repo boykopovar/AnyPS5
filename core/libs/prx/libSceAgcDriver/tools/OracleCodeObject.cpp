@@ -89,6 +89,18 @@ const Section& SectionOf(const std::vector<Section>& sections, const Symbol& sym
 
 }
 
+std::uint32_t ParseOracleCount(std::string_view text, const char* what) {
+    const auto reject = [&] { throw std::runtime_error(std::string(what) + " must be a decimal count from 0 to 4294967295, not \"" + std::string(text) + "\""); };
+    if (text.empty()) reject();
+    std::uint64_t value = 0;
+    for (const char character : text) {
+        if (character < '0' || character > '9') reject();
+        value = value * 10u + static_cast<std::uint64_t>(character - '0');
+        if (value > 0xffffffffu) reject();
+    }
+    return static_cast<std::uint32_t>(value);
+}
+
 OracleKernel ParseOracleCodeObject(std::span<const std::byte> bytes) {
     const Reader reader(bytes);
     Require(bytes.size() >= ElfHeaderBytes, "code object is truncated: ELF header lies outside the file");
