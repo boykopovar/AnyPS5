@@ -4,6 +4,30 @@
 #include "prx/libSceLibreSsl3/include/Key.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 
+struct LibreSsl3Asn1String {
+    int length;
+    int type;
+    unsigned char* data;
+    std::int64_t flags;
+};
+
+struct LibreSsl3X509Algor {
+    void* algorithm;
+    void* parameter;
+};
+
+struct LibreSsl3X509Pubkey {
+    LibreSsl3X509Algor* algor;
+    LibreSsl3Asn1String* publicKey;
+    void* pkey;
+};
+
+static_assert(sizeof(LibreSsl3Asn1String) == 24);
+static_assert(offsetof(LibreSsl3Asn1String, data) == 8);
+static_assert(sizeof(LibreSsl3X509Algor) == 16);
+static_assert(sizeof(LibreSsl3X509Pubkey) == 24);
+static_assert(offsetof(LibreSsl3X509Pubkey, publicKey) == 8);
+
 extern "C" {
 
 int APS5_VABI ASN1_INTEGER_free_nid_postfix(void);
@@ -68,7 +92,7 @@ int APS5_VABI SSL_CTX_up_ref_nid_postfix(void);
 int APS5_VABI SSL_SESSION_up_ref_nid_postfix(void);
 int APS5_VABI SSL_get_client_random_nid_postfix(void);
 int APS5_VABI SSL_up_ref_nid_postfix(void);
-int APS5_VABI X509_PUBKEY_get0_param_nid_postfix(void);
+int APS5_VABI X509_PUBKEY_get0_param_nid_postfix(void** publicKeyAlgorithm, const unsigned char** publicKey, int* publicKeyLength, void** algorithm, const void* pub);
 int APS5_VABI X509_STORE_CTX_free_nid_postfix(void);
 int APS5_VABI X509_STORE_CTX_init_nid_postfix(void);
 int APS5_VABI X509_STORE_CTX_new_nid_postfix(void);
