@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -294,6 +295,49 @@ class ProgressHistoryTests(unittest.TestCase):
                 self.assertEqual(error.exception.code, 2)
                 self.assertIn(str(loop), errors.getvalue())
 
+
+    def test_cache_recursion_is_reported_as_a_path_specific_value_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "counts.json"
+            path.write_bytes(b"preserve cache")
+            with patch.object(progress_history.json, "loads", side_effect=RecursionError("decoder depth")):
+                with self.assertRaisesRegex(ValueError, "history cache JSON is too deeply nested") as raised:
+                    progress_history.load_cache(path, "signature")
+            self.assertIn(str(path), str(raised.exception))
+            self.assertEqual(path.read_bytes(), b"preserve cache")
+
+    def test_real_deep_cache_cli_is_bounded_and_preserves_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "counts.json"
+            original = ("[" * 20000 + "0" + "]" * 20000).encode()
+            cache.write_bytes(original)
+            completed = subprocess.run([sys.executable, str(Path(progress_history.__file__)), str(root / "reports"), "--cache", str(cache)], capture_output=True, timeout=10)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertEqual(completed.stdout, b"")
+            self.assertNotIn(b"Traceback", completed.stderr)
+            self.assertIn(b"counts.json", completed.stderr)
+            self.assertFalse((root / "reports").exists())
+            self.assertEqual(cache.read_bytes(), original)
+
+
+
+    def test_dynamic_scale_keeps_old_steps_and_bounds_large_chart_grids(self):
+        steps = (5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000)
+        for peak in (0, 1, 20, 21, 40, 41, 80, 81, 200, 201, 200000):
+            step = next(value for value in steps if peak <= value * 4)
+            self.assertEqual(progress_history.scale(peak), (step, max(step, -(-peak // step) * step)))
+        for value in (200001, 1000000, 10**100):
+            step, maximum = progress_history.scale(value)
+            self.assertGreaterEqual(maximum, value)
+            self.assertLessEqual(maximum // step, 4)
+            point = {"date": "2026-01-01", "libraries": {"done": value // 2, "total": value, "percent": 50},
+                     "shaders": {"done": 0, "total": 0, "percent": 0}}
+            svg = progress_history.chart([point])
+            ET.fromstring(svg)
+            self.assertNotIn("nan", svg.lower())
+            self.assertNotIn("infinity", svg.lower())
+            self.assertIn(f"Declared {value:,}", svg)
 
     def test_cache_recursion_is_reported_as_a_path_specific_value_error(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -592,8 +592,7 @@ int APS5_VABI sceAvSettingSetDispclk() {
 }
 
 int APS5_VABI sceAvSettingSetDisplayBlackLevel() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x802A00FF);
 }
 
 int APS5_VABI sceAvSettingSetHdcpMode() {
@@ -637,8 +636,7 @@ int APS5_VABI sceAvSettingSimulateProcessOutputModeArbitration_() {
 }
 
 int APS5_VABI sceAvSettingTerm() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x802A00FF);
 }
 
 int APS5_VABI sceAvSettingWaitCallback() {

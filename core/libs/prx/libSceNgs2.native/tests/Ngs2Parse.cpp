@@ -186,17 +186,25 @@ static void TestParseFileBank() {
 }
 
 static void TestFrameInfoPcm() {
-    for (std::uint32_t channels = 1; channels <= 8; channels++) {
-        for (const std::uint32_t rate : {1u, 22050u, 48000u, 192000u}) {
-            const Ngs2WaveformFormat format{SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, channels, rate, 0, 0, 0};
-            std::uint32_t frameSize = 0xa1, frameSamples = 0xa2, units = 0xa3, delay = 0xa4;
-            Require(sceNgs2GetWaveformFrameInfo(&format, &frameSize, &frameSamples, &units, &delay) == SCE_NGS2_OK);
-            Require(frameSize == channels * 2 && frameSamples == 1 && units == 1 && delay == 0);
-            const auto file = PcmFile(channels, rate, 16, 10);
-            Ngs2WaveformInfo info{};
-            Require(sceNgs2ParseWaveformData(file.data(), file.size(), &info) == SCE_NGS2_OK);
-            Require(info.audio_frame_size == frameSize && info.num_audio_frame_samples == frameSamples);
-            Require(info.num_audio_unit_per_frame == units && info.num_delay_samples == delay);
+    const std::pair<std::uint32_t, std::uint32_t> types[] = {
+        {SCE_NGS2_WAVEFORM_TYPE_PCM_U8, 1}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2},
+        {SCE_NGS2_WAVEFORM_TYPE_PCM_I24L, 3}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I32L, 4},
+        {SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 4}, {SCE_NGS2_WAVEFORM_TYPE_PCM_F64L, 8},
+    };
+    for (const auto& [type, bytes] : types) {
+        for (std::uint32_t channels = 1; channels <= 8; channels++) {
+            for (const std::uint32_t rate : {1u, 22050u, 48000u, 192000u}) {
+                const Ngs2WaveformFormat format{type, channels, rate, 0, 0, 0};
+                std::uint32_t frameSize = 0xa1, frameSamples = 0xa2, units = 0xa3, delay = 0xa4;
+                Require(sceNgs2GetWaveformFrameInfo(&format, &frameSize, &frameSamples, &units, &delay) == SCE_NGS2_OK);
+                Require(frameSize == channels * bytes && frameSamples == 1 && units == 1 && delay == 0);
+                if (type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) continue;
+                const auto file = PcmFile(channels, rate, 16, 10);
+                Ngs2WaveformInfo info{};
+                Require(sceNgs2ParseWaveformData(file.data(), file.size(), &info) == SCE_NGS2_OK);
+                Require(info.audio_frame_size == frameSize && info.num_audio_frame_samples == frameSamples);
+                Require(info.num_audio_unit_per_frame == units && info.num_delay_samples == delay);
+            }
         }
     }
     const Ngs2WaveformFormat ignored{SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0x12345678, 3, 5};
@@ -228,7 +236,7 @@ static void TestFrameInfoErrors() {
         Require(sceNgs2GetWaveformFrameInfo(&format, &values[0], &values[1], &values[2], &values[3]) == SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT);
         Require(untouched());
     }
-    for (const std::uint32_t type : {0u, 0x10u, 0x11u, 0x13u, 0x14u, 0x16u, SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 0x19u, 0x41u, 0xffffffffu}) {
+    for (const std::uint32_t type : {0u, 0x10u, 0x13u, 0x19u, 0x41u, 0xffffffffu}) {
         Require(FrameInfoThrows({type, 2, 48000, 0, 0, 0}));
     }
 }

@@ -1,3 +1,4 @@
+cmake_minimum_required(VERSION 3.20)
 if(NOT DEFINED REPLAY OR NOT DEFINED OUTPUT_ROOT)
     message(FATAL_ERROR "Missing replay tool or output root")
 endif()

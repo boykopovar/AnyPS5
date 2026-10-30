@@ -121,6 +121,7 @@ endif()
 set(UNPATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/libs/unpatched)
 set(PATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/libs)
 set(IMPLIB_DIR ${PATCHED_DIR}/implib)
+set(RELEASE_IMPLIBS "libc=$<TARGET_LINKER_FILE:libc>\n")
 
 set_target_properties(libc PROPERTIES
         PREFIX ""
@@ -210,10 +211,17 @@ foreach(LIB_DIR ${LIBS_DIRS})
         )
 
         list(APPEND PATCHED_OUTPUTS ${PATCHED_FILE})
+        string(APPEND RELEASE_IMPLIBS "${LIB_NAME}=$<TARGET_LINKER_FILE:${LIB_NAME}>\n")
     endif()
 endforeach()
 
+if(WIN32)
+    file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/release-implibs.txt CONTENT "${RELEASE_IMPLIBS}")
+endif()
+
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
+
+include(prx/libSceFreeType/PostScriptInfo.cmake)
 
 if(APS5_ENABLE_TRACY)
     set_target_properties(TracyClient PROPERTIES
@@ -278,6 +286,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_posix_scalar_io PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_kernel_sys_upd_version_tests tests/GuestKernelSysUpdVersion.cpp)
+    target_include_directories(guest_kernel_sys_upd_version_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_upd_version_tests PRIVATE libkernel_sys libkernel libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_kernel_sys_upd_version_tests)
+    add_test(NAME guest_kernel_sys_upd_version COMMAND guest_kernel_sys_upd_version_tests)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_upd_version PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
     add_test_executable(guest_kernel_sys_sdk_version_tests tests/GuestKernelSysSdkVersion.cpp)
     target_include_directories(guest_kernel_sys_sdk_version_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_sdk_version_tests PRIVATE libkernel_sys libkernel libc)
@@ -303,6 +320,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_kernel_sys_cpumode COMMAND guest_kernel_sys_cpumode_tests)
     if(WIN32)
         set_tests_properties(guest_kernel_sys_cpumode PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+    add_test_executable(guest_kernel_sys_neo_mode_tests tests/GuestKernelSysNeoMode.cpp)
+    target_include_directories(guest_kernel_sys_neo_mode_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_neo_mode_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_neo_mode_tests)
+    add_test(NAME guest_kernel_sys_neo_mode COMMAND guest_kernel_sys_neo_mode_tests)
+    set_tests_properties(guest_kernel_sys_neo_mode PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_neo_mode PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
     add_test_executable(nid_buffer_validation_tests nid/tests/BufferValidation.cpp)
@@ -454,13 +481,13 @@ if(BUILD_TESTING)
     set_tests_properties(guest_kernel_sys_constants PROPERTIES TIMEOUT 20)
     add_test_executable(guest_firmware_constant_returns_tests tests/GuestFirmwareConstantReturns.cpp)
     target_include_directories(guest_firmware_constant_returns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_firmware_constant_returns_tests PRIVATE libSceComposite libSceFsInternalForVsh libSceHttpCache libScePlayReady libSceSdma libSceSsl libSceVisionManager libmdbg_syscore libkernel libc)
+    target_link_libraries(guest_firmware_constant_returns_tests PRIVATE libSceAvSetting libSceComposite libSceFsInternalForVsh libSceHttpCache libScePlayReady libSceSdma libSceSsl libSceVisionManager libmdbg_syscore libkernel libc)
     configure_windows_unwind(guest_firmware_constant_returns_tests)
     add_test(NAME guest_firmware_constant_returns COMMAND guest_firmware_constant_returns_tests)
     set_tests_properties(guest_firmware_constant_returns PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_firmware_constant_returns PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceComposite>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttpCache>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSsl>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVisionManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libmdbg_syscore>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceComposite>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttpCache>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSsl>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVisionManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libmdbg_syscore>")
     endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME nid_verneed COMMAND ${Python3_EXECUTABLE}
@@ -619,6 +646,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_voice_port_attr PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVoice>")
+    endif()
+
+    add_test_executable(guest_remoteplay_tests tests/GuestRemoteplay.cpp)
+    target_include_directories(guest_remoteplay_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_remoteplay_tests PRIVATE libSceRemoteplay libc)
+    configure_windows_unwind(guest_remoteplay_tests)
+    add_test(NAME guest_remoteplay COMMAND guest_remoteplay_tests)
+    if(WIN32)
+        set_tests_properties(guest_remoteplay PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRemoteplay>")
     endif()
 
     add_test_executable(guest_gnm_neo_retail_tests tests/GuestGnmNeoRetail.cpp)

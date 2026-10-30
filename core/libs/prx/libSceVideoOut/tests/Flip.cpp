@@ -267,7 +267,12 @@ void testCpuFlipOrder() {
     check(flipsWithin(2, std::chrono::seconds(30)), "the submitting thread's flip did not complete");
     check(shownArgument() == 6, "the submitting thread's flip presented the wrong request");
     AgcDriverWaitIdle_nid_postfix();
-    sceVideoOutUnregisterBuffers(handle, 0);
+    constexpr int resourceBusy = static_cast<int>(0x80290009u);
+    check(sceVideoOutUnregisterBuffers(handle, 0) == resourceBusy, "the set on screen was unregistered");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(cfg->groups[0].occupied && cfg->buffers[0].groupIndex == 0, "a refused unregistration released the set on screen");
+    }
     sceVideoOutClose(handle);
     AgcDriverUnregisterVideoOutput_nid_postfix(7, first);
     AgcDriverUnregisterVideoOutput_nid_postfix(8, second);
@@ -506,6 +511,13 @@ void testControls() {
     attribute.width = 64;
     attribute.height = 64;
     attribute.pixel_format = 0x8000000000000000ull;
+    constexpr int invalidValue = static_cast<int>(0x80290001u);
+    const std::array<VideoOutBuffers, 5> pastLast{buffer, buffer, buffer, buffer, buffer};
+    check(sceVideoOutRegisterBuffers2(handle, 3, 15, pastLast.data(), 5, &attribute, 0, nullptr) == invalidValue, "buffers 15 to 19 were not refused with INVALID_VALUE");
+    {
+        std::lock_guard lock(cfg->mutex);
+        check(!cfg->groups[3].occupied && !cfg->buffers[15].Occupied(), "a refused registration past the last buffer registered something");
+    }
     check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "buffers with set reserved pointers were rejected");
     check(sceVideoOutUnregisterBuffers(handle, 0) == 0, "buffer unregistration failed");
     check(owner->GetTriggeredEvents(&event, 1) == 0, "VRR status event triggered without a VRR change");
@@ -920,6 +932,9 @@ void testUnopenedEventRegistration() {
     check(sceVideoOutAddVblankEvent(eq, 1, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event on an unopened port was accepted");
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == 0, "flip event on an open port was refused");
+    check(sceVideoOutAddVblankEvent(eq, handle, nullptr) == 0, "vblank event on an open port was refused");
+    check(sceVideoOutDeleteFlipEvent(eq, handle) == 0, "registered flip event was not deleted");
+    check(sceVideoOutDeleteVblankEvent(eq, handle) == 0, "registered vblank event was not deleted");
     sceVideoOutClose(handle);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on a closed port was accepted");
     check(sceKernelDeleteEqueue(eq) == 0, "the event queue was not deleted");
@@ -1066,6 +1081,7 @@ void testFreshHandleCalls() {
     const std::uint32_t image[64 * 64] = {};
     check(sceVideoOutCursorEnable(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a cursor was enabled without an image address");
     check(sceVideoOutCursorSetPosition(handle, 0, 100, 100) == 0, "the cursor position was refused");
+    check(sceVideoOutCursorSet2xMagnify(handle, 0, true) == 0, "2x cursor magnification was refused");
     check(sceVideoOutCursorSetImageAddress(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a null cursor image address was accepted");
     check(sceVideoOutCursorDisable(handle, 0) == 0, "the cursor was not disabled");
     check(sceVideoOutSetFlipMaster(handle, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a fresh handle was made flip master of handle 0");
@@ -1092,6 +1108,7 @@ void testFreshHandleCalls() {
     check(sceVideoOutCursorEnable(-1, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle was checked after the cursor image address");
     check(sceVideoOutCursorEnable(-1, 0, image) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a cursor was enabled on an invalid handle");
     check(sceVideoOutCursorSetPosition(-1, 0, 100, 100) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor was positioned");
+    check(sceVideoOutCursorSet2xMagnify(-1, 0, true) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor was magnified");
     check(sceVideoOutCursorSetImageAddress(-1, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor image was set");
     check(sceVideoOutCursorDisable(-1, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor was disabled");
     check(sceVideoOutSetFlipMaster(-1, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle was made flip master");

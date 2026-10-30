@@ -690,7 +690,7 @@ int main() {
     version42.pop_back();
     version42[4] = 42u;
     const auto replay42 = serializer.Deserialize(EncodeBase64(version42));
-    Require(replay42.request.context.pixel.has_value() && replay42.request.context.pixel->sampleOrder == pixel.sampleOrder && replay42.request.context.pixel->targetMerge == ShaderRecompiler::TargetMerge{});
+    Require(replay42.request.context.pixel.has_value() && replay42.request.context.pixel->sampleOrder == pixel.sampleOrder && replay42.request.context.pixel->targetMerges.empty());
     auto upgraded42 = replay42.request;
     upgraded42.target = request.target;
     Require(serializer.Serialize(upgraded42) == orderEncoded);

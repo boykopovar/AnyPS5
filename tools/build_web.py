@@ -69,10 +69,17 @@ def library_assets(release):
     return assets
 
 
+def load_release(response):
+    try:
+        return json.load(response)
+    except RecursionError as error:
+        raise ValueError(f"Invalid release metadata: {error}") from error
+
+
 def publish_libraries(output, release=None):
     if release is None:
         with request("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest") as response:
-            release = json.load(response)
+            release = load_release(response)
     release = release_metadata(release)
     tag = release["tag_name"]
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", tag):
@@ -141,7 +148,7 @@ def publish_libraries(output, release=None):
 
 def publish_release(output):
     with request("https://api.github.com/repos/boykopovar/AnyPS5/releases/latest") as response:
-        release = json.load(response)
+        release = load_release(response)
     release = release_metadata(release)
     tag = release["tag_name"]
     if not re.fullmatch(r"v[0-9A-Za-z][0-9A-Za-z._-]*", tag) or tag.endswith("."):
@@ -179,7 +186,7 @@ def publish_release(output):
                 raise ValueError(f"Encrypted release archive {asset['name']} is not supported")
             if any(file.file_size == 0 for file in files) or sum(file.file_size for file in files) > 128 * 1024 * 1024:
                 raise ValueError("Invalid expanded web release archive size")
-            metadata = json.loads(archive.read("web-release.json"))
+            metadata = load_release(archive.open("web-release.json"))
             if (not isinstance(metadata, dict) or metadata.get("tag") != tag
                     or not isinstance(metadata.get("revision"), str)
                     or not re.fullmatch(r"[0-9a-f]{40}", metadata["revision"])):
