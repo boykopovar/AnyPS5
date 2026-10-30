@@ -208,6 +208,7 @@ void encodeState(Writer& writer, const State& state) {
         writer.U32(color.exportIndex);
         writer.Raw(color.componentMapping);
         writer.Raw(color.partialWriteMask);
+        writer.Raw(color.mergeBlend);
     }
     writer.Raws(std::span<const VkPipelineColorBlendAttachmentState>(state.blends));
     for (const auto value : state.blendConstants) writer.Raw(value);
@@ -279,7 +280,8 @@ void decodeState(Reader& reader, State& state) {
         color.format = static_cast<VkFormat>(reader.U32());
         color.exportIndex = reader.U32();
         color.componentMapping = reader.Raw<std::uint8_t>();
-        color.partialWriteMask = reader.Raw<std::uint16_t>();
+        color.partialWriteMask = reader.Raw<std::uint32_t>();
+        color.mergeBlend = reader.Raw<std::uint32_t>();
         state.colors.push_back(color);
     }
     reader.Raws(state.blends, 8u);
@@ -1569,6 +1571,7 @@ State CanonicalPipelineState(const State& state) {
         canonicalColor.exportIndex = color.exportIndex;
         canonicalColor.componentMapping = color.componentMapping;
         canonicalColor.partialWriteMask = color.partialWriteMask;
+        canonicalColor.mergeBlend = color.mergeBlend;
         canonical.colors.push_back(canonicalColor);
     }
     canonical.blends = state.blends;
