@@ -29,6 +29,11 @@ int main() {
     Require(sceContentDeleteById(1) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
+    std::int64_t contentId = 1;
+    Require(sceContentDeleteByIdListForSf(&contentId, 1) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 1) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(&contentId, 0) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 0) == static_cast<int>(0x809D5002u));
 
     ContentDeleteInitParam param{};
     param.heap_size = 0x10000;
@@ -40,6 +45,9 @@ int main() {
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5001u));
 
     Require(LogicErrorMessage([] { sceContentDeleteByPath(nullptr); }) == "invalid argument");
+    Require(sceContentDeleteByIdListForSf(&contentId, 0) == static_cast<int>(0x809D5001u));
+    Require(LogicErrorMessage([] { sceContentDeleteByIdListForSf(nullptr, 1); }) == "invalid argument");
+    Require(LogicErrorMessage([] { sceContentDeleteByIdListForSf(nullptr, 0); }) == "invalid argument");
 
     Require(sceContentDeleteTerminate() == 0);
     Require(sceContentDeleteTerminate() == static_cast<int>(0x809D5002u));
@@ -47,5 +55,9 @@ int main() {
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(&contentId, 1) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 1) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(&contentId, 0) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 0) == static_cast<int>(0x809D5002u));
     return 0;
 }

@@ -39,6 +39,9 @@ int APS5_VABI sceContentDeleteById(std::int64_t contentId) {
 }
 
 int APS5_VABI sceContentDeleteByIdListForSf(const std::int64_t* contentIds, std::size_t count) {
+    if (!g_initialized.load()) return NotInitialized;
+    if (contentIds == nullptr) APS5_INVALID_ARG_EX;
+    if (count == 0) return InvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
