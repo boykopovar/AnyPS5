@@ -235,6 +235,21 @@ NpAllocator MemoryHeapAllocator(NpMemoryHeap* heap) {
 
 constexpr std::size_t NP_OBJECT_HEADER_SIZE = 16;
 
+constexpr int NP_ERROR_STREAM_BUFFER_TOO_SMALL = static_cast<int>(0x80559E0D);
+constexpr std::size_t NP_MEMORY_STREAM_SIZE = 0x20;
+
+void* const NpMemoryStreamReaderVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamReaderD1Ev), reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamReaderD0Ev),
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm),
+};
+
+void* const NpMemoryStreamWriterVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamWriterD1Ev), reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamWriterD0Ev),
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm),
+};
+
 void* AllocateObject(std::size_t size, NpAllocator* allocator) {
     auto* header = static_cast<std::uint8_t*>(allocator->allocate(size + NP_OBJECT_HEADER_SIZE, allocator->context));
     if (header == nullptr) return nullptr;
@@ -862,6 +877,65 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
     std::putchar('\n');
 }
 
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size) {
+    self->vtable = &NpMemoryStreamReaderVtable[2];
+    self->data = data;
+    self->size = size;
+    self->position = 0;
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderC2EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size) {
+    _ZN3sce2np18MemoryStreamReaderC1EPKvm(self, data, size);
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD1Ev(NpMemoryStreamReader*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD2Ev(NpMemoryStreamReader*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD0Ev(NpMemoryStreamReader* self) {
+    _ZdlPvm_nid_postfix(self, NP_MEMORY_STREAM_SIZE);
+}
+
+int APS5_VABI _ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(NpMemoryStreamReader* self, void*, void* out, std::size_t size, std::size_t* read) {
+    std::size_t count = 0;
+    if (self->position < self->size) {
+        count = std::min(size, self->size - self->position);
+        std::memcpy(out, static_cast<const std::uint8_t*>(self->data) + self->position, count);
+        self->position += count;
+    }
+    *read = count;
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterC1EPvm(NpMemoryStreamWriter* self, void* data, std::size_t size) {
+    self->vtable = &NpMemoryStreamWriterVtable[2];
+    self->data = data;
+    self->size = size;
+    self->position = 0;
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterC2EPvm(NpMemoryStreamWriter* self, void* data, std::size_t size) {
+    _ZN3sce2np18MemoryStreamWriterC1EPvm(self, data, size);
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD1Ev(NpMemoryStreamWriter*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD2Ev(NpMemoryStreamWriter*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(NpMemoryStreamWriter* self) {
+    _ZdlPvm_nid_postfix(self, NP_MEMORY_STREAM_SIZE);
+}
+
+int APS5_VABI _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(NpMemoryStreamWriter* self, void*, const void* data, std::size_t size, std::size_t* written) {
+    if (self->data != nullptr) {
+        const std::size_t room = self->size == 0 ? 0 : self->size - self->position;
+        if (room < size) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
+        std::memcpy(static_cast<std::uint8_t*>(self->data) + self->position, data, size);
+    }
+    self->position += size;
+    if (written != nullptr) *written = size;
+    return 0;
+}
 
 void APS5_VABI _ZN3sce2np9NpTitleIdC1Ev(NpTitleIdObject* self) {
     self->vtable = &NpTitleIdVtable[2];

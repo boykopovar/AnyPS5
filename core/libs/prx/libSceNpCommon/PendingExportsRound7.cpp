@@ -41,11 +41,6 @@ int APS5_VABI _ZN3sce2np14JsonDocBuilderC2ERKNS0_9JsonValueE(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np18MemoryStreamReaderD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np7RingBuf4dtorEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -107,11 +102,6 @@ int APS5_VABI _ZN3sce2np18HttpConnectionPool13InvalidateAllEv(void) {
 }
 
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient21DeleteRequestForAsyncEii(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -536,11 +526,6 @@ int APS5_VABI _ZN3sce2np9SemaphoreD2Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np9EventFlagD2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -552,11 +537,6 @@ int APS5_VABI _ZN3sce2np9RefObjectD1Ev(void) {
 }
 
 int APS5_VABI _sceNpAllocatorMalloc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -592,11 +572,6 @@ int APS5_VABI _ZN3sce2np15CancelableScope5BeginEPNS0_6HandleEPKciS5_(void) {
 }
 
 int APS5_VABI _ZNK3sce2np10EventQueue6IsInitEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np18MemoryStreamWriterD1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -697,11 +672,6 @@ int APS5_VABI _ZN3sce2np10EventQueueD0Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2np8JsonNull5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np18MemoryStreamWriterD2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
