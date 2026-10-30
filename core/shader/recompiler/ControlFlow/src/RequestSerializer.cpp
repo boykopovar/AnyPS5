@@ -6,8 +6,9 @@ namespace ShaderRecompiler {
 
 namespace {
 
-constexpr std::uint32_t TargetBlendFlag = 0x10000u;
-constexpr std::uint32_t FurtherMergeShift = 17u;
+constexpr std::uint32_t TargetMergeFlagShift = 16u;
+constexpr std::uint32_t TargetBlendFlag = 1u;
+constexpr std::uint32_t FurtherMergeShift = 1u;
 constexpr std::uint32_t FurtherMergeMask = 7u << FurtherMergeShift;
 
 constexpr char kBase64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -366,22 +367,29 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
     for (std::uint32_t index = 0; index <= further; ++index) {
         const auto& merge = info.targetMerges.empty() ? TargetMerge{} : info.targetMerges[index];
         writer.WriteU8(merge.target);
-        writer.WriteU32(static_cast<std::uint32_t>(merge.mask) | (merge.blend.enabled ? TargetBlendFlag : 0u) | (index == 0u ? further << FurtherMergeShift : 0u));
+        writer.WriteU32(merge.mask);
         writer.WriteU8(merge.samples);
         for (const std::uint32_t word : merge.descriptor) writer.WriteU32(word);
         writer.WriteBool(merge.depthStencilWrites);
         writer.WriteBool(merge.depthStencilTests);
-        if (!merge.blend.enabled) continue;
-        const auto& blend = merge.blend;
-        writer.WriteBool(blend.snorm);
-        writer.WriteU8(blend.colorSource);
-        writer.WriteU8(blend.colorDestination);
-        writer.WriteU8(blend.colorOperation);
-        writer.WriteU8(blend.alphaSource);
-        writer.WriteU8(blend.alphaDestination);
-        writer.WriteU8(blend.alphaOperation);
-        writer.WriteU8(blend.writeMask);
-        for (const std::uint32_t word : blend.constants) writer.WriteU32(word);
+        writer.WriteU8(static_cast<std::uint8_t>((merge.blend.enabled ? TargetBlendFlag : 0u) | (index == 0u ? further << FurtherMergeShift : 0u)));
+        if (merge.blend.enabled) {
+            const auto& blend = merge.blend;
+            writer.WriteBool(blend.snorm);
+            writer.WriteU8(blend.colorSource);
+            writer.WriteU8(blend.colorDestination);
+            writer.WriteU8(blend.colorOperation);
+            writer.WriteU8(blend.alphaSource);
+            writer.WriteU8(blend.alphaDestination);
+            writer.WriteU8(blend.alphaOperation);
+            writer.WriteU8(blend.writeMask);
+            for (const std::uint32_t word : blend.constants) writer.WriteU32(word);
+        }
+        writer.WriteU8(static_cast<std::uint8_t>(merge.packing));
+        writer.WriteU32(merge.blendControl);
+        writer.WriteBool(merge.layered);
+        writer.WriteU32(merge.firstSlice);
+        writer.WriteU32(merge.lastSlice);
     }
     if (info.depthExportEnable) {
         writer.WriteU32(std::bit_cast<std::uint32_t>(info.depthExportMin));
@@ -467,14 +475,15 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
         TargetMerge merge;
         merge.target = reader.ReadU8();
         const auto word = reader.ReadU32();
-        if ((word & ~(0xffffu | TargetBlendFlag | (index == 0u ? FurtherMergeMask : 0u))) != 0u) throw std::runtime_error("invalid recompile request target merge mask");
-        count += (word & FurtherMergeMask) >> FurtherMergeShift;
-        merge.mask = static_cast<std::uint16_t>(word & 0xffffu);
+        merge.mask = version < 52u ? word & 0xffffu : word;
         merge.samples = reader.ReadU8();
         for (std::uint32_t& descriptor : merge.descriptor) descriptor = reader.ReadU32();
         merge.depthStencilWrites = reader.ReadBool();
         merge.depthStencilTests = reader.ReadBool();
-        if ((word & TargetBlendFlag) != 0u) {
+        const std::uint32_t flags = version < 52u ? word >> TargetMergeFlagShift : reader.ReadU8();
+        if ((flags & ~(TargetBlendFlag | (index == 0u ? FurtherMergeMask : 0u))) != 0u) throw std::runtime_error("invalid recompile request target merge mask");
+        count += (flags & FurtherMergeMask) >> FurtherMergeShift;
+        if ((flags & TargetBlendFlag) != 0u) {
             auto& blend = merge.blend;
             blend.enabled = true;
             blend.snorm = reader.ReadBool();
@@ -486,6 +495,15 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
             blend.alphaOperation = reader.ReadU8();
             blend.writeMask = reader.ReadU8();
             for (std::uint32_t& constant : blend.constants) constant = reader.ReadU32();
+        }
+        if (version >= 52u) {
+            merge.packing = readColorExportPacking(reader);
+            merge.blendControl = reader.ReadU32();
+            merge.layered = reader.ReadBool();
+            merge.firstSlice = reader.ReadU32();
+            merge.lastSlice = reader.ReadU32();
+        } else if (merge.mask != 0u && !merge.blend.enabled) {
+            merge.packing = ColorExportPacking::Unorm4_4_4_4;
         }
         if (merge.mask != 0u) info.targetMerges.push_back(merge);
         else if (index != 0u || count != 1u) throw std::runtime_error("invalid recompile request target merge mask");
@@ -898,7 +916,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(51u);
+    writer.WriteU32(52u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -949,7 +967,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 51u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 52u || version == 50u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);

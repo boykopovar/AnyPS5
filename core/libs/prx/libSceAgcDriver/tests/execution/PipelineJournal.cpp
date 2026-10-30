@@ -36,6 +36,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <random>
 #include <span>
 #include <string>
@@ -342,6 +343,41 @@ void JournalTests() {
         Require(repeated.journal.recordedGraphics == 1 && repeated.journal.recordedModules == 3, "a repeated draw recorded its pipeline again");
     }
     Require(std::filesystem::exists(journalPath) && std::filesystem::file_size(journalPath) > 0, "the journal file was not written");
+    {
+        std::ifstream input(journalPath, std::ios::binary);
+        Require(input.is_open(), "the recorded journal could not be opened");
+        const std::vector<char> recorded((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+        input.close();
+        Require(recorded.size() == std::filesystem::file_size(journalPath) && recorded.size() >= 2u * sizeof(std::uint32_t), "the recorded journal could not be read with its format word");
+        std::uint32_t format = 0;
+        std::memcpy(&format, recorded.data() + sizeof(std::uint32_t), sizeof(format));
+        Require(format == 14u, "the recorded journal did not use format 14");
+        const auto restore = [&] {
+            std::ofstream output(journalPath, std::ios::binary | std::ios::trunc);
+            output.write(recorded.data(), static_cast<std::streamsize>(recorded.size()));
+            output.flush();
+            Require(output.good(), "the recorded journal could not be restored");
+        };
+        try {
+            {
+                std::fstream output(journalPath, std::ios::binary | std::ios::in | std::ios::out);
+                const std::uint32_t previousFormat = 13u;
+                output.seekp(sizeof(std::uint32_t));
+                output.write(reinterpret_cast<const char*>(&previousFormat), sizeof(previousFormat));
+                output.flush();
+                Require(output.good(), "the journal format word could not be changed to 13");
+            }
+            const auto device = OpenVulkanTestDevice();
+            Require(device != nullptr, "the device for the previous journal format could not be opened");
+            device->WaitForPipelineJournalReplay();
+            const auto rejected = Snapshot();
+            Require(rejected.journal.loadedRecipes == 0 && rejected.journal.loadedModules == 0 && rejected.journal.replayedGraphics == 0 && rejected.journal.replayedCompute == 0, "a format 13 journal loaded or replayed format 14 records");
+        } catch (...) {
+            restore();
+            throw;
+        }
+        restore();
+    }
     {
         const auto device = OpenVulkanTestDevice();
         Require(device != nullptr, "the second device could not be opened");
