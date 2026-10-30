@@ -584,6 +584,15 @@ private:
 
 using Kind = Recorder::ReadKind;
 
+template <typename TDescribe>
+void WaitUntilSignaled(TDescribe describe, const char* what) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    for (auto info = describe(); !(info.has_value() && info->signaled); info = describe()) {
+        Require(info.has_value() && std::chrono::steady_clock::now() < deadline, what);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
 void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     context.nullDescriptors = device.NullDescriptors();
@@ -866,6 +875,7 @@ void readTrackingTests(const Device& device, Recorder& recorder) {
     // An empty batch completes at once: once its fence signaled, its read is no reader any more,
     // although the batch stays in flight until it is reaped.
     device.WaitQueue();
+    WaitUntilSignaled([&] { return recorder.DescribePendingRead(0x10000, 4); }, "the read's batch did not signal after the queue went idle");
     Require(!recorder.PendingReadOverlaps(0x10000, 4), "a signaled batch's read still refuses");
     Require(!recorder.Idle(), "an overlap query reaped the batch");
     const auto signaled = recorder.DescribePendingRead(0x10000, 4);
@@ -1226,6 +1236,7 @@ void writeSettledTests(const Device& device, Recorder& recorder) {
     Require(recorder.PendingWriteOverlaps(0x50000, 0x100) && !recorder.PendingWriteSettled(0x50000, 0x100) && recorder.PendingWriteSettled(0x50100, 0x100), "an open batch's write counts as settled");
     recorder.Submit();
     device.WaitQueue();
+    WaitUntilSignaled([&] { return recorder.DescribePendingWrite(0x50000, 0x100); }, "the write's batch did not signal after the queue went idle");
     Require(recorder.PendingWriteOverlaps(0x50000, 0x100) && recorder.PendingWriteSettled(0x50000, 0x100), "a signaled batch's write is not settled");
     recorder.NotePendingWrite(0x50080, 0x10);
     Require(!recorder.PendingWriteSettled(0x50000, 0x100) && recorder.PendingWriteSettled(0x50000, 0x80), "a later open write over the range still counts as settled");
@@ -3676,6 +3687,7 @@ void resourceReadTests(const Device& device, Recorder& recorder) {
         Require(info.has_value() && info->kind == Kind::DispatchElement && info->open, "the build's read has the wrong kind");
         recorder.Submit();
         device.WaitQueue();
+        WaitUntilSignaled([&] { return recorder.DescribePendingRead(element, 16); }, "the build's read batch did not signal after the queue went idle");
         Require(!recorder.PendingReadOverlaps(element, 16), "the build's read refuses after its batch ran");
         recorder.Sync();
     }
@@ -11112,6 +11124,40 @@ int pipelineCacheFileTests(const Device& device) {
     {
         PipelineCache reloaded(context, properties);
         Require(holds(reloaded.Handle(), 1), "an invalid cache file was not replaced by the saving object's pipelines");
+    }
+    {
+        PipelineCache restoring(context, properties);
+        Require(holds(restoring.Handle(), 1), "the valid cache file lost a pipeline");
+        {
+            std::ofstream corrupt(path, std::ios::binary | std::ios::trunc);
+            corrupt << "corrupted pipeline cache header with 24 bytes";
+        }
+        PipelineCache invalidHeader(context, properties, false);
+        Require(!PipelineCacheTestAccess::HasHeader(invalidHeader), "an invalid cache header was accepted as present");
+        restoring.SaveNow();
+    }
+    {
+        PipelineCache reloaded(context, properties);
+        Require(holds(reloaded.Handle(), 1), "an invalid cache header was not replaced by the unchanged cache object");
+    }
+    {
+#ifdef _WIN32
+        _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
+#else
+        setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
+#endif
+        PipelineCache emptyPath(context, properties);
+        build(emptyPath.Handle(), 0);
+        StderrCapture capture;
+        emptyPath.SaveNow();
+        const auto output = capture.Finish();
+        Require(output.find("cannot write") == std::string::npos, "an empty cache path attempted to write to disk");
+        Require(holds(emptyPath.Handle(), 0), "an empty cache path failed to retain in-memory pipelines");
+#ifdef _WIN32
+        _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
+#else
+        setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
+#endif
     }
     {
         PipelineCache busy(context, properties);

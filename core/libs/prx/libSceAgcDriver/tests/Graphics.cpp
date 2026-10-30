@@ -1060,18 +1060,13 @@ void MsaaEnableSingleSampleTests() {
     queue = enabled();
     queue.context[0x313] = 0x6001;
     refused(queue, "MSAA_ENABLE on a single-sample target with conservative rasterization");
-    for (const auto primitive : {2u, 3u}) {
-        queue = enabled();
-        queue.userConfig[0x242] = primitive;
-        refused(queue, "primitives other than triangles and rectangles");
-    }
     queue = enabled();
     queue.userConfig[0x242] = 1;
-    Require(DrawRejection(queue, false).find("primitives other than triangles and rectangles") != std::string::npos, "the precheck accepted MSAA_ENABLE on a single-sample target for points");
-    for (const auto primitive : {5u, 6u, 7u, 17u, 21u}) {
+    Require(DrawRejection(queue, false).find("primitives other than triangles, lines and rectangles") != std::string::npos, "the precheck accepted MSAA_ENABLE on a single-sample target for points");
+    for (const auto primitive : {2u, 3u, 5u, 6u, 7u, 17u, 21u}) {
         queue = enabled();
         queue.userConfig[0x242] = primitive;
-        Require(DecodeState(queue).samples == 1 && DrawRejection(queue, false).empty(), "MSAA_ENABLE on a single-sample target was refused for a filled triangle or rectangle primitive");
+        Require(DecodeState(queue).samples == 1 && DrawRejection(queue, false).empty(), "MSAA_ENABLE on a single-sample target was refused for a triangle, line or rectangle primitive");
     }
     queue = enabled();
     queue.context[0x292] = 7;
@@ -12654,7 +12649,7 @@ int main(int argc, char** argv) {
             Require(mock.live == 0, "the heap mirror run unwatch test leaked Vulkan objects");
             return 0;
         }
-        if (argc == 2 && (std::string_view(argv[1]) == "--address-copy-cap" || std::string_view(argv[1]) == "--address-copy-cap-remembered")) {
+        if (argc == 2 && (std::string_view(argv[1]) == "--address-copy-cap" || std::string_view(argv[1]) == "--address-copy-cap-remembered" || std::string_view(argv[1]) == "--address-copy-cap-mirror" || std::string_view(argv[1]) == "--unwatched-mirror-import")) {
 #ifdef _WIN32
             _putenv_s("APS5_ADDRESS_COPY_MAX_MIB", "1");
 #else
@@ -12665,7 +12660,7 @@ int main(int argc, char** argv) {
                 auto context = mockContext();
                 context.bufferDeviceAddress = true;
                 context.limits.maxStorageBufferRange = 1u << 27;
-                RunAddressCopyCapTests(context, {
+                const BdaTestAccess access{
                     [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); },
                     {},
                     [](VkDeviceAddress address) {
@@ -12675,7 +12670,10 @@ int main(int argc, char** argv) {
                     },
                     {},
                     {}
-                }, std::string_view(argv[1]) == "--address-copy-cap-remembered", frames);
+                };
+                if (std::string_view(argv[1]) == "--address-copy-cap-mirror") RunAddressCopyCapMirrorTests(context, access, frames);
+                else if (std::string_view(argv[1]) == "--unwatched-mirror-import") RunUnwatchedMirrorImportTests(context, access, frames);
+                else RunAddressCopyCapTests(context, access, std::string_view(argv[1]) == "--address-copy-cap-remembered", frames);
                 Require(mock.live == 0, "the address copy cap test leaked Vulkan objects");
             }
             return 0;

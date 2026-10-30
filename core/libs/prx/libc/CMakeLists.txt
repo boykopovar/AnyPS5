@@ -128,7 +128,7 @@ target_include_directories(libc PRIVATE
 target_link_libraries(libc PRIVATE zarchive)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(libc PRIVATE -ffp-contract=off)
+    target_compile_options(libc PRIVATE -ffp-contract=off $<$<CXX_COMPILER_ID:Clang,AppleClang>:-fno-slp-vectorize>)
     if(BUILD_TESTING AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND NOT MSVC)
         add_test(NAME libc_floating_point_contraction
                 COMMAND ${CMAKE_COMMAND} -DCOMPILER=${CMAKE_CXX_COMPILER}
@@ -1106,6 +1106,15 @@ if(BUILD_TESTING)
     add_test(NAME guest_underflow_error COMMAND guest_underflow_error_tests)
     if(WIN32)
         set_tests_properties(guest_underflow_error PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_throw_bad_array_new_length_tests ${LIBS_INCLUDE_DIR}/tests/GuestThrowBadArrayNewLength.cpp)
+    target_include_directories(guest_throw_bad_array_new_length_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_throw_bad_array_new_length_tests PRIVATE libc)
+    configure_windows_unwind(guest_throw_bad_array_new_length_tests)
+    add_test(NAME guest_throw_bad_array_new_length COMMAND guest_throw_bad_array_new_length_tests)
+    if(WIN32)
+        set_tests_properties(guest_throw_bad_array_new_length PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     if(WIN32)

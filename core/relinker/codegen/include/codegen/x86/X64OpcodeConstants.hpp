@@ -176,6 +176,7 @@ inline constexpr std::uint8_t TwoByte3DNow = 0x0F;
 inline constexpr std::uint8_t TwoByteMovCrDrMin = 0x20;
 inline constexpr std::uint8_t TwoByteMovCrDrMax = 0x23;
 inline constexpr std::uint8_t TwoBytePopcnt = 0xB8;
+inline constexpr std::uint8_t TwoByteUd0 = 0xFF;
 inline constexpr std::uint8_t TwoByteUd1 = 0xB9;
 inline constexpr std::uint8_t TwoByteBts = 0xAB;
 inline constexpr std::uint8_t TwoByteBtc = 0xBB;

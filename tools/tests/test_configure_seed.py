@@ -283,6 +283,24 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         self.assertEqual(configure_seed.checks(seeded)["HAVE FEATURE"][0], "1")
         self.assertNotIn("HAVE:INTERNAL=", seeded.read_text(encoding="utf-8"))
 
+    def test_check_names_with_colons_round_trip_through_cmake(self):
+        source = self.root / "colon-check-source"
+        source.mkdir(exist_ok=True)
+        (source / "CMakeLists.txt").write_text(
+            'cmake_minimum_required(VERSION 3.20)\nproject(colon_check C)\ninclude(CheckCSourceCompiles)\n'
+            'check_c_source_compiles("int main(void) { return 0; }" "MINI_COLON:CHECK")\n', encoding="utf-8")
+        fresh = subprocess.run(["cmake", "-S", str(source), "-B", str(self.root / "colon-fresh"), "-G", "Ninja",
+                                f"-DCMAKE_C_COMPILER={self.compiler}"], check=True, capture_output=True, text=True).stdout
+        self.assertIn("Performing Test MINI_COLON:CHECK", fresh)
+        cache = self.root / "colon-fresh" / "CMakeCache.txt"
+        self.assertIn('"MINI_COLON:CHECK":INTERNAL=1', cache.read_text(encoding="utf-8"))
+        seeded = subprocess.run(["cmake", "-C", str(self.seed(cache, "colon.cmake")), "-S", str(source),
+                                 "-B", str(self.root / "colon-seeded"), "-G", "Ninja",
+                                 f"-DCMAKE_C_COMPILER={self.compiler}"], check=True, capture_output=True, text=True).stdout
+        self.assertNotIn("Performing Test MINI_COLON:CHECK", seeded)
+        self.assertEqual(configure_seed.checks(self.root / "colon-seeded" / "CMakeCache.txt"),
+                         configure_seed.checks(cache))
+
     def test_seeded_configure_runs_no_check_and_gets_the_same_results(self):
         self.assertRegex(self.fresh, r"Looking for|Performing Test|Check size of")
         output = self.configure("seeded", "-C", str(self.seed(self.root / "fresh" / "CMakeCache.txt", "seed.cmake")))
@@ -411,6 +429,19 @@ class ChecksParsingTests(unittest.TestCase):
             for name, (value, help_text) in checks.items():
                 self.assertEqual((second / f"{name}.help").read_text(encoding="utf-8"), help_text)
                 self.assertEqual((second / f"{name}.value").read_text(encoding="utf-8"), value)
+
+    def test_quoted_check_names_are_parsed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "CMakeCache.txt"
+            cache.write_text('//Test MINI_COLON\n"MINI_COLON:CHECK":INTERNAL=1\n'
+                             '//Test MINI_COLON_QUOTE\n"MINI_"X":COLON":INTERNAL=0\n'
+                             '//An ordinary entry\n"ORDINARY:COLON":INTERNAL=1\n'
+                             '"MALFORMED:COLON":INTERNAL=1\n'
+                             '//Test AMBIGUOUS\n"A:B":INTERNAL=abc":INTERNAL=1\n', encoding="utf-8")
+            self.assertEqual(configure_seed.checks(cache), {
+                "MINI_COLON:CHECK": ("1", "Test MINI_COLON"),
+                'MINI_"X":COLON': ("0", "Test MINI_COLON_QUOTE"),
+            })
 
     def test_checks_reads_cache_with_utf8_bom(self):
         with tempfile.TemporaryDirectory() as directory:

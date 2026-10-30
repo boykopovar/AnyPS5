@@ -8,6 +8,7 @@ import tempfile
 
 from test_guest_intel_trampolines import main_fixture
 from test_guest_module_args import args_module, load_and_record
+from test_guest_module_dir import pe_export_names
 from test_guest_module_directories import module_with_symbol, needed_libraries
 from test_guest_needed_modules import executable_with_needed, module_with_needed
 from test_guest_symbol_names import DYNAMIC, GOT, RELOCATIONS, importing_executable
@@ -113,6 +114,15 @@ def main():
                     dependency = f"@executable_path/app0/Media/Plugins/{name}.prx.guest.prx"
                     expected = root == "imported" and name == "provider"
                     assert (dependency in needed) == expected, (root, name, needed)
+            windows = case / "windows"
+            windows.mkdir()
+            target = windows / "output.exe"
+            result = subprocess.run([str(relinker), "--windows", "--skip-syscall-check", "--module-dir", "Media/Plugins", str(source), str(target)],
+                                    capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, (root, result.stdout, result.stderr)
+            for name in ("plugin", "consumer", "provider"):
+                exports = pe_export_names((windows / "app0" / "Media" / "Plugins" / f"{name}.prx.guest.prx").read_bytes())
+                assert ("__aps5_guest_initialize" in exports) == (root != "bundled"), (root, name, exports)
             if sys.platform == "linux" and os.uname().machine == "x86_64":
                 libraries = case / "libs"
                 libraries.mkdir()

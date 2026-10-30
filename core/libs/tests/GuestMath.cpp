@@ -130,6 +130,50 @@ static void CheckNearbyint() {
     Require(nearbyint_nid_postfix(INFINITY) == INFINITY && nearbyint_nid_postfix(-INFINITY) == -INFINITY);
     Require(std::isnan(nearbyint_nid_postfix(NAN)));
     Require(std::fetestexcept(FE_INEXACT) == 0);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    std::uint16_t savedControl;
+    asm volatile("fnstcw %0" : "=m"(savedControl));
+    const unsigned savedMxcsr = _mm_getcsr();
+    Require(std::fesetround(FE_UPWARD) == 0);
+    _mm_setcsr((_mm_getcsr() & ~0x6000u) | 0x0000u);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(nearbyintf_nid_postfix(2.5f) == 2.0f);
+    Require(std::fetestexcept(FE_INEXACT) != 0);
+    Require(std::fesetround(FE_TONEAREST) == 0);
+    _mm_setcsr((_mm_getcsr() & ~0x6000u) | 0x4000u);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(nearbyintf_nid_postfix(2.5f) == 3.0f);
+    Require(std::fetestexcept(FE_INEXACT) != 0);
+    struct RoundingCase {
+        unsigned mode;
+        std::uint32_t positiveHalf;
+        std::uint32_t negativeHalf;
+        std::uint32_t positiveTwoHalf;
+        std::uint32_t negativeTwoHalf;
+    };
+    struct RoundingValue {
+        float input;
+        std::uint32_t expected;
+    };
+    for (const auto& test : {RoundingCase{0x0000u, 0x00000000u, 0x80000000u, 0x40000000u, 0xc0000000u},
+                             RoundingCase{0x2000u, 0x00000000u, 0xbf800000u, 0x40000000u, 0xc0400000u},
+                             RoundingCase{0x4000u, 0x3f800000u, 0x80000000u, 0x40400000u, 0xc0000000u},
+                             RoundingCase{0x6000u, 0x00000000u, 0x80000000u, 0x40000000u, 0xc0000000u}}) {
+        Require(std::fesetround(FE_TONEAREST) == 0);
+        _mm_setcsr((_mm_getcsr() & ~0x6000u) | test.mode);
+        for (const auto& value : {RoundingValue{0.5f, test.positiveHalf}, RoundingValue{-0.5f, test.negativeHalf},
+                                  RoundingValue{2.5f, test.positiveTwoHalf}, RoundingValue{-2.5f, test.negativeTwoHalf}}) {
+            std::feclearexcept(FE_ALL_EXCEPT);
+            Require(std::bit_cast<std::uint32_t>(nearbyintf_nid_postfix(value.input)) == value.expected);
+            Require(std::fetestexcept(FE_INEXACT) != 0);
+        }
+        for (const float zeroValue : {0.0f, -0.0f}) {
+            std::feclearexcept(FE_ALL_EXCEPT);
+            Require(std::bit_cast<std::uint32_t>(nearbyintf_nid_postfix(zeroValue)) == std::bit_cast<std::uint32_t>(zeroValue));
+        }
+    }
+    asm volatile("fldcw %0" :: "m"(savedControl));
+    _mm_setcsr(savedMxcsr);
 }
 
 static std::uint16_t X87ControlWord() {
@@ -490,6 +534,28 @@ static void CheckFloatUnderflowErrno() {
     errno = 0;
 }
 
+static void CheckLdexpfErrno() {
+    constexpr struct {
+        std::uint32_t input;
+        int exponent;
+        std::uint32_t expected;
+    } cases[] = {
+        {0x3f800000u, 200, 0x7f800000u},
+        {0x101e8e30u, 1262, 0x7f800000u},
+        {0xbf800000u, 128, 0xff800000u},
+        {0x3f800000u, -200, 0x00000000u},
+        {0x3f800000u, -2000, 0x00000000u},
+        {0x3f800000u, -149, 0x00000001u},
+        {0x3fc00000u, -149, 0x00000002u},
+        {0x00000200u, 5, 0x00004000u},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(ldexpf_nid_postfix(std::bit_cast<float>(item.input), item.exponent)) == item.expected);
+        Require(errno == 1234);
+    }
+}
+
 static void CheckAtanfConsoleBits() {
     constexpr std::uint32_t cases[][2] = {
         {0x3e80000bu, 0x3e7adbc5u}, {0x3e0007c9u, 0x3dfebd2au}, {0xbdccce4cu, 0xbdcc2090u},
@@ -708,6 +774,39 @@ static void CheckFmodfErrno() {
     if (*__error_nid_postfix() != 73 || std::fetestexcept(FE_DIVBYZERO) == 0) {
         std::fprintf(stderr, "Guest fmodf dropped the floating-point environment\n");
         std::abort();
+    }
+}
+
+static void CheckScalbnErrno() {
+    constexpr struct {
+        int exponent;
+        std::uint64_t expected;
+    } doubles[] = {
+        {2000, 0x7ff0000000000000ull},
+        {-2000, 0x0000000000000000ull},
+        {-1074, 0x0000000000000001ull},
+        {-1075, 0x0000000000000000ull},
+        {200, 0x4c70000000000000ull},
+    };
+    for (const auto& item : doubles) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(scalbn_nid_postfix(1.0, item.exponent)) == item.expected);
+        Require(errno == 1234);
+    }
+    constexpr struct {
+        int exponent;
+        std::uint32_t expected;
+    } floats[] = {
+        {2000, 0x7f800000u},
+        {200, 0x7f800000u},
+        {-200, 0x00000000u},
+        {-2000, 0x00000000u},
+        {10, 0x44800000u},
+    };
+    for (const auto& item : floats) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(scalbnf_nid_postfix(1.0f, item.exponent)) == item.expected);
+        Require(errno == 1234);
     }
 }
 
@@ -1092,7 +1191,7 @@ static void CheckNextafterEnvironment(T (APS5_VABI *next)(T, T), UInt sign, UInt
             _mm_setcsr(control);
             const auto result = std::bit_cast<UInt>(next(std::bit_cast<T>(item.x), std::bit_cast<T>(item.y)));
             const auto flags = _mm_getcsr() & 0x3fu;
-            const int exceptions = std::fetestexcept(FE_ALL_EXCEPT);
+            const int exceptions = std::fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
             const int error = errno;
             const auto expectedFlags = daz ? item.dazFlags : item.normalFlags;
             Require(result == (daz ? item.dazResult : item.normalResult));
@@ -2494,6 +2593,7 @@ int main() {
     CheckNearbyint();
     CheckFegetenv();
     CheckLongDouble();
+    CheckScalbnErrno();
     CheckNearbyintl();
     CheckCbrtConsoleBits();
     CheckLogbConsoleBits();
@@ -2647,6 +2747,7 @@ int main() {
     CheckAtanfConsoleBits();
     CheckAtan2fConsoleBits();
     CheckFloatUnderflowErrno();
+    CheckLdexpfErrno();
     CheckFmodErrno();
     CheckFmodfErrno();
     CheckDoubleClassification();
