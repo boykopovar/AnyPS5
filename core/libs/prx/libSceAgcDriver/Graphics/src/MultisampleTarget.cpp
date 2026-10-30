@@ -891,8 +891,15 @@ void stampUse(TargetUse& use, std::uint64_t address, std::uint64_t bytes) {
     claimOverlapping(address, bytes, &use);
 }
 
+void collectFmaskWrites(const ColorTarget& target) {
+    if (target.eqaaFragments == 0) return;
+    const auto bytes = static_cast<std::size_t>(fmaskBytes(target));
+    if (GuestMemory::Watched(target.fmaskAddress, bytes)) static_cast<void>(GuestMemory::CollectWrites(target.fmaskAddress, bytes));
+}
+
 void guard(const Context& context, const ColorTarget& target, const std::shared_ptr<std::atomic<bool>>& active, const std::shared_ptr<std::atomic<bool>>& metadataValid, const std::shared_ptr<TargetUse>& use) {
     const auto bytes = guardedColorBytes(target);
+    collectFmaskWrites(target);
     stampUse(*use, target.address, bytes);
     std::unique_lock lock(guardedMutex());
     guarded().push_back({context.device, target.address, bytes, target.samples, active, nullptr, use});
@@ -926,6 +933,7 @@ bool holdHostOnly(const MultisampleTarget& target) {
         if (!target.active->load(std::memory_order_acquire)) return false;
         target.use->hostOnly.store(true, std::memory_order_release);
     }
+    collectFmaskWrites(target.target);
     stampUse(*target.use, target.target.address, guardedColorBytes(target.target));
     return true;
 }
@@ -969,6 +977,7 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested)
         target->Keep();
         target->SettleStorageWrites();
         target->ApplyFastClear(use);
+        collectFmaskWrites(target->target);
         stampUse(*target->use, target->target.address, guardedColorBytes(target->target));
         return *target;
     }
