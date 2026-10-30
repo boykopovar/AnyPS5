@@ -83,6 +83,38 @@ int APS5_VABI sceAppInstUtilGetPrimaryAppSlot(const char* titleId, void* slot) {
     return 0;
 }
 
+int APS5_VABI sceAppInstUtilCheckLatestPatch2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilAppGetIrremovableAppList2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilGetAddons2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilInstallPatch2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilAppUnInstall3() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilGetPatchInstallStatus2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilAppRequestMoveApps2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppInstUtilGetContentSize3() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceAppInstUtilAppGetAppInstallStatusByAppInfo(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
