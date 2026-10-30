@@ -49,6 +49,7 @@ constexpr std::uint32_t ScissorWidth = 128;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t Unorm8888Info = 10u << 2u;
 constexpr std::uint32_t Snorm8888Info = (10u << 2u) | (1u << 8u);
+constexpr std::uint32_t Unorm88Info = 3u << 2u;
 constexpr std::uint32_t TiledAttrib3 = 0x4dc6c000u;
 constexpr std::uint32_t Float32Export = 9;
 constexpr std::uint32_t PositionInputs = 0x300u;
@@ -91,6 +92,22 @@ std::span<const std::uint32_t> DepthAsXProgram(std::array<float, 4> rgba) {
     }
     code[at++] = 0xf800180fu;
     code[at++] = 0x07060504u;
+    code[at++] = 0xbf810000u;
+    return std::span<const std::uint32_t>(code.data(), at);
+}
+
+std::span<const std::uint32_t> TwoTargetProgram(std::array<float, 4> first, std::array<float, 4> second) {
+    Require(programCount < Programs.size(), "too many test programs");
+    auto& code = Programs[programCount++];
+    std::size_t at = 0;
+    for (std::uint32_t vgpr = 0; vgpr < 8u; ++vgpr) {
+        code[at++] = 0x7e0002ffu | ((4u + vgpr) << 17u);
+        code[at++] = std::bit_cast<std::uint32_t>(vgpr < 4u ? first[vgpr] : second[vgpr - 4u]);
+    }
+    code[at++] = 0xf800000fu;
+    code[at++] = 0x07060504u;
+    code[at++] = 0xf800181fu;
+    code[at++] = 0x0b0a0908u;
     code[at++] = 0xbf810000u;
     return std::span<const std::uint32_t>(code.data(), at);
 }
@@ -180,7 +197,12 @@ struct BlendCase {
 };
 
 
-void Draw(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ColorTarget color, const BlendCase& blendCase, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, const DrawSetup& setup = {}) {
+struct Target {
+    AgcDriver::Graphics::ColorTarget color;
+    BlendCase blend;
+};
+
+void Draw(AgcDriver::VulkanDevice& device, std::span<const Target> targets, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, const DrawSetup& setup = {}) {
     auto target = device.Target();
     std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
     if (setup.withoutInterlock) std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityFragmentShaderPixelInterlockEXT));
@@ -201,11 +223,25 @@ void Draw(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ColorTarget colo
     const auto vertexResult = ShaderRecompiler::Recompile(vertex);
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
 
-    color.partialWriteMask = AgcDriver::Graphics::UnclampedBlendMask;
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, waveSize, waveSize, std::nullopt, std::nullopt};
-    state.colors = {color};
-    state.color = color;
+    for (const auto& entry : targets) {
+        auto color = entry.color;
+        color.partialWriteMask = AgcDriver::Graphics::UnclampedBlendMask;
+        state.colors.push_back(color);
+        VkPipelineColorBlendAttachmentState blend{};
+        blend.blendEnable = VK_TRUE;
+        blend.srcColorBlendFactor = entry.blend.colorSource;
+        blend.dstColorBlendFactor = entry.blend.colorDestination;
+        blend.colorBlendOp = entry.blend.colorOperation;
+        blend.srcAlphaBlendFactor = entry.blend.alphaSource;
+        blend.dstAlphaBlendFactor = entry.blend.alphaDestination;
+        blend.alphaBlendOp = entry.blend.alphaOperation;
+        blend.colorWriteMask = entry.blend.writeMask;
+        state.blends.resize(std::max<std::size_t>(state.blends.size(), color.exportIndex + 1u));
+        state.blends[color.exportIndex] = blend;
+    }
+    state.color = state.colors.front();
     state.hasColorTarget = true;
     state.renderExtent = {Width, Height};
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -214,18 +250,8 @@ void Draw(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ColorTarget colo
     state.scissor = {{0, 0}, {ScissorWidth, Height}};
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    VkPipelineColorBlendAttachmentState blend{};
-    blend.blendEnable = VK_TRUE;
-    blend.srcColorBlendFactor = blendCase.colorSource;
-    blend.dstColorBlendFactor = blendCase.colorDestination;
-    blend.colorBlendOp = blendCase.colorOperation;
-    blend.srcAlphaBlendFactor = blendCase.alphaSource;
-    blend.dstAlphaBlendFactor = blendCase.alphaDestination;
-    blend.alphaBlendOp = blendCase.alphaOperation;
-    blend.colorWriteMask = blendCase.writeMask;
-    state.blends = {blend};
-    state.blend = blend;
-    state.blendConstants = blendCase.constants;
+    state.blend = state.blends.front();
+    state.blendConstants = targets.front().blend.constants;
     if (setup.depth != 0) {
         state.depth = AgcDriver::Graphics::DepthTarget{setup.depth, 0, {Width, Height}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0, false};
         state.depthTest = true;
@@ -248,20 +274,39 @@ void Draw(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ColorTarget colo
     fragment.shader.code = snapshot.code;
     fragment.context.pixel = AgcDriver::Graphics::DecodePixelStageInfo(context, AgcDriver::Graphics::ExportMappings(state));
     fragment.context.pixel->targetExportPacking = AgcDriver::Graphics::ExportPackings(state);
-    fragment.context.pixel->targetMerge = AgcDriver::Graphics::ExportTargetMerge(state);
+    fragment.context.pixel->targetMerges = AgcDriver::Graphics::ExportTargetMerges(state);
     Require(!fragment.context.pixel->pixelKillEnable && !fragment.context.pixel->earlyZ, "the test pixel shader does not kill");
-    Require(fragment.context.pixel->targetMerge.blend.enabled && fragment.context.pixel->targetMerge.mask == AgcDriver::Graphics::UnclampedBlendMask && fragment.context.pixel->targetMerge.blend.snorm == blendCase.snorm, "the draw's target merge does not describe the unclamped blend");
+    const auto& merges = fragment.context.pixel->targetMerges;
+    Require(merges.size() == targets.size() && std::ranges::all_of(merges, [&](const ShaderRecompiler::TargetMerge& merge) {
+        const auto& entry = targets[static_cast<std::size_t>(&merge - merges.data())];
+        return merge.blend.enabled && merge.mask == AgcDriver::Graphics::UnclampedBlendMask && merge.target == entry.color.exportIndex && merge.blend.snorm == entry.blend.snorm;
+    }), "the draw's target merges do not describe one unclamped blend per target");
     const ShaderRecompiler::SrtRuntime runtime{};
     const auto invocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, fragment);
     const auto pixelResult = invocation.Materialize(*invocation.Capture(runtime));
     const bool registered = pixelResult->variantId == ShaderRecompiler::GetPreparedArtifact(*handle).variantId;
     Require(!registered, "the blending draw reused the registered pixel shader");
+    const auto words = pixelResult->spirv.Copy();
+    std::size_t begins = 0, inside = 0, outside = 0;
+    bool interlocked = false;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+        if (op == spv::OpBeginInvocationInterlockEXT) ++begins;
+        if (op == spv::OpBeginInvocationInterlockEXT || op == spv::OpEndInvocationInterlockEXT) interlocked = op == spv::OpBeginInvocationInterlockEXT;
+        if (op == spv::OpImageWrite) ++(interlocked ? inside : outside);
+    }
+    Require(begins == 1u && inside >= targets.size() && outside == 0u, "the blending draw does not store every merged target inside its one pixel interlock region");
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
         {ShaderStage::Fragment, pixelResult.get(), PixelPushOffset(vertexPush, target)}
     }};
     const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(setup.vertices.size()), 0, 1, 0, false};
     device.Draw(state, draw, shaders);
+}
+
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, const BlendCase& blendCase, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, const DrawSetup& setup = {}) {
+    const std::array<Target, 1> target{{{color, blendCase}}};
+    Draw(device, target, exportFormat, pixelCode, setup);
 }
 struct Case {
     const char* name;
@@ -272,17 +317,20 @@ struct Case {
 
 constexpr int Tolerance = 1;
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, bool snorm) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t info, std::uint32_t slot = 0) {
     AgcDriver::Registers cx;
-    cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
-    cx[0x31b] = 0;
-    cx[0x31c] = snorm ? Snorm8888Info : Unorm8888Info;
-    cx[0x31d] = 0;
-    cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
-    cx[0x3b8] = TiledAttrib3;
-    cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
-    auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
-    Require(color.format == (snorm ? VK_FORMAT_R8G8B8A8_SNORM : VK_FORMAT_R8G8B8A8_UNORM) && color.componentMapping == 0xe4u && color.packing == ShaderRecompiler::ColorExportPacking::None && color.tileMode == ColorTileMode::RenderTarget && color.bytes == block.bytes, "the 8_8_8_8 target did not decode as expected");
+    const auto stride = slot * 0xfu;
+    cx[0x318 + stride] = static_cast<std::uint32_t>(block.Address() >> 8u);
+    cx[0x31b + stride] = 0;
+    cx[0x31c + stride] = info;
+    cx[0x31d + stride] = 0;
+    cx[0x3b0 + slot] = ((Width - 1u) << 14u) | (Height - 1u);
+    cx[0x3b8 + slot] = TiledAttrib3;
+    cx[0x390 + slot] = static_cast<std::uint32_t>(block.Address() >> 40u);
+    auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, slot);
+    color.exportIndex = slot;
+    const auto format = info == Unorm88Info ? VK_FORMAT_R8G8_UNORM : info == Snorm8888Info ? VK_FORMAT_R8G8B8A8_SNORM : VK_FORMAT_R8G8B8A8_UNORM;
+    Require(color.format == format && color.componentMapping == 0xe4u && color.packing == ShaderRecompiler::ColorExportPacking::None && color.tileMode == ColorTileMode::RenderTarget && color.bytes == block.bytes, "the color target did not decode as expected");
     return color;
 }
 
@@ -369,9 +417,11 @@ std::vector<std::uint8_t> Fill(Block& block, std::uint32_t seed) {
     return bytes;
 }
 
-std::array<std::uint8_t, 4> Texel(const std::vector<std::uint8_t>& bytes, const ColorTargetLayout& layout, std::uint32_t x, std::uint32_t y) {
+std::array<std::uint8_t, 4> Texel(const std::vector<std::uint8_t>& bytes, const ColorTargetLayout& layout, std::uint32_t x, std::uint32_t y, std::uint32_t components) {
     const auto offset = layout.Offset(x, y);
-    return {bytes[offset], bytes[offset + 1u], bytes[offset + 2u], bytes[offset + 3u]};
+    std::array<std::uint8_t, 4> texel{0u, 0u, 0u, 0xffu};
+    for (std::uint32_t channel = 0; channel < components; ++channel) texel[channel] = bytes[offset + channel];
+    return texel;
 }
 
 struct Outcome {
@@ -382,17 +432,17 @@ int Difference(std::uint8_t left, std::uint8_t right, bool snorm) {
     return snorm ? std::abs(static_cast<int>(static_cast<std::int8_t>(left)) - static_cast<int>(static_cast<std::int8_t>(right))) : std::abs(static_cast<int>(left) - static_cast<int>(right));
 }
 
-Outcome Expect(AgcDriver::VulkanDevice& device, const Block& block, const ColorTargetLayout& layout, const std::vector<std::uint8_t>& before, bool snorm, std::uint32_t writeMask, const std::string& what, const std::function<std::array<std::uint8_t, 4>(const std::array<std::uint8_t, 4>&)>& expected, const std::function<std::array<std::uint8_t, 4>(const std::array<std::uint8_t, 4>&)>& clamped) {
+Outcome Expect(AgcDriver::VulkanDevice& device, const Block& block, const ColorTargetLayout& layout, const std::vector<std::uint8_t>& before, bool snorm, std::uint32_t writeMask, const std::string& what, const std::function<std::array<std::uint8_t, 4>(const std::array<std::uint8_t, 4>&)>& expected, const std::function<std::array<std::uint8_t, 4>(const std::array<std::uint8_t, 4>&)>& clamped, std::uint32_t components = 4u) {
     const auto stored = ReadBack(device, block);
     Outcome outcome;
     for (std::uint32_t y = 0; y < Height; ++y) {
         for (std::uint32_t x = 0; x < Width; ++x) {
-            const auto was = Texel(before, layout, x, y);
+            const auto was = Texel(before, layout, x, y, components);
             const bool inside = x < ScissorWidth;
             const auto want = inside ? expected(was) : was;
-            const auto got = Texel(stored, layout, x, y);
-            if (inside && clamped(was) != want) outcome.distinguished = true;
-            for (std::uint32_t channel = 0; channel < 4u; ++channel) {
+            const auto got = Texel(stored, layout, x, y, components);
+            if (inside && !std::equal(want.begin(), want.begin() + components, clamped(was).begin())) outcome.distinguished = true;
+            for (std::uint32_t channel = 0; channel < components; ++channel) {
                 const bool written = inside && (writeMask & (1u << channel)) != 0u;
                 if (Difference(got[channel], want[channel], snorm) <= (written ? Tolerance : 0)) continue;
                 char detail[256];
@@ -411,6 +461,22 @@ void RunCase(AgcDriver::VulkanDevice& device, Block& block, const ColorTargetLay
         [&](const std::array<std::uint8_t, 4>& was) { return Blended(testCase.blend, testCase.rgba, was, false); },
         [&](const std::array<std::uint8_t, 4>& was) { return Blended(testCase.blend, testCase.rgba, was, true); });
     Require(outcome.distinguished == testCase.distinguishesClamping, std::string("unclamped blend ") + testCase.name + (testCase.distinguishesClamping ? " does not differ from Vulkan's clamped blend, so it cannot catch a clamping approximation" : " differs from Vulkan's clamped blend, which the case declares equal"));
+}
+
+void RunTwoTargets(AgcDriver::VulkanDevice& device, const std::string& name, std::array<Block*, 2> blocks, std::array<const ColorTargetLayout*, 2> layouts, std::array<AgcDriver::Graphics::ColorTarget, 2> colors, std::array<Case, 2> cases, std::uint32_t seed) {
+    std::array<std::vector<std::uint8_t>, 2> before;
+    for (std::size_t index = 0; index < 2u; ++index) before[index] = Fill(*blocks[index], seed + static_cast<std::uint32_t>(index));
+    const std::array<Target, 2> targets{{{colors[0], cases[0].blend}, {colors[1], cases[1].blend}}};
+    Draw(device, targets, Float32Export | (Float32Export << 4u), TwoTargetProgram(cases[0].rgba, cases[1].rgba));
+    for (std::size_t index = 0; index < 2u; ++index) {
+        const auto& testCase = cases[index];
+        const auto what = name + ", MRT" + std::to_string(index) + " " + testCase.name;
+        const auto outcome = Expect(device, *blocks[index], *layouts[index], before[index], testCase.blend.snorm, testCase.blend.writeMask, what,
+            [&](const std::array<std::uint8_t, 4>& was) { return Blended(testCase.blend, testCase.rgba, was, false); },
+            [&](const std::array<std::uint8_t, 4>& was) { return Blended(testCase.blend, testCase.rgba, was, true); },
+            colors[index].format == VK_FORMAT_R8G8_UNORM ? 2u : 4u);
+        Require(outcome.distinguished == testCase.distinguishesClamping, what + (testCase.distinguishesClamping ? " does not differ from Vulkan's clamped blend" : " differs from Vulkan's clamped blend"));
+    }
 }
 
 void Overdraw(AgcDriver::VulkanDevice& device, Block& block, const ColorTargetLayout& layout, const AgcDriver::Graphics::ColorTarget& color, float first, float last, std::uint32_t seed) {
@@ -448,8 +514,8 @@ int main() {
         }
         const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 4);
         Block block(layout.Bytes());
-        const auto unorm = DecodeTarget(block, false);
-        const auto snorm = DecodeTarget(block, true);
+        const auto unorm = DecodeTarget(block, Unorm8888Info);
+        const auto snorm = DecodeTarget(block, Snorm8888Info);
         constexpr VkColorComponentFlags All = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         constexpr auto Zero = VK_BLEND_FACTOR_ZERO;
         constexpr auto One = VK_BLEND_FACTOR_ONE;
@@ -489,7 +555,17 @@ int main() {
         Require(refusal.find("blending into an unclamped normalized color target needs the fragmentShaderPixelInterlock feature, which the device lacks") != std::string::npos, "a device without fragmentShaderPixelInterlock did not refuse the unclamped blend: " + refusal);
         Overdraw(*device, block, layout, unorm, 0.2f, 0.8f, 401u);
         Overdraw(*device, block, layout, unorm, 0.8f, 0.2f, 402u);
-        std::printf("unclamped normalized color blend tests passed: %zu UNORM draws, %zu SNORM draws, 2 same-draw overdraws of 16 layers, 1 refusal without pixel interlock\n", unormCases.size(), snormCases.size());
+        const ColorTargetLayout pairLayout(Width, Height, ColorTileMode::RenderTarget, 2);
+        Block firstPair(pairLayout.Bytes());
+        Block secondPair(pairLayout.Bytes());
+        const auto firstTarget = DecodeTarget(firstPair, Unorm88Info, 0);
+        const auto secondTarget = DecodeTarget(secondPair, Unorm88Info, 1);
+        const BlendCase over{VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, Add, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, Add, All, {}, false};
+        RunTwoTargets(*device, "two 8_8 UNORM targets blending SRC_ALPHA, ONE_MINUS_SRC_ALPHA in one draw (CB_COLOR_INFO 0x0000000c, CB_BLEND0_CONTROL and CB_BLEND1_CONTROL 0x40010504, PPSA26344)", {&firstPair, &secondPair}, {&pairLayout, &pairLayout}, {firstTarget, secondTarget},
+            {{{"with an out-of-range source and alpha", over, {0.75f, -0.5f, 2.0f, 1.5f}, true}, {"with an out-of-range source", over, {1.5f, 0.25f, -1.0f, 0.5f}, true}}}, 501u);
+        RunTwoTargets(*device, "an 8_8_8_8 UNORM MRT0 and an 8_8 UNORM MRT1 with different blend equations in one draw", {&block, &secondPair}, {&layout, &pairLayout}, {unorm, secondTarget},
+            {{unormCases[3], unormCases[4]}}, 503u);
+        std::printf("unclamped normalized color blend tests passed: %zu UNORM draws, %zu SNORM draws, 2 same-draw overdraws of 16 layers, 2 draws blending two targets each, 1 refusal without pixel interlock\n", unormCases.size(), snormCases.size());
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

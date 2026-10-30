@@ -208,7 +208,8 @@ extern "C" {
 
 int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port) try {
     const AudioOutCall call;
-    if (!ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    auto* context = AudioOut2FindContext(ctx);
+    if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!params || !port) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     const auto channels = (params->data_format >> FORMAT_CHANNELS_SHIFT) & FORMAT_CHANNELS_MASK;
     const auto sampleType = params->data_format & FORMAT_TYPE_MASK;
@@ -231,7 +232,7 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     entry = AudioOut2Port{};
     entry.used = true;
     entry.generation = ++g_portGeneration;
-    entry.context = reinterpret_cast<AudioOut2Context*>(ctx);
+    entry.context = context;
     entry.type = params->port_type;
     entry.dataFormat = params->data_format;
     entry.samplingFreq = params->sampling_freq;

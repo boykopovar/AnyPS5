@@ -268,6 +268,7 @@ int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, Guest
 int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare);
 void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
 int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestContextCompare compare, void* context);
+void APS5_VABI qsort_r_nid_postfix(void* base, size_t count, size_t size, void* thunk, int (APS5_VABI *compare)(void*, const void*, const void*));
 int APS5_VABI access_nid_postfix(const char* path, int mode);
 int APS5_VABI remove_nid_postfix(const char* path);
 double APS5_VABI __adddf3_nid_postfix(double a, double b);
@@ -1416,6 +1417,7 @@ int APS5_VABI dl_iterate_phdr_nid_postfix(int (*callback)(dl_phdr_info*, std::si
 [[noreturn]] void APS5_VABI __cxa_bad_cast_nid_postfix();
 [[noreturn]] void APS5_VABI __cxa_bad_typeid_nid_postfix();
 [[noreturn]] void APS5_VABI __cxa_throw_bad_array_new_length_nid_postfix();
+[[noreturn]] void APS5_VABI _ZSt6_ThrowRKSt20bad_array_new_length_nid_postfix(const LibcException::ExceptionObject* error);
 [[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt14_Xout_of_rangePKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZSt14_Xlength_errorPKc_nid_postfix(const char* message);
@@ -1491,6 +1493,8 @@ const char* APS5_VABI _ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix
 [[noreturn]] void APS5_VABI _ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix(int code);
 std::int64_t APS5_VABI _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix();
 const char* APS5_VABI _ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(int value);
+void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(GuestLocale::SceV2Locinfo* self, const char* localeName);
+void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(GuestLocale::SceV2Locinfo* self);
 int APS5_VABI feupdateenv_nid_postfix(const GuestFloatingPointEnvironment* environment);
 int APS5_VABI feholdexcept_nid_postfix(GuestFloatingPointEnvironment* environment);
 extern const GuestFloatingPointEnvironment __fe_dfl_env_nid_postfix;

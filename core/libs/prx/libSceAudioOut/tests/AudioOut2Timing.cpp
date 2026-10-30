@@ -15,6 +15,7 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -187,18 +188,20 @@ void TestDeviceLevelDoesNotWaitForTheContext(bool low) {
 }
 
 void TestLevelWithoutADeviceUsesThePlaybackClock() {
-    AudioOut2Context context;
-    context.queueDepth = queueDepth;
+    Session session("anyps5_audio_out2_no_device.raw");
+    auto& context = *reinterpret_cast<AudioOut2Context*>(session.context);
+    SDL_CloseAudioDevice(std::exchange(context.device, 0));
+    context.deviceBacked = false;
     context.queued = queueDepth;
     context.playHead = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    const auto handle = reinterpret_cast<AudioOut2ContextHandle>(&context);
     std::uint32_t level = 99;
     std::uint32_t available = 99;
-    Require(sceAudioOut2ContextGetQueueLevel(handle, &level, &available) == 0);
+    Require(sceAudioOut2ContextGetQueueLevel(session.context, &level, &available) == 0);
     Require(level == queueDepth && available == 0);
     context.playHead = std::chrono::steady_clock::now() - std::chrono::seconds(5);
-    Require(sceAudioOut2LoContextGetQueueLevel(handle, &level, &available) == 0);
+    Require(sceAudioOut2LoContextGetQueueLevel(session.context, &level, &available) == 0);
     Require(level == 0 && available == queueDepth);
+    session.Close();
 }
 
 void TestPrimingAfterRunningDry() {

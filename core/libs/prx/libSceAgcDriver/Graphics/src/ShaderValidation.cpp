@@ -595,6 +595,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         } else {
             Require(variable.storage == spv::StorageClassStorageBuffer && decoration.set && decoration.binding, "unsupported or unbound shader resource");
             const auto key = std::make_pair(*decoration.set, *decoration.binding);
+            if (*decoration.set == ShaderRecompiler::MeshWindowDescriptorSet) {
+                Require(mesh && *decoration.binding == 0u, "mesh window buffer binding is wrong");
+                continue;
+            }
             if (*decoration.set == ShaderRecompiler::PixelFunctionLdsDescriptorSet) {
                 Require(fragment && *decoration.binding == 0u, "pixel function LDS buffer binding is wrong");
                 continue;

@@ -551,6 +551,7 @@ const char* APS5_VABI _ZNKSt8ios_base7failure4whatEv_nid_postfix(const LibcExcep
 [[noreturn]] void APS5_VABI __cxa_bad_cast_nid_postfix() { LibcException::ThrowPlain(_ZTVSt8bad_cast_nid_postfix); }
 [[noreturn]] void APS5_VABI __cxa_bad_typeid_nid_postfix() { LibcException::ThrowPlain(_ZTVSt10bad_typeid_nid_postfix); }
 [[noreturn]] void APS5_VABI __cxa_throw_bad_array_new_length_nid_postfix() { LibcException::ThrowPlain(_ZTVSt20bad_array_new_length_nid_postfix); }
+[[noreturn]] void APS5_VABI _ZSt6_ThrowRKSt20bad_array_new_length_nid_postfix(const LibcException::ExceptionObject*) { LibcException::ThrowPlain(_ZTVSt20bad_array_new_length_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix() { LibcException::ThrowPlain(_ZTVSt9bad_alloc_nid_postfix); }
 [[noreturn]] void APS5_VABI _ZSt14_Xout_of_rangePKc_nid_postfix(const char* message) { LibcException::ThrowMessage(_ZTVSt12out_of_range_nid_postfix, message); }
 [[noreturn]] void APS5_VABI _ZSt14_Xlength_errorPKc_nid_postfix(const char* message) { LibcException::ThrowMessage(_ZTVSt12length_error_nid_postfix, message); }

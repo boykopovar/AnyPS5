@@ -18,6 +18,84 @@ std::mutex g_mutex;
 std::unordered_set<AcmContextId> g_contexts;
 std::atomic<uint32_t> g_nextId{1};
 
+int EncodeTransforms(AcmBatchInfo* batch, bool inverse, std::int32_t transformSize, std::uint32_t transformCount, std::int32_t inputFormat, const void* const* inputs, std::int32_t outputFormat, void* const* outputs, std::int32_t flags) {
+    const std::int32_t conflictingFlags = inverse ? 5 : 3;
+    if (!batch || transformCount == 0 || transformCount > 0x7FFFFFFF || !inputs || !outputs || (flags & conflictingFlags) == conflictingFlags || inputFormat < 0 || inputFormat > 1 || outputFormat < 0 || outputFormat > 1) return SCE_ACM_ERROR_BAD_POINTER;
+    if (transformSize != 256 && transformSize != 512 && transformSize != 1024 && transformSize != 2048) return SCE_ACM_ERROR_BAD_POINTER;
+    const bool real = (flags & 1) != 0;
+    const bool wide = transformSize == 2048;
+    if (wide && !inverse && !real) return SCE_ACM_ERROR_BAD_POINTER;
+    const std::uint32_t sizeIndex = transformSize == 256 ? 0 : transformSize == 512 ? 1 : transformSize == 1024 ? 2 : 3;
+    const std::uint32_t inputBytes = transformSize * (inputFormat == 1 ? 2 : 4);
+    const std::uint32_t outputBytes = transformSize * (outputFormat == 1 ? 2 : 4);
+    const std::uint64_t inputBlocks = (inputBytes >> 8) >> (!inverse && real ? 1 : 0);
+    const std::uint64_t outputBlocks = outputBytes >> 8;
+    std::uint32_t inputCommand;
+    std::uint32_t transformCommand;
+    std::uint32_t outputCommand;
+    if (wide) {
+        inputCommand = 2 * inputFormat + (inverse ? 1 : 0);
+        transformCommand = inverse ? 7 : 6;
+        outputCommand = 4 | outputFormat;
+    } else if (inverse) {
+        inputCommand = 4 | inputFormat;
+        transformCommand = 0xC;
+        outputCommand = 6 | outputFormat;
+    } else {
+        inputCommand = (real ? 0 : 2) | inputFormat;
+        transformCommand = real ? 0xA : 0xB;
+        outputCommand = 8 | outputFormat;
+    }
+    std::uint64_t header = 0;
+    if (!(flags & 8)) {
+        const auto encodedCount = transformCount < 64000 ? transformCount : 64000;
+        header = (inverse ? 0 : std::uint64_t{1} << 16) | (static_cast<std::uint64_t>(flags & 6) << 20) | (real ? std::uint64_t{1} << (inverse ? 23 : 24) : 0) | (std::uint64_t{1} << (inputFormat == 1 ? 25 : 27)) | (std::uint64_t{1} << (outputFormat == 1 ? 26 : 28)) | (std::uint64_t{1} << (17 + sizeIndex)) | (static_cast<std::uint64_t>(encodedCount) << 29);
+    }
+    header |= static_cast<std::uint64_t>(7 + sizeIndex) << 8;
+    auto* buffer = static_cast<std::byte*>(batch->buffer);
+    auto offset = batch->offset;
+    const auto capacity = batch->buffer_size;
+    const auto hasRoom = [&](std::uint64_t bytes) { return offset <= capacity && capacity - offset >= bytes; };
+    const auto appendWord = [&](std::uint64_t value) {
+        std::memcpy(buffer + offset, &value, sizeof(value));
+        offset += sizeof(value);
+    };
+    constexpr int noSpace = static_cast<int>(0x81940009);
+    constexpr int badAlignment = static_cast<int>(0x8194000A);
+    if (!hasRoom(16)) return noSpace;
+    appendWord(header);
+    appendWord(10 | ((wide ? 8u : 0xDu) << 8));
+    const bool pairedInputs = (flags & 2) != 0;
+    const bool pairedOutputs = (flags & 4) != 0;
+    const bool realOutput = inverse && real;
+    for (std::uint32_t index = 0; index < transformCount; ++index) {
+        const auto inputIndex = static_cast<std::size_t>(index) * (pairedInputs ? 2 : 1);
+        const auto input = reinterpret_cast<std::uintptr_t>(inputs[inputIndex]);
+        const auto secondInput = pairedInputs ? reinterpret_cast<std::uintptr_t>(inputs[inputIndex + 1]) : 0;
+        if (!pairedInputs && !input) return SCE_ACM_ERROR_BAD_POINTER;
+        if ((input | secondInput) & 127) return badAlignment;
+        if (!hasRoom((pairedInputs ? 24 : 16) + 24)) return noSpace;
+        appendWord((pairedInputs ? 7 : 6) | (inputBlocks << 32) | (pairedInputs ? static_cast<std::uint64_t>(inputBytes / 2) << 48 : 0));
+        appendWord(input);
+        if (pairedInputs) appendWord(secondInput);
+        appendWord(10 | (inputCommand << 8));
+        appendWord(10 | (transformCommand << 8));
+        appendWord(10 | (outputCommand << 8));
+        const auto outputIndex = static_cast<std::size_t>(index) * (pairedOutputs ? 2 : 1);
+        const auto output = reinterpret_cast<std::uintptr_t>(outputs[outputIndex]);
+        const auto secondOutput = pairedOutputs ? reinterpret_cast<std::uintptr_t>(outputs[outputIndex + 1]) : 0;
+        if ((output | secondOutput) & 127) return badAlignment;
+        const bool longRecord = pairedOutputs || realOutput;
+        if (!hasRoom(longRecord ? 24 : 16)) return noSpace;
+        appendWord((longRecord ? 9 : 8) | (outputBlocks << 32) | (longRecord ? static_cast<std::uint64_t>(outputBytes / 2) << 48 : 0));
+        if (realOutput) appendWord(0);
+        appendWord(output);
+        if (pairedOutputs) appendWord(secondOutput);
+    }
+    batch->offset = offset;
+    return 0;
+}
+
 }
 
 extern "C" {
@@ -85,79 +163,7 @@ int APS5_VABI sceAcm_ConvReverb_SharedInput(AcmBatchInfo* batch, std::uint32_t m
 }
 
 int APS5_VABI sceAcm_FFT(AcmBatchInfo* batch, std::int32_t transformSize, std::uint32_t transformCount, std::int32_t inputFormat, const void* const* inputs, std::int32_t outputFormat, void* const* outputs, std::int32_t flags) {
-    if (!batch || transformCount == 0 || transformCount > 0x7FFFFFFF || !inputs || !outputs || (flags & 3) == 3 || inputFormat < 0 || inputFormat > 1 || outputFormat < 0 || outputFormat > 1) return SCE_ACM_ERROR_BAD_POINTER;
-    if (transformSize != 512 && transformSize != 1024 && transformSize != 2048) return SCE_ACM_ERROR_BAD_POINTER;
-    const bool realInput = (flags & 1) != 0;
-    if (transformSize == 2048 && !realInput) return SCE_ACM_ERROR_BAD_POINTER;
-    const std::uint32_t inputBytes = transformSize * (inputFormat == 1 ? 2 : 4);
-    const std::uint32_t outputBytes = transformSize * (outputFormat == 1 ? 2 : 4);
-    const std::uint32_t inputBlocks = (inputBytes >> 9) >> (realInput ? 1 : 0);
-    const std::uint32_t outputBlocks = outputBytes >> 9;
-    std::uint32_t transformCommand;
-    std::uint32_t inputCommand;
-    std::uint32_t outputCommand;
-    std::uint32_t setupCommand;
-    std::uint32_t sizeCode;
-    if (transformSize == 512) {
-        sizeCode = 4;
-        transformCommand = realInput ? 7 : 11;
-        inputCommand = realInput ? 2 * inputFormat : 9 + inputFormat;
-        outputCommand = 4 | outputFormat;
-        setupCommand = realInput ? 6 : 12;
-    } else if (transformSize == 1024) {
-        sizeCode = 5;
-        transformCommand = realInput ? 8 : 13;
-        inputCommand = realInput ? 2 * inputFormat : 14 | inputFormat;
-        outputCommand = 5 | (2 * outputFormat);
-        setupCommand = realInput ? 10 : 12;
-    } else {
-        sizeCode = 6;
-        transformCommand = 6;
-        inputCommand = 2 * inputFormat;
-        outputCommand = 4 | outputFormat;
-        setupCommand = 8;
-    }
-    auto* buffer = static_cast<std::byte*>(batch->buffer);
-    auto offset = batch->offset;
-    const auto capacity = batch->buffer_size;
-    const auto appendWord = [&](std::uint64_t value) {
-        if (offset > capacity || capacity - offset < sizeof(value)) return false;
-        std::memcpy(buffer + offset, &value, sizeof(value));
-        offset += sizeof(value);
-        return true;
-    };
-    std::uint64_t header = static_cast<std::uint64_t>(sizeCode) << 8;
-    if (!(flags & 8)) {
-        const auto encodedCount = transformCount < 64000 ? transformCount : 64000;
-        header |= (std::uint64_t{1} << 16) | (static_cast<std::uint64_t>(transformSize) << 8) | (static_cast<std::uint64_t>(flags & 6) << 19) | (static_cast<std::uint64_t>(flags & 1) << 23) | (std::uint64_t{1} << (inputFormat == 1 ? 24 : 26)) | (std::uint64_t{1} << (outputFormat == 1 ? 25 : 27)) | (static_cast<std::uint64_t>(encodedCount) << 28);
-    }
-    constexpr int noSpace = static_cast<int>(0x81940009);
-    constexpr int badAlignment = static_cast<int>(0x8194000A);
-    if (!appendWord(header) || !appendWord(10 | (setupCommand << 8))) return noSpace;
-    for (std::uint32_t index = 0; index < transformCount; ++index) {
-        const auto inputIndex = static_cast<std::size_t>(index) * ((flags & 2) ? 2 : 1);
-        const auto input = reinterpret_cast<std::uintptr_t>(inputs[inputIndex]);
-        const auto secondInput = (flags & 2) ? reinterpret_cast<std::uintptr_t>(inputs[inputIndex + 1]) : 0;
-        if (!(flags & 2) && !input) return SCE_ACM_ERROR_BAD_POINTER;
-        if ((input | secondInput) & 127) return badAlignment;
-        const auto inputRecordSize = (flags & 2) ? 24u : 16u;
-        if (offset > capacity || capacity - offset < inputRecordSize) return noSpace;
-        appendWord(((flags & 2) ? 7 : 6) | (static_cast<std::uint64_t>(inputBlocks) << 32) | ((flags & 2) ? static_cast<std::uint64_t>(inputBytes / 2) << 48 : 0));
-        appendWord(input);
-        if (flags & 2) appendWord(secondInput);
-        if (!appendWord(10 | (inputCommand << 8)) || !appendWord(10 | (transformCommand << 8)) || !appendWord(10 | (outputCommand << 8))) return noSpace;
-        const auto outputIndex = static_cast<std::size_t>(index) * ((flags & 4) ? 2 : 1);
-        const auto output = reinterpret_cast<std::uintptr_t>(outputs[outputIndex]);
-        const auto secondOutput = (flags & 4) ? reinterpret_cast<std::uintptr_t>(outputs[outputIndex + 1]) : 0;
-        if ((output | secondOutput) & 127) return badAlignment;
-        const auto outputRecordSize = (flags & 4) ? 24u : 16u;
-        if (offset > capacity || capacity - offset < outputRecordSize) return noSpace;
-        appendWord(((flags & 4) ? 9 : 8) | (static_cast<std::uint64_t>(outputBlocks) << 32) | ((flags & 4) ? static_cast<std::uint64_t>(outputBytes / 2) << 48 : 0));
-        appendWord(output);
-        if (flags & 4) appendWord(secondOutput);
-    }
-    batch->offset = offset;
-    return 0;
+    return EncodeTransforms(batch, false, transformSize, transformCount, inputFormat, inputs, outputFormat, outputs, flags);
 }
 
 int APS5_VABI sceAcm_Panner(AcmBatchInfo* batch, std::uint32_t sourceCount, const void* const* sources, std::uint32_t sourceMode, std::uint32_t outputMode, std::uint32_t channelCount, const void* const* sourceParameters, const void* const* sourceMatrices, const void* const* inputChannels, void* const* outputChannels) {
@@ -213,9 +219,8 @@ int APS5_VABI sceAcm_ConvReverb_SharedIr() {
     return 0;
 }
 
-int APS5_VABI sceAcm_IFFT() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAcm_IFFT(AcmBatchInfo* batch, std::int32_t transformSize, std::uint32_t transformCount, std::int32_t inputFormat, const void* const* inputs, std::int32_t outputFormat, void* const* outputs, std::int32_t flags) {
+    return EncodeTransforms(batch, true, transformSize, transformCount, inputFormat, inputs, outputFormat, outputs, flags);
 }
 
 int APS5_VABI sceAcmBatchJobNotification() {
