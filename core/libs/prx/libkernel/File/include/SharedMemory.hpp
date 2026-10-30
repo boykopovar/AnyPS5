@@ -9,6 +9,9 @@
 
 namespace File {
 
+using SharedMemoryMetadataHook = int (*)(int);
+extern "C" void FileSetSharedMemoryMetadataHookForTest_nid_no_patch(SharedMemoryMetadataHook hook);
+
 extern "C" bool IsSharedMemoryDescriptor_nid_no_patch(int descriptor);
 std::int64_t WriteSharedMemory_nid_no_patch(int descriptor, const void* buffer, std::size_t size);
 std::int64_t PwriteSharedMemory_nid_no_patch(int descriptor, const void* buffer, std::size_t size, std::int64_t offset);
