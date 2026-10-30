@@ -739,7 +739,7 @@ public:
         stencilWritesSeen = writes;
         const auto bytes = DepthSliceBytes(target.extent, 1u);
         auto storage = StorageTexture::FindPending(target.stencilAddress, bytes);
-        if (storage == nullptr) return;
+        if (storage == nullptr || storage == stencilMirror.storage) return;
         const auto& described = storage->Descriptor();
         const auto format = ResolveTextureFormat(described.format);
         if (described.baseAddress != target.stencilAddress || described.width != target.extent.width || described.height != target.extent.height || (format != VK_FORMAT_R8_UINT && format != VK_FORMAT_R8_UNORM)) return;
@@ -2269,7 +2269,6 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
     surface->clearStencil = target.clearStencil;
     takePlanes(*surface, created, htileCleared | (cleared ? VK_IMAGE_ASPECT_DEPTH_BIT : 0u));
     if (created && !inherits && target.htileAddress == 0) surface->TakeStorage();
-    surface->TakeStencilStorage();
     if (cleared && (!created || inherits)) {
         if (target.samples != 1u) surface->sampling.Refuse("native multisample depth fast-clear transition is not implemented");
         if (!created) surface->NoteHtileClear(VK_IMAGE_ASPECT_DEPTH_BIT);
@@ -2277,6 +2276,7 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
     if (!created) surface->NoteHtileClear(htileCleared);
     if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target));
     if (surface->StencilMirrorable()) surface->SyncStencilFromMemory(stencilResource(target));
+    surface->TakeStencilStorage();
     surface->ApplyFastClear();
     if (drawnDepth != nullptr && drawnDepth != surface) drawnDepth->written = ++depthWrites;
     surface->written = ++depthWrites;

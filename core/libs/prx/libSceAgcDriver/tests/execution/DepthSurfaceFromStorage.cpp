@@ -52,7 +52,7 @@ constexpr std::uint32_t TileDepth64KB = 0x18;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t Type2DArray = 13;
 constexpr std::size_t PlaneBytes = 65536;
-constexpr std::size_t BlockBytes = 15 * PlaneBytes;
+constexpr std::size_t BlockBytes = 19 * PlaneBytes;
 constexpr std::uint32_t RowPasses = 15;
 
 alignas(256) constexpr std::array<std::uint32_t, 9> StoreRowCode{
@@ -293,6 +293,22 @@ int main() {
         StoreStencilRow(*device, block.Plane(14));
         RequireCount(DepthFastClearHarness::Draw(*device, shaders, drawn, {.depthTest = false, .stencilTest = true, .stencil = equalOne}), Threads, "a D32S8 depth surface drawn again after an R8_UINT storage write of its stencil plane, tested EQUAL to the stored 1");
         RequireCount(DepthFastClearHarness::Draw(*device, shaders, drawn, {.depthTest = false, .stencilTest = true, .stencil = equalOne}), Threads, "a D32S8 depth surface drawn a third time with no storage write in between, tested EQUAL to the stored 1");
+
+        const auto swizzle = AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX);
+        const DepthFastClearHarness::Surface synced{Address(block.Plane(15)), Address(block.Plane(16)), 0, false, VK_FORMAT_D32_SFLOAT_S8_UINT, 0, 0, swizzle};
+        RequireCount(DepthFastClearHarness::Draw(*device, shaders, synced, {.depthTest = false, .stencilTest = true, .stencil = equalZero}), Covered, "a mirrored D32S8 depth surface before its stencil plane changes, tested EQUAL to 0");
+        std::memset(block.Plane(16), 3, PlaneBytes);
+        StoreStencilRow(*device, block.Plane(16));
+        RequireCount(DepthFastClearHarness::Draw(*device, shaders, synced, {.depthTest = false, .stencilTest = true, .stencil = equalOne}), Threads, "a mirrored D32S8 depth surface whose stencil plane memory changed and then took a pending R8_UINT storage write, tested EQUAL to 1 on the next bind");
+
+        constexpr VkStencilOpState writeOne{VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS, 0xffu, 0xffu, 1u};
+        constexpr VkStencilOpState writeTwo{VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS, 0xffu, 0xffu, 2u};
+        constexpr VkStencilOpState equalTwo{VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_EQUAL, 0xffu, 0u, 2u};
+        const DepthFastClearHarness::Surface stored{Address(block.Plane(17)), Address(block.Plane(18)), 0, false, VK_FORMAT_D32_SFLOAT_S8_UINT, 0, 0, swizzle};
+        RequireCount(DepthFastClearHarness::Draw(*device, shaders, stored, {.depthTest = false, .stencilTest = true, .stencil = writeOne}), Covered, "a mirrored D32S8 depth surface writing stencil 1");
+        static_cast<void>(AgcDriver::Graphics::FlushDepthPlanes(Address(block.Plane(18)), PlaneBytes));
+        RequireCount(DepthFastClearHarness::Draw(*device, shaders, stored, {.depthTest = false, .stencilTest = true, .stencil = writeTwo}), Covered, "a mirrored D32S8 depth surface writing stencil 2 after its stencil plane was stored through a read");
+        RequireCount(DepthFastClearHarness::Draw(*device, shaders, stored, {.depthTest = false, .stencilTest = true, .stencil = equalTwo}), Covered, "a mirrored D32S8 depth surface whose stencil plane was stored through a read and drawn again, tested EQUAL to 2 on the next bind");
 
         if (!failures.empty()) {
             std::string text;
