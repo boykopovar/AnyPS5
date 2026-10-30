@@ -558,8 +558,7 @@ int APS5_VABI sceNpTrophySystemCreateHandle(void) {
 }
 
 int APS5_VABI sceNpTrophySystemDbgCtl(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemDebugLockTrophy(void) {
@@ -588,13 +587,11 @@ int APS5_VABI sceNpTrophySystemDestroyTrophyConfig(void) {
 }
 
 int APS5_VABI sceNpTrophySystemGetDbgParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemGetDbgParamInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemGetGroupIcon(void) {
@@ -718,13 +715,11 @@ int APS5_VABI sceNpTrophySystemRemoveUserData(void) {
 }
 
 int APS5_VABI sceNpTrophySystemSetDbgParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemSetDbgParamInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemUnregisterTitleSyncedCallback(void) {
@@ -785,6 +780,34 @@ int APS5_VABI sceNpTrophySystemWrapRemoveTitleData(void) {
 int APS5_VABI sceNpTrophySystemWrapRemoveUserData(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDetailsArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTitleData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDetails() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

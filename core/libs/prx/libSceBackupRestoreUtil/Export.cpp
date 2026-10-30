@@ -86,4 +86,24 @@ int APS5_VABI sceBackupRestoreUtilTerminate() {
     return 0;
 }
 
+int APS5_VABI sceBackupRestoreUtilCalcRequiredSize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBackupRestoreUtilCancelCalcRequiredSize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBackupRestoreUtilGetBackupTelemetryInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBackupRestoreUtilGetRestoreFailedTitles() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBackupRestoreUtilGetRestoreTelemetryInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

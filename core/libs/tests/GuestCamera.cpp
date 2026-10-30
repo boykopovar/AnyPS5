@@ -55,6 +55,14 @@ void CheckClosed() {
     Require(sceCameraStop(1) == ErrorNotOpen, "stopping before any open must report NOT_OPEN");
     Require(sceCameraStopByHandle(1) == ErrorNotOpen, "stopping by handle before any open must report NOT_OPEN");
     Require(sceCameraIsValidFrameData(1, &frame) == ErrorNotOpen, "frame validity before any open must report NOT_OPEN");
+    CameraConfig config{};
+    config.sizeThis = sizeof(CameraConfig);
+    Require(sceCameraGetConfig(1, &config) == ErrorNotOpen, "getting config before any open must report NOT_OPEN");
+    Require(sceCameraGetConfig(0, &config) == ErrorParam, "getting config with handle 0 must be rejected");
+    Require(sceCameraGetConfig(1, nullptr) == ErrorParam, "getting config with null pointer must be rejected");
+    Require(sceCameraGetDeviceConfig(1, &config) == ErrorNotOpen, "getting device config before any open must report NOT_OPEN");
+    Require(sceCameraGetDeviceConfig(0, &config) == ErrorParam, "getting device config with handle 0 must be rejected");
+    Require(sceCameraGetDeviceConfig(1, nullptr) == ErrorParam, "getting device config with null pointer must be rejected");
 }
 
 void CheckOpen() {

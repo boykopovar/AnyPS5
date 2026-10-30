@@ -981,20 +981,28 @@ std::string hexText(std::uint64_t value) {
 
 std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32_t linkRegister) {
     constexpr std::uint64_t page = 4096u;
-    constexpr std::size_t limitWords = 16384u;
+    constexpr std::size_t limitWords = 1024u * 1024u / 4u;
     if (address % 4u != 0u) throw std::runtime_error("its callee address " + hexText(address) + " is not dword aligned");
     std::vector<std::uint32_t> words;
+    const auto finish = [&] {
+        const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister);
+        if (length) words.resize(*length);
+        return length.has_value();
+    };
+    std::size_t nextCheck = 0;
     while (words.size() < limitWords) {
         const auto next = address + words.size() * 4u;
         const auto bytes = static_cast<std::size_t>(page - next % page);
-        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(next)), bytes)) throw std::runtime_error("its callee at " + hexText(address) + " is not readable at " + hexText(next));
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(next)), bytes)) {
+            if (finish()) return words;
+            throw std::runtime_error("its callee at " + hexText(address) + " is not readable at " + hexText(next));
+        }
         const auto old = words.size();
         words.resize(old + bytes / 4u);
         GuestMemory::Read(next, std::as_writable_bytes(std::span(words).subspan(old)));
-        if (const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister)) {
-            words.resize(*length);
-            return words;
-        }
+        if (words.size() < nextCheck && words.size() < limitWords) continue;
+        nextCheck = words.size() * 2u;
+        if (finish()) return words;
     }
     throw std::runtime_error("its callee at " + hexText(address) + " does not return within " + std::to_string(limitWords * 4u) + " bytes");
 }
@@ -1537,8 +1545,8 @@ public:
 
 private:
     static std::mutex& Lifecycle() {
-        static std::mutex lifecycle;
-        return lifecycle;
+        static auto* lifecycle = new std::mutex;
+        return *lifecycle;
     }
 
     static bool& Closing() {
@@ -1558,13 +1566,13 @@ private:
 
 public:
 
-    void Submit(std::function<void()> task, const PreparedShaders* prepared = nullptr) {
+    void Submit(std::function<void()> task, const PreparedShaders* prepared = nullptr, bool budgeted = false) {
         {
             std::unique_lock lock(mutex);
             if (threads != 0 && !closed) {
                 const auto sequence = ++submitted;
-                if (prepared != nullptr && prepared->demanded.load()) tasks.push_front({std::move(task), prepared, sequence});
-                else tasks.push_back({std::move(task), prepared, sequence});
+                if (prepared != nullptr && prepared->demanded.load()) tasks.push_front({std::move(task), prepared, sequence, budgeted});
+                else tasks.push_back({std::move(task), prepared, sequence, budgeted});
                 unfinished.insert(sequence);
                 lock.unlock();
                 ready.notify_one();
@@ -1652,6 +1660,7 @@ private:
         }
         pthread_attr_destroy(&attributes);
 #endif
+        budgetedLimit = std::max(1u, threads / 2u);
     }
 
 #ifdef _WIN32
@@ -1668,26 +1677,34 @@ private:
             Task task;
             {
                 std::unique_lock lock(pool.mutex);
-                pool.ready.wait(lock, [&] { return !pool.tasks.empty() || pool.closed; });
-                if (pool.tasks.empty()) {
+                auto next = pool.tasks.end();
+                pool.ready.wait(lock, [&] {
+                    next = std::ranges::find_if(pool.tasks, [&](const Task& queued) { return !queued.budgeted || pool.budgetedRunning < pool.budgetedLimit; });
+                    return next != pool.tasks.end() || (pool.closed && pool.tasks.empty());
+                });
+                if (next == pool.tasks.end()) {
                     liveWorkers.fetch_sub(1, std::memory_order_acq_rel);
                     return nullptr;
                 }
-                task = std::move(pool.tasks.front());
-                pool.tasks.pop_front();
+                task = std::move(*next);
+                pool.tasks.erase(next);
                 ++pool.running;
+                if (task.budgeted) ++pool.budgetedRunning;
             }
             const auto sequence = task.sequence;
+            const bool budgeted = task.budgeted;
             task.function();
             task = {};
             bool drained = false;
             {
                 std::lock_guard lock(pool.mutex);
                 --pool.running;
+                if (budgeted) --pool.budgetedRunning;
                 pool.unfinished.erase(sequence);
                 drained = pool.tasks.empty() && pool.running == 0;
                 pool.idle.notify_all();
             }
+            if (budgeted) pool.ready.notify_all();
 #ifdef __GLIBC__
             if (drained) trimFreedMemory();
 #endif
@@ -1699,6 +1716,7 @@ private:
         std::function<void()> function;
         const PreparedShaders* prepared = nullptr;
         std::uint64_t sequence = 0;
+        bool budgeted = false;
     };
 
     std::mutex mutex;
@@ -1709,6 +1727,8 @@ private:
     unsigned threads = 0;
     inline static std::atomic<unsigned> liveWorkers{0};
     unsigned running = 0;
+    unsigned budgetedRunning = 0;
+    unsigned budgetedLimit = 1;
     std::uint64_t submitted = 0;
     std::set<std::uint64_t> unfinished;
     bool closed = false;
@@ -1789,6 +1809,10 @@ void AwaitRegistrationPreparation() {
 
 void SubmitLibraryPrebuild(std::function<void()> task) {
     RegistrationPreparePool::Prebuild().Submit(std::move(task));
+}
+
+void SubmitComputePrebuild(std::function<void()> task) {
+    RegistrationPreparePool::Prebuild().Submit(std::move(task), nullptr, true);
 }
 
 void AwaitLibraryPrebuilds() {

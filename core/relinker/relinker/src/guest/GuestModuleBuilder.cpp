@@ -317,7 +317,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (const auto provider : executableProviders) require(provider);
     for (std::size_t index = 0; index < images.size(); ++index) {
         if (!isRuntime(index)) require(index);
-        if (windows) for (const auto dependency : dependencies[index]) require(dependency);
+        if (windows) for (const auto dependency : dependencies[index]) if (standardDirectory(dependency)) require(dependency);
     }
     const auto deferred = [&](const std::size_t index) {
         return !required[index] && isRuntime(index);
