@@ -14,41 +14,12 @@ The 7 exports in [Export.cpp](../../../core/libs/prx/libSceAvcap2/Export.cpp) ar
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceAvcap2/Export.cpp) - 41 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceAvcap2/Export.cpp) - 12 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 [Version-pinned selected ELF export records](https://gist.github.com/kyon-eth/3fbb1a4a6f95a936b4cd58e9c3d8c50c/5e3af709224ed8235af11337309af0725e5685cb) list every NID below with its image label, decoded export module and library, raw qualified symbol, ELF function type, value and size for each inspected version-labelled image. The extract SHA-256 is `02ab27f12bcd0cc9fa03fa33f55fc201110f0d54a86bbbaa093d55d0a8cf262d`; its full-module sorted-function-NID digests and raw module-parameter words permit independent comparison. This is an analyst-produced metadata record, not independent authentication of the original images or proof of prototypes or behavior.
 
 | Name | NID |
 | --- | --- |
-| `sceAvcap2AllocateVideoEncoderMemory` | `CYgd06bO5q0` |
-| `sceAvcap2FreeEncoderVideoMemory` | `96UQhNnBlxc` |
-| `sceAvcap2GetAudioOutVolume` | `mYgFfxPwEjY` |
-| `sceAvcap2GetFramePitch` | `2GC2UnBJHIA` |
-| `sceAvcap2GetMicVolume` | `41+5ixaiTj0` |
-| `sceAvcap2GetNonVclNalUnitStream2` | `VAFgNc0Pfp8` |
-| `sceAvcap2GetNonVclNalUnitStream` | `NeKlrUv+lbY` |
-| `sceAvcap2GetRecProhibit` | `pEm2jVo44dE` |
-| `sceAvcap2GetSupportInformation` | `RW88AiwmL+Y` |
-| `sceAvcap2GetVideoOutMode` | `DHFDHdKAr9U` |
-| `sceAvcap2LockInputDataBuffer` | `S4nvYDibKBw` |
-| `sceAvcap2MapMemory` | `X8c-f8LgzHo` |
-| `sceAvcap2OpenVideo` | `4jwUgirLFrA` |
-| `sceAvcap2QueryVideoEncoderMemorySize` | `Dht3tcbRoEY` |
-| `sceAvcap2ReadVideo` | `pN0hIQZsMzc` |
-| `sceAvcap2RequestKeyFrame` | `YaXDckFygvw` |
-| `sceAvcap2Select` | `ysFbdZrSCMM` |
-| `sceAvcap2SetAudioOutVolume` | `4S4mGtzLmyI` |
-| `sceAvcap2SetAudioOutVolumeForRec` | `0W6GB-ecnK0` |
-| `sceAvcap2SetChapterOpenLevel` | `r9BQzY0IvxA` |
-| `sceAvcap2SetChapterPermissionLevel` | `GBx9f5BmDvU` |
-| `sceAvcap2SetImagePaste` | `Cdf6VsJgvaY` |
-| `sceAvcap2SetInvalidFrame` | `fLzv9I4mHF0` |
-| `sceAvcap2SetMicVolume` | `BPgql5PsMKo` |
-| `sceAvcap2SetMicVolumeForRec` | `2Lv-4HVkqO4` |
-| `sceAvcap2SetPrivacyGuard` | `aAbMwQwWHyM` |
-| `sceAvcap2SetPrivacyImage` | `ImOtOnPjgio` |
-| `sceAvcap2SetVideoEncodeConfig` | `-NotZDC2pQc` |
-| `sceAvcap2UnlockInputDataBuffer` | `BjHu5q5-6NI` |
 | `Unknown` | `+OspdnZ-8mc` |
 | `Unknown` | `1Xp85wUaVTE` |
 | `Unknown` | `32gujAUoIMc` |
