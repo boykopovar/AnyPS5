@@ -245,6 +245,46 @@ struct LibreSslX509StoreContext {
     void* exData;
 };
 
+struct EvpMdContext;
+
+struct EvpMd {
+    std::int32_t type;
+    std::int32_t pkeyType;
+    std::int32_t mdSize;
+    std::uint64_t flags;
+    int (APS5_VABI* init)(EvpMdContext* context);
+    int (APS5_VABI* update)(EvpMdContext* context, const void* data, std::size_t length);
+    int (APS5_VABI* finalize)(EvpMdContext* context, unsigned char* digest);
+    int (APS5_VABI* copy)(EvpMdContext* to, const EvpMdContext* from);
+    int (APS5_VABI* cleanup)(EvpMdContext* context);
+    void* sign;
+    void* verify;
+    std::int32_t requiredPkeyType[5];
+    std::int32_t blockSize;
+    std::int32_t contextSize;
+    int (APS5_VABI* control)(EvpMdContext* context, int command, int argument, void* pointer);
+};
+
+struct EvpMdContext {
+    const EvpMd* digest;
+    void* engine;
+    std::uint64_t flags;
+    void* mdData;
+    void* pkeyContext;
+    int (APS5_VABI* update)(EvpMdContext* context, const void* data, std::size_t length);
+};
+
+inline constexpr std::size_t HmacMaxBlock = 128;
+
+struct HmacContext {
+    const EvpMd* md;
+    EvpMdContext mdContext;
+    EvpMdContext innerContext;
+    EvpMdContext outerContext;
+    std::uint32_t keyLength;
+    unsigned char key[HmacMaxBlock];
+};
+
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
@@ -356,20 +396,20 @@ int APS5_VABI EVP_CipherUpdate_nid_postfix(void);
 int APS5_VABI EVP_DecryptFinal_ex_nid_postfix(void);
 int APS5_VABI EVP_DecryptInit_ex_nid_postfix(void);
 int APS5_VABI EVP_DecryptUpdate_nid_postfix(void);
-int APS5_VABI EVP_Digest_nid_postfix(void);
-int APS5_VABI EVP_DigestFinal_ex_nid_postfix(void);
-int APS5_VABI EVP_DigestInit_ex_nid_postfix(void);
-int APS5_VABI EVP_DigestUpdate_nid_postfix(void);
+int APS5_VABI EVP_Digest_nid_postfix(const void* data, std::size_t length, unsigned char* digest, std::uint32_t* size, const EvpMd* type, void* engine);
+int APS5_VABI EVP_DigestFinal_ex_nid_postfix(EvpMdContext* context, unsigned char* digest, std::uint32_t* size);
+int APS5_VABI EVP_DigestInit_ex_nid_postfix(EvpMdContext* context, const EvpMd* type, void* engine);
+int APS5_VABI EVP_DigestUpdate_nid_postfix(EvpMdContext* context, const void* data, std::size_t length);
 int APS5_VABI EVP_DigestVerifyFinal_nid_postfix(void);
 int APS5_VABI EVP_DigestVerifyInit_nid_postfix(void);
 int APS5_VABI EVP_EncryptFinal_ex_nid_postfix(void);
 int APS5_VABI EVP_EncryptInit_ex_nid_postfix(void);
 int APS5_VABI EVP_EncryptUpdate_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_cleanup_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_create_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_destroy_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_init_nid_postfix(void);
-int APS5_VABI EVP_MD_size_nid_postfix(void);
+int APS5_VABI EVP_MD_CTX_cleanup_nid_postfix(EvpMdContext* context);
+EvpMdContext* APS5_VABI EVP_MD_CTX_create_nid_postfix(void);
+void APS5_VABI EVP_MD_CTX_destroy_nid_postfix(EvpMdContext* context);
+void APS5_VABI EVP_MD_CTX_init_nid_postfix(EvpMdContext* context);
+int APS5_VABI EVP_MD_size_nid_postfix(const EvpMd* md);
 int APS5_VABI EVP_PKEY_copy_parameters_nid_postfix(void);
 int APS5_VABI EVP_PKEY_free_nid_postfix(void);
 int APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void);
@@ -391,19 +431,19 @@ int APS5_VABI EVP_aes_256_cfb8_nid_postfix(void);
 int APS5_VABI EVP_aes_256_ctr_nid_postfix(void);
 int APS5_VABI EVP_aes_256_gcm_nid_postfix(void);
 int APS5_VABI EVP_cleanup_nid_postfix(void);
-int APS5_VABI EVP_md5_nid_postfix(void);
-int APS5_VABI EVP_sha256_nid_postfix(void);
-int APS5_VABI EVP_sha384_nid_postfix(void);
-int APS5_VABI EVP_sha512_nid_postfix(void);
+const EvpMd* APS5_VABI EVP_md5_nid_postfix(void);
+const EvpMd* APS5_VABI EVP_sha256_nid_postfix(void);
+const EvpMd* APS5_VABI EVP_sha384_nid_postfix(void);
+const EvpMd* APS5_VABI EVP_sha512_nid_postfix(void);
 int APS5_VABI GENERAL_NAMES_free_nid_postfix(void);
 int APS5_VABI GENERAL_NAME_free_nid_postfix(void);
-int APS5_VABI HMAC_nid_postfix(void);
-int APS5_VABI HMAC_CTX_cleanup_nid_postfix(void);
-int APS5_VABI HMAC_CTX_init_nid_postfix(void);
-int APS5_VABI HMAC_Final_nid_postfix(void);
-int APS5_VABI HMAC_Init_nid_postfix(void);
-int APS5_VABI HMAC_Init_ex_nid_postfix(void);
-int APS5_VABI HMAC_Update_nid_postfix(void);
+unsigned char* APS5_VABI HMAC_nid_postfix(const EvpMd* md, const void* key, int keyLength, const unsigned char* data, std::size_t length, unsigned char* digest, std::uint32_t* digestLength);
+void APS5_VABI HMAC_CTX_cleanup_nid_postfix(HmacContext* context);
+void APS5_VABI HMAC_CTX_init_nid_postfix(HmacContext* context);
+int APS5_VABI HMAC_Final_nid_postfix(HmacContext* context, unsigned char* digest, std::uint32_t* length);
+int APS5_VABI HMAC_Init_nid_postfix(HmacContext* context, const void* key, int length, const EvpMd* md);
+int APS5_VABI HMAC_Init_ex_nid_postfix(HmacContext* context, const void* key, int length, const EvpMd* md, void* engine);
+int APS5_VABI HMAC_Update_nid_postfix(HmacContext* context, const unsigned char* data, std::size_t length);
 void APS5_VABI OBJ_cleanup_nid_postfix(void);
 int APS5_VABI OBJ_create_nid_postfix(void);
 int APS5_VABI OBJ_nid2sn_nid_postfix(void);
