@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libNativeExtensions/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -126,5 +127,39 @@ int APS5_VABI RnpsGetTicks() {
 int APS5_VABI ThreadUtils_SetSchedulePolicy() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libNativeExtensionsInventory_6QMoWxdywac_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("6QMoWxdywac", libNativeExtensionsInventory_6QMoWxdywac_nid_no_patch);
+
+int APS5_VABI libNativeExtensionsInventory_D_minus_2SZbPFqzQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("D-2SZbPFqzQ", libNativeExtensionsInventory_D_minus_2SZbPFqzQ_nid_no_patch);
+
+int APS5_VABI libNativeExtensionsInventory_J4I3Ue9vQ_plus_E_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("J4I3Ue9vQ+E", libNativeExtensionsInventory_J4I3Ue9vQ_plus_E_nid_no_patch);
+
+int APS5_VABI libNativeExtensionsInventory_PYd486Ryp_plus_4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PYd486Ryp+4", libNativeExtensionsInventory_PYd486Ryp_plus_4_nid_no_patch);
+
+int APS5_VABI libNativeExtensionsInventory_QfxvUZ0N9zc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("QfxvUZ0N9zc", libNativeExtensionsInventory_QfxvUZ0N9zc_nid_no_patch);
+
+int APS5_VABI libNativeExtensionsInventory_tw7mDSn_plus_8Ng_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tw7mDSn+8Ng", libNativeExtensionsInventory_tw7mDSn_plus_8Ng_nid_no_patch);
 
 }

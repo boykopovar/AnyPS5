@@ -37,3 +37,16 @@
 | `RnpsGetOpenPsIdForSystem` | `85O5VmSVqmI` |
 | `RnpsGetTicks` | `dG6FGUzIYGA` |
 | `ThreadUtils_SetSchedulePolicy` | `KGAA02fSVmk` |
+
+### Additional unidentified exports
+
+- Six [callable exports](../../../core/libs/prx/libNativeExtensions/Export.cpp) are throwing placeholders. Names, signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `6QMoWxdywac` |
+| `Unknown` | `D-2SZbPFqzQ` |
+| `Unknown` | `J4I3Ue9vQ+E` |
+| `Unknown` | `PYd486Ryp+4` |
+| `Unknown` | `QfxvUZ0N9zc` |
+| `Unknown` | `tw7mDSn+8Ng` |

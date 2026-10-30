@@ -36,4 +36,12 @@ int APS5_VABI RnpsGetOpenPsIdForSystem();
 int APS5_VABI RnpsGetTicks();
 int APS5_VABI ThreadUtils_SetSchedulePolicy();
 
+
+int APS5_VABI libNativeExtensionsInventory_6QMoWxdywac_nid_no_patch();
+int APS5_VABI libNativeExtensionsInventory_D_minus_2SZbPFqzQ_nid_no_patch();
+int APS5_VABI libNativeExtensionsInventory_J4I3Ue9vQ_plus_E_nid_no_patch();
+int APS5_VABI libNativeExtensionsInventory_PYd486Ryp_plus_4_nid_no_patch();
+int APS5_VABI libNativeExtensionsInventory_QfxvUZ0N9zc_nid_no_patch();
+int APS5_VABI libNativeExtensionsInventory_tw7mDSn_plus_8Ng_nid_no_patch();
+
 }
