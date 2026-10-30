@@ -64,6 +64,12 @@ struct NpTitleIdParts {
     std::uint8_t index;
 };
 
+struct NpEventFlagObject {
+    const void* const* vtable;
+    KernelEventFlag flag;
+    std::int32_t state;
+};
+
 extern "C" {
 
 int APS5_VABI sceNpCmpOnlineId(const NpOnlineId* onlineId1, const NpOnlineId* onlineId2);
@@ -141,6 +147,7 @@ int APS5_VABI sceNpSetEventFlag(KernelEventFlag flag, std::uint64_t pattern);
 int APS5_VABI sceNpClearEventFlag(KernelEventFlag flag, std::uint64_t pattern);
 int APS5_VABI sceNpPollEventFlag(KernelEventFlag flag, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result);
 int APS5_VABI sceNpCancelEventFlag(KernelEventFlag flag, std::uint64_t pattern, int* waiting);
+int APS5_VABI sceNpWaitEventFlag(KernelEventFlag flag, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result, KernelUseconds* timeout);
 int APS5_VABI sceNpCreateSema(KernelSema* sema, std::uint32_t flags, int initial, int maximum, const char* name);
 int APS5_VABI sceNpDeleteSema(KernelSema sema);
 int APS5_VABI sceNpPollSema(KernelSema sema);
@@ -258,7 +265,6 @@ int APS5_VABI _ZN3sce2npeqERKNS0_4TimeES3_(void);
 int APS5_VABI _ZN3sce2np13RingBufMemory6ExpandEm(void);
 int APS5_VABI _ZThn8_N3sce2np10MemoryFile4ReadEPNS0_6HandleEPvmPm(void);
 int APS5_VABI _ZN3sce2np7RingBuf15CheckoutForReadEPm(void);
-int APS5_VABI _ZN3sce2np9EventFlag4OpenEPKc(void);
 int APS5_VABI _ZN3sce2np13NpTitleSecret5ClearEv(void);
 int APS5_VABI _ZN3sce2np10EventQueue7EnqueueEPKvmj(void);
 int APS5_VABI _ZN3sce2np12HttpTemplateD1Ev(void);
@@ -279,8 +285,6 @@ int APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(void);
 int APS5_VABI sceNpUtilXmlUnescape(void);
 int APS5_VABI sceNpXmlParse(void);
 int APS5_VABI _ZN3sce2np9WorkQueue15GetFinishedItemENS0_14WorkItemStatusE(void);
-int APS5_VABI _ZN3sce2np9EventFlag4PollEmjPm(void);
-int APS5_VABI _ZN3sce2np9EventFlagD0Ev(void);
 int APS5_VABI _ZN3sce2np9LocalFile6RemoveEPKc(void);
 int APS5_VABI _ZN3sce2np14JsonDocBuilder12BuildBufSizeEv(void);
 int APS5_VABI _ZN3sce2np10MemoryFile8TruncateEl(void);
@@ -301,7 +305,6 @@ int APS5_VABI _ZN3sce2np7RingBuf14CheckinForReadEm(void);
 int APS5_VABI _ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPKvmPm(void);
 int APS5_VABI _ZN3sce2np6ThreadD1Ev(void);
 int APS5_VABI _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(void);
-int APS5_VABI _ZN3sce2np9EventFlag3SetEm(void);
 int APS5_VABI _ZN3sce2np9RefObjectC1Ev(void);
 int APS5_VABI _ZNK3sce2np7RingBuf6IsFullEv(void);
 int APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(void);
@@ -330,12 +333,10 @@ int APS5_VABI _ZN3sce2np5Mutex7DestroyEv(void);
 int APS5_VABI _ZN3sce2np14JsonDocBuilderC1ERKNS0_9JsonValueE(void);
 int APS5_VABI _ZN3sce2np9HttpTransD2Ev(void);
 int APS5_VABI _ZN3sce2np12HttpTemplateC2Ev(void);
-int APS5_VABI _ZN3sce2np9EventFlag6CreateEPKcj(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient15RegisterServiceEPKNS1_17ServiceClientInfoE(void);
 int APS5_VABI _ZN3sce2np8WorkItemD0Ev(void);
 int APS5_VABI _ZN3sce2np9SemaphoreD2Ev(void);
 int APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(void);
-int APS5_VABI _ZN3sce2np9EventFlagD2Ev(void);
 int APS5_VABI _ZN3sce2np9RefObjectD1Ev(void);
 int APS5_VABI _sceNpAllocatorMalloc(void);
 int APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(void);
@@ -357,7 +358,6 @@ int APS5_VABI _ZN3sce2np7RingBufD2Ev(void);
 int APS5_VABI _ZN3sce2np4PathD2Ev(void);
 int APS5_VABI _ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPvmPm(void);
 int APS5_VABI _ZN3sce2np4CondD1Ev(void);
-int APS5_VABI _ZN3sce2np9EventFlag7DestroyEv(void);
 int APS5_VABI _ZN3sce2np9HttpTransC1EP16SceNpAllocatorEx(void);
 int APS5_VABI _ZN3sce2np6Thread4dtorEv(void);
 int APS5_VABI _ZN3sce2np4Time8AddHoursEl(void);
@@ -373,6 +373,21 @@ int APS5_VABI _ZN3sce2np4Time12GetUserClockEPS1_(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient12AbortRequestEii(void);
 int APS5_VABI _ZNK3sce2np5Mutex6IsInitEv(void);
 
+void APS5_VABI _ZN3sce2np9EventFlagC1Ev(NpEventFlagObject* self);
+void APS5_VABI _ZN3sce2np9EventFlagC2Ev(NpEventFlagObject* self);
+void APS5_VABI _ZN3sce2np9EventFlagD1Ev(NpEventFlagObject* self);
+void APS5_VABI _ZN3sce2np9EventFlagD2Ev(NpEventFlagObject* self);
+void APS5_VABI _ZN3sce2np9EventFlagD0Ev(NpEventFlagObject* self);
+void APS5_VABI _ZN3sce2np9EventFlag4ctorEv(NpEventFlagObject* self);
+void APS5_VABI _ZN3sce2np9EventFlag4dtorEv(NpEventFlagObject* self);
+int APS5_VABI _ZN3sce2np9EventFlag6CreateEPKcj(NpEventFlagObject* self, const char* name, std::uint32_t attr);
+int APS5_VABI _ZN3sce2np9EventFlag4OpenEPKc(NpEventFlagObject* self, const char* name);
+void APS5_VABI _ZN3sce2np9EventFlag7DestroyEv(NpEventFlagObject* self);
+int APS5_VABI _ZN3sce2np9EventFlag3SetEm(NpEventFlagObject* self, std::uint64_t pattern);
+int APS5_VABI _ZN3sce2np9EventFlag4PollEmjPm(NpEventFlagObject* self, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result);
+int APS5_VABI _ZN3sce2np9EventFlag4WaitEmjPmj(NpEventFlagObject* self, std::uint64_t pattern, std::uint32_t mode, std::uint64_t* result, std::uint32_t usec);
+int APS5_VABI _ZN3sce2np9EventFlag5ClearEm(NpEventFlagObject* self, std::uint64_t pattern);
+int APS5_VABI _ZN3sce2np9EventFlag6CancelEm(NpEventFlagObject* self, std::uint64_t pattern);
 [[noreturn]] void APS5_VABI sceNpPanic(void);
 
 }
