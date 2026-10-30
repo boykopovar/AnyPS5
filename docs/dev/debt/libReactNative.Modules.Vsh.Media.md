@@ -61,3 +61,5 @@
 | `Unknown` | `kYVOipktdO0` |
 | `Unknown` | `m4NzcIr-JJk` |
 | `Unknown` | `zj7-XSRULNw` |
+
+- [Older callable NIDs](../../../core/libs/prx/libReactNative.Modules.Vsh.Media/Export.cpp): 9 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.

@@ -1,3 +1,4 @@
+#include "prx/libReactNative.Modules.Vsh.Media/include/LegacyExports.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libReactNative.Modules.Vsh.Media/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
@@ -208,5 +209,54 @@ int APS5_VABI libReactNativeMediaInventory_zj7_minus_XSRULNw_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("zj7-XSRULNw", libReactNativeMediaInventory_zj7_minus_XSRULNw_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI reactMediaLegacyUnknown_9pVA5pNkGHs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9pVA5pNkGHs", reactMediaLegacyUnknown_9pVA5pNkGHs_nid_no_patch);
+
+int APS5_VABI reactMediaLegacyUnknown_CxLjOlnTFVE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("CxLjOlnTFVE", reactMediaLegacyUnknown_CxLjOlnTFVE_nid_no_patch);
+
+int APS5_VABI reactMediaLegacyUnknown_JmVNtNXaZh8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JmVNtNXaZh8", reactMediaLegacyUnknown_JmVNtNXaZh8_nid_no_patch);
+
+int APS5_VABI reactMediaLegacyUnknown_Qx6_plus_lbJDwOc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Qx6+lbJDwOc", reactMediaLegacyUnknown_Qx6_plus_lbJDwOc_nid_no_patch);
+
+int APS5_VABI reactMediaLegacyUnknown_Y09cEVpgZ0I_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Y09cEVpgZ0I", reactMediaLegacyUnknown_Y09cEVpgZ0I_nid_no_patch);
+
+int APS5_VABI reactMediaLegacyUnknown_YnFtfNT7s4U_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("YnFtfNT7s4U", reactMediaLegacyUnknown_YnFtfNT7s4U_nid_no_patch);
+
+int APS5_VABI reactMediaLegacyUnknown_h2MkTxBmZQA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("h2MkTxBmZQA", reactMediaLegacyUnknown_h2MkTxBmZQA_nid_no_patch);
+
+int APS5_VABI reactMediaLegacyUnknown_haZdEMK5Xyw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("haZdEMK5Xyw", reactMediaLegacyUnknown_haZdEMK5Xyw_nid_no_patch);
+
+int APS5_VABI reactMediaLegacyUnknown_zkK8n_minus_lhgF4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("zkK8n-lhgF4", reactMediaLegacyUnknown_zkK8n_minus_lhgF4_nid_no_patch);
 
 }
