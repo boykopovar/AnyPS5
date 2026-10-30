@@ -64,13 +64,17 @@ inline std::string ImportModule(const std::string& symbol, const std::map<std::u
     if (lookup == "libSceLibreSSl3") lookup = "libSceLibreSsl3";
     if (lookup == "libSceLibreSSL") lookup = "libSceLibreSsl";
     if (lookup == "libSceJson") lookup = "libSceJson2";
-    std::string matched;
-    for (const auto& dependency : dependencies) {
-        if (ImportModuleName(dependency) != lookup) continue;
-        if (!matched.empty() && matched != dependency) throw RelinkerException("Ambiguous import module dependency: " + name);
-        matched = dependency;
-    }
-    return matched;
+    const auto findMatch = [&](const std::string& candidate) {
+        std::string matched;
+        for (const auto& dependency : dependencies) {
+            if (ImportModuleName(dependency) != candidate) continue;
+            if (!matched.empty() && matched != dependency) throw RelinkerException("Ambiguous import module dependency: " + name);
+            matched = dependency;
+        }
+        return matched;
+    };
+    if (const auto matched = findMatch(normalized); !matched.empty()) return matched;
+    return lookup == normalized ? std::string{} : findMatch(lookup);
 }
 
 }
