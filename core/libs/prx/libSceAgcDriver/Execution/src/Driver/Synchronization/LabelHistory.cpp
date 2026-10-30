@@ -20,14 +20,6 @@ void Driver::noteLabelStore(std::uint64_t address, std::span<const std::byte> by
     }
 }
 
-namespace {
-
-std::uint64_t queueDword(std::uint32_t queue, std::uint64_t dword) {
-    return dword | (static_cast<std::uint64_t>(queue) << 56u);
-}
-
-}
-
 void Driver::noteLabelPass(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     const auto opcode = (packet[0] >> 8u) & 0xffu;
     if ((opcode != 0x3c && opcode != 0x93) || packet.size() < 7 || ((packet[1] >> 4u) & 3u) != 1u) return;
@@ -35,20 +27,28 @@ void Driver::noteLabelPass(std::span<const std::uint32_t> packet, std::uint32_t 
     const std::uint64_t address = (packet[2] & (bytes == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
     const auto passed = eventSerial.load(std::memory_order_acquire);
     std::lock_guard lock(labelStoresMutex);
-    for (std::size_t offset = 0; offset < bytes; offset += 4) labelPasses[queueDword(queue, address + offset)] = passed;
+    for (std::size_t offset = 0; offset < bytes; offset += 4) labelTakes.Pass(queue, address + offset, passed);
+}
+
+void Driver::retireLabelTakes(std::uint32_t queue, std::uint64_t received) {
+    std::lock_guard lock(labelStoresMutex);
+    labelTakes.Retire(queue, received);
 }
 
 void Driver::noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t queue) {
-    const auto take = [&](std::uint64_t address, std::uint64_t bytes) {
+    const auto mayTake = [&](std::uint64_t address, std::uint64_t bytes) {
         for (std::uint64_t offset = 0; offset < bytes; offset += 4) {
-            const auto key = queueDword(queue, address + offset);
-            if (const auto pass = labelPasses.find(key); pass != labelPasses.end()) labelTaken[key] = pass->second;
+            if (labelTakes.MayHavePass(queue, address + offset)) return true;
         }
+        return false;
+    };
+    const auto take = [&](std::uint64_t address, std::uint64_t bytes) {
+        for (std::uint64_t offset = 0; offset < bytes; offset += 4) labelTakes.Take(queue, address + offset);
     };
     switch ((packet[0] >> 8u) & 0xffu) {
         case 0x37: case 0x49: {
             const auto label = Pm4::DecodeLabelWrite(packet);
-            if (!label.has_value() || !KeepsLabelStore(label->address, label->Bytes().size())) return;
+            if (!label.has_value() || !KeepsLabelStore(label->address, label->Bytes().size()) || !mayTake(label->address, label->Bytes().size())) return;
             std::lock_guard lock(labelStoresMutex);
             take(label->address, label->Bytes().size());
             return;
@@ -57,7 +57,7 @@ void Driver::noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t
         default: return;
     }
     auto stores = Pm4::DecodeStores(packet);
-    std::erase_if(stores, [](const Pm4::PacketStore& store) { return store.conditional || !KeepsLabelStore(store.address, static_cast<std::size_t>(store.bytes)); });
+    std::erase_if(stores, [&](const Pm4::PacketStore& store) { return store.conditional || !KeepsLabelStore(store.address, static_cast<std::size_t>(store.bytes)) || !mayTake(store.address, store.bytes); });
     if (stores.empty()) return;
     std::lock_guard lock(labelStoresMutex);
     for (const auto& store : stores) take(store.address, store.bytes);
@@ -70,9 +70,7 @@ bool Driver::storedSince(std::span<const std::uint32_t> packet, std::uint64_t ad
     const auto high = bytes == 8 ? labelStores.find(address + 4) : labelStores.end();
     if (bytes == 8 && high == labelStores.end()) return false;
     std::uint64_t taken = 0;
-    for (std::size_t offset = 0; offset < bytes; offset += 4) {
-        if (const auto found = labelTaken.find(queueDword(queue, address + offset)); found != labelTaken.end()) taken = std::max(taken, found->second);
-    }
+    for (std::size_t offset = 0; offset < bytes; offset += 4) taken = std::max(taken, labelTakes.Taken(queue, address + offset));
     for (const auto& store : low->second) {
         if (store.stamp <= received || (store.queue != queue && store.stamp <= taken)) continue;
         std::uint64_t value = store.value;

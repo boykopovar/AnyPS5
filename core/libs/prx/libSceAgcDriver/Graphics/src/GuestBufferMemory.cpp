@@ -3748,6 +3748,12 @@ void ClearHostImports(VkDevice device) {
         state.settles.erase(found);
     }
     if (state.device != device) return;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unwatched;
+    GuestAllocations::Lease lease;
+    if (std::any_of(state.imports.begin(), state.imports.end(), [](const auto& import) { return import.second.unwatched; })) {
+        lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+        for (const auto& [address, entry] : state.imports) noteRetiredUnwatched(unwatched, entry, lease);
+    }
     for (const auto& [address, entry] : state.imports) {
         state.destroyBuffer(state.device, entry.buffer, nullptr);
         state.freeMemory(state.device, entry.memory, nullptr);
@@ -3756,6 +3762,7 @@ void ClearHostImports(VkDevice device) {
 #endif
     }
     state.imports.clear();
+    rewatchRetired(state, std::move(unwatched));
     state.pendingImports.clear();
     state.liveBytes = 0;
     state.failed.clear();

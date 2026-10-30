@@ -39,5 +39,12 @@ int APS5_VABI sceRazorCpuStopCaptureInternal(void);
 int APS5_VABI sceRazorCpuWorkloadRunBegin(void);
 int APS5_VABI sceRazorCpuWorkloadRunEnd(void);
 int APS5_VABI sceRazorCpuWorkloadSubmit(void);
+int APS5_VABI sceRazorCpuUserSignalWaitBegin();
+int APS5_VABI sceRazorCpuUserSignalPost();
+int APS5_VABI sceRazorCpuWriteBookmarkEnd();
+int APS5_VABI sceRazorCpuUserSignalWaitEnd();
+int APS5_VABI sceRazorCpuWorkloadRunBeginEx();
+int APS5_VABI sceRazorCpuUserSignalPostEx();
+int APS5_VABI sceRazorCpuUserSignalWaitBeginEx();
 
 }

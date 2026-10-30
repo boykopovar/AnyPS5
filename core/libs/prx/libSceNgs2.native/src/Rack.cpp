@@ -220,6 +220,7 @@ int Ngs2DestroyRack(Ngs2Rack& rack, Ngs2ContextBufferInfo* outBufferInfo) {
             for (auto& port : voice.ports) {
                 if (port.dest != nullptr && port.dest->rack == &rack) port.dest = nullptr;
             }
+            Ngs2DetachPendingPatches(voice, rack);
         }
     }
     rack.system = nullptr;

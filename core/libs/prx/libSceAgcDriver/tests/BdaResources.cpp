@@ -116,6 +116,7 @@ void snapshotTableTests(const Context& context, const BdaTestAccess& access) {
         auto a = build(first, false, true, snapshotAddress);
         auto plain = build(first, false, false, snapshotAddress);
         auto d = build(first, true, true, snapshotAddress);
+        const auto spaceTableHitsBefore = BdaResources::TableCacheCounters().spaceTables;
         auto b = build(first, false, true, snapshotAddress);
         auto c = build(second, false, true, snapshotAddress);
         Require(a.snapshot == b.snapshot && a.view == b.view, "two builds of one snapshot with the same bytes do not share its device copy");
@@ -124,6 +125,8 @@ void snapshotTableTests(const Context& context, const BdaTestAccess& access) {
         if (spaces) {
             Require(a.memory->CachedAddressTable().has_value() && c.memory->CachedAddressTable().has_value() && d.memory->CachedAddressTable().has_value(), "a build with its own regions over the address space has no cached BDA table");
             Require(a.table == b.table, "two builds of the same space and snapshot do not share their BDA table");
+            Require(BdaResources::TableCacheCounters().spaceTables == spaceTableHitsBefore + 1, "a repeated build with a stable address-space and MSAA guard generation missed the serial-keyed BDA table");
+            Require(b.bda->Table().range == a.bda->Table().range && b.bda->Table().range != 0, "a cached BDA descriptor lost its byte range: " + std::to_string(b.bda->Table().range) + " instead of " + std::to_string(a.bda->Table().range));
             Require(c.table != a.table, "a build with other snapshot bytes took another build's BDA table");
             Require(a.memory->CachedAddressTable()->serial == b.memory->CachedAddressTable()->serial && c.memory->CachedAddressTable()->serial != a.memory->CachedAddressTable()->serial, "cached BDA table serials do not follow the build's ranges");
         }
