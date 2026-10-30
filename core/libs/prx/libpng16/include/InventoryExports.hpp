@@ -67,4 +67,10 @@ int APS5_VABI png_write_end();
 int APS5_VABI png_write_image();
 int APS5_VABI png_write_info();
 
+int APS5_VABI libpng16Unknown_KfijsxTYXjA_nid_no_patch();
+int APS5_VABI libpng16Unknown_aW9EOzLYcpE_nid_no_patch();
+int APS5_VABI libpng16Unknown_dE_plus__plus_k4zc9go_nid_no_patch();
+int APS5_VABI libpng16Unknown_npOsN_plus__minus_i1Vg_nid_no_patch();
+int APS5_VABI libpng16Unknown_tdUy1yBytBk_nid_no_patch();
+
 }

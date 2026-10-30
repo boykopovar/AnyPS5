@@ -68,3 +68,5 @@
 | `png_write_end` | `0teUd1yBOKg` |
 | `png_write_image` | `nleYBZY-BsY` |
 | `png_write_info` | `Bdn6SlO1+NQ` |
+
+- [Five additional callable NIDs](../../../core/libs/prx/libpng16/Export.cpp) occur in the older `libpng16` and later `libSceVshPng` images. Module and library identities differ; matching NIDs do not establish forwarding or equivalent behavior. Image labels are not authenticated. Names, signatures and behavior are unverified; these declarations throw.

@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libpng16/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -250,5 +251,34 @@ int APS5_VABI png_write_image() {
 int APS5_VABI png_write_info() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libpng16Unknown_KfijsxTYXjA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KfijsxTYXjA", libpng16Unknown_KfijsxTYXjA_nid_no_patch);
+
+int APS5_VABI libpng16Unknown_aW9EOzLYcpE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aW9EOzLYcpE", libpng16Unknown_aW9EOzLYcpE_nid_no_patch);
+
+int APS5_VABI libpng16Unknown_dE_plus__plus_k4zc9go_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dE++k4zc9go", libpng16Unknown_dE_plus__plus_k4zc9go_nid_no_patch);
+
+int APS5_VABI libpng16Unknown_npOsN_plus__minus_i1Vg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("npOsN+-i1Vg", libpng16Unknown_npOsN_plus__minus_i1Vg_nid_no_patch);
+
+int APS5_VABI libpng16Unknown_tdUy1yBytBk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tdUy1yBytBk", libpng16Unknown_tdUy1yBytBk_nid_no_patch);
 
 }
