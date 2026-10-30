@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -35,10 +36,10 @@ public:
     void ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType);
     void RegisterVideoOutput(std::uint32_t handle);
     void UnregisterVideoOutput(std::uint32_t handle);
-    void Submit(const Packet& packet, std::uint32_t queue);
-    void Flip(const FlipInfo& info);
+    void Submit(const Packet& packet, std::uint32_t queue, const std::function<void()>& accept);
+    void Flip(const FlipInfo& info, const std::function<void()>& accept);
     void ReserveEopFlip(const FlipInfo& info, std::uint32_t token);
-    void Suspend();
+    void Suspend(const std::function<void()>& accept);
     void PresentBuffer(const DisplayBuffer& buffer);
     void FrameBoundary();
 
@@ -62,7 +63,8 @@ private:
     };
 
     FrameCall make(FrameCallKind kind);
-    void record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders = {});
+    void record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders = {}, const std::function<void()>& accept = {});
+    void recordLocked(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders);
     void emitDelta();
     void emitShaderDelta(std::span<const Shader* const> shaders);
     void writeDelta(std::span<const Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {});
@@ -70,8 +72,10 @@ private:
     void start();
     void finish();
     void snapshot(const Range& range);
+    void readGuest(std::uint64_t address, std::span<std::byte> bytes, GuestRead read);
     void writeReferenceFrames();
     bool abandonIfDiskLow();
+    void stop(const char* reason);
     std::string header() const;
     std::vector<Range> committedRanges();
     std::vector<Range> newRanges();
@@ -101,6 +105,7 @@ private:
     std::uint64_t recordedCalls = 0;
     std::uint64_t startAttempts = 0;
     std::uint64_t unreadableBytes = 0;
+    std::uint64_t hostOnlySampleBytes = 0;
     std::uint64_t allocationsGeneration = 0;
     std::uint64_t lateRanges = 0;
     std::vector<std::string> warnings;

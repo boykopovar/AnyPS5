@@ -128,6 +128,12 @@ struct FontGraphicsDeviceUsage {
     FontGraphicsMemoryUsage second;
 };
 
+namespace Font {
+
+using GraphicsErrorCallback = void (APS5_VABI*)(int error);
+
+}
+
 extern "C" {
 
 int APS5_VABI sceFontMemoryInit(FontMemory* memory, void* regionAddress, std::uint32_t regionSize, const FontMemoryInterface* iface, void* mspaceObject, FontMemoryDestroyFunction destroyCallback, void* destroyObject);
@@ -147,6 +153,7 @@ int APS5_VABI sceFontClearDeviceCache(FontLibrary library);
 int APS5_VABI sceFontDettachDeviceCacheBuffer(FontLibrary library, void** buffer, std::uint32_t* size);
 int APS5_VABI sceFontSupportExternalFonts(FontLibrary library, std::uint32_t fontMax, std::uint32_t formats);
 int APS5_VABI sceFontSupportSystemFonts(FontLibrary library);
+void APS5_VABI sceFontSetGraphicsErrorCallback(Font::GraphicsErrorCallback callback);
 int APS5_VABI sceFontSetFontsOpenMode(FontLibrary library, std::uint32_t openMode);
 int APS5_VABI sceFontOpenFontMemory(FontLibrary library, const void* fontAddress, std::uint32_t fontSize, const FontOpenDetail* openDetail, FontHandle* pFontHandle);
 int APS5_VABI sceFontOpenFontFile(FontLibrary library, const char* path, std::uint32_t openMode, const FontOpenDetail* openDetail, FontHandle* pFontHandle);
@@ -316,8 +323,8 @@ int APS5_VABI sceFontGraphicsUpdateShapeFill(FontGraphicsResource* resource, con
 int APS5_VABI sceFontGraphicsUpdateShapeFillPlot(FontGraphicsResource* resource, const FontGraphicsFillPlot* plot);
 int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support);
 int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter* firstCharacter, FontTextCharacter* endCharacter, FontTextCharacter** lastCharacter, FontTextCharacter** nextCharacter);
-int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* frame, const void* data, std::uint32_t dataSize, float x, float y, float width, float height, FontGraphicsFill** fill);
-int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* frame, const void* data, std::uint32_t dataSize, std::uint32_t firstMode, std::uint32_t secondMode, std::int32_t firstCount, std::int32_t firstLayout, std::int32_t secondLayout, std::int32_t secondCount, FontGraphicsFill** fill);
+int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height);
+int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height);
 int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t writingForm, const void* writingLineDetail, void** pWritingLine);
 int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine);
 int APS5_VABI sceFontWritingLineClear(void* writingLine);

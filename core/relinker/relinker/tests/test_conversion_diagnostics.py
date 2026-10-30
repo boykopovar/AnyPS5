@@ -75,7 +75,7 @@ def main():
                 convert(f"{index}-module-name", None, "Unsupported Windows guest filename", flags, module=guest_fixture(PLAIN_SITE))
             module = guest_fixture(PLAIN_SITE)
             struct.pack_into("<QQ", module, 176 + 32, 17, 17)
-            convert(f"{index}-module", None, "Missing or invalid ELF load/dynamic segments", flags, module=module)
+            convert(f"{index}-module", None, "Unterminated dynamic segment", flags, module=module)
             convert(f"{index}-module-syscall", None, "Forbidden syscall instruction", flags, module=guest_fixture(b"\x0f\x05" + b"\x90" * 4), module_name="broken.prx")
     if failures:
         raise AssertionError(failures)

@@ -464,7 +464,7 @@ private:
             std::istringstream stream(text);
             stream.imbue(std::locale::classic());
             stream >> real;
-            converted = !stream.fail() && stream.eof();
+            converted = stream.eof() && (!stream.fail() || real == 0);
         }
         if (!converted || !std::isfinite(real)) throw std::runtime_error("sce::Json::Parser::parse: number " + text + " overflows a double; the console's behaviour is unverified");
         out.type = TypeReal;

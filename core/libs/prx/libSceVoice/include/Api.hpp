@@ -32,7 +32,7 @@ int APS5_VABI sceVoiceInitHQ(const VoiceInitParam* param, std::int32_t version);
 int APS5_VABI sceVoiceGetMemorySize(void);
 int APS5_VABI sceVoiceDeviceInCustomerData(void);
 int APS5_VABI sceVoiceQAEnableRecording(void);
-int APS5_VABI sceVoiceVADAdjustment(void);
+int APS5_VABI sceVoiceVADAdjustment(float param1, float param2);
 int APS5_VABI sceVoiceVADPVTAdjustment(void);
 int APS5_VABI sceVoiceVADSetVersion(std::int32_t version);
 int APS5_VABI sceVoiceSetMuteFlagAll(bool muted);

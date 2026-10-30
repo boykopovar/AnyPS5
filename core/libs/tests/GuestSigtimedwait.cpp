@@ -2,9 +2,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
@@ -98,6 +101,24 @@ static void CheckTimeoutWithUnrelatedSignals() {
     Require(sigtimedwait_nid_postfix(&interrupt, nullptr, &poll) == 2);
     Require(sigtimedwait_nid_postfix(&pipe, nullptr, &poll) == -1 && *__error_nid_postfix() == 35);
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
+}
+static void CheckShortTimeouts() {
+    const GuestSignalSet pipe{{1u << 12, 0, 0, 0}};
+    for (const std::int64_t nanos : {100000, 1000000}) {
+        const KernelTimespec timeout{0, nanos};
+        std::array<std::chrono::nanoseconds, 31> samples{};
+        for (auto& sample : samples) {
+            const auto before = std::chrono::steady_clock::now();
+            Require(sigtimedwait_nid_postfix(&pipe, nullptr, &timeout) == -1 && *__error_nid_postfix() == 35);
+            sample = std::chrono::steady_clock::now() - before;
+            Require(sample >= std::chrono::nanoseconds(nanos));
+        }
+        std::sort(samples.begin(), samples.end());
+        const auto median = samples[samples.size() / 2];
+        std::fprintf(stderr, "sigtimedwait(%lld ns) median: %lld ns\n", static_cast<long long>(nanos),
+                     static_cast<long long>(median.count()));
+        Require(median < std::chrono::milliseconds(12));
+    }
 }
 int main() {
     const GuestSignalSet empty{{0, 0, 0, 0}};
@@ -194,4 +215,5 @@ int main() {
     }
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
     CheckTimeoutWithUnrelatedSignals();
+    CheckShortTimeouts();
 }
