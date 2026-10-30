@@ -1205,6 +1205,11 @@ std::string Logged(TAction action) {
     return capture.Finish();
 }
 
+void SettleResolvedAbis() {
+    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    while (AgcDriver::DriverDetail::RegistrationPreparationsPending() != std::optional<std::size_t>{0}) std::this_thread::yield();
+}
+
 std::size_t Deferrals(const std::string& log) {
     constexpr std::string_view line = "could not be prepared when the title created its pipeline";
     std::size_t count = 0;
@@ -1320,8 +1325,10 @@ void AbiDeferredCompute() {
     const bool lazy = std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr;
     const auto before = ShaderRecompiler::FrontEndBuilds();
     AgcDriverResolveShaderAbi_nid_postfix(&caller.shader, {}, {});
+    SettleResolvedAbis();
     const auto attempted = ShaderRecompiler::FrontEndBuilds();
     AgcDriverResolveShaderAbi_nid_postfix(&caller.shader, {}, {});
+    SettleResolvedAbis();
     if (lazy) Require(attempted == before && ShaderRecompiler::FrontEndBuilds() == attempted, "a compute static ABI resolved under lazy preparation built its front end before its dispatch");
     else Require(attempted > before && ShaderRecompiler::FrontEndBuilds() == attempted, "a compute static ABI deferred to its dispatch was prepared again for the same state");
     const auto first = reinterpret_cast<std::uintptr_t>(AddFiveCallee.data());
@@ -1469,15 +1476,24 @@ void AbiDeferredPixel() {
     DescribeWaterfallPixel(pixel);
     AgcDriverRegisterShader_nid_postfix(&pixel.shader);
     const auto before = ShaderRecompiler::FrontEndBuilds();
-    auto log = Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {}); });
+    auto log = Logged([&] {
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {});
+        SettleResolvedAbis();
+    });
     const auto attempted = ShaderRecompiler::FrontEndBuilds();
-    log += Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {}); });
+    log += Logged([&] {
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, {}, {});
+        SettleResolvedAbis();
+    });
     Require(attempted > before && ShaderRecompiler::FrontEndBuilds() == attempted, "a pixel static ABI deferred to its draw was prepared again for the same state");
     Require(Deferrals(log) == 1 && log.find("is not a valid runtime value") != std::string::npos, "a pixel shader its static ABI cannot prepare was not logged once with its reason");
     {
         AgcDriver::ShaderPreparationScope scope({&pixel.shader});
         const std::array<ShaderRegister, 1> interpolant{{{0x191, 0x20}}};
-        log = Logged([&] { AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, interpolant, {}); });
+        log = Logged([&] {
+            AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, interpolant, {});
+            SettleResolvedAbis();
+        });
         scope.Commit();
     }
     Require(ShaderRecompiler::FrontEndBuilds() > attempted && Deferrals(log) == 0, "a deferred pixel shader was not prepared once more for another state, or was logged again");
@@ -1619,6 +1635,12 @@ void AbiDeferredRectanglePairs() {
         AgcDriverResolveGraphicsAbi_nid_postfix(&front.shader, &pixel.shader, 17);
         scope.Commit();
     };
+    {
+        AgcDriver::ShaderPreparationScope scope({&pixel.shader});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, passthrough, {});
+        scope.Commit();
+    }
+    SettleResolvedAbis();
     auto log = Logged(resolve);
     Require(Deferrals(log) == 1 && log.find("custom per-vertex interpolation is unsupported") != std::string::npos, "a rectangle pair its pipeline ABI cannot build was not deferred once with the builder's reason");
     log = Logged(resolve);
@@ -1671,7 +1693,7 @@ void CommittedAbis() {
         std::lock_guard lock(pixelSnapshot->prepared->mutex);
         return pixelSnapshot->prepared->registeredAbis.size();
     };
-    AgcDriver::DriverDetail::AwaitRegistrationPreparation();
+    SettleResolvedAbis();
     const auto before = ShaderRecompiler::FrontEndBuilds();
     const auto abisBefore = committedAbis();
     bool unblocked = false;
@@ -1696,6 +1718,22 @@ void CommittedAbis() {
     other.get();
     Require(unblocked && repeatedBuilds == 0, "resolving ABIs the shaders already had waited for another thread's shader preparation, or prepared them again");
     Require(excluded, "a new ABI was published beside a shader preparation that had read prepared state");
+    if (std::getenv("APS5_SYNC_SHADER_PREPARE") != nullptr || std::getenv("APS5_LAZY_SHADER_PREPARE") != nullptr) return;
+    SettleResolvedAbis();
+    std::promise<void> release;
+    const auto released = release.get_future().share();
+    for (unsigned worker = 0; worker < std::max(1u, AgcDriver::DriverDetail::RegistrationPreparationThreads()); ++worker) AgcDriver::DriverDetail::SubmitRegistrationPreparation([released] { released.wait(); });
+    const auto queued = ShaderRecompiler::FrontEndBuilds();
+    const std::array<ShaderRegister, 1> flat{{{0x191, 0x420}}};
+    {
+        AgcDriver::ShaderPreparationScope scope({&pixel.shader});
+        AgcDriverResolveShaderAbi_nid_postfix(&pixel.shader, flat, {});
+        scope.Commit();
+    }
+    const bool returned = ShaderRecompiler::FrontEndBuilds() == queued;
+    release.set_value();
+    SettleResolvedAbis();
+    Require(returned && ShaderRecompiler::FrontEndBuilds() > queued, "a new static ABI was prepared on the resolving thread instead of the registration pool");
 }
 
 void RelocatedHeaders() {

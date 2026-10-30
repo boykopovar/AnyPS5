@@ -593,7 +593,7 @@ void ShaderPreparationTransaction::Commit() {
             auto& destination = *change.destination;
             for (auto index = std::min(change.baseEntries, destination.entries.size()); index < destination.entries.size(); ++index) {
                 const auto& entry = destination.entries[index];
-                if (std::ranges::none_of(change.prepared.entries, [&](const auto& existing) { return existing.codeOffset == entry.codeOffset && existing.handle == entry.handle; })) change.prepared.entries.push_back(entry);
+                if (std::ranges::none_of(change.prepared.entries, [&](const auto& existing) { return existing.codeOffset == entry.codeOffset && existing.handle->artifact == entry.handle->artifact; })) change.prepared.entries.push_back(entry);
             }
             for (auto index = std::min(change.baseAbis, destination.registeredAbis.size()); index < destination.registeredAbis.size(); ++index) {
                 const auto& abi = destination.registeredAbis[index];
@@ -894,7 +894,7 @@ void ReportPreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler:
         return;
     }
     if (!snapshot.header.empty()) {
-        if (!snapshot.prepared->deferred) APS5_LOG_ERR("Shader 0x%llx stage %u has no artifact prepared at registration for the state of this draw or dispatch; preparing it at use", static_cast<unsigned long long>(request.shader.codeAddress), static_cast<std::uint32_t>(request.shader.stage));
+        if (!snapshot.prepared->deferred && snapshot.prepared->resolving == 0) APS5_LOG_ERR("Shader 0x%llx stage %u has no artifact prepared at registration for the state of this draw or dispatch; preparing it at use", static_cast<unsigned long long>(request.shader.codeAddress), static_cast<std::uint32_t>(request.shader.stage));
         return;
     }
     if (request.shader.stage == ShaderRecompiler::ShaderStage::Compute) {
@@ -1531,6 +1531,28 @@ void DeferPipelineStage(PreparedShaderState& prepared, const ShaderSnapshot& sna
     prepared.deferred = true;
 }
 
+void PrepareResolvedAbi(const ShaderSnapshot& snapshot, RegisteredPreparation& plan) {
+    PerformanceContext timingContext(FrameTiming::Preparation());
+    std::vector<PreparedShaders::Entry> entries;
+    std::optional<std::string> failure;
+    try {
+        if (RegistrationPrepareWithinMemoryBudget()) entries = PrepareRegistered(plan);
+        else LogRegistrationPrepareDeferred();
+    } catch (const std::exception& error) {
+        failure = error.what();
+    }
+    std::lock_guard lock(snapshot.prepared->mutex);
+    --snapshot.prepared->resolving;
+    if (failure) {
+        DeferPipelineStage(*snapshot.prepared, snapshot, failure->c_str());
+        return;
+    }
+    for (auto& entry : entries) {
+        const auto duplicate = std::ranges::any_of(snapshot.prepared->entries, [&](const auto& existing) { return existing.codeOffset == entry.codeOffset && existing.handle->artifact == entry.handle->artifact; });
+        if (!duplicate) snapshot.prepared->entries.push_back(std::move(entry));
+    }
+}
+
 std::optional<std::string> FailedRegistration(const ShaderSnapshot& snapshot) {
     std::unique_lock lock(snapshot.prepared->mutex);
     try {
@@ -1600,7 +1622,7 @@ public:
             if (pool == nullptr) continue;
             std::unique_lock lock(pool->mutex, std::try_to_lock);
             if (!lock.owns_lock()) return std::nullopt;
-            pending += pool->tasks.size() + pool->running;
+            pending += pool->tasks.size() + pool->background.size() + pool->running;
         }
         return pending;
     }
@@ -1657,6 +1679,19 @@ public:
         task();
     }
 
+    void SubmitBackground(std::function<void()> task) {
+        {
+            std::unique_lock lock(mutex);
+            if (threads != 0 && !closed) {
+                background.push_back({std::move(task), nullptr, 0});
+                lock.unlock();
+                ready.notify_one();
+                return;
+            }
+        }
+        task();
+    }
+
     void Prioritize(const PreparedShaders& prepared) {
         std::lock_guard lock(mutex);
         moveToFront(prepared);
@@ -1703,6 +1738,8 @@ public:
                 }
                 idle.notify_all();
             }
+            std::ranges::move(background, std::back_inserter(dropped));
+            background.clear();
             idle.wait(lock, [&] { return tasks.empty() && running == 0; });
             joined.swap(workers);
         }
@@ -1790,15 +1827,19 @@ private:
                 auto next = pool.tasks.end();
                 pool.ready.wait(lock, [&] {
                     next = std::ranges::find_if(pool.tasks, [&](const Task& queued) { return !queued.budgeted || pool.budgetedRunning < pool.budgetedLimit; });
-                    return next != pool.tasks.end() || (pool.closed && pool.tasks.empty());
+                    return next != pool.tasks.end() || !pool.background.empty() || (pool.closed && pool.tasks.empty());
                 });
-                if (next == pool.tasks.end()) {
+                if (next != pool.tasks.end()) {
+                    task = std::move(*next);
+                    pool.tasks.erase(next);
+                    if (task.program != 0) pool.waitingPrograms.fetch_sub(1, std::memory_order_relaxed);
+                } else if (!pool.background.empty()) {
+                    task = std::move(pool.background.front());
+                    pool.background.pop_front();
+                } else {
                     liveWorkers.fetch_sub(1, std::memory_order_acq_rel);
                     return nullptr;
                 }
-                task = std::move(*next);
-                pool.tasks.erase(next);
-                if (task.program != 0) pool.waitingPrograms.fetch_sub(1, std::memory_order_relaxed);
                 ++pool.running;
                 if (task.budgeted) ++pool.budgetedRunning;
             }
@@ -1814,7 +1855,7 @@ private:
                 if (budgeted) --pool.budgetedRunning;
                 pool.unfinished.erase(sequence);
                 pool.disown(prepared, sequence);
-                drained = pool.tasks.empty() && pool.running == 0;
+                drained = pool.tasks.empty() && pool.background.empty() && pool.running == 0;
                 pool.idle.notify_all();
             }
             if (budgeted) pool.ready.notify_all();
@@ -1838,6 +1879,7 @@ private:
     std::condition_variable idle;
     std::deque<Task> tasks;
     std::atomic<std::size_t> waitingPrograms{0};
+    std::deque<Task> background;
     std::vector<Worker> workers;
     unsigned threads = 0;
     inline static std::atomic<unsigned> liveWorkers{0};
@@ -2265,24 +2307,39 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
     struct RegisteredAbiKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, RegisteredAbiKeyStorage>();
     BuildRegisteredAbiKey(state, *localDevice, key);
-    if (LazyShaderPreparation()) {
+    if (LazyShaderPreparation() || AsyncRegistrationPrepare()) {
+        if (CommittedAbi(*snapshot, key) && !transaction.Tracks(*snapshot)) {
+            transaction.Commit();
+            return;
+        }
         const auto& resolved = transaction.Read(*snapshot).registeredAbis;
         if (std::ranges::find(resolved, key) != resolved.end()) {
             transaction.Commit();
             return;
         }
         std::optional<std::string> invalid;
+        std::unique_ptr<RegisteredPreparation> plan;
         try {
-            static_cast<void>(PlanRegistered(*snapshot, *localDevice, state, false));
+            plan = PlanRegistered(*snapshot, *localDevice, state, false);
         } catch (const std::exception& error) {
             invalid = error.what();
         }
         auto& prepared = transaction.Edit(*snapshot);
         if (invalid) DeferPipelineStage(prepared, *snapshot, invalid->c_str());
         prepared.registeredAbis.push_back(key);
-        prepared.deferred = true;
+        if (LazyShaderPreparation()) prepared.deferred = true;
         transaction.Commit();
         if (invalid) return;
+        if (!LazyShaderPreparation()) {
+            if (plan == nullptr) return;
+            plan->prebuildDevice = localDevice;
+            {
+                std::lock_guard lock(snapshot->prepared->mutex);
+                ++snapshot->prepared->resolving;
+            }
+            RegistrationPreparePool::Instance().SubmitBackground([snapshot, plan = std::shared_ptr<RegisteredPreparation>(std::move(plan))] { PrepareResolvedAbi(*snapshot, *plan); });
+            return;
+        }
         PreparedShaders::DeferredAbi deferred{key, {}, {}, localDevice};
         for (const auto reg : context) deferred.context.emplace_back(reg.offset, reg.value);
         for (const auto reg : primitive) deferred.primitive.emplace_back(reg.offset, reg.value);
