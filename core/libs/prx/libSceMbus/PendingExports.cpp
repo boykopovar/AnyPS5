@@ -584,4 +584,48 @@ int APS5_VABI sceMbusUserLogout(std::int32_t userId) {
     return 0;
 }
 
+int APS5_VABI sceMbusGetCurrentChatBalanceId() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusGetInitialUser() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusGetSimulatedBusUsableStatusByBusType2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetChatBalance() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetCronosOutputMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetCronosPrimaryUser() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetHmd2SocialScreenAudioMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetVolumeDownForDiscPlayerFG() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusStartAudioOutScreenShare() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusStopAudioOutScreenShare() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
