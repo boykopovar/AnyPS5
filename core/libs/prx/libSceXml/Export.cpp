@@ -1,4 +1,3 @@
-#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceXml/include/InventoryExports.hpp"
 #include "prx/libSceXml/include/Api.hpp"
 #include <cstdint>
@@ -612,169 +611,136 @@ int APS5_VABI _ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE() {
 
 extern "C" {
 
-int APS5_VABI libSceXmlUnknown_1JAZNsOKua0_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNodeTypeENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("1JAZNsOKua0", libSceXmlUnknown_1JAZNsOKua0_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_5JyhV10GpQE_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document12getLastChildENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("5JyhV10GpQE", libSceXmlUnknown_5JyhV10GpQE_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_7MsYv4D1Ang_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document7getTextENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("7MsYv4D1Ang", libSceXmlUnknown_7MsYv4D1Ang_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_AI6mDpNxPYk_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("AI6mDpNxPYk", libSceXmlUnknown_AI6mDpNxPYk_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_GceM6WE2WS4_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNodeNameENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("GceM6WE2WS4", libSceXmlUnknown_GceM6WE2WS4_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_HGZ0DTuCvuQ_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document20getElementsByTagNameENS1_6NodeIdEPKNS0_6StringEPNS1_8NodeListE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("HGZ0DTuCvuQ", libSceXmlUnknown_HGZ0DTuCvuQ_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_I3ootbOM_minus_00_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getEntityTypeENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("I3ootbOM-00", libSceXmlUnknown_I3ootbOM_minus_00_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_KgzBbi3DUDA_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml4Attr7getNameEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("KgzBbi3DUDA", libSceXmlUnknown_KgzBbi3DUDA_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_N_minus_2qBJYv6lw_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("N-2qBJYv6lw", libSceXmlUnknown_N_minus_2qBJYv6lw_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_NZMWDTSdPXM_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getAttributesENS1_6NodeIdEPNS1_8NodeListE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("NZMWDTSdPXM", libSceXmlUnknown_NZMWDTSdPXM_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_PXmLYh0zF14_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("PXmLYh0zF14", libSceXmlUnknown_PXmLYh0zF14_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_Q_minus_ryXoj4ez0_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeList4itemEj() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Q-ryXoj4ez0", libSceXmlUnknown_Q_minus_ryXoj4ez0_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_QOmIaoXFNig_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml4Attr8getValueEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("QOmIaoXFNig", libSceXmlUnknown_QOmIaoXFNig_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_REcO7rLo0fA_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11getAttrNameENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("REcO7rLo0fA", libSceXmlUnknown_REcO7rLo0fA_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_VdYoc9kGeyA_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeListixEj() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("VdYoc9kGeyA", libSceXmlUnknown_VdYoc9kGeyA_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_WPyn5rEy2DE_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document9getStatusEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("WPyn5rEy2DE", libSceXmlUnknown_WPyn5rEy2DE_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_XlzFT8nnAMU_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document14getSkippedTextENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("XlzFT8nnAMU", libSceXmlUnknown_XlzFT8nnAMU_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_Zmk8Mb9qNQ0_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Zmk8Mb9qNQ0", libSceXmlUnknown_Zmk8Mb9qNQ0_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_aZH_plus_29bSsEk_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document9getEntityENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("aZH+29bSsEk", libSceXmlUnknown_aZH_plus_29bSsEk_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_b9b6PA5TKc0_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNextAttrENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("b9b6PA5TKc0", libSceXmlUnknown_b9b6PA5TKc0_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_fw4_plus_tIZ_minus_4t8_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document12getAttrValueENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("fw4+tIZ-4t8", libSceXmlUnknown_fw4_plus_tIZ_minus_4t8_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_jMWTTO6X_minus_kw_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document12getFirstAttrENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("jMWTTO6X-kw", libSceXmlUnknown_jMWTTO6X_minus_kw_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_jc7L3HSltT0_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeList11isAvailableEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("jc7L3HSltT0", libSceXmlUnknown_jc7L3HSltT0_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_mODyaCpyDnM_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document7getRootEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("mODyaCpyDnM", libSceXmlUnknown_mODyaCpyDnM_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_miVYGbk3LHs_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document12getAttributeENS1_6NodeIdEPKNS0_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("miVYGbk3LHs", libSceXmlUnknown_miVYGbk3LHs_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_muE9OA3xYv4_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document10getXmlMetaEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("muE9OA3xYv4", libSceXmlUnknown_muE9OA3xYv4_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_nfoWUQ1eDl8_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11isAvailableEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("nfoWUQ1eDl8", libSceXmlUnknown_nfoWUQ1eDl8_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_p0IeMemvZKo_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document9getParentENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("p0IeMemvZKo", libSceXmlUnknown_p0IeMemvZKo_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_tZioKsu5pxs_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeList9getLengthEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("tZioKsu5pxs", libSceXmlUnknown_tZioKsu5pxs_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_uiPVQSxXlsc_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document10isReadOnlyEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("uiPVQSxXlsc", libSceXmlUnknown_uiPVQSxXlsc_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_ulLP_plus_f5h0rg_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13hasChildNodesENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("ulLP+f5h0rg", libSceXmlUnknown_ulLP_plus_f5h0rg_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_vWA1r9CiPgI_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13hasAttributesENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("vWA1r9CiPgI", libSceXmlUnknown_vWA1r9CiPgI_nid_no_patch);
 
-int APS5_VABI libSceXmlUnknown_wlgM8cLl1mQ_nid_no_patch() {
+int APS5_VABI _ZNK3sce3Xml4Attr11isAvailableEv() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("wlgM8cLl1mQ", libSceXmlUnknown_wlgM8cLl1mQ_nid_no_patch);
 
 }
