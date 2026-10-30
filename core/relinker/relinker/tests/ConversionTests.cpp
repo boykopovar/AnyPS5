@@ -252,6 +252,25 @@ void scanning() {
     require(progress.Events.back().Completed < progress.Events.back().Total, "Failed scan reported completion");
 }
 
+void branchAcrossSignedBoundary() {
+    std::vector<std::uint8_t> image(64 + 32, 0x90);
+    image[64] = 0xc3;
+    const std::array<std::uint8_t, 5> jump{0xe9, 0xeb, 0xff, 0xff, 0xff};
+    std::copy(jump.begin(), jump.end(), image.begin() + 64 + 16);
+    image.back() = 0xc3;
+    Domain::ProgramHeader header{};
+    header.Type = 1;
+    header.Flags = 1;
+    header.Offset = 64;
+    header.MappedAddress = 0x7ffffffffffffff0;
+    header.FileSize = image.size() - 64;
+    header.MemorySize = header.FileSize;
+    Io::WriteU64(image, 24, 0x8000000000000000);
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
+    require(instructions.contains(0x8000000000000000), "Lost the entry above the signed boundary");
+    require(instructions.contains(0x7ffffffffffffff0), "Lost the branch target below the signed boundary");
+}
+
 class FailingProgress final : public Domain::IProgress {
 public:
     std::string InputPath;
@@ -353,6 +372,21 @@ void runtimeDirectories() {
         require(output.Modules.size() == 1, "Module was not converted");
         require(exports(output.Modules.front().Bytes, Relinker::GuestInitializeExport) == (std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module the executable needs");
     }
+    for (const auto* directory : {"sce_module", "sce_modules", "prx", "Media/Modules"}) {
+        auto source = input();
+        const auto parent = source.ModuleRoot / directory;
+        const auto plugins = source.ModuleRoot / "Media/Plugins";
+        source.Modules.push_back({plugins / "plugin.prx", fixture("needed.prx")});
+        source.Modules.push_back({parent / "needed.prx", fixture()});
+        source.RuntimeDirectories.push_back(plugins);
+        source.RuntimeDirectories.push_back(parent);
+        const auto output = converter.Convert(std::move(source), options);
+        require(output.Modules.size() == 2, "Modules were not converted");
+        for (const auto& module : output.Modules) {
+            const bool plugin = module.SourcePath.filename() == "plugin.prx";
+            require(exports(module.Bytes, Relinker::GuestInitializeExport) == (plugin || std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module another runtime module needs");
+        }
+    }
 }
 
 void relocationValidation() {
@@ -368,7 +402,7 @@ void relocationValidation() {
             converter.Convert(source, {});
             throw std::runtime_error("Unsupported relocation type was accepted");
         } catch (const Domain::RelinkerException& error) {
-            require(std::string(error.what()).find("Unsupported relocation type 0x99") != std::string::npos, "Wrong error for unsupported relocation");
+            require(std::string(error.what()) == "Unsupported relocation type 0x99", "Wrong error for unsupported relocation");
             require(error.FailureOffset == 0x2700, "Wrong failure offset for unsupported relocation");
         }
     }
@@ -407,6 +441,7 @@ int main() {
         runtimeLifecyclePolicy();
         fixedBase();
         scanning();
+        branchAcrossSignedBoundary();
         diagnosticContext();
         cancellation();
         baseRelocations();

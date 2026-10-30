@@ -1743,6 +1743,41 @@ void CheckImportWindowOverUnwatchedBlock() {
     Require(after != 0 && !UnchangedSince(base, Block, after), "a store after an import window over an unwatched block was missed");
 }
 
+void CheckImportWindowAcrossThreads() {
+    constexpr std::size_t blocks = 264;
+    constexpr std::size_t gap = 130;
+    constexpr std::size_t pageBytes = 4096;
+    void* memory = AllocateWatched(blocks * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    auto* plain = static_cast<std::uint8_t*>(memory);
+    std::memset(plain, 0x11, blocks * Block);
+    for (std::size_t page = 0; page < blocks * Block / pageBytes; ++page) {
+        const std::uint64_t mark = (page + 1) * 0x9E3779B97F4A7C15ull;
+        std::memcpy(plain + page * pageBytes, &mark, sizeof(mark));
+    }
+    Unwatch(base + gap * Block, Block);
+    const auto synced = CollectWritesUncached(base, gap * Block);
+    const auto syncedAfter = CollectWritesUncached(base + (gap + 1) * Block, (blocks - gap - 1) * Block);
+    Require(synced != 0 && syncedAfter != 0, "the blocks of a large import window are not collected");
+    constexpr std::array<std::size_t, 4> written{3, 70, 140, 250};
+    Require(ImportWatched(base, blocks * Block, [&] {
+        for (std::size_t page = 0; page < blocks * Block / pageBytes; ++page) {
+            if (page * pageBytes / Block != gap) bytes[page * pageBytes + 0x100] = 0x11;
+        }
+        for (const auto block : written) bytes[block * Block + 0x3100] = 0x22;
+        return true;
+    }), "the large import window import failed");
+    Require(Watched(base, gap * Block) && Watched(base + (gap + 1) * Block, (blocks - gap - 1) * Block) && !Watched(base + gap * Block, Block), "a large import window changed which blocks are watched");
+    const auto since = [&](std::size_t block) { return block < gap ? synced : syncedAfter; };
+    for (std::size_t block = 0; block < blocks; ++block) {
+        if (block == gap) continue;
+        const bool stored = std::find(written.begin(), written.end(), block) != written.end();
+        if (stored) Require(WrittenSince(base + block * Block, Block, since(block)), "a store of new bytes within a large import window was missed in block " + std::to_string(block));
+        else Require(UnchangedSince(base + block * Block, Block, since(block)), "a page a large import window resolved without changing its bytes reads as written in block " + std::to_string(block));
+    }
+}
+
 void CheckImportWindowFootprint() {
 #ifdef __GLIBC__
     constexpr std::size_t bytes = std::size_t{64} << 20;
@@ -2161,6 +2196,7 @@ int main() {
         CheckImportWindowZeroPages();
         CheckImportWindowOtherThread();
         CheckImportWindowOverUnwatchedBlock();
+        CheckImportWindowAcrossThreads();
         CheckStoreAcrossImports();
         CheckImportWindowFootprint();
         CheckUnwatchedImport();

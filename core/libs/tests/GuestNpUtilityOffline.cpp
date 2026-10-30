@@ -130,6 +130,11 @@ void CheckBandwidthTestShutdownWithDetailedInfo() {
     constexpr int npInvalidArgument = static_cast<int>(0x80550003u);
     Require(sceNpBandwidthTestShutdownWithDetailedInfo() == npInvalidArgument, "sceNpBandwidthTestShutdownWithDetailedInfo", "shutting down a test that never started did not return INVALID_ARGUMENT");
     Require(sceNpBandwidthTestShutdownWithDetailedInfo() == sceNpBandwidthTestShutdown(0, nullptr), "sceNpBandwidthTestShutdownWithDetailedInfo", "the answer differs from sceNpBandwidthTestShutdown");
+    Require(sceNpBandwidthTestAbort(0) == npInvalidArgument, "sceNpBandwidthTestAbort", "aborting a test that never started did not return INVALID_ARGUMENT");
+    int status = -1;
+    Require(sceNpBandwidthTestGetStatus(0, &status) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "the status of a test that never started did not return INVALID_ARGUMENT");
+    Require(status == 0, "sceNpBandwidthTestGetStatus", "the status of a test that never started was not cleared to 0");
+    Require(sceNpBandwidthTestGetStatus(0, nullptr) == npInvalidArgument, "sceNpBandwidthTestGetStatus", "a null status did not return INVALID_ARGUMENT");
 }
 
 }
@@ -229,6 +234,26 @@ void CheckWordFilterAsync() {
     sceNpWordFilterDeleteTitleCtx(context);
 }
 
+void CheckTitleContextsA() {
+    int lookups[32];
+    int created = 0;
+    while (created < 32) {
+        const int context = sceNpLookupCreateTitleCtxA(created == 0 ? -1 : 1);
+        if (context == TooManyObjects) break;
+        Require(context > 0 && context < WordFilterTitleCtxBase, "sceNpLookupCreateTitleCtxA", "a lookup context id was not returned");
+        lookups[created++] = context;
+    }
+    Require(created > 0, "sceNpLookupCreateTitleCtxA", "no context was created");
+    Require(sceNpLookupCreateTitleCtxA(1) == TooManyObjects, "sceNpLookupCreateTitleCtxA", "the 32-context limit was not applied");
+    Require(sceNpLookupCreateTitleCtx(selfNpId) == TooManyObjects, "sceNpLookupCreateTitleCtxA", "the A contexts do not share the lookup limit");
+    for (int index = 0; index < created; ++index) Require(sceNpLookupDeleteTitleCtx(lookups[index]) == 0, "sceNpLookupCreateTitleCtxA", "an A context could not be deleted");
+
+    const int filter = sceNpWordFilterCreateTitleCtxA(-1);
+    Require(filter > WordFilterTitleCtxBase, "sceNpWordFilterCreateTitleCtxA", "a word filter context id was not returned");
+    Require(sceNpLookupDeleteTitleCtx(filter) == InvalidId, "sceNpWordFilterCreateTitleCtxA", "the context was created among the lookup contexts");
+    Require(sceNpWordFilterDeleteTitleCtx(filter) == 0, "sceNpWordFilterCreateTitleCtxA", "the context could not be deleted");
+}
+
 int main() {
     std::memset(selfNpId, 0, sizeof(selfNpId));
     std::strcpy(reinterpret_cast<char*>(selfNpId), "player_1");
@@ -238,6 +263,7 @@ int main() {
     CheckWordFilter();
     CheckLookupAsync();
     CheckWordFilterAsync();
+    CheckTitleContextsA();
     if (failures != 0) return 1;
     std::puts("NpUtility offline tests passed");
     return 0;

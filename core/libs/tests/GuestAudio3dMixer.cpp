@@ -135,5 +135,25 @@ int main() {
     Require(half_gain_out.size() == 2 && half_gain_out[0] == 5000 && half_gain_out[1] == 10000,
             "half gain scales stereo samples by half");
 
+    Audio3dInternal::Source s_zero{pcm, 1, 2, false, 1.0f, 0.0f};
+    std::vector<std::int16_t> zero_out;
+    Audio3dInternal::MixFrame(&s_zero, 0, 0, zero_out);
+    Require(zero_out.empty(), "zero frame returns empty output");
+    Audio3dInternal::MixFrame(&s_zero, 1, 0, zero_out);
+    Require(zero_out.empty(), "zero frame with source returns empty output");
+
+    Audio3dInternal::Source neg_out_of_range{panned, 1, 2, false, 1.0f, -2.0f};
+    std::vector<std::int16_t> neg_out_of_range_out;
+    Audio3dInternal::MixFrame(&neg_out_of_range, 1, 1, neg_out_of_range_out);
+    Require(neg_out_of_range_out.size() == 2 && neg_out_of_range_out[0] == 10000 && neg_out_of_range_out[1] == 0,
+            "negative out of range pan clamps");
+
+    std::int16_t surround7[7] = {1000, 2000, 3000, 0, 4000, 5000, 6000};
+    Audio3dInternal::Source surround7_source{surround7, 1, 7, false, 1.0f, 0.0f};
+    std::vector<std::int16_t> surround7_out;
+    Audio3dInternal::MixFrame(&surround7_source, 1, 1, surround7_out);
+    Require(surround7_out.size() == 2 && surround7_out[0] == 10192 && surround7_out[1] == 7657,
+            "7 channel downmix folds center and surround channels");
+
     return 0;
 }

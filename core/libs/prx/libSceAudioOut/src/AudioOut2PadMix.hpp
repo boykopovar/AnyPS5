@@ -31,6 +31,6 @@ void AudioOut2AccumulatePadFrame(AudioOut2Route route, const float* in, std::uin
 void AudioOut2FinishPadMix(float* out, std::uint32_t frames);
 std::array<std::uint8_t, 2> AudioOut2RumbleFromPadFrames(const float* pad, std::uint32_t frames);
 AudioOut2PadLayout AudioOut2PadLayoutForDriver(const char* driver);
-void AudioOut2WritePadFrames(const float* pad, const AudioOut2PadLayout& layout, float* out, std::uint32_t frames);
+void AudioOut2WritePadFrames(const float* pad, const AudioOut2PadLayout& layout, float* out, std::uint32_t frames, unsigned vibrationPercent = 100);
 
 #endif

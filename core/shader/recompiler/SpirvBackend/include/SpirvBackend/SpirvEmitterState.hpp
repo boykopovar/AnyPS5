@@ -131,6 +131,7 @@ struct SpirvEmitterState {
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> solvedBarycentrics;
     bool waveLdsMemoryBarriers = false;
     bool deviceScopeLdsMemoryBarriers = false;
+    bool ldsLockFences = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
     std::uint32_t spirvVersion = 0x00010300u;
@@ -201,7 +202,7 @@ struct SpirvEmitterState {
     std::uint32_t loopGuardVisits = 0;
     std::uint32_t loopGuardPc = 0;
     std::uint32_t srgbTableVariable = 0;
-    std::uint32_t gcnBufferFormatVariable = 0;
+    std::uint32_t gcnBufferFormatFunction = 0;
     std::uint32_t gdsVariable = 0;
     std::uint32_t gdsLength = 0;
     std::uint32_t pushConstantVariable = 0;
@@ -217,6 +218,13 @@ struct SpirvEmitterState {
     std::array<std::uint32_t, 2> vectorWindowVariable {};
     std::uint32_t vectorWindowIndexed = 0;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
+    bool meshWindowBuffer = false;
+    std::uint32_t meshWindowBufferVariable = 0;
+    std::uint32_t meshWindowSlotVariable = 0;
+    std::uint32_t meshWindowBaseVariable = 0;
+    std::unordered_set<const IrValue*> meshWindowBufferStores;
+    std::unordered_set<const IrValue*> meshWindowBufferLoads;
+    std::vector<bool> meshWindowEntryLive;
     std::array<std::uint32_t, ImageBindingCount> imageVariables {};
     std::uint32_t samplerVariable = 0;
     std::vector<SpirvTableImageVariable> tableImageVariables;
@@ -235,8 +243,8 @@ struct SpirvEmitterState {
     std::uint32_t currentLabel = 0;
     const IrBlock* currentBlock = nullptr;
     std::uint32_t pixelValidMaskVariable = 0;
-    std::uint32_t mergeWordVariable = 0;
-    std::uint32_t mergePendingVariable = 0;
+    std::vector<std::uint32_t> mergeValueVariables;
+    std::vector<std::uint32_t> mergePendingVariables;
     std::uint32_t quadPixelUncovered = 0;
     std::uint32_t sampleMaskInputVariable = 0;
     std::uint32_t quadSampleCoverage = 0;

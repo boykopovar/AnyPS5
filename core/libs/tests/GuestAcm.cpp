@@ -70,26 +70,53 @@ int main() {
     Require(descriptor[6] == reinterpret_cast<std::uintptr_t>(sources) && descriptor[7] == reinterpret_cast<std::uintptr_t>(sources));
     for (std::size_t index = 8; index < 16; ++index) Require(descriptor[index] == 0);
     commandBatch = {commands, 0, sizeof(commands)};
+    Require(sceAcm_FFT(&commandBatch, 512, 0, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 768, 1, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 4096, 1, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 2, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 2, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, nullptr, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, nullptr, 0) == BadPointer);
     Require(sceAcm_FFT(&commandBatch, 2048, 1, 0, sources, 0, outputs, 0) == BadPointer);
     Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, outputs, 3) == BadPointer);
     Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, outputs, 0) == 0);
     Require(commandBatch.offset == 72 && commandBatch.buffer_size == sizeof(commands));
     std::uint64_t fftWords[9];
     std::memcpy(fftWords, commands, sizeof(fftWords));
-    Require(fftWords[0] == 0x1C030400 && fftWords[1] == 0xC0A);
-    Require(fftWords[2] == 0x400000006 && fftWords[3] == reinterpret_cast<std::uintptr_t>(sourceData));
-    Require(fftWords[4] == 0x90A && fftWords[5] == 0xB0A && fftWords[6] == 0x40A);
-    Require(fftWords[7] == 0x400000008 && fftWords[8] == reinterpret_cast<std::uintptr_t>(sourceData));
+    Require(fftWords[0] == 0x38050800 && fftWords[1] == 0xD0A);
+    Require(fftWords[2] == 0x800000006 && fftWords[3] == reinterpret_cast<std::uintptr_t>(sourceData));
+    Require(fftWords[4] == 0x20A && fftWords[5] == 0xB0A && fftWords[6] == 0x80A);
+    Require(fftWords[7] == 0x800000008 && fftWords[8] == reinterpret_cast<std::uintptr_t>(sourceData));
     commandBatch = {commands, 0, 71};
     Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, outputs, 0) == static_cast<int>(0x81940009));
     Require(commandBatch.offset == 0);
     commandBatch = {commands, 0, sizeof(commands)};
     Require(sceAcm_FFT(&commandBatch, 2048, 1, 1, sources, 1, outputs, 9) == 0);
     std::memcpy(fftWords, commands, sizeof(fftWords));
-    Require(fftWords[0] == 0x600 && fftWords[1] == 0x80A && fftWords[4] == 0x20A && fftWords[5] == 0x60A && fftWords[6] == 0x50A);
+    Require(fftWords[0] == 0xA00 && fftWords[1] == 0x80A && fftWords[2] == 0x800000006 && fftWords[4] == 0x20A && fftWords[5] == 0x60A && fftWords[6] == 0x50A);
+    commandBatch = {commands, 0, sizeof(commands)};
+    Require(sceAcm_FFT(&commandBatch, 256, 1, 0, sources, 0, outputs, 1) == 0 && commandBatch.offset == 72);
+    std::memcpy(fftWords, commands, sizeof(fftWords));
+    Require(fftWords[0] == 0x39030700 && fftWords[1] == 0xD0A && fftWords[2] == 0x200000006);
+    Require(fftWords[4] == 0xA && fftWords[5] == 0xA0A && fftWords[6] == 0x80A && fftWords[7] == 0x400000008);
+    std::uint64_t ifftWords[10];
+    commandBatch = {commands, 0, sizeof(commands)};
+    Require(sceAcm_IFFT(nullptr, 1024, 1, 1, sources, 0, outputs, 1) == BadPointer);
+    Require(sceAcm_IFFT(&commandBatch, 1024, 1, 1, sources, 0, outputs, 5) == BadPointer);
+    Require(sceAcm_IFFT(&commandBatch, 1024, 1, 1, sources, 0, outputs, 3) == 0 && commandBatch.offset == 88);
+    commandBatch = {commands, 0, sizeof(commands)};
+    Require(sceAcm_IFFT(&commandBatch, 1024, 1, 1, sources, 0, outputs, 1) == 0 && commandBatch.offset == 80);
+    std::memcpy(ifftWords, commands, sizeof(ifftWords));
+    Require(ifftWords[0] == 0x32880900 && ifftWords[1] == 0xD0A && ifftWords[2] == 0x800000006 && ifftWords[3] == reinterpret_cast<std::uintptr_t>(sourceData));
+    Require(ifftWords[4] == 0x50A && ifftWords[5] == 0xC0A && ifftWords[6] == 0x60A);
+    Require(ifftWords[7] == 0x0800001000000009 && ifftWords[8] == 0 && ifftWords[9] == reinterpret_cast<std::uintptr_t>(sourceData));
+    commandBatch = {commands, 0, sizeof(commands)};
+    Require(sceAcm_IFFT(&commandBatch, 2048, 1, 0, sources, 1, outputs, 0) == 0 && commandBatch.offset == 72);
+    std::memcpy(ifftWords, commands, sizeof(ifftWords));
+    Require(ifftWords[0] == 0x2C100A00 && ifftWords[1] == 0x80A && ifftWords[4] == 0x10A && ifftWords[5] == 0x70A && ifftWords[6] == 0x50A);
     sources[1] = sourceData;
     outputs[1] = sourceData;
-    for (const auto size : {512, 1024, 2048}) {
+    for (const auto size : {256, 512, 1024, 2048}) {
         for (std::int32_t inputFormat = 0; inputFormat < 2; ++inputFormat) {
             for (std::int32_t outputFormat = 0; outputFormat < 2; ++outputFormat) {
                 for (std::int32_t flags = 0; flags < 16; ++flags) {
@@ -99,6 +126,13 @@ int main() {
                         Require(result == BadPointer && commandBatch.offset == 0);
                     } else {
                         Require(result == 0 && commandBatch.offset == 72 + ((flags & 2) ? 8 : 0) + ((flags & 4) ? 8 : 0));
+                    }
+                    commandBatch = {commands, 0, sizeof(commands)};
+                    const auto inverseResult = sceAcm_IFFT(&commandBatch, size, 1, inputFormat, sources, outputFormat, outputs, flags);
+                    if ((flags & 5) == 5) {
+                        Require(inverseResult == BadPointer && commandBatch.offset == 0);
+                    } else {
+                        Require(inverseResult == 0 && commandBatch.offset == 72 + ((flags & 2) ? 8 : 0) + ((flags & 5) ? 8 : 0));
                     }
                 }
             }
@@ -111,6 +145,7 @@ int main() {
     Require(sceAcmContextDestroy(context1) == 0);
     Require(sceAcmContextDestroy(context1) == BadContext);
     Require(sceAcmBatchStartBuffer(context1, nullptr, 0, nullptr, &batch1) == BadContext);
+    Require(sceAcmBatchStartBuffers(context1, 0, nullptr, nullptr, &batch1) == BadContext);
     Require(sceAcmBatchWait(context1, batch1, 0) == BadContext);
 
     Require(sceAcmContextDestroy(context2) == 0);

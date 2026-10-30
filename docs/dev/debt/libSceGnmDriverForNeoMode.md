@@ -2,6 +2,7 @@
 
 ### Unknown function info
 
+- [sceGnmDingDongForWorkload, sceGnmDrawInitToDefaultContextStateInternalCommand, sceGnmRegisterOwner](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - the first two throw through `NotImplemented_nid_no_patch` and `sceGnmRegisterOwner` returns `Failure` (0x8EEE00FF) without registering anything; behaviour and the PS5 prototypes are unmeasured. The only source of the parameter lists is shadPS4's PS4-derived prototypes (GPLv2, used as a reference only), with no second reference; structure pointers are `void*` because no layout is known.
 - [libSceGnmDriverForNeoMode pending exports](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - 34 named callable exports are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceGnmDriverForNeoMode.c) and were cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
 ### Functional

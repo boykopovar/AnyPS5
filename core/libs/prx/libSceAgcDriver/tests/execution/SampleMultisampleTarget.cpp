@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -15,6 +16,7 @@
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
+#include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -34,6 +36,7 @@
 #include <iostream>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -69,6 +72,8 @@ constexpr std::uint32_t Uint8x4Info = 0x8428u;
 constexpr std::uint32_t Format8888Unorm = 56;
 constexpr std::uint32_t Format8888Uint = 60;
 constexpr std::uint32_t Format8888Sint = 61;
+constexpr std::uint32_t Float10_11_11Info = 0x0718u;
+constexpr std::uint32_t Format11_11_10Float = 36;
 constexpr std::uint32_t Type2DMsaa = 14;
 constexpr std::uint32_t TileRenderTarget = 0x1b;
 constexpr std::uint32_t TileZ64KBX = 0x18;
@@ -143,6 +148,8 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
 }};
 
 alignas(256) std::array<std::uint32_t, Threads * Words> Buffer{};
+
+alignas(256) constexpr std::array<std::uint32_t, 7> BufferLoadCode{0x34020082u, 0xe8001000u | (20u << 19u), 0x80000201u, 0xbf8c0000u, 0xe0701000u, 0x80010201u, 0xbf810000u};
 
 struct Block {
     explicit Block(std::size_t bytes, bool watched = false) : bytes(bytes), watched(watched) {
@@ -230,6 +237,20 @@ AgcDriver::Graphics::ColorTarget DecodeSwappedTarget(const Block& block) {
     return color;
 }
 
+AgcDriver::Graphics::ColorTarget DecodePackedFloatTarget(const Block& block) {
+    AgcDriver::Registers cx;
+    cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
+    cx[0x31b] = 0;
+    cx[0x31c] = Float10_11_11Info;
+    cx[0x31d] = MultisampledAttrib;
+    cx[0x3b0] = ((Side - 1u) << 14u) | (Side - 1u);
+    cx[0x3b8] = TiledAttrib3;
+    cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
+    Require(color.format == VK_FORMAT_B10G11R11_UFLOAT_PACK32 && color.samples == Samples && color.extent.width == Side && color.extent.height == Side, "the 10_11_11 float target did not decode as a 16x16 B10G11R11 surface of 4 samples");
+    return color;
+}
+
 AgcDriver::Graphics::ColorTarget DecodeUintTarget(const Block& block) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
@@ -262,6 +283,20 @@ void CheckSwappedSamples(const std::vector<std::array<float, 4>>& loaded) {
         ++drawn;
     }
     Require(drawn != 0, "no sample of the BGRA8 target holds the drawn color");
+}
+
+void CheckPackedFloatSamples(const std::vector<std::array<float, 4>>& loaded) {
+    const std::array<float, 4> expected{Drawn[0], Drawn[1], Drawn[2], 1.0f};
+    const std::array<float, 4> background{0.0f, 0.0f, 0.0f, 1.0f};
+    std::size_t drawn = 0;
+    for (const auto& texel : loaded) {
+        if (texel == background) continue;
+        char text[256];
+        std::snprintf(text, sizeof(text), "a sample of the 10_11_11 float target read through a format 36 descriptor reads (%g, %g, %g, %g) instead of the drawn (%g, %g, %g, 1)", texel[0], texel[1], texel[2], texel[3], expected[0], expected[1], expected[2]);
+        Require(texel == expected, text);
+        ++drawn;
+    }
+    Require(drawn != 0, "no sample of the 10_11_11 float target holds the drawn color");
 }
 
 void CheckUintSamples(const std::vector<std::array<float, 4>>& loaded) {
@@ -431,9 +466,20 @@ void RequireStoreRefused(AgcDriver::VulkanDevice& device, const std::array<std::
     Require(refusal.find(expected) != std::string::npos, what + " was not refused: " + refusal);
 }
 
+bool DeclaresCapability(std::span<const std::uint32_t> words, spv::Capability capability) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0u && count <= words.size() - cursor, "a SPIR-V instruction is truncated");
+        if ((words[cursor] & 0xffffu) == spv::OpCapability && words[cursor + 1u] == static_cast<std::uint32_t>(capability)) return true;
+        cursor += count;
+    }
+    return false;
+}
+
 std::vector<std::array<float, 4>> RunLoad(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, bool arrayed, std::uint32_t fragments) {
     std::vector<std::uint32_t> userData;
     const auto program = CompileLoad(device, texture, userData, arrayed);
+    Require(!DeclaresCapability(program.spirv, spv::CapabilityImageMSArray), "the multisampled image_load declared ImageMSArray, which only multisampled arrayed storage images need");
     std::vector<std::array<float, 4>> loaded(Side * Side * fragments);
     const auto codeAddress = reinterpret_cast<std::uintptr_t>((arrayed ? ArrayLoadCode : LoadCode).data());
     for (std::uint32_t first = 0; first < loaded.size(); first += Threads) {
@@ -576,6 +622,14 @@ void CheckNativeIndices(AgcDriver::VulkanDevice& device, const Block& source, co
         guarded = error.what();
     }
     Require(guarded.find("whose samples are only on the host") != std::string::npos, "the draw-input source is not guarded as a native target");
+    const auto hostOnly = AgcDriver::Graphics::HostOnlySampleRanges(source.Address(), 48u);
+    Require(std::ranges::any_of(hostOnly, [&](const auto& range) { return range.first <= source.Address() && source.Address() < range.first + range.second; }), "the host-only samples of the draw-input source are not reported to the frame capture snapshot");
+    Require(AgcDriver::Graphics::HostOnlySampleRanges(neighbor, 12u).empty(), "the neighbor of a native target is reported as host-only samples");
+    std::vector<std::byte> captured(static_cast<std::size_t>(colorBytes) + 12u, std::byte{0xcc});
+    const auto zeroed = AgcDriver::ReadAroundRanges(source.Address(), captured, AgcDriver::Graphics::HostOnlySampleRanges(source.Address(), captured.size()), AgcDriver::GuestMemory::ReadCommitted);
+    std::vector<std::byte> after(12u);
+    AgcDriver::GuestMemory::ReadCommitted(neighbor, after);
+    Require(zeroed == colorBytes && AgcDriver::AllZero(std::span(captured).first(static_cast<std::size_t>(colorBytes))) && std::ranges::equal(std::span(captured).last(12u), after), "a capture read across a native target and its neighbor did not zero exactly the target");
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         const auto* native = AgcDriver::Graphics::HostImportFor(context, source.Address(), 12u);
@@ -686,6 +740,44 @@ void DrawVertexInput(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics:
     const AgcDriver::Pm4::DrawParameters draw{0u, 3u, 0u, 1u, 0u, false};
     device.Draw(state, draw, shaders);
     device.WaitIdle();
+}
+
+ShaderRecompiler::RecompileResult CompileBufferLoad(AgcDriver::VulkanDevice& device, std::uint64_t source, std::uint64_t destination) {
+    const std::array<std::uint32_t, 8> userData{
+        static_cast<std::uint32_t>(source), static_cast<std::uint32_t>((source >> 32u) & 0xffffu), Threads * 4u, 0x31016facu,
+        static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>((destination >> 32u) & 0xffffu), Threads * 4u, 0x31016facu
+    };
+    const std::span<const std::uint32_t> code(BufferLoadCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory}, device.Target(), {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    return ShaderRecompiler::Recompile(request);
+}
+
+void CheckBufferLoad(AgcDriver::VulkanDevice& device, const ShaderRecompiler::RecompileResult& program, const Block& output, std::shared_ptr<const AgcDriver::Recipe>* recipe = nullptr) {
+    const std::span words(reinterpret_cast<std::uint32_t*>(output.data), Threads * 2u);
+    std::fill(words.begin(), words.end(), 0xdeadbeefu);
+    device.Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), nullptr, recipe);
+    device.WaitIdle();
+    Require(std::all_of(words.begin(), words.begin() + Threads, [](auto word) { return word == 0; }), "the nonresident typed buffer load did not read zeroes");
+    Require(std::all_of(words.begin() + Threads, words.end(), [](auto word) { return word == 0xdeadbeefu; }), "the typed buffer load overwrote its output boundary");
+}
+
+template<class TAction>
+void CheckBufferRefused(TAction&& action, const char* name, std::vector<std::string>& missing) {
+    std::string refusal;
+    try {
+        action();
+    } catch (const std::runtime_error& error) {
+        refusal = error.what();
+    }
+    const bool refused = refusal.find("whose samples are only on the host") != std::string::npos;
+    std::cout << "native buffer " << name << ": " << (refused ? "refused" : "missing refusal") << '\n';
+    if (!refused) missing.emplace_back(std::string(name) + ": " + refusal);
 }
 
 void CheckVertexValues(std::uint64_t address, std::uint32_t stride) {
@@ -963,6 +1055,17 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--native-vertex-input") return NativeVertexInput(device);
         Block block(4u * BlockBytes);
         Block other(BlockBytes);
+        Block output(2u * 1024u * 1024u);
+        Block destination(BlockBytes);
+        struct ReleaseDevice {
+            decltype(device)& value;
+            ~ReleaseDevice() { value.reset(); }
+        } releaseDevice{device};
+        const auto warm = CompileBufferLoad(*device, block.Address(), output.Address());
+        std::shared_ptr<const AgcDriver::Recipe> recipe;
+        CheckBufferLoad(*device, warm, output, &recipe);
+        const auto deferredProgram = CompileBufferLoad(*device, block.Address() + Threads * 4u, output.Address());
+        auto prepared = device->PrepareDispatch(deferredProgram, {}, Threads, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()));
         const auto color = DecodeTarget(block);
         const auto state = TargetState(color);
         Draw(*device, state);
@@ -988,6 +1091,12 @@ int main(int argc, char** argv) {
         CheckSwappedSamples(swappedSamples);
         CheckFirstSampleReads(*device, TargetDescriptor(swapped, SampleShift, Format8888Unorm), swappedSamples, true, "from a 4x BGRA8 target read through an RGBA8 descriptor");
         std::puts("a 4x BGRA8 color target loaded through an RGBA8 texture descriptor reads its drawn color with red and blue swapped");
+        Block packedFloat(4u * BlockBytes);
+        Draw(*device, TargetState(DecodePackedFloatTarget(packedFloat)));
+        const auto packedSamples = LoadSamples(*device, packedFloat, Format11_11_10Float);
+        CheckPackedFloatSamples(packedSamples);
+        CheckFirstSampleReads(*device, TargetDescriptor(packedFloat, SampleShift, Format11_11_10Float), packedSamples, true, "from a 4x 10_11_11 float target read through a format 36 descriptor");
+        std::puts("a 4x 10_11_11 float color target loaded through a format 36 (11_11_10 float) texture descriptor reads its drawn color");
         Block integer(4u * BlockBytes);
         Block signedFill(BlockBytes);
         if ((AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).limits.sampledImageIntegerSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0) {
@@ -1009,6 +1118,40 @@ int main(int argc, char** argv) {
         Require(colorBytes != 0 && colorBytes <= block.bytes, "the 4x target's color memory does not fit its block");
         AgcDriver::Graphics::NoteColorMetadataFill(block.Address(), static_cast<std::size_t>(colorBytes), FillOnes);
         CheckUniform(LoadSamples(*device, block), Ones, "after a fill of the target's color memory with half-float ones");
+        std::vector<std::string> missing;
+        const auto dispatch = [&](const auto& program) {
+            device->Dispatch(program, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()));
+            device->WaitIdle();
+        };
+        CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + 4u, output.Address())); }, "fresh read", missing);
+        CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + colorBytes - 4u, output.Address())); }, "edge read", missing);
+        CheckBufferRefused([&] { dispatch(CompileBufferLoad(*device, block.Address() + colorBytes, block.Address())); }, "write", missing);
+        CheckBufferRefused([&] { dispatch(warm); }, "warmed dispatch", missing);
+        if (prepared != nullptr) {
+            CheckBufferRefused([&] {
+                device->Dispatch(deferredProgram, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), prepared);
+                device->WaitIdle();
+            }, "deferred dispatch", missing);
+        }
+        bool recipeReused = false;
+        if (recipe != nullptr) {
+            const auto hit = device->PrepareRecipe(recipe, false);
+            Require(hit != nullptr, "the warmed buffer recipe did not retain its template");
+            recipeReused = true;
+            CheckBufferRefused([&] {
+                AgcDriver::VulkanDevice::IndirectOutcome outcome{};
+                device->DispatchRecipe(warm, 1, 1, 1, 0, reinterpret_cast<std::uintptr_t>(BufferLoadCode.data()), hit, outcome);
+                device->WaitIdle();
+            }, "recipe dispatch", missing);
+        }
+        CheckBufferLoad(*device, CompileBufferLoad(*device, block.Address() + colorBytes, output.Address()), output);
+        CheckUniform(LoadSamples(*device, block), Ones, "after the native buffer access refusals and adjacent buffer control");
+        std::cout << "native buffer controls: adjacent=passed deferred=" << (prepared != nullptr) << " recipe=" << recipeReused << std::endl;
+        std::string failures;
+        for (const auto& item : missing) failures += " " + item;
+        Require(missing.empty(), "buffer aliases of live native MSAA color memory bypassed the guard:" + failures);
+        recipe.reset();
+        prepared.reset();
         RequireRefused(*device, TargetDescriptor(block, 3u), "texture of 8 samples", "loading a 4x target as an 8x texture");
         Require(colorBytes <= other.bytes, "the 4x target's color memory does not fit one block");
         CheckUniform(LoadSamples(*device, other), {}, "from zeroed color memory no draw rendered to");
@@ -1098,7 +1241,6 @@ int main(int argc, char** argv) {
         StoreWords(standard, colorBytes, FillOnes);
         RequireRefused(*device, TargetDescriptor(standard, SampleShift, Format16161616Float, TileS64KBX), "has no modeled multisampled color footprint", "loading an S swizzle multisampled texture no draw rendered to");
         std::puts("every sample of a 4x color target loaded through its multisampled texture descriptor matches the triangle drawn into it, then the fill of its color memory; a surface no draw rendered to loads the value its color memory repeats and keeps it under a later draw");
-        Block destination(BlockBytes);
         struct ReleaseIndexDevice {
             std::unique_ptr<AgcDriver::VulkanDevice>& device;
             ~ReleaseIndexDevice() { device.reset(); }
