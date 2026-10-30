@@ -15,6 +15,11 @@ struct IntrusivePtr {
     void* libContext;
 };
 
+struct CommonIterator {
+    std::int32_t referenceCount;
+    void* element;
+};
+
 extern "C" {
 
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V111UserFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_4UserEEE();
@@ -790,24 +795,24 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_13InGameCatalog2V53SkuEEEEppEv();
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V59ContainerEEEE5emptyEv(const IntrusivePtr* self);
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEaSERKSA_(IntrusivePtr* self, const IntrusivePtr* source);
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEppEv();
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEppEv(CommonIterator* self);
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEC1Ev(IntrusivePtr* self);
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev(IntrusivePtr* self);
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_6StringEED2Ev(void* self);
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_();
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEE3getEv(const IntrusivePtr* self);
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_();
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_(const CommonIterator* self, const CommonIterator* other);
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_15DefaultResponseENS2_12IntrusivePtrINS2_18ResponseHeaderBaseEEEE11hasResponseEv();
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEptEv(const IntrusivePtr* self);
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv();
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(CommonIterator* iterator, const IntrusivePtr* self);
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringeqEPKc(const CommonString* self, const char* other);
 std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS2_18ResponseHeaderBaseEEEE5getIdEv();
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEaSERS6_(IntrusivePtr* self, const IntrusivePtr* source);
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS2_18ResponseHeaderBaseEEEE5abortEv();
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv();
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv(CommonIterator* iterator, const IntrusivePtr* self);
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5emptyEv(const CommonString* self);
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEE3getEv(const IntrusivePtr* self);
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEdeEv();
+CommonString* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEdeEv(const CommonIterator* self);
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi28ParameterToGetPublicProfilesD1Ev();
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEEdeEv();

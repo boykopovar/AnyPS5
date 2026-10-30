@@ -1016,6 +1016,8 @@ static_assert(sizeof(IntrusivePtr) == 0x18);
 
 static constexpr std::size_t ReferenceCountOffset = 0;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
+static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
+static constexpr std::size_t ScalarVectorReferenceCountOffset = 0x20;
 
 static std::atomic_ref<std::int32_t> ReferenceCount(void* object, const std::size_t offset) {
     return std::atomic_ref<std::int32_t>(*reinterpret_cast<std::int32_t*>(static_cast<std::uint8_t*>(object) + offset));
@@ -1643,6 +1645,16 @@ static int VectorPushBackString(IntrusivePtr* self, const CommonString* element)
     body->size += 1;
     return 0;
 }
+
+static_assert(sizeof(CommonIterator) == 0x10 && offsetof(CommonIterator, element) == 0x08);
+
+static CommonString* StringVectorElements(const IntrusivePtr* self, const bool end, const char* function) {
+    const auto* body = static_cast<const VectorBody*>(self->object);
+    if (body == nullptr) return nullptr;
+    if (body->magic != VectorBodyMagic || body->elementKind != 2) NotImplemented_nid_no_patch(function);
+    auto* elements = static_cast<CommonString*>(body->elements);
+    return end && body->size != 0 ? elements + body->size : elements;
+}
 // --------------------------------------------------------------------------
 // SessionManager2V1 and extra Common symbols, from a title dump whose modules lack
 // libSceNpCppWebApi.prx.
@@ -1745,6 +1757,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibCont
     self->object = nullptr;
     self->deleter = nullptr;
     self->libContext = libContext;
+    ReferenceCount(self, StringVectorReferenceCountOffset).store(0);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120RequestPlayerSessionEEEE8pushBackERKS8_(IntrusivePtr* self, const void* element) {
@@ -2031,7 +2044,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEC1ERS7_(IntrusivePtr* self, const IntrusivePtr* source) {
-    CopyIntrusivePtr(self, source, 0x30);
+    CopyIntrusivePtr(self, source, StringVectorReferenceCountOffset);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V136UsersPlayerSessionsInvitationForReadEEEEdeEv(const void* self) {
@@ -2053,6 +2066,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6String
     self->object = body;
     self->deleter = deleter;
     self->libContext = libContext;
+    if (body) ReferenceCount(body, StringVectorReferenceCountOffset).fetch_add(1);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V120RequestPlayerSessionEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext) {
@@ -2138,7 +2152,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V1
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEED1Ev(IntrusivePtr* self) {
-    ReleaseIntrusivePtr(self, 0x30, __func__);
+    ReleaseIntrusivePtr(self, StringVectorReferenceCountOffset, __func__);
 }
 
 void* APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V154GetUsersAccountIdPlayerSessionsInvitationsResponseBody14getInvitationsEv(void* self) {
@@ -3887,9 +3901,9 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13
     AssignIntrusivePtr(self, source, 0x30, __func__);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEppEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEppEv(CommonIterator* self) {
+    self->element = static_cast<CommonString*>(self->element) + 1;
+    return self;
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEC1Ev(IntrusivePtr* self) {
@@ -3897,7 +3911,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEC1Ev(In
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev(IntrusivePtr* self) {
-    ReleaseIntrusivePtr(self, 0x30, __func__);
+    ReleaseIntrusivePtr(self, ScalarVectorReferenceCountOffset, __func__);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common13ConstIteratorINS2_6StringEED2Ev(void* self) {
@@ -3914,9 +3928,8 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEE3getE
     return self->object;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEneERKS5_(const CommonIterator* self, const CommonIterator* other) {
+    return self->element != other->element;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_15DefaultResponseENS2_12IntrusivePtrINS2_18ResponseHeaderBaseEEEE11hasResponseEv() {
@@ -3927,9 +3940,10 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6Stri
     return self->object;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE3endEv(CommonIterator* iterator, const IntrusivePtr* self) {
+    iterator->referenceCount = 0;
+    iterator->element = StringVectorElements(self, true, __func__);
+    return iterator;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common6StringeqEPKc(const CommonString* self, const char* other) {
@@ -3941,17 +3955,18 @@ std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_15Defau
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEaSERS6_(IntrusivePtr* self, const IntrusivePtr* source) {
-    ReleaseIntrusivePtr(self, 0x30, __func__);
-    CopyIntrusivePtr(self, source, 0x30);
+    ReleaseIntrusivePtr(self, ScalarVectorReferenceCountOffset, __func__);
+    CopyIntrusivePtr(self, source, ScalarVectorReferenceCountOffset);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_15DefaultResponseENS2_12IntrusivePtrINS2_18ResponseHeaderBaseEEEE5abortEv() {
     return TransactionNotStarted;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+CommonIterator* APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE5beginEv(CommonIterator* iterator, const IntrusivePtr* self) {
+    iterator->referenceCount = 0;
+    iterator->element = StringVectorElements(self, false, __func__);
+    return iterator;
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5emptyEv(const CommonString* self) {
@@ -3962,9 +3977,8 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6Stri
     return self->object;
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEdeEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+CommonString* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_6StringEEdeEv(const CommonIterator* self) {
+    return static_cast<CommonString*>(self->element);
 }
 
 // --------------------------------------------------------------------------
