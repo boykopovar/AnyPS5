@@ -3,6 +3,8 @@
 #include "SceTypes.hpp"
 
 extern "C" {
+extern std::uintptr_t _ZTVN3sce2np12SelectorItemE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np9JsonValueE_nid_postfix[];
 extern std::uintptr_t _ZTVN3sce2np8msg_pack17MsgPackStringImplE_nid_postfix[];
 extern std::uintptr_t _ZTVN3sce2np8msg_pack17MsgPackBinaryImplE_nid_postfix[];
 extern std::uintptr_t _ZTVN3sce2np8msg_pack16MsgPackArrayImplE_nid_postfix[];
@@ -111,7 +113,6 @@ int APS5_VABI _ZN3sce2np12SelectorItem9GetEventsEv();
 int APS5_VABI _ZN3sce2np12SelectorItemC2Ev();
 int APS5_VABI _ZN3sce2np12SelectorItemD0Ev();
 int APS5_VABI _ZN3sce2np12SelectorItemD1Ev();
-int APS5_VABI _ZN3sce2np12SelectorItemD2Ev();
 int APS5_VABI _ZN3sce2np12StreamBuffer10GetBufSizeEv();
 int APS5_VABI _ZN3sce2np12StreamBuffer11GetCapacityEv();
 int APS5_VABI _ZN3sce2np12StreamBuffer11GetDataSizeEv();
@@ -506,7 +507,6 @@ int APS5_VABI _ZN3sce2np9JsonValue13SetFieldValueEPKcPS1_();
 int APS5_VABI _ZN3sce2np9JsonValueC2EP16SceNpAllocatorExNS1_9ValueTypeE();
 int APS5_VABI _ZN3sce2np9JsonValueD0Ev();
 int APS5_VABI _ZN3sce2np9JsonValueD1Ev();
-int APS5_VABI _ZN3sce2np9JsonValueD2Ev();
 int APS5_VABI _ZN3sce2np9LocalFile11GetFileSizeEPl();
 int APS5_VABI _ZN3sce2np9LocalFile11GetFileStatEPKcPNS1_8FileStatE();
 int APS5_VABI _ZN3sce2np9LocalFile16ConvertErrorCodeEi();

@@ -2,10 +2,28 @@
 #include "prx/libSceNpCommon/include/InventoryExports.hpp"
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/Api.hpp"
 
 extern "C" {
 
 static_assert(sizeof(std::uintptr_t) == 8);
+
+std::uintptr_t _ZTVN3sce2np9JsonValueE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np9JsonValueD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np9JsonValueD0Ev),
+    reinterpret_cast<std::uintptr_t>(&__cxa_pure_virtual_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&__cxa_pure_virtual_nid_postfix),
+};
+
+std::uintptr_t _ZTVN3sce2np12SelectorItemE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np12SelectorItemD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np12SelectorItemD0Ev),
+    reinterpret_cast<std::uintptr_t>(&__cxa_pure_virtual_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&__cxa_pure_virtual_nid_postfix),
+};
+
 
 static int APS5_VABI NpMsgPackMapImplType(const void*) { return 0x2003; }
 std::uintptr_t _ZTVN3sce2np8msg_pack14MsgPackMapImplE_nid_postfix[] {
@@ -467,10 +485,7 @@ int APS5_VABI _ZN3sce2np12SelectorItemD0Ev() {
 int APS5_VABI _ZN3sce2np12SelectorItemD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZN3sce2np12SelectorItemD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+APS5_EXPORT("H74u5owPMbY", _ZN3sce2np12SelectorItemD1Ev);
 
 int APS5_VABI _ZN3sce2np12StreamBuffer10GetBufSizeEv() {
     NotImplemented_nid_no_patch(__func__);
@@ -2054,10 +2069,7 @@ int APS5_VABI _ZN3sce2np9JsonValueD0Ev() {
 int APS5_VABI _ZN3sce2np9JsonValueD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZN3sce2np9JsonValueD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+APS5_EXPORT("FfSNfBmn+K8", _ZN3sce2np9JsonValueD1Ev);
 
 int APS5_VABI _ZN3sce2np9LocalFile11GetFileSizeEPl() {
     NotImplemented_nid_no_patch(__func__);
