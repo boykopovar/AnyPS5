@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -125,8 +126,10 @@ void OutputAudioOut() {
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("SDL_AUDIODRIVER", "dummy");
+    _putenv_s(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "");
 #else
     setenv("SDL_AUDIODRIVER", "dummy", 1);
+    unsetenv(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
 #endif
     const bool waiting = argc == 2 && std::strcmp(argv[1], "--audio-out2-waiting-push") == 0;
     if (argc == 2 && std::strcmp(argv[1], "--audio-out2") == 0) PushAudioOut2();

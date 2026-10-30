@@ -167,7 +167,7 @@ class DatabaseCacheTests(unittest.TestCase):
                         if json_output:
                             self.assertEqual(json.loads(result.stdout), {"db_entries": 0, "rows": []})
                         else:
-                            self.assertIn("0 unknowns, 0 suggestions (0 already implemented)", result.stdout)
+                            self.assertIn("0 unknowns, 0 suggestions (0 names already in use)", result.stdout)
 
     def test_environment_variable_selects_the_database_and_help_names_it(self):
         script = str(Path(nid_names.__file__))
@@ -456,6 +456,34 @@ class SourceCollectionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
         self.assertIn("core/libs/prx/libSceExample/\u8cc7\u6599.cpp", result.stdout.decode("utf-8"))
 
+    def test_named_stub_and_implementation_are_reported_as_names_in_use(self):
+        stub_name, implementation_name = "scePadPending", "scePadImplemented"
+        stub_nid = nid_names.compute_nid(stub_name)
+        implementation_nid = nid_names.compute_nid(implementation_name)
+        self.write_source(
+            f'APS5_EXPORT("{stub_nid}", exampleUnknown00);\n'
+            f'APS5_EXPORT("{implementation_nid}", exampleUnknown01);\n'
+            'int APS5_VABI scePadPending() { NotImplemented_nid_no_patch(__func__); return 0; }\n'
+            'int APS5_VABI scePadImplemented() { return 1; }\n')
+        database = self.root / "aerolib.csv"
+        database.write_text(f"{stub_nid} {stub_name}\n{implementation_nid} {implementation_name}\n", encoding="utf-8")
+
+        text_result = self.cli("--db", database)
+        self.assertEqual(text_result.returncode, 0, text_result.stderr.decode("utf-8", errors="replace"))
+        text = text_result.stdout.decode("utf-8")
+        self.assertIn(f"{stub_nid}  ", text)
+        self.assertIn(f"{implementation_nid}  ", text)
+        self.assertIn("name-in-use  scePadPending", text)
+        self.assertIn("name-in-use  scePadImplemented", text)
+        self.assertEqual(text.count("name-in-use"), 2)
+        self.assertIn("2 names already in use", text)
+
+        json_result = self.cli("--db", database, "--json")
+        self.assertEqual(json_result.returncode, 0, json_result.stderr.decode("utf-8", errors="replace"))
+        rows = json.loads(json_result.stdout.decode("utf-8"))["rows"]
+        self.assertEqual({row["nid"]: row["status"] for row in rows},
+                         {stub_nid: "name-in-use", implementation_nid: "name-in-use"})
+
     def test_error_preserves_unicode_paths_with_legacy_stderr(self):
         database = self.root / "\u8cc7\u6599"
         database.mkdir()
@@ -617,6 +645,34 @@ int APS5_VABI sceReal() { return 0; }
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
 
+
+
+class SourceLocationTests(unittest.TestCase):
+    def test_lookup_finds_named_and_explicit_aliases_without_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prx = root / "core/libs/prx"
+            file = prx / "libExample/Export.cpp"
+            file.parent.mkdir(parents=True)
+            nid = nid_names.compute_nid("sceNamed")
+            file.write_text('int APS5_VABI sceNamed_nid_postfix() { return 1; }\n'
+                            'APS5_EXPORT("3gQncidodmw", CameraImage);\n'
+                            'int APS5_VABI CameraImage() { return 1; }\n'
+                            'int APS5_VABI Helper_nid_no_patch() { return 1; }\n', encoding="utf-8")
+            output = io.StringIO()
+            with patch.object(nid_names, "ROOT", root), patch.object(nid_names, "PRX", prx), \
+                 patch.object(nid_names, "load_db", side_effect=AssertionError("unexpected database")), \
+                 contextlib.redirect_stdout(output):
+                self.assertEqual(nid_names.main(["--where", "--nid", nid, "3gQncidodmw", "--json"]), 0)
+            locations = json.loads(output.getvalue())["locations"]
+            self.assertEqual({row["name"] for row in locations}, {"sceNamed_nid_postfix", "CameraImage"})
+            self.assertTrue(all(row["path"] == "core/libs/prx/libExample/Export.cpp" for row in locations))
+
+    def test_where_requires_input_and_checks_nids(self):
+        for arguments in (["--where"], ["--where", "--nid"], ["--where", "--nid", "invalid"]):
+            with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    nid_names.main(arguments)
 
 
 if __name__ == "__main__":

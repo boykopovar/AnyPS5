@@ -473,6 +473,12 @@ def library_progress(group):
     return f'{group["done"]}/{total} ({percent:.2f}%)', percent
 
 
+def percent_change(old_percent, new_percent):
+    if old_percent is None or new_percent is None:
+        return "n/a"
+    return f'{round(new_percent - old_percent, 2) or 0:+.2f}%'
+
+
 def library_report(base, head):
     before, after = ({group["name"]: group for group in data["groups"]} for data in (base, head))
     fields = ("done", "todo", "done_names", "todo_names", "shared_sources")
@@ -483,9 +489,12 @@ def library_report(base, head):
             continue
         old_text, old_percent = library_progress(old)
         new_text, new_percent = library_progress(new)
-        delta = "n/a"
-        if old_percent is not None and new_percent is not None:
-            delta = f'{round(new_percent - old_percent, 2) or 0:+.2f} pp'
+        delta = percent_change(old_percent, new_percent)
+        if delta == "+0.00%":
+            exact = exact_delta({"done": old["done"], "total": old["done"] + old["todo"]},
+                                {"done": new["done"], "total": new["done"] + new["todo"]})
+            if exact:
+                delta = f"{small_delta(exact)}%"
         rows.append(f"| {name} | {old_text} | {new_text} | {delta} |")
     if not rows:
         return []
@@ -503,8 +512,22 @@ def report(base, head):
     return "\n".join(lines)
 
 
+SITE_REPORTS = ("progress.json", "badge-libraries.svg", "badge-shaders.svg", "progress.svg", "progress.html")
+
+
+def require_distinct_reports(output):
+    paths = [output / name for name in SITE_REPORTS]
+    for index, path in enumerate(paths):
+        if not path.exists():
+            continue
+        for other in paths[index + 1:]:
+            if other.exists() and path.samefile(other):
+                raise ValueError(f"{path.name} and {other.name} in {output} are the same file")
+
+
 def write_site(output, libraries, shaders):
     output.mkdir(parents=True, exist_ok=True)
+    require_distinct_reports(output)
     (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2), encoding="utf-8")
     (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
     (output / "badge-shaders.svg").write_text(badge("shaders", shaders), encoding="utf-8")
@@ -525,10 +548,14 @@ def validate_snapshot(snapshot):
         percent = data.get("percent")
         if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not 0 <= percent <= 100:
             raise ValueError(f"{section}.percent must be a finite number between 0 and 100")
+        seen = set()
         for index, group in enumerate(groups):
             location = f"{section}.groups[{index}]"
             if not isinstance(group, dict) or not isinstance(group.get("name"), str):
                 raise ValueError(f"{location} must be an object with a string name")
+            if group["name"] in seen:
+                raise ValueError(f"{location}.name duplicates {group['name']!r}")
+            seen.add(group["name"])
             if "shared_sources" in group and not isinstance(group["shared_sources"], str):
                 raise ValueError(f"{location}.shared_sources must be a string")
             if section == "libraries":
@@ -566,7 +593,7 @@ def main(argv=None):
             for path in args.compare:
                 try:
                     snapshots.append(json.loads(path.read_text(encoding="utf-8-sig")))
-                except (OSError, ValueError) as error:
+                except (OSError, ValueError, RecursionError) as error:
                     parser.error(f"{path}: {error}")
             for path, snapshot in zip(args.compare, snapshots):
                 try:
@@ -592,6 +619,8 @@ def main(argv=None):
         if args.output:
             try:
                 write_site(args.output, libraries, shaders)
+            except ValueError as error:
+                parser.error(str(error))
             except OSError as error:
                 parser.error(f"{args.output}: {error.strerror or error}")
         if args.json:

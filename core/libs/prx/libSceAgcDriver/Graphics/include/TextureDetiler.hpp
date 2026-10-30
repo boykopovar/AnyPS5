@@ -79,6 +79,8 @@ namespace AgcDriver::Graphics {
         VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
         VkShaderModule module = VK_NULL_HANDLE;
         std::vector<std::pair<std::uint32_t, VkPipeline>> pipelines;
+        std::vector<std::pair<std::uint32_t, GcnTileGeometry>> gcnGeometries;
+        std::uint32_t layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer);
         DescriptorRing descriptorSets;
         VkDescriptorSetLayout cmaskDescriptorLayout = VK_NULL_HANDLE;
         VkPipelineLayout cmaskPipelineLayout = VK_NULL_HANDLE;

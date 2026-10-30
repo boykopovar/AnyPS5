@@ -13,6 +13,12 @@ struct LocinfoStorage {
     alignas(std::uint64_t) unsigned char bytes[64];
 };
 
+struct SceV2Locinfo {
+    std::uint64_t reserved;
+    const char* name;
+    const char* classicName;
+};
+
 struct Facet;
 
 struct FacetVtable {
@@ -46,6 +52,9 @@ struct String {
     std::uint64_t size;
     std::uint64_t capacity;
 };
+
+void* AllocateStringStorage(std::size_t bytes);
+void ReleaseStringStorage(String& string);
 
 struct CollateFacet {
     Facet base;
@@ -185,6 +194,9 @@ static_assert(offsetof(NumpunctFacet, truename) == 0x28);
 static_assert(offsetof(NumpunctVtable, decimalPoint) == 0x20);
 static_assert(offsetof(NumpunctVtable, truename) == 0x40);
 static_assert(alignof(LocinfoStorage) == 8);
+static_assert(sizeof(SceV2Locinfo) == 24);
+static_assert(offsetof(SceV2Locinfo, name) == 8);
+static_assert(offsetof(SceV2Locinfo, classicName) == 0x10);
 
 }
 

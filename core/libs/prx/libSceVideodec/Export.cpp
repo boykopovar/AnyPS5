@@ -79,11 +79,12 @@ SceVideodec2::DecoderConfigInfo MapConfig(const ConfigInfo& config) {
     return decoderConfig;
 }
 
-Geometry Measure(const SceVideodec2::OutputInfo& output, const Decoder2Crop& crop) {
+Geometry Measure(const SceVideodec2::OutputInfo& output, const SceVideodec2::Internal::PictureHeader& header) {
+    if (header.bitDepthMinus8 != 0) throw std::runtime_error("Videodec: pictures deeper than 8 bits are not implemented");
     Geometry geometry;
     geometry.width = output.frameWidth;
     geometry.height = output.frameHeight;
-    geometry.crop = crop;
+    geometry.crop = header.crop;
     geometry.pitch = AlignUp(geometry.width, PitchAlignment);
     return geometry;
 }
@@ -188,7 +189,7 @@ int APS5_VABI sceVideodecDecode(Ctrl* ctrl, const SceVideodec2::InputData* input
     }
     SceVideodec2::Internal::PictureHeader header{};
     if (output.isValid) Videodec2PictureHeader_nid_no_patch(decoder->handle, output.frameBuffer, &header);
-    const auto geometry = Measure(output, header.crop);
+    const auto geometry = Measure(output, header);
     FillPictureInfo(geometry, output, picture);
     picture->ptsData = header.pts;
     picture->attachedData = header.attached;
@@ -240,7 +241,7 @@ int APS5_VABI sceVideodecFlush(Ctrl* ctrl, FrameBuffer* frameBuffer, PictureInfo
     }
     SceVideodec2::Internal::PictureHeader header{};
     if (output.isValid) Videodec2PictureHeader_nid_no_patch(decoder->handle, output.frameBuffer, &header);
-    const auto geometry = Measure(output, header.crop);
+    const auto geometry = Measure(output, header);
     FillPictureInfo(geometry, output, picture);
     picture->ptsData = header.pts;
     picture->attachedData = header.attached;

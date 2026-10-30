@@ -88,6 +88,17 @@ static bool CheckFileBytes(const std::string& filename, const std::string& expec
     return false;
 }
 
+static void CheckGetcPutc() {
+    FileStream stream(std::tmpfile());
+    Require(putc_nid_postfix('A', &stream) == 'A');
+    Require(putc_nid_postfix(0x141, &stream) == 0x41);
+    Require(putc_nid_postfix(-1, &stream) == 0xff);
+    rewind_nid_postfix(&stream);
+    Require(getc_nid_postfix(&stream) == 'A' && getc_nid_postfix(&stream) == 0x41 && getc_nid_postfix(&stream) == 0xff);
+    Require(getc_nid_postfix(&stream) == EOF && feof_nid_postfix(&stream) != 0 && ferror_nid_postfix(&stream) == 0);
+    stream.Close();
+}
+
 static void CheckUnlockedStreams() {
     FileStream stream(std::tmpfile());
     auto& guest = stream.GuestState();
@@ -279,6 +290,60 @@ static void CheckFgetsSize() {
     char line[8]{};
     Require(fgets_nid_postfix(line, sizeof(line), &stream) == line && std::strcmp(line, "line\n") == 0);
     Require(ferror_nid_postfix(&stream) == 0);
+    stream.Close();
+}
+
+static void CheckSupplementaryWideCharacters() {
+    const char16_t text[] = u"A\U0001F600\n";
+    FileStream stream(std::tmpfile());
+    Require(fputws_nid_postfix(text, &stream) == 4);
+    rewind_nid_postfix(&stream);
+    char bytes[8]{};
+    Require(fread_nid_postfix(bytes, 1, sizeof(bytes), &stream) == 6 && std::memcmp(bytes, "A\xF0\x9F\x98\x80\n", 6) == 0);
+    rewind_nid_postfix(&stream);
+    char16_t line[8]{};
+    Require(fgetws_nid_postfix(line, 8, &stream) == line && std::u16string_view(line) == std::u16string_view(text));
+    rewind_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == u'A' && getwc_nid_postfix(&stream) == 0xd83d && getwc_nid_postfix(&stream) == 0xde00);
+    Require(getwc_nid_postfix(&stream) == u'\n' && getwc_nid_postfix(&stream) == -1 && ferror_nid_postfix(&stream) == 0);
+    rewind_nid_postfix(&stream);
+    Require(fgetws_nid_postfix(line, 3, &stream) == line && line[0] == u'A' && line[1] == 0xd83d && line[2] == 0);
+    Require(fgetws_nid_postfix(line, 8, &stream) == line && line[0] == 0xde00 && line[1] == u'\n' && line[2] == 0);
+    rewind_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == u'A' && getwc_nid_postfix(&stream) == 0xd83d);
+    Require(fseeko_nid_postfix(&stream, 0, SEEK_SET) == 0 && getwc_nid_postfix(&stream) == u'A');
+    rewind_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == u'A' && getwc_nid_postfix(&stream) == 0xd83d);
+    Require(ungetwc_nid_postfix(u'X', &stream) == u'X');
+    Require(getwc_nid_postfix(&stream) == u'X' && getwc_nid_postfix(&stream) == 0xde00 && getwc_nid_postfix(&stream) == u'\n');
+    stream.Close();
+
+    FileStream units(std::tmpfile());
+    Require(fputwc_nid_postfix(0xd83d, &units) == 0xd83d && fputwc_nid_postfix(0xde00, &units) == 0xde00);
+    rewind_nid_postfix(&units);
+    Require(getwc_nid_postfix(&units) == 0xd83d && getwc_nid_postfix(&units) == 0xde00 && getwc_nid_postfix(&units) == -1);
+    units.Close();
+
+    for (const std::string_view malformed : {"\xC0\x80", "\xE0\x9F\xBF", "\xF0\x8F\xBF\xBF", "\xF4\x90\x80\x80", "\xF8\x88\x80\x80\x80"}) {
+        FileStream input(std::tmpfile());
+        Require(fwrite_nid_postfix(malformed.data(), 1, malformed.size(), &input) == malformed.size());
+        rewind_nid_postfix(&input);
+        *__error_nid_postfix() = 0;
+        Require(getwc_nid_postfix(&input) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&input) != 0);
+        input.Close();
+    }
+}
+
+static void CheckUngetcEndOfFile() {
+    FileStream stream(std::tmpfile());
+    Require(fwrite_nid_postfix("ab", 1, 2, &stream) == 2);
+    rewind_nid_postfix(&stream);
+    Require(ungetc_nid_postfix(EOF, &stream) == EOF);
+    Require(ftello_nid_postfix(&stream) == 0 && fgetc_nid_postfix(&stream) == 'a');
+    Require(fgetc_nid_postfix(&stream) == 'b' && fgetc_nid_postfix(&stream) == EOF && feof_nid_postfix(&stream) != 0);
+    Require(ungetc_nid_postfix(EOF, &stream) == EOF && feof_nid_postfix(&stream) != 0);
+    Require(ungetc_nid_postfix('z', &stream) == 'z' && feof_nid_postfix(&stream) == 0);
+    Require(fgetc_nid_postfix(&stream) == 'z' && fgetc_nid_postfix(&stream) == EOF && feof_nid_postfix(&stream) != 0);
     stream.Close();
 }
 
@@ -678,6 +743,21 @@ static int CheckUpdateStandardOutput() {
     return 0;
 }
 
+static void CheckSetvbufInvalidMode() {
+    FileStream stream(std::tmpfile());
+    for (const int mode : {3, -1, INT_MAX}) Require(setvbuf_nid_postfix(&stream, nullptr, mode, 0) == EOF);
+    char buffer[16];
+    std::memset(buffer, 'z', sizeof(buffer));
+    Require(setvbuf_nid_postfix(&stream, buffer, 3, sizeof(buffer)) == EOF);
+    Require(fputc_nid_postfix('A', &stream) == 'A');
+    Require(buffer[0] == 'z');
+    Require(fflush_nid_postfix(&stream) == 0);
+    std::rewind(stream.GetHandle());
+    Require(fgetc_nid_postfix(&stream) == 'A');
+    Require(fgetc_nid_postfix(&stream) == EOF);
+    stream.Close();
+}
+
 #ifdef _WIN32
 static void CheckStandardStreamDeleteSharing() {
     int index = 0;
@@ -705,6 +785,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]) == "--reopen-closed-stdout") return CheckReopenedClosedStandardOutput();
     CheckClosedStreamWrites();
     CheckClosedStreamReopen();
+    CheckSetvbufInvalidMode();
     CheckDescriptorAccessModes();
     Require(_Getmbcurmax_nid_postfix() == 3 && ___mb_cur_max_nid_postfix() == 1);
     CheckFlushWhileReading();
@@ -1006,8 +1087,11 @@ int main(int argc, char** argv) {
     Require(fgetc_nid_postfix(&locked) == 'A' && fgetc_nid_postfix(&locked) == 'B');
     locked.Close();
     CheckRewind();
+    CheckUngetcEndOfFile();
     CheckFgetsSize();
+    CheckSupplementaryWideCharacters();
     CheckUnlockedStreams();
+    CheckGetcPutc();
     CheckUnlockedStreamLock(false);
     CheckUnlockedStreamLock(true);
     CheckUnlockedStreamLock(false, feof_unlocked_nid_postfix);

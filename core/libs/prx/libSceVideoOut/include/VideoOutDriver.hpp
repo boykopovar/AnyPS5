@@ -18,13 +18,17 @@
 #include <stdexcept>
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
+#ifndef __EMSCRIPTEN__
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
-#include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
 #include "prx/libSceVideoOut/include/HostHdrProbe.hpp"
+#endif
+#include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 
+#ifndef __EMSCRIPTEN__
 #include "SDL.h"
+#endif
 #include "SceTypes.hpp"
 
 static constexpr int VIDEO_OUT_ERROR_INVALID_VALUE = -2144796671;
@@ -139,6 +143,7 @@ struct VideoOutConfig {
     bool opened = false;
     bool closing = false;
     bool ps4 = false;
+    bool buffersEverRegistered = false;
     std::exception_ptr failure;
     std::stop_token shutdownToken = LibcShutdownToken_nid_postfix();
     int flipRate = 0;
@@ -254,8 +259,10 @@ private:
     std::array<std::shared_ptr<AgcDriver::IVideoOutput>, VIDEO_OUT_NUM_MAX> outputs;
     std::shared_ptr<FlipQueue> flipQueue = std::make_shared<FlipQueue>();
 
+#ifndef __EMSCRIPTEN__
     DisplayWindow window;
     HostHdrProbe hdrProbe;
+#endif
     std::uint64_t hdrGeneration = 0;
     std::atomic<int> displayRefreshRate{0};
     std::atomic<std::uint32_t> displayResolution{VIDEO_OUT_RESOLUTION_1080P};

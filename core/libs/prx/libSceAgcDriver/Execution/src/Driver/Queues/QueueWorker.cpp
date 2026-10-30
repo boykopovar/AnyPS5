@@ -141,7 +141,7 @@ void Driver::run(std::uint32_t id) noexcept {
     PinWorkerThread(role);
 
     GuestMemory::TagGpuLockThread(id);
-    if (id == 0) StartWorkerSampler();
+    StartWorkerSampler(id);
     Submission submission;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& costs = submissionCosts(id);
@@ -278,6 +278,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 running.Start();
                 if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{}) costs.dequeueNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - submission.enqueuedAt).count());
             }
+            retireLabelTakes(id, submission.received);
             execute(submission);
             if (submission.progress && submission.rewindTail == nullptr && !completionDeferred()) submitOpenWork(submission.progress);
             if (traceGpu) std::fprintf(stderr, "[gpu] %.1f done serial=%llu queue=0x%x\n", TraceMs(), static_cast<unsigned long long>(submission.serial), id);

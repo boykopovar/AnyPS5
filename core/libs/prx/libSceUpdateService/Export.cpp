@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceUpdateService/include/InventoryExports.hpp"
 #include "prx/libSceUpdateService/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -5,6 +7,10 @@
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
+
+int APS5_VABI sceUpsrvFlushHttpCookie() {
+    NotImplemented_nid_no_patch(__func__);
+}
 
 int APS5_VABI sceUpsrvGetCompletedTaskId() {
     NotImplemented_nid_no_patch(__func__);
@@ -205,5 +211,75 @@ int APS5_VABI sceUpsrvVerifySystemExBank() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI sceUpsrvDisableAutoInstall() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUpsrvEndUpdateSession() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUpsrvNotifyUpdatedEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUpsrvUpdateCheckDoCheckSystemWithDownloadTypeForSettings() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUpsrvUpdateCheckDoCheckSystemWithReleaseType() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUpsrvUpdateCheckIsTestPeriod() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUpsrvUpdateConfirmUpdate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUpsrvUpdateStartUpdateModeWithParam() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUpsrvUpdateStartUpdateMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI libSceUpdateServiceUnknown_33Z2z4kXKq0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("33Z2z4kXKq0", libSceUpdateServiceUnknown_33Z2z4kXKq0_nid_no_patch);
+
+int APS5_VABI libSceUpdateServiceUnknown_ItlDmxWppec_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ItlDmxWppec", libSceUpdateServiceUnknown_ItlDmxWppec_nid_no_patch);
+
+int APS5_VABI libSceUpdateServiceUnknown_SpnzKCdKA_plus_4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("SpnzKCdKA+4", libSceUpdateServiceUnknown_SpnzKCdKA_plus_4_nid_no_patch);
+
+int APS5_VABI libSceUpdateServiceUnknown_sEcvo34_plus_ihg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("sEcvo34+ihg", libSceUpdateServiceUnknown_sEcvo34_plus_ihg_nid_no_patch);
+
+int APS5_VABI libSceUpdateServiceUnknown_vrw9HD_minus_1Gs0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("vrw9HD-1Gs0", libSceUpdateServiceUnknown_vrw9HD_minus_1Gs0_nid_no_patch);
+
+int APS5_VABI libSceUpdateServiceUnknown_yyy3cEojLOw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("yyy3cEojLOw", libSceUpdateServiceUnknown_yyy3cEojLOw_nid_no_patch);
 
 }
