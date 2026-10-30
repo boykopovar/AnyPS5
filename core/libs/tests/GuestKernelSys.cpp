@@ -76,13 +76,31 @@ bool ThrowsNaming(Call call, const char* text) {
     return false;
 }
 
-#ifndef _WIN32
+#ifdef _WIN32
+unsigned long LinkCount(const std::string& path) {
+    const HANDLE link = CreateFileW(std::filesystem::path(path).c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Require(link != INVALID_HANDLE_VALUE);
+    BY_HANDLE_FILE_INFORMATION information{};
+    const bool read = GetFileInformationByHandle(link, &information) != 0;
+    CloseHandle(link);
+    Require(read);
+    return information.nNumberOfLinks;
+}
+#else
 nlink_t LinkCount(const std::string& path) {
     struct stat status {};
     Require(::lstat(path.c_str(), &status) == 0);
     return status.st_nlink;
 }
 #endif
+
+std::string LinkTarget(const std::string& path) {
+    char buffer[256]{};
+    const std::int64_t length = readlink_nid_postfix(path.c_str(), buffer, sizeof(buffer));
+    Require(length > 0);
+    return std::string(buffer, static_cast<std::size_t>(length));
+}
 
 void OwnershipAndLinkTests(const std::filesystem::path& root) {
     constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
@@ -152,27 +170,31 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
         Require(lchown_nid_postfix(dangling.c_str(), 0, 0) == 0);
         Require(fchownat_nid_postfix(-100, dangling.c_str(), 0, 0, 0) == -1 && Error() == 2);
         Require(fchownat_nid_postfix(-100, dangling.c_str(), 0, 0, 0x200) == 0);
-#ifndef _WIN32
         const auto symbolicCopy = (root / "copy.link").string();
         const auto danglingCopy = (root / "dangling.copy").string();
         Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, symbolicCopy.c_str(), 0) == 0);
-        Require(std::filesystem::read_symlink(symbolicCopy) == "owned.txt" && LinkCount(symbolic) == 2);
+        Require(LinkTarget(symbolicCopy) == "owned.txt" && LinkCount(symbolic) == 2);
         Require(std::filesystem::hard_link_count(file) == 2);
         Require(linkat_nid_postfix(directory, "dangling.link", directory, "dangling.copy", 0) == 0);
-        Require(std::filesystem::read_symlink(danglingCopy) == "missing.txt" && LinkCount(dangling) == 2);
+        Require(LinkTarget(danglingCopy) == "missing.txt" && LinkCount(dangling) == 2);
         Require(linkat_nid_postfix(-100, dangling.c_str(), -100, other.c_str(), 0x400) == -1 && Error() == 2);
         Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, linked.c_str(), 0) == -1 && Error() == 17);
         Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, (missing + "/inner").c_str(), 0) == -1 && Error() == 2);
         Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, (throughFile + "/inner").c_str(), 0) == -1 && Error() == 20);
         Require(LinkCount(symbolic) == 2 && !std::filesystem::exists(std::filesystem::symlink_status(other)));
+        Require(unlink_nid_postfix(symbolicCopy.c_str()) == 0 && unlink_nid_postfix(danglingCopy.c_str()) == 0);
+        Require(LinkCount(symbolic) == 1 && LinkCount(dangling) == 1 && std::filesystem::hard_link_count(file) == 2);
         const auto folder = root / "folder";
         const auto folderLink = (root / "folder.link").string();
-        const auto folderCopy = (root / "folder.copy").string();
         Require(std::filesystem::create_directory(folder) && symlink_nid_postfix("folder", folderLink.c_str()) == 0);
         Require(linkat_nid_postfix(-100, folderLink.c_str(), -100, other.c_str(), 0x400) == -1 && Error() == 1);
+#ifdef _WIN32
+        Require(RemoveDirectoryW(std::filesystem::path(folderLink).c_str()) != 0 && std::filesystem::remove(folder));
+#else
+        const auto folderCopy = (root / "folder.copy").string();
         Require(linkat_nid_postfix(-100, folderLink.c_str(), -100, folderCopy.c_str(), 0) == 0);
-        Require(std::filesystem::read_symlink(folderCopy) == "folder" && LinkCount(folderLink) == 2);
-        Require(std::filesystem::remove(symbolicCopy) && std::filesystem::remove(danglingCopy) && std::filesystem::remove(folderCopy));
+        Require(LinkTarget(folderCopy) == "folder" && LinkCount(folderLink) == 2);
+        Require(std::filesystem::remove(folderCopy));
         Require(std::filesystem::remove(folderLink) && std::filesystem::remove(folder));
 #endif
         Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, other.c_str(), 0x400) == 0);
@@ -668,6 +690,26 @@ void CheckSettimeofday() {
     Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
 
+void CheckSceKernelSettimeofday() {
+    constexpr int KernelFault = static_cast<int>(0x8002000Eu);
+    constexpr int KernelInvalid = static_cast<int>(0x80020016u);
+    KernelTimezone zone{-1, -1};
+    Require(sceKernelSettimeofday(nullptr, nullptr) == 0);
+    const KernelTimezone west{60, 1};
+    const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(1);
+    const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(1);
+    Require(sceKernelSettimeofday(unreadableTime, &west) == KernelFault);
+    Require(sceKernelSettimeofday(nullptr, unreadableZone) == KernelFault);
+    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
+        Require(sceKernelSettimeofday(&invalid, &west) == KernelInvalid);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    Require(sceKernelSettimeofday(nullptr, &west) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1);
+    const KernelTimezone zero{0, 0};
+    Require(sceKernelSettimeofday(nullptr, &zero) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+}
+
 void DirectoryRenameTests(const std::filesystem::path& parent) {
     const auto fixture = parent / "directory-identity";
     const auto original = fixture / "original";
@@ -1124,6 +1166,7 @@ int main() {
     Require(link_nid_postfix(original.c_str(), "") == -1 && Error() == 2);
     Require(std::filesystem::remove(linked) && std::filesystem::hard_link_count(original) == 1);
     CheckSettimeofday();
+    CheckSceKernelSettimeofday();
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     const int fileDescriptor = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);

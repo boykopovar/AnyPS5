@@ -140,7 +140,7 @@ void requireSliceAddresses(const GuestTextureResource& resource, std::uint32_t b
     }
 }
 
-std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std::uint32_t pitch, std::uint32_t height, std::uint32_t x, std::uint32_t y) {
+std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std::uint32_t pitch, std::uint32_t height, std::uint32_t x, std::uint32_t y, std::uint32_t slice = 0u) {
     const auto bit = [](std::uint32_t value, std::uint32_t index) { return (value >> index) & 1u; };
     const std::uint32_t x0 = bit(x, 0), x1 = bit(x, 1), x2 = bit(x, 2), y0 = bit(y, 0), y1 = bit(y, 1), y2 = bit(y, 2);
     std::array<std::uint32_t, 6> pixel{x0, y0, x1, y1, x2, y2};
@@ -190,7 +190,9 @@ std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std
     std::uint32_t bank = 0;
     if (banks == 16u) bank = (bit(bx, 0) ^ bit(by, 3)) | ((bit(bx, 1) ^ bit(by, 2) ^ bit(by, 3)) << 1u) | ((bit(bx, 2) ^ bit(by, 1)) << 2u) | ((bit(bx, 3) ^ bit(by, 0)) << 3u);
     else bank = (bit(bx, 0) ^ bit(by, 2)) | ((bit(bx, 1) ^ bit(by, 1) ^ bit(by, 2)) << 1u) | ((bit(bx, 2) ^ bit(by, 0)) << 2u);
-    if (!pipe8x16) bank = (bank ^ static_cast<std::uint32_t>((banks / 2u + 1u) * splitSlice)) & (banks - 1u);
+    if (!prt) bank ^= (banks / 2u - 1u) * slice;
+    if (!pipe8x16) bank ^= static_cast<std::uint32_t>((banks / 2u + 1u) * splitSlice);
+    bank &= banks - 1u;
     const std::uint32_t bankBits = static_cast<std::uint32_t>(std::countr_zero(banks));
     return ((total >> 8u) << (8u + 3u + bankBits)) | (static_cast<std::uint64_t>(bank) << 11u) | (static_cast<std::uint64_t>(pipe) << 8u) | (total & 0xffu);
 }
@@ -216,6 +218,45 @@ void gcnTilingTests() {
                     const auto address = block * geometry.blockBytes + inBlock + static_cast<std::uint64_t>(split) * splitStride;
                     if (address != referenceGcnAddress(mode, bytes, pitch, height, x, y)) Require(false, what + ": element " + std::to_string(x) + "," + std::to_string(y) + " is at " + std::to_string(address) + ", addrlib places it at " + std::to_string(referenceGcnAddress(mode, bytes, pitch, height, x, y)));
                     Require(address % bytes == 0 && address / bytes < seen.size() && seen[address / bytes]++ == 0, what + ": two elements share an address or one leaves the surface");
+                }
+            }
+        }
+    }
+    for (const auto mode : {kGcnDisplay2D, kGcnThin2D, kGcnDepth2D64, kGcnDepth2D256, kGcnDepth2D1K, kGcnDepthPrt256, kGcnDisplayPrt, kGcnThin2DPrt}) {
+        for (std::uint32_t bytes = 1u; bytes <= 16u; bytes <<= 1u) {
+            const auto geometry = GcnTiling(mode, bytes);
+            constexpr std::array<std::uint32_t, 5> formats{1u, 7u, 20u, 62u, 75u};
+            for (const auto mipCount : {1u, 2u}) {
+                GuestTextureResource array{};
+                array.width = geometry.blockWidth * 4u;
+                array.height = geometry.blockHeight * 4u;
+                array.depthOrLastArray = 5u;
+                array.mipCount = mipCount;
+                array.lastLevel = mipCount - 1u;
+                array.tileMode = mode;
+                array.dimension = TextureDimension::k2DArray;
+                array.format = formats[std::countr_zero(bytes)];
+                array.gcnPitch = array.width;
+                const auto surface = DescribeSurface(array);
+                const auto what = "PS4 tile mode " + std::to_string(static_cast<int>(mode)) + " at " + std::to_string(bytes) + " bytes with " + std::to_string(mipCount) + " mips";
+                for (std::uint32_t level = 0; level < mipCount; ++level) {
+                    const auto& mip = surface.mips[level];
+                    Require(!mip.gcnMicroTiled, what + ": level " + std::to_string(level) + " is micro-tiled");
+                    const auto width = mip.blocksPerRow * geometry.blockWidth;
+                    const auto height = ((array.height >> level) + geometry.blockHeight - 1u) / geometry.blockHeight * geometry.blockHeight;
+                    for (std::uint32_t layer = 0; layer < surface.layers; ++layer) {
+                        for (std::uint32_t y = 0; y < height; ++y) {
+                            for (std::uint32_t x = 0; x < width; ++x) {
+                                std::uint32_t inBlock = 0, split = 0;
+                                for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= static_cast<std::uint32_t>(std::popcount((x & geometry.equation[bit] & 0xfffu) ^ ((y << 12u) & geometry.equation[bit] & 0xfff000u)) & 1) << bit;
+                                for (std::uint32_t bit = 0; bit < 4u; ++bit) split |= static_cast<std::uint32_t>(std::popcount((x & geometry.splitMasks[bit] & 0xfffu) ^ ((y << 12u) & geometry.splitMasks[bit] & 0xfff000u)) & 1) << bit;
+                                const auto block = static_cast<std::uint64_t>(y / geometry.blockHeight) * mip.blocksPerRow + x / geometry.blockWidth;
+                                const auto address = surface.GuestOffset(layer, mip) + block * geometry.blockBytes + (inBlock ^ GcnLayerBankXor(geometry, layer)) + static_cast<std::uint64_t>(split) * mip.gcnSplitStride;
+                                const auto expected = surface.GuestOffset(layer, mip) + referenceGcnAddress(mode, bytes, width, height, x, y, layer);
+                                if (address != expected) Require(false, what + ": element " + std::to_string(x) + "," + std::to_string(y) + " of level " + std::to_string(level) + ", array layer " + std::to_string(layer) + " is at " + std::to_string(address) + ", addrlib places it at " + std::to_string(expected));
+                            }
+                        }
+                    }
                 }
             }
         }

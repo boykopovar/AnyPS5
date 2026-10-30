@@ -505,6 +505,14 @@ extern "C" void PadPublishInput_nid_postfix(const PadInputState& input) {
     PadPublishInputForPort_nid_postfix(0, input);
 }
 
+extern "C" void PadApplyInjectedInput_nid_postfix(PadInputState* state) {
+    if (state == nullptr) return;
+    std::lock_guard lock(stateMutex);
+    const auto injected = InjectedInput(sceKernelGetProcessTime());
+    state->buttons |= injected.buttons;
+    if (injected.hasSticks) state->sticks = injected.sticks;
+}
+
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error) {
     if (!error) throw std::invalid_argument("Pad: missing input failure");
     std::lock_guard lock(stateMutex);
