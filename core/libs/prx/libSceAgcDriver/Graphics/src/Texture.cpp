@@ -367,33 +367,57 @@ static bool SparseLevelsSupported(const Context& context, const VkImageCreateInf
     return std::any_of(properties.begin(), properties.begin() + count, [](const VkSparseImageFormatProperties& format) { return (format.aspectMask & VK_IMAGE_ASPECT_COLOR_BIT) != 0; });
 }
 
-static VkDeviceSize BindSparseLevels(const Context& context, OwnedImage& owned, const VkImageCreateInfo& info, const VkMemoryRequirements& requirements, std::uint32_t firstLevel) {
-    std::uint32_t count = 0;
-    context.Function<PFN_vkGetImageSparseMemoryRequirements>("vkGetImageSparseMemoryRequirements")(context.device, owned.image, &count, nullptr);
-    std::vector<VkSparseImageMemoryRequirements> sparse(count);
-    context.Function<PFN_vkGetImageSparseMemoryRequirements>("vkGetImageSparseMemoryRequirements")(context.device, owned.image, &count, sparse.data());
-    const auto color = std::find_if(sparse.begin(), sparse.begin() + count, [](const VkSparseImageMemoryRequirements& entry) { return (entry.formatProperties.aspectMask & VK_IMAGE_ASPECT_COLOR_BIT) != 0; });
-    Require(color != sparse.begin() + count, "a sparse texture reports no color aspect memory requirements");
+std::optional<SparseLevelBinds> PlanSparseLevels(VkExtent3D extent, std::uint32_t mipLevels, std::uint32_t arrayLayers, VkDeviceSize alignment, std::span<const VkSparseImageMemoryRequirements> requirements, std::uint32_t firstLevel) {
+    const VkSparseImageMemoryRequirements* color = nullptr;
+    for (const auto& entry : requirements) {
+        const auto aspects = entry.formatProperties.aspectMask;
+        if (aspects == VK_IMAGE_ASPECT_COLOR_BIT && color == nullptr) color = &entry;
+        else if (aspects != VK_IMAGE_ASPECT_METADATA_BIT) return std::nullopt;
+    }
+    if (color == nullptr || alignment == 0 || color->formatProperties.imageGranularity.width == 0 || color->formatProperties.imageGranularity.height == 0) return std::nullopt;
+    const auto aligned = [&](VkDeviceSize size) { return (size + alignment - 1u) / alignment * alignment; };
     const auto granularity = color->formatProperties.imageGranularity;
-    Require(granularity.width != 0 && granularity.height != 0 && requirements.alignment != 0, "a sparse texture reports an empty block shape");
-    const auto tailFirst = std::min(color->imageMipTailFirstLod, info.mipLevels);
+    const auto tailFirst = std::min(color->imageMipTailFirstLod, mipLevels);
     const bool singleTail = (color->formatProperties.flags & VK_SPARSE_IMAGE_FORMAT_SINGLE_MIPTAIL_BIT) != 0;
-    std::vector<VkSparseImageMemoryBind> levels;
-    std::vector<VkSparseMemoryBind> tails;
-    VkDeviceSize bytes = 0;
-    for (std::uint32_t layer = 0; layer < info.arrayLayers; ++layer) {
+    SparseLevelBinds plan;
+    for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
         for (auto level = firstLevel; level < tailFirst; ++level) {
-            const auto width = std::max(info.extent.width >> level, 1u);
-            const auto height = std::max(info.extent.height >> level, 1u);
+            const auto width = std::max(extent.width >> level, 1u);
+            const auto height = std::max(extent.height >> level, 1u);
             const VkDeviceSize blocks = static_cast<VkDeviceSize>((width + granularity.width - 1u) / granularity.width) * ((height + granularity.height - 1u) / granularity.height);
-            levels.push_back({{VK_IMAGE_ASPECT_COLOR_BIT, level, layer}, {0, 0, 0}, {width, height, 1u}, VK_NULL_HANDLE, bytes, 0});
-            bytes += blocks * requirements.alignment;
+            plan.levels.push_back({{VK_IMAGE_ASPECT_COLOR_BIT, level, layer}, {0, 0, 0}, {width, height, 1u}, VK_NULL_HANDLE, plan.bytes, 0});
+            plan.bytes += blocks * alignment;
         }
-        if (tailFirst < info.mipLevels && (!singleTail || layer == 0)) {
-            tails.push_back({color->imageMipTailOffset + (singleTail ? 0u : static_cast<VkDeviceSize>(layer) * color->imageMipTailStride), color->imageMipTailSize, VK_NULL_HANDLE, bytes, 0});
-            bytes += (color->imageMipTailSize + requirements.alignment - 1u) / requirements.alignment * requirements.alignment;
+        if (tailFirst < mipLevels && (!singleTail || layer == 0)) {
+            plan.tails.push_back({color->imageMipTailOffset + (singleTail ? 0u : static_cast<VkDeviceSize>(layer) * color->imageMipTailStride), color->imageMipTailSize, VK_NULL_HANDLE, plan.bytes, 0});
+            plan.bytes += aligned(color->imageMipTailSize);
         }
     }
+    for (const auto& entry : requirements) {
+        if (entry.formatProperties.aspectMask != VK_IMAGE_ASPECT_METADATA_BIT) continue;
+        const bool single = (entry.formatProperties.flags & VK_SPARSE_IMAGE_FORMAT_SINGLE_MIPTAIL_BIT) != 0;
+        for (std::uint32_t layer = 0; layer < (single ? 1u : arrayLayers); ++layer) {
+            plan.tails.push_back({entry.imageMipTailOffset + static_cast<VkDeviceSize>(layer) * entry.imageMipTailStride, entry.imageMipTailSize, VK_NULL_HANDLE, plan.bytes, VK_SPARSE_MEMORY_BIND_METADATA_BIT});
+            plan.bytes += aligned(entry.imageMipTailSize);
+        }
+    }
+    if (plan.bytes == 0) return std::nullopt;
+    return plan;
+}
+
+static std::vector<VkSparseImageMemoryRequirements> SparseRequirements(const Context& context, VkImage image) {
+    std::uint32_t count = 0;
+    context.Function<PFN_vkGetImageSparseMemoryRequirements>("vkGetImageSparseMemoryRequirements")(context.device, image, &count, nullptr);
+    std::vector<VkSparseImageMemoryRequirements> sparse(count);
+    context.Function<PFN_vkGetImageSparseMemoryRequirements>("vkGetImageSparseMemoryRequirements")(context.device, image, &count, sparse.data());
+    sparse.resize(count);
+    return sparse;
+}
+
+static VkDeviceSize BindSparseLevels(const Context& context, OwnedImage& owned, SparseLevelBinds& plan, const VkMemoryRequirements& requirements) {
+    auto& levels = plan.levels;
+    auto& tails = plan.tails;
+    const auto bytes = plan.bytes;
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     allocation.allocationSize = bytes;
     allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, bytes, "texture");
@@ -474,7 +498,8 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         const auto unmapped = depthCompare || srgbExpand ? 0u : UnmappedLevelsBelowMinLod(descriptor, geometry);
-        const auto skip = unmapped != 0 && SparseLevelsSupported(context, imageInfo) ? unmapped : 0u;
+        auto skip = unmapped != 0 && SparseLevelsSupported(context, imageInfo) ? unmapped : 0u;
+        const auto denseInfo = imageInfo;
         const std::array<std::uint32_t, 2> families{context.queueFamily, context.sparseFamily};
         if (skip != 0) {
             imageInfo.flags |= VK_IMAGE_CREATE_SPARSE_BINDING_BIT | VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT;
@@ -489,8 +514,21 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
 
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
+        std::optional<SparseLevelBinds> sparseBinds;
         if (skip != 0) {
-            allocationBytes = BindSparseLevels(context, *owned, imageInfo, requirements, skip);
+            sparseBinds = PlanSparseLevels(imageInfo.extent, imageInfo.mipLevels, imageInfo.arrayLayers, requirements.alignment, SparseRequirements(context, image), skip);
+            if (!sparseBinds) {
+                owned.reset();
+                image = VK_NULL_HANDLE;
+                skip = 0;
+                imageInfo = denseInfo;
+                Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &imageInfo, nullptr, &image), "vkCreateImage");
+                owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
+                context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
+            }
+        }
+        if (sparseBinds) {
+            allocationBytes = BindSparseLevels(context, *owned, *sparseBinds, requirements);
         } else {
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
