@@ -45,5 +45,7 @@ int main() {
     const std::array<std::string, 2> both{"libmonosgen.prx", "libmonosgen-2.0.prx"};
     if (!Domain::ImportModule("nid#A#B", versioned, legacy).empty()) return 5;
     if (Domain::ImportModule("nid#A#B", modules, both) != both[0]) return 6;
+    const std::array<std::string, 1> normalizedMono{"libmonosgen-module.prx"};
+    if (Domain::ImportModule("nid#A#B", modules, normalizedMono) != normalizedMono[0]) return 43;
     std::cout << "module mapping checks passed\n";
 }
