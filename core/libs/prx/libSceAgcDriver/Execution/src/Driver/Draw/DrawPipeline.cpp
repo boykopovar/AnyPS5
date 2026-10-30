@@ -32,6 +32,12 @@ std::atomic<std::uint64_t> heldReadRanges{0};
 std::atomic<std::uint64_t> heldReadQueries{0};
 std::atomic<std::uint64_t> heldReadHits{0};
 
+template<typename TItem>
+struct ClearOnExit {
+    std::vector<TItem>& items;
+    ~ClearOnExit() { items.clear(); }
+};
+
 }
 
 namespace {
@@ -169,7 +175,7 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
     constexpr std::size_t depth = 16;
     struct ReclaimStorage {};
     auto& reclaim = HostThreadLocal<std::vector<Job>, ReclaimStorage>();
-    reclaim.clear();
+    const ClearOnExit<Job> clearReclaim{reclaim};
     std::unique_lock lock(mutex);
     if (!ran.empty()) std::swap(ran, reclaim);
     if (failure != nullptr) std::rethrow_exception(std::exchange(failure, nullptr));
@@ -303,7 +309,7 @@ void DrawPipeline::enqueue(Item item) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     struct ReclaimStorage {};
     auto& reclaim = HostThreadLocal<std::vector<Item>, ReclaimStorage>();
-    reclaim.clear();
+    const ClearOnExit<Item> clearReclaim{reclaim};
     const auto lockStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::unique_lock lock(mutex);
     if (!retired.empty()) std::swap(retired, reclaim);
