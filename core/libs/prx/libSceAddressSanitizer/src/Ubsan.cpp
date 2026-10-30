@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -72,6 +73,13 @@ struct TypeMismatchData {
     unsigned char typeCheckKind;
 };
 
+struct LegacyTypeMismatchData {
+    SourceLocation loc;
+    const TypeDescriptor* type;
+    std::uintptr_t alignment;
+    unsigned char typeCheckKind;
+};
+
 struct AlignmentAssumptionData {
     SourceLocation loc;
     SourceLocation assumptionLoc;
@@ -133,6 +141,11 @@ struct InvalidBuiltinData {
 };
 
 struct NonNullReturnData {
+    SourceLocation attrLoc;
+};
+
+struct LegacyNonNullReturnData {
+    SourceLocation loc;
     SourceLocation attrLoc;
 };
 
@@ -682,13 +695,15 @@ bool IgnoreReport(const SourceLocation& location, const ReportOptions& options) 
     return location.Disabled();
 }
 
-void TypeMismatch(TypeMismatchData* data, ValueHandle pointer, const ReportOptions& options) {
-    Location location = Location::FromSource(data->loc.Acquire());
-    const std::uintptr_t alignment = std::uintptr_t(1) << data->logAlignment;
+void TypeMismatch(SourceLocation& source, const TypeDescriptor& descriptor, std::uintptr_t alignment, unsigned char typeCheckKind, ValueHandle pointer, const ReportOptions& options) {
+    if (typeCheckKind >= std::size(typeCheckKinds)) {
+        Unexpected("ubsan: unknown type check kind");
+    }
+    Location location = Location::FromSource(source.Acquire());
     ErrorType type;
     if (pointer == 0) {
-        type = data->typeCheckKind == kTypeCheckNonnullAssign ? ErrorType::NullPointerUseWithNullability : ErrorType::NullPointerUse;
-    } else if ((pointer & (alignment - 1)) != 0) {
+        type = typeCheckKind == kTypeCheckNonnullAssign ? ErrorType::NullPointerUseWithNullability : ErrorType::NullPointerUse;
+    } else if (alignment != 0 && (pointer & (alignment - 1)) != 0) {
         type = ErrorType::MisalignedPointerUse;
     } else {
         type = ErrorType::InsufficientObjectSize;
@@ -696,20 +711,20 @@ void TypeMismatch(TypeMismatchData* data, ValueHandle pointer, const ReportOptio
     if (IgnoreReport(location.source, options)) {
         return;
     }
-    if (data->loc.Invalid()) {
+    if (source.Invalid()) {
         location = Location::FromSymbolized(CallerLocation(options.pc));
     }
     ScopedReport report(location, type);
     switch (type) {
     case ErrorType::NullPointerUse:
     case ErrorType::NullPointerUseWithNullability:
-        Diag(location, DiagLevel::Error, type, "%0 null pointer of type %1") << typeCheckKinds[data->typeCheckKind] << *data->type;
+        Diag(location, DiagLevel::Error, type, "%0 null pointer of type %1") << typeCheckKinds[typeCheckKind] << descriptor;
         break;
     case ErrorType::MisalignedPointerUse:
-        Diag(location, DiagLevel::Error, type, "%0 misaligned address %1 for type %3, which requires %2 byte alignment") << typeCheckKinds[data->typeCheckKind] << reinterpret_cast<const void*>(pointer) << static_cast<unsigned long long>(alignment) << *data->type;
+        Diag(location, DiagLevel::Error, type, "%0 misaligned address %1 for type %3, which requires %2 byte alignment") << typeCheckKinds[typeCheckKind] << reinterpret_cast<const void*>(pointer) << static_cast<unsigned long long>(alignment) << descriptor;
         break;
     default:
-        Diag(location, DiagLevel::Error, type, "%0 address %1 with insufficient space for an object of type %2") << typeCheckKinds[data->typeCheckKind] << reinterpret_cast<const void*>(pointer) << *data->type;
+        Diag(location, DiagLevel::Error, type, "%0 address %1 with insufficient space for an object of type %2") << typeCheckKinds[typeCheckKind] << reinterpret_cast<const void*>(pointer) << descriptor;
         break;
     }
     if (pointer != 0) {
@@ -935,7 +950,7 @@ void InvalidBuiltin(InvalidBuiltinData* data, const ReportOptions& options) {
     Diag(Location::FromSource(location), DiagLevel::Error, type, "passing zero to %0, which is not a valid argument") << (data->kind == 0 ? "ctz()" : "clz()");
 }
 
-void NonNullReturn(NonNullReturnData* data, SourceLocation* locationPointer, const ReportOptions& options, bool isAttribute) {
+void NonNullReturn(const SourceLocation& attributeLocation, SourceLocation* locationPointer, const ReportOptions& options, bool isAttribute) {
     if (locationPointer == nullptr) {
         Unexpected("ubsan: source location pointer is null");
     }
@@ -946,8 +961,8 @@ void NonNullReturn(NonNullReturnData* data, SourceLocation* locationPointer, con
     }
     ScopedReport report(Location::FromSource(location), type);
     Diag(Location::FromSource(location), DiagLevel::Error, type, "null pointer returned from function declared to never return null");
-    if (!data->attrLoc.Invalid()) {
-        Diag(Location::FromSource(data->attrLoc), DiagLevel::Note, type, "%0 specified here") << (isAttribute ? "returns_nonnull attribute" : "_Nonnull return type annotation");
+    if (!attributeLocation.Invalid()) {
+        Diag(Location::FromSource(attributeLocation), DiagLevel::Note, type, "%0 specified here") << (isAttribute ? "returns_nonnull attribute" : "_Nonnull return type annotation");
     }
 }
 
@@ -1015,9 +1030,19 @@ void FunctionTypeMismatch(FunctionTypeMismatchData* data, ValueHandle function, 
 void Handle_nid_no_patch(Check check, void* data, ValueHandle first, ValueHandle second, ValueHandle third, bool unrecoverable, std::uintptr_t pc, std::uintptr_t bp) {
     const ReportOptions options{unrecoverable, pc, bp};
     switch (check) {
-    case Check::TypeMismatch:
-        TypeMismatch(static_cast<TypeMismatchData*>(data), first, options);
+    case Check::TypeMismatch: {
+        auto* mismatch = static_cast<TypeMismatchData*>(data);
+        if (mismatch->logAlignment >= sizeof(std::uintptr_t) * 8) {
+            Unexpected("ubsan: invalid alignment exponent");
+        }
+        TypeMismatch(mismatch->loc, *mismatch->type, std::uintptr_t{1} << mismatch->logAlignment, mismatch->typeCheckKind, first, options);
         break;
+    }
+    case Check::LegacyTypeMismatch: {
+        auto* mismatch = static_cast<LegacyTypeMismatchData*>(data);
+        TypeMismatch(mismatch->loc, *mismatch->type, mismatch->alignment, mismatch->typeCheckKind, first, options);
+        break;
+    }
     case Check::AlignmentAssumption:
         AlignmentAssumption(static_cast<AlignmentAssumptionData*>(data), first, second, third, options);
         break;
@@ -1064,10 +1089,15 @@ void Handle_nid_no_patch(Check check, void* data, ValueHandle first, ValueHandle
         InvalidBuiltin(static_cast<InvalidBuiltinData*>(data), options);
         break;
     case Check::NonNullReturn:
-        NonNullReturn(static_cast<NonNullReturnData*>(data), reinterpret_cast<SourceLocation*>(first), options, true);
+        NonNullReturn(static_cast<NonNullReturnData*>(data)->attrLoc, reinterpret_cast<SourceLocation*>(first), options, true);
         break;
+    case Check::LegacyNonNullReturn: {
+        auto* returnData = static_cast<LegacyNonNullReturnData*>(data);
+        NonNullReturn(returnData->attrLoc, &returnData->loc, options, true);
+        break;
+    }
     case Check::NullabilityReturn:
-        NonNullReturn(static_cast<NonNullReturnData*>(data), reinterpret_cast<SourceLocation*>(first), options, false);
+        NonNullReturn(static_cast<NonNullReturnData*>(data)->attrLoc, reinterpret_cast<SourceLocation*>(first), options, false);
         break;
     case Check::NonNullArg:
         NonNullArg(static_cast<NonNullArgData*>(data), options, true);

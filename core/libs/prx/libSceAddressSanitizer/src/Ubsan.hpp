@@ -8,6 +8,7 @@ using ValueHandle = std::uintptr_t;
 
 enum class Check {
     TypeMismatch,
+    LegacyTypeMismatch,
     AlignmentAssumption,
     AddOverflow,
     SubOverflow,
@@ -24,6 +25,7 @@ enum class Check {
     ImplicitConversion,
     InvalidBuiltin,
     NonNullReturn,
+    LegacyNonNullReturn,
     NullabilityReturn,
     NonNullArg,
     NullabilityArg,

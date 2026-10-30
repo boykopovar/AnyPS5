@@ -147,6 +147,18 @@ struct TypeMismatchData {
     unsigned char kind;
 };
 
+struct LegacyTypeMismatchData {
+    Location loc;
+    const Type* type;
+    std::uintptr_t alignment;
+    unsigned char kind;
+};
+
+struct LegacyNonNullReturnData {
+    Location loc;
+    Location attrLoc;
+};
+
 struct NonNullArgData {
     Location loc;
     Location attrLoc;
@@ -284,6 +296,57 @@ static int UbsanData() {
     return 0;
 }
 
+static int UbsanLegacyType(bool abort, bool repeated) {
+    LegacyTypeMismatchData nullLoad = {{"legacy.cpp", 101, 3}, &signedInt, 4, 0};
+    LegacyTypeMismatchData misaligned = {{"legacy.cpp", 102, 7}, &signedInt, 256, 1};
+    LegacyTypeMismatchData insufficient = {{"legacy.cpp", 103, 9}, &signedInt, 4, 2};
+    LegacyTypeMismatchData zeroAlignment = {{"legacy.cpp", 104, 11}, &signedInt, 0, 3};
+    if (repeated || !abort) {
+        __ubsan_handle_type_mismatch(&nullLoad, 0);
+        __ubsan_handle_type_mismatch(&nullLoad, 0);
+        if (nullLoad.loc.column != UINT32_MAX) return 1;
+        if (nullLoad.alignment != 4 || nullLoad.kind != 0) return 2;
+    }
+    if (abort) {
+        __sanitizer_set_death_callback(PrintDeathCallback);
+        __ubsan_handle_type_mismatch_abort(&nullLoad, 0);
+        return 3;
+    }
+    __ubsan_handle_type_mismatch(&misaligned, Address(16) + 1);
+    __ubsan_handle_type_mismatch(&insufficient, Address(16));
+    __ubsan_handle_type_mismatch(&zeroAlignment, Address(16) + 1);
+    if (misaligned.loc.column != UINT32_MAX || insufficient.loc.column != UINT32_MAX || zeroAlignment.loc.column != UINT32_MAX) return 4;
+    std::puts("legacy type returned");
+    return 0;
+}
+
+static int UbsanLegacyReturn(bool abort, bool repeated) {
+    LegacyNonNullReturnData data = {{"legacy.cpp", 201, 5}, {"legacy.h", 8, 2}};
+    LegacyNonNullReturnData noAttribute = {{"legacy.cpp", 202, 6}, {nullptr, 0, 0}};
+    if (repeated || !abort) {
+        __ubsan_handle_nonnull_return(&data);
+        __ubsan_handle_nonnull_return(&data);
+        if (data.loc.column != UINT32_MAX || data.attrLoc.column != 2) return 1;
+    }
+    if (abort) {
+        __sanitizer_set_death_callback(PrintDeathCallback);
+        __ubsan_handle_nonnull_return_abort(&data);
+        return 2;
+    }
+    __ubsan_handle_nonnull_return(&noAttribute);
+    if (noAttribute.loc.column != UINT32_MAX) return 3;
+    const char* kind;
+    const char* message;
+    const char* file;
+    unsigned line;
+    unsigned column;
+    char* memory;
+    __ubsan_get_current_report_data(&kind, &message, &file, &line, &column, &memory);
+    if (std::strcmp(kind, "invalid-null-return") != 0 || std::strcmp(file, "legacy.cpp") != 0 || line != 202 || column != 6 || memory != nullptr) return 4;
+    std::puts("legacy return returned");
+    return 0;
+}
+
 static int UbsanDedup() {
     static OverflowData add = {{"test.cpp", 60, 4}, &signedInt};
     const char* capture = "ubsan-dedup.log";
@@ -409,6 +472,36 @@ static int FakeStack() {
     FAKE_CLASS(8)
     FAKE_CLASS(9)
     FAKE_CLASS(10)
+    return 0;
+}
+
+static int FakeStackOption() {
+    if (__asan_option_detect_stack_use_after_return != 0) return 1;
+    if (__asan_stack_malloc_0(64) != 0 || __asan_get_current_fake_stack() != nullptr) return 2;
+    __asan_option_detect_stack_use_after_return = 1;
+    const auto frame = __asan_stack_malloc_0(64);
+    if (!frame || __asan_get_current_fake_stack() == nullptr) return 3;
+    if (__asan_address_is_poisoned(reinterpret_cast<void*>(frame))) return 4;
+    __asan_stack_free_0(frame, 64);
+    if (!__asan_address_is_poisoned(reinterpret_cast<void*>(frame))) return 5;
+    __asan_option_detect_stack_use_after_return = 0;
+    if (__asan_stack_malloc_0(64) != 0 || __asan_get_current_fake_stack() != nullptr) return 6;
+    const auto always = __asan_stack_malloc_always_0(64);
+    if (!always) return 7;
+    __asan_stack_free_0(always, 64);
+    return 0;
+}
+
+static int VptrCacheData() {
+    for (const auto hash : __ubsan_vptr_type_cache) {
+        if (hash != 0) return 1;
+    }
+    for (std::size_t index = 0; index < std::size(__ubsan_vptr_type_cache); ++index) {
+        __ubsan_vptr_type_cache[index] = UINTPTR_MAX - index;
+    }
+    for (std::size_t index = 0; index < std::size(__ubsan_vptr_type_cache); ++index) {
+        if (__ubsan_vptr_type_cache[index] != UINTPTR_MAX - index) return 2;
+    }
     return 0;
 }
 
@@ -659,6 +752,14 @@ static int SandboxNotify() {
 int main(int argc, char* argv[]) {
     if (argc < 2) return 100;
     const std::string_view mode(argv[1]);
+    if (mode == "ubsan_legacy_type") return UbsanLegacyType(false, false);
+    if (mode == "ubsan_legacy_type_abort") return UbsanLegacyType(true, false);
+    if (mode == "ubsan_legacy_type_repeat_abort") return UbsanLegacyType(true, true);
+    if (mode == "ubsan_legacy_return") return UbsanLegacyReturn(false, false);
+    if (mode == "ubsan_legacy_return_abort") return UbsanLegacyReturn(true, false);
+    if (mode == "ubsan_legacy_return_repeat_abort") return UbsanLegacyReturn(true, true);
+    if (mode == "fake_stack_option") return FakeStackOption();
+    if (mode == "vptr_cache_data") return VptrCacheData();
     if (mode == "ubsan_arithmetic") return UbsanArithmetic();
     if (mode == "ubsan_misc") return UbsanMisc();
     if (mode == "ubsan_data") return UbsanData();

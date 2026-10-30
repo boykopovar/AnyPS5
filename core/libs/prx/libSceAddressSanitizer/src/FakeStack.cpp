@@ -1,4 +1,5 @@
 #include "prx/libSceAddressSanitizer/src/FakeStack.hpp"
+#include "prx/libSceAddressSanitizer/include/Api.hpp"
 #include "prx/libSceAddressSanitizer/src/Container.hpp"
 #include "prx/libSceAddressSanitizer/src/ErrorReport.hpp"
 #include "prx/libSceAddressSanitizer/src/ShadowRequire.hpp"
@@ -24,7 +25,6 @@ constexpr std::size_t kPageSize = 4096;
 constexpr std::uintptr_t kMaxExpectedCleanupSize = 64ull << 20;
 constexpr std::uintptr_t kCurrentStackFrameMagic = 0x41B58AB3;
 constexpr std::uint8_t kStackAfterReturnMagic = 0xf5;
-constexpr bool kDetectStackUseAfterReturn = false;
 
 struct FakeFrame {
     std::uintptr_t magic;
@@ -272,7 +272,7 @@ void* Malloc_nid_no_patch(std::size_t classId, std::size_t size, bool always, st
     if (classId >= kClasses) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!always && !kDetectStackUseAfterReturn) {
+    if (!always && !__asan_option_detect_stack_use_after_return) {
         return nullptr;
     }
     Stack* stack = GetOrCreate();
@@ -298,7 +298,7 @@ void Free_nid_no_patch(std::uintptr_t pointer, std::size_t classId, std::size_t 
 }
 
 void* Current_nid_no_patch() {
-    return kDetectStackUseAfterReturn ? GetOrCreate() : nullptr;
+    return __asan_option_detect_stack_use_after_return ? GetOrCreate() : nullptr;
 }
 
 void* AddrIsIn_nid_no_patch(void* fakeStack, void* address, void** begin, void** end) {

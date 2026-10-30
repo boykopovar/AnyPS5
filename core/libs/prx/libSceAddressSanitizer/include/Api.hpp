@@ -78,7 +78,7 @@ void* APS5_VABI __asan_memalign(std::size_t alignment, std::size_t size);
 void* APS5_VABI __asan_memcpy(void* to, const void* from, std::uintptr_t size);
 void* APS5_VABI __asan_memmove(void* to, const void* from, std::uintptr_t size);
 void* APS5_VABI __asan_memset(void* block, int value, std::uintptr_t size);
-int APS5_VABI __asan_option_detect_stack_use_after_return();
+extern int __asan_option_detect_stack_use_after_return;
 void APS5_VABI __asan_poison_cxx_array_cookie(std::uintptr_t p);
 void APS5_VABI __asan_poison_intra_object_redzone(std::uintptr_t address, std::uintptr_t size);
 void APS5_VABI __asan_poison_memory_region(const volatile void* addr, std::uintptr_t size);
@@ -284,8 +284,8 @@ void APS5_VABI __ubsan_handle_negate_overflow(void* data, std::uintptr_t oldValu
 void APS5_VABI __ubsan_handle_negate_overflow_abort(void* data, std::uintptr_t oldValue);
 void APS5_VABI __ubsan_handle_nonnull_arg(void* data);
 void APS5_VABI __ubsan_handle_nonnull_arg_abort(void* data);
-int APS5_VABI __ubsan_handle_nonnull_return();
-int APS5_VABI __ubsan_handle_nonnull_return_abort();
+void APS5_VABI __ubsan_handle_nonnull_return(void* data);
+void APS5_VABI __ubsan_handle_nonnull_return_abort(void* data);
 void APS5_VABI __ubsan_handle_nonnull_return_v1(void* data, void* location);
 void APS5_VABI __ubsan_handle_nonnull_return_v1_abort(void* data, void* location);
 void APS5_VABI __ubsan_handle_nullability_arg(void* data);
@@ -300,12 +300,12 @@ void APS5_VABI __ubsan_handle_shift_out_of_bounds(void* data, std::uintptr_t lhs
 void APS5_VABI __ubsan_handle_shift_out_of_bounds_abort(void* data, std::uintptr_t lhs, std::uintptr_t rhs);
 void APS5_VABI __ubsan_handle_sub_overflow(void* data, std::uintptr_t lhs, std::uintptr_t rhs);
 void APS5_VABI __ubsan_handle_sub_overflow_abort(void* data, std::uintptr_t lhs, std::uintptr_t rhs);
-int APS5_VABI __ubsan_handle_type_mismatch();
-int APS5_VABI __ubsan_handle_type_mismatch_abort();
+void APS5_VABI __ubsan_handle_type_mismatch(void* data, std::uintptr_t pointer);
+void APS5_VABI __ubsan_handle_type_mismatch_abort(void* data, std::uintptr_t pointer);
 void APS5_VABI __ubsan_handle_type_mismatch_v1(void* data, std::uintptr_t pointer);
 void APS5_VABI __ubsan_handle_type_mismatch_v1_abort(void* data, std::uintptr_t pointer);
 void APS5_VABI __ubsan_handle_vla_bound_not_positive(void* data, std::uintptr_t bound);
 void APS5_VABI __ubsan_handle_vla_bound_not_positive_abort(void* data, std::uintptr_t bound);
-int APS5_VABI __ubsan_vptr_type_cache();
+extern std::uintptr_t __ubsan_vptr_type_cache[128];
 
 }
