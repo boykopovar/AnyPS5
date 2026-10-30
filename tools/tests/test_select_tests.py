@@ -383,6 +383,16 @@ class NonAsciiDirectoryTests(unittest.TestCase):
         self.assertIn("input: alpha/alpha.h", reasons["alpha"])
         self.assertIn("input: alpha/alpha.h", reasons["alpha_data"])
 
+    @unittest.skipUnless(os.name == "nt", "the ANSI code page exists only on Windows")
+    def test_dependency_written_by_an_ansi_compiler_is_decoded(self):
+        path = r"C:\ação\source\alpha\alpha.h"
+        try:
+            ansi = path.encode("mbcs", "strict")
+        except UnicodeEncodeError:
+            self.skipTest("the ANSI code page cannot represent the fixture directory")
+        self.assertEqual(select_tests.dependency_path(ansi), path)
+        self.assertEqual(select_tests.dependency_path(path.encode("utf-8")), path)
+
 
 class BuildErrorTests(unittest.TestCase):
     def run_tool(self, *args):
