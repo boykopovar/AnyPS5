@@ -14,8 +14,9 @@ public:
     static constexpr std::size_t BlockFrames = 32;
     static constexpr std::size_t MaxFrames = 160;
 
-    void Push(const float* left, const float* right, std::size_t stride, std::uint32_t frames, std::uint32_t rate) {
+    void Push(const float* left, const float* right, std::size_t stride, std::uint32_t frames, std::uint32_t rate, unsigned percent = 100) {
         if (rate == 0) return;
+        const float gain = static_cast<float>(std::min(percent, 100u)) / 100.0f;
         for (std::uint32_t frame = 0; frame < frames; ++frame) {
             const auto offset = static_cast<std::size_t>(frame) * stride;
             sum[0] += finite(left[offset]);
@@ -24,7 +25,7 @@ public:
             phase += Rate;
             if (phase < rate) continue;
             phase -= rate;
-            append({sample(sum[0] / summed), sample(sum[1] / summed)});
+            append({sample(sum[0] / summed * gain), sample(sum[1] / summed * gain)});
             sum = {};
             summed = 0;
         }
