@@ -12,6 +12,10 @@ static_assert(sizeof(MbusEventCallbacks) == 16);
 
 extern "C" {
 
+int APS5_VABI sceMbusDebugGetStringToShow() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceMbusAcquireControl(std::uint64_t control, std::int32_t first, std::int32_t second) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

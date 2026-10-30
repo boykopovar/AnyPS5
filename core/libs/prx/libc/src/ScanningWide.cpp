@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 #include <cerrno>
 #include <cstdarg>
 #include <cstddef>
@@ -365,7 +366,6 @@ private:
     }
 
     Outcome Float(const Directive& directive) {
-        static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64);
         if (!directive.length.empty() && directive.length != "l" && directive.length != "L")
             Fail("invalid floating length modifier " + directive.length);
         void* target = nullptr;
@@ -377,8 +377,7 @@ private:
         if (target != nullptr) {
             const int savedError = errno;
             if (directive.length == "L") {
-                const long double value = std::strtold(field.c_str(), nullptr);
-                std::memcpy(target, &value, sizeof(value));
+                LibcDetail::GuestLongDoubleStore(target, std::strtold(field.c_str(), nullptr));
             } else if (directive.length == "l") {
                 const double value = std::strtod(field.c_str(), nullptr);
                 std::memcpy(target, &value, sizeof(value));

@@ -54,9 +54,8 @@ int APS5_VABI sceNpUniversalDataSystemCreateEvent(
     NpUniversalDataSystemEvent** new_event,
     NpUniversalDataSystemEventPropertyObject** prop_ptr)
 {
-    if (event_name == nullptr || new_event == nullptr) {
-        APS5_INVALID_ARG_EX;
-    }
+    if (event_name == nullptr || event_name[0] == '\0') return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_EVENT_NAME;
+    if (new_event == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     auto event = std::make_unique<NpUniversalDataSystemEvent>();
     event->name = event_name;
     if (prop != nullptr) event->properties = prop->Clone();

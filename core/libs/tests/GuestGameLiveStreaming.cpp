@@ -184,6 +184,14 @@ void CheckScalars() {
     for (const std::uint32_t bitrate : {0u, 6000u, 0xffffffffu}) Require(sceGameLiveStreamingSetMaxBitrate(bitrate) == 0);
 }
 
+void CheckSeparateModeParameter() {
+    Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(nullptr) == kInvalidArgument);
+    std::array<std::uint8_t, 0x60> parameter{};
+    parameter.fill(0xaa);
+    Require(sceGameLiveStreamingScreenInitializeSeparateModeParameter(parameter.data()) == 0);
+    for (std::size_t i = 0; i < parameter.size(); ++i) Require(parameter[i] == (i < 0x44 ? 0 : 0xaa));
+}
+
 }
 
 int main() {
@@ -194,6 +202,7 @@ int main() {
     Require(sceGameLiveStreamingGetCurrentStatus2(nullptr) == notInitialized);
     Require(EnableThrowsNotInitialized(true));
     CheckLifecycleFirst();
+    CheckSeparateModeParameter();
     for (const std::size_t size : {0u, 1u, 0x3fffu, 0x4001u, 0x100000u}) Require(sceGameLiveStreamingInitialize(size) == invalidArgument);
     Require(sceGameLiveStreamingInitialize(0x4000) == 0);
     Require(sceGameLiveStreamingEnableLiveStreaming(true) == 0);
