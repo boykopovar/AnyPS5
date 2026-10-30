@@ -16,6 +16,7 @@
 - [sceImeConfigSet and sceImeConfigGet](../../../core/libs/prx/libSceIme/Export.cpp) preserve the native argument slots: an unused first slot, a 64-bit configuration value, a 32-bit key and, for set, a 32-bit value. The service receives a 24-byte request; configuration/key semantics and unused argument types remain unresolved. The getter advertises one output transfer but does not initialize its descriptor in this module. Protected bodies remain unchanged.
 
 - [libSceIme pending exports](../../../core/libs/prx/libSceIme/Export.cpp) - 2 named callable exports are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceIme.c) and were cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [ModalDialog](../../../core/libs/prx/libSceIme/src/ModalDialog.cpp) (libSceIme) - the session that message and error dialogs share is a host design, not a console behaviour: one dialog at a time, owned by the library that opened it, which alone can poll, close or reset it; the IME keyboard or pad capture hides the dialog and takes its input until it ends; an opening is refused while another dialog shows. Closes when: measured on a PS5
 
 ### Functional
 

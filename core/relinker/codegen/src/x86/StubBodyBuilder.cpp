@@ -1,5 +1,6 @@
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
+#include <codegen/x86/DecodedInstruction.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
@@ -24,6 +25,12 @@ constexpr std::uint8_t kSibRsp = 0x24;
 constexpr std::uint8_t kShiftDwords = 0x72;
 constexpr std::uint8_t kShiftQwords = 0x73;
 constexpr std::uint8_t kMovdqu = 0x6F;
+
+bool _addressSize32(const std::span<const std::uint8_t> instruction) {
+    const DecodedInstruction decoded{instruction.data(), instruction.size()};
+    const auto prefixes = instruction.first(decoded.OpcodeOffset());
+    return std::find(prefixes.begin(), prefixes.end(), X64OpcodeConstants::PrefixAddressSize) != prefixes.end();
+}
 
 std::uint8_t _rex(const std::uint8_t reg, const std::uint8_t rm) {
     return static_cast<std::uint8_t>(kRexBase | ((reg & 8) != 0 ? kRexR : 0) | ((rm & 8) != 0 ? kRexB : 0));
@@ -88,9 +95,9 @@ void ApplyStubRelocations(const std::span<std::uint8_t> body, const std::span<co
             throw CodegenException("Stub relocation lies outside the stub body", failureOffset);
         const auto target = siteAddress + static_cast<std::uint64_t>(relocation.SiteTarget);
         const auto displacement = static_cast<std::int64_t>(target - (stubAddress + relocation.InstructionEnd));
-        if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+        if (!relocation.AddressSize32 && (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max()))
             throw CodegenException("RIP-relative operand is out of rel32 range from its stub", failureOffset);
-        const auto value = static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement));
+        const auto value = static_cast<std::uint32_t>(displacement);
         for (std::size_t index = 0; index < Disp32Size; ++index)
             body[relocation.DisplacementOffset + index] = static_cast<std::uint8_t>(value >> (index * 8));
     }
@@ -147,7 +154,8 @@ void StubBodyBuilder::Load(const std::uint8_t reg, const MemoryOperand& operand)
     if (operand.Rm == ModRmRmSibPresent)
         _bytes.push_back(operand.Sib);
     if (operand.RipRelative) {
-        _relocations.push_back({_bytes.size(), _bytes.size() + Disp32Size, _siteOffset + static_cast<std::int64_t>(operand.InstructionLength) + operand.Displacement});
+        const auto addressSize32 = std::find(operand.Prefixes.begin(), operand.Prefixes.end(), PrefixAddressSize) != operand.Prefixes.end();
+        _relocations.push_back({_bytes.size(), _bytes.size() + Disp32Size, _siteOffset + static_cast<std::int64_t>(operand.InstructionLength) + operand.Displacement, addressSize32});
         _bytes.insert(_bytes.end(), Disp32Size, 0);
         return;
     }
@@ -186,7 +194,7 @@ void StubBodyBuilder::Move(const std::span<const std::uint8_t> instruction, cons
             value |= static_cast<std::uint32_t>(instruction[*ripDisplacementOffset + index]) << (index * 8);
             _bytes[start + *ripDisplacementOffset + index] = 0;
         }
-        _relocations.push_back({start + *ripDisplacementOffset, start + instruction.size(), _siteOffset + static_cast<std::int64_t>(instruction.size()) + static_cast<std::int32_t>(value)});
+        _relocations.push_back({start + *ripDisplacementOffset, start + instruction.size(), _siteOffset + static_cast<std::int64_t>(instruction.size()) + static_cast<std::int32_t>(value), _addressSize32(instruction)});
     }
     Advance(instruction.size());
 }
@@ -198,7 +206,7 @@ void StubBodyBuilder::RipRelative(const std::span<const std::uint8_t> instructio
     const auto start = _bytes.size();
     Raw(instruction);
     std::fill_n(_bytes.begin() + static_cast<std::ptrdiff_t>(start + displacementOffset), Disp32Size, std::uint8_t{0});
-    _relocations.push_back({start + displacementOffset, start + instruction.size(), _siteOffset + target});
+    _relocations.push_back({start + displacementOffset, start + instruction.size(), _siteOffset + target, _addressSize32(instruction)});
 }
 
 void StubBodyBuilder::MoveControlFlow(const std::span<const std::uint8_t> instruction, const DecodedInstructionInfo& info) {

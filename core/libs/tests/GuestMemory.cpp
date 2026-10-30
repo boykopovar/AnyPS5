@@ -1886,6 +1886,31 @@ static void CheckHeapAlignment() {
     }
 }
 
+static void CheckHeapReallocWithinTheBlock() {
+    auto* pointer = static_cast<unsigned char*>(GuestHeap::GuestHeapAllocate_nid_postfix(1000));
+    std::memset(pointer, 0x6b, 1000);
+    auto* shrunk = static_cast<unsigned char*>(GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 920));
+    Require(shrunk == pointer && GuestHeap::GuestHeapUsableSize_nid_postfix(shrunk) == 920);
+    for (std::size_t at = 0; at < 920; ++at) Require(shrunk[at] == 0x6b);
+    auto* regrown = static_cast<unsigned char*>(GuestHeap::GuestHeapReallocate_nid_postfix(shrunk, 1000));
+    Require(regrown == pointer && GuestHeap::GuestHeapUsableSize_nid_postfix(regrown) == 1000);
+    auto* aligned = static_cast<unsigned char*>(GuestHeap::GuestHeapRealign_nid_postfix(regrown, 920, 16));
+    Require(aligned == pointer && GuestHeap::GuestHeapUsableSize_nid_postfix(aligned) == 920);
+    auto* smaller = static_cast<unsigned char*>(GuestHeap::GuestHeapReallocate_nid_postfix(aligned, 40));
+    Require(smaller != pointer && GuestHeap::GuestHeapUsableSize_nid_postfix(smaller) == 40);
+    for (std::size_t at = 0; at < 40; ++at) Require(smaller[at] == 0x6b);
+    auto* moved = static_cast<unsigned char*>(GuestHeap::GuestHeapReallocate_nid_postfix(smaller, std::size_t{1} << 20u));
+    Require(moved != nullptr && GuestHeap::GuestHeapUsableSize_nid_postfix(moved) == std::size_t{1} << 20u);
+    for (std::size_t at = 0; at < 40; ++at) Require(moved[at] == 0x6b);
+    std::memset(moved, 0x2c, std::size_t{1} << 20u);
+    auto* big = static_cast<unsigned char*>(GuestHeap::GuestHeapReallocate_nid_postfix(moved, (std::size_t{1} << 20u) + 1000));
+    Require(big == moved && GuestHeap::GuestHeapUsableSize_nid_postfix(big) == (std::size_t{1} << 20u) + 1000);
+    auto* shrunk4k = static_cast<unsigned char*>(GuestHeap::GuestHeapReallocate_nid_postfix(big, 4096));
+    Require(shrunk4k != big && GuestHeap::GuestHeapUsableSize_nid_postfix(shrunk4k) == 4096);
+    for (std::size_t at = 0; at < 4096; ++at) Require(shrunk4k[at] == 0x2c);
+    GuestHeap::GuestHeapFree_nid_postfix(shrunk4k);
+}
+
 static void CheckHeapAfterMappingReuse() {
     constexpr std::size_t bytes = 0x30000;
     auto* pointer = static_cast<unsigned char*>(GuestHeap::GuestHeapAllocate_nid_postfix(bytes));
@@ -3762,6 +3787,7 @@ int main(int argc, char** argv) {
     CheckDirectMemoryQuery();
     CheckMtypeprotect();
     CheckHeapAlignment();
+    CheckHeapReallocWithinTheBlock();
     CheckHeapAfterMappingReuse();
     CheckNoOverwriteRejectsHostOccupiedMapping();
     CheckFixedMappingsReachTheApplicationAreaEnd();

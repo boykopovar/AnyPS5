@@ -981,20 +981,28 @@ std::string hexText(std::uint64_t value) {
 
 std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32_t linkRegister) {
     constexpr std::uint64_t page = 4096u;
-    constexpr std::size_t limitWords = 16384u;
+    constexpr std::size_t limitWords = 1024u * 1024u / 4u;
     if (address % 4u != 0u) throw std::runtime_error("its callee address " + hexText(address) + " is not dword aligned");
     std::vector<std::uint32_t> words;
+    const auto finish = [&] {
+        const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister);
+        if (length) words.resize(*length);
+        return length.has_value();
+    };
+    std::size_t nextCheck = 0;
     while (words.size() < limitWords) {
         const auto next = address + words.size() * 4u;
         const auto bytes = static_cast<std::size_t>(page - next % page);
-        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(next)), bytes)) throw std::runtime_error("its callee at " + hexText(address) + " is not readable at " + hexText(next));
+        if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(next)), bytes)) {
+            if (finish()) return words;
+            throw std::runtime_error("its callee at " + hexText(address) + " is not readable at " + hexText(next));
+        }
         const auto old = words.size();
         words.resize(old + bytes / 4u);
         GuestMemory::Read(next, std::as_writable_bytes(std::span(words).subspan(old)));
-        if (const auto length = ShaderRecompiler::UserDataCalleeLength(words, linkRegister)) {
-            words.resize(*length);
-            return words;
-        }
+        if (words.size() < nextCheck && words.size() < limitWords) continue;
+        nextCheck = words.size() * 2u;
+        if (finish()) return words;
     }
     throw std::runtime_error("its callee at " + hexText(address) + " does not return within " + std::to_string(limitWords * 4u) + " bytes");
 }
@@ -1537,8 +1545,8 @@ public:
 
 private:
     static std::mutex& Lifecycle() {
-        static std::mutex lifecycle;
-        return lifecycle;
+        static auto* lifecycle = new std::mutex;
+        return *lifecycle;
     }
 
     static bool& Closing() {
