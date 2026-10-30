@@ -520,7 +520,8 @@ int APS5_VABI sceKernelInternalMemoryGetAvailableSize(std::size_t* size) {
 
 int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const char* name) {
  const auto start = reinterpret_cast<uintptr_t>(addr);
- if (!addr || len == 0 || !name || len > UINTPTR_MAX - start) return SCE_KERNEL_ERROR_EINVAL;
+ if (!name) return SCE_KERNEL_ERROR_EFAULT;
+ if (!addr || len == 0 || len > UINTPTR_MAX - start) return SCE_KERNEL_ERROR_EINVAL;
  std::lock_guard lock(g_rangeNameLock);
  EraseRangeNames(start, start + len);
  g_rangeNames.emplace(start, NamedRange{start + len, std::string(name, strnlen(name, 31))});

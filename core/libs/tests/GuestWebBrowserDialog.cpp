@@ -12,6 +12,8 @@ constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
 constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
+constexpr int COMMON_DIALOG_ERROR_INVALID_STATE = static_cast<int>(0x80B80006u);
+constexpr int COMMON_DIALOG_ERROR_PARAMETER = static_cast<int>(0x80B8000Au);
 constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
 
 void Require(bool value) { if (!value) std::abort(); }
@@ -43,6 +45,14 @@ int main() {
     Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_INITIALIZED);
     Require(sceWebBrowserDialogGetResult(&result) == COMMON_DIALOG_ERROR_NOT_FINISHED);
     Require(result.result == 0x5a5a5a5a);
+    Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(sceWebBrowserDialogResetCookie(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    WebBrowserDialogCookieParam badCookie{};
+    badCookie.size = 1;
+    Require(sceWebBrowserDialogSetCookie(&badCookie) == COMMON_DIALOG_ERROR_PARAMETER);
+    WebBrowserDialogResetCookieParam badReset{};
+    badReset.size = 1;
+    Require(sceWebBrowserDialogResetCookie(&badReset) == COMMON_DIALOG_ERROR_PARAMETER);
 
     Require(sceWebBrowserDialogTerminate() == 0);
     Require(sceWebBrowserDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
@@ -53,6 +63,8 @@ int main() {
     Require(sceWebBrowserDialogInitialize() == 0);
     Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogOpen(param) == 0);
+    Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_INVALID_STATE);
+    Require(sceWebBrowserDialogResetCookie(&badReset) == COMMON_DIALOG_ERROR_INVALID_STATE);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
     Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_FINISHED);
 

@@ -107,11 +107,11 @@ static void CheckInputCommands() {
     Require(disabled.Buttons(0) == 0);
 }
 
-static float SettleOrientationW() {
+static float SettleOrientationW(int port = 0) {
     float w = 1.0f;
     for (int i = 0; i < 10; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        w = Pad::ReadState().orientation_w;
+        w = Pad::ReadState(port).orientation_w;
     }
     return w;
 }
@@ -949,6 +949,87 @@ int main() {
     Require(scePadGetInfo_nid_postfix(&info) == PAD_OK);
     Require(info.connectedCount[0] == 1);
     Require(info.padTypeInfo[0].connectPort == 0);
+
+    const PadVibrationParam vibZero{0, 0};
+    const PadVibrationParam vibFull{255, 255};
+    const PadVibrationParam vibMixed{128, 64};
+    Require(scePadSetVibration(handle2, &vibZero) == PAD_OK);
+    Require(scePadSetVibration(handle2, &vibFull) == PAD_OK);
+    Require(scePadSetVibration(handle2, &vibMixed) == PAD_OK);
+    Require(scePadSetVibration(handle2 + 99, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(-1, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
+
+    const PadLightBarParam lightOff{0, 0, 0};
+    const PadLightBarParam lightFull{255, 255, 255};
+    const PadLightBarParam lightColor{100, 150, 200};
+    Require(scePadSetLightBar(handle2, &lightOff) == PAD_OK);
+    Require(scePadSetLightBar(handle2, &lightFull) == PAD_OK);
+    Require(scePadSetLightBar(handle2, &lightColor) == PAD_OK);
+    Require(scePadSetLightBar(handle2 + 99, &lightColor) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBar(-1, &lightColor) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBar(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
+
+    PadInputState p0MotionSample{};
+    p0MotionSample.hasMotion = true;
+    p0MotionSample.accel = {0.0f, 9.80665f, 0.0f};
+    p0MotionSample.gyro = {0.5f, 0.5f, 0.5f};
+    PadPublishInputForPort_nid_postfix(0, p0MotionSample);
+    Require(scePadSetMotionSensorState(handle, true) == PAD_OK);
+
+    PadInputState p2MotionSample{};
+    p2MotionSample.hasMotion = true;
+    p2MotionSample.accel = {4.903325f, 9.80665f, 0.0f};
+    p2MotionSample.gyro = {0.1f, 0.2f, -0.3f};
+    PadPublishInputForPort_nid_postfix(1, p2MotionSample);
+
+    Require(scePadSetMotionSensorState(handle2, true) == PAD_OK);
+    PadData p2DataMotion{};
+    Require(scePadReadState(handle2, &p2DataMotion) == PAD_OK);
+    Require(p2DataMotion.angular_velocity_x == 0.1f && p2DataMotion.angular_velocity_y == 0.2f && p2DataMotion.angular_velocity_z == -0.3f);
+    Require(p2DataMotion.acceleration_x > 0.49f && p2DataMotion.acceleration_x < 0.51f);
+
+    Require(scePadSetMotionSensorState(handle2, false) == PAD_OK);
+    Require(scePadReadState(handle2, &p2DataMotion) == PAD_OK);
+    Require(p2DataMotion.angular_velocity_x == 0.0f && p2DataMotion.angular_velocity_y == 0.0f && p2DataMotion.angular_velocity_z == 0.0f);
+    Require(p2DataMotion.acceleration_x == 0.0f);
+
+    PadData p0DataMotion{};
+    Require(scePadReadState(handle, &p0DataMotion) == PAD_OK);
+    Require(p0DataMotion.angular_velocity_x == 0.5f && p0DataMotion.angular_velocity_y == 0.5f && p0DataMotion.angular_velocity_z == 0.5f);
+
+    Require(scePadSetMotionSensorState(handle2, true) == PAD_OK);
+    Require(scePadReadState(handle2, &p2DataMotion) == PAD_OK);
+    Require(p2DataMotion.angular_velocity_x == 0.1f && p2DataMotion.angular_velocity_y == 0.2f && p2DataMotion.angular_velocity_z == -0.3f);
+
+    Require(scePadSetMotionSensorState(handle2 + 99, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetMotionSensorState(-1, true) == PAD_ERROR_INVALID_HANDLE);
+
+    PadPublishInputForPort_nid_postfix(0, PadInputState{});
+    PadPublishInputForPort_nid_postfix(1, PadInputState{});
+
+    PadInputState tilted2;
+    tilted2.hasMotion = true;
+    tilted2.accel = {9.80665f, 0.0f, 0.0f};
+    PadPublishInputForPort_nid_postfix(1, tilted2);
+
+    Require(scePadSetTiltCorrectionState(handle2, false) == PAD_OK);
+    Require(scePadResetOrientation(handle2) == PAD_OK);
+    Require(SettleOrientationW(1) == 1.0f);
+
+    Require(scePadSetTiltCorrectionState(handle2, true) == PAD_OK);
+    Require(SettleOrientationW(1) < 0.999f);
+
+    PadPublishInputForPort_nid_postfix(1, PadInputState{});
+
+    Require(SettleOrientationW(0) == 1.0f);
+
+    Require(scePadSetTiltCorrectionState(handle2 + 99, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetTiltCorrectionState(-1, true) == PAD_ERROR_INVALID_HANDLE);
+
+    Require(scePadResetOrientation(handle2) == PAD_OK);
+    Require(scePadResetOrientation(handle2 + 99) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadResetOrientation(-1) == PAD_ERROR_INVALID_HANDLE);
 
     Require(scePadClose_nid_postfix(handle2) == 0);
     Require(scePadGetHandle(user2, 0, 0) == noHandle);

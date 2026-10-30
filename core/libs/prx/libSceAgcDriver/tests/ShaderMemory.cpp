@@ -6276,7 +6276,7 @@ void verifyPixelRequestSerialization() {
                         value.posZ, value.posW, value.frontFace, value.frontFaceAllBits, value.ancillary, value.sampleShading,
                         value.noPerspective, value.linearCentroid, value.pixelKillEnable, value.depthExportEnable,
                         value.sampleMaskExportEnable, value.earlyZ, value.executeOnNoop, value.conservativeZExport, value.orderedPixelShader,
-                        value.targetOutputMode, value.targetExportMapping, value.alphaToCoverage, value.stencilRefExportEnable, value.rasterPrimitive, value.layerExported, value.ditheredAlphaToCoverage, value.reversedBlend, value.targetMerge);
+                        value.targetOutputMode, value.targetExportMapping, value.alphaToCoverage, value.stencilRefExportEnable, value.rasterPrimitive, value.layerExported, value.ditheredAlphaToCoverage, value.reversedBlend, value.targetMerges);
     };
     const std::array<std::uint32_t, 1> code{0xbf810000u};
     const std::array<std::uint32_t, 3> userData{0x12345678u, 0xabcdef01u, 0x87654321u};
@@ -6324,7 +6324,7 @@ void verifyPixelRequestSerialization() {
     pixel.stencilRefExportEnable = true;
     pixel.ditheredAlphaToCoverage = true;
     pixel.reversedBlend = 0x570001u;
-    pixel.targetMerge = {1u, 0x0ff0u, 1u, {0x100u, 0x2u, 0x3u, 0x4u, 0x5u, 0x6u, 0x7u, 0x8u}};
+    pixel.targetMerges = {{1u, 0x0ff0u, 1u, {0x100u, 0x2u, 0x3u, 0x4u, 0x5u, 0x6u, 0x7u, 0x8u}}};
     const std::array<std::array<std::uint8_t, 8>, 3> mappings{{
         {0x00u, 0xe4u, 0xc6u, 0x1bu, 0xffu, 0x80u, 0x55u, 0xaau},
         {0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u, 0xe4u},
@@ -6358,25 +6358,25 @@ void verifyPixelRequestSerialization() {
         RecompileCacheKey::Build(withoutReversedBlend, replayKey);
         require(key == replayKey && RecompileCacheKey::ContextHash(request) == RecompileCacheKey::ContextHash(withoutReversedBlend), "the reversed-order blend code changed the static shader identity");
         auto movedMerge = request;
-        movedMerge.context.pixel->targetMerge.descriptor[0] = 0x200u;
+        movedMerge.context.pixel->targetMerges.at(0).descriptor[0] = 0x200u;
         RecompileCacheKey::Build(movedMerge, replayKey);
         require(key == replayKey, "the merged target's descriptor changed the static shader identity");
         auto depthWritingMerge = request;
-        depthWritingMerge.context.pixel->targetMerge.depthStencilWrites = true;
+        depthWritingMerge.context.pixel->targetMerges.at(0).depthStencilWrites = true;
         RecompileCacheKey::Build(depthWritingMerge, replayKey);
         require(key != replayKey, "the merge draw's depth or stencil writes did not change the static shader identity");
         auto depthTestingMerge = request;
-        depthTestingMerge.context.pixel->targetMerge.depthStencilTests = true;
+        depthTestingMerge.context.pixel->targetMerges.at(0).depthStencilTests = true;
         RecompileCacheKey::Build(depthTestingMerge, replayKey);
         require(key != replayKey, "the merge draw's depth or stencil tests did not change the static shader identity");
         auto blending = request;
-        blending.context.pixel->targetMerge.blend = {true, false, 6u, 7u, 0u, 1u, 0u, 0u, 0xfu, {}};
+        blending.context.pixel->targetMerges.at(0).blend = {true, false, 6u, 7u, 0u, 1u, 0u, 0u, 0xfu, {}};
         RecompileCacheKey::Build(blending, replayKey);
         require(key != replayKey && RecompileCacheKey::ContextHash(request) != RecompileCacheKey::ContextHash(blending), "an unclamped color target blend did not change the static shader identity");
         const auto blendKey = replayKey;
         for (const auto change : {0, 1, 2, 3, 4, 5, 6, 7, 8}) {
             auto other = blending;
-            auto& blend = other.context.pixel->targetMerge.blend;
+            auto& blend = other.context.pixel->targetMerges.at(0).blend;
             if (change == 0) blend.snorm = true;
             if (change == 1) blend.colorSource = 2u;
             if (change == 2) blend.colorDestination = 2u;
@@ -6389,12 +6389,26 @@ void verifyPixelRequestSerialization() {
             RecompileCacheKey::Build(other, replayKey);
             require(blendKey != replayKey, "a field of the unclamped color target blend did not change the static shader identity");
         }
+        auto second = blending;
+        second.context.pixel->targetMerges.push_back({3u, 0xffffu, 1u, {0x300u}, false, false, {true, false, 4u, 5u, 0u, 4u, 5u, 0u, 0xfu, {}}});
+        RecompileCacheKey::Build(second, replayKey);
+        const auto secondKey = replayKey;
+        require(secondKey != blendKey && RecompileCacheKey::ContextHash(second) != RecompileCacheKey::ContextHash(blending), "a second merged target did not change the static shader identity");
+        for (const auto change : {0, 1, 2}) {
+            auto other = second;
+            auto& merge = other.context.pixel->targetMerges.at(1);
+            if (change == 0) merge.target = 4u;
+            if (change == 1) merge.blend.colorSource = 2u;
+            if (change == 2) merge.descriptor[0] = 0x400u;
+            RecompileCacheKey::Build(other, replayKey);
+            require((secondKey == replayKey) == (change == 2), "the second merged target's slot or blend did not change the static shader identity, or its descriptor did");
+        }
         auto disabled = blending;
-        disabled.context.pixel->targetMerge.blend.enabled = false;
+        disabled.context.pixel->targetMerges.at(0).blend.enabled = false;
         RecompileCacheKey::Build(disabled, replayKey);
         require(key == replayKey && RecompileCacheKey::ContextHash(request) == RecompileCacheKey::ContextHash(disabled), "a disabled color target blend changed the static shader identity");
         auto withoutMerge = request;
-        withoutMerge.context.pixel->targetMerge = {};
+        withoutMerge.context.pixel->targetMerges = {};
         RecompileCacheKey::Build(withoutMerge, replayKey);
         require(key != replayKey, "a color target merge did not change the static shader identity");
         auto withoutCoverage = request;
@@ -6411,10 +6425,10 @@ void verifyPixelRequestSerialization() {
     blendedDepth.context.pixel->depthExportEnable = true;
     blendedDepth.context.pixel->depthExportMin = -0.25f;
     blendedDepth.context.pixel->depthExportMax = 0.75f;
-    blendedDepth.context.pixel->targetMerge.blend = {true, true, 6u, 7u, 1u, 2u, 3u, 4u, 0xau, {0x3f800000u, 0x40000000u, 0x40400000u, 0x40800000u}};
+    blendedDepth.context.pixel->targetMerges.at(0).blend = {true, true, 6u, 7u, 1u, 2u, 3u, 4u, 0xau, {0x3f800000u, 0x40000000u, 0x40400000u, 0x40800000u}};
     const auto blendedReplay = serializer.Deserialize(serializer.Serialize(blendedDepth));
     require(blendedReplay.request.context.pixel.has_value() && fields(*blendedReplay.request.context.pixel) == fields(*blendedDepth.context.pixel), "a pixel request with a target blend and depth export bounds lost pixel fields in serialization");
-    require(blendedReplay.request.context.pixel->targetMerge.blend == blendedDepth.context.pixel->targetMerge.blend, "the target blend did not round-trip beside the depth export bounds");
+    require(blendedReplay.request.context.pixel->targetMerges.at(0).blend == blendedDepth.context.pixel->targetMerges.at(0).blend, "the target blend did not round-trip beside the depth export bounds");
     require(blendedReplay.request.context.pixel->depthExportMin == -0.25f && blendedReplay.request.context.pixel->depthExportMax == 0.75f, "the depth export bounds did not round-trip beside the target blend");
     require(blendedReplay.request.context.vertex.has_value() && blendedReplay.request.context.vertex->fetchAttribReg == 17u && blendedReplay.request.context.memory.size() == 1u && blendedReplay.request.context.memory[0].guestAddress == 0x60000u, "a target blend with depth export bounds displaced the following guest context");
     request.context.pixel.reset();
@@ -6830,18 +6844,30 @@ void verifyVertexInfoVersion19() {
     const auto orderOffset = blendOffset + 4u + iterationBytes;
     const auto mergeOffset = static_cast<std::ptrdiff_t>(orderOffset + sampleOrderBytes);
     auto merging = pixel;
-    merging.context.pixel->targetMerge = {3u, 0xf00fu, 2u, {1u, 2u, 3u, 4u, 5u, 6u, 7u, 0x89abcdefu}, true, true};
+    merging.context.pixel->targetMerges = {{3u, 0xf00fu, 2u, {1u, 2u, 3u, 4u, 5u, 6u, 7u, 0x89abcdefu}, true, true}};
     const auto mergingBytes = decodeBase64(serializer.Serialize(merging));
     require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 40 bytes the version 46 pixel info adds after the sample order");
-    require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerge == merging.context.pixel->targetMerge, "a serialized request lost its color target merge");
+    require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerges == merging.context.pixel->targetMerges, "a serialized request lost its color target merge");
     auto blendMerging = pixel;
-    blendMerging.context.pixel->targetMerge = {1u, 0xffffu, 1u, {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, true, false, {true, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {0x3fc00000u, 0xbe800000u, 0x3f000000u, 0x40000000u}}};
+    blendMerging.context.pixel->targetMerges = {{1u, 0xffffu, 1u, {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}, true, false, {true, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {0x3fc00000u, 0xbe800000u, 0x3f000000u, 0x40000000u}}}};
     const auto blendMergingBytes = decodeBase64(serializer.Serialize(blendMerging));
     constexpr std::size_t blendPayloadBytes = 24u;
     require(blendMergingBytes.size() == plainPixel.size() + blendPayloadBytes && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, blendMergingBytes.begin()) && blendMergingBytes[mergeOffset] == 1u && blendMergingBytes[mergeOffset + 1] == 0xffu && blendMergingBytes[mergeOffset + 2] == 0xffu && blendMergingBytes[mergeOffset + 3] == 0x01u && blendMergingBytes[mergeOffset + 4] == 0x00u, "a color target blend is not flagged in the merge mask word, or changed the bytes before the merge");
-    require(serializer.Deserialize(serializer.Serialize(blendMerging)).request.context.pixel->targetMerge == blendMerging.context.pixel->targetMerge, "a serialized request lost its color target blend");
+    require(serializer.Deserialize(serializer.Serialize(blendMerging)).request.context.pixel->targetMerges == blendMerging.context.pixel->targetMerges, "a serialized request lost its color target blend");
+    auto twoMerging = blendMerging;
+    twoMerging.context.pixel->targetMerges.push_back({3u, 0xffffu, 1u, {9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u}, true, false, {true, false, 4u, 5u, 0u, 4u, 5u, 0u, 0x3u, {}}});
+    const auto twoMergingBytes = decodeBase64(serializer.Serialize(twoMerging));
+    require(twoMergingBytes.size() == blendMergingBytes.size() + mergeBytes + blendPayloadBytes && twoMergingBytes[mergeOffset + 3] == 0x03u && std::equal(blendMergingBytes.begin() + mergeOffset + 4, blendMergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes), twoMergingBytes.begin() + mergeOffset + 4), "a second color target merge did not follow the first, counted in the first merge word");
+    require(serializer.Deserialize(serializer.Serialize(twoMerging)).request.context.pixel->targetMerges == twoMerging.context.pixel->targetMerges, "a serialized request lost its second color target merge");
+    auto unmasked = twoMergingBytes;
+    const auto secondMask = mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes) + 1;
+    unmasked[secondMask] = unmasked[secondMask + 1] = 0u;
+    expectFailure([&] { static_cast<void>(serializer.Deserialize(encodeBase64(unmasked))); }, "invalid recompile request target merge mask", "a request whose second color target merge has no mask was read");
+    auto nine = twoMerging;
+    nine.context.pixel->targetMerges.resize(9u, twoMerging.context.pixel->targetMerges.back());
+    expectFailure([&] { static_cast<void>(serializer.Serialize(nine)); }, "merges into more than eight color targets", "a request with nine color target merges was serialized");
     auto disabledBlend = merging;
-    disabledBlend.context.pixel->targetMerge.blend = {false, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {1u, 2u, 3u, 4u}};
+    disabledBlend.context.pixel->targetMerges.at(0).blend = {false, true, 6u, 7u, 1u, 1u, 0u, 4u, 0xbu, {1u, 2u, 3u, 4u}};
     require(serializer.Serialize(disabledBlend) == serializer.Serialize(merging), "a disabled color target blend changed the serialized request");
     // A version 43 request: no color target merge, and no fused arithmetic flag, pixel function LDS flag, storage size or barycentric built-ins flag at the end.
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
@@ -6853,13 +6879,13 @@ void verifyVertexInfoVersion19() {
     auto version42 = version43Bytes(plainPixel);
     version42[4] = 42u;
     const auto replay42 = serializer.Deserialize(encodeBase64(version42));
-    require(replay42.request.context.pixel.has_value() && replay42.request.context.pixel->targetMerge == TargetMerge{} && serializer.Serialize(replay42.request) == encodedPixel, "a version 42 request read a color target merge or misread the fields after it");
+    require(replay42.request.context.pixel.has_value() && replay42.request.context.pixel->targetMerges.empty() && serializer.Serialize(replay42.request) == encodedPixel, "a version 42 request read a color target merge or misread the fields after it");
     auto version39 = version42;
     version39.pop_back();
     version39.erase(version39.begin() + static_cast<std::ptrdiff_t>(orderOffset), version39.begin() + mergeOffset);
     version39[4] = 39u;
     const auto replay39 = serializer.Deserialize(encodeBase64(version39));
-    require(replay39.request.context.pixel.has_value() && replay39.request.context.pixel->targetMerge == TargetMerge{} && replay39.request.context.pixel->sampleOrder == std::array<std::uint32_t, 4>{} && serializer.Serialize(replay39.request) == encodedPixel, "a version 39 request read a sample order or color target merge, or misread the fields after them");
+    require(replay39.request.context.pixel.has_value() && replay39.request.context.pixel->targetMerges.empty() && replay39.request.context.pixel->sampleOrder == std::array<std::uint32_t, 4>{} && serializer.Serialize(replay39.request) == encodedPixel, "a version 39 request read a sample order or color target merge, or misread the fields after them");
     auto ordered = pixel;
     ordered.context.pixel->sampleOrder = {0x76543210u, 0x76543210u, 0x76543201u, 0x76543201u};
     const auto orderedBytes = decodeBase64(serializer.Serialize(ordered));
@@ -9315,6 +9341,9 @@ void verifyVolumeArrayLoadMode() {
     require(sampled.dimension == RdnaImageDimension::Dim3D && !sampled.cube, "2D-array image sample on a 3D T# did not select a volume runtime mode");
     const DescriptorValue arrayDescriptor{{0x02466600u, 0x01400000u, 0u, 0xd0500204u, 1u, 0x00700000u, 0u, 0u}, 8u};
     require(sampleModes[ResourceMaterializer::RuntimeImageMode(image, arrayDescriptor, sampleModes)].dimension == RdnaImageDimension::Dim2DArray, "2D-array image sample on a 2D-array T# no longer selects the 2D-array runtime mode");
+    image.adjustedSample = true;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(image, descriptor, ResourceMaterializer::RuntimeImageModes(image))); }, "incompatible with the static runtime image interface", "a 2D-array image_sample_a on a 3D T# selected a volume runtime mode");
+    image.adjustedSample = false;
     image.volumeArraySampleCompatible = false;
     ImageResource store{};
     store.resourceClass = ImageResourceClass::Storage;
@@ -9349,6 +9378,12 @@ void verifyMultisamplePlaneReadMode() {
     auto other = image;
     other.cubeFaceCompatible = false;
     refused(other, "a 2D read of a 2D MSAA T# through a mip, gather, bias, gradient or offset access was accepted");
+    other = image;
+    other.adjustedSample = true;
+    require(modes[ResourceMaterializer::RuntimeImageMode(other, descriptor, ResourceMaterializer::RuntimeImageModes(other))].dimension == RdnaImageDimension::Dim2D, "a 2D image_sample_a of a 2D MSAA T# did not select the 2D runtime mode");
+    const DescriptorValue cube{{0x02143930u, 71u << 20u, 0u, 0xb1b00facu, 5u, 0u, 0u, 0u}, 8u};
+    require(modes[ResourceMaterializer::RuntimeImageMode(image, cube, modes)].cube, "a 2D sample of a cube T# did not select a cube face runtime mode");
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(other, cube, ResourceMaterializer::RuntimeImageModes(other))); }, "incompatible with the static runtime image interface", "a 2D image_sample_a of a cube T# selected a cube face runtime mode");
     other = image;
     other.depthCompare = true;
     refused(other, "a 2D depth comparison of a 2D MSAA T# was accepted");

@@ -19,4 +19,8 @@ int APS5_VABI sceCameraSetForceDriverMode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI sceCameraIsVrCaptureEnable() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
