@@ -364,11 +364,17 @@ std::uint64_t GuestSegmentBytes() {
     return bytes;
 }
 
+#ifdef ANYPS5_GUEST_LIFTED
+bool SystemImage(const GuestImage&) {
+    return false;
+}
+#else
 bool SystemImage(const GuestImage& image) {
     const auto* name = static_cast<const link_map*>(image.native)->l_name;
     const std::string_view path = name ? name : "";
     return !path.empty() && !path.ends_with(GuestModuleSuffix);
 }
+#endif
 #else
 bool SectionNamed(const IMAGE_SECTION_HEADER& section, const char* name) {
     return std::strncmp(reinterpret_cast<const char*>(section.Name), name, IMAGE_SIZEOF_SHORT_NAME) == 0;
@@ -565,6 +571,12 @@ int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, M
     const bool found = Fill(static_cast<std::uintptr_t>(address), result) &&
         VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) == sizeof(memory);
     const GuestImage image{nullptr, found ? reinterpret_cast<std::uintptr_t>(memory.AllocationBase) : 0};
+#elif defined(ANYPS5_GUEST_LIFTED)
+    ImageSearch<ModuleInfoEx> search{static_cast<std::uintptr_t>(address), &result, false};
+    dl_iterate_phdr(FindImage<ModuleInfoEx>, &search);
+    const bool found = search.found && result.segment_count != 0;
+    if (found) result.id = ModuleIdForImage_nid_no_patch(reinterpret_cast<const void*>(result.segments[0].address));
+    const GuestImage image{nullptr, found ? result.segments[0].address : 0};
 #elif defined(__APPLE__)
     Dl_info symbol{};
     const bool found = Fill(static_cast<std::uintptr_t>(address), result) &&
