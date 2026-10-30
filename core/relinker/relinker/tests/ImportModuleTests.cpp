@@ -88,5 +88,17 @@ int main() {
     catch (const Domain::RelinkerException&) {}
     const auto ajmImage = Relinker::GuestImageReader().Read("ajm-consumer.prx", Fixture(false, "libSceAjm.native.prx", "libSceAjm"), true);
     if (ajmImage.Symbols.size() != 4 || ajmImage.Symbols[3].Library != "libSceAjm.native.prx") return 24;
+    const std::map<std::uint64_t, std::string> dialog{{1, "libSceMsgDialog"}};
+    const std::array<std::string, 1> dialogNative{"libSceMsgDialog.native.prx"};
+    const std::array<std::string, 2> dialogBoth{"libSceMsgDialog.prx", "libSceMsgDialog.native.prx"};
+    const std::array<std::string, 1> dialogOther{"libSceMsgDialog2.prx"};
+    const std::array<std::string, 2> dialogAmbiguous{"libSceMsgDialog.native.prx", "libSceMsgDialog.native.sprx"};
+    if (Domain::ImportModule("nid#A#B", dialog, dialogNative) != dialogNative[0]) return 25;
+    if (Domain::ImportModule("nid#A#B", dialog, dialogBoth) != dialogBoth[0]) return 26;
+    if (!Domain::ImportModule("nid#A#B", dialog, dialogOther).empty()) return 27;
+    try { Domain::ImportModule("nid#A#B", dialog, dialogAmbiguous); return 28; }
+    catch (const Domain::RelinkerException&) {}
+    const auto dialogImage = Relinker::GuestImageReader().Read("dialog-consumer.prx", Fixture(false, "libSceMsgDialog.native.prx", "libSceMsgDialog"), true);
+    if (dialogImage.Symbols.size() != 4 || dialogImage.Symbols[3].Library != "libSceMsgDialog.native.prx") return 29;
     std::cout << "module mapping checks passed\n";
 }
