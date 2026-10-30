@@ -586,7 +586,10 @@ def unconditional_calls(body):
 
 def always_stub_calls(text):
     helpers = {}
+    possible = progress.stub_calls(text)
     for match in progress.STUB_WRAPPER.finditer(text):
+        if match.group(1) not in possible:
+            continue
         body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
         helpers.setdefault(match.group(1), []).extend(variant_calls(body))
     calls = {progress.STUB}

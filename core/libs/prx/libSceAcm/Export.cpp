@@ -398,7 +398,12 @@ int APS5_VABI sceAcm_Panner(AcmBatchInfo* batch, std::uint32_t sourceCount, cons
 }
 
 int APS5_VABI sceAcmBatchJobPriority(AcmBatchInfo* batch, std::uint32_t priority) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!batch || priority >= 4) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto offset = batch->offset;
+    if (offset > batch->buffer_size || batch->buffer_size - offset < 8) return static_cast<int>(0x81940009);
+    const std::uint64_t job = 0x10 | (static_cast<std::uint64_t>(priority) << 8);
+    std::memcpy(static_cast<std::byte*>(batch->buffer) + offset, &job, sizeof(job));
+    batch->offset = offset + sizeof(job);
     return 0;
 }
 

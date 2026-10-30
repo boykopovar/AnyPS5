@@ -254,7 +254,7 @@ int APS5_VABI sceHttp2SetConnectTimeOut(int id, uint32_t usec) {
 }
 
 int APS5_VABI sceHttp2SetInflateGZIPEnabled(int id, int enable) {
-    return Update(id, __func__, [&](auto&) { if (enable != 0) NotImplemented_nid_no_patch("sceHttp2SetInflateGZIPEnabled"); });
+    return Update(id, __func__, [&](auto& settings) { settings.inflateGzip = enable != 0; });
 }
 
 int APS5_VABI sceHttp2SetRecvTimeOut(int id, uint32_t usec) {
