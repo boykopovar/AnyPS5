@@ -451,7 +451,17 @@ constexpr std::array<std::uint32_t, 54> PointerBitFieldVariant(std::uint32_t fir
 alignas(256) constexpr std::array<std::uint32_t, 54> PointerMaskShiftCode = PointerBitFieldVariant(0x872cff13u, 0x00000fffu, 0x902c842cu);
 alignas(256) constexpr std::array<std::uint32_t, 54> PointerScalarBfeCode = PointerBitFieldVariant(0x93acff13u, 0x000c0004u, 0xbf800000u);
 alignas(256) constexpr std::array<std::uint32_t, 54> PointerMaskOnlyCode = PointerBitFieldVariant(0x872cff13u, 0x00000fffu, 0xbf800000u);
-alignas(256) constexpr std::array<std::uint32_t, 54> PointerHighBitFieldCode = PointerBitFieldVariant(0x902d8413u, 0x872dff2du, 0x00000fffu);
+alignas(256) constexpr std::array<std::uint32_t, 57> PointerHighBitFieldCode = [] {
+    const auto source = PointerBitFieldVariant(0x902d8413u, 0x872dff2du, 0x00000fffu);
+    std::array<std::uint32_t, 57> code{};
+    std::copy_n(source.begin(), 34u, code.begin());
+    code[34] = 0xbf068212u;
+    code[35] = 0xbf840001u;
+    code[36] = 0xbeac0380u;
+    std::copy(source.begin() + 34u, source.end(), code.begin() + 37u);
+    code[48] = 0xbf89ffe7u;
+    return code;
+}();
 alignas(256) constexpr std::array<std::uint32_t, 54> PointerVectorBfeCode = PointerBitFieldVariant(0xd548000au, 0x02310813u, 0x7e58050au);
 
 alignas(256) constexpr std::array<std::uint32_t, 63> PointerVsharpSelectCode{
