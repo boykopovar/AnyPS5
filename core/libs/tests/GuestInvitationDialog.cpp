@@ -62,6 +62,7 @@ void TestBeforeInitialize() {
     Require(sceInvitationDialogTerminate() == NotInitialized, "terminate before initialization");
     const InvitationDialogParam param = MakeParam(ModeSend, nullptr);
     RequireUnsettled([&] { sceInvitationDialogOpen(&param); }, "open before initialization");
+    RequireUnsettled([] { sceInvitationDialogOpen(nullptr); }, "null open before initialization");
 }
 
 void TestCommonDialogPreconditions() {
@@ -136,8 +137,13 @@ void TestCanceled() {
     Require(sceInvitationDialogGetResult(&result) == 0 && result.callbackArg == &second, "the second open carries its own callback argument");
 
     Require(sceInvitationDialogTerminate() == 0 && !sceCommonDialogIsUsed(), "terminate");
+    Require(sceInvitationDialogTerminate() == NotInitialized, "terminate after termination");
     Require(sceInvitationDialogUpdateStatus() == StatusNone, "status after termination");
     Require(sceInvitationDialogGetResult(&result) == NotInitialized, "result after termination");
+    Require(sceInvitationDialogGetResult(nullptr) == NotInitialized, "null result after termination");
+    Require(sceInvitationDialogClose() == NotInitialized, "close after termination");
+    RequireUnsettled([&] { sceInvitationDialogOpen(&send); }, "open after termination");
+    RequireUnsettled([] { sceInvitationDialogOpen(nullptr); }, "null open after termination");
     Require(sceInvitationDialogInitialize() == 0 && sceInvitationDialogGetResult(&result) == NotFinished, "a new initialization forgets the result");
     Require(sceInvitationDialogTerminate() == 0, "terminate again");
 }

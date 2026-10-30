@@ -529,6 +529,9 @@ public:
     // Presentations so far (never reset): a frame clock for policies that count per frame, such as
     // StorageTexture's write-back hysteresis.
     static std::uint64_t Presents();
+    static void NoteFrameGpuBusy(double milliseconds);
+    static std::pair<std::uint64_t, double> FrameGpuBusy();
+    static void RequestBatchStamps();
 
     // What the presenter learns about finished batches (Driver::Present's [present] line and the
     // frame record): finish() writes an entry per submitted batch into a ring of the last 128,
@@ -860,9 +863,7 @@ private:
     std::uint64_t writeNoteCount = 0;
     std::shared_ptr<Buffer> drawUpload;
     VkDeviceSize drawUploadUsed = 0;
-    // Command buffers and fences of completed batches, reused by later ones (hundreds of batches per
-    // frame would otherwise allocate and free their objects each time).
-    std::vector<std::pair<VkCommandBuffer, VkFence>> spare;
+    std::vector<VkFence> spare;
     std::vector<VkQueryPool> sparePools;
     mutable AgcDriver::Mutex completedMutex;
     std::array<Completed, CompletedRingSize> completed;

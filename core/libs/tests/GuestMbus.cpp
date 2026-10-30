@@ -6,6 +6,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+#include <type_traits>
+
+static_assert(std::is_same_v<decltype(&sceMbusEventCallbackFuncsInit_), void (APS5_VABI *)(MbusEventCallbacks*, std::uint32_t)>);
 
 namespace {
 
@@ -19,6 +22,21 @@ void Require(bool condition, const char* message) {
 }
 
 int main() {
+    static_assert(sizeof(MbusEventCallbacks) == 16);
+    alignas(MbusEventCallbacks) std::array<std::uint8_t, 24> callbackBytes{};
+    callbackBytes.fill(0xa5);
+    sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(callbackBytes.data()), 8);
+    for (std::size_t i = 0; i < callbackBytes.size(); ++i) {
+        Require(callbackBytes[i] == (i < 8 ? 0 : 0xa5), "partial callback initialization changed an unexpected byte");
+    }
+    sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(callbackBytes.data()), sizeof(MbusEventCallbacks));
+    for (std::size_t i = 0; i < callbackBytes.size(); ++i) {
+        Require(callbackBytes[i] == (i < sizeof(MbusEventCallbacks) ? 0 : 0xa5), "full callback initialization changed an unexpected byte");
+    }
+    callbackBytes.fill(0x5a);
+    sceMbusEventCallbackFuncsInit_(reinterpret_cast<MbusEventCallbacks*>(callbackBytes.data()), 0);
+    for (const auto byte : callbackBytes) Require(byte == 0x5a, "zero-size callback initialization changed memory");
+
     DeviceServiceInitParam param{};
     constexpr auto invalidArgument = static_cast<std::int32_t>(0x809B0080u);
     Require(sceDeviceServiceInitialize(3, &param) == invalidArgument, "invalid parameter size accepted");
@@ -44,6 +62,8 @@ int main() {
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, nullptr, 1, &count, nullptr, info.size()) == invalidArgument, "null record buffer accepted");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, info.data(), -1, &count, nullptr, info.size()) == invalidArgument, "negative capacity accepted");
     Require(sceDeviceServiceQueryDeviceInfo_(0x7001, nullptr, 0, info.data(), 1, &count, nullptr, info.size() - 1) == invalidArgument, "incorrect record size accepted");
+    Require(sceDeviceServiceQueryDeviceInfo_(0, nullptr, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "invalid device class accepted");
+    Require(sceDeviceServiceQueryDeviceInfo_(0xFFFF, nullptr, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "unrecognized device class accepted");
     DeviceServiceUsageFilter filter{1, 2, 3};
     Require(sceDeviceServiceQueryDeviceInfo_(0x8001, &filter, 0, info.data(), 1, &count, nullptr, info.size()) == 0, "valid HID filter rejected");
     Require(sceDeviceServiceQueryDeviceInfo_(0x8001, nullptr, 0, info.data(), 1, &count, nullptr, info.size()) == invalidArgument, "missing HID filter accepted");

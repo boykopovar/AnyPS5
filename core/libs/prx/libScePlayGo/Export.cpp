@@ -204,6 +204,10 @@ int APS5_VABI scePlayGoGetProgress(int handle, const uint16_t* chunk_ids, uint32
     return 0;
 }
 
+int APS5_VABI scePlayGoGetRequiredDisc() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI scePlayGoGetSupportedOptionalChunk(int handle, std::uint32_t type, PlayGoOptionalChunk* option) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
@@ -252,6 +256,10 @@ int APS5_VABI scePlayGoSetInstallSpeed(int handle, int32_t speed) {
     return 0;
 }
 
+int APS5_VABI scePlayGoSetInstallSpeed2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI scePlayGoSetToDoList(int handle, const PlayGoToDo* todo_list, uint32_t number_of_entries) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!todo_list) return SCE_PLAYGO_ERROR_BAD_POINTER;
@@ -271,6 +279,10 @@ int APS5_VABI scePlayGoTerminate(void) {
 int APS5_VABI scePlayGoRequestNextChunk() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI scePlayGoRequestOptionalChunk() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI scePlayGoSetLanguageMask(int handle, uint64_t language_mask) {

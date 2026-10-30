@@ -25,20 +25,21 @@ std::int64_t APS5_VABI PKFree_nid_postfix(void** memory) {
 }
 
 std::int64_t APS5_VABI readIS_nid_postfix(void*, Jxr::BitIo* io) {
-    if (!io) NotImplemented_nid_no_patch(__func__);
+    if (!io) APS5_INVALID_ARG_EX;
     constexpr std::uintptr_t packetSize = 4096;
     const auto start = reinterpret_cast<std::uintptr_t>(io->start);
     if (((start ^ reinterpret_cast<std::uintptr_t>(io->current)) & packetSize) == 0) return WmpErrSuccess;
     auto* stream = io->stream;
-    if (!stream || !stream->setPosition) NotImplemented_nid_no_patch(__func__);
+    if (!stream || !stream->setPosition) APS5_INVALID_ARG_EX;
     stream->setPosition(stream, io->referenceOffset);
-    if (!io->start || !stream->read) NotImplemented_nid_no_patch(__func__);
+    if (!stream->read) APS5_INVALID_ARG_EX;
     {
         GuestArena::HostWrite access(io->start, packetSize);
-        if (!access.Open()) NotImplemented_nid_no_patch(__func__);
+        if (!access.Open()) APS5_INVALID_ARG_EX;
         stream->read(stream, io->start, packetSize);
     }
     io->referenceOffset += packetSize;
+    if (!io->start) APS5_INVALID_ARG_EX;
     std::memcpy(&io->shadow, io->start, sizeof(io->shadow));
     const auto mask = static_cast<std::uintptr_t>(static_cast<std::intptr_t>(io->mask));
     io->start = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(io->start) + packetSize) & mask);
@@ -46,13 +47,14 @@ std::int64_t APS5_VABI readIS_nid_postfix(void*, Jxr::BitIo* io) {
 }
 
 std::int64_t APS5_VABI writeIS_nid_postfix(void*, Jxr::BitIo* io) {
-    if (!io) NotImplemented_nid_no_patch(__func__);
+    if (!io) APS5_INVALID_ARG_EX;
     constexpr std::uintptr_t packetSize = 4096;
     const auto start = reinterpret_cast<std::uintptr_t>(io->start);
     if (((start ^ reinterpret_cast<std::uintptr_t>(io->current)) & packetSize) == 0) return WmpErrSuccess;
-    if (!io->start || !io->stream || !io->stream->write) NotImplemented_nid_no_patch(__func__);
+    if (!io->stream || !io->stream->write) APS5_INVALID_ARG_EX;
     const auto result = io->stream->write(io->stream, io->start, packetSize);
     if (result < 0) return result;
+    if (!io->start) APS5_INVALID_ARG_EX;
     const auto mask = static_cast<std::uintptr_t>(static_cast<std::intptr_t>(io->mask));
     io->start = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(io->start) + packetSize) & mask);
     return result;
