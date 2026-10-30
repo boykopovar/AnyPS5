@@ -5969,7 +5969,7 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5emptyEv(const CommonString* se
 
 // ---------------------------------------------------------------------------
 // SessionManager::V1::PlayerSessionsApi::getFriendsPlayerSessions family.
-// Layouts measured in libSceNpCppWebApi from PPSA23732 (J03341606): Friend has
+// Layouts measured in the titles' bundled libSceNpCppWebApi (build J03341606): Friend has
 // accountId at +0x10, accountIdIsSet at +0x18, IntrusivePtr<Vector<FriendJoined
 // PlayerSession>> at +0x30 and playerSessionsIsSet at +0x48; FriendJoined
 // PlayerSession has String sessionId at +0x10 and sessionIdIsSet at +0x30.
