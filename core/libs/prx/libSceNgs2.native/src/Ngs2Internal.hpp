@@ -136,8 +136,21 @@ struct Ngs2UserFxControl {
     std::vector<std::uint8_t> param;
 };
 
+struct Ngs2ParamControl {
+    std::vector<std::uint8_t> param;
+    std::vector<Ngs2WaveformBlock> blocks;
+    bool destDestroyed = false;
+};
+
+struct Ngs2Atrac9Frame {
+    std::uint32_t frameSamples = 0;
+    std::uint32_t framesInSuperframe = 0;
+    std::uint32_t superframeBytes = 0;
+};
+
 using Ngs2PendingControl = std::variant<std::uint32_t, Ngs2VoicePortVolumeParam, Ngs2VoicePortMatrixParam,
-    Ngs2MatrixControl, Ngs2SamplerVoicePitchParam, Ngs2MasteringVoiceGainParam, Ngs2CustomVoicePitchShiftParam, Ngs2SubmixerVoiceUserFxParam, Ngs2CustomVoiceUserFxParam, Ngs2UserFxControl>;
+    Ngs2MatrixControl, Ngs2SamplerVoicePitchParam, Ngs2MasteringVoiceGainParam, Ngs2CustomVoicePitchShiftParam, Ngs2SubmixerVoiceUserFxParam, Ngs2CustomVoiceUserFxParam, Ngs2UserFxControl,
+    Ngs2ParamControl>;
 
 struct Ngs2Voice {
     Ngs2Rack* rack = nullptr;
@@ -164,6 +177,10 @@ struct Ngs2Voice {
     std::uint32_t samplerWritePosition = 0;
     std::deque<Ngs2Block> blocks;
     bool acceptsBlocks = true;
+    alignas(std::atomic_ref<std::uint32_t>::required_alignment) mutable std::uint32_t queuedBlocks = 0;
+    const std::uint8_t* queuedTailEnd = nullptr;
+    std::uintptr_t queuedTailUserData = 0;
+    bool decodePendingAtGrain = false;
     std::vector<Ngs2PendingControl> pendingControls;
     bool pendingPlay = false;
     std::thread::id controlOwner{};
@@ -326,6 +343,12 @@ int Ngs2ReleaseBuffer(const Ngs2BufferAllocator& allocator, Ngs2ContextBufferInf
 void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format);
 void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block);
+std::size_t Ngs2Atrac9BlockBytes(const Ngs2Atrac9Frame& frame, const Ngs2WaveformBlock& block);
+bool Ngs2Atrac9FrameInfo(const Ngs2WaveformFormat& format, Ngs2Atrac9Frame& frame);
+void Ngs2PublishBlockCount(Ngs2Voice& voice);
+void Ngs2PublishBlockQueue(Ngs2Voice& voice);
+bool Ngs2DecodePending(const Ngs2Voice& voice);
+void Ngs2DetachPendingPatches(Ngs2Voice& voice, const Ngs2Rack& rack);
 void Ngs2RestartAtrac9(Ngs2Voice& voice);
 bool Ngs2FinishBlock(Ngs2Voice& voice);
 void Ngs2BindSamplerBlock(Ngs2Voice& voice, bool restartDecoder);

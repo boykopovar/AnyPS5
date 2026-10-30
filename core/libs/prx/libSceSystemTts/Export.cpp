@@ -31,4 +31,20 @@ int APS5_VABI sceSystemTtsUnregisterCallback() {
     return 0;
 }
 
+int APS5_VABI sceSystemTtsConvertText() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemTtsPauseResume() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemTtsRepeat() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemTtsWait() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

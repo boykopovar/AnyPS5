@@ -466,7 +466,7 @@ int APS5_VABI sceNgs2SystemSetGrainSamples(uintptr_t system_handle, uint32_t num
     auto* system = Ngs2FindSystem(system_handle);
     if (system == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
     if (system->jobsExecuting) throw std::runtime_error("NGS2: changing grain size from an active job handler is not implemented");
-    if (num_samples == 0 || num_samples > system->option.max_grain_samples) return SCE_NGS2_ERROR_INVALID_NUM_GRAIN_SAMPLES;
+    if (!ValidGrainSamples(num_samples, system->option.max_grain_samples)) return SCE_NGS2_ERROR_INVALID_NUM_GRAIN_SAMPLES;
     system->option.num_grain_samples = num_samples;
     return SCE_NGS2_OK;
 }

@@ -11,7 +11,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -26,6 +25,10 @@ static void Check(bool value, int line) {
 #define Require(value) Check((value), __LINE__)
 
 constexpr std::int64_t Sentinel = 0x1122334455667788;
+
+static std::int64_t Widened(FT_Fixed value) {
+    return value == static_cast<FT_Fixed>(Sentinel) ? Sentinel : static_cast<std::int64_t>(value);
+}
 
 struct Fixture {
     std::vector<unsigned char> bytes;
@@ -82,8 +85,7 @@ static void CheckSingle(Fixture& fixture, unsigned glyph, std::int32_t flags) {
     std::array<std::int64_t, 3> actual{Sentinel, Sentinel, Sentinel};
     Require(FT_Get_Advance_nid_postfix(fixture.guest, glyph, flags, &actual[1]) == error);
     Require(actual.front() == Sentinel && actual.back() == Sentinel);
-    if (error == 0 || sizeof(FT_Fixed) == sizeof(std::int64_t)) Require(actual[1] == expected);
-    else Require(actual[1] == Sentinel);
+    Require(actual[1] == Widened(expected));
     fixture.CheckSlot();
 }
 
@@ -96,10 +98,7 @@ static void CheckBatch(Fixture& fixture, unsigned start, unsigned count, std::in
     actual.fill(Sentinel);
     Require(FT_Get_Advances_nid_postfix(fixture.guest, start, count, flags, &actual[1]) == error);
     Require(actual.front() == Sentinel && actual.back() == Sentinel);
-    for (unsigned index = 0; index < expected.size(); ++index) {
-        if ((error == 0 && index < count) || sizeof(FT_Fixed) == sizeof(std::int64_t)) Require(actual[index + 1] == expected[index]);
-        else Require(actual[index + 1] == Sentinel);
-    }
+    for (unsigned index = 0; index < expected.size(); ++index) Require(actual[index + 1] == Widened(expected[index]));
     fixture.CheckSlot();
 }
 
@@ -244,18 +243,8 @@ static void CheckPartialFailure() {
     const int error = FT_Get_Advances(fixture.native, 0, 2, FT_LOAD_DEFAULT, expected.data());
     Require(error != 0 && expected[0] != static_cast<FT_Fixed>(Sentinel) && expected[1] == static_cast<FT_Fixed>(Sentinel));
     std::array<std::int64_t, 4> actual{Sentinel, Sentinel, Sentinel, Sentinel};
-    if constexpr (sizeof(FT_Fixed) == sizeof(std::int64_t)) {
-        Require(FT_Get_Advances_nid_postfix(fixture.guest, 0, 2, FT_LOAD_DEFAULT, &actual[1]) == error);
-        Require(actual[1] == expected[0] && actual[2] == Sentinel);
-    } else {
-        bool threw = false;
-        try {
-            FT_Get_Advances_nid_postfix(fixture.guest, 0, 2, FT_LOAD_DEFAULT, &actual[1]);
-        } catch (const std::runtime_error&) {
-            threw = true;
-        }
-        Require(threw && actual[1] == Sentinel && actual[2] == Sentinel);
-    }
+    Require(FT_Get_Advances_nid_postfix(fixture.guest, 0, 2, FT_LOAD_DEFAULT, &actual[1]) == error);
+    Require(actual[1] == expected[0] && actual[2] == Sentinel);
     Require(actual.front() == Sentinel && actual.back() == Sentinel);
     fixture.CheckSlot();
 }

@@ -61,6 +61,7 @@ bool Ngs2FinishBlock(Ngs2Voice& voice) {
     };
     if (!repeat) {
         voice.blocks.pop_front();
+        Ngs2PublishBlockCount(voice);
         Ngs2BindSamplerBlock(voice, true);
     }
     const auto revision = voice.waveformRevision;
@@ -516,6 +517,7 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
     for (auto* rack : system.racks) {
         for (auto& voice : rack->voices) {
             voice.ApplyPendingControls();
+            voice.decodePendingAtGrain = Ngs2DecodePending(voice);
             voice.rendered = false;
             Ngs2PublishSamplerState(voice);
             voices.push_back(&voice);

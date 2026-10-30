@@ -37,6 +37,11 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
 void BindPixelFunctionLds(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout);
 void CheckPixelFunctionLds(const Context& context);
 void ReleasePixelFunctionLds(VkDevice device);
+bool UsesMeshWindow(std::span<const CompiledShader> shaders);
+VkDescriptorSetLayout MeshWindowSetLayout(const Context& context);
+void PrepareMeshWindow(const Context& context);
+void BindMeshWindow(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout);
+void ReleaseMeshWindow(VkDevice device);
 std::optional<std::string> KnownValidationFailure(const Context& context, std::span<const CompiledShader> shaders, const State& state);
 std::uint64_t DrawRenderPassKey(const Context& context, const State& state, std::span<const VkImageView> targetViews);
 
