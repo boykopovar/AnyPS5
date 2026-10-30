@@ -7534,16 +7534,16 @@ void verifyInt64AtomicCapabilities() {
     const auto texelAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels.data()));
     const std::array<std::uint32_t, 16> userData{
         0u, 0u, 0u, 0u,
-        static_cast<std::uint32_t>(bufferAddress), static_cast<std::uint32_t>((bufferAddress >> 32u) & 0xffffu), 256u, 0x01016facu,
+        static_cast<std::uint32_t>(bufferAddress), static_cast<std::uint32_t>((bufferAddress >> 32u) & 0xffffu), 256u, 0x31016facu,
         static_cast<std::uint32_t>(texelAddress >> 8u), static_cast<std::uint32_t>((texelAddress >> 40u) & 0xffu) | (Format32_32UInt << 20u) | (3u << 30u), 7u | (7u << 14u), 0xfacu | (Type2D << 28u),
         0u, 0u, 0u, 0u};
     const std::vector<std::uint32_t> bufferAtomic{0xe1705000u, 0x80012803u, 0xbf810000u};
     const std::vector<std::uint32_t> imageAtomic{0xf03c0308u, 0x00020a08u, 0xbf810000u};
-    const std::vector<std::uint32_t> bufferOr{0xe1685000u, 0x80012803u, 0xbf810000u};
-    const std::vector<std::uint32_t> bufferAnd{0xe1645000u, 0x80012803u, 0xbf810000u};
-    const std::vector<std::uint32_t> bufferXor{0xe16c5000u, 0x80012803u, 0xbf810000u};
-    const std::vector<std::uint32_t> bufferOrTwice{0xe1685000u, 0x80012803u, 0xe1685000u, 0x80012a03u, 0xbf810000u};
-    const std::vector<std::uint32_t> bufferOrAnd{0xe1685000u, 0x80012803u, 0xe1645000u, 0x80012a03u, 0xbf810000u};
+    const std::vector<std::uint32_t> bufferOr{0xe1685000u, 0x80010003u, 0xbf810000u};
+    const std::vector<std::uint32_t> bufferAnd{0xe1645000u, 0x80010003u, 0xbf810000u};
+    const std::vector<std::uint32_t> bufferXor{0xe16c5000u, 0x80010003u, 0xbf810000u};
+    const std::vector<std::uint32_t> bufferOrTwice{0xe1685000u, 0x80010003u, 0xe1685000u, 0x80010203u, 0xbf810000u};
+    const std::vector<std::uint32_t> bufferOrAnd{0xe1685000u, 0x80010003u, 0xe1645000u, 0x80010203u, 0xbf810000u};
     const auto compile = [&](std::span<const std::uint32_t> code, spv::Capability added) {
         const std::array<std::uint32_t, 4> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, static_cast<std::uint32_t>(added)};
         RecompileRequest request{};
