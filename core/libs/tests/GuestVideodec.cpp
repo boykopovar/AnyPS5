@@ -61,6 +61,7 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
     check(units.size() == PictureHashes.size(), "unexpected access unit count");
     std::vector<std::uint64_t> hashes;
     std::vector<std::uint64_t> timestamps;
+    std::vector<std::uint64_t> attachments;
     const auto collect = [&](PictureInfo& picture) {
         if (!picture.isValid) return;
         check(picture.framePitch == Pitch && picture.frameHeight == PictureHeight, "unexpected picture geometry");
@@ -69,6 +70,7 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
         check(picture.codec.avc.frameCropTopOffset == cropTop && picture.codec.avc.frameCropBottomOffset == cropBottom, "unexpected crop");
         hashes.push_back(hashNv12(session.buffer.data(), Pitch, PictureHeight));
         timestamps.push_back(picture.ptsData);
+        attachments.push_back(picture.attachedData);
     };
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
         const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
@@ -90,6 +92,7 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
         check(hashes[index] == PictureHashes[index], "picture " + std::to_string(index) + " differs from the reference");
         const auto unit = DisplayOrderUnits[index];
         check(timestamps[index] == 1000 + unit, "pictures out of display order");
+        check(attachments[index] == 0xa0 + unit, "picture attachment out of display order");
     }
 }
 
@@ -112,6 +115,11 @@ void testErrors() {
     const ConfigInfo shortConfig{sizeof(ConfigInfo) - 8};
     check(sceVideodecCreateDecoder(&shortConfig, &resource, &ctrl) == ErrorStructSize, "a short configuration was accepted");
     check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "decoder creation failed");
+    check(sceVideodecDeleteDecoder(nullptr) == ErrorArgumentPointer, "a null control block was accepted by delete");
+    Ctrl shortCtrl{sizeof(Ctrl) - 8};
+    check(sceVideodecDeleteDecoder(&shortCtrl) == ErrorStructSize, "a short control block was accepted by delete");
+    check(sceVideodecReset(nullptr) == ErrorArgumentPointer, "a null control block was accepted by reset");
+    check(sceVideodecReset(&shortCtrl) == ErrorStructSize, "a short control block was accepted by reset");
     Ctrl foreign{sizeof(Ctrl)};
     foreign.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234));
     check(sceVideodecDeleteDecoder(&foreign) == ErrorHandle, "an unknown decoder was deleted");
@@ -137,8 +145,14 @@ void testErrors() {
         if (status == ErrorFrameBufferSize) ++refusals;
     }
     check(refusals > 0, "no picture was refused for the short frame buffer");
+    FrameBuffer shortFrame{sizeof(FrameBuffer) - 8, storage.data(), FrameBytes};
+    check(sceVideodecDecode(&ctrl, &input, &shortFrame, &picture) == ErrorStructSize, "a short frame buffer structure was accepted");
+    PictureInfo shortPicture{sizeof(PictureInfo) - 8};
+    check(sceVideodecDecode(&ctrl, &input, &frame, &shortPicture) == ErrorStructSize, "a short picture information structure was accepted");
     check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder was not deleted");
     check(sceVideodecDeleteDecoder(&ctrl) == ErrorHandle, "the decoder was deleted twice");
+    check(sceVideodecReset(&ctrl) == ErrorHandle, "a deleted decoder was reset");
+    check(sceVideodecDecode(&ctrl, &input, &frame, &picture) == ErrorHandle, "a decode succeeded on a deleted decoder");
 }
 
 void testReset() {

@@ -412,10 +412,14 @@ int main() {
     std::uint32_t wide = 0;
     std::memcpy(&wide, "\x00\x00\x30\x42", 4);
     Require(sceCesUtf32beToMbc(&wide, sjis, mbc, sizeof(mbc), &produced) == 0 && produced == 2 && std::memcmp(mbc, "\x82\xA0", 2) == 0);
+    Require(sceCesUtf32beToMbc(nullptr, sjis, mbc, sizeof(mbc), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf32leToMbc(nullptr, sjis, mbc, sizeof(mbc), &produced) == invalidSrcBuffer);
     Require(sceCesUtf32leToMbc(&wide, sjis, mbc, sizeof(mbc), &produced) == invalidEncode);
     std::uint16_t narrow = 0;
     std::memcpy(&narrow, "\xD8\x00", 2);
     Require(sceCesUtf16leToMbc(&narrow, 1, &consumed, cp1252, mbc, sizeof(mbc), &produced) == 0 && consumed == 1 && produced == 1 && mbc[0] == 0xD8);
+    Require(sceCesUtf16leToMbc(nullptr, 1, &consumed, cp1252, mbc, sizeof(mbc), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf16beToMbc(nullptr, 1, &consumed, cp1252, mbc, sizeof(mbc), &produced) == invalidSrcBuffer);
     Require(sceCesUtf16beToMbc(&narrow, 1, &consumed, cp1252, mbc, sizeof(mbc), &produced) == srcBufferEnd);
     Require(sceCesUtf8ToMbc(Bytes("A\xE4\xB8\xAD"), 4, &consumed, gbk, mbc, sizeof(mbc), &produced) == 0 && consumed == 1 && produced == 1 && mbc[0] == 'A');
 

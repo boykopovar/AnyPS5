@@ -205,10 +205,12 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) && !RegularFile(mappingDescriptor)) return failed(GuestNotSupported);
 #elif defined(_WIN32)
     const int mappingDescriptor = descriptor;
-    if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor)) {
+    {
         const HANDLE handle = WindowsDescriptorHandle_nid_no_patch(mappingDescriptor);
         if (handle == INVALID_HANDLE_VALUE) return failed(GuestBadDescriptor);
-        if (File::DirectoryDescriptorPath(mappingDescriptor) || File::IsRandomDevice(mappingDescriptor) || GetFileType(handle) != FILE_TYPE_DISK) return failed(GuestNotSupported);
+        if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) &&
+            (File::DirectoryDescriptorPath(mappingDescriptor) || File::IsRandomDevice(mappingDescriptor) || GetFileType(handle) != FILE_TYPE_DISK))
+            return failed(GuestNotSupported);
         const int accessMode = DescriptorAccess(handle, mappingDescriptor);
         if (accessMode < 0) return failed(GuestBadDescriptor);
         if ((protection & 1) != 0 && accessMode == 1) return failed(GuestAccess);
@@ -251,9 +253,10 @@ int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {
         return -1;
     };
     std::size_t rounded;
-    const auto start = reinterpret_cast<std::uintptr_t>(address);
-    if (!RoundLength(length, rounded) || start == 0 ||
-        (start & (PS5_PAGE_SIZE - 1)) != 0 ||
+    const auto offset = reinterpret_cast<std::uintptr_t>(address) & (PS5_PAGE_SIZE - 1);
+    const auto start = reinterpret_cast<std::uintptr_t>(address) - offset;
+    if (length == 0 || length > std::numeric_limits<std::size_t>::max() - offset ||
+        !RoundLength(length + offset, rounded) || start == 0 ||
         rounded > std::numeric_limits<std::uintptr_t>::max() - start)
         return failed(GuestInvalid);
     try {

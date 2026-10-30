@@ -232,8 +232,7 @@ int APS5_VABI sceHmd2ReprojectionDisableVrMode() {
 }
 
 int APS5_VABI sceHmd2ReprojectionEnableMirroring(const Hmd2::MirroringParameter* parameter) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Hmd2::ReprojectionNotInitialized;
 }
 
 int APS5_VABI sceHmd2ReprojectionEnableVrMode(std::uint64_t mode) {
@@ -250,8 +249,7 @@ Hmd2::SizeAlign APS5_VABI sceHmd2ReprojectionGetMirroringWorkMemorySizeAlign() {
 }
 
 int APS5_VABI sceHmd2ReprojectionGetPredictedDisplayTime(std::uint64_t frameId, std::uint64_t* time) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Hmd2::ReprojectionNotInitialized;
 }
 
 int APS5_VABI sceHmd2ReprojectionInitialize(const Hmd2::ReprojectionInitializeParameter* parameter, const void* reserved) {
@@ -289,8 +287,7 @@ int APS5_VABI sceHmd2ReprojectionSetParamWithBuffer(std::uint32_t bufferSetId, s
 }
 
 int APS5_VABI sceHmd2ReprojectionSetRenderConfig(std::uint64_t flags, std::uint64_t reserved, std::uint64_t reserved2) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Hmd2::ReprojectionNotInitialized;
 }
 
 int APS5_VABI sceHmd2ReprojectionSetTiming(std::int32_t timing) {

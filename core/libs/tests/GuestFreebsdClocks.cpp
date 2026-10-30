@@ -246,6 +246,9 @@ static void SettimeValidatesLikeFreebsd() {
     const KernelTimespec valid{1767225600, 5};
     RequireSettimeError(GUEST_CLOCK_REALTIME, nullptr, 14);
     RequireSettimeError(GUEST_CLOCK_MONOTONIC, nullptr, 14);
+    const auto unreadable = reinterpret_cast<const KernelTimespec*>(1);
+    RequireSettimeError(GUEST_CLOCK_REALTIME, unreadable, 14);
+    RequireSettimeError(GUEST_CLOCK_MONOTONIC, unreadable, 14);
     for (const int clockId : {GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_REALTIME_PRECISE,
              GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID, -1, 16})
         RequireSettimeError(clockId, &valid, 22);
@@ -318,8 +321,16 @@ static void CalendarConversionsFollowTheHostZone() {
     SetTimeZone("UTC0");
 }
 
+static void KernelTimezoneIsUtc() {
+    SetTimeZone("UTC0");
+    Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000eu));
+    KernelTimezone zone{-1, -1};
+    Require(sceKernelGettimezone(&zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+}
+
 int main() {
     if (!OmittedResolutionSucceeds()) return 1;
+    KernelTimezoneIsUtc();
     UnsupportedResolutionStillThrows();
     OmittedTimeIsFaultAfterClockValidation();
     SettimeValidatesLikeFreebsd();
@@ -330,6 +341,13 @@ int main() {
     KernelTimezone zone{-1, -1};
     Require(gettimeofday_nid_postfix(nullptr, nullptr) == SCE_OK);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    Require(sceKernelGettimeofday(nullptr) == static_cast<int>(0x8002000eu));
+    const std::int64_t beforeSce = Microseconds();
+    KernelTimeval sceTime{-1, -1};
+    Require(sceKernelGettimeofday(&sceTime) == SCE_OK);
+    const std::int64_t afterSce = Microseconds();
+    const std::int64_t sceMicroseconds = sceTime.tv_sec * 1000000LL + sceTime.tv_usec;
+    Require(sceTime.tv_usec >= 0 && sceTime.tv_usec < 1000000 && beforeSce <= sceMicroseconds && sceMicroseconds <= afterSce);
     const int nullResolutionClocks[] = {GUEST_CLOCK_REALTIME, GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_MONOTONIC, GUEST_CLOCK_SECOND, GUEST_CLOCK_PROCESS_CPUTIME_ID};
     for (const int clockId : nullResolutionClocks) Require(clock_getres_nid_postfix(clockId, nullptr) == SCE_OK);
 

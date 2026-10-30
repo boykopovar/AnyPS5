@@ -3,11 +3,17 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <source_location>
 #include <xmmintrin.h>
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
+    std::abort();
+}
 
 static std::uint64_t Bits(double value) { return std::bit_cast<std::uint64_t>(value); }
 static std::uint32_t Bits(float value) { return std::bit_cast<std::uint32_t>(value); }

@@ -10,6 +10,7 @@ add_library(libSceVideoOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MouseInput.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/KeyboardInput.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ImeTextInput.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/DialogInput.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/InputMapping.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/KeyboardMouse.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostHdrProbe.cpp
@@ -35,7 +36,7 @@ foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
 endforeach()
 add_test_executable(video_out_mouse_tests EXCLUDE_FROM_ALL tests/MouseInput.cpp)
 target_include_directories(video_out_mouse_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
-target_link_libraries(video_out_mouse_tests PRIVATE libSceVideoOut libSceMouse libc SDL2-static)
+target_link_libraries(video_out_mouse_tests PRIVATE libSceVideoOut libSceMouse libSceIme libc SDL2-static)
 set_target_properties(video_out_mouse_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(video_out_mouse_tests)
 if(BUILD_TESTING)
@@ -43,7 +44,21 @@ if(BUILD_TESTING)
     add_test(NAME video_out_mouse COMMAND video_out_mouse_tests)
     if(WIN32)
         set_tests_properties(video_out_mouse PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMouse>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMouse>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(video_out_dialog_input_tests EXCLUDE_FROM_ALL tests/DialogInput.cpp)
+target_include_directories(video_out_dialog_input_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+target_link_libraries(video_out_dialog_input_tests PRIVATE libSceVideoOut libSceIme libc SDL2-static)
+set_target_properties(video_out_dialog_input_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(video_out_dialog_input_tests)
+if(BUILD_TESTING)
+    set_target_properties(video_out_dialog_input_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME video_out_dialog_input COMMAND video_out_dialog_input_tests)
+    if(WIN32)
+        set_tests_properties(video_out_dialog_input PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 
@@ -131,18 +146,21 @@ if(BUILD_TESTING AND NOT WIN32)
     add_test(NAME video_out_frame_dump_wait COMMAND video_out_frame_dump_queue_tests wait)
     set_tests_properties(video_out_frame_dump_wait PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0
         ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_DUMP_FRAMES=4;APS5_DUMP_SCALE=1")
+    add_test(NAME video_out_frame_dump_cpu_queue COMMAND video_out_frame_dump_queue_tests)
+    set_tests_properties(video_out_frame_dump_cpu_queue PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0
+        ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_DUMP_FRAMES=4;APS5_DUMP_SCALE=4;APS5_NO_GPU_DUMP=1")
 endif()
 
 if(BUILD_TESTING)
     add_test_executable(pad_sdl_tests tests/PadSdl.cpp)
     target_include_directories(pad_sdl_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(pad_sdl_tests PRIVATE libSceVideoOut libScePad libSceUserService libc SDL2-static)
+    target_link_libraries(pad_sdl_tests PRIVATE libSceVideoOut libScePad libSceIme libSceUserService libc SDL2-static)
     configure_windows_unwind(pad_sdl_tests)
     add_test(NAME pad_sdl COMMAND pad_sdl_tests)
     set_tests_properties(pad_sdl PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(pad_sdl PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(pad_input_mapping_tests tests/InputMapping.cpp src/InputMapping.cpp)
     target_include_directories(pad_input_mapping_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
@@ -226,6 +244,19 @@ if(BUILD_TESTING)
     set_tests_properties(guest_video_out_color_space PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
     if(WIN32)
         set_tests_properties(guest_video_out_color_space PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_video_out_event_id_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutEventId.cpp)
+    target_include_directories(guest_video_out_event_id_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_event_id_tests PRIVATE libSceVideoOut libkernel libc)
+    configure_windows_unwind(guest_video_out_event_id_tests)
+    add_test(NAME guest_video_out_event_id COMMAND guest_video_out_event_id_tests)
+    set_tests_properties(guest_video_out_event_id PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_video_out_event_id PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

@@ -626,6 +626,17 @@ class GroupSegmentTests(unittest.TestCase):
         self.assertNotIn("@LDS@", text)
 
 
+class SourceEncodingTests(unittest.TestCase):
+    def test_assembly_source_is_utf8(self):
+        body = "  s_nop 0  ; v0 \u2192 v10, caf\u00e9"
+        with tempfile.TemporaryDirectory() as tmp, patch.object(hw_oracle, "target", return_value="gfx1036"), \
+                patch.object(hw_oracle, "runtime", return_value="hsa"), patch.object(hw_oracle.subprocess, "run"), \
+                patch.object(hw_oracle, "tool", return_value="clang"):
+            hw_oracle.assemble(body, Path(tmp), False, **MODES)
+            text = (Path(tmp) / "k.s").read_bytes().decode("utf-8")
+        self.assertIn(body, text)
+
+
 class AssemblyTests(unittest.TestCase):
     def test_condition_operands_match_wave_size(self):
         for name in ("clang", "ld.lld"):
@@ -717,6 +728,20 @@ class HipOracleTests(unittest.TestCase):
             with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exit:
                 self.oracle_hip.main(argv)
             self.assertEqual(exit.exception.code, 2)
+
+    def test_cli_rejects_noninteger_dispatch_sizes_before_oracle_work(self):
+        for index, name in ((1, "THREADS"), (4, "OUT_DWORDS")):
+            argv = ["code", "1", "in", "out", "1"]
+            argv[index] = "not-an-int"
+            with self.subTest(argument=name), patch.object(Path, "read_bytes", side_effect=AssertionError("input read")) as read, \
+                    patch.object(self.oracle_hip, "dispatch", side_effect=AssertionError("dispatch called")) as dispatch, \
+                    contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as exited:
+                self.oracle_hip.main(argv)
+            self.assertEqual(exited.exception.code, 2)
+            self.assertIn(f"{name} must be an integer", errors.getvalue())
+            self.assertNotIn("Traceback", errors.getvalue())
+            read.assert_not_called()
+            dispatch.assert_not_called()
 
     def test_cli_rejects_output_aliases_before_oracle_work(self):
         with tempfile.TemporaryDirectory() as directory:
