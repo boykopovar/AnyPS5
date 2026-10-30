@@ -19,3 +19,8 @@ foreach(mode collect fresh armed register mapped host empty protection overlaps 
     add_test(NAME write_watch_${mode} COMMAND write_watch_tests ${mode})
     set_tests_properties(write_watch_${mode} PROPERTIES TIMEOUT 30)
 endforeach()
+
+foreach(mode execute-fault read-fault)
+    add_test(NAME write_watch_${mode} COMMAND write_watch_tests ${mode})
+    set_tests_properties(write_watch_${mode} PROPERTIES TIMEOUT 30)
+endforeach()

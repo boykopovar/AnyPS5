@@ -3,6 +3,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -15,6 +16,8 @@
 #include <optional>
 
 namespace {
+
+constexpr std::uint32_t PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE = 0x00800000;
 
 int SceResult(int error) {
     return error == 0 ? 0 : SceKernelError(error);
@@ -780,11 +783,6 @@ int APS5_VABI sceKernelGetEmergencyErrorLog(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetExecutableModuleHandle(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelGetExtLibcHandle(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1330,13 +1328,9 @@ int APS5_VABI sceKernelIsModuleLoaded(void) {
 }
 
 int APS5_VABI sceKernelIsNeoMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelIsPs4Process(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::uint32_t attribute = 0;
+    if (!GetAppParamSfoAttribute_nid_no_patch(&attribute)) NotImplemented_nid_no_patch(__func__);
+    return (attribute & PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE) != 0 ? 1 : 0;
 }
 
 int APS5_VABI sceKernelJitGetSharedMemoryInfo(void) {
@@ -1710,9 +1704,8 @@ int APS5_VABI sceKernelSetVmContainer(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelSettimeofday(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelSettimeofday(const KernelTimeval* tv, const KernelTimezone* tz) {
+    return settimeofday_nid_postfix(tv, tz) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 }
 
 int APS5_VABI sceKernelSflashGetWritePrio(void) {

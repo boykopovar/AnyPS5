@@ -2582,6 +2582,80 @@ void ProtectTablePage(std::uintptr_t page, std::uint32_t protection) {
     GuestAllocations::GuestAllocationsInvalidate_nid_postfix(page, 4096u);
 }
 
+void verifyRegionMerge(bool strided = false, bool benchmark = false) {
+    using namespace ShaderRecompiler;
+    constexpr std::size_t SlotBytes = 8192;
+    constexpr std::size_t TableBytes = 4096;
+    const std::size_t stride = strided ? 64u : 32u;
+    constexpr std::size_t MaximumBlocks = 64;
+    constexpr std::size_t Bytes = (MaximumBlocks + 8u) * SlotBytes;
+    auto* heap = AllocateWatchedTable(Bytes);
+    struct Release {
+        void* pointer;
+        ~Release() { GuestArena::GuestArenaRelease_nid_postfix(pointer, Bytes); }
+    } release{heap};
+    std::vector<TableGuest> guests(MaximumBlocks);
+    std::vector<std::array<std::uint32_t, 2>> userData(MaximumBlocks);
+    for (std::size_t block = 0; block < MaximumBlocks; ++block) {
+        auto* table = heap + block * SlotBytes / sizeof(std::uint32_t);
+        for (std::size_t record = 0; record < TableBytes / stride; ++record) {
+            const auto words = TableT(reinterpret_cast<const void*>(0x100000000ull + record * 256u), TableFormat8888UNorm, TableType2D, 1u);
+            std::copy(words.begin(), words.end(), table + record * stride / sizeof(std::uint32_t));
+        }
+        FillTableSrt(guests[block], table, stride, TableBytes / stride);
+        userData[block] = TableUserData(guests[block]);
+    }
+    const bool watched = AgcDriver::GuestMemory::CollectWrites(reinterpret_cast<std::uintptr_t>(heap), Bytes) != 0u;
+    for (const std::size_t count : {0u, 1u, 2u, 3u, 7u, 8u, 16u, 64u}) {
+        std::vector<MemoryRegion> initial;
+        for (std::size_t block = 0; block <= count; ++block) {
+            for (std::size_t offset = TableBytes; offset < SlotBytes; offset += 64u) {
+                auto* word = heap + (block * SlotBytes + offset) / sizeof(std::uint32_t);
+                *word = static_cast<std::uint32_t>(block * SlotBytes + offset);
+                initial.push_back({reinterpret_cast<std::uintptr_t>(word), std::as_bytes(std::span(word, 1))});
+            }
+        }
+        AgcDriver::ShaderMemory memory(initial);
+        for (std::size_t position = 0; position < count; ++position) {
+            const auto block = (position * (count > 1u ? count - 1u : 1u)) % count;
+            const auto request = TableRequest(TableWholeCode, userData[block]);
+            {
+                AgcDriver::ShaderMemory warm({});
+                static_cast<void>(warm.Capture(request));
+            }
+            static_cast<void>(memory.Capture(request));
+        }
+        if (watched) require(memory.SuppliedBlocks().size() == count, "region merge: the fixture did not retain every shared table");
+        const auto verify = [&](const std::vector<MemoryRegion>& regions, bool recent) {
+            for (std::size_t index = 0; index < regions.size(); ++index) {
+                const auto& region = regions[index];
+                require(index == 0u || regions[index - 1u].guestAddress + regions[index - 1u].bytes.size() <= region.guestAddress, "region merge: regions were reordered or duplicated");
+                require(std::memcmp(region.bytes.data(), reinterpret_cast<const void*>(region.guestAddress), region.bytes.size()) == 0, "region merge: collected words changed");
+            }
+            for (std::size_t block = 0; block < count; ++block) {
+                for (std::size_t record = 0; record < TableBytes / stride; ++record) require(TableCovered(regions, heap + (block * SlotBytes + record * stride) / sizeof(std::uint32_t), 32u), "region merge: a shared table record was omitted");
+            }
+            for (const auto& entry : initial) require(TableCovered(regions, reinterpret_cast<const std::uint32_t*>(entry.guestAddress), entry.bytes.size()) != recent, "region merge: initial-region visibility changed");
+        };
+        const auto regions = memory.Regions();
+        verify(regions, false);
+        verify(memory.TakeRecentRegions(), true);
+        require(memory.TakeRecentRegions().empty(), "region merge: recent regions were not reset");
+        verify(memory.Regions(), false);
+        if (!strided && benchmark) {
+            constexpr std::size_t Iterations = 1000;
+            std::size_t total = 0;
+            const auto started = std::chrono::steady_clock::now();
+            for (std::size_t iteration = 0; iteration < Iterations; ++iteration) total += memory.Regions().size();
+            const auto elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count();
+            require(total == Iterations * regions.size(), "region merge: repeated collection changed coverage");
+            std::printf("region-merge blocks=%zu regions=%zu iterations=%zu us_per_call=%.3f\n", count, regions.size(), Iterations, elapsed / Iterations);
+        }
+    }
+    std::puts("region merge: mixed initial, captured and shared regions retain order, coverage and recent-read semantics");
+}
+
+
 void verifyTableSnapshotReuse() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -5767,6 +5841,85 @@ void verifySingleLaneVertexWave() {
     require(withoutKey != withKey, "single-lane vertex wave: vertex subgroup support did not change the cache key");
 }
 
+void verifySingleLaneElectedAtomicMax() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityGroupNonUniformShuffleRelative, spv::CapabilityClipDistance, spv::CapabilityInt64};
+    static const std::vector<std::uint32_t> userData{0x10000u, 0u, 0x100u, 0x31016facu, 0x20000u, 0x100000u, 0x1000u, 0x31016facu};
+    const auto compiled = [](std::span<const std::uint32_t> code, bool vertexSubgroups) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Vertex, 0x5c000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.userDataBaseRegister = 8;
+        request.context.userData = userData;
+        request.context.vertex = ShaderVertexStageInfo{};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.vertexSubgroups = vertexSubgroups;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv.Copy();
+    };
+    const auto usesSubgroups = [](std::span<const std::uint32_t> spirv) {
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            const auto op = spirv[cursor] & 0xffffu;
+            if (op >= spv::OpGroupNonUniformElect && op <= spv::OpGroupNonUniformQuadSwap) return true;
+        }
+        return false;
+    };
+    static constexpr std::array<std::uint32_t, 41> elected{
+        0xe00c2000u, 0x80030005u, 0xbf8c3f70u, 0x7e0c0d05u, 0xd5088006u, 0x02020cffu, 0x3d000000u, 0xbe94047eu, 0xbe9625c1u, 0x7e1402ffu,
+        0xff800000u, 0xd501000au, 0x00520d0au, 0x201414fau, 0xff01110au, 0x201414fau, 0xff01120au, 0x201414fau, 0xff01140au, 0x201414fau,
+        0xff01180au, 0xd7780009u, 0x0305830au, 0x2014130au, 0xbefe0416u, 0xd7600018u, 0x02013f0au, 0xd7600019u, 0x02017f0au, 0xd5100008u,
+        0x02003218u, 0x7c240d08u, 0xbf880002u, 0xe0e00000u, 0x80020800u, 0xbefe0414u, 0xf80008cfu, 0x03020100u, 0xf800020fu, 0x00000000u,
+        0xbf810000u,
+    };
+    const auto variant = [](std::initializer_list<std::pair<std::size_t, std::uint32_t>> words) {
+        std::vector<std::uint32_t> code(elected.begin(), elected.end());
+        for (const auto& [index, word] : words) code[index] = word;
+        return code;
+    };
+    auto maskedAddress = variant({{32u, 0xbf880003u}, {33u, 0xe0e01000u}, {34u, 0x80020809u}});
+    maskedAddress.insert(maskedAddress.begin() + 33, 0x7e120280u);
+    auto unbranched = variant({});
+    unbranched.erase(unbranched.begin() + 32);
+    auto electedWrite = variant({{32u, 0xbf880003u}, {39u, 0x00000007u}});
+    electedWrite.insert(electedWrite.begin() + 33, 0x7e0e02f2u);
+    auto laneAddress = maskedAddress;
+    laneAddress[33] = 0x7e120305u;
+    auto negativeZero = variant({{4u, 0x7e0c02ffu}, {5u, 0x80000000u}});
+    negativeZero.erase(negativeZero.begin() + 6);
+    const std::array<std::pair<const char*, std::vector<std::uint32_t>>, 4> accepted{{
+        {"buffer_atomic_umax", variant({})},
+        {"buffer_atomic_smax", variant({{33u, 0xe0dc0000u}})},
+        {"an address the permutation register keeps only in lanes without the atomic", maskedAddress},
+        {"an atomic without s_cbranch_execz", unbranched},
+    }};
+    for (const auto& [name, code] : accepted) {
+        const auto spirv = compiled(code, false);
+        require(!spirv.empty() && !usesSubgroups(spirv), (std::string("single-lane elected atomic max: ") + name + " did not build without subgroup operations").c_str());
+    }
+    require(usesSubgroups(compiled(elected, true)), "single-lane elected atomic max: the reduction left subgroup operations with vertex subgroups");
+    const std::array<std::pair<const char*, std::vector<std::uint32_t>>, 11> rejected{{
+        {"keys without a clamp", variant({{4u, 0xd5080006u}})},
+        {"an atomic whose result is read", variant({{33u, 0xe0e04000u}, {39u, 0x08080808u}})},
+        {"a maximum exported beside the atomic", variant({{39u, 0x00000008u}})},
+        {"buffer_atomic_add", variant({{33u, 0xe0c80000u}})},
+        {"a comparison against another value", variant({{31u, 0x7c240308u}})},
+        {"an atomic addressed by the permutation", variant({{33u, 0xe0e01000u}, {34u, 0x80020809u}})},
+        {"a register written for the elected lanes and exported", electedWrite},
+        {"an atomic indexed by the vertex", variant({{33u, 0xe0e02000u}, {34u, 0x80020805u}})},
+        {"an address the elected lanes take from the vertex", laneAddress},
+        {"a key of -0", negativeZero},
+        {"a maximum written under EXEC -1", variant({{24u, 0xd7600018u}, {25u, 0x02013f0au}, {26u, 0xd7600019u}, {27u, 0x02017f0au}, {28u, 0xd5100008u}, {29u, 0x02003218u}, {30u, 0xbefe0416u}})},
+    }};
+    for (const auto& [name, code] : rejected) {
+        expectFailure([&] { static_cast<void>(compiled(code, false)); }, "v_permlanex16_b32 from lanes 16-31 is outside the 1-lane host subgroup", (std::string("single-lane elected atomic max: ") + name + " was accepted").c_str());
+    }
+}
+
 void verifyMeshConfiguration() {
     using namespace ShaderRecompiler;
     ShaderMeshInputInfo list;
@@ -8872,6 +9025,33 @@ void verifyGuardedNullPointers() {
     }
     root[4] = 1u;
 
+    auto belowCode = branchCode;
+    belowCode[12] = 0xfa1ffffcu;
+    belowCode.push_back(0xbf810000u);
+    NestedRequest below(belowCode, root.data());
+    point(payloadAddress + 4u);
+    AgcDriver::ShaderMemory belowMemory({});
+    const auto belowValid = belowMemory.Capture(below.request);
+    require(belowValid->snapshot.srtPoison.empty() && belowValid->snapshot.flattenedSrt.at(belowValid->plan->guardedSrtSlots.at(0)) == payload, "guarded pointer: a read below a mapped nested pointer does not hold its word");
+    for (const auto condition : {1u, 0u}) {
+        point(0u);
+        root[4] = condition;
+        below.request.context.memory = {};
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(below.request);
+        const auto& poison = capture->snapshot.srtPoison;
+        require(poison.size() == condition, "guarded pointer: a read below a null nested pointer was poisoned on a path that skips it, or not poisoned on one that takes it");
+        if (condition != 0u) {
+            require(poison[0].pc == 0x2cu && poison[0].address == 0xfffffffffffcu && slotPc(*capture->plan, poison[0].slot) == 0x2cu, "guarded pointer: a read below a null nested pointer was not poisoned at its pc and wrapped address");
+            require(GuardRecords(*capture), "guarded pointer: the poison record of a read below a null pointer is not where the guard reads it");
+        }
+        const auto regions = memory.Regions();
+        below.request.context.memory = regions;
+        const auto result = Recompile(below.request, *capture);
+        require(result->poisonedSrtReads == condition && faultBinding(*result), "guarded pointer: a read below a null pointer does not report through the fault buffer");
+    }
+    root[4] = 1u;
+
     NestedRequest chain(chainCode, root.data());
     point(unmapped);
     AgcDriver::ShaderMemory chainMemory({});
@@ -9388,6 +9568,11 @@ int main(int argc, char** argv) {
             std::cout << "The result memo budget counts and trims the masked table's entries\n";
             return 0;
         }
+        if (argc == 2 && (std::string_view(argv[1]) == "--region-merge" || std::string_view(argv[1]) == "--region-merge-bench")) {
+            verifyRegionMerge(false, std::string_view(argv[1]) == "--region-merge-bench");
+            verifyRegionMerge(true);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-threads") {
             verifyResultMemoBudgetThreads();
             std::cout << "The result memo ends within its byte budget when results are inserted during a trim\n";
@@ -9510,6 +9695,7 @@ int main(int argc, char** argv) {
         verifyFusedExactArithmetic();
         verifyNarrowVertexWave();
         verifySingleLaneVertexWave();
+        verifySingleLaneElectedAtomicMax();
         verifyMeshConfiguration();
         verifyPixelInputs();
         verifyCanonicalVersion20And21Requests();

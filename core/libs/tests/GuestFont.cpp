@@ -500,6 +500,41 @@ static void CheckPointAndDpiScale(FontHandle font, FontLibrary library, const Fo
     Require(sceFontSetScalePixel(font, 100.0f, 100.0f) == SCE_FONT_OK);
 }
 
+static void CheckOutlineBuffer() {
+    const FontMemoryInterface iface{Allocate, Release, nullptr, nullptr, nullptr, nullptr};
+    FontMemory memory{};
+    Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, &allocations, nullptr, nullptr) == SCE_FONT_OK);
+    FontRenderer renderer = nullptr;
+    Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), &renderer) == SCE_FONT_OK && renderer != nullptr);
+    Font::RendererNative foreign{};
+    std::uint32_t size = 7;
+    Require(sceFontRendererGetOutlineBufferSize(renderer, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontRendererGetOutlineBufferSize(nullptr, &size) == SCE_FONT_ERROR_INVALID_RENDERER && size == 0);
+    size = 7;
+    Require(sceFontRendererGetOutlineBufferSize(&foreign, &size) == SCE_FONT_ERROR_INVALID_RENDERER && size == 0);
+    Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x4000);
+    Require(sceFontRendererResetOutlineBuffer(nullptr) == SCE_FONT_ERROR_INVALID_RENDERER);
+    Require(sceFontRendererResetOutlineBuffer(&foreign) == SCE_FONT_ERROR_INVALID_RENDERER);
+    Require(sceFontRendererResetOutlineBuffer(renderer) == SCE_FONT_OK);
+    Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x4000);
+    Require(sceFontRendererSetOutlineBufferPolicy(nullptr, 0, 0x8000, 0) == SCE_FONT_ERROR_INVALID_RENDERER);
+    Require(sceFontRendererSetOutlineBufferPolicy(&foreign, 0, 0x8000, 0) == SCE_FONT_ERROR_INVALID_RENDERER);
+    Require(sceFontRendererSetOutlineBufferPolicy(renderer, 0, 0x8000, 0x4000) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x4000);
+    Require(sceFontRendererSetOutlineBufferPolicy(renderer, 0, 0x8000, 0) == SCE_FONT_OK);
+    Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x8000);
+    Require(sceFontRendererSetOutlineBufferPolicy(renderer, 0, 0x1000, 0) == SCE_FONT_OK);
+    Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x8000);
+    Require(sceFontRendererSetOutlineBufferPolicy(renderer, 0, 0, 0x2000) == SCE_FONT_OK);
+    Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x2000);
+    Require(sceFontRendererSetOutlineBufferPolicy(renderer, 0, 0x1000, 0x1000) == SCE_FONT_OK);
+    Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x1000);
+    Require(sceFontRendererResetOutlineBuffer(renderer) == SCE_FONT_OK);
+    Require(sceFontRendererGetOutlineBufferSize(renderer, &size) == SCE_FONT_OK && size == 0x1000);
+    Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK && renderer == nullptr);
+    Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK);
+}
+
 int main() {
     constexpr std::uint32_t SystemFontSet = 0x18070043u;
     const std::filesystem::path fontRoot = std::filesystem::temp_directory_path() / ("anyps5_guest_font-" + std::to_string(std::random_device{}()));
@@ -911,6 +946,7 @@ int main() {
 
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_OK && renderer == nullptr);
     Require(sceFontDestroyRenderer(&renderer) == SCE_FONT_ERROR_INVALID_RENDERER);
+    CheckOutlineBuffer();
 
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK && library == nullptr);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_ERROR_INVALID_LIBRARY);

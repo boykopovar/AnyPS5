@@ -372,6 +372,21 @@ void runtimeDirectories() {
         require(output.Modules.size() == 1, "Module was not converted");
         require(exports(output.Modules.front().Bytes, Relinker::GuestInitializeExport) == (std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module the executable needs");
     }
+    for (const auto* directory : {"sce_module", "sce_modules", "prx", "Media/Modules"}) {
+        auto source = input();
+        const auto parent = source.ModuleRoot / directory;
+        const auto plugins = source.ModuleRoot / "Media/Plugins";
+        source.Modules.push_back({plugins / "plugin.prx", fixture("needed.prx")});
+        source.Modules.push_back({parent / "needed.prx", fixture()});
+        source.RuntimeDirectories.push_back(plugins);
+        source.RuntimeDirectories.push_back(parent);
+        const auto output = converter.Convert(std::move(source), options);
+        require(output.Modules.size() == 2, "Modules were not converted");
+        for (const auto& module : output.Modules) {
+            const bool plugin = module.SourcePath.filename() == "plugin.prx";
+            require(exports(module.Bytes, Relinker::GuestInitializeExport) == (plugin || std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module another runtime module needs");
+        }
+    }
 }
 
 void relocationValidation() {

@@ -1270,6 +1270,65 @@ void EmitPixelEntryPoint(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpFunctionEnd);
 }
 
+namespace {
+
+std::uint32_t MeshWindowWord(SpirvEmitterState& state, std::uint32_t index) {
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.meshWindowBufferVariable, ConstantU32(state, 0u), index);
+    return pointer;
+}
+
+void EmitMeshWindowClaim(SpirvEmitterState& state, std::uint32_t firstInvocation) {
+    const auto uniform = spv::MemorySemanticsUniformMemoryMask;
+    EmitIfCondition(state, firstInvocation, [&]() {
+        const auto header = state.module.AllocateId();
+        const auto body = state.module.AllocateId();
+        const auto next = state.module.AllocateId();
+        const auto merge = state.module.AllocateId();
+        state.module.AddFunction(spv::OpBranch, header);
+        EmitLabel(state, header);
+        state.module.AddFunction(spv::OpLoopMerge, merge, next, spv::LoopControlMaskNone);
+        state.module.AddFunction(spv::OpBranch, body);
+        EmitLabel(state, body);
+        const auto ticket = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAtomicIAdd, TypeU32(state), ticket, MeshWindowWord(state, ConstantU32(state, 0u)), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 1u));
+        const auto slot = EmitBinaryU32(state, spv::OpBitwiseAnd, ticket, ConstantU32(state, MeshWindowSlots - 1u));
+        const auto previous = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, MeshWindowWord(state, EmitAddU32(state, slot, ConstantU32(state, 4u))), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsAcquireMask | uniform), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, 1u), ConstantU32(state, 0u));
+        state.module.AddFunction(spv::OpStore, state.meshWindowSlotVariable, slot);
+        const auto claimed = Binary(state, spv::OpIEqual, TypeBool(state), previous, ConstantU32(state, 0u));
+        state.module.AddFunction(spv::OpBranchConditional, claimed, merge, next);
+        EmitLabel(state, next);
+        state.module.AddFunction(spv::OpBranch, header);
+        EmitLabel(state, merge);
+    });
+    state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask | uniform));
+    const auto slot = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), slot, state.meshWindowSlotVariable);
+    const auto invocation = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), invocation, InputVariableForKind(state, StageInputKind::LocalInvocationIndex));
+    const auto base = EmitAddU32(state, EmitAddU32(state, EmitBinaryU32(state, spv::OpIMul, slot, ConstantU32(state, MeshWindowSlotDwords)), ConstantU32(state, MeshWindowHeaderDwords)), invocation);
+    state.module.AddFunction(spv::OpStore, state.meshWindowBaseVariable, base);
+    const auto invocations = MeshWindowInvocations(state);
+    const auto window = state.program.Metadata().vectorWindowSize;
+    const auto indexed = state.vectorWindowIndexed != 0u ? state.vectorWindowIndexed : window;
+    for (std::uint32_t entry = 0; entry < state.laneCount * indexed; entry++) {
+        if (entry / state.laneCount < state.meshWindowEntryLive.size() && !state.meshWindowEntryLive[entry / state.laneCount]) continue;
+        state.module.AddFunction(spv::OpStore, MeshWindowWord(state, EmitAddU32(state, base, ConstantU32(state, entry * invocations))), ConstantU32(state, 0u));
+    }
+}
+
+void EmitMeshWindowRelease(SpirvEmitterState& state, std::uint32_t firstInvocation) {
+    state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask));
+    EmitIfCondition(state, firstInvocation, [&]() {
+        const auto slot = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), slot, state.meshWindowSlotVariable);
+        state.module.AddFunction(spv::OpAtomicStore, MeshWindowWord(state, EmitAddU32(state, slot, ConstantU32(state, 4u))), ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask), ConstantU32(state, 0u));
+    });
+}
+
+}
+
 void EmitMeshEntryPoint(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpFunction, TypeVoid(state), state.mainFunc, spv::FunctionControlMaskNone, TypeFunction(state));
     EmitLabel(state, state.module.AllocateId());
@@ -1293,8 +1352,10 @@ void EmitMeshEntryPoint(SpirvEmitterState& state) {
             state.module.AddFunction(spv::OpStore, MeshElement(state, state.meshAllocation, spv::StorageClassWorkgroup, TypeU32(state), ConstantU32(state, field)), ConstantU32(state, 0u));
         }
     });
+    if (state.meshWindowBuffer) EmitMeshWindowClaim(state, firstInvocation);
     state.module.AddFunction(spv::OpFunctionCall, TypeVoid(state), state.module.AllocateId(), state.meshGuestFunc);
     state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask));
+    if (state.meshWindowBuffer) EmitMeshWindowRelease(state, firstInvocation);
     const auto& mesh = state.inputInfo.vertex->mesh;
     const auto clamp = [&](std::uint32_t value, std::uint32_t limit) {
         const auto result = state.module.AllocateId();
@@ -1734,7 +1795,7 @@ void EmitProgram(SpirvEmitterState& state) {
         const auto array = state.module.Type(spv::OpTypeArray, TypeU32(state), ConstantU32(state, indexed));
         const auto zero = state.module.Constant(spv::OpConstantNull, array);
         for (std::uint32_t half = 0; half < state.laneCount; half++) {
-            state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, array), state.vectorWindowVariable.at(half), spv::StorageClassFunction, zero);
+            if (!state.meshWindowBuffer) state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, array), state.vectorWindowVariable.at(half), spv::StorageClassFunction, zero);
             for (const auto slot : state.vectorWindowSlots.at(half)) {
                 state.module.AddFunction(spv::OpVariable, TypePointer(state, spv::StorageClassFunction, TypeU32(state)), slot, spv::StorageClassFunction, ConstantU32(state, 0u));
             }
