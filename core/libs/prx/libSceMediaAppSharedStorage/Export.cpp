@@ -1,9 +1,8 @@
-#include "prx/libSceMediaAppSharedStorage/include/LegacyExports.hpp"
-#include "prx/libc/include/general/ExportMacros.hpp"
-#include "prx/libSceMediaAppSharedStorage/include/InventoryExports.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
+#include "prx/libSceMediaAppSharedStorage/include/InventoryExports.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -93,44 +92,5 @@ int APS5_VABI libSceMediaAppSharedStorageUnknown_zgDNUrp0A_plus_U_nid_no_patch()
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("zgDNUrp0A+U", libSceMediaAppSharedStorageUnknown_zgDNUrp0A_plus_U_nid_no_patch);
-
-}
-
-extern "C" {
-
-int APS5_VABI mediaAppStorageLegacyUnknown_03_minus_bWzrUFd4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("03-bWzrUFd4", mediaAppStorageLegacyUnknown_03_minus_bWzrUFd4_nid_no_patch);
-
-int APS5_VABI mediaAppStorageLegacyUnknown_4lBcfmQhX90_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("4lBcfmQhX90", mediaAppStorageLegacyUnknown_4lBcfmQhX90_nid_no_patch);
-
-int APS5_VABI mediaAppStorageLegacyUnknown_Ibq2gPzHlbk_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("Ibq2gPzHlbk", mediaAppStorageLegacyUnknown_Ibq2gPzHlbk_nid_no_patch);
-
-int APS5_VABI mediaAppStorageLegacyUnknown_Lb0zH9q2Xso_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("Lb0zH9q2Xso", mediaAppStorageLegacyUnknown_Lb0zH9q2Xso_nid_no_patch);
-
-int APS5_VABI mediaAppStorageLegacyUnknown_Wt0rMjv_plus_RHE_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("Wt0rMjv+RHE", mediaAppStorageLegacyUnknown_Wt0rMjv_plus_RHE_nid_no_patch);
-
-int APS5_VABI mediaAppStorageLegacyUnknown_jaU3fPN9Ao0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("jaU3fPN9Ao0", mediaAppStorageLegacyUnknown_jaU3fPN9Ao0_nid_no_patch);
-
-int APS5_VABI mediaAppStorageLegacyUnknown_mUqJQj6fl0A_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("mUqJQj6fl0A", mediaAppStorageLegacyUnknown_mUqJQj6fl0A_nid_no_patch);
 
 }
