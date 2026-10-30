@@ -2050,9 +2050,10 @@ bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& 
     if (layout.descriptorSet != handle.artifact->layout.descriptorSet || layout.firstBinding != handle.artifact->layout.firstBinding) return false;
     if (layout.pushConstantOffsetBytes % 4u != 0u || layout.pushConstantSizeBytes % 4u != 0u || layout.pushConstantOffsetBytes > NativePushConstantSize || layout.pushConstantSizeBytes > NativePushConstantSize - layout.pushConstantOffsetBytes) return false;
     const auto words = prepared.ShaderDataDwords();
-    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words <= layout.pushConstantSizeBytes / 4u;
-    if (prepared.UsesPushData() != usesPush) return false;
     const bool stencilReplay = !handle.artifact->artifact.stencilReferences.empty();
+    const auto driverDwords = handle.artifact->artifact.depthBoundsDword != PushData::NoStart ? (stencilReplay ? 3u : 2u) : 0u;
+    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words + driverDwords <= layout.pushConstantSizeBytes / 4u;
+    if (prepared.UsesPushData() != usesPush) return false;
     if (stencilReplay && (prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u))) return false;
     if (handle.artifact->artifact.depthBoundsDword != PushData::NoStart && (prepared.depthBoundsDword + 2u > layout.pushConstantSizeBytes / 4u || prepared.depthBoundsDword != (usesPush ? words : 0u) + (stencilReplay ? 1u : 0u))) return false;
     if (!std::ranges::equal(key, handle.staticKey) || handle.source->code.size() != request.shader.code.size()) return false;

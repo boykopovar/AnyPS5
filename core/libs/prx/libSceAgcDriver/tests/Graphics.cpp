@@ -9651,6 +9651,26 @@ void stencilRefExportTests() {
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(pushedRequest)); }, "unused push constant dword");
     pushedRequest.layout.pushConstantSizeBytes = 8u;
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(pushedRequest)); }, "crosses a stage slot");
+    {
+        const AgcDriver::Graphics::DepthTarget boundedDepth{0x10000, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 0.0f, 0};
+        for (const auto [shaderControl, code, stencil] : {std::tuple{0x53u, std::span<const std::uint32_t>(pushedDepthStencil), true}, std::tuple{0x51u, std::span<const std::uint32_t>(pushedDepthStencil), false}}) {
+            auto boundedRequest = stencilRefExportRequest(shaderControl, plain, code);
+            boundedRequest.context.userData = pushedDepth;
+            boundedRequest.context.pixel->depthBoundsDiscard = {true, AgcDriver::Graphics::DepthBoundsSourceWords(boundedDepth)};
+            const auto driverDwords = stencil ? 3u : 2u;
+            for (const auto [dwords, shaderDataPushed] : {std::pair{driverDwords + 1u, true}, std::pair{driverDwords, false}}) {
+                boundedRequest.layout = {0u, 0u, 0u, dwords * 4u};
+                const auto bounded = ShaderRecompiler::Recompile(boundedRequest);
+                const auto first = shaderDataPushed ? 1u : 0u;
+                Require(bounded.depthBoundsDword == first + (stencil ? 1u : 0u) && bounded.stencilReferenceDword == (stencil ? first : 0xffffffffu) && bounded.pushConstants.size() == (first + driverDwords) * sizeof(std::uint32_t), "the depth bounds dwords were not placed after the shader data that fits beside them, or at the stage start without it");
+                Require(shaderDataPushed || std::ranges::any_of(bounded.bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; }), "shader data that leaves no room for the depth bounds dwords did not move to its storage buffer");
+                const auto handle = ShaderRecompiler::PrepareShader(boundedRequest);
+                Require(ShaderRecompiler::MatchesPreparedShader(boundedRequest, *handle), "a depth bounds artifact did not match the push range it was prepared for");
+            }
+            boundedRequest.layout = {0u, 0u, 0u, (driverDwords - 1u) * 4u};
+            expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(boundedRequest)); }, "requires two unused push constant dwords");
+        }
+    }
     const std::array<std::uint32_t, 4> noStencilExport{0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u};
     auto noStencilRequest = stencilRefExportRequest(0x52u, plain, noStencilExport);
     noStencilRequest.layout.pushConstantSizeBytes = 0u;
