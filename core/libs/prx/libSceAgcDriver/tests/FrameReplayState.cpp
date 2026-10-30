@@ -1,6 +1,7 @@
 #define main frameReplayToolMain
 #include "../tools/FrameReplay.cpp"
 #undef main
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <barrier>
@@ -200,6 +201,38 @@ private:
     const std::uint32_t* label;
 };
 
+void testTraceWindow(const std::filesystem::path& directory) {
+    const char* traceDirectory = std::getenv("APS5_TRACE_DIR");
+    check(traceDirectory != nullptr && AgcDriver::PerformanceTrace::Configured(), "the trace window test runs without APS5_TRACE_DIR and APS5_TRACE_FRAMES");
+    const auto summaryPath = std::filesystem::path(traceDirectory) / "aps5-summary.jsonl";
+    std::filesystem::remove(summaryPath);
+    FrameCaptureWriter writer(directory);
+    writer.Finish("{}");
+    const FrameCaptureReader reader(directory);
+    Options options;
+    options.pace = false;
+    options.release = false;
+    Replay replay{options, reader};
+    auto output = std::make_shared<ReplayOutput>(replay.frames);
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    std::array<std::uint32_t, AgcDriver::FlipPacketWords> words{AgcDriver::FlipPacketHeader, 7, 0xffffffffu, 1, 0, 0};
+    FrameCall flip;
+    flip.kind = FrameCallKind::Submit;
+    flip.thread = 1;
+    flip.address = address(words.data());
+    flip.size = words.size();
+    const std::array calls{flip, flip, flip};
+    replay.runWindow(calls);
+    AgcDriverWaitIdle_nid_postfix();
+    check(replay.frames.Times().size() == calls.size(), "a replayed flip was lost");
+    AgcDriver::PerformanceTrace::StopOutput();
+    std::ifstream summary(summaryPath);
+    std::string line;
+    check(static_cast<bool>(std::getline(summary, line)), "replayed frames did not open and close the trace window");
+    check(line.find("\"presents\":2,") != std::string::npos, "the trace window did not count each replayed flip as a present");
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+}
+
 void testBlockingSubmission(const std::filesystem::path& directory) {
     auto* bytes = allocate(FrameCaptureWriter::BlockBytes);
     auto* label = reinterpret_cast<std::uint32_t*>(bytes);
@@ -301,6 +334,7 @@ int main(int argc, char** argv) {
         else if (mode == "shared_page") testSharedPage(directory);
         else if (mode == "host_neighbors") testHostNeighbors(directory);
         else if (mode == "unwatched") testUnwatched();
+        else if (mode == "trace_window") testTraceWindow(directory);
         else if (mode == "tokens") testEopTokens();
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
