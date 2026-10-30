@@ -70,3 +70,5 @@
 | `png_write_info` | `Bdn6SlO1+NQ` |
 
 - [Five additional callable NIDs](../../../core/libs/prx/libpng16/Export.cpp) occur in the older `libpng16` and later `libSceVshPng` images. Module and library identities differ; matching NIDs do not establish forwarding or equivalent behavior. Image labels are not authenticated. Names, signatures and behavior are unverified; these declarations throw.
+
+- [Older callable NIDs](../../../core/libs/prx/libpng16/Export.cpp): 179 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.
