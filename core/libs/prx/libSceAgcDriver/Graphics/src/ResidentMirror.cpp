@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ResidentMirror.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/LiveAllocations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -144,6 +145,7 @@ private:
         info.memoryTypeIndex = type;
         if (context.bufferPool != nullptr) return context.bufferPool->AllocateMemory(info, operation);
         VkDeviceMemory memory = VK_NULL_HANDLE;
+        const AllocationLabel allocationLabel(operation);
         if (const auto result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &info, nullptr, &memory); result != VK_SUCCESS) fail(operation, result);
         return memory;
     }

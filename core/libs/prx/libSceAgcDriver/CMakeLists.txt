@@ -336,6 +336,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RuntimeSwitches.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeferredDestruction.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/LiveAllocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PlaceholderImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ParallelCompare.cpp
@@ -1426,6 +1427,20 @@ if(BUILD_TESTING)
     add_test(NAME agc_deferred_destruction COMMAND agc_deferred_destruction_tests)
     if(WIN32)
         set_tests_properties(agc_deferred_destruction PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_live_allocations_tests EXCLUDE_FROM_ALL tests/LiveAllocations.cpp)
+target_include_directories(agc_live_allocations_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+target_link_libraries(agc_live_allocations_tests PRIVATE libSceAgcDriver libc)
+set_target_properties(agc_live_allocations_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_live_allocations_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_live_allocations_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_live_allocations COMMAND agc_live_allocations_tests)
+    if(WIN32)
+        set_tests_properties(agc_live_allocations PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
