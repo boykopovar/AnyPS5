@@ -10,27 +10,11 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceComposite/Export.cpp) - 45 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceComposite/Export.cpp) - 29 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
 
 | Name | NID |
 | --- | --- |
-| `sceCompositorGetMemoryPoolAddress` | `Kp5aInbKpf4` |
-| `sceCompositorGetMemoryPoolSize` | `Vvd8eoo3OiM` |
-| `sceCompositorGetNullCanvasHandle` | `+7a8xDlI+-s` |
-| `sceCompositorGetSecondaryMemoryAddress` | `ReHQrFnGVxA` |
-| `sceCompositorGetSecondaryMemorySize` | `5x5tC7zLwq4` |
-| `sceCompositorGetTFRing` | `7pmp5rMZAHQ` |
-| `sceCompositorGetVirtualCanvasHandle` | `Sd1bTXoZXQM` |
-| `sceCompositorIsVirtualCanvasHandle` | `Bt2J+lHKAbQ` |
-| `sceCompositorMemoryPoolCommit` | `-qZdNb3JOkg` |
-| `sceCompositorMemoryPoolCreate` | `mQalCzqB93M` |
-| `sceCompositorSecondaryMemoryCreate` | `TAlqzssvpes` |
 | `sceCompositorSecondaryMemoryRelease` | `gEME-XiMfm0` |
-| `sceCompositorSetCanvasIdToCanvasHandle` | `Y5h8Z7fhs-A` |
-| `sceCompositorSetMetaIdToCanvasHandle` | `yDo24E2v2+Q` |
-| `sceCompositorSetTFRing` | `kHYbbhOlSGM` |
-| `sceCompositorSetVirtualCanvasRenderTargetCommand` | `MtUd+xuw74A` |
-| `sceCompositorWaitEndOfRenderingIfGpuWorking` | `IUxijmT0S7g` |
 | `Unknown` | `+A5zYfomrKo` |
 | `Unknown` | `+DMKcAbpcrQ` |
 | `Unknown` | `0hVj7ycuNjY` |

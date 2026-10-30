@@ -4,23 +4,7 @@
 
 extern "C" {
 
-int APS5_VABI sceCompositorGetMemoryPoolAddress();
-int APS5_VABI sceCompositorGetMemoryPoolSize();
-int APS5_VABI sceCompositorGetNullCanvasHandle();
-int APS5_VABI sceCompositorGetSecondaryMemoryAddress();
-int APS5_VABI sceCompositorGetSecondaryMemorySize();
-int APS5_VABI sceCompositorGetTFRing();
-int APS5_VABI sceCompositorGetVirtualCanvasHandle();
-int APS5_VABI sceCompositorIsVirtualCanvasHandle();
-int APS5_VABI sceCompositorMemoryPoolCommit();
-int APS5_VABI sceCompositorMemoryPoolCreate();
-int APS5_VABI sceCompositorSecondaryMemoryCreate();
 int APS5_VABI sceCompositorSecondaryMemoryRelease();
-int APS5_VABI sceCompositorSetCanvasIdToCanvasHandle();
-int APS5_VABI sceCompositorSetMetaIdToCanvasHandle();
-int APS5_VABI sceCompositorSetTFRing();
-int APS5_VABI sceCompositorSetVirtualCanvasRenderTargetCommand();
-int APS5_VABI sceCompositorWaitEndOfRenderingIfGpuWorking();
 int APS5_VABI libSceCompositeUnknown__plus_A5zYfomrKo_nid_no_patch();
 int APS5_VABI libSceCompositeUnknown__plus_DMKcAbpcrQ_nid_no_patch();
 int APS5_VABI libSceCompositeUnknown_0hVj7ycuNjY_nid_no_patch();
