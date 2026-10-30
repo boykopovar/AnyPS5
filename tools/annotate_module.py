@@ -25,6 +25,7 @@ DT_JMPREL = 23
 DT_PLTRELSZ = 2
 DT_PLTREL = 20
 DT_STRSZ = 10
+DT_SYMENT = 11
 DT_RELAENT = 9
 DT_REL = 17
 DT_RELA_KIND = 7
@@ -57,6 +58,8 @@ class Module:
         if self.strtab + self.strsz > len(self.data):
             raise ModuleError("the string table of DT_STRSZ %#x extends past the end of the file" % self.strsz)
         self.address(self.tags[DT_STRTAB], self.strsz)
+        if self.require_tag(DT_SYMENT, "DT_SYMENT") != SYMBOL_SIZE:
+            raise ModuleError("DT_SYMENT is not %d" % SYMBOL_SIZE)
         self.symbol_count = self.count_symbols()
         self.address(self.tags[DT_SYMTAB], self.symbol_count * SYMBOL_SIZE)
         self.check_relocation_tags()

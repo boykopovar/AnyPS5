@@ -181,6 +181,27 @@ class AuditDumpTests(unittest.TestCase):
         audit.assert_not_called()
         self.assertTrue(stale.exists())
 
+    def test_output_directory_creation_failure_stops_before_conversion(self):
+        work = self.root / "work"
+        original_mkdir = Path.mkdir
+
+        def mkdir(path, *args, **kwargs):
+            if path == work / "output":
+                raise PermissionError("permission denied")
+            return original_mkdir(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "mkdir", mkdir), mock.patch.object(audit_dump, "prepare") as prepare, \
+                mock.patch.object(audit_dump, "convert") as convert, mock.patch.object(audit_dump.import_audit, "main") as audit:
+            code, errors = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs", "--work", work)
+        self.assertEqual(code, 2)
+        self.assertIn("cannot create", errors)
+        self.assertIn(str(work / "output"), errors)
+        self.assertIn("permission denied", errors)
+        prepare.assert_not_called()
+        convert.assert_not_called()
+        audit.assert_not_called()
+        self.assertEqual((self.dump / "eboot.bin").read_bytes(), SELF)
+
     @unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0), "needs POSIX permissions and a non-root user")
     def test_a_non_writable_stale_directory_stops_before_conversion(self):
         work = self.root / "work"
