@@ -26,6 +26,8 @@ inline std::string ImportModuleName(std::string name) {
     name.resize(name.size() - ModuleSuffix(name).size());
     if (name.ends_with("-module")) name.resize(name.size() - 7);
     if (name == "libmonosgen-2.0") name = "libmonosgen";
+    if (name == "libSceLibreSSl3") name = "libSceLibreSsl3";
+    if (name == "libSceLibreSSL") name = "libSceLibreSsl";
     std::replace(name.begin(), name.end(), '.', '_');
     return name;
 }
