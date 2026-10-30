@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -456,16 +457,6 @@ void CheckWritten(const std::vector<std::array<float, 4>>& before, const std::ve
     Require(written != 0 && written != after.size(), "the stores covered every sample or none " + what);
 }
 
-void RequireStoreRefused(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::string& expected, const std::string& what) {
-    std::string refusal;
-    try {
-        StoreSamples(device, texture, {{0u, 0u, 0u}});
-    } catch (const std::exception& error) {
-        refusal = error.what();
-    }
-    Require(refusal.find(expected) != std::string::npos, what + " was not refused: " + refusal);
-}
-
 bool DeclaresCapability(std::span<const std::uint32_t> words, spv::Capability capability) {
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
@@ -678,6 +669,33 @@ void CheckNativeIndices(AgcDriver::VulkanDevice& device, const Block& source, co
 
 void StoreWords(const Block& block, std::uint64_t bytes, std::uint32_t word) {
     for (std::uint64_t offset = 0; offset < bytes; offset += sizeof(word)) std::memcpy(block.data + offset, &word, sizeof(word));
+}
+
+std::vector<std::array<float, 4>> StoreVaryingUnorm(const Block& block, AgcDriver::Graphics::TextureTileMode tileMode) {
+    using namespace AgcDriver::Graphics;
+    const MultisampleTextureLayout layout(tileMode, 4u, Samples, Side, Side, 1u);
+    Require(layout.Bytes() <= block.bytes, "the varying fixture does not fit its color block");
+    StoreWords(block, block.bytes, 0u);
+    std::vector<std::byte> linear(static_cast<std::size_t>(layout.LinearBytes()));
+    std::vector<std::array<float, 4>> expected(Side * Side * Samples);
+    for (std::uint32_t index = 0; index < expected.size(); ++index) {
+        const auto pixel = index / Samples;
+        const bool odd = ((pixel % Side) * 3u + (pixel / Side) * 5u + (index % Samples) * 7u) % 2u != 0u;
+        const std::uint32_t word = odd ? 0x00ff00ffu : 0xff00ff00u;
+        std::memcpy(linear.data() + index * sizeof(word), &word, sizeof(word));
+        expected[index] = odd ? std::array<float, 4>{1.0f, 0.0f, 1.0f, 0.0f} : std::array<float, 4>{0.0f, 1.0f, 0.0f, 1.0f};
+    }
+    layout.Tile(linear, std::as_writable_bytes(std::span(block.data, block.bytes)));
+    return expected;
+}
+
+void CheckLoaded(const std::vector<std::array<float, 4>>& loaded, const std::vector<std::array<float, 4>>& expected, const std::string& what) {
+    Require(loaded.size() == expected.size(), "the loaded sample count differs " + what);
+    for (std::size_t index = 0; index < loaded.size(); ++index) {
+        char where[96];
+        std::snprintf(where, sizeof(where), "sample %zu of pixel (%zu, %zu)", index % Samples, index / Samples % Side, index / Samples / Side);
+        Require(loaded[index] == expected[index], std::string(where) + " does not hold its guest color " + what);
+    }
 }
 
 void RequireRefused(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::string& expected, const std::string& what) {
@@ -1179,7 +1197,17 @@ int main(int argc, char** argv) {
         StoreWords(mixed, colorBytes, FillOnes);
         const std::uint32_t odd = 0x3c000000u;
         std::memcpy(mixed.data + colorBytes - sizeof(odd), &odd, sizeof(odd));
-        RequireRefused(*device, TargetDescriptor(mixed, SampleShift), "does not hold one repeated 32-bit value", "loading a multisampled texture no draw rendered to whose color memory is not uniform");
+        CheckUniform(LoadSamples(*device, mixed), Ones, "from color memory no draw rendered to whose padding alone differs");
+        for (const auto& [mode, tileMode] : {std::pair{TileRenderTarget, AgcDriver::Graphics::TextureTileMode::kR64KBX}, std::pair{TileZ64KBX, AgcDriver::Graphics::TextureTileMode::kZ64KBX}}) {
+            Block varying(BlockBytes);
+            const auto expected = StoreVaryingUnorm(varying, tileMode);
+            CheckLoaded(LoadSamples(*device, varying, Format8888Unorm, mode), expected, "from varying color memory of a " + std::to_string(mode) + " swizzle surface no draw rendered to");
+        }
+        Block varyingD(BlockBytes);
+        StoreWords(varyingD, colorBytes, FillOnes);
+        std::memcpy(varyingD.data, &odd, sizeof(odd));
+        RequireRefused(*device, TargetDescriptor(varyingD, SampleShift, Format16161616Float, TileD64KBX), "non-uniform multisampled guest color tiling is not implemented", "loading varying D_X color memory no draw rendered to");
+        std::puts("loads of R_X and Z_X color memory no draw rendered to return each sample's guest color, and varying D_X color memory is refused");
         const auto oneSample = [](std::uint32_t, std::uint32_t, std::uint32_t sample) { return sample == StoredSample; };
         const auto drawnBefore = LoadSamples(*device, block);
         StoreSamples(*device, TargetDescriptor(block, SampleShift), SampleWrites(oneSample));
@@ -1208,8 +1236,9 @@ int main(int argc, char** argv) {
         Block mixedStore(BlockBytes);
         StoreWords(mixedStore, colorBytes, FillOnes);
         std::memcpy(mixedStore.data + colorBytes - sizeof(odd), &odd, sizeof(odd));
-        RequireStoreRefused(*device, TargetDescriptor(mixedStore, SampleShift), "writing the 16x16 multisampled texture", "storing to a multisampled texture no draw rendered to whose color memory is not uniform");
-        std::puts("stores to one sample of each pixel of a drawn 4x target and to samples of zeroed color memory no draw rendered to reach exactly those samples, and a store to non-uniform color memory no draw rendered to is refused");
+        StoreSamples(*device, TargetDescriptor(mixedStore, SampleShift), SampleWrites(oneSample));
+        CheckWritten(std::vector<std::array<float, 4>>(Side * Side * Samples, Ones), LoadSamples(*device, mixedStore), oneSample, "into one sample of each pixel of color memory no draw rendered to whose padding alone differs");
+        std::puts("stores to one sample of each pixel of a drawn 4x target and to samples of zeroed or non-uniform color memory no draw rendered to reach exactly those samples");
         for (const auto mode : {TileZ64KBX, TileD64KBX}) {
             Block swizzled(BlockBytes);
             StoreWords(swizzled, colorBytes, FillOnes);
