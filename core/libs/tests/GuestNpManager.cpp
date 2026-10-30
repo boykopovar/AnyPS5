@@ -696,6 +696,9 @@ int main() {
     Require(sceNpInGameMessageCreateHandle(-1) == InGameMessageContextNotFound, "sceNpInGameMessageCreateHandle must reject an unknown context");
     const int messageHandle = sceNpInGameMessageCreateHandle(messageContext);
     Require(messageHandle > 0, "sceNpInGameMessageCreateHandle must return a handle id");
+    const int secondMessageHandle = sceNpInGameMessageCreateHandle(messageContext);
+    Require(secondMessageHandle > 0 && secondMessageHandle != messageHandle, "sceNpInGameMessageCreateHandle must return a new id for each handle");
+    Require(sceNpInGameMessageDeleteHandle(messageContext, secondMessageHandle) == 0, "sceNpInGameMessageDeleteHandle must delete the second handle");
     Require(sceNpInGameMessageDeleteHandle(otherMessageContext, messageHandle) == InGameMessageHandleNotFound, "a handle must belong to the context that created it");
     int messageCallback = 0;
     NpPeerAddressA to{1, 1, {}};
