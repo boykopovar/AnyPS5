@@ -25,9 +25,6 @@ inline std::string NeededLibraryName(std::string name) {
 inline std::string ImportModuleName(std::string name) {
     name.resize(name.size() - ModuleSuffix(name).size());
     if (name.ends_with("-module")) name.resize(name.size() - 7);
-    if (name == "libmonosgen-2.0") name = "libmonosgen";
-    if (name == "libSceLibreSSl3") name = "libSceLibreSsl3";
-    if (name == "libSceLibreSSL") name = "libSceLibreSsl";
     std::replace(name.begin(), name.end(), '.', '_');
     return name;
 }
@@ -63,6 +60,9 @@ inline std::string ImportModule(const std::string& symbol, const std::map<std::u
     if (std::find(dependencies.begin(), dependencies.end(), name) != dependencies.end()) return name;
     const auto normalized = ImportModuleName(name);
     auto lookup = normalized;
+    if (lookup == "libmonosgen") lookup = "libmonosgen-2_0";
+    if (lookup == "libSceLibreSSl3") lookup = "libSceLibreSsl3";
+    if (lookup == "libSceLibreSSL") lookup = "libSceLibreSsl";
     if (lookup == "libSceJson") lookup = "libSceJson2";
     if (lookup == "libSceAudiodec") lookup = "libSceAudiodec_native";
     if (lookup == "libSceAjm") lookup = "libSceAjm_native";
