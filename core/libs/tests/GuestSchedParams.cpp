@@ -65,9 +65,13 @@ static void CheckTargets() {
     *__error_nid_postfix() = 0;
     REQUIRE(FailsWith(sched_getparam_nid_postfix(0, nullptr), GUEST_EFAULT));
     *__error_nid_postfix() = 0;
+    REQUIRE(FailsWith(sched_getparam_nid_postfix(0, reinterpret_cast<KernelSchedParam*>(0x10)), GUEST_EFAULT));
+    *__error_nid_postfix() = 0;
     REQUIRE(FailsWith(sched_getparam_nid_postfix(self + 1, nullptr), GUEST_ESRCH));
     *__error_nid_postfix() = 0;
     REQUIRE(FailsWith(sched_setparam_nid_postfix(0, nullptr), GUEST_EFAULT));
+    *__error_nid_postfix() = 0;
+    REQUIRE(FailsWith(sched_setparam_nid_postfix(0, reinterpret_cast<const KernelSchedParam*>(0x10)), GUEST_EFAULT));
     *__error_nid_postfix() = 0;
     REQUIRE(FailsWith(sched_setparam_nid_postfix(self + 1, nullptr), GUEST_EFAULT));
 }

@@ -12,6 +12,10 @@ static_assert(sizeof(MbusEventCallbacks) == 16);
 
 extern "C" {
 
+int APS5_VABI sceMbusDebugGetStringToShow() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceMbusAcquireControl(std::uint64_t control, std::int32_t first, std::int32_t second) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -582,6 +586,50 @@ int APS5_VABI sceMbusUserLogin(std::int32_t userId) {
 int APS5_VABI sceMbusUserLogout(std::int32_t userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceMbusGetCurrentChatBalanceId() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusGetInitialUser() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusGetSimulatedBusUsableStatusByBusType2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetChatBalance() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetCronosOutputMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetCronosPrimaryUser() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetHmd2SocialScreenAudioMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusSetVolumeDownForDiscPlayerFG() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusStartAudioOutScreenShare() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceMbusStopAudioOutScreenShare() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }
