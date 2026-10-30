@@ -26,6 +26,15 @@ int APS5_VABI sceAppInstUtilGetInstallProgressInfo(const char* titleId, AppInsta
 int APS5_VABI sceAppInstUtilGetInstallProgress(const char* titleId, void* progress);
 int APS5_VABI sceAppInstUtilGetPrimaryAppSlot(const char* titleId, void* slot);
 
+int APS5_VABI sceAppInstUtilCheckLatestPatch2();
+int APS5_VABI sceAppInstUtilAppGetIrremovableAppList2();
+int APS5_VABI sceAppInstUtilGetAddons2();
+int APS5_VABI sceAppInstUtilInstallPatch2();
+int APS5_VABI sceAppInstUtilAppUnInstall3();
+int APS5_VABI sceAppInstUtilGetPatchInstallStatus2();
+int APS5_VABI sceAppInstUtilAppRequestMoveApps2();
+int APS5_VABI sceAppInstUtilGetContentSize3();
+
 int APS5_VABI sceAppInstUtilAppGetAppInstallStatusByAppInfo(void);
 int APS5_VABI sceAppInstUtilAppUnInstall2(void);
 int APS5_VABI sceAppInstUtilAppUnInstallForRemote(void);
