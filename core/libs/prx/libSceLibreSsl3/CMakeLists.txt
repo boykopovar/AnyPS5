@@ -3,6 +3,11 @@ target_include_directories(libSceLibreSsl3 PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl3 PRIVATE libSceLibreSsl libc)
 configure_windows_unwind(libSceLibreSsl3)
 
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/AdditionalExports.cpp)
+if(WIN32)
+    target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ParentExports.cpp)
+endif()
+
 if(BUILD_TESTING)
     add_test_executable(guest_crypto_memcmp_tests ${LIBS_INCLUDE_DIR}/tests/GuestCryptoMemcmp.cpp)
     target_include_directories(guest_crypto_memcmp_tests PRIVATE ${LIBS_INCLUDE_DIR})

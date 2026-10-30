@@ -490,6 +490,19 @@ void relativeTableTargetsBounds() {
             "Modular two's-complement displacement wrapping across the address boundary was lost");
 }
 
+void pltCompactorBounds() {
+    const std::vector<std::uint8_t> text(64, 0x90);
+    const std::vector<Relinker::NidReference> emptyReferences;
+
+    requireFailure([&] {
+        Relinker::UnusedNidFilter::CompactPlt(emptyReferences, emptyReferences, text, std::numeric_limits<std::uint64_t>::max() - 10, 0, 0x300);
+    }, "Wrapping text section virtual address range was accepted by PLT compactor");
+
+    requireFailure([&] {
+        Relinker::UnusedNidFilter::CompactPlt(emptyReferences, emptyReferences, text, 0x1000, std::numeric_limits<std::uint64_t>::max() - 10, 0x300);
+    }, "Overflowing text section file byte offset was accepted by PLT compactor");
+}
+
 void relativeRelocationTableBounds() {
     std::vector<std::uint8_t> bytes(0x400, 0);
     bytes[0] = 0x7F;
@@ -923,6 +936,7 @@ int main() {
         filterCallbackDataImports();
         filterAndPltCompaction();
         relativeTableTargetsBounds();
+        pltCompactorBounds();
         relativeRelocationTableBounds();
         sceDynlibDataOffsets();
         duplicatePointerRelocations();

@@ -1502,4 +1502,17 @@ void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, c
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
+std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    AppendHostWrittenDepthRanges(address, bytes, ranges);
+    if (bytes != 0 && anyGuarded().load(std::memory_order_acquire)) {
+        std::shared_lock lock(guardedMutex());
+        for (const auto& range : guarded()) {
+            if (address < range.address + range.bytes && range.address < address + bytes && range.hostOnly->load(std::memory_order_acquire)) ranges.emplace_back(range.address, range.bytes);
+        }
+    }
+    std::ranges::sort(ranges);
+    return ranges;
+}
+
 }

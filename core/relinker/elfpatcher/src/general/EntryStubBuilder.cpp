@@ -1,5 +1,6 @@
 #include <elfpatcher/general/EntryStubBuilder.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <elfpatcher/general/AddressDistance.hpp>
 #include <domain/Types.hpp>
 #include <limits>
 
@@ -20,8 +21,8 @@ std::vector<std::uint8_t> EntryStubBuilder::BuildEntryStub(
     std::vector<std::uint8_t> s;
     const auto appendRel32 = [&](const std::uint64_t target) {
         const std::uint64_t nextVaddr = stubVaddr + s.size() + sizeof(std::int32_t);
-        const auto displacement = static_cast<std::int64_t>(target - nextVaddr);
-        if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+        std::int64_t displacement = 0;
+        if (!SignedDistance(target, nextVaddr, displacement) || displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
             throw Domain::RelinkerException("Entry stub call exceeds rel32 range");
         const auto rel32 = static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement));
         for (std::size_t shift = 0; shift < 32; shift += 8)

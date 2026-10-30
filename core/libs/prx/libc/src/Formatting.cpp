@@ -112,7 +112,10 @@ std::string HostLength(const std::string& length, char conversion) {
 
 int HostVsscanf(const char* input, const char* format, std::va_list args) {
 #if defined(__GLIBC__)
-    return __isoc99_vsscanf(input, format, args);
+    const int savedError = errno;
+    const int result = __isoc99_vsscanf(input, format, args);
+    if (result == EOF && errno == 0) errno = savedError;
+    return result;
 #else
     return std::vsscanf(input, format, args);
 #endif

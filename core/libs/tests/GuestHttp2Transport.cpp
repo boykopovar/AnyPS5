@@ -10,6 +10,7 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
+#include "prx/libSceHttp2/Transport.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libSceSsl/SslTypes.hpp"
@@ -308,6 +309,7 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     if (disableCa) Require(sceHttp2SslDisableOption(client.tmpl, 0x20) == 0, "disable known CA check");
     if (mode == Mode::Normal && !disableCa) Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "verify localhost certificate name");
     Require(sceHttp2AddRequestHeader(client.tmpl, "X-Inherited", "original", 0) == 0, "template header");
+    Require(sceHttp2SetResolveRetry(client.tmpl, 2) == 0, "resolve retries");
     const std::string upload = mode == Mode::Large ? std::string(150000, 'u') : std::string{};
     client.Create(server.Url(mode == Mode::Normal && !disableCa ? "localhost" : "127.0.0.1"), mode == Mode::Head ? "HEAD" : upload.empty() ? "GET" : "POST", upload.size());
     Require(sceHttp2AddRequestHeader(client.tmpl, "X-Inherited", "changed", 0) == 0, "template mutation");
@@ -480,6 +482,43 @@ void Refused(int ssl) {
     Require(sceHttp2GetStatusCode(client.request, &status) == static_cast<int>(0x8041013d) && status == 123, "failed status untouched");
 }
 
+std::atomic<int> lookups{0};
+std::atomic<int> failedLookups{0};
+
+int CountedLookup(const char*) {
+    return ++lookups <= failedLookups.load() ? -1 : 0;
+}
+
+void Retries(int ssl) {
+    std::fprintf(stderr, "HTTP2 resolve retry scenarios\n");
+    Http2SetLookupHook_nid_no_patch(CountedLookup);
+    {
+        Server server(Mode::Normal);
+        Client client(ssl);
+        Require(sceHttp2SetResolveRetry(client.tmpl, 2) == 0, "two resolve retries");
+        client.Create(server.Url());
+        lookups = 0;
+        failedLookups = 2;
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "a lookup that fails twice succeeds on its second retry");
+        Require(lookups == 3, "two failed lookups and the third one were made");
+        std::array<char, 64> buffer;
+        std::string body;
+        for (int count; (count = sceHttp2ReadData(client.request, buffer.data(), buffer.size())) > 0;) body.append(buffer.data(), static_cast<std::size_t>(count));
+        Require(body == "response body", "body after retried lookups");
+        server.Join();
+    }
+    for (const int retry : {0, 1}) {
+        Client client(ssl);
+        Require(sceHttp2SetResolveRetry(client.tmpl, retry) == 0, "resolve retry count");
+        client.Create("https://127.0.0.1:1/");
+        lookups = 0;
+        failedLookups = 100;
+        Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "every lookup failing fails the request");
+        Require(lookups == retry + 1, "a request makes its retry count plus one lookups before failing");
+    }
+    Http2SetLookupHook_nid_no_patch(nullptr);
+}
+
 void Capacity(int ssl) {
     Server server(Mode::StallBody);
     Client client(ssl, 1);
@@ -556,6 +595,7 @@ int main(int argc, char** argv) {
         }
         Refused(ssl);
         Capacity(ssl);
+        Retries(ssl);
         const int untrusted = sceSslInit_nid_postfix(8 * 1024 * 1024);
         Require(untrusted > 0, "untrusted SSL context");
         Failure(untrusted, Mode::Normal);

@@ -1,4 +1,5 @@
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
+#include "SpirvBackend/SpirvAnalysis.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "IntermediateRepresentation/IrBlock.hpp"
 #include "IntermediateRepresentation/IrValue.hpp"
@@ -6,11 +7,15 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <initializer_list>
 #include <map>
 #include <optional>
+#include <ranges>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -615,7 +620,7 @@ bool CrossesRowsOf(const IrValue* value, const IrValue* scan, bool narrow) {
     return flags.x16 && !flags.fetchInactive && Resolved(permlane->Argument(0)) == scan && IsU32(permlane->Argument(1), 0xffffffffu) && IsU32(permlane->Argument(2), 0xffffffffu) && EveryLaneBit(permlane->Argument(3), narrow);
 }
 
-std::optional<HalfWaveScan> MatchHalfWaveScan(const IrValue* value, IrShaderStage stage, bool narrow) {
+std::optional<HalfWaveScan> MatchHalfWaveScan(const IrValue* value, IrShaderStage stage, bool narrow, bool anyKeys = false) {
     const auto* combined = Unmasked(Resolved(value), narrow);
     std::optional<std::array<const IrValue*, 2>> operands;
     const auto reduction = std::find_if(WaveReductions.begin(), WaveReductions.end(), [&](const WaveReduction& candidate) { return (operands = ReductionOperands(combined, candidate)).has_value(); });
@@ -628,14 +633,279 @@ std::optional<HalfWaveScan> MatchHalfWaveScan(const IrValue* value, IrShaderStag
     const auto* source = Unmasked(scan, narrow);
     const bool entryKeys = Is(source, IrOpcode::SelectU32) && IsU32(source->Argument(2), reduction->identity) && EntryLaneWalk{stage}.ZeroBit(source->Argument(0));
     const bool upperKeys = narrow && reduction->identity == 0u && !reduction->floating && UpperLaneWalk{stage}.ZeroValue(source);
-    if (!entryKeys && !upperKeys) return std::nullopt;
+    const bool selectedKeys = anyKeys && Is(source, IrOpcode::SelectU32) && IsU32(source->Argument(2), reduction->identity);
+    if (!entryKeys && !upperKeys && !selectedKeys) return std::nullopt;
     return HalfWaveScan{&*reduction, source};
+}
+
+std::optional<std::array<const IrValue*, 2>> ExecWords(const IrValue* bit, std::uint32_t depth = 0u) {
+    bit = Resolved(bit);
+    if (const auto words = LaneBitWords(bit)) return words;
+    if (bit == nullptr || depth > 8u || !bit->IsPhi() || bit->Type() != IrType::Bool || bit->Parent() == nullptr) return std::nullopt;
+    std::vector<std::array<const IrValue*, 2>> incoming;
+    for (std::size_t index = 0; index < bit->ArgumentCount(); ++index) {
+        const auto words = ExecWords(bit->Argument(index), depth + 1u);
+        if (!words) return std::nullopt;
+        incoming.push_back(*words);
+    }
+    std::array<const IrValue*, 2> result{};
+    for (std::size_t half = 0; half < 2u; ++half) {
+        for (const auto* candidate : bit->Parent()->Instructions()) {
+            if (!candidate->IsPhi() || candidate->Type() != IrType::U32 || candidate->ArgumentCount() != bit->ArgumentCount()) continue;
+            const bool matches = std::ranges::all_of(std::views::iota(std::size_t{0}, bit->ArgumentCount()), [&](std::size_t index) {
+                for (std::size_t other = 0; other < candidate->ArgumentCount(); ++other) {
+                    if (candidate->PhiBlock(other) == bit->PhiBlock(index)) return Resolved(candidate->Argument(other)) == incoming[index][half];
+                }
+                return false;
+            });
+            if (matches) {
+                result[half] = candidate;
+                break;
+            }
+        }
+        if (result[half] == nullptr) return std::nullopt;
+    }
+    return result;
+}
+
+std::optional<std::uint32_t> ActiveBallotWord(const IrValue* word) {
+    if (!Is(word, IrOpcode::CompositeExtractU32x4)) return std::nullopt;
+    const auto* ballot = Resolved(word->Argument(0));
+    const auto* active = Is(ballot, IrOpcode::Ballot) ? Resolved(ballot->Argument(0)) : nullptr;
+    const auto* index = Resolved(word->Argument(1));
+    if (active == nullptr || !active->HasImmediate() || active->Type() != IrType::Bool || !active->ImmediateBool() || index == nullptr || !index->HasImmediate()) return std::nullopt;
+    return index->ImmediateU32();
+}
+
+bool WordImplies(const IrValue* stronger, const IrValue* weaker, std::uint32_t depth = 0u) {
+    stronger = Resolved(stronger);
+    weaker = Resolved(weaker);
+    if (stronger == nullptr || weaker == nullptr || depth > 8u) return false;
+    if (stronger == weaker) return true;
+    const auto ballot = ActiveBallotWord(weaker);
+    if (ballot && ActiveBallotWord(stronger) == ballot) return true;
+    if (Is(weaker, IrOpcode::BitwiseAnd32) && WordImplies(stronger, weaker->Argument(0), depth + 1u) && WordImplies(stronger, weaker->Argument(1), depth + 1u)) return true;
+    return Is(stronger, IrOpcode::BitwiseAnd32) && (WordImplies(stronger->Argument(0), weaker, depth + 1u) || WordImplies(stronger->Argument(1), weaker, depth + 1u));
+}
+
+bool LaneBitImplies(const IrValue* stronger, const IrValue* weaker) {
+    stronger = Resolved(stronger);
+    weaker = Resolved(weaker);
+    if (stronger == weaker) return true;
+    const auto strong = ExecWords(stronger);
+    const auto weak = ExecWords(weaker);
+    return strong && weak && WordImplies((*strong)[0], (*weak)[0]) && WordImplies((*strong)[1], (*weak)[1]);
+}
+
+bool NonNegativeKeys(const IrValue* key, const IrValue* active, const IrProgram& program) {
+    std::unordered_map<const IrBlock*, std::size_t> position;
+    for (std::size_t index = 0; index < program.BlockOrder().size(); ++index) position.emplace(program.BlockOrder()[index], index);
+    const auto backEdge = [&](const IrValue* phi, std::size_t index) {
+        const auto from = position.find(phi->PhiBlock(index));
+        const auto to = position.find(phi->Parent());
+        return from == position.end() || to == position.end() || from->second >= to->second;
+    };
+    using Node = std::pair<const IrValue*, bool>;
+    const auto hash = [](const Node& node) { return std::hash<const IrValue*>{}(node.first) ^ static_cast<std::size_t>(node.second); };
+    std::vector<Node> nodes;
+    std::unordered_map<Node, bool, decltype(hash)> holds(0, hash);
+    std::unordered_set<Node, decltype(hash)> implied(0, hash);
+    std::vector<Node> pending{{Resolved(key), false}};
+    while (!pending.empty()) {
+        const auto node = pending.back();
+        pending.pop_back();
+        const auto* value = node.first;
+        if (value == nullptr || holds.contains(node)) continue;
+        if (nodes.size() >= 4096u) return false;
+        holds.emplace(node, true);
+        nodes.push_back(node);
+        if (value->HasImmediate()) continue;
+        const auto push = [&](std::size_t index, bool carried) { pending.push_back({Resolved(value->Argument(index)), carried}); };
+        switch (value->Opcode()) {
+            case IrOpcode::BitCastU32F32:
+            case IrOpcode::BitCastF32U32: push(0, node.second); break;
+            case IrOpcode::FPMax32:
+            case IrOpcode::BitwiseAnd32: push(0, node.second); push(1, node.second); break;
+            case IrOpcode::SelectU32:
+            case IrOpcode::SelectF32:
+                push(1, node.second);
+                if (!node.second && LaneBitImplies(active, value->Argument(0))) implied.insert(node);
+                else push(2, node.second);
+                break;
+            case IrOpcode::Phi:
+                for (std::size_t index = 0; index < value->ArgumentCount(); ++index) push(index, node.second || backEdge(value, index));
+                break;
+            default: break;
+        }
+    }
+    const auto immediate = [](const IrValue* value) {
+        if (value->Type() == IrType::U32) return (value->ImmediateU32() & 0x80000000u) == 0u && value->ImmediateU32() <= 0x7f800000u;
+        if (value->Type() == IrType::F32) return std::bit_cast<std::uint32_t>(value->ImmediateF32()) <= 0x7f800000u;
+        return false;
+    };
+    const auto evaluate = [&](const Node& node) {
+        const auto* value = node.first;
+        const auto at = [&](std::size_t index, bool carried) { const auto found = holds.find({Resolved(value->Argument(index)), carried}); return found != holds.end() && found->second; };
+        if (value->HasImmediate()) return immediate(value);
+        switch (value->Opcode()) {
+            case IrOpcode::BitCastU32F32:
+            case IrOpcode::BitCastF32U32: return at(0, node.second);
+            case IrOpcode::FPSaturate32: return true;
+            case IrOpcode::FPMax32: return at(0, node.second) || at(1, node.second);
+            case IrOpcode::BitwiseAnd32: return (IsU32(value->Argument(1), 0x80000000u) && at(0, node.second)) || (IsU32(value->Argument(0), 0x80000000u) && at(1, node.second));
+            case IrOpcode::SelectU32:
+            case IrOpcode::SelectF32: return at(1, node.second) && (implied.contains(node) || at(2, node.second));
+            case IrOpcode::Phi: return std::ranges::all_of(std::views::iota(std::size_t{0}, value->ArgumentCount()), [&](std::size_t index) { return at(index, node.second || backEdge(value, index)); });
+            default: return false;
+        }
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const auto& node : nodes) {
+            auto& current = holds[node];
+            if (current && !evaluate(node)) {
+                current = false;
+                changed = true;
+            }
+        }
+    }
+    return holds[Node{Resolved(key), false}];
+}
+
+template<typename TSink>
+bool ReachesOnlyThroughBitOps(const IrValue* value, TSink&& sink) {
+    std::vector<const IrValue*> pending{value};
+    std::unordered_set<const IrValue*> seen;
+    while (!pending.empty()) {
+        const auto* current = pending.back();
+        pending.pop_back();
+        for (const auto* user : current->Uses()) {
+            if (!seen.insert(user).second || sink(user)) continue;
+            if (!Is(user, IrOpcode::BitwiseAnd32) && !Is(user, IrOpcode::IEqual32) && !Is(user, IrOpcode::SelectU32) && !Is(user, IrOpcode::BitCastF32U32)) return false;
+            pending.push_back(user);
+        }
+    }
+    return true;
+}
+
+const IrValue* ElectedAtomicMax(const IrValue* read, const HalfWaveScan& scan, const IrProgram& program) {
+    if (scan.reduction->opcode != IrOpcode::FPMax32 || read == nullptr) return nullptr;
+    const auto* active = Resolved(scan.source->Argument(0));
+    const auto* key = Resolved(scan.source->Argument(1));
+    std::array<const IrValue*, 2> lanes{};
+    for (const auto* user : read->Uses()) {
+        if (!Is(user, IrOpcode::ReadLane) || Resolved(user->Argument(0)) != read) return nullptr;
+        const auto* selector = Resolved(user->Argument(1));
+        if (selector == nullptr || !selector->HasImmediate() || ((selector->ImmediateU32() & 63u) != 31u && (selector->ImmediateU32() & 63u) != 63u)) return nullptr;
+        auto& slot = lanes[(selector->ImmediateU32() & 63u) == 63u ? 1u : 0u];
+        if (slot != nullptr) return nullptr;
+        slot = user;
+    }
+    if (lanes[0] == nullptr || lanes[1] == nullptr) return nullptr;
+    const IrValue* combined = nullptr;
+    const auto combine = [&](const IrValue* user) {
+        if (!Is(user, IrOpcode::FPMax32)) return false;
+        if (combined == nullptr) combined = user;
+        return user == combined;
+    };
+    if (!ReachesOnlyThroughBitOps(lanes[0], combine) || !ReachesOnlyThroughBitOps(lanes[1], combine) || combined == nullptr || combined->UseCount() != 1u) return nullptr;
+    const auto* bits = *combined->Uses().begin();
+    const auto operands = Is(bits, IrOpcode::BitCastU32F32) ? ReductionOperands(bits, *scan.reduction) : std::nullopt;
+    if (!operands || !EitherOrder(*operands, [&](const IrValue* low, const IrValue* high) { return low == lanes[0] && high == lanes[1]; })) return nullptr;
+    if (bits->UseCount() != 1u) return nullptr;
+    const auto* data = *bits->Uses().begin();
+    if (!Is(data, IrOpcode::SelectU32) || Resolved(data->Argument(1)) != bits) return nullptr;
+    const auto* written = Resolved(data->Argument(0));
+    if (!LaneBitImplies(written, active) || !LaneBitImplies(active, written)) return nullptr;
+    const IrValue* atomic = nullptr;
+    const IrValue* equal = nullptr;
+    const auto sink = [&](const IrValue* user) {
+        if ((Is(user, IrOpcode::BufferAtomicUMax32) || Is(user, IrOpcode::BufferAtomicSMax32)) && Resolved(user->Argument(4)) == data && atomic == nullptr) {
+            atomic = user;
+            return true;
+        }
+        if (Is(user, IrOpcode::FPOrdEqual32) && (equal == nullptr || equal == user)) {
+            equal = user;
+            return true;
+        }
+        return false;
+    };
+    if (!ReachesOnlyThroughBitOps(data, sink) || atomic == nullptr || equal == nullptr || atomic->HasUses()) return nullptr;
+    const auto compared = [](const IrValue* operand) {
+        operand = Resolved(operand);
+        return Is(operand, IrOpcode::BitCastF32U32) ? Unflushed(Resolved(operand->Argument(0))) : nullptr;
+    };
+    if (!EitherOrder(equal, [&](const IrValue* own, const IrValue* other) { return compared(own) == data && compared(other) == key; }) || equal->UseCount() != 1u) return nullptr;
+    const auto* elected = *equal->Uses().begin();
+    if (!Is(elected, IrOpcode::LogicalAnd) || !EitherOrder(elected, [&](const IrValue* lane, const IrValue* test) { return lane == written && test == equal; })) return nullptr;
+    if (Resolved(atomic->Argument(5)) != elected) return nullptr;
+    for (const auto* user : elected->Uses()) {
+        if (user == atomic) continue;
+        if (Is(user, IrOpcode::LogicalNot) && std::ranges::all_of(user->Uses(), [](const IrValue* branch) { return Is(branch, IrOpcode::Reference); })) continue;
+        if (Is(user, IrOpcode::SelectU32) && Resolved(user->Argument(0)) == elected && std::ranges::all_of(user->Uses(), [&](const IrValue* consumer) { return consumer == atomic; })) continue;
+        return nullptr;
+    }
+    if (!NonNegativeKeys(key, active, program)) return nullptr;
+    const auto uniform = WaveUniformValues(program);
+    const auto steady = [&](std::size_t index) {
+        const auto* operand = Resolved(atomic->Argument(index));
+        if (Is(operand, IrOpcode::SelectU32) && Resolved(operand->Argument(0)) == elected) operand = Resolved(operand->Argument(1));
+        return operand != nullptr && (operand->HasImmediate() || uniform.contains(operand));
+    };
+    return steady(0u) && steady(1u) && steady(2u) && steady(3u) ? atomic : nullptr;
+}
+
+std::optional<HalfWaveScan> MatchElectedMaxScan(const IrValue* read, const IrProgram& program) {
+    read = Resolved(read);
+    const auto scan = MatchHalfWaveScan(read, program.Resources().stage, false, true);
+    if (!scan || ElectedAtomicMax(read, *scan, program) == nullptr) return std::nullopt;
+    return scan;
+}
+
+bool CrossesElectedMaxScan(const IrValue& permlane, const IrProgram& program) {
+    std::vector<const IrValue*> pending{&permlane};
+    std::unordered_set<const IrValue*> seen;
+    std::vector<const IrValue*> reads;
+    std::vector<const IrValue*> masked;
+    while (!pending.empty()) {
+        const auto* current = pending.back();
+        pending.pop_back();
+        for (const auto* user : current->Uses()) {
+            if (!seen.insert(user).second) continue;
+            if (Is(user, IrOpcode::ReadLane)) {
+                reads.push_back(Resolved(user->Argument(0)));
+                continue;
+            }
+            if (Is(user, IrOpcode::SelectU32) && Resolved(user->Argument(2)) == current && Resolved(user->Argument(1)) != current && user->UseCount() == 1u) {
+                const auto* atomic = *user->Uses().begin();
+                if ((Is(atomic, IrOpcode::BufferAtomicUMax32) || Is(atomic, IrOpcode::BufferAtomicSMax32)) && Resolved(atomic->Argument(5)) == Resolved(user->Argument(0)) && Resolved(atomic->Argument(4)) != user) {
+                    masked.push_back(atomic);
+                    continue;
+                }
+            }
+            if (!Is(user, IrOpcode::BitwiseAnd32) && !Is(user, IrOpcode::IEqual32) && !Is(user, IrOpcode::SelectU32) && !Is(user, IrOpcode::BitCastF32U32) && !Is(user, IrOpcode::BitCastU32F32) && !Is(user, IrOpcode::FPMax32)) return false;
+            pending.push_back(user);
+        }
+    }
+    std::vector<const IrValue*> elected;
+    const bool crossed = !reads.empty() && std::ranges::all_of(reads, [&](const IrValue* read) {
+        const auto* combined = Unmasked(read, false);
+        const auto operands = combined != nullptr ? ReductionOperands(combined, *std::ranges::find(WaveReductions, IrOpcode::FPMax32, &WaveReduction::opcode)) : std::nullopt;
+        const auto scan = MatchHalfWaveScan(read, program.Resources().stage, false, true);
+        const auto* atomic = scan ? ElectedAtomicMax(read, *scan, program) : nullptr;
+        if (atomic != nullptr) elected.push_back(atomic);
+        return operands && std::ranges::any_of(*operands, [&](const IrValue* operand) { return Unmasked(operand, false) == &permlane; }) && atomic != nullptr;
+    });
+    return crossed && std::ranges::all_of(masked, [&](const IrValue* atomic) { return std::ranges::find(elected, atomic) != elected.end(); });
 }
 
 std::optional<std::uint32_t> EmitHalfWaveReduction(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t lane) {
     auto& state = ctx.state;
     if (state.program.WaveSize() != 64u || (lane & 31u) != 31u || state.spannedWave) return std::nullopt;
     const auto stage = state.program.Resources().stage;
+    if (HostSubgroupSingleLane(state)) {
+        if (const auto elected = MatchElectedMaxScan(inst.Argument(0), state.program)) return lane >= 32u ? ConstantU32(state, elected->reduction->identity) : ctx.Def(elected->source);
+    }
     auto scan = MatchHalfWaveScan(inst.Argument(0), stage, false);
     const bool narrow = !scan && HostSubgroupNarrowerThanWave(state) && state.hostSubgroupSize == 32u;
     if (narrow) scan = MatchHalfWaveScan(inst.Argument(0), stage, true);
@@ -1177,7 +1447,10 @@ std::uint32_t EmitWriteLane(SpirvValueEmitContext& ctx, const IrValue& inst) {
 std::uint32_t EmitPermlane16U32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto flags = inst.Flags<PermlaneFlags>();
-    if (flags.x16 && state.hostSubgroupSize <= 16u && HostSubgroupNarrowerThanWave(state)) FailOutsideHostSubgroup(ctx, inst, "v_permlanex16_b32 from lanes 16-31");
+    if (flags.x16 && state.hostSubgroupSize <= 16u && HostSubgroupNarrowerThanWave(state)) {
+        if (HostSubgroupSingleLane(state) && CrossesElectedMaxScan(inst, state.program)) return ctx.Arg(inst, 0);
+        FailOutsideHostSubgroup(ctx, inst, "v_permlanex16_b32 from lanes 16-31");
+    }
     const auto subid = EmitSubgroupLocalInvocationId(state);
     const auto row = state.module.AllocateId();
     const auto rowValue = state.module.AllocateId();
