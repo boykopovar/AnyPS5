@@ -10588,7 +10588,7 @@ void unorm4_4_4_4TargetTests() {
             auto killing = depthQueue;
             killing.context[0x203] = 0x40u;
             const bool split = (control & 0x7u) == 0x6u;
-            Require(AgcDriver::Graphics::LateTestMergeSplitTargets(partial) == 0u && AgcDriver::Graphics::LateTestMergeSplitTargets(AgcDriver::Graphics::DecodeState(killing)) == (split ? 0xfu : 0u), "a partial 4_4_4_4 write that kills under late tests and " + what + (split ? " did not split" : " split"));
+            Require(AgcDriver::Graphics::LateTestMergeSplitTargets(depthQueue.context, partial) == 0u && AgcDriver::Graphics::LateTestMergeSplitTargets(killing.context, AgcDriver::Graphics::DecodeState(killing)) == (split ? 0xfu : 0u), "a partial 4_4_4_4 write that kills under late tests and " + what + (split ? " did not split" : " split"));
         }
         auto killing = depthQueue;
         killing.context[0x203] = 0x40u;
@@ -10598,13 +10598,16 @@ void unorm4_4_4_4TargetTests() {
             auto refused = killing;
             refused.context[0x200] = control;
             refused.context[0x203] = shaderControl;
-            Require(AgcDriver::Graphics::LateTestMergeSplitTargets(AgcDriver::Graphics::DecodeState(refused)) == 0u, std::string("a partial 4_4_4_4 write that writes depth under late tests split despite ") + what);
+            Require(AgcDriver::Graphics::LateTestMergeSplitTargets(refused.context, AgcDriver::Graphics::DecodeState(refused)) == 0u, std::string("a partial 4_4_4_4 write that writes depth under late tests split despite ") + what);
         }
         killing.context[0x200] = 0x00700716u;
         auto second = AgcDriver::Graphics::DecodeState(killing);
         Require(second.colors.size() == 1u && second.colors[0].slot == 0u, "the merged target did not decode in slot 0");
         second.colors[0].slot = 1u;
-        Require(AgcDriver::Graphics::LateTestMergeSplitTargets(second) == 0xf0u, "a merged target in slot 1 did not split on CB_TARGET_MASK bits 4..7");
+        Require(AgcDriver::Graphics::LateTestMergeSplitTargets(killing.context, second) == 0xf0u, "a merged target in slot 1 did not split on CB_TARGET_MASK bits 4..7");
+        auto cleared = killing;
+        cleared.context[0x000] = 1u;
+        Require(AgcDriver::Graphics::LateTestMergeSplitTargets(cleared.context, AgcDriver::Graphics::DecodeState(cleared)) == 0u, "a partial 4_4_4_4 write that kills under late tests split while DB_RENDER_CONTROL clears depth, which forces the depth write and ZFUNC ALWAYS the merge pass would patch");
         auto truncated = depthQueue;
         truncated.context[0x200] = 0x00700712u;
         truncated.context[0x010] = 0x22900987u;

@@ -211,6 +211,7 @@ struct Pass {
     const std::uint32_t* vertex = VertexCode.data();
     bool counter = false;
     bool second = false;
+    std::uint32_t renderControl = 0;
 };
 
 void Submit(const Pass& pass, const char* what) {
@@ -236,7 +237,7 @@ void Submit(const Pass& pass, const char* what) {
         {0x111, std::bit_cast<std::uint32_t>(-(Height / 2.0f))}, {0x112, std::bit_cast<std::uint32_t>(Height / 2.0f)},
         {0x113, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0}, {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)},
         {0x2fe, 0}, {0x302, 0}, {0x306, 0}, {0x30a, 0},
-        {0x000, 0}, {0x002, 0}, {0x007, ((Height - 1u) << 16u) | (Width - 1u)},
+        {0x000, pass.renderControl}, {0x002, 0}, {0x007, ((Height - 1u) << 16u) | (Width - 1u)},
         {0x008, 0}, {0x009, std::bit_cast<std::uint32_t>(1.0f)}, {0x00a, 0}, {0x00b, 0},
         {0x010, 3}, {0x011, 0},
         {0x012, static_cast<std::uint32_t>(depth >> 8u)}, {0x014, static_cast<std::uint32_t>(depth >> 8u)},
@@ -312,6 +313,20 @@ void RunCounting(bool vertexCounts) {
     }
     Require(refused, what + " was split and drawn twice");
     Require(Counted() == counted, what + " added to the counter before it was refused");
+}
+
+void RunDepthClear() {
+    const auto* killing = PixelProgram(0, {0.5f, 0.25f, 0.125f, 0.5f}, true);
+    const std::string what = "a late-test merge whose draw clears depth (DB_RENDER_CONTROL DEPTH_CLEAR_ENABLE)";
+    bool refused = false;
+    try {
+        Submit({Middle, killing, DepthTest | DepthWrite | Less, LateKill, 0xfu, PremultipliedOver, VertexCode.data(), false, false, 1u}, what.c_str());
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        Require(message.find("kills pixels under late tests of a draw writing depth or stencil") != std::string::npos, what + " failed on another refusal: " + message);
+        refused = true;
+    }
+    Require(refused, what + " was split and drawn");
 }
 
 struct Case {
@@ -400,6 +415,12 @@ int main(int argc, char** argv) {
             RunCounting(vertexCounts);
             try { AgcDriverShutdown_nid_postfix(); } catch (const std::exception&) {}
             std::printf("a late-test merge split whose %s shader adds to a counter was refused before either pass\n", vertexCounts ? "vertex" : "pixel");
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--depth-clear") {
+            RunDepthClear();
+            try { AgcDriverShutdown_nid_postfix(); } catch (const std::exception&) {}
+            std::puts("a late-test merge whose draw clears depth was refused before either pass");
             return 0;
         }
         const auto* killing = PixelProgram(0, {0.5f, 0.25f, 0.125f, 0.5f}, true);

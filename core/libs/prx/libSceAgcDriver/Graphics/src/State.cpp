@@ -1986,7 +1986,8 @@ bool DepthStencilWrites(const State& state) {
     return state.depthWrite || stencilWrites(state);
 }
 
-std::uint32_t LateTestMergeSplitTargets(const State& state) {
+std::uint32_t LateTestMergeSplitTargets(const Registers& context, const State& state) {
+    if (const auto renderControl = find(context, 0x000); renderControl != context.end() && (renderControl->second & 1u) != 0) return 0;
     if (!state.pixelKill || state.pixelEarlyZ || !state.depth || !state.depthWrite || stencilWrites(state) || state.depthCompare == VK_COMPARE_OP_NEVER || state.alphaToCoverage) return 0;
     std::uint32_t targets = 0;
     for (const auto& color : state.colors) {
