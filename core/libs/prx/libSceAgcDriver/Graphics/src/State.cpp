@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <bit>
 #include <bitset>
@@ -449,8 +450,9 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     };
     DepthTarget depth{};
     depth.samples = 1u << ((read(cx, 0x010) >> 2u) & 3u);
-    depth.depthSwizzle = (read(cx, 0x010) >> 4u) & 31u;
-    depth.iterate256 = (read(cx, 0x010) & (1u << 20u)) != 0;
+    const bool gcn = ShaderRecompiler::GcnGuestShaders();
+    depth.depthSwizzle = gcn ? 0u : (read(cx, 0x010) >> 4u) & 31u;
+    depth.iterate256 = !gcn && (read(cx, 0x010) & (1u << 20u)) != 0;
     depth.firstSlice = view & 0x1fffu;
     depth.lastSlice = (view >> 13u) & 0x7ffu;
     depth.address = zFormat != 0 ? base(0x012, 0x01a) : 0;
@@ -464,8 +466,14 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
             depth.htileVrsEncoding = (surface->second >> 19u) & 3u;
         }
     }
-    const auto size = read(cx, 0x007);
-    depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
+    if (gcn) {
+        const auto size = read(cx, 0x016);
+        depth.extent = {((size & 0x7ffu) + 1u) * 8u, (((size >> 11u) & 0x7ffu) + 1u) * 8u};
+    } else {
+        const auto size = read(cx, 0x007);
+        depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
+    }
+    Require(!gcn || (maxMip == 0 && viewMip == 0), "PS4 depth targets with mip levels are not implemented");
     if (maxMip != 0) {
         char message[320];
         std::snprintf(message, sizeof(message), "depth view mip %u of %u at %ux%u (DB_Z_INFO 0x%08x, DB_DEPTH_VIEW 0x%08x)", viewMip, maxMip + 1u, depth.extent.width, depth.extent.height, read(cx, 0x010), view);
@@ -602,7 +610,7 @@ constexpr std::array<std::array<std::int8_t, 2>, 2> StandardLocations2{{{4, 4}, 
 constexpr std::array<std::array<std::int8_t, 2>, 4> StandardLocations4{{{-2, -6}, {6, -2}, {-6, 2}, {2, 6}}};
 constexpr std::array<std::array<std::int8_t, 2>, 8> StandardLocations8{{{1, -3}, {-1, 3}, {5, 1}, {-3, -5}, {-5, 5}, {-7, -1}, {3, 7}, {7, -7}}};
 
-std::string nonTriangleRejection(const QueueState& queue, const char* message, bool rectangles = false) {
+std::string nonTriangleRejection(const QueueState& queue, const char* message, bool rectangles = false, bool lines = false) {
     const auto word = [](const Registers& registers, std::uint32_t offset, RegisterBank bank = RegisterBank::Context) -> std::optional<std::uint32_t> {
         const auto it = find(registers, offset, bank);
         if (it == registers.end()) return std::nullopt;
@@ -619,7 +627,7 @@ std::string nonTriangleRejection(const QueueState& queue, const char* message, b
             const auto topology = (*parameters >> 5u) & 7u;
             if ((domain != 1u && domain != 2u) || (topology != 2u && topology != 3u)) return zeroMessage(0x2db, *parameters, message);
         }
-    } else if (const auto primitive = word(queue.userConfig, 0x242, RegisterBank::UserConfig); primitive && *primitive != 4u && *primitive != 5u && *primitive != 6u && *primitive != 21u && !(rectangles && (*primitive == 7u || *primitive == 17u))) {
+    } else if (const auto primitive = word(queue.userConfig, 0x242, RegisterBank::UserConfig); primitive && *primitive != 4u && *primitive != 5u && *primitive != 6u && *primitive != 21u && !(rectangles && (*primitive == 7u || *primitive == 17u)) && !(lines && (*primitive == 2u || *primitive == 3u))) {
         return zeroMessage(0x242, *primitive, message);
     }
     return {};
@@ -638,7 +646,7 @@ std::string singleSampleMsaaRejection(const QueueState& queue) {
     }
     if (const auto alphaToMask = word(cx, 0x2dc); alphaToMask && (*alphaToMask & 1u) != 0 && !(ditheredAlphaToCoverageWord(*alphaToMask) && alphaToCoverageDisabled(cx))) return zeroMessage(0x2dc, *alphaToMask, "MSAA_ENABLE on a single-sample target with alpha-to-coverage");
     if (const auto conservative = word(cx, 0x313); conservative && (*conservative & ~0x001f6000u) != 0) return zeroMessage(0x313, *conservative, "MSAA_ENABLE on a single-sample target with conservative rasterization");
-    return nonTriangleRejection(queue, "MSAA_ENABLE on a single-sample target for primitives other than triangles and rectangles", true);
+    return nonTriangleRejection(queue, "MSAA_ENABLE on a single-sample target for primitives other than triangles, lines and rectangles", true, true);
 }
 
 std::string singleSampleDepthScanRejection(const QueueState& queue) {
@@ -1218,7 +1226,7 @@ std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const Shad
     std::array<std::uint8_t, 32> locations{};
     const bool sampleBarycentrics = (pixel.inputAddr & (PixelInputBit(PixelInput::PerspectiveSample) | PixelInputBit(PixelInput::LinearSample))) != 0u;
     const bool samplePosition = !state.perSampleShading && (pixel.posX || pixel.posY) && pixel.positionLocation == ShaderRecompiler::PixelPositionLocation::Sample;
-    const bool mergedCentres = pixel.targetMerge.samples > 1u && (pixel.inputAddr & (PixelInputBit(PixelInput::PerspectiveCenter) | PixelInputBit(PixelInput::LinearCenter))) != 0u;
+    const bool mergedCentres = !pixel.targetMerges.empty() && pixel.targetMerges.front().samples > 1u && (pixel.inputAddr & (PixelInputBit(PixelInput::PerspectiveCenter) | PixelInputBit(PixelInput::LinearCenter))) != 0u;
     if (!sampleBarycentrics && !samplePosition && !mergedCentres) return locations;
     const auto samples = state.perSampleShading ? state.samples : 1u;
     for (std::uint32_t pixelIndex = 0; pixelIndex < 4u; ++pixelIndex) {
@@ -1290,7 +1298,16 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto provokingVertex = raster != queue.context.end() && (raster->second & (1u << 19u)) != 0 ? outputSize - 1u : 0u;
         return ShaderRecompiler::MeshConfiguration{inputPrimitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
     };
-    if (path == ShaderPath::Vertex) {
+    if (path == ShaderPath::Vertex && ShaderRecompiler::GcnGuestShaders() && (value & 0x2000u) == 0) {
+        validate(value == 0, "GCN vertex routing other than a plain VS is unsupported");
+        const auto unitStepRate = [&](std::uint32_t offset) {
+            const auto rate = find(queue.context, offset);
+            return rate == queue.context.end() || rate->second == 1u;
+        };
+        const auto components = (read(queue.shader, 0x4a, RegisterBank::Shader) >> 24u) & 3u;
+        validate(components == 0 || (unitStepRate(0x2a8) && (components == 1 || unitStepRate(0x2a9))), "GCN vertex instance step rates other than 1 are not implemented");
+        result.legacyVertex = true;
+    } else if (path == ShaderPath::Vertex) {
         validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
         validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
     } else if (path == ShaderPath::Tessellation || path == ShaderPath::TessellationGeometry) {
@@ -1452,6 +1469,20 @@ void ApplyDepthRemap(const Context& context, State& state) {
     state.viewport.maxDepth = clampMax;
     state.negativeOneToOne = false;
     state.depthClamp = true;
+}
+
+static bool SignedNormalizedFormat(VkFormat format) {
+    return format == VK_FORMAT_R8_SNORM || format == VK_FORMAT_R16_SNORM || format == VK_FORMAT_R8G8_SNORM || format == VK_FORMAT_R16G16_SNORM || format == VK_FORMAT_R8G8B8A8_SNORM || format == VK_FORMAT_B8G8R8A8_SNORM || format == VK_FORMAT_R16G16B16A16_SNORM;
+}
+
+static std::uint32_t NormalizedChannelMask(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_SNORM:
+        case VK_FORMAT_R16_SNORM: return 0x1u;
+        case VK_FORMAT_R8G8_SNORM:
+        case VK_FORMAT_R16G16_SNORM: return 0x3u;
+        default: return 0xfu;
+    }
 }
 
 State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
@@ -1809,7 +1840,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             Require(nibbles || (exportedMask & packedMask) == packedMask, "partial writes of " + packed + " color target are unsupported");
             if ((exportedMask & packedMask) != packedMask) {
                 Require(color.mipCount == 1u && color.depth == 1u && color.layers == 1u && color.arrayLastSlice == 0u, "partial writes of a mipmapped, volume or array " + std::string(PackedColorTargetName(color.packing)) + " color target are not implemented");
-                Require(std::ranges::none_of(result.colors, [](const ColorTarget& other) { return other.partialWriteMask != 0; }), "partial writes of more than one packed color target are not implemented");
+                Require(std::ranges::none_of(result.colors, [](const ColorTarget& other) { return other.partialWriteMask != 0; }), "partial writes of a packed color target merge into their target alone and cannot join another merged color target of the draw");
                 color.partialWriteMask = PackedWriteMask(mapping, exportedMask);
                 state.colorWriteMask = 0;
                 if (color.samples > 1u) {
@@ -1836,7 +1867,13 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         if (const auto info = read(cx, 0x31c + slot * 0xfu); state.blendEnable && (info & 0x8000u) == 0 && ((info >> 8u) & 7u) <= 1u) {
             char detail[80];
             std::snprintf(detail, sizeof(detail), " (CB_COLOR_INFO 0x%08x, CB_BLEND%u_CONTROL 0x%08x)", info, slot, blend);
-            throw std::runtime_error(std::string("AGC graphics: blending unclamped normalized color is not implemented") + detail);
+            const std::string where = detail;
+            Require(color.samples == 1u && color.packing == ShaderRecompiler::ColorExportPacking::None, "blending unclamped normalized color into a multisampled or packed color target is not implemented" + where);
+            Require(!reversed && mapping != 0xecu, "blending unclamped normalized color into a color target with a reversed or alternate component order is not implemented" + where);
+            Require(!(secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor)), "dual-source blending of unclamped normalized color is not implemented" + where);
+            Require(std::ranges::none_of(result.colors, [&](const ColorTarget& other) { return &other != &color && other.partialWriteMask != 0 && other.partialWriteMask != UnclampedBlendMask; }), "blending unclamped normalized color cannot join a partial write of a packed color target in one draw" + where);
+            Require(!SignedNormalizedFormat(color.format) || (state.colorWriteMask & NormalizedChannelMask(color.format)) == NormalizedChannelMask(color.format), "blending unclamped signed normalized color with a write mask that skips a component is not implemented, since the shader rewrites the skipped component through a float and the code -128 would become -127" + where);
+            color.partialWriteMask = UnclampedBlendMask;
         }
         result.blends[color.exportIndex] = state;
     }
@@ -1905,11 +1942,14 @@ bool DepthStencilTests(const State& state) {
     return state.depth.has_value() && (state.depthTest || state.stencilTest || state.depthBoundsTest);
 }
 
-ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state) {
-    ShaderRecompiler::TargetMerge merge;
+std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state) {
+    static_assert(VK_BLEND_FACTOR_ZERO == 0 && VK_BLEND_FACTOR_SRC_ALPHA_SATURATE == 14 && VK_BLEND_OP_ADD == 0 && VK_BLEND_OP_MAX == 4);
+    std::vector<ShaderRecompiler::TargetMerge> merges;
     for (const auto& color : state.colors) {
         if (color.partialWriteMask == 0) continue;
-        Require(merge.mask == 0 && color.exportIndex < 8u && color.samples <= 8u, "a draw merges into one packed color target at most");
+        Require(color.exportIndex < 8u && color.samples <= 8u, "a merged color target needs an MRT slot below 8 and at most 8 samples");
+        Require(std::ranges::none_of(state.colors, [&](const ColorTarget& other) { return &other != &color && other.partialWriteMask != 0 && other.address < color.address + color.bytes && color.address < other.address + other.bytes; }), "two merged color targets of one draw share memory");
+        auto& merge = merges.emplace_back();
         Require(color.samples == 1u || state.perSampleShading, "a merged multisampled color target needs per-sample shading");
         merge.target = static_cast<std::uint8_t>(color.exportIndex);
         merge.mask = color.partialWriteMask;
@@ -1917,8 +1957,21 @@ ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state) {
         merge.descriptor = EncodeTextureResource(TargetMergeSurface(color));
         merge.depthStencilWrites = DepthStencilWrites(state);
         merge.depthStencilTests = DepthStencilTests(state);
+        if (color.partialWriteMask != UnclampedBlendMask) continue;
+        const auto& attachment = state.blends.at(color.exportIndex);
+        auto& blend = merge.blend;
+        blend.enabled = true;
+        blend.snorm = SignedNormalizedFormat(color.format);
+        blend.colorSource = static_cast<std::uint8_t>(attachment.srcColorBlendFactor);
+        blend.colorDestination = static_cast<std::uint8_t>(attachment.dstColorBlendFactor);
+        blend.colorOperation = static_cast<std::uint8_t>(attachment.colorBlendOp);
+        blend.alphaSource = static_cast<std::uint8_t>(attachment.srcAlphaBlendFactor);
+        blend.alphaDestination = static_cast<std::uint8_t>(attachment.dstAlphaBlendFactor);
+        blend.alphaOperation = static_cast<std::uint8_t>(attachment.alphaBlendOp);
+        blend.writeMask = static_cast<std::uint8_t>(attachment.colorWriteMask & 0xfu);
+        for (std::size_t i = 0; i < 4; ++i) blend.constants[i] = std::bit_cast<std::uint32_t>(state.blendConstants[i]);
     }
-    return merge;
+    return merges;
 }
 
 bool PartialSampleMask(const State& state) {
@@ -2028,6 +2081,7 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dccAddress = color.dccAddress != 0 ? color.dccAddress : color.chainDccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
+    if (ColorTileModeIsGcn(color.tileMode)) surface.gcnPitch = surface.width;
     return surface;
 }
 DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number, std::uint32_t swap) {
@@ -2037,7 +2091,54 @@ DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number,
 }
 
 
+ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
+    const auto stride = slot * 0xfu;
+    ColorTarget color{};
+    color.slot = slot;
+    const auto info = read(cx, 0x31c + stride);
+    const auto number = (info >> 8u) & 7u;
+    const auto swap = (info >> 11u) & 3u;
+    const auto decoded = DecodeColorFormat((info >> 2u) & 0x1fu, number, swap);
+    const auto attrib = read(cx, 0x31d + stride);
+    color.samples = 1u << ((attrib >> 12u) & 7u);
+    Require(color.samples == 1u, "multisampled GCN color targets are not implemented");
+    Require((info & 0x3u) == 0 && (info & 0x80u) == 0, "endian-swapped or linear-general GCN color targets are not implemented");
+    Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
+    const auto view = read(cx, 0x31b + stride);
+    Require((view & 0x7ffu) == 0 && ((view >> 13u) & 0x7ffu) == 0, "GCN color array slices are not implemented");
+    const auto pitch = ((read(cx, 0x319 + stride) & 0x7ffu) + 1u) * 8u;
+    const auto sliceElements = ((read(cx, 0x31a + stride) & 0x3fffffu) + 1u) * 64u;
+    color.extent = {pitch, sliceElements / pitch};
+    color.surfaceExtent = color.extent;
+    color.elementBytes = decoded.elementBytes;
+    switch (attrib & 0x1fu) {
+        case 8u: color.tileMode = ColorTileMode::Linear; break;
+        case 5u: case 13u: color.tileMode = ColorTileMode::GcnThin1D; break;
+        case 9u: color.tileMode = ColorTileMode::GcnDisplay1D; break;
+        case 10u: color.tileMode = ColorTileMode::GcnDisplay2D; break;
+        case 14u: color.tileMode = ColorTileMode::GcnThin2D; break;
+        default: throw std::runtime_error("AGC graphics: PS4 color target tile mode index " + std::to_string(attrib & 0x1fu) + " is not implemented");
+    }
+    color.mipCount = 1;
+    color.surfaceAddress = static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u;
+    color.address = color.surfaceAddress;
+    const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+    Require(layout.Bytes() == static_cast<std::size_t>(pitch) * color.extent.height * color.elementBytes, "PS4 color target pitch or slice is not padded the way its tile mode pads them");
+    color.bytes = layout.Bytes();
+    color.format = decoded.format;
+    color.componentMapping = decoded.componentMapping;
+    color.packing = decoded.packing;
+    for (std::uint32_t word = 0; word < 2; ++word) {
+        const auto clear = find(cx, 0x323 + word + stride);
+        color.clearWords[word] = clear == cx.end() ? 0u : clear->second;
+    }
+    Require(((info >> 13u) & 1u) == 0, "PS4 color target fast clear (CMASK) is not implemented");
+    GuestMemory::CheckRange(reinterpret_cast<const void*>(color.address), color.bytes, layout.Alignment(), true);
+    return color;
+}
+
 ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allowMultisampleDcc) {
+    if (ShaderRecompiler::GcnGuestShaders()) return DecodeGcnColorBuffer(cx, slot);
     const auto stride = slot * 0xfu;
     ColorTarget color{};
     color.slot = slot;

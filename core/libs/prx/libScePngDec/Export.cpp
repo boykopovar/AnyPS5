@@ -101,7 +101,7 @@ void fillImageInfo(const Decoder::Png::Header& header, PngDecImageInfo* info) {
 }
 
 bool hasAlpha(const Decoder::Png::Header& header) {
-    return header.hasTransparency || header.colorType == Decoder::Png::ColorType::GrayscaleAlpha
+    return header.hasTransparency || header.colorType == Decoder::Png::ColorType::Palette || header.colorType == Decoder::Png::ColorType::GrayscaleAlpha
         || header.colorType == Decoder::Png::ColorType::Rgba;
 }
 

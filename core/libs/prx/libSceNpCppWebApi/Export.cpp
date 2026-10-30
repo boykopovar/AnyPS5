@@ -931,10 +931,11 @@ static IntrusivePtr* HostVectorElement(void* self, const std::uint64_t index, co
 static int VectorPushBackIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* element) {
     VectorBody* body = VectorBodyFor(self, 1, __func__);
     if (body == nullptr) return -1;
+    const IntrusivePtr copy = *element;
     if (!VectorGrow(body, sizeof(IntrusivePtr))) return -1;
     auto* elements = static_cast<IntrusivePtr*>(body->elements);
-    elements[body->size] = *element;
-    if (element->object != nullptr) ReferenceCount(element->object, ReferenceCountOffset).fetch_add(1);
+    elements[body->size] = copy;
+    if (copy.object != nullptr) ReferenceCount(copy.object, ReferenceCountOffset).fetch_add(1);
     body->size += 1;
     return 0;
 }
@@ -942,7 +943,6 @@ static int VectorPushBackIntrusivePtr(IntrusivePtr* self, const IntrusivePtr* el
 static int VectorPushBackString(IntrusivePtr* self, const CommonString* element) {
     VectorBody* body = VectorBodyFor(self, 2, __func__);
     if (body == nullptr) return -1;
-    if (!VectorGrow(body, sizeof(CommonString))) return -1;
     CommonString copy = *element;
     copy.referenceCount = 0;
     copy.buffer = nullptr;
@@ -953,6 +953,10 @@ static int VectorPushBackString(IntrusivePtr* self, const CommonString* element)
         if (copy.buffer == nullptr) return -1;
         std::memcpy(copy.buffer, element->buffer, length);
         copy.bufferSize = length;
+    }
+    if (!VectorGrow(body, sizeof(CommonString))) {
+        std::free(copy.buffer);
+        return -1;
     }
     static_cast<CommonString*>(body->elements)[body->size] = copy;
     body->size += 1;
@@ -1129,11 +1133,13 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common6String6appendEPKc(CommonString* self, 
         char* buffer = static_cast<char*>(std::malloc(capacity));
         if (buffer == nullptr) return -1;
         if (oldLength != 0) std::memcpy(buffer, self->buffer, oldLength);
+        std::memmove(buffer + oldLength, text, textLength + 1);
         std::free(self->buffer);
         self->buffer = buffer;
         self->bufferSize = capacity;
+        return 0;
     }
-    std::memcpy(self->buffer + oldLength, text, textLength + 1);
+    std::memmove(self->buffer + oldLength, text, textLength + 1);
     return 0;
 }
 
@@ -1923,16 +1929,16 @@ int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi10getFriendsEiRKNS
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends10initializeEPNS1_6Common10LibContextEPKc() {
- return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends10initializeEPNS1_6Common10LibContextEPKc(void* self, const std::uint64_t* context, const char* accountId) {
+    return InitializeParameter(self, context, accountId != nullptr);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends9terminateEv() {
- return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends9terminateEv(void* self) {
+    return TerminateParameter(self);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriendsC1Ev(void* self) {
-    (void)self;
+    ConstructParameter(self);
     return 0;
 }
 
@@ -1945,16 +1951,16 @@ int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi17getBasicPresenc
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences10initializeEPNS1_6Common10LibContextEPKc() {
- return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences10initializeEPNS1_6Common10LibContextEPKc(void* self, const std::uint64_t* context, const char* accountIds) {
+    return InitializeParameter(self, context, accountIds != nullptr);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences9terminateEv() {
- return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences9terminateEv(void* self) {
+    return TerminateParameter(self);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresencesC1Ev(void* self) {
-    (void)self;
+    ConstructParameter(self);
     return 0;
 }
 
@@ -2080,16 +2086,16 @@ int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi16getBlockingUsersEi
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers10initializeEPNS1_6Common10LibContextE() {
- return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers10initializeEPNS1_6Common10LibContextE(void* self, const std::uint64_t* context) {
+    return InitializeParameter(self, context, true);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers9terminateEv() {
- return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers9terminateEv(void* self) {
+    return TerminateParameter(self);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsersC1Ev(void* self) {
-    (void)self;
+    ConstructParameter(self);
     return 0;
 }
 
@@ -2248,16 +2254,16 @@ int APS5_VABI _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi15filterProf
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity10initializeEPNS1_6Common10LibContextEPKcSA_NS6_12IntrusivePtrINS3_19WebApiFilterRequestEEE() {
- return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity10initializeEPNS1_6Common10LibContextEPKcSA_NS6_12IntrusivePtrINS3_19WebApiFilterRequestEEE(void* self, const std::uint64_t* context, const char* locale, const char* serviceLabel, const IntrusivePtr* body) {
+    return InitializeParameterWithBody(self, context, locale != nullptr && serviceLabel != nullptr, body);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity9terminateEv() {
- return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity9terminateEv(void* self) {
+    return TerminateParameter(self);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanityC1Ev(void* self) {
-    (void)self;
+    ConstructParameter(self);
     return 0;
 }
 
@@ -2274,16 +2280,17 @@ int APS5_VABI _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333Communica
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus10initializeEPNS1_6Common10LibContextEm() {
- return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus10initializeEPNS1_6Common10LibContextEm(void* self, const std::uint64_t* context, std::uint64_t accountId) {
+    (void)accountId;
+    return InitializeParameter(self, context, true);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus9terminateEv() {
- return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus9terminateEv(void* self) {
+    return TerminateParameter(self);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatusC1Ev(void* self) {
-    (void)self;
+    ConstructParameter(self);
     return 0;
 }
 

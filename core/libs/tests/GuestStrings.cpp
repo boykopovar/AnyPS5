@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <string>
 
 static void Require(bool condition) {
@@ -409,6 +410,19 @@ int main() {
     Require(strlcat_nid_postfix(buffer, "xyz", 0) == 3);
     buffer[0] = '\0';
     Require(strlcat_nid_postfix(buffer, "x", 1) == 1 && buffer[0] == '\0');
+    char copied[8] = "zzzzzzz";
+    Require(strlcpy_nid_postfix(copied, "abc", sizeof(copied)) == 3);
+    Require(std::memcmp(copied, "abc\0zzz", sizeof(copied)) == 0);
+    std::memset(copied, 'z', sizeof(copied));
+    Require(strlcpy_nid_postfix(copied, "abcdefghij", 4) == 10);
+    Require(std::memcmp(copied, "abc\0zzzz", sizeof(copied)) == 0);
+    std::memset(copied, 'z', sizeof(copied));
+    Require(strlcpy_nid_postfix(copied, "abcdefg", sizeof(copied)) == 7 && std::strcmp(copied, "abcdefg") == 0);
+    std::memset(copied, 'z', sizeof(copied));
+    Require(strlcpy_nid_postfix(copied, "abc", 0) == 3 && copied[0] == 'z');
+    Require(strlcpy_nid_postfix(copied, "abc", 1) == 3 && copied[0] == '\0' && copied[1] == 'z');
+    std::memset(copied, 'z', sizeof(copied));
+    Require(strlcpy_nid_postfix(copied, "", sizeof(copied)) == 0 && copied[0] == '\0' && copied[1] == 'z');
     char chained[8] = "zzzzzzz";
     char* end = stpcpy_nid_postfix(chained, "ab");
     Require(end == chained + 2 && *end == '\0' && chained[3] == 'z');
@@ -481,23 +495,23 @@ int main() {
     Require(std::strcmp(strtok_r_nid_postfix(nullptr, ",", &firstState), "b") == 0);
     Require(firstState == first + 6);
     Require(strtok_r_nid_postfix(nullptr, ",", &firstState) == nullptr);
-    if (firstState != nullptr) std::fputs("strtok_r retained the state after exhausting delimiters\n", stderr);
-    Require(firstState == nullptr);
-    Require(strtok_r_nid_postfix(nullptr, ",", &firstState) == nullptr);
+    Require(firstState != nullptr && *firstState == '\0' && (std::less<>()(firstState, first) || !std::less<>()(firstState, first + sizeof(first))));
+    char* const exhausted = firstState;
+    Require(strtok_r_nid_postfix(nullptr, ",", &firstState) == nullptr && firstState == exhausted);
     Require(std::strcmp(strtok_r_nid_postfix(nullptr, "", &secondState), "y") == 0);
-    Require(secondState == nullptr);
+    Require(secondState == second + 3);
     char tokenEnd[8] = "last";
     char* finishedState = first;
     *__error_nid_postfix() = 77;
-    Require(strtok_r_nid_postfix(tokenEnd, ",", &finishedState) == tokenEnd && finishedState == nullptr);
+    Require(strtok_r_nid_postfix(tokenEnd, ",", &finishedState) == tokenEnd && finishedState == tokenEnd + 4);
     tokenEnd[4] = 'x';
     tokenEnd[5] = '\0';
-    Require(strtok_r_nid_postfix(nullptr, ",", &finishedState) == nullptr && finishedState == nullptr);
+    Require(strtok_r_nid_postfix(nullptr, ",", &finishedState) == tokenEnd + 4 && finishedState == tokenEnd + 5);
     for (const char* input : {"", ",", ",,,"}) {
         char noTokens[8];
         std::strcpy(noTokens, input);
         finishedState = first;
-        Require(strtok_r_nid_postfix(noTokens, ",", &finishedState) == nullptr && finishedState == nullptr);
+        Require(strtok_r_nid_postfix(noTokens, ",", &finishedState) == nullptr && finishedState == exhausted);
         Require(strtok_r_nid_postfix(nullptr, ",", &finishedState) == nullptr);
     }
     Require(*__error_nid_postfix() == 77);

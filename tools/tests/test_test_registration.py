@@ -426,6 +426,30 @@ class ScriptRegistrationTests(unittest.TestCase):
             "core/relinker/CMakeLists.txt": "if(WIN32)\n    add_test(NAME a COMMAND ${Python3_EXECUTABLE}\n        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_a.py)\nendif()\n",
             "core/relinker/relinker/tests/test_a.py": ""}), [])
 
+    def test_cmake_test_names_do_not_register_scripts(self):
+        for command in ('add_test(NAME test_a.py COMMAND python helper.py)',
+                        'add_test(test_a.py python helper.py)'):
+            with self.subTest(command=command):
+                self.assertEqual(self.unrun({"CMakeLists.txt": command, "test_a.py": ""}), ["test_a.py"])
+
+    def test_cmake_test_options_do_not_register_scripts(self):
+        for option in ("CONFIGURATIONS", "WORKING_DIRECTORY", "BUILD_DEPENDS"):
+            for command in (f'add_test(NAME a {option} test_a.py COMMAND python helper.py)',
+                            f'add_test(NAME a COMMAND python helper.py {option} test_a.py)'):
+                with self.subTest(command=command):
+                    self.assertEqual(self.unrun({"CMakeLists.txt": command, "test_a.py": ""}), ["test_a.py"])
+
+    def test_cmake_command_scripts_remain_registered(self):
+        commands = ('add_test(a python test_a.py)',
+                    'add_test(NAME a CONFIGURATIONS Debug COMMAND python test_a.py)',
+                    'add_test(NAME a WORKING_DIRECTORY work COMMAND python test_a.py)',
+                    'add_test(NAME a COMMAND python test_a.py CONFIGURATIONS Debug)',
+                    'add_test(NAME a COMMAND python test_a.py COMMAND_EXPAND_LISTS)',
+                    'add_test(NAME a COMMAND test_a.py WORKING_DIRECTORY work)')
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertEqual(self.unrun({"CMakeLists.txt": command, "test_a.py": ""}), [])
+
     def test_script_in_bracket_argument_with_initial_newline_is_registered(self):
         self.assertEqual(self.unrun({
             "CMakeLists.txt": "add_test(NAME a COMMAND python [=[\ntools/tests/test_a.py]=])\n",

@@ -442,6 +442,12 @@ int APS5_VABI sceKernelGetModuleInfo2(KernelModule handle, ModuleInfo* info) {
     return FillModuleInfo(handle, info, true);
 }
 
+KernelModule APS5_VABI sceKernelGetExecutableModuleHandle() {
+    const auto images = GuestImages();
+    if (images.empty()) throw std::runtime_error("sceKernelGetExecutableModuleHandle: the main program is not loaded");
+    return ModuleIdForImage_nid_no_patch(images.front().native);
+}
+
 int GetModuleInfoExByHandle_nid_no_patch(KernelModule handle, ModuleInfoEx* info) {
     return FillModuleInfo(handle, info, false);
 }

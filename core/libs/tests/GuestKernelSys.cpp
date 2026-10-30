@@ -311,6 +311,12 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     posixFault([&] { return shm_open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDWR, 0600); });
     posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldfind_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return kldstat_nid_postfix(1, paths.Unreadable()); });
+    posixFault([&] { return kldstat_nid_postfix(1, paths.Boundary()); });
+    const std::int32_t statVersion = 1056;
+    std::memcpy(paths.Unreadable() - sizeof(statVersion), &statVersion, sizeof(statVersion));
+    *__error_nid_postfix() = 0;
+    Require(kldstat_nid_postfix(1, paths.Unreadable() - sizeof(statVersion)) == -1 && Error() == 2);
     Require(sceKernelOpen(paths.Unreadable(), SCE_KERNEL_O_RDONLY, 0) == KernelFault);
     Require(sceKernelStat(paths.Unreadable(), &status) == KernelFault);
     Require(sceKernelMkdir(paths.Unreadable(), 0755) == KernelFault);
@@ -659,6 +665,26 @@ void CheckSettimeofday() {
     Require(gettimeofday_nid_postfix(&now, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1 && now.tv_sec > 0);
     const KernelTimezone zero{0, 0};
     Require(settimeofday_nid_postfix(nullptr, &zero) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+}
+
+void CheckSceKernelSettimeofday() {
+    constexpr int KernelFault = static_cast<int>(0x8002000Eu);
+    constexpr int KernelInvalid = static_cast<int>(0x80020016u);
+    KernelTimezone zone{-1, -1};
+    Require(sceKernelSettimeofday(nullptr, nullptr) == 0);
+    const KernelTimezone west{60, 1};
+    const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(1);
+    const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(1);
+    Require(sceKernelSettimeofday(unreadableTime, &west) == KernelFault);
+    Require(sceKernelSettimeofday(nullptr, unreadableZone) == KernelFault);
+    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
+        Require(sceKernelSettimeofday(&invalid, &west) == KernelInvalid);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    Require(sceKernelSettimeofday(nullptr, &west) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1);
+    const KernelTimezone zero{0, 0};
+    Require(sceKernelSettimeofday(nullptr, &zero) == 0);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
 
@@ -1118,6 +1144,7 @@ int main() {
     Require(link_nid_postfix(original.c_str(), "") == -1 && Error() == 2);
     Require(std::filesystem::remove(linked) && std::filesystem::hard_link_count(original) == 1);
     CheckSettimeofday();
+    CheckSceKernelSettimeofday();
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     const int fileDescriptor = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);
@@ -1183,6 +1210,22 @@ int main() {
     Require(kldunload_nid_postfix(-1) == -1 && Error() == 1);
     Require(kldunload_nid_postfix(0) == -1 && Error() == 1);
     Require(kldunload_nid_postfix(1) == -1 && Error() == 1);
+    std::array<unsigned char, 2080> fileStatus{};
+    const auto kldstatFails = [&](int fileid, std::int32_t version, int error) {
+        fileStatus.fill(0xA5);
+        std::memcpy(fileStatus.data(), &version, sizeof(version));
+        const auto before = fileStatus;
+        *__error_nid_postfix() = 0;
+        return kldstat_nid_postfix(fileid, fileStatus.data()) == -1 && Error() == error && fileStatus == before;
+    };
+    Require(kldstat_nid_postfix(1, nullptr) == -1 && Error() == 14);
+    Require(kldstat_nid_postfix(1, reinterpret_cast<void*>(0x10)) == -1 && Error() == 14);
+    for (const std::int32_t version : {0, 1, 1040, 1055, 1057, 2079, 2081, -1}) {
+        Require(kldstatFails(1, version, 22) && kldstatFails(-1, version, 22));
+    }
+    for (const std::int32_t version : {1056, 2080}) {
+        for (const int fileid : {-2147483647 - 1, -1, 0, 1, 2, 2147483647}) Require(kldstatFails(fileid, version, 2));
+    }
     struct SymbolLookup {
         std::int32_t version;
         const char* name;
