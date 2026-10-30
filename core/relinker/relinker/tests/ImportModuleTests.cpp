@@ -40,5 +40,10 @@ int main() {
     if (!Domain::ImportModule("nid#A#B", modules, other).empty()) return 2;
     try { Domain::ImportModule("nid#A#B", modules, ambiguous); return 3; }
     catch (const Domain::RelinkerException&) {}
+    const std::map<std::uint64_t, std::string> versioned{{1, "libmonosgen-2.0"}};
+    const std::array<std::string, 1> legacy{"libmonosgen.prx"};
+    const std::array<std::string, 2> both{"libmonosgen.prx", "libmonosgen-2.0.prx"};
+    if (!Domain::ImportModule("nid#A#B", versioned, legacy).empty()) return 5;
+    if (Domain::ImportModule("nid#A#B", modules, both) != both[0]) return 6;
     std::cout << "module mapping checks passed\n";
 }
