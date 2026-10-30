@@ -212,6 +212,7 @@ class ReleasePackageTests(unittest.TestCase):
 
     def test_jemspace_allocator_license_in_archives(self):
         (self.source / "core/libs/prx/libSceJemspace").mkdir()
+        (self.unpatched.parent / "libSceJemspace.prx").write_bytes(b"unpatched allocator")
         (self.build / "core/libs/libs/libSceJemspace.prx").write_bytes(b"allocator")
         license_file = self.source / "3rdparty/jemalloc/COPYING"
         license_file.parent.mkdir(parents=True)
@@ -221,6 +222,7 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(archive.read("libs/licenses/jemalloc.txt"), b"allocator license")
         with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
             self.assertEqual(archive.extractfile("libs/licenses/jemalloc.txt").read(), b"allocator license")
+
     def test_vorbis_decoder_licenses_in_archives(self):
         (self.source / "core/libs/prx/libSceVorbisDec").mkdir()
         (self.unpatched.parent / "libSceVorbisDec.prx").write_bytes(b"unpatched library")
