@@ -11,6 +11,7 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/OutlineDecompose.cpp
 )
 target_include_directories(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR})
+target_sources(libSceFreeType PRIVATE src/Glyph.cpp)
 target_sources(libSceFreeType PRIVATE src/Advances.cpp)
 
 if(BUILD_TESTING)
@@ -83,6 +84,15 @@ if(BUILD_TESTING)
     target_include_directories(guest_freetype_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_tests PRIVATE libSceFreeType freetype libc)
     configure_windows_unwind(guest_freetype_tests)
+    add_test_executable(guest_freetype_glyph_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeGlyph.cpp)
+    target_include_directories(guest_freetype_glyph_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_glyph_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_glyph_tests)
+    add_test(NAME guest_freetype_glyph COMMAND guest_freetype_glyph_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_glyph PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
     add_test(NAME guest_freetype COMMAND guest_freetype_tests)
     add_test_executable(guest_freetype_outline_mutations_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutlineMutations.cpp)
     target_include_directories(guest_freetype_outline_mutations_tests PRIVATE ${LIBS_INCLUDE_DIR})
