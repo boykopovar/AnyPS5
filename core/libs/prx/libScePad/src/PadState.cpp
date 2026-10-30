@@ -1,6 +1,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadAudioHapticQueue.hpp"
 #include "prx/libScePad/include/PadHapticBuffer.hpp"
+#include "prx/libScePad/include/PadRumbleIntensity.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -631,7 +632,7 @@ extern "C" void PadSubmitHapticFrames_nid_postfix(const float* left, const float
     if (left == nullptr || right == nullptr || !hapticStreamOpen.load()) return;
     {
         std::lock_guard lock(hapticMutex);
-        haptics.Push(left, right, stride, frames, rate);
+        haptics.Push(left, right, stride, frames, rate, Pad::RumblePercent());
     }
     hapticReady.notify_all();
 }

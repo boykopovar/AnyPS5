@@ -87,6 +87,24 @@ void BufferFollowsTheInputRate() {
     Require(buffer.Frames() == 30, "441 frames at 44.1 kHz are 30 frames at 3 kHz");
 }
 
+void BufferScalesByRumblePercent() {
+    std::vector<float> pad(48 * 4 * 2, 0.0f);
+    for (std::size_t frame = 0; frame < 48 * 2; ++frame) {
+        pad[frame * 4 + 2] = 1.0f;
+        pad[frame * 4 + 3] = -1.0f;
+    }
+    const auto first = [&pad](unsigned percent) {
+        PadHapticBuffer buffer;
+        for (int round = 0; round < 6; ++round) buffer.Push(pad.data() + 2, pad.data() + 3, 4, 48 * 2, 48000, percent);
+        std::array<std::int8_t, PadHapticBuffer::BlockFrames * 2> block{};
+        Require(buffer.Take(block), "a full block is taken");
+        return std::array<std::int8_t, 2>{block[0], block[1]};
+    };
+    Require(first(100) == std::array<std::int8_t, 2>{127, -127}, "full intensity passes the samples unchanged");
+    Require(first(50) == std::array<std::int8_t, 2>{64, -64}, "half intensity halves the samples");
+    Require(first(0) == std::array<std::int8_t, 2>{0, 0}, "zero intensity silences the stream");
+}
+
 void ReportsArePaced() {
     using namespace std::chrono;
     const steady_clock::time_point start{seconds(100)};
@@ -108,6 +126,7 @@ int main() {
     PowerReportLayout();
     BufferAveragesTo3kHz();
     BufferFollowsTheInputRate();
+    BufferScalesByRumblePercent();
     ReportsArePaced();
     std::puts("dualsense haptics tests passed");
     return 0;
