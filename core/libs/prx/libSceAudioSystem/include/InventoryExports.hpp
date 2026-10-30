@@ -6,12 +6,6 @@ extern "C" {
 
 int APS5_VABI sceAudioOutServerBusGetIoParam();
 int APS5_VABI sceAudioOutServerGetOption();
-int APS5_VABI sceAudioSystemInit();
-int APS5_VABI sceAudioSystemProcessAdd();
-int APS5_VABI sceAudioSystemProcessRemove();
-int APS5_VABI sceAudioSystemProcessResume();
-int APS5_VABI sceAudioSystemProcessSuspend();
-int APS5_VABI sceAudioSystemTerminate();
 int APS5_VABI libSceAudioSystemUnknown__minus_e5aJEqL34Y_nid_no_patch();
 int APS5_VABI libSceAudioSystemUnknown_17nOsxccH5o_nid_no_patch();
 int APS5_VABI libSceAudioSystemUnknown_2bKJUeywpeY_nid_no_patch();
