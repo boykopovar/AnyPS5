@@ -785,6 +785,7 @@ int APS5_VABI _Dclass_nid_postfix(double x);
 int APS5_VABI _FDclass_nid_postfix(float x);
 int APS5_VABI _LDclass_nid_postfix(long double x);
 short APS5_VABI _LDsign_nid_postfix(long double x);
+short APS5_VABI _LExp_nid_postfix(long double* value, long double y, short offset);
 void* APS5_VABI sceLibcMspaceCreate_nid_postfix(const char* name, void* base, std::size_t size, unsigned flags);
 int APS5_VABI sceLibcMspaceDestroy_nid_postfix(void* handle);
 void* APS5_VABI sceLibcMspaceMalloc_nid_postfix(void* handle, std::size_t size);
