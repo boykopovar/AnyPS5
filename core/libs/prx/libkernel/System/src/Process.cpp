@@ -655,17 +655,25 @@ int APS5_VABI getppid_nid_postfix(void) {
 }
 
 int APS5_VABI sceKernelGetAppInfo(int pid, void* info) {
-    if (pid != getpid_nid_postfix()) return SCE_KERNEL_ERROR_EPERM;
+    const bool own = pid == getpid_nid_postfix();
+    if (!own && pid != 0) NotImplemented_nid_no_patch("sceKernelGetAppInfo: a pid other than the caller's and 0");
     if (info == nullptr) return 0;
+    constexpr std::size_t StructureBytes = 0x58;
     constexpr std::size_t TitleIdOffset = 0x10;
     constexpr std::size_t TitleIdBytes = 10;
-    const auto titleId = GetAppTitleId_nid_postfix();
-    char field[TitleIdBytes] = {};
-    std::strncpy(field, titleId.value, sizeof(field) - 1);
+    constexpr std::size_t MarkerOffset = 0x50;
     auto* bytes = static_cast<std::uint8_t*>(info);
-    const std::uint32_t appId = 1;
-    std::memcpy(bytes, &appId, sizeof(appId));
-    std::memcpy(bytes + TitleIdOffset, field, TitleIdBytes);
+    std::memset(bytes, 0, StructureBytes);
+    if (own) {
+        const auto titleId = GetAppTitleId_nid_postfix();
+        char field[TitleIdBytes] = {};
+        std::strncpy(field, titleId.value, sizeof(field) - 1);
+        const std::uint32_t appId = 1;
+        std::memcpy(bytes, &appId, sizeof(appId));
+        std::memcpy(bytes + TitleIdOffset, field, TitleIdBytes);
+    }
+    const std::uint32_t marker = 0xffffffffu;
+    std::memcpy(bytes + MarkerOffset, &marker, sizeof(marker));
     return 0;
 }
 
@@ -776,7 +784,8 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
 }
 
 int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit) {
-    if (limit == nullptr) {
+    GuestResourceLimit requested{};
+    if (limit == nullptr || !GuestCopyIn_nid_no_patch(&requested, limit, sizeof(requested))) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
@@ -785,7 +794,6 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
         return -1;
     }
 
-    GuestResourceLimit requested = *limit;
     if (requested.rlim_cur < 0)
         requested.rlim_cur = guestRlimitInfinity;
     if (requested.rlim_max < 0)

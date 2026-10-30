@@ -286,6 +286,7 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
 #ifdef _WIN32
     if (handle == __acrt_iob_func(1) && KeepHostStandardOutput_nid_no_patch() < 0) return -1;
     if (handle == __acrt_iob_func(2) && KeepHostStandardError_nid_no_patch() < 0) return -1;
+    buffer = nullptr;
 #endif
     return std::setvbuf(handle, buffer, native, size);
 }

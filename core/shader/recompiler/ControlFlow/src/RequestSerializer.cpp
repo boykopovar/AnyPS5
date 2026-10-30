@@ -7,6 +7,8 @@ namespace ShaderRecompiler {
 namespace {
 
 constexpr std::uint32_t TargetBlendFlag = 0x10000u;
+constexpr std::uint32_t FurtherMergeShift = 17u;
+constexpr std::uint32_t FurtherMergeMask = 7u << FurtherMergeShift;
 
 constexpr char kBase64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -359,14 +361,18 @@ void writePixelInfo(Writer& writer, const ShaderPixelStageInfo& info) {
     for (const std::uint8_t location : info.sampleLocations) writer.WriteU8(location);
     writer.WriteBool(info.stencilOperationValueExport);
     for (const std::uint32_t order : info.sampleOrder) writer.WriteU32(order);
-    writer.WriteU8(info.targetMerge.target);
-    writer.WriteU32(static_cast<std::uint32_t>(info.targetMerge.mask) | (info.targetMerge.blend.enabled ? TargetBlendFlag : 0u));
-    writer.WriteU8(info.targetMerge.samples);
-    for (const std::uint32_t word : info.targetMerge.descriptor) writer.WriteU32(word);
-    writer.WriteBool(info.targetMerge.depthStencilWrites);
-    writer.WriteBool(info.targetMerge.depthStencilTests);
-    if (info.targetMerge.blend.enabled) {
-        const auto& blend = info.targetMerge.blend;
+    if (info.targetMerges.size() > 8u) throw std::runtime_error("a recompile request merges into more than eight color targets");
+    const auto further = static_cast<std::uint32_t>(std::max<std::size_t>(info.targetMerges.size(), 1u) - 1u);
+    for (std::uint32_t index = 0; index <= further; ++index) {
+        const auto& merge = info.targetMerges.empty() ? TargetMerge{} : info.targetMerges[index];
+        writer.WriteU8(merge.target);
+        writer.WriteU32(static_cast<std::uint32_t>(merge.mask) | (merge.blend.enabled ? TargetBlendFlag : 0u) | (index == 0u ? further << FurtherMergeShift : 0u));
+        writer.WriteU8(merge.samples);
+        for (const std::uint32_t word : merge.descriptor) writer.WriteU32(word);
+        writer.WriteBool(merge.depthStencilWrites);
+        writer.WriteBool(merge.depthStencilTests);
+        if (!merge.blend.enabled) continue;
+        const auto& blend = merge.blend;
         writer.WriteBool(blend.snorm);
         writer.WriteU8(blend.colorSource);
         writer.WriteU8(blend.colorDestination);
@@ -457,17 +463,19 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
     if (version >= 42u) {
         for (std::uint32_t& order : info.sampleOrder) order = reader.ReadU32();
     }
-    if (version >= 46u) {
-        info.targetMerge.target = reader.ReadU8();
+    for (std::uint32_t index = 0, count = version >= 46u ? 1u : 0u; index < count; ++index) {
+        TargetMerge merge;
+        merge.target = reader.ReadU8();
         const auto word = reader.ReadU32();
-        if ((word & ~(0xffffu | TargetBlendFlag)) != 0u) throw std::runtime_error("invalid recompile request target merge mask");
-        info.targetMerge.mask = static_cast<std::uint16_t>(word & 0xffffu);
-        info.targetMerge.samples = reader.ReadU8();
-        for (std::uint32_t& descriptor : info.targetMerge.descriptor) descriptor = reader.ReadU32();
-        info.targetMerge.depthStencilWrites = reader.ReadBool();
-        info.targetMerge.depthStencilTests = reader.ReadBool();
+        if ((word & ~(0xffffu | TargetBlendFlag | (index == 0u ? FurtherMergeMask : 0u))) != 0u) throw std::runtime_error("invalid recompile request target merge mask");
+        count += (word & FurtherMergeMask) >> FurtherMergeShift;
+        merge.mask = static_cast<std::uint16_t>(word & 0xffffu);
+        merge.samples = reader.ReadU8();
+        for (std::uint32_t& descriptor : merge.descriptor) descriptor = reader.ReadU32();
+        merge.depthStencilWrites = reader.ReadBool();
+        merge.depthStencilTests = reader.ReadBool();
         if ((word & TargetBlendFlag) != 0u) {
-            auto& blend = info.targetMerge.blend;
+            auto& blend = merge.blend;
             blend.enabled = true;
             blend.snorm = reader.ReadBool();
             blend.colorSource = reader.ReadU8();
@@ -479,6 +487,8 @@ ShaderPixelStageInfo readPixelInfo(Reader& reader, std::uint32_t version) {
             blend.writeMask = reader.ReadU8();
             for (std::uint32_t& constant : blend.constants) constant = reader.ReadU32();
         }
+        if (merge.mask != 0u) info.targetMerges.push_back(merge);
+        else if (index != 0u || count != 1u) throw std::runtime_error("invalid recompile request target merge mask");
     }
     if (version >= 49u && info.depthExportEnable) {
         info.depthExportMin = std::bit_cast<float>(reader.ReadU32());

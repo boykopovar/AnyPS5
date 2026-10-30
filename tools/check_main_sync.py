@@ -52,7 +52,7 @@ def merged_pull_requests(repo, mergebase, base, paths):
     found = {}
     if not paths:
         return found
-    for line in lines(repo, "-c", "core.quotepath=off", "log", "--first-parent", "--format=%h %s", f"{mergebase}..{base}", "--", *paths):
+    for line in lines(repo, "--literal-pathspecs", "-c", "core.quotepath=off", "log", "--first-parent", "--format=%h %s", f"{mergebase}..{base}", "--", *paths):
         match = PULL_REQUEST.search(line)
         if match:
             found[int(match.group(1) or match.group(2))] = line.split(" ", 1)[0]

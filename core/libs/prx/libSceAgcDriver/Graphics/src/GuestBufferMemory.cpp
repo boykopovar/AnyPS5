@@ -298,6 +298,7 @@ struct HostImports {
     std::uint64_t frameFloor = 0;
     std::uint64_t previousFrameFloor = 0;
     std::uint64_t framesEnded = 0;
+    bool mirrorsYield = false;
     std::array<HostImportRequesterCounts, ImportRequesterCount> counts{};
     VkPhysicalDevice reportedDevice = VK_NULL_HANDLE;
     std::chrono::steady_clock::time_point reportedAt{};
@@ -1615,15 +1616,37 @@ bool pointerHeld(const HostImports& state, const HostImport& entry) {
 
 constexpr std::uint64_t ProtectedUses = 256;
 
+bool mirrorsEnabled();
+
+bool mirrorStandsIn(const HostImport& entry) {
+    return mirrorsEnabled() && !entry.joined && entry.ranges.size() == 1 && entry.range != nullptr && entry.range->releasable && GuestMemory::Watched(entry.range->address, entry.range->bytes);
+}
+
 bool hasFrameHistory(const HostImports& state) {
     return state.previousFrameFloor != 0;
 }
 
 bool evictable(const HostImports& state, const HostImport& entry) {
     if (pointerHeld(state, entry)) return false;
+    if (state.mirrorsYield && mirrorStandsIn(entry)) return true;
     if (!hasFrameHistory(state)) return effectiveUse(state, entry) + ProtectedUses < state.useCounter;
     return effectiveUse(state, entry) < state.previousFrameFloor;
 }
+
+struct MirrorsYield {
+    HostImports& state;
+    std::uint64_t floor;
+    MirrorsYield(HostImports& state, std::uint64_t buildFloor) : state(state), floor(state.buildFloor) {
+        state.mirrorsYield = true;
+        state.buildFloor = buildFloor;
+    }
+    ~MirrorsYield() {
+        state.mirrorsYield = false;
+        state.buildFloor = floor;
+    }
+    MirrorsYield(const MirrorsYield&) = delete;
+    MirrorsYield& operator=(const MirrorsYield&) = delete;
+};
 
 bool evictingRefusalCurrent(const HostImports& state, const EvictingRefusal& refusal, std::uint64_t budget) {
     return refusal.epoch == state.epoch && refusal.frames == state.framesEnded && refusal.liveBytes == state.liveBytes && budget <= refusal.budget && refusal.window == importWindow.load(std::memory_order_relaxed) && state.useCounter < refusal.ready && (state.buildFloor <= refusal.floor || state.useCounter < refusal.readyHeld);
@@ -2007,7 +2030,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     }
     const auto budget = effectiveBudget(context, state);
     const auto containing = std::find_if(run.ranges.begin(), run.ranges.end(), [address](const auto& range) { return address >= range->address && address < range->address + range->bytes; });
-    if (const auto remembered = state.evictingRefusals.find({base, bytes}); evict && remembered != state.evictingRefusals.end()) {
+    if (const auto remembered = state.evictingRefusals.find({base, bytes}); evict && !state.mirrorsYield && remembered != state.evictingRefusals.end()) {
         if (remembered->second.joined == joined && evictingRefusalCurrent(state, remembered->second, budget) && sameRun(remembered->second, run)) {
             ++counts.refused;
             counts.refusedBytes += bytes;
@@ -3085,7 +3108,10 @@ bool heapMirrorWatched(ImageMirror& mirror) {
 }
 
 bool importsNow(const Context& context, HostImports& state, const GuestAllocations::Lease& lease, std::uint64_t address) {
-    return context.hostImportAlignment != 0 && (importsStale(context, state) || importAllocation(context, state, address, lease, ImportRequester::Build, 0, false) != nullptr);
+    if (context.hostImportAlignment == 0) return false;
+    if (importsStale(context, state)) return true;
+    const MirrorsYield yield(state, state.useCounter + 1);
+    return importAllocation(context, state, address, lease, ImportRequester::Build, 0, true) != nullptr;
 }
 
 const char* heapCopyReason(bool overBudget, bool watched) {
@@ -4536,7 +4562,10 @@ void GuestBufferMemory::AcquireRegistered() {
             if (overBudget && copiedBytes + committed > cap) {
                 auto& state = Imports();
                 std::lock_guard lock(state.mutex);
-                entry = importAllocation(context, state, range->address, lease, ImportRequester::Build, 0, true);
+                {
+                    const MirrorsYield yield(state, state.buildFloor);
+                    entry = importAllocation(context, state, range->address, lease, ImportRequester::Build, 0, true);
+                }
                 if (entry != nullptr) {
                     covering = entry;
                     coveredBegin = entry->base;

@@ -215,6 +215,8 @@ endforeach()
 
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
+include(prx/libSceFreeType/PostScriptInfo.cmake)
+
 if(APS5_ENABLE_TRACY)
     set_target_properties(TracyClient PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${UNPATCHED_DIR}
@@ -303,6 +305,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_kernel_sys_cpumode COMMAND guest_kernel_sys_cpumode_tests)
     if(WIN32)
         set_tests_properties(guest_kernel_sys_cpumode PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+    add_test_executable(guest_kernel_sys_neo_mode_tests tests/GuestKernelSysNeoMode.cpp)
+    target_include_directories(guest_kernel_sys_neo_mode_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_neo_mode_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_neo_mode_tests)
+    add_test(NAME guest_kernel_sys_neo_mode COMMAND guest_kernel_sys_neo_mode_tests)
+    set_tests_properties(guest_kernel_sys_neo_mode PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_neo_mode PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
     add_test_executable(nid_buffer_validation_tests nid/tests/BufferValidation.cpp)
@@ -619,6 +631,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_voice_port_attr PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVoice>")
+    endif()
+
+    add_test_executable(guest_remoteplay_tests tests/GuestRemoteplay.cpp)
+    target_include_directories(guest_remoteplay_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_remoteplay_tests PRIVATE libSceRemoteplay libc)
+    configure_windows_unwind(guest_remoteplay_tests)
+    add_test(NAME guest_remoteplay COMMAND guest_remoteplay_tests)
+    if(WIN32)
+        set_tests_properties(guest_remoteplay PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRemoteplay>")
     endif()
 
     add_test_executable(guest_gnm_neo_retail_tests tests/GuestGnmNeoRetail.cpp)
