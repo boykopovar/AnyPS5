@@ -52,6 +52,10 @@ int main(int argc, char* argv[]) {
         } else if (mode == "storeN") {
             reportExpected = base + 16;
             __asan_storeN(base + 8, 16);
+        } else if (mode == "load16") {
+            __asan_load16(base);
+            reportExpected = base + 16;
+            __asan_load16(base + 4);
         } else if (mode == "unaligned") {
             reportExpected = base + 16;
             __sanitizer_unaligned_store32(reportBuffer.data() + 14, 0);
