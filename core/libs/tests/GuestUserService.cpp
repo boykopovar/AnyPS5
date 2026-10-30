@@ -33,6 +33,10 @@ int main() {
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID, &privacy) == USER_SERVICE_OK);
     Require(privacy == 0);
+    privacy = -1;
+    Require(sceUserServiceGetPlatformPrivacyWs1(123, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(privacy == -1);
+    Require(sceUserServiceGetPlatformPrivacyWs1(123, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
 
     int foreground = -1;
     Require(sceUserServiceGetForegroundUser(&foreground) == USER_SERVICE_OK);
@@ -96,7 +100,9 @@ int main() {
 
     std::uint64_t account_id = 0xdeadbeefu;
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-    Require(sceUserServiceGetNpAccountId(123, &account_id) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetNpAccountId(123, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(account_id == 0xdeadbeefu);
+    Require(sceUserServiceGetNpAccountId(123, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, &account_id) == USER_SERVICE_OK);
     Require(account_id == 0);
 
@@ -107,6 +113,14 @@ int main() {
         Require(sceUserServiceGetAgeLevel(user_id, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
         Require(age_level == 0x5a5a5a5au);
         Require(sceUserServiceGetAgeLevel(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        privacy = 0x5a5a;
+        Require(sceUserServiceGetPlatformPrivacyWs1(user_id, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(privacy == 0x5a5a);
+        Require(sceUserServiceGetPlatformPrivacyWs1(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        account_id = 0xdeadbeefu;
+        Require(sceUserServiceGetNpAccountId(user_id, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(account_id == 0xdeadbeefu);
+        Require(sceUserServiceGetNpAccountId(user_id, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
     }
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID, &age_level) == USER_SERVICE_OK);
     Require(age_level == 0xffffffffu);
@@ -181,6 +195,14 @@ int main() {
 
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    privacy = 0x5a5a;
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(privacy == 0x5a5a);
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    account_id = 0xdeadbeefu;
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(account_id == 0xdeadbeefu);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
     for (const Setting& setting : settings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
@@ -197,6 +219,14 @@ int main() {
     }
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_OK);
     Require(age_level == 0xffffffffu);
+    privacy = 0x5a5a;
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_OK);
+    Require(privacy == 0);
+    account_id = 0xdeadbeefu;
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, &account_id) == USER_SERVICE_OK);
+    Require(account_id == 0);
     for (const Setting& setting : settings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_OK);
@@ -211,6 +241,14 @@ int main() {
     }
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    privacy = 0x5a5a;
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(privacy == 0x5a5a);
+    Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    account_id = 0xdeadbeefu;
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(account_id == 0xdeadbeefu);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
     for (const Setting& setting : settings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
