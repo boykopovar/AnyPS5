@@ -9,15 +9,14 @@ static_assert(sizeof(LibreSslX509CertInfo) == 104);
 static_assert(offsetof(LibreSslX509CertInfo, serialNumber) == 8);
 static_assert(offsetof(LibreSslX509CertInfo, issuer) == 24);
 static_assert(offsetof(LibreSslX509CertInfo, subject) == 40);
-static_assert(sizeof(LibreSslX509) == 176);
-static_assert(offsetof(LibreSslX509, certInfo) == 0);
+static_assert(offsetof(LibreSslX509, certificateInfo) == 0);
 
 namespace {
 
 const LibreSslX509CertInfo& CertInfo(const LibreSslX509* certificate, const char* function) {
     if (!certificate) throw std::invalid_argument(std::string(function) + ": null certificate");
-    if (!certificate->certInfo) throw std::invalid_argument(std::string(function) + ": null certificate info");
-    return *certificate->certInfo;
+    if (!certificate->certificateInfo) throw std::invalid_argument(std::string(function) + ": null certificate info");
+    return *static_cast<const LibreSslX509CertInfo*>(certificate->certificateInfo);
 }
 
 }

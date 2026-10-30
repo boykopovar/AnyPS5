@@ -270,13 +270,6 @@ struct LibreSslX509CertInfo {
     LibreSslAsn1Encoding enc;
 };
 
-struct LibreSslX509 {
-    LibreSslX509CertInfo* certInfo;
-    void* sigAlg;
-    void* signature;
-    unsigned char rest[152];
-};
-
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
