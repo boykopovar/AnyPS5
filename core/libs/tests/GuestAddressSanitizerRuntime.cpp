@@ -304,6 +304,83 @@ static int UbsanDedup() {
     return 0;
 }
 
+static int Heap() {
+    auto* p = static_cast<unsigned char*>(__asan_malloc(13));
+    if (!p) return 1;
+    if (reinterpret_cast<std::uintptr_t>(p) % 8) return 2;
+    for (int i = 0; i < 13; ++i) {
+        if (p[i] != 0xbe) return 3;
+    }
+    if (__asan_address_is_poisoned(p + 12) || !__asan_address_is_poisoned(p + 13) || !__asan_address_is_poisoned(p - 1)) return 4;
+    if (__sanitizer_get_allocated_size(p) != 13 || __asan_malloc_usable_size(p) != 13) return 5;
+    if (!__sanitizer_get_ownership(p) || __sanitizer_get_ownership(p + 1)) return 6;
+    if (__sanitizer_get_allocated_begin(p + 5) != p) return 7;
+    if (__sanitizer_get_allocated_size_fast(p) != 13) return 8;
+    const std::size_t before = __sanitizer_get_current_allocated_bytes();
+    auto* q = static_cast<unsigned char*>(__asan_calloc(5, 7));
+    for (int i = 0; i < 35; ++i) {
+        if (q[i] != 0) return 9;
+    }
+    if (__sanitizer_get_current_allocated_bytes() != before + 35) return 10;
+    if (__sanitizer_get_heap_size() == 0 || __sanitizer_get_free_bytes() > __sanitizer_get_heap_size()) return 11;
+    std::memset(q, 0x42, 35);
+    auto* r = static_cast<unsigned char*>(__asan_realloc(q, 100));
+    if (r == q) return 12;
+    for (int i = 0; i < 35; ++i) {
+        if (r[i] != 0x42) return 13;
+    }
+    if (!__asan_address_is_poisoned(q) || __sanitizer_get_ownership(q)) return 14;
+    if (__asan_address_is_poisoned(r + 99) || !__asan_address_is_poisoned(r + 100)) return 15;
+    if (__asan_realloc(r, 0) != nullptr) return 16;
+    if (!__asan_address_is_poisoned(r)) return 17;
+    auto* grown = static_cast<unsigned char*>(__asan_realloc(nullptr, 8));
+    if (!grown || __sanitizer_get_allocated_size(grown) != 8) return 18;
+    __asan_free(grown);
+    __asan_free(nullptr);
+    auto* zero = static_cast<unsigned char*>(__asan_malloc(0));
+    if (!zero || __sanitizer_get_allocated_size(zero) != 1) return 19;
+    __asan_free(zero);
+    if (__asan_malloc(13) == p) return 20;
+    if (!__asan_update_allocation_context(p) || __asan_update_allocation_context(p + 1)) return 21;
+    std::uintptr_t trace[4] = {};
+    std::uint32_t tid = 99;
+    if (__asan_get_alloc_stack(reinterpret_cast<std::uintptr_t>(p), trace, 4, &tid) != 1 || trace[0] == 0 || tid == 99) return 22;
+    if (__asan_get_free_stack(reinterpret_cast<std::uintptr_t>(p), trace, 4, &tid) != 0) return 23;
+    __asan_free(p);
+    if (!__asan_address_is_poisoned(p) || __asan_get_free_stack(reinterpret_cast<std::uintptr_t>(p), trace, 4, &tid) != 1) return 24;
+    if (__sanitizer_get_ownership(p)) return 25;
+    __sanitizer_purge_allocator();
+    if (__asan_address_is_poisoned(zero)) return 26;
+    return 0;
+}
+
+static int HeapAligned() {
+    void* a = __asan_memalign(64, 10);
+    if (!a || reinterpret_cast<std::uintptr_t>(a) % 64) return 1;
+    if (__sanitizer_get_allocated_size(a) != 10 || !__asan_address_is_poisoned(static_cast<char*>(a) + 10)) return 2;
+    void* b = __asan_aligned_alloc(32, 64);
+    if (!b || reinterpret_cast<std::uintptr_t>(b) % 32) return 3;
+    void* c = nullptr;
+    if (__asan_posix_memalign(&c, 128, 5) != 0 || !c || reinterpret_cast<std::uintptr_t>(c) % 128) return 4;
+    void* d = __asan_memalign(4096, 100000);
+    if (!d || reinterpret_cast<std::uintptr_t>(d) % 4096 || __asan_address_is_poisoned(static_cast<char*>(d) + 99999) || !__asan_address_is_poisoned(static_cast<char*>(d) + 100000)) return 5;
+    void* e = __asan_memalign(0, 8);
+    if (!e || reinterpret_cast<std::uintptr_t>(e) % 8) return 6;
+    __asan_free(a);
+    __asan_free(b);
+    __asan_free(c);
+    __asan_free(d);
+    __asan_free(e);
+    return 0;
+}
+
+static int HeapStats() {
+    void* p = __asan_malloc(100);
+    __asan_free(p);
+    __asan_print_accumulated_stats();
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) return 100;
     const std::string_view mode(argv[1]);
@@ -321,6 +398,59 @@ int main(int argc, char* argv[]) {
         static Location unreachable = {"test.cpp", 71, 3};
         __sanitizer_set_death_callback(PrintDeathCallback);
         __ubsan_handle_builtin_unreachable(&unreachable);
+        return 2;
+    }
+    if (mode == "heap") return Heap();
+    if (mode == "heap_aligned") return HeapAligned();
+    if (mode == "heap_stats") return HeapStats();
+    if (mode == "heap_double_free") {
+        void* p = __asan_malloc(10);
+        __asan_free(p);
+        __asan_free(p);
+        return 2;
+    }
+    if (mode == "heap_bad_free") {
+        __asan_free(buffer.data());
+        return 2;
+    }
+    if (mode == "heap_interior_free") {
+        char* p = static_cast<char*>(__asan_malloc(32));
+        __asan_free(p + 1);
+        return 2;
+    }
+    if (mode == "heap_usable_size_unowned") {
+        __asan_malloc_usable_size(buffer.data());
+        return 2;
+    }
+    if (mode == "heap_allocated_size_unowned") {
+        __sanitizer_get_allocated_size(buffer.data());
+        return 2;
+    }
+    if (mode == "heap_calloc_overflow") {
+        __asan_calloc(1ull << 40, 1ull << 40);
+        return 2;
+    }
+    if (mode == "heap_aligned_alloc_bad") {
+        __asan_aligned_alloc(24, 48);
+        return 2;
+    }
+    if (mode == "heap_posix_memalign_bad") {
+        void* p = nullptr;
+        __asan_posix_memalign(&p, 12, 8);
+        return 2;
+    }
+    if (mode == "heap_memalign_bad") {
+        __asan_memalign(24, 8);
+        return 2;
+    }
+    if (mode == "heap_too_big") {
+        __asan_malloc(1ull << 41);
+        return 2;
+    }
+    if (mode == "heap_realloc_freed") {
+        void* p = __asan_malloc(10);
+        __asan_free(p);
+        __asan_realloc(p, 20);
         return 2;
     }
     if (mode == "clean") return CleanAccess();

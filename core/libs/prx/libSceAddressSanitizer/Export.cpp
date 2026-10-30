@@ -3,6 +3,7 @@
 #include "prx/libSceAddressSanitizer/src/ShadowCheck.hpp"
 #include "prx/libSceAddressSanitizer/src/ErrorReport.hpp"
 #include "prx/libSceAddressSanitizer/src/Report.hpp"
+#include "prx/libSceAddressSanitizer/src/Allocator.hpp"
 #include "prx/libSceAddressSanitizer/src/Container.hpp"
 #include "prx/libSceAddressSanitizer/src/Ubsan.hpp"
 #include <algorithm>
@@ -320,9 +321,8 @@ int APS5_VABI __asan_after_dynamic_init() {
     return 0;
 }
 
-int APS5_VABI __asan_aligned_alloc() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI __asan_aligned_alloc(std::size_t alignment, std::size_t size) {
+    return AsanRuntime::Heap::AlignedAlloc_nid_no_patch(alignment, size, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)));
 }
 
 void APS5_VABI __asan_alloca_poison(std::uintptr_t addr, std::uintptr_t size) {
@@ -367,9 +367,8 @@ int APS5_VABI __asan_before_dynamic_init() {
     return 0;
 }
 
-int APS5_VABI __asan_calloc() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI __asan_calloc(std::size_t count, std::size_t size) {
+    return AsanRuntime::Heap::Calloc_nid_no_patch(count, size, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)));
 }
 
 int APS5_VABI __asan_current_error_report() {
@@ -488,14 +487,23 @@ void APS5_VABI __asan_exp_storeN_noabort(std::uintptr_t address, std::uintptr_t 
     CheckRegion_nid_no_patch(address, size, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __asan_free() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_free(void* pointer) {
+    AsanRuntime::Heap::Deallocate_nid_no_patch(pointer, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)));
 }
 
-int APS5_VABI __asan_get_alloc_stack() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_get_alloc_stack(std::uintptr_t address, std::uintptr_t* trace, std::uintptr_t size, std::uint32_t* threadId) {
+    AsanRuntime::Heap::ChunkView view{};
+    if (!AsanRuntime::Heap::FindChunk_nid_no_patch(address, view) || false) {
+        return 0;
+    }
+    if (threadId) {
+        *threadId = view.allocTid;
+    }
+    if (!trace || size == 0) {
+        return 0;
+    }
+    trace[0] = view.allocPc - 1;
+    return 1;
 }
 
 int APS5_VABI __asan_get_current_fake_stack() {
@@ -503,9 +511,19 @@ int APS5_VABI __asan_get_current_fake_stack() {
     return 0;
 }
 
-int APS5_VABI __asan_get_free_stack() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_get_free_stack(std::uintptr_t address, std::uintptr_t* trace, std::uintptr_t size, std::uint32_t* threadId) {
+    AsanRuntime::Heap::ChunkView view{};
+    if (!AsanRuntime::Heap::FindChunk_nid_no_patch(address, view) || !view.quarantined) {
+        return 0;
+    }
+    if (threadId) {
+        *threadId = view.freeTid;
+    }
+    if (!trace || size == 0) {
+        return 0;
+    }
+    trace[0] = view.freePc - 1;
+    return 1;
 }
 
 std::size_t APS5_VABI __asan_get_report_access_size() {
@@ -648,9 +666,8 @@ int APS5_VABI __asan_locate_address() {
     return 0;
 }
 
-int APS5_VABI __asan_malloc() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI __asan_malloc(std::size_t size) {
+    return AsanRuntime::Heap::Allocate_nid_no_patch(size, 8, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), true);
 }
 
 int APS5_VABI __asan_malloc_stats() {
@@ -658,14 +675,12 @@ int APS5_VABI __asan_malloc_stats() {
     return 0;
 }
 
-int APS5_VABI __asan_malloc_usable_size() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::size_t APS5_VABI __asan_malloc_usable_size(const void* pointer) {
+    return AsanRuntime::Heap::UsableSize_nid_no_patch(pointer, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)));
 }
 
-int APS5_VABI __asan_memalign() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI __asan_memalign(std::size_t alignment, std::size_t size) {
+    return AsanRuntime::Heap::Memalign_nid_no_patch(alignment, size, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)));
 }
 
 void* APS5_VABI __asan_memcpy(void* to, const void* from, std::uintptr_t size) {
@@ -761,19 +776,16 @@ void APS5_VABI __asan_poison_stack_memory(std::uintptr_t address, std::uintptr_t
     UpdateStackShadow_nid_no_patch(reinterpret_cast<std::int8_t*>(AsanRuntime::ShadowBase), AsanRuntime::ShadowSize, address, size, true);
 }
 
-int APS5_VABI __asan_posix_memalign() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __asan_posix_memalign(void** memptr, std::size_t alignment, std::size_t size) {
+    return AsanRuntime::Heap::PosixMemalign_nid_no_patch(memptr, alignment, size, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)));
 }
 
-int APS5_VABI __asan_print_accumulated_stats() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_print_accumulated_stats() {
+    AsanRuntime::EmitDiagnostic_nid_no_patch(AsanRuntime::Heap::FormatStats_nid_no_patch());
 }
 
-int APS5_VABI __asan_realloc() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI __asan_realloc(void* pointer, std::size_t size) {
+    return AsanRuntime::Heap::Reallocate_nid_no_patch(pointer, size, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)));
 }
 
 int APS5_VABI __asan_reallocalign() {
@@ -1408,9 +1420,8 @@ int APS5_VABI __asan_unregister_image_globals() {
     return 0;
 }
 
-int APS5_VABI __asan_update_allocation_context() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __asan_update_allocation_context(void* address) {
+    return AsanRuntime::Heap::UpdateContext_nid_no_patch(reinterpret_cast<std::uintptr_t>(address), reinterpret_cast<std::uintptr_t>(__builtin_return_address(0))) ? 1 : 0;
 }
 
 void APS5_VABI __asan_version_mismatch_check_v6() {}
@@ -1511,43 +1522,40 @@ int APS5_VABI __sanitizer_finish_switch_fiber() {
 void APS5_VABI __sanitizer_free_hook(void*) {
 }
 
-int APS5_VABI __sanitizer_get_allocated_begin() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const void* APS5_VABI __sanitizer_get_allocated_begin(const void* pointer) {
+    return AsanRuntime::Heap::AllocationBegin_nid_no_patch(pointer);
 }
 
-int APS5_VABI __sanitizer_get_allocated_size() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::size_t APS5_VABI __sanitizer_get_allocated_size(const void* pointer) {
+    return AsanRuntime::Heap::AllocatedSizeChecked_nid_no_patch(pointer, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)));
 }
 
-int APS5_VABI __sanitizer_get_allocated_size_fast() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::size_t APS5_VABI __sanitizer_get_allocated_size_fast(const void* pointer) {
+    const std::size_t size = AsanRuntime::Heap::AllocationSize_nid_no_patch(reinterpret_cast<std::uintptr_t>(pointer));
+    if (size == 0) {
+        InvalidArgument_nid_no_patch(__func__);
+    }
+    return size;
 }
 
-int APS5_VABI __sanitizer_get_current_allocated_bytes() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::size_t APS5_VABI __sanitizer_get_current_allocated_bytes() {
+    return AsanRuntime::Heap::CurrentAllocatedBytes_nid_no_patch();
 }
 
 std::size_t APS5_VABI __sanitizer_get_estimated_allocated_size(std::size_t size) {
     return size;
 }
 
-int APS5_VABI __sanitizer_get_free_bytes() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::size_t APS5_VABI __sanitizer_get_free_bytes() {
+    return AsanRuntime::Heap::FreeBytes_nid_no_patch();
 }
 
-int APS5_VABI __sanitizer_get_heap_size() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::size_t APS5_VABI __sanitizer_get_heap_size() {
+    return AsanRuntime::Heap::HeapSize_nid_no_patch();
 }
 
-int APS5_VABI __sanitizer_get_ownership() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI __sanitizer_get_ownership(const void* pointer) {
+    return AsanRuntime::Heap::AllocationSize_nid_no_patch(reinterpret_cast<std::uintptr_t>(pointer)) > 0 ? 1 : 0;
 }
 
 int APS5_VABI __sanitizer_get_report_path() {
@@ -1575,9 +1583,8 @@ void APS5_VABI __sanitizer_ptr_sub(void*, void*) {
 
 }
 
-int APS5_VABI __sanitizer_purge_allocator() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_purge_allocator() {
+    AsanRuntime::Heap::Purge_nid_no_patch();
 }
 
 int APS5_VABI __sanitizer_sandbox_on_notify() {
