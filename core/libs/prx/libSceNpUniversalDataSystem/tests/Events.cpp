@@ -7,10 +7,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -141,6 +143,115 @@ void testEvents() {
         sceNpUniversalDataSystemCreateEvent(nullptr, nullptr, &unnamed, nullptr);
 
     }), "an event without a name was created");
+}
+
+void checkEventText(const NpUniversalDataSystemEvent* event, size_t expectedSize, std::string_view expected, const char* message) {
+    size_t size = 0;
+    call(sceNpUniversalDataSystemEventEstimateSize(event, &size), "EstimateSize failed");
+    check(size == expectedSize, message);
+    size_t length = 0;
+    call(sceNpUniversalDataSystemEventToString(event, nullptr, 0, &length), "ToString without a buffer failed");
+    check(length == expected.size(), message);
+    std::string text(expected.size() + 2, '\x7f');
+    length = 0;
+    call(sceNpUniversalDataSystemEventToString(event, text.data(), expected.size() + 1, &length), "ToString failed");
+    check(length == expected.size() && text.compare(0, expected.size(), expected) == 0 && text[expected.size()] == '\0' && text.back() == '\x7f', message);
+}
+
+void testEventSizeAndString() {
+    using Fill = void (*)(NpUniversalDataSystemEventPropertyObject*);
+    struct Case {
+        Fill fill;
+        size_t size;
+        std::string_view text;
+        const char* message;
+    };
+    const Case cases[] = {
+        {[](NpUniversalDataSystemEventPropertyObject*) {}, 25,
+         "{\n    \"eventName\": \"E\",\n    \"properties\": {\n    },\n}", "an empty event was not described as the console does"},
+        {[](NpUniversalDataSystemEventPropertyObject* object) { call(sceNpUniversalDataSystemEventPropertyObjectSetInt64(object, "k", INT64_MIN), "SetInt64 failed"); }, 36,
+         "{\n    \"eventName\": \"E\",\n    \"properties\": {\n        \"k\": -9223372036854775808 (Int64),\n    },\n}", "an int64 property was not described as the console does"},
+        {[](NpUniversalDataSystemEventPropertyObject* object) { call(sceNpUniversalDataSystemEventPropertyObjectSetUInt64(object, "k", UINT64_MAX), "SetUInt64 failed"); }, 36,
+         "{\n    \"eventName\": \"E\",\n    \"properties\": {\n        \"k\": 18446744073709551615 (UInt64),\n    },\n}", "a uint64 property was not described as the console does"},
+        {[](NpUniversalDataSystemEventPropertyObject* object) { call(sceNpUniversalDataSystemEventPropertyObjectSetFloat32(object, "k", 0.1f), "SetFloat32 failed"); }, 32,
+         "{\n    \"eventName\": \"E\",\n    \"properties\": {\n        \"k\": 0.1 (Float32),\n    },\n}", "a float32 property was not described as the console does"},
+        {[](NpUniversalDataSystemEventPropertyObject* object) { call(sceNpUniversalDataSystemEventPropertyObjectSetFloat64(object, "k", 1e300), "SetFloat64 failed"); }, 36,
+         "{\n    \"eventName\": \"E\",\n    \"properties\": {\n        \"k\": 1e+300 (Float64),\n    },\n}", "a float64 property was not described as the console does"},
+        {[](NpUniversalDataSystemEventPropertyObject* object) { call(sceNpUniversalDataSystemEventPropertyObjectSetString(object, "s", "a\"b\\c\n\x01/z"), "SetString failed"); }, 37,
+         "{\n    \"eventName\": \"E\",\n    \"properties\": {\n        \"s\": \"a\"b\\c\n\x01/z\",\n    },\n}", "a string property was escaped or resized"},
+        {[](NpUniversalDataSystemEventPropertyObject* object) { call(sceNpUniversalDataSystemEventPropertyObjectSetBinary(object, "b", "\x00\x7f\xff", 3), "SetBinary failed"); }, 32,
+         "{\n    \"eventName\": \"E\",\n    \"properties\": {\n        \"b\": 007FFF (Binary),\n    },\n}", "a binary property was not described as the console does"},
+        {[](NpUniversalDataSystemEventPropertyObject* object) {
+             call(sceNpUniversalDataSystemEventPropertyObjectSetInt32(object, "zeta", 1), "SetInt32 failed");
+             call(sceNpUniversalDataSystemEventPropertyObjectSetInt32(object, "alpha", 2), "SetInt32 failed");
+             call(sceNpUniversalDataSystemEventPropertyObjectSetInt32(object, "mid", 3), "SetInt32 failed");
+             call(sceNpUniversalDataSystemEventPropertyObjectSetInt32(object, "alpha", 4), "SetInt32 failed");
+         }, 55,
+         "{\n    \"eventName\": \"E\",\n    \"properties\": {\n        \"zeta\": 1 (Int32),\n        \"alpha\": 4 (Int32),\n        \"mid\": 3 (Int32),\n    },\n}",
+         "properties were not described in the order they were first set"},
+        {[](NpUniversalDataSystemEventPropertyObject* object) {
+             auto* child = createObject();
+             call(sceNpUniversalDataSystemEventPropertyObjectSetInt32(child, "x", 7), "SetInt32 failed");
+             NpUniversalDataSystemEventPropertyObject* stored = nullptr;
+             call(sceNpUniversalDataSystemEventPropertyObjectSetObject(object, "obj", child, &stored), "SetObject failed");
+             call(sceNpUniversalDataSystemEventPropertyObjectSetInt32(child, "after", 1), "SetInt32 failed");
+             call(sceNpUniversalDataSystemEventPropertyObjectSetInt32(stored, "viaPtr", 2), "SetInt32 failed");
+             call(sceNpUniversalDataSystemDestroyEventPropertyObject(child), "child object was not destroyed");
+         }, 49,
+         "{\n    \"eventName\": \"E\",\n    \"properties\": {\n        \"obj\": {\n            \"x\": 7 (Int32),\n            \"viaPtr\": 2 (Int32),\n        },\n    },\n}",
+         "a nested object was not described as the console does"},
+        {[](NpUniversalDataSystemEventPropertyObject* object) {
+             NpUniversalDataSystemEventPropertyArray* array = nullptr;
+             call(sceNpUniversalDataSystemCreateEventPropertyArray(&array), "array was not created");
+             call(sceNpUniversalDataSystemEventPropertyArraySetInt32(array, -1), "array SetInt32 failed");
+             call(sceNpUniversalDataSystemEventPropertyArraySetString(array, "x"), "array SetString failed");
+             call(sceNpUniversalDataSystemEventPropertyArraySetBool(array, true), "array SetBool failed");
+             call(sceNpUniversalDataSystemEventPropertyArraySetUInt64(array, 9), "array SetUInt64 failed");
+             call(sceNpUniversalDataSystemEventPropertyArraySetFloat32(array, 2.5f), "array SetFloat32 failed");
+             call(sceNpUniversalDataSystemEventPropertyArraySetBinary(array, "\x01\x02", 2), "array SetBinary failed");
+             auto* inner = createObject();
+             call(sceNpUniversalDataSystemEventPropertyObjectSetInt32(inner, "i", 1), "SetInt32 failed");
+             call(sceNpUniversalDataSystemEventPropertyArraySetObject(array, inner, nullptr), "array SetObject failed");
+             NpUniversalDataSystemEventPropertyArray* empty = nullptr;
+             call(sceNpUniversalDataSystemCreateEventPropertyArray(&empty), "empty array was not created");
+             call(sceNpUniversalDataSystemEventPropertyArraySetArray(array, empty, nullptr), "array SetArray failed");
+             call(sceNpUniversalDataSystemEventPropertyObjectSetArray(object, "arr", array, nullptr), "SetArray failed");
+             call(sceNpUniversalDataSystemDestroyEventPropertyObject(inner), "inner object was not destroyed");
+             call(sceNpUniversalDataSystemDestroyEventPropertyArray(empty), "empty array was not destroyed");
+             call(sceNpUniversalDataSystemDestroyEventPropertyArray(array), "array was not destroyed");
+         }, 65,
+         "{\n    \"eventName\": \"E\",\n    \"properties\": {\n        \"arr\": [\n            -1 (Int32),\n            \"x\",\n            true,\n            9 (UInt64),\n"
+         "            2.5 (Float32),\n            0102 (Binary),\n            {\n                \"i\": 1 (Int32),\n            },\n            [\n            ],\n        ],\n    },\n}",
+         "an array was not described as the console does"},
+    };
+    for (const auto& item : cases) {
+        NpUniversalDataSystemEvent* event = nullptr;
+        NpUniversalDataSystemEventPropertyObject* properties = nullptr;
+        call(sceNpUniversalDataSystemCreateEvent("E", nullptr, &event, &properties), "event was not created");
+        item.fill(properties);
+        checkEventText(event, item.size, item.text, item.message);
+        call(sceNpUniversalDataSystemDestroyEvent(event), "event was not destroyed");
+    }
+
+    NpUniversalDataSystemEvent* event = nullptr;
+    call(sceNpUniversalDataSystemCreateEvent("E", nullptr, &event, nullptr), "event was not created");
+    size_t length = 0;
+    check(sceNpUniversalDataSystemEventEstimateSize(nullptr, &length) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_EVENT, "EstimateSize accepted a null event");
+    check(sceNpUniversalDataSystemEventEstimateSize(event, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT, "EstimateSize accepted a null size");
+    char text[8];
+    check(sceNpUniversalDataSystemEventToString(nullptr, text, sizeof(text), &length) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_EVENT, "ToString accepted a null event");
+    check(sceNpUniversalDataSystemEventToString(event, nullptr, 0, nullptr) == SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT, "ToString accepted no buffer and no length");
+    length = 0;
+    call(sceNpUniversalDataSystemEventToString(event, nullptr, sizeof(text), &length), "ToString without a buffer but with a capacity failed");
+    check(length == 52, "ToString without a buffer did not report the full length");
+    std::memset(text, 'x', sizeof(text));
+    call(sceNpUniversalDataSystemEventToString(event, text, 0, &length), "ToString into an empty buffer failed");
+    check(length == 52 && text[0] == 'x', "ToString wrote into an empty buffer");
+    call(sceNpUniversalDataSystemEventToString(event, text, 1, nullptr), "ToString into a one-byte buffer failed");
+    check(text[0] == '\0' && text[1] == 'x', "a one-byte buffer did not get only the terminator");
+    call(sceNpUniversalDataSystemEventToString(event, text, 7, &length), "ToString into a short buffer failed");
+    check(length == 52 && std::string_view(text, 7) == std::string_view("{\n    \0", 7) && text[7] == 'x', "a short buffer was not cut like snprintf");
+    call(sceNpUniversalDataSystemDestroyEvent(event), "event was not destroyed");
 }
 
 Uds::TrophyEvent recognize(const char* name, std::optional<Uds::Value> id) {
@@ -287,6 +398,7 @@ int main() {
         testObjectSetters();
         testNestedValues();
         testEvents();
+        testEventSizeAndString();
         testRecognition();
         testStatEvent();
         testLocaleIndependentNumberFormatting();
