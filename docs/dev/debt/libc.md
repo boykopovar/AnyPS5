@@ -98,6 +98,8 @@
 
 - [strtoq](../../../core/libs/prx/libc/src/Strings.cpp) (libc, NID `yUUOxgk8Dmc`) is the BSD "quad" alias of `strtoll` and forwards to it, as FreeBSD 11.4 [strtoq.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdlib/strtoq.c) does. The console export is not verified; the sibling `strtouq` is already here.
 
+- [fwide](../../../core/libs/prx/libc/src/StandardStreams.cpp) (libc) - the `printf` and `wprintf` families, `perror` and `putw` orient a stream as C11 7.21.2p4 requires, where FreeBSD 11.4's `vfprintf.c`, `vfwprintf.c`, `perror.c` and `putw.c` have no `ORIENT`; nothing is measured on a console. Otherwise it follows [FreeBSD 11.4 fwide.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdio/fwide.c#L38-L51) and `ORIENT`: the first byte or wide read, write, unget or scan orients a stream, also when `fgets`, `fgetws` or `ungetwc` then fail on their arguments; a zero-length `fread` or `fwrite` does not, and a successful `freopen` clears it. Mixed byte and wide calls still run. The export is in the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c#L17666)
+
 ### Functional
 
 - [_Cosh](../../../core/libs/prx/libc/src/Math.cpp) (libc) follows the two-argument Dinkumware CRT helper used by `std::complex`, including a scaled large-finite-input path; the signature, exact result and floating-point exception behavior are not verified against the console.
