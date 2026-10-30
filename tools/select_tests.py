@@ -191,6 +191,9 @@ def load_graph(path):
     for name, paths in graph["closures"].items():
         if not isinstance(name, str) or not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
             raise ValueError(f"{path}: invalid test graph closure {name!r}")
+    for name, test in graph["tests"].items():
+        if test["target"] is not None and test["target"] not in graph["closures"]:
+            raise ValueError(f"{path}: invalid test graph entry {name!r}: missing closure for {test['target']!r}")
     return graph
 
 
@@ -207,7 +210,10 @@ def dump(build, out):
                 deps[current].add(path)
     listing, listed = build.tests()
     graph = listing["backtraceGraph"]
-    targets = {build.target(t) for t in listed} - {None}
+    arguments = {test["name"]: {build.output(path) for path in paths((test.get("command") or [])[1:])} - {None}
+                 for test in listed}
+    outputs = set(build.outputs(sorted(set().union(*arguments.values()))))
+    targets = ({build.target(t) for t in listed} - {None}) | outputs
     nodes = build.walk(sorted(targets))
     closures = {}
     for target in sorted(targets):
@@ -230,13 +236,14 @@ def dump(build, out):
             registered.add(build.repo(graph["files"][graph["nodes"][node]["file"]]))
             node = graph["nodes"][node].get("parent")
         props = {p["name"]: p["value"] for p in test.get("properties", [])}
-        arguments = sorted({build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None})
-        tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": arguments,
+        inputs = {build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None}
+        inputs.update(path for target in arguments[test["name"]] & outputs for path in closures[target])
+        tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": sorted(inputs),
                                "requires": props.get("FIXTURES_REQUIRED", []), "sets": props.get("FIXTURES_SETUP", []),
                                "depends": props.get("DEPENDS", []), "target": build.target(test)}
     with open(out, "w", encoding="utf-8") as file:
         json.dump({"tests": tests, "closures": closures}, file)
-    print(f"{len(tests)} tests, {len(closures)} test executables, {len(deps)} objects with header deps")
+    print(f"{len(tests)} tests, {len(closures)} build targets, {len(deps)} objects with header deps")
 
 
 def select(graph, changed, reasons=None):

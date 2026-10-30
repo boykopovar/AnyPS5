@@ -206,4 +206,32 @@ int APS5_VABI sceRazorCpuWorkloadSubmit(void) {
     return 0;
 }
 
+int APS5_VABI sceRazorCpuUserSignalWaitBegin() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuUserSignalPost() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuWriteBookmarkEnd() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuUserSignalWaitEnd() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuWorkloadRunBeginEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuUserSignalPostEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuUserSignalWaitBeginEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

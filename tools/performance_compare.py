@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -33,6 +34,17 @@ def validate(summary):
             raise ValueError(f"{key} must be a non-negative integer")
     if type(summary.get("trace_dropped")) is not bool:
         raise ValueError("trace_dropped must be a boolean")
+    if "trace_dropped_threads" in summary:
+        threads = summary["trace_dropped_threads"]
+        if not isinstance(threads, dict):
+            raise ValueError("trace_dropped_threads must be an object")
+        for name, thread in threads.items():
+            if not isinstance(thread, dict):
+                raise ValueError(f"trace_dropped_threads.{name} must be an object")
+            if "totals_full" in thread and type(thread["totals_full"]) is not bool:
+                raise ValueError(f"trace_dropped_threads.{name}.totals_full must be a boolean")
+            if "events_lost" in thread and (type(thread["events_lost"]) is not int or thread["events_lost"] < 0):
+                raise ValueError(f"trace_dropped_threads.{name}.events_lost must be a non-negative integer")
     if "dirty" not in summary or (summary["dirty"] is not None and type(summary["dirty"]) is not bool):
         raise ValueError("dirty must be a boolean or null")
     env = summary.get("env")
@@ -63,6 +75,15 @@ def validate(summary):
     return summary
 
 
+def unique_json_object(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError(f"duplicate JSON field: {name!r}")
+        result[name] = value
+    return result
+
+
 def load_summary(path, trace=None):
     records = []
     with Path(path).open(encoding="utf-8-sig") as source:
@@ -70,10 +91,10 @@ def load_summary(path, trace=None):
             if not line.strip():
                 continue
             try:
-                record = json.loads(line)
+                record = json.loads(line, object_pairs_hook=unique_json_object)
                 if not isinstance(record, dict):
                     raise ValueError("summary must be an object")
-            except ValueError as error:
+            except (ValueError, RecursionError) as error:
                 raise ValueError(f"{path}:{line_number}: {error}") from error
             if trace is None or record.get("trace") == trace:
                 records.append((line_number, record))
@@ -113,7 +134,9 @@ def compare(baseline, candidate):
     for summary in (baseline, candidate):
         context = {key: summary[key] for key in CONTEXT}
         context.update({key: summary[key] for key in (*OPTIONAL_STRINGS, *OPTIONAL_INTEGERS) if key in summary})
-        context.update({f"window.{key}": summary["window"][key] for key in ("spec", "first_present")})
+        context["window.spec"] = summary["window"]["spec"]
+        if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
+            context["window.first_present"] = summary["window"]["first_present"]
         context.update({f"env.{key}": value for key, value in summary["env"].items()})
         contexts.append(context)
     differences = {key: {"baseline": contexts[0].get(key), "candidate": contexts[1].get(key)}
@@ -125,8 +148,15 @@ def compare(baseline, candidate):
     if differences:
         notes.append("Recorded configuration differs; these measurements do not isolate the code change.")
     for label, summary in (("baseline", baseline), ("candidate", candidate)):
-        if summary["trace_dropped"]:
-            notes.append(f"{label}: trace events were dropped; the event trace omits some of the work included in phase totals.")
+        threads = summary.get("trace_dropped_threads", {})
+        totals_full = any(thread.get("totals_full", False) for thread in threads.values())
+        if totals_full:
+            notes.append(f"{label}: phase totals are incomplete because a thread's totals table overflowed.")
+        if summary["trace_dropped"] and (not threads or any(thread.get("events_lost", 0) for thread in threads.values())):
+            if totals_full:
+                notes.append(f"{label}: trace events were dropped; the event trace is incomplete.")
+            else:
+                notes.append(f"{label}: trace events were dropped; the event trace omits some of the work included in phase totals.")
         if summary["dirty"] is not False:
             notes.append(f"{label}: source tree is dirty or its state is unknown; the commit alone does not identify the build.")
         missing = [key for key in (*CONTEXT, *OPTIONAL_STRINGS, *OPTIONAL_INTEGERS) if not summary.get(key)]
@@ -181,8 +211,14 @@ def main(argv=None):
         report = compare(load_summary(args.baseline, args.baseline_trace), load_summary(args.candidate, args.candidate_trace))
         if args.require_matching_context and report["configuration_differences"]:
             raise ValueError("recorded configuration differs: " + ", ".join(report["configuration_differences"]))
-        output = json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n" if args.json else markdown(report)
-    except (OSError, ValueError, OverflowError) as error:
+        if args.json:
+            try:
+                output = json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+            except RecursionError as error:
+                raise ValueError(f"JSON report: {error}") from error
+        else:
+            output = markdown(report)
+    except (OSError, ValueError, OverflowError, RecursionError) as error:
         parser.exit(2, f"{parser.prog}: {error}\n")
     sys.stdout.write(output)
 

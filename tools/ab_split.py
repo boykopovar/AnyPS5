@@ -19,9 +19,25 @@ PHASE = re.compile(r"^\[ab\] phase ([AB]) (\d+) (begins|settled) at present (\d+
 KINDS = (("present", "[present] "), ("gputime", "[gputime] "), ("draw", "[draw] pipelined"), ("syncwait", "[syncwait] "))
 
 
+def finite(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("non-finite A/B statistic")
+    if isinstance(value, dict):
+        for item in value.values():
+            finite(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            finite(item)
+    return value
+
+
+def finite_sum(values):
+    return finite(sum(values))
+
+
 def number(pattern, text):
     match = re.search(pattern, text)
-    return float(match.group(1)) if match else None
+    return finite(float(match.group(1))) if match else None
 
 
 def parse_report(kind, text):
@@ -38,9 +54,9 @@ def parse_report(kind, text):
         programs_text, classes_text = text.split("by program:", 1)[-1].split("; by class:", 1)
         programs, classes = {}, {}
         for key, ms in re.findall(r" (0x[0-9a-f]+) x\d+ ([\d.]+)ms", programs_text):
-            programs[key] = programs.get(key, 0.0) + float(ms)
+            programs[key] = programs.get(key, 0.0) + finite(float(ms))
         for name, ms in re.findall(r" ([a-z][a-z-]*) x\d+ ([\d.]+)ms [\d.]+MiB \(per present", classes_text):
-            classes[name] = classes.get(name, 0.0) + float(ms)
+            classes[name] = classes.get(name, 0.0) + finite(float(ms))
         return {"total": total, "presents": presents, "programs": programs, "classes": classes}
     if kind == "draw":
         commits, per_commit = number(r": (\d+) commits at", text), number(r"commits at ([\d.]+) us each", text)
@@ -49,12 +65,12 @@ def parse_report(kind, text):
             return None
         drains = text.split("; drains:", 1)[1].split(";", 1)[0]
         return {"commits": commits, "per_commit": per_commit, "enqueued": enqueued, "room": room,
-                "drain_ms": sum(float(ms) for ms in re.findall(r"\(([\d.]+) ms\)", drains))}
+                "drain_ms": finite_sum(finite(float(ms)) for ms in re.findall(r"\(([\d.]+) ms\)", drains))}
     if kind == "syncwait":
         if "):" not in text:
             return None
         sites = text.split("):", 1)[1].split("; batches ahead", 1)[0]
-        return {"wait_ms": sum(float(ms) for ms in re.findall(r" \d+/([\d.]+)ms", sites))}
+        return {"wait_ms": finite_sum(finite(float(ms)) for ms in re.findall(r" \d+/([\d.]+)ms", sites))}
     return None
 
 
@@ -64,18 +80,22 @@ def read_log(lines):
     for line in lines:
         text = line.rstrip("\r\n")
         if text.startswith("[ab] in-run A/B:"):
+            if config is not None or phases:
+                raise ValueError("multiple A/B runs in one log; split the captures before comparing phases")
             config = text
             continue
         match = PHASE.match(text)
         if match:
-            kind, index, event, present, seconds = match.group(1), int(match.group(2)), match.group(3), int(match.group(4)), float(match.group(5))
+            kind, index, event, present, seconds = match.group(1), int(match.group(2)), match.group(3), int(match.group(4)), finite(float(match.group(5)))
             if event == "begins":
+                if phases and index <= phases[-1]["index"]:
+                    raise ValueError("phase index restarts in one log (multiple A/B runs); split the captures before comparing phases")
                 if current is not None:
                     current["end"] = (present, seconds)
                 current = {"kind": kind, "index": index, "begin": (present, seconds), "settled": None, "end": None,
                            "reports": {name: [] for name, _ in KINDS}}
                 phases.append(current)
-            elif current is not None and current["index"] == index:
+            elif current is not None and current["index"] == index and current["kind"] == kind:
                 current["settled"] = (present, seconds)
             continue
         for name, prefix in KINDS:
@@ -91,8 +111,8 @@ def read_log(lines):
 
 
 def weighted(rows, value, weight):
-    total = sum(row[weight] for row in rows)
-    return sum(row[value] * row[weight] for row in rows) / total if total else None
+    total = finite_sum(row[weight] for row in rows)
+    return finite_sum(row[value] * row[weight] for row in rows) / total if total else None
 
 
 def metrics(phase, programs, classes):
@@ -105,18 +125,18 @@ def metrics(phase, programs, classes):
     rows = phase["reports"]["present"]
     out["GPU busy ms/frame"], out["GPU idle gaps ms/frame"] = weighted(rows, "busy", "frames"), weighted(rows, "gaps", "frames")
     rows = phase["reports"]["gputime"]
-    presents = sum(row["presents"] for row in rows)
+    presents = finite_sum(row["presents"] for row in rows)
     if presents:
-        out["gputime ms/present"] = sum(row["total"] for row in rows) / presents
+        out["gputime ms/present"] = finite_sum(row["total"] for row in rows) / presents
         for key in programs:
-            out[f"{key} ms/present"] = sum(row["programs"].get(key, 0.0) for row in rows) / presents
+            out[f"{key} ms/present"] = finite_sum(row["programs"].get(key, 0.0) for row in rows) / presents
         for name in classes:
-            out[f"{name} ms/present"] = sum(row["classes"].get(name, 0.0) for row in rows) / presents
+            out[f"{name} ms/present"] = finite_sum(row["classes"].get(name, 0.0) for row in rows) / presents
     rows = phase["reports"]["draw"]
     out["committer us/commit"], out["room wait us/draw"] = weighted(rows, "per_commit", "commits"), weighted(rows, "room", "enqueued")
-    out["drain ms/report"] = sum(row["drain_ms"] for row in rows) / len(rows) if rows else None
+    out["drain ms/report"] = finite_sum(row["drain_ms"] for row in rows) / len(rows) if rows else None
     rows = phase["reports"]["syncwait"]
-    out["syncwait GPU ms/report"] = sum(row["wait_ms"] for row in rows) / len(rows) if rows else None
+    out["syncwait GPU ms/report"] = finite_sum(row["wait_ms"] for row in rows) / len(rows) if rows else None
     return {name: value for name, value in out.items() if value is not None}
 
 
@@ -128,17 +148,17 @@ def noise(values, phases):
         neighbours = [values[other] for other in (index - 1, index + 1)
                       if 0 <= other < len(phases) and phases[other]["kind"] == "A" and values[other] is not None]
         if neighbours:
-            differences.append(values[index] - sum(neighbours) / len(neighbours))
+            differences.append(values[index] - finite_sum(neighbours) / len(neighbours))
     if not differences:
         return None
-    mean = sum(differences) / len(differences)
+    mean = finite_sum(differences) / len(differences)
     if len(differences) == 1:
         return {"mean": mean, "se": None, "sd": None, "n": 1}
-    sd = math.sqrt(sum((value - mean) ** 2 for value in differences) / (len(differences) - 1))
+    sd = math.sqrt(finite_sum((value - mean) ** 2 for value in differences) / (len(differences) - 1))
     return {"mean": mean, "se": sd / math.sqrt(len(differences)), "sd": sd, "n": len(differences)}
 
 
-def split(lines, programs=(), classes=()):
+def split_report(lines, programs, classes):
     config, phases = read_log(lines)
     if not phases:
         raise ValueError("no [ab] phase lines (was APS5_AB set?)")
@@ -150,7 +170,7 @@ def split(lines, programs=(), classes=()):
         a = [value for phase, value in zip(phases, values) if phase["kind"] == "A" and value is not None]
         b = [value for phase, value in zip(phases, values) if phase["kind"] == "B" and value is not None]
         if a and b:
-            mean_a, mean_b = sum(a) / len(a), sum(b) / len(b)
+            mean_a, mean_b = finite_sum(a) / len(a), finite_sum(b) / len(b)
             rows.append({"metric": name, "a": mean_a, "b": mean_b, "change": mean_b - mean_a,
                          "change_pct": (mean_b / mean_a - 1) * 100 if mean_a else None, "noise": noise(values, phases)})
     return {"config": config,
@@ -160,6 +180,13 @@ def split(lines, programs=(), classes=()):
                         "clean_reports": {name: len(reports) for name, reports in phase["reports"].items()},
                         "metrics": row} for phase, row in zip(phases, table)],
             "metrics": rows}
+
+
+def split(lines, programs=(), classes=()):
+    try:
+        return finite(split_report(lines, programs, classes))
+    except OverflowError as error:
+        raise ValueError("A/B statistic exceeds the finite numeric range") from error
 
 
 def text_report(result):

@@ -73,6 +73,8 @@ class CheckCompileTests(CheckCompileFixture):
         self.assertEqual(result.returncode, 0)
         self.assertIn("1 translation units compile", result.stdout)
 
+
+class CheckCompileRecordedCommandTests(CheckCompileFixture):
     def test_the_command_is_rewritten_to_syntax_only_without_object_or_dependency_files(self):
         source = self.source("unit.cpp")
         script = self.compiler(
@@ -254,6 +256,8 @@ class CheckCompileTests(CheckCompileFixture):
                         else:
                             self.assertIn("1 translation units compile", result.stdout)
 
+
+class CheckCompilePathSelectionTests(CheckCompileFixture):
     def test_a_changed_file_with_a_non_ascii_name_is_checked(self):
         self.failing("caf\u00e9.cpp")
         subprocess.run(["git", "-C", str(self.root), "add", "caf\u00e9.cpp"], check=True)
@@ -276,6 +280,42 @@ class CheckCompileTests(CheckCompileFixture):
         result = self.tool("src/foo.cpp")
         self.assertEqual(result.returncode, 1)
         self.assertIn("src/foo.cpp:1:1: error: no", result.stderr)
+
+    def test_symbolic_link_loops_are_reported_without_a_traceback(self):
+        loop = self.root / "loop.cpp"
+        other = self.root / "other.cpp"
+        try:
+            loop.symlink_to(other)
+            other.symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        source = self.source("unit.cpp")
+        script = self.compiler("import sys\nsys.exit(0)\n")
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{source}"'),
+                       self.entry("other.cpp", f'"{sys.executable}" "{script}" "{other}"')])
+        result = self.tool("unit.cpp", "loop.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("loop.cpp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        looping_build = self.root / "looping-build"
+        looping_build.symlink_to(looping_build)
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{source}"'),
+                       {"directory": str(looping_build), "file": "other.cpp", "command": "cc other.cpp"},
+                       {"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(loop), str(source), "--", str(loop)]}])
+        result = self.tool("unit.cpp")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 translation units compile", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        response = self.build / "flags.rsp"
+        response.symlink_to(response)
+        self.manifest([{"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), "@flags.rsp", str(source)]}])
+        result = self.tool("unit.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("flags.rsp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_a_new_untracked_translation_unit_is_checked(self):
         self.source("base.cpp")
@@ -373,6 +413,24 @@ class CheckCompileTests(CheckCompileFixture):
                 self.assertEqual(json.loads(seen.read_text(encoding="utf-8")),
                                  ["-fsyntax-only", *flags, str(source)])
 
+    def test_a_cmake_env_launcher_keeps_its_environment_and_the_compiler_command_is_rewritten(self):
+        cmake = shutil.which("cmake")
+        if cmake is None:
+            self.skipTest("cmake is not on PATH")
+        source = self.source("unit.cpp")
+        script = self.compiler(
+            "import json\nimport os\nimport sys\nfrom pathlib import Path\n"
+            "Path(sys.argv[1]).write_text(json.dumps([sys.argv[2:], os.environ.get('CHECK_COMPILE_SET'), "
+            "os.environ.get('CHECK_COMPILE_UNSET')]))\n")
+        seen = self.root / "arguments.json"
+        self.manifest([self.entry("unit.cpp", f'"{cmake}" -E env CHECK_COMPILE_SET=pch_defines,time_macros '
+                                                f'--unset=CHECK_COMPILE_UNSET "{sys.executable}" "{script}" "{seen}" '
+                                                f'-include unit.hpp -c -o unit.o "{source}"')])
+        result = self.tool("unit.cpp", env={"CHECK_COMPILE_UNSET": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(seen.read_text(encoding="utf-8")),
+                         [["-fsyntax-only", "-include", "unit.hpp", str(source)], "pch_defines,time_macros", None])
+
     def test_parallel_checks_overlap_but_diagnostics_keep_source_order(self):
         barrier = self.root / "barrier"
         barrier.mkdir()
@@ -426,25 +484,41 @@ class CheckCompileDatabaseTests(CheckCompileFixture):
                 self.assertIn("compile_commands.json: expected an array of command objects", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
 
-    def test_invalid_entries_are_rejected_before_any_compiler_runs(self):
+    def test_non_object_entries_are_rejected_before_any_compiler_runs(self):
+        self.check_invalid_entries(lambda valid: [(value, "expected a command object")
+                                                  for value in (None, [], 42, "command")])
+
+    def test_invalid_directories_are_rejected_before_any_compiler_runs(self):
+        self.check_invalid_locations("directory")
+
+    def test_invalid_files_are_rejected_before_any_compiler_runs(self):
+        self.check_invalid_locations("file")
+
+    def test_invalid_commands_are_rejected_before_any_compiler_runs(self):
+        def cases(valid):
+            return [({key: value for key, value in valid.items() if key != "command"},
+                     "expected arguments or command"),
+                    *(({**valid, "command": value}, "command must be a nonempty string")
+                      for value in (None, [], 42, "", " \t")),
+                    ({**valid, "arguments": []},
+                     "arguments must be a nonempty list of strings with an executable")]
+        self.check_invalid_entries(cases)
+
+    def check_invalid_locations(self, field):
+        def cases(valid):
+            missing = dict(valid)
+            del missing[field]
+            return [(missing, f"missing {field}"),
+                    *(({**valid, field: value}, f"{field} must be a nonempty string")
+                      for value in (None, [], 42, ""))]
+        self.check_invalid_entries(cases)
+
+    def check_invalid_entries(self, cases):
         source = self.source("unit.cpp")
         invoked = self.root / "invoked"
         script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
         valid = self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{invoked}" "{source}"')
-        cases = [(value, "expected a command object") for value in (None, [], 42, "command")]
-        for field in ("directory", "file"):
-            missing = dict(valid)
-            del missing[field]
-            cases.append((missing, f"missing {field}"))
-            cases.extend(({**valid, field: value}, f"{field} must be a nonempty string")
-                         for value in (None, [], 42, ""))
-        cases.append(({key: value for key, value in valid.items() if key != "command"},
-                      "expected arguments or command"))
-        cases.extend(({**valid, "command": value}, "command must be a nonempty string")
-                     for value in (None, [], 42, "", " \t"))
-        cases.append(({**valid, "arguments": []},
-                      "arguments must be a nonempty list of strings with an executable"))
-        for invalid, message in cases:
+        for invalid, message in cases(valid):
             with self.subTest(invalid=invalid):
                 self.manifest([valid, invalid])
                 result = self.tool("--jobs", "2", "unit.cpp")
@@ -607,23 +681,22 @@ class CheckCompileOutputTests(CheckCompileFixture):
                     self.assertEqual(path.read_bytes(), content, str(path))
                 self.assertEqual(set(self.build.iterdir()), set(preserved))
 
-    def test_rejected_saved_temporary_mode_is_not_hidden(self):
-        compiler = shutil.which("gcc") or shutil.which("clang")
-        if compiler is None:
-            self.skipTest("needs a C compiler")
+    def test_unmodeled_saved_temporary_modes_are_rejected_before_the_compiler_runs(self):
         source = self.source("unit.c")
-        original = subprocess.run([compiler, "-save-temps=invalid", "-fsyntax-only", str(source)],
-                                  cwd=self.build, capture_output=True, text=True)
-        if original.returncode == 0:
-            self.skipTest("compiler accepts unknown saved-temporary modes with -fsyntax-only")
-        self.assertIn("save-temps", original.stderr)
-        self.manifest([{"directory": str(self.build), "file": str(source),
-                        "arguments": [compiler, "-save-temps=invalid", "-c", str(source),
-                                      "-o", str(self.build / "unit.o")]}])
-        result = self.tool("unit.c")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("save-temps", result.stderr)
-        self.assertFalse((self.build / "unit.o").exists())
+        invoked = self.root / "invoked"
+        script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
+        for option in ("-save-temps=invalid", "-save-temps=diag", "--save-temps=diag",
+                       "-save-temps=CWD", "-save-temps="):
+            with self.subTest(option=option):
+                self.manifest([{"directory": str(self.build), "file": str(source),
+                                "arguments": [sys.executable, str(script), str(invoked), option,
+                                              "-c", str(source), "-o", str(self.build / "unit.o")]}])
+                result = self.tool("unit.c")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(f"unsupported saved-temporary mode in {option}", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(invoked.exists(), result.stdout + result.stderr)
+                self.assertFalse((self.build / "unit.o").exists(), result.stdout + result.stderr)
 
 
 class CheckCompileResponseTests(CheckCompileFixture):
@@ -706,7 +779,25 @@ class CheckCompileResponseTests(CheckCompileFixture):
                 response.write_bytes(content.encode("utf-8"))
                 self.assertEqual(check_compile.expand_response_files(["@flags.rsp"], self.build), expected)
 
-    def test_response_options_compile_without_changing_build_outputs(self):
+    def test_empty_response_options_compile_without_changing_build_outputs(self):
+        self.check_response_option_outputs((
+            ("", "int x;\n"),
+            (" \t\r\n", "int x;\n"),
+        ))
+
+    def test_response_definitions_compile_without_changing_build_outputs(self):
+        self.check_response_option_outputs((
+            ("  -DA=7 -DB=11", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
+            ("-DA=7\n-DB=11\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
+        ))
+
+    def test_crlf_and_quoted_response_definitions_compile_without_changing_build_outputs(self):
+        self.check_response_option_outputs((
+            ("-DA=7\r\n-DB=11\r\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
+            (r'-DNAME=\"hello\" -DB=11', '_Static_assert(sizeof(NAME) == 6 && B == 11, "quoted definition");\n'),
+        ))
+
+    def check_response_option_outputs(self, cases):
         compiler = shutil.which("clang") or shutil.which("gcc")
         if compiler is None:
             self.skipTest("needs a GNU-compatible C compiler")
@@ -718,14 +809,6 @@ class CheckCompileResponseTests(CheckCompileFixture):
                                           ("-c", source.as_posix(), "-MMD", "-MF",
                                            outputs[1].as_posix(), "-o", outputs[0].as_posix())), encoding="utf-8")
         arguments = [compiler, "@" + str(response), "@" + str(output_options)]
-        cases = (
-            ("", "int x;\n"),
-            (" \t\r\n", "int x;\n"),
-            ("  -DA=7 -DB=11", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
-            ("-DA=7\n-DB=11\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
-            ("-DA=7\r\n-DB=11\r\n", "_Static_assert(A == 7 && B == 11, \"definitions\");\n"),
-            (r'-DNAME=\"hello\" -DB=11', '_Static_assert(sizeof(NAME) == 6 && B == 11, "quoted definition");\n'),
-        )
         for content, text in cases:
             source.write_text(text, encoding="utf-8")
             response.write_bytes(content.encode("utf-8"))
@@ -862,6 +945,109 @@ class CheckCompileResponseTests(CheckCompileFixture):
         result = self.tool("unit.c")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+    def check_response_options(self, cases):
+        compiler = shutil.which("clang") or shutil.which("gcc")
+        if compiler is None:
+            self.skipTest("needs a GNU-compatible C compiler")
+        source = self.source("unit.c")
+        response = self.build / "flags.rsp"
+        output_options = self.build / "output flags.rsp"
+        outputs = [self.build / name for name in ("unit.o", "unit.d")]
+        output_options.write_text(" ".join('"' + value + '"' for value in
+                                          ("-c", source.as_posix(), "-MMD", "-MF",
+                                           outputs[1].as_posix(), "-o", outputs[0].as_posix())), encoding="utf-8")
+        arguments = [compiler, "@" + str(response), "@" + str(output_options)]
+        for content, text in cases:
+            source.write_text(text, encoding="utf-8")
+            response.write_bytes(content.encode("utf-8"))
+            original = subprocess.run(arguments, cwd=self.build, capture_output=True, text=True, check=False)
+            self.assertEqual(original.returncode, 0, original.stderr)
+            preserved = {path: path.read_bytes() for path in (source, response, output_options, *outputs)}
+            for field in ("arguments", "command"):
+                for jobs in ("1", "2"):
+                    with self.subTest(content=content, field=field, jobs=jobs):
+                        command = (subprocess.list2cmdline(arguments) if os.name == "nt" else
+                                   " ".join(shlex.quote(argument) for argument in arguments))
+                        self.manifest([{"directory": str(self.build), "file": str(source),
+                                        field: arguments if field == "arguments" else command}])
+                        result = self.tool("--jobs", jobs, "unit.c")
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertIn("1 translation units compile", result.stdout)
+                        for path, data in preserved.items():
+                            self.assertEqual(path.read_bytes(), data, path.name)
+
+
+    def test_response_macro_options_preserve_build_outputs(self):
+        self.check_response_options((('  -DA=7 -DB=11', '_Static_assert(A == 7 && B == 11, "definitions");\n'), ('-DA=7\n-DB=11\n', '_Static_assert(A == 7 && B == 11, "definitions");\n')))
+
+    def test_response_crlf_and_quoted_options_preserve_build_outputs(self):
+        self.check_response_options((('-DA=7\r\n-DB=11\r\n', '_Static_assert(A == 7 && B == 11, "definitions");\n'), ('-DNAME=\\"hello\\" -DB=11', '_Static_assert(sizeof(NAME) == 6 && B == 11, "quoted definition");\n')))
+
+    def test_unexpanded_response_files_cannot_rewrite_build_outputs(self):
+        compiler = shutil.which("clang")
+        if compiler is None:
+            self.skipTest("Clang is required to check compilation-fragment side effects")
+        source = self.source("unit.c")
+        outputs = [self.build / name for name in ("unit.o", "unit.d", "fragment.json")]
+        response = self.build / "unit flags.rsp"
+        response.write_text(" ".join('"' + argument + '"' for argument in
+                                    ("-c", source.as_posix(), "-MMD", "-MF", outputs[1].as_posix(),
+                                     "-MJ", outputs[2].as_posix(), "-o", outputs[0].as_posix())), encoding="utf-8")
+        arguments = [compiler, "@" + str(response)]
+        original = subprocess.run(arguments, cwd=self.build, capture_output=True, text=True)
+        self.assertEqual(original.returncode, 0, original.stderr)
+        preserved = {path: path.read_bytes() for path in [source, response, *outputs]}
+        for field in ("arguments", "command"):
+            for jobs in ("1", "2"):
+                with self.subTest(field=field, jobs=jobs):
+                    command = (subprocess.list2cmdline(arguments) if os.name == "nt" else
+                               " ".join(shlex.quote(argument) for argument in arguments))
+                    self.manifest([{"directory": str(self.build), "file": str(source),
+                                    field: arguments if field == "arguments" else command}])
+                    result = self.tool("--jobs", jobs, "unit.c")
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("1 translation units compile", result.stdout)
+                    self.assertNotIn("Traceback", result.stderr)
+                    for path, content in preserved.items():
+                        self.assertEqual(path.read_bytes(), content)
+
+
+
+class CheckCompileLauncherTests(unittest.TestCase):
+    def test_a_cmake_env_prefix_is_kept_and_only_the_command_after_it_is_rewritten(self):
+        source = Path.cwd() / "unit.cpp"
+        for prefix in (["cmake", "-E", "env", "CCACHE_SLOPPINESS=pch_defines,time_macros"],
+                       ["/usr/bin/cmake", "-E", "env", "--unset=CCACHE_DIR", "--modify", "PATH=path_list_prepend:/x", "--"],
+                       ["C:\\Program Files\\CMake\\bin\\cmake.exe", "-E", "env", "A=1", "B="]):
+            with self.subTest(prefix=prefix):
+                self.assertEqual(check_compile.syntax_arguments(
+                    [*prefix, "ccache", "g++", "-DNAME=1", "-include", "pch.hxx", "-c", "-o", "unit.o", str(source)],
+                    Path.cwd(), source),
+                    [*prefix, "ccache", "g++", "-fsyntax-only", "-DNAME=1", "-include", "pch.hxx", str(source)])
+
+    def test_env_delimiter_preserves_a_command_path_containing_equals(self):
+        source = Path.cwd() / "unit.cpp"
+        prefix = ["cmake", "-E", "env", "--"]
+        command = "compiler=tools/g++"
+        self.assertEqual(check_compile.syntax_arguments([*prefix, command, "-c", str(source)], Path.cwd(), source),
+                         [*prefix, command, "-fsyntax-only", str(source)])
+
+    def test_only_cmake_starts_an_env_prefix(self):
+        source = Path.cwd() / "unit.cpp"
+        self.assertEqual(check_compile.syntax_arguments(["g++", "-E", "env", "-c", str(source)], Path.cwd(), source),
+                         ["g++", "-fsyntax-only", "env", str(source)])
+
+    def test_an_env_prefix_without_a_command_or_with_an_unmodeled_option_is_rejected(self):
+        source = Path.cwd() / "unit.cpp"
+        for arguments, message in ((["cmake", "-E", "env", "A=1"], "no command"),
+                                   (["cmake", "-E", "env", "A=1", "--"], "no command"),
+                                   (["cmake", "-E", "env", "--modify"], "--modify"),
+                                   (["cmake", "-E", "env", "-", "cc", "-c", str(source)], "unsupported"),
+                                   (["cmake", "-E", "env", "--chdir=x", "cc", "-c", str(source)], "unsupported")):
+            with self.subTest(arguments=arguments):
+                with self.assertRaisesRegex(ValueError, message):
+                    check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
 
 if __name__ == "__main__":

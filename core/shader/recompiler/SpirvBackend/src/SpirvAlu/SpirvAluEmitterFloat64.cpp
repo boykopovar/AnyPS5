@@ -599,11 +599,12 @@ std::uint32_t EmitFPMax64(SpirvEmitterState& state, std::uint32_t arg0, std::uin
 }
 
 std::uint32_t EmitFPSaturate64(SpirvEmitterState& state, std::uint32_t arg0) {
-    const auto value = ToF64(state, arg0);
-    const auto positive = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), value, ConstantF64(state, 0u));
-    const auto belowOne = Binary(state, spv::OpFOrdLessThan, TypeBool(state), value, ConstantF64(state, 0x3ff0000000000000ull));
-    const auto upper = Select(state, TypeF64(state), belowOne, value, ConstantF64(state, 0x3ff0000000000000ull));
-    return FromF64(state, Select(state, TypeF64(state), positive, upper, ConstantF64(state, 0u)));
+    const auto cls = Classify(state, arg0);
+    const auto atLeastOne = Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), cls.bits.high, ConstantU32(state, 0x3ff00000u));
+    const auto zero = Binary(state, spv::OpLogicalOr, TypeBool(state), cls.nan, cls.negative);
+    auto result = SelectBits(state, atLeastOne, {ConstantU32(state, 0u), ConstantU32(state, 0x3ff00000u)}, cls.bits);
+    result = SelectBits(state, zero, {ConstantU32(state, 0u), ConstantU32(state, 0u)}, result);
+    return Join(state, result);
 }
 
 std::uint32_t EmitFPLdexp64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {

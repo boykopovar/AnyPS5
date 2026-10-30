@@ -200,7 +200,8 @@ int APS5_VABI sceHttp2GetStatusCode(int req_id, int* status_code) {
 }
 
 int APS5_VABI sceHttp2Init(int libnet_mem_id, int libssl_ctx_id, size_t pool_size, int max_concurrent_request) {
-    if (max_concurrent_request <= 0) NotImplemented_nid_no_patch(__func__);
+    if (max_concurrent_request == 0) return ERROR_INVALID_VALUE;
+    if (max_concurrent_request < 0) NotImplemented_nid_no_patch(__func__);
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_handlesMutex);
     Http2Handle handle{Http2Kind::Context, 0, pool_size};
@@ -253,7 +254,7 @@ int APS5_VABI sceHttp2SetConnectTimeOut(int id, uint32_t usec) {
 }
 
 int APS5_VABI sceHttp2SetInflateGZIPEnabled(int id, int enable) {
-    return Update(id, __func__, [&](auto&) { if (enable != 0) NotImplemented_nid_no_patch("sceHttp2SetInflateGZIPEnabled"); });
+    return Update(id, __func__, [&](auto& settings) { settings.inflateGzip = enable != 0; });
 }
 
 int APS5_VABI sceHttp2SetRecvTimeOut(int id, uint32_t usec) {
@@ -311,7 +312,7 @@ int APS5_VABI sceHttp2SslEnableOption(int id, uint32_t ssl_flags) {
 }
 
 int APS5_VABI sceHttp2SetMinSslVersion(int id, uint32_t ssl_version) {
-    return Update(id, __func__, [&](auto&) { NotImplemented_nid_no_patch("sceHttp2SetMinSslVersion"); });
+    return Update(id, __func__, [&](auto&) { if (ssl_version < 2 || ssl_version > 5) NotImplemented_nid_no_patch("sceHttp2SetMinSslVersion"); });
 }
 
 int APS5_VABI sceHttp2Term(int lib_http2_ctx_id) {
@@ -337,11 +338,12 @@ int APS5_VABI sceHttp2AbortRequest(int req_id) {
 int APS5_VABI sceHttp2GetMemoryPoolStats(int lib_http2_ctx_id, Http2MemoryPoolStats* stats) {
     if (stats == nullptr) return ERROR_NULL_POINTER;
     std::lock_guard lock(g_handlesMutex);
-    if (!FindHandle(lib_http2_ctx_id, Http2Kind::Context)) {
+    const auto* context = FindHandle(lib_http2_ctx_id, Http2Kind::Context);
+    if (!context) {
         std::memset(stats, 0, sizeof(*stats));
         return ERROR_INVALID_ID;
     }
-    NotImplemented_nid_no_patch(__func__);
+    *stats = {context->poolSize, 0, 0, 0};
     return 0;
 }
 
@@ -380,8 +382,15 @@ int APS5_VABI sceHttp2SetRequestNoContentLength(int id) {
     return Update(id, __func__, [&](auto& settings) { settings.noContentLength = true; });
 }
 
+extern "C" void Http2SetLookupHook_nid_no_patch(Http2::LookupHook hook) {
+    Http2::LookupHookSlot().store(hook, std::memory_order_release);
+}
+
 int APS5_VABI sceHttp2SetResolveRetry(int id, int32_t retry) {
-    return Update(id, __func__, [&](auto&) { if (retry != 0) NotImplemented_nid_no_patch("sceHttp2SetResolveRetry"); });
+    return Update(id, __func__, [&](auto& settings) {
+        if (retry < 0) NotImplemented_nid_no_patch("sceHttp2SetResolveRetry");
+        settings.resolveRetry = retry;
+    });
 }
 
 int APS5_VABI sceHttp2WebSocketCreateRequest(std::int32_t templateId, const char* url, Http2WebSocketTextCallback textCallback, Http2WebSocketDataCallback dataCallback, Http2WebSocketCloseCallback closeCallback, Http2WebSocketErrorCallback errorCallback, void* receiveBuffer, std::size_t receiveBufferSize, void* userData, const void* option) {
@@ -488,5 +497,11 @@ int APS5_VABI sceHttp2SetPreSendCallback(int id, void* cb_func, void* user_arg) 
         settings.preSendArgument = user_arg;
     }, true);
 }
+
+int APS5_VABI sceHttp2Unknown_001_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+APS5_EXPORT("AS45QoYHjc4", sceHttp2Unknown_001_nid_no_patch);
 
 }

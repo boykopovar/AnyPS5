@@ -32,7 +32,7 @@ struct LoadCase {
     std::uint32_t components = 1;
 };
 
-std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint32_t offset, std::uint32_t records, bool robust, bool exact = false, bool valid = true) {
+std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint32_t offset, std::uint32_t records, bool robust, bool exact = false, bool valid = true, bool coherent = true) {
     IrProgram program;
     program.SetWaveSize(32);
     program.Resources().stage = IrShaderStage::Compute;
@@ -70,7 +70,7 @@ std::vector<std::uint32_t> emitLoad(const LoadCase& test, bool active, std::uint
         auto& handle = emit(IrOpcode::GetScratchResource, IrType::AddressResource, {});
         emit(test.opcode, test.type, {&handle, &address, &zero, &enabled});
     } else if (test.kind == ResourceKind::Buffer) {
-        program.Resources().memoryInfo.front().coherent = true;
+        program.Resources().memoryInfo.front().coherent = coherent;
         program.Info().buffers.emplace_back().read = true;
         program.Metadata().bindings.descriptors.push_back({DescriptorBindingKind::Buffers, {0}});
         program.Metadata().bindings.pushDataStartDword = 0;
@@ -385,6 +385,23 @@ int main() {
         require(compared == 2u * 9u * 3u * 4u * 2u, "exact robust loads: the comparison grid shrank");
         const auto plain = emitLoad(test, true, 8, 64, false, true);
         require(AccessTrace(plain, 0).Run() == std::vector<std::uint32_t>({2}), "exact request without robustBufferAccess2 changed the plain variant");
+    });
+    run("volatile robust buffer omits repeated zero selection", [] {
+        const LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};
+        const auto selections = [](const std::vector<std::uint32_t>& module) {
+            unsigned count = 0;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) {
+                count += (module[offset] & 0xffffu) == spv::OpSelect;
+            }
+            return count;
+        };
+        for (const bool robust : {false, true}) {
+            for (const bool exact : {false, true}) {
+                const auto plain = emitLoad(test, true, 8, 64, robust, exact, true, false);
+                const auto coherent = emitLoad(test, true, 8, 64, robust, exact);
+                require(selections(plain) == selections(coherent) + (robust && !exact ? 1u : 0u), "only volatile guarded robust loads may omit the repeated zero selection");
+            }
+        }
     });
     run("private scratch selection", [] {
         const LoadCase test{ResourceKind::Scratch, IrOpcode::LoadAddressU32, IrType::U32};

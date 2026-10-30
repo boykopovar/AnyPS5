@@ -111,4 +111,20 @@ int APS5_VABI sceInvitationDialogGetResult(InvitationDialogResult* result) {
     return COMMON_DIALOG_OK;
 }
 
+int APS5_VABI sceInvitationDialogGetStatus_nid_postfix(void) {
+    DialogState& dialog = Dialog();
+    std::lock_guard lock(dialog.mutex);
+    return dialog.status;
+}
+
+int APS5_VABI sceInvitationDialogOpenA_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceInvitationDialogGetResultA_nid_postfix(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

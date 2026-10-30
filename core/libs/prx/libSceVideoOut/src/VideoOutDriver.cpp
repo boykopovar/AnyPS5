@@ -19,6 +19,7 @@
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
+#include "prx/libSceVideoOut/include/DialogInput.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
@@ -31,6 +32,7 @@
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
@@ -698,11 +700,15 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
         return;
     }
     started.set_value();
+    struct DialogPresenter {
+        ~DialogPresenter() { ModalDialogSetPresenter_nid_postfix(false); }
+    } dialogPresenter;
     std::shared_ptr<FlipRequest> current;
     std::optional<PadInput> padInput;
     std::optional<MouseInput> mouseInput;
     std::optional<KeyboardInput> keyboardInput;
     std::optional<ImeTextInput> imeTextInput;
+    std::optional<DialogInput> dialogInput;
 #if APS5_ENABLE_TIMING_LOG
     std::unique_ptr<FrameTimingLog> timingLog;
 #endif
@@ -715,6 +721,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             mouseInput.emplace();
             keyboardInput.emplace();
             imeTextInput.emplace();
+            dialogInput.emplace();
         });
         while (!token.stop_requested()) {
             {
@@ -737,6 +744,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                         mouseInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         keyboardInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         imeTextInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
+                        dialogInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                     }
                 }
                 padInput->Update(window);
@@ -747,6 +755,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 LibcRequestExit_nid_postfix(0);
                 throw ProcessShutdown{};
             }
+            ModalDialogSetPresenter_nid_postfix(window.Handle() != nullptr);
             pollHostHdr();
             OnMainThread([&] { mouseInput->UpdateCapture(!padInput->MouseModeEnabled()); });
             if (current) {
@@ -756,6 +765,9 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 ImeKeyboardView keyboardView;
                 const bool keyboardShown = ImeReadKeyboardView_nid_postfix(keyboardView);
                 AgcDriverSetSystemOverlay_nid_postfix(keyboardShown ? &keyboardView : nullptr);
+                ModalDialogView dialogView;
+                const bool dialogShown = !keyboardShown && ModalDialogReadView_nid_postfix(dialogView);
+                AgcDriverSetSystemDialog_nid_postfix(dialogShown ? &dialogView : nullptr);
                 processFlip(*current);
                 int windowWidth = 0;
                 int windowHeight = 0;

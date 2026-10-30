@@ -1,3 +1,4 @@
+#include "prx/libSceContentSearch/include/InventoryExports.hpp"
 #include "prx/libSceContentSearch/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -61,6 +62,23 @@ void ValidateOrderBy(const char* funcName, const ContentSearchContentOrderByCond
 }
 
 extern "C" {
+
+int APS5_VABI sceContentSearchAddAvContentCreatedEventCondition() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceContentSearchDisableAvContentCreatedEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceContentSearchEnableAvContentCreatedEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceContentSearchGetContentIdByAvContentCreatedEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int APS5_VABI sceContentSearchInit(const ContentSearchInitParam* init_param) {
     if (g_initialized.load()) return ErrorAlreadyInitialized;

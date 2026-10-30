@@ -30,6 +30,14 @@
 #include <string>
 #include <vector>
 
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
+
 namespace {
 
 using AgcDriver::Graphics::Require;
@@ -387,11 +395,18 @@ int main() {
             std::puts("skipped, no guest write watch: heap mirrors need one");
             return VulkanTestSkipped;
         }
-        ResidentTests(*device);
-        ReusedAddressTests(*device);
-        JoinedImportTests(*device);
+        const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        const bool sparse = context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased;
+        if (sparse) {
+            ResidentTests(*device);
+            ReusedAddressTests(*device);
+            JoinedImportTests(*device);
+        } else {
+            std::puts("the device has no sparseBinding, sparseResidencyBuffer and sparseResidencyAliased, so every heap mirror is a whole copy; the resident heap mirror tests are skipped");
+        }
         CopiedTests(*device);
         for (const bool copied : {false, true}) {
+            if (!copied && !sparse) continue;
             for (const bool readFirst : {false, true}) PartialImportTests(*device, copied, readFirst);
         }
         std::puts("resident heap mirror tests passed");

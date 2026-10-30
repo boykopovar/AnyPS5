@@ -186,6 +186,7 @@ void RunCadence() {
 }
 
 int InitializeSdlAudio_nid_no_patch() { return failInitialize ? -1 : 0; }
+bool WasapiDefaultOutputAbsent_nid_no_patch() { return false; }
 extern "C" void PadQueueLegacyAudioHaptics_nid_postfix(int source, std::uint64_t begin, std::uint64_t end, std::uint8_t large, std::uint8_t small) {
     blocks.push_back({source, begin, end, {large, small}});
     timeline.Queue(source, begin, end, large, small);

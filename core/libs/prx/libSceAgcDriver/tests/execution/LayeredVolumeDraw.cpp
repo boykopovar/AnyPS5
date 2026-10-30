@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <span>
 #include <string>
@@ -269,6 +270,17 @@ void Check(const std::byte* volume, const AgcDriver::Graphics::ColorTarget& colo
 
 int main(int argc, char** argv) {
     try {
+        const bool directReadback = std::getenv("APS5_TEST_DIRECT_READBACK") != nullptr;
+        if (directReadback) {
+            std::remove("private-readback.ready");
+            char extent[64];
+            std::snprintf(extent, sizeof(extent), "%ux%ux%u", Width, Height, Slices);
+#ifdef _WIN32
+            Require(_putenv_s("APS5_DUMP_STORAGE", extent) == 0 && _putenv_s("APS5_DUMP_STORAGE_GATE", "private-readback.ready") == 0, "cannot set private readback options");
+#else
+            Require(setenv("APS5_DUMP_STORAGE", extent, 1) == 0 && setenv("APS5_DUMP_STORAGE_GATE", "private-readback.ready", 1) == 0, "cannot set private readback options");
+#endif
+        }
         const bool vertexOnly = argc == 2 && std::strcmp(argv[1], "--vertex-only") == 0;
         Require(argc == 1 || vertexOnly, "usage: layered volume draw [--vertex-only]");
         const auto device = OpenVulkanTestDevice();
@@ -283,6 +295,38 @@ int main(int argc, char** argv) {
         const auto color = VolumeTarget(volume.Data());
         Run(*device, color, false, PixelCode, false);
         Check(volume.Data(), color, "vertex draw", WhiteBands);
+        if (directReadback) {
+            char name[80];
+            std::snprintf(name, sizeof(name), "storage_direct_%llx_0.raw", static_cast<unsigned long long>(color.address));
+            std::remove(name);
+            AgcDriver::Graphics::StorageTexture::FlushDumpSelected("closed readback gate fixture");
+            Require(!std::filesystem::exists(name), "private readback ignored its closed gate");
+            auto* trigger = std::fopen("private-readback.ready", "wb");
+            Require(trigger != nullptr, "cannot create private readback trigger");
+            Require(std::fclose(trigger) == 0, "cannot close private readback trigger");
+            AgcDriver::Graphics::StorageTexture::FlushDumpSelected("private readback fixture");
+            std::remove("private-readback.ready");
+            auto* file = std::fopen(name, "rb");
+            Require(file != nullptr, "clean volume image was not exported by direct readback");
+            std::array<std::uint32_t, 3> header{};
+            Require(std::fread(header.data(), sizeof(header), 1, file) == 1, "private readback header is incomplete");
+            Require(header[0] >= Width && header[1] == Height && header[2] == VK_FORMAT_R8G8B8A8_UNORM, "private readback header disagrees with the volume");
+            std::vector<std::uint8_t> pixels(static_cast<std::size_t>(header[0]) * Height * Slices * 4u);
+            Require(std::fread(pixels.data(), 1, pixels.size(), file) == pixels.size(), "private readback pixels are incomplete");
+            Require(std::fgetc(file) == EOF, "private readback has unexpected trailing pixels");
+            Require(std::fclose(file) == 0, "cannot close private readback");
+            for (std::uint32_t z = 0; z < Slices; ++z) {
+                for (std::uint32_t y = 0; y < Height; ++y) {
+                    for (std::uint32_t x = 0; x < Width; ++x) {
+                        const bool drawn = z >= FirstSlice && x / BandWidth == z - FirstSlice;
+                        const auto expected = drawn ? WhiteBands[z - FirstSlice] : Kept;
+                        for (std::uint32_t channel = 0; channel < 4; ++channel) Require(pixels[((z * Height + y) * header[0] + x) * 4u + channel] == expected, "private readback changed a volume texel");
+                    }
+                }
+            }
+            std::puts("private clean-volume direct readback pixels verified");
+            return 0;
+        }
         const GuestVolume fieldVolume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
         const auto fieldColor = VolumeTarget(fieldVolume.Data());
         Run(*device, fieldColor, false, LayerFieldPixelCode, true);

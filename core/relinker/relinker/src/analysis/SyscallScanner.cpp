@@ -31,16 +31,18 @@ static constexpr std::array<std::uint8_t, 23> SDK_GENERIC_SYSCALL_STUB{
     0x4D, 0x89, 0xC2, 0x4D, 0x89, 0xC8, 0x4C, 0x8B, 0x4C, 0x24, 0x08,
 };
 
-static bool IsSdkSyscallStub(const std::vector<std::uint8_t>& code, const std::size_t syscallOffset) {
+static bool IsSdkSyscallStub(const std::vector<std::uint8_t>& code, const std::size_t syscallOffset, const std::size_t limit) {
     constexpr std::array<std::uint8_t, 3> numberLoad{0x48, 0xC7, 0xC0};
     constexpr std::array<std::uint8_t, 3> argumentShuffle{0x49, 0x89, 0xCA};
-    if (syscallOffset <= code.size() && syscallOffset >= SDK_GENERIC_SYSCALL_STUB.size() && code.size() - syscallOffset >= 3u) {
+    if (limit > code.size() || syscallOffset > limit || limit - syscallOffset < 3u)
+        return false;
+    if (syscallOffset >= SDK_GENERIC_SYSCALL_STUB.size()) {
         const auto begin = code.begin() + static_cast<std::ptrdiff_t>(syscallOffset - SDK_GENERIC_SYSCALL_STUB.size());
         if (std::equal(SDK_GENERIC_SYSCALL_STUB.begin(), SDK_GENERIC_SYSCALL_STUB.end(), begin)
             && code[syscallOffset] == 0x0F && code[syscallOffset + 1] == 0x05 && code[syscallOffset + 2] == 0xC3)
             return true;
     }
-    if (syscallOffset > code.size() || syscallOffset < 10u || code.size() - syscallOffset < 3u)
+    if (syscallOffset < 10u)
         return false;
     const auto begin = code.begin() + static_cast<std::ptrdiff_t>(syscallOffset - 10u);
     return std::equal(numberLoad.begin(), numberLoad.end(), begin)
@@ -108,7 +110,7 @@ static bool IsSdkMmanSyscallStub(const std::vector<std::uint8_t>& code, std::siz
 }
 
 static ForbiddenInstruction ClassifyForbiddenInstruction(const std::vector<std::uint8_t>& codeSection, const std::size_t opcodeOffset, const std::size_t limit) {
-    if (opcodeOffset + 1 >= limit)
+    if (opcodeOffset >= limit || limit - opcodeOffset < 2u)
         return ForbiddenInstruction::None;
 
     const std::uint8_t byte0 = codeSection[opcodeOffset];
@@ -200,7 +202,37 @@ static std::optional<std::uint64_t> ConstantSyscallNumber(const std::vector<std:
     return std::nullopt;
 }
 
+struct ActivePrefixes {
+    bool OperandSize;
+    std::uint8_t Rex;
+    std::size_t Count;
+};
+
+static ActivePrefixes ActivePrefixesBefore(const std::vector<std::uint8_t>& code, const std::size_t opcode) {
+    ActivePrefixes prefixes{false, 0, 0};
+    if (opcode > code.size())
+        return prefixes;
+    std::size_t start = opcode;
+    if (start > 0 && (code[start - 1] & 0xF0) == 0x40) {
+        prefixes.Rex = code[start - 1];
+        --start;
+    }
+    while (start > 0) {
+        const std::uint8_t prefix = code[start - 1];
+        if (prefix == 0x66)
+            prefixes.OperandSize = true;
+        else if (prefix != 0x67 && prefix != 0xF0 && prefix != 0xF2 && prefix != 0xF3 &&
+                 prefix != 0x26 && prefix != 0x2E && prefix != 0x36 && prefix != 0x3E && prefix != 0x64 && prefix != 0x65)
+            break;
+        --start;
+    }
+    prefixes.Count = opcode - start;
+    return prefixes;
+}
+
 static std::optional<std::uint64_t> ConstantRaxSetEndingAt(const std::vector<std::uint8_t>& code, const std::size_t end) {
+    if (end > code.size())
+        return std::nullopt;
     if (end >= 10 && code[end - 10] == 0x48 && code[end - 9] == 0xB8) {
         std::uint64_t value = 0;
         std::memcpy(&value, code.data() + end - 8, sizeof(value));
@@ -212,11 +244,19 @@ static std::optional<std::uint64_t> ConstantRaxSetEndingAt(const std::vector<std
         return static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<std::int32_t>(immediate)));
     }
     if (end >= 5 && code[end - 5] == 0xB8) {
-        std::memcpy(&immediate, code.data() + end - 4, sizeof(immediate));
-        return immediate;
+        const ActivePrefixes prefixes = ActivePrefixesBefore(code, end - 5);
+        if (!prefixes.OperandSize && (prefixes.Rex & 0x09) == 0) {
+            std::memcpy(&immediate, code.data() + end - 4, sizeof(immediate));
+            return immediate;
+        }
     }
-    if (end >= 2 && (code[end - 2] == 0x31 || code[end - 2] == 0x33) && code[end - 1] == 0xC0)
-        return 0;
+    if (end >= 2 && (code[end - 2] == 0x31 || code[end - 2] == 0x33) && code[end - 1] == 0xC0) {
+        const ActivePrefixes prefixes = ActivePrefixesBefore(code, end - 2);
+        const bool wordSized = prefixes.OperandSize && (prefixes.Rex & 0x08) == 0;
+        const bool extendedOperand = (prefixes.Rex & 0x05) != 0;
+        if (!wordSized && !extendedOperand)
+            return 0;
+    }
     return std::nullopt;
 }
 
@@ -227,14 +267,24 @@ struct LowRaxWrite {
 };
 
 static std::optional<LowRaxWrite> ImmediateLowRaxWriteEndingAt(const std::vector<std::uint8_t>& code, const std::size_t end) {
-    if (end >= 2 && code[end - 2] == 0xB0)
-        return LowRaxWrite{2, 0xFF, code[end - 1]};
-    if (end >= 4 && code[end - 4] == 0x66 && code[end - 3] == 0xB8)
-        return LowRaxWrite{4, 0xFFFF, static_cast<std::uint64_t>(code[end - 2]) | static_cast<std::uint64_t>(code[end - 1]) << 8};
+    if (end > code.size())
+        return std::nullopt;
+    if (end >= 2 && code[end - 2] == 0xB0) {
+        const ActivePrefixes prefixes = ActivePrefixesBefore(code, end - 2);
+        if ((prefixes.Rex & 0x01) == 0)
+            return LowRaxWrite{prefixes.Count + 2, 0xFF, code[end - 1]};
+        return LowRaxWrite{prefixes.Count + 2, 0, 0};
+    }
+    if (end >= 4 && code[end - 4] == 0x66 && code[end - 3] == 0xB8) {
+        const std::size_t length = end >= 5 && (code[end - 5] & 0xF0) == 0x40 ? 5 : 4;
+        return LowRaxWrite{length, 0xFFFF, static_cast<std::uint64_t>(code[end - 2]) | static_cast<std::uint64_t>(code[end - 1]) << 8};
+    }
     return std::nullopt;
 }
 
 static std::optional<std::uint64_t> ConstantSyscallNumberInBytes(const std::vector<std::uint8_t>& code, const std::size_t syscall) {
+    if (syscall > code.size())
+        return std::nullopt;
     using Step = std::tuple<std::size_t, std::uint64_t, std::uint64_t>;
     std::vector<Step> pending{{syscall, 0, 0}};
     std::set<Step> seen(pending.begin(), pending.end());
@@ -287,7 +337,7 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
         recent.Push(match);
         if (match.Offset < codeSectionOffset) throw RelinkerException("Instruction match precedes code section offset", match.Offset);
         const std::size_t start = static_cast<std::size_t>(match.Offset - codeSectionOffset);
-        if (start > codeSection.size() || match.Length > codeSection.size() - start) throw RelinkerException("Instruction match exceeds code section", match.Offset);
+        if (start > limit || match.Length > limit - start) throw RelinkerException("Instruction match exceeds code section", match.Offset);
         const auto opcodeOffset = Codegen::DecodedInstruction{codeSection.data() + start, match.Length}.OpcodeOffset();
         const std::size_t opcode = start + opcodeOffset;
         const std::size_t spanLimit = std::min(limit, start + static_cast<std::size_t>(match.Length));
@@ -298,7 +348,7 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
             return;
 
         if (trapSdkStubs && kind == ForbiddenInstruction::Invocation &&
-            (IsSdkSyscallStub(codeSection, opcode) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset))) {
+            (IsSdkSyscallStub(codeSection, opcode, limit) || IsSdkMmanSyscallStub(codeSection, opcode, limit, recent, codeSectionOffset))) {
             trapped.push_back(opcode);
             std::ostringstream message;
             message << "Trapping SDK syscall instruction at code offset 0x" << std::hex << match.Offset << '\n';
