@@ -3,6 +3,8 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 static void Require(bool ok) { if (!ok) throw std::runtime_error("Unwind record validation failed"); }
 
@@ -49,7 +51,7 @@ int main() {
         auto empty = Fixture();
         Io::WriteU64(empty, 112, 0);
         Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(empty, {load, eh}, {}, {}).empty());
-        for (int kind = 0; kind < 12; ++kind) {
+        for (int kind = 0; kind < 11; ++kind) {
             auto bytes = Fixture(); auto segment = load;
             switch (kind) {
                 case 0: Io::WriteU32(bytes, 64, 0x1000); break;
@@ -78,12 +80,6 @@ int main() {
                     Io::WriteU64(bytes, 104, 0x800);
                     break;
                 }
-                case 11: {
-                    bytes[3] = 0x4A;
-                    bytes[96] = 0;
-                    bytes[97] = 0x80;
-                    break;
-                }
             }
             bool rejected = false;
             std::vector<Domain::ProgramHeader> headers = {segment, eh};
@@ -99,6 +95,35 @@ int main() {
             catch (const std::exception&) { rejected = true; }
             Require(rejected);
         }
+        std::vector<std::uint8_t> lsdaBytes(0x400, 0);
+        Io::WriteU32(lsdaBytes, 0x200, 25);
+        lsdaBytes[0x208] = 1;
+        const std::uint8_t ciePrefix[] = {'z', 'P', 'L', 'R', 0, 1, 0, 0x78, 11, 0};
+        std::copy(std::begin(ciePrefix), std::end(ciePrefix), lsdaBytes.begin() + 0x209);
+        lsdaBytes[0x212] = 0;
+        Io::WriteU64(lsdaBytes, 0x213, 0x1000);
+        lsdaBytes[0x21B] = 0x4A;
+        lsdaBytes[0x21C] = 0;
+        Io::WriteU32(lsdaBytes, 0x220, 29);
+        Io::WriteU32(lsdaBytes, 0x224, 0x24);
+        Io::WriteU64(lsdaBytes, 0x228, 0x1000);
+        Io::WriteU64(lsdaBytes, 0x230, 0x20);
+        lsdaBytes[0x238] = 2;
+        Io::WriteU16(lsdaBytes, 0x239, 0xEFFF);
+        lsdaBytes[0x300] = 1;
+        lsdaBytes[0x302] = 3;
+        Io::WriteU64(lsdaBytes, 0x304, 0x200);
+        Io::WriteU32(lsdaBytes, 0x30C, 1);
+        Io::WriteU64(lsdaBytes, 0x310, 0x1000);
+        Io::WriteU64(lsdaBytes, 0x318, 0x220);
+        Domain::ProgramHeader lsdaLoad{}; lsdaLoad.Type = 1; lsdaLoad.Flags = 4; lsdaLoad.FileSize = lsdaBytes.size(); lsdaLoad.MemorySize = lsdaBytes.size(); lsdaLoad.Alignment = 8;
+        Domain::ProgramHeader lsdaEh = lsdaLoad; lsdaEh.Type = 0x6474E550; lsdaEh.Offset = 0x300; lsdaEh.MappedAddress = 0x300; lsdaEh.FileSize = 32; lsdaEh.MemorySize = 32; lsdaEh.Alignment = 4;
+        bool lsdaOverflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaBytes, {lsdaLoad, lsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaOverflowRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(lsdaOverflowRejected);
         std::cout << "18 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
