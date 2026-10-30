@@ -173,6 +173,10 @@ int main() {
         std::uint8_t owner = 0; _ZN3sce4Json11InitializerC1Ev(&owner);
         Require(_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(&owner, reinterpret_cast<const InitParameter2*>(&parameter)) == 0 && trace.live.size() == 11, "Initialize the eleven-resource legacy module");
         Value value{}; _ZN3sce4Json5ValueC1Ev(&value);
+        Require(_ZNK3sce4Json5Value10getBooleanEv(&value) == &_ZN3sce4Json5Value10s_nullboolE, "Legacy Boolean default identity");
+        Require(_ZNK3sce4Json5Value10getIntegerEv(&value) == &_ZN3sce4Json5Value13s_nullintegerE, "Legacy integer default identity");
+        Require(_ZNK3sce4Json5Value11getUIntegerEv(&value) == &_ZN3sce4Json5Value14s_nulluintegerE, "Legacy unsigned default identity");
+        Require(_ZNK3sce4Json5Value7getRealEv(&value) == &_ZN3sce4Json5Value10s_nullrealE, "Legacy real default identity");
         Require(_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm(&value, object ? "{}" : "[]", 2) == 0 &&
                 _ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_(&value, nullptr, &trace) == 0, "Prepare legacy collection ownership and auxiliary callback context");
         const Value before = value; const auto generations = trace.generations;
