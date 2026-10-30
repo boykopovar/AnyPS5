@@ -337,6 +337,52 @@ static void UnreadableAddressFailsWithEfault() {
     Require(timeout == SHORT_TIMEOUT);
 }
 
+static void RegisteredUnreadableAddressFailsWithEfault() {
+    std::uint32_t word = 2;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(&word, sizeof(word), false, false, false);
+    }
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait32(&word, 1, &timeout, nullptr) == SCE_KERNEL_ERROR_EFAULT && timeout == SHORT_TIMEOUT);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(&word);
+    }
+}
+
+static void RegisteredRangesRespectReadability() {
+    alignas(std::uint32_t) unsigned char bytes[sizeof(std::uint32_t) + 1]{2, 0, 0, 0, 0};
+    auto* address = reinterpret_cast<std::uint32_t*>(bytes + 1);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(bytes + 1, 2, true, false, false);
+        mutation.Add(bytes + 3, 2, false, false, false);
+    }
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait32(address, 1, &timeout, nullptr) == SCE_KERNEL_ERROR_EFAULT && timeout == SHORT_TIMEOUT);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(bytes + 1);
+        mutation.Remove(bytes + 3);
+    }
+}
+
+static void RegisteredPrefixWithUnregisteredTailUsesGuardedCopy() {
+    alignas(std::uint32_t) unsigned char bytes[sizeof(std::uint32_t)]{2, 0, 0, 0};
+    auto* address = reinterpret_cast<std::uint32_t*>(bytes);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(bytes, 2, true, false, false);
+    }
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait32(address, 1, &timeout, nullptr) == SCE_KERNEL_ERROR_EAGAIN && timeout == SHORT_TIMEOUT);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(bytes);
+    }
+}
+
 static void RegisteredReadableAddressKeepsWaitSemantics() {
     std::uint32_t word = 2;
     {
@@ -366,5 +412,8 @@ int main() {
     MisalignedAddressesWaitAndWake();
     NullAddresses();
     UnreadableAddressFailsWithEfault();
+    RegisteredUnreadableAddressFailsWithEfault();
+    RegisteredRangesRespectReadability();
+    RegisteredPrefixWithUnregisteredTailUsesGuardedCopy();
     RegisteredReadableAddressKeepsWaitSemantics();
 }
