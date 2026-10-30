@@ -5,6 +5,7 @@ import gzip
 import html
 import json
 import math
+import os
 import sys
 import zlib
 from pathlib import Path
@@ -142,6 +143,21 @@ def load_trace(path):
         return Trace(document)
 
 
+def resolve_summary_path(path):
+    path = Path(path)
+    try:
+        resolved = Path(os.path.realpath(path))
+    except OSError as error:
+        raise ValueError(str(error)) from error
+    if resolved.is_symlink():
+        try:
+            resolved.stat()
+        except OSError as error:
+            raise ValueError(f"{path}: summary file is a symbolic link loop: {error}") from error
+        raise ValueError(f"{path}: summary file is a symbolic link loop")
+    return resolved
+
+
 def load_summary_lines(path, numbered=False):
     records = []
     for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
@@ -160,9 +176,13 @@ def load_summary_lines(path, numbered=False):
 
 
 def load_summary(path, trace_path):
-    candidate = Path(path) if path else Path(trace_path).with_name("aps5-summary.jsonl")
-    if not candidate.exists():
-        return None
+    if path:
+        candidate = resolve_summary_path(path)
+    else:
+        hint = Path(trace_path).with_name("aps5-summary.jsonl")
+        if not hint.exists() and not hint.is_symlink():
+            return None
+        candidate = resolve_summary_path(hint)
     lines = load_summary_lines(candidate)
     name = Path(trace_path).name
     alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
@@ -465,8 +485,13 @@ def main(arguments=None):
     parser.add_argument("--top", type=nonnegative_integer, default=10, help="entries per list (default 10)")
     parser.add_argument("--json", action="store_true", help="print the digest as JSON")
     options = parser.parse_args(arguments)
-    if options.summary and not Path(options.summary).is_file():
-        parser.error(f"summary file not found: {options.summary}")
+    if options.summary:
+        try:
+            summary_path = resolve_summary_path(options.summary)
+        except ValueError as error:
+            parser.error(str(error))
+        if not summary_path.is_file():
+            parser.error(f"summary file not found: {options.summary}")
     if options.thread and options.trace.endswith(".jsonl"):
         parser.error("--thread requires an event trace, not interval summaries")
     if options.trace.endswith(".jsonl"):
