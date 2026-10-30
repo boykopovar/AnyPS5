@@ -88,13 +88,11 @@ def elf_program_dynamic_symbols(path, data):
     if len(dynamic_segments) != 1:
         raise AuditError(f"{path}: expected one dynamic segment, found {len(dynamic_segments)}")
     _, _, dynamic_offset, _, _, dynamic_size, _, _ = dynamic_segments[0]
-    if dynamic_size % 16:
-        raise AuditError(f"{path}: dynamic segment size {dynamic_size} is not a multiple of 16")
     take(data, dynamic_offset, dynamic_size, path, "dynamic segment")
     dynamic = {}
     needed_offsets = []
     terminated = False
-    for position in range(0, dynamic_size, 16):
+    for position in range(0, dynamic_size - 15, 16):
         tag, value = unpack("<qQ", data, dynamic_offset + position, path, "dynamic entry")
         if tag == 0:
             terminated = True
@@ -535,23 +533,39 @@ def branch_variants(body):
         raise AuditError("#if without a matching #endif")
     root.append(body[position:])
 
-    def expand(items):
-        variants = [""]
-        for item in items:
-            if isinstance(item, str):
-                variants = [variant + item for variant in variants]
-                continue
-            choices = [choice for alternative in item["alternatives"] for choice in expand(alternative)]
-            variants = [variant + choice for variant in variants for choice in choices]
-            if len(variants) > BRANCH_VARIANT_LIMIT:
-                raise AuditError(f"more than {BRANCH_VARIANT_LIMIT} preprocessor branch combinations in one function")
-        return variants
+    def choices(item):
+        if isinstance(item, str):
+            return iter((item,))
+        return (choice for alternative in item["alternatives"] for choice in expand(alternative))
 
-    return expand(root)
+    def expand(items):
+        iterators = [choices(item) for item in items]
+        values = [next(iterator) for iterator in iterators]
+        while True:
+            yield "".join(values)
+            index = len(items) - 1
+            while index >= 0:
+                try:
+                    values[index] = next(iterators[index])
+                    break
+                except StopIteration:
+                    iterators[index] = choices(items[index])
+                    values[index] = next(iterators[index])
+                    index -= 1
+            if index < 0:
+                return
+
+    def limited(variants):
+        for count, variant in enumerate(variants, 1):
+            if count > BRANCH_VARIANT_LIMIT:
+                raise AuditError(f"more than {BRANCH_VARIANT_LIMIT} preprocessor branch combinations in one function")
+            yield variant
+
+    return limited(expand(root))
 
 
 def variant_calls(body):
-    return [unconditional_calls(variant) for variant in branch_variants(body)]
+    return (unconditional_calls(variant) for variant in branch_variants(body))
 
 
 def unconditional_calls(body):
@@ -572,7 +586,10 @@ def unconditional_calls(body):
 
 def always_stub_calls(text):
     helpers = {}
+    possible = progress.stub_calls(text)
     for match in progress.STUB_WRAPPER.finditer(text):
+        if match.group(1) not in possible:
+            continue
         body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
         helpers.setdefault(match.group(1), []).extend(variant_calls(body))
     calls = {progress.STUB}
@@ -588,7 +605,7 @@ def conditional_stubs(library):
     for source in library.rglob("*.cpp"):
         if "tests" in source.relative_to(library).parts:
             continue
-        text = progress.code(source.read_text(errors="ignore"))
+        text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
         calls = always_stub_calls(text)
         for match in progress.DEFINITION.finditer(text):
             body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
@@ -640,7 +657,7 @@ def source_stub_classes(source):
 def read_registry(path):
     try:
         entries = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
         raise AuditError(f"{path}: cannot read registry: {error}") from error
     if not isinstance(entries, list):
         raise AuditError(f"{path}: a registry is a JSON list, got {type(entries).__name__}")
@@ -665,7 +682,7 @@ def needed_registry_path(path):
 def read_needed_registry(path):
     try:
         libraries = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
         raise AuditError(f"{path}: cannot read needed libraries: {error}") from error
     if not isinstance(libraries, list) or any(not isinstance(library, str) or not library for library in libraries):
         raise AuditError(f"{path}: needed libraries must be a JSON list of nonempty strings")
@@ -687,9 +704,8 @@ def module_stem(name, fold):
         name = name.lower()
     for suffix in MODULE_FILE_SUFFIXES:
         if len(name) > len(suffix) and name.endswith(suffix):
-            name = name[:-len(suffix)]
-            break
-    return name
+            return name[:-len(suffix)]
+    return None
 
 
 class ModuleNames(set):
@@ -699,10 +715,14 @@ class ModuleNames(set):
     def __init__(self, names=(), fold=False):
         super().__init__(names)
         self.fold = fold
-        self.stems = {module_stem(name, fold) for name in self}
+        self.files = {name.lower() if fold else name for name in self}
+        self.stems = {stem for name in self if (stem := module_stem(name, fold)) is not None}
 
     def __contains__(self, library):
-        return isinstance(library, str) and module_stem(library, self.fold) in self.stems
+        if not isinstance(library, str):
+            return False
+        filename = library.lower() if self.fold else library
+        return filename in self.files or module_stem(library, self.fold) in self.stems
 
 
 def classify(nid, library, providers, stubs, modules, partial=frozenset()):
@@ -816,7 +836,9 @@ def attach_names(records, names):
 def write_json(path, result):
     if path.is_dir():
         raise AuditError(f"{path}: JSON output is a directory")
-    destination = path.resolve()
+    destination = Path(os.path.realpath(path))
+    if destination.is_symlink():
+        raise AuditError(f"{path}: JSON output is a symbolic link loop")
     with tempfile.TemporaryDirectory(dir=destination.parent, prefix=destination.name + ".", suffix=".tmp") as directory:
         temporary = Path(directory) / destination.name
         try:
@@ -955,8 +977,8 @@ def main(argv=None):
             inputs += [file for directory in args.modules for file in directory_files(directory, "*")]
             inputs += list(Path(args.source).rglob("*.cpp"))
             inputs += [file for file in Path(args.source).glob("*/CMakeLists.txt") if file.is_file()]
-            output = args.json.resolve()
-            if any(output == path.resolve() or (args.json.exists() and args.json.samefile(path)) for path in inputs):
+            output = Path(os.path.realpath(args.json))
+            if any(output == Path(os.path.realpath(path)) or (args.json.exists() and args.json.samefile(path)) for path in inputs):
                 raise AuditError(f"{args.json}: JSON output would overwrite an input file")
         registries = [(registry, read_registry(registry)) for registry in args.registries]
         imports = [entry for _, entries in registries for entry in entries]

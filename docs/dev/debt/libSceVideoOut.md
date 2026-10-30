@@ -3,13 +3,14 @@
 ### Silent stubs
 
 - [sceVideoOutSetFlipRate](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) stores a rate of 0, 1 or 2 and returns `VIDEO_OUT_ERROR_INVALID_VALUE` for any other rate. PPSA13356 calls it with 60; whether the console accepts that value or returns this error is unverified. Its one call in PPSA13356 (0xbedef) passes the handle from a field of its own object and does not read the result.
-- [sceVideoOutOpen](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) validates the priority and CPU affinity that the open param requests for the VideoOut service thread but does not apply them: the port's present and vblank threads are host threads, and guest priorities and affinities do not reach host scheduling
+- [sceVideoOutOpen](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) validates the priority and CPU affinity that the open param requests for the VideoOut service thread but does not apply them: the port's present and vblank threads are host threads, and guest priorities and affinities do not reach host scheduling. Of the 16 calls in ten titles checked, all pass user 255 and index 0, 13 pass bus type 0 and three read it from a field (one call each in Borderlands 4, MXGP 26 and Super Meat Boy 3D), and 13 pass no open param. Metal Gear Solid 4 (PPSA18194) passes one from `mgs4.elf` with neither flag set and one from its launcher that sets only the affinity, 0x3e. Astro Bot (PPSA21564) sets priority 256 and affinity 0x1fff
 - [sceVideoOutAddVrrStatusFlagsPrivilege](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) returns 0 and does nothing: the host output has no VRR state to report. The name comes from an assert message in a title that requires `SCE_VIDEO_OUT_OK`; the NID hashes to it, the arguments are unknown (it is called without any)
 - [sceVideoOutVrrPegToFixedRate, sceVideoOutVrrUnpegFromFixedRate](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - PPSA05684 passes the handle to both, two further zero arguments to `sceVideoOutVrrPegToFixedRate`, and ignores the results. The meaning of those two arguments is unknown, so only zeros are accepted. VRR is not modelled and the output always runs at a fixed rate, so both calls only validate the handle and return 0
+- [sceVideoOutCursorSet2xMagnify](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) takes the handle and the cursor index like the other cursor calls and returns 0: no cursor image is drawn, so a magnified cursor cannot be observed, and the console's answer is unmeasured. PC5 (PPSA11018) imports it. The signature `(handle, index, enable)` and the effect of the flag are unverified
 
 ### Unknown function info
 
-- PPSA29866 imports declared without parameters, signatures unknown, added without an implementation because the title fails to load without them: [sceVideoOutSetFlipMaster and sceVideoOutClearFlipMaster](../../../core/libs/prx/libSceVideoOut/Unimplemented.cpp) (libSceVideoOut) - the shapes and what flip-master ownership means are unknown, so both report that they are not implemented. Measured in a payload process on a PS5 (firmware 12.70) on a handle from `sceVideoOutOpen(0xff, 0, 0, NULL)`: `sceVideoOutSetFlipMaster` with (handle), (handle, 0) and (handle, 1) returned 0x8029000b, `sceVideoOutClearFlipMaster(handle)` returned 0x8029001c, and both returned 0x8029000b for handle -1
+- [sceVideoOutSetFlipMaster, sceVideoOutClearFlipMaster](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - what flip-master ownership means is unknown, and the signatures `sceVideoOutSetFlipMaster(handle, masterHandle)` and `sceVideoOutClearFlipMaster(handle)` are unverified; PPSA29866 imports both. Both throw on a handle that has ever had buffers registered, and `SetFlipMaster` throws for a master handle other than 0 or 1; those states are unmeasured, as is a closed handle (answered like -1). Measured in a payload process on a PS5 (firmware 12.70) on a handle from `sceVideoOutOpen(0xff, 0, 0, NULL)` with no buffer registered: `SetFlipMaster` with (handle), (handle, 0) and (handle, 1) returned 0x8029000b, `ClearFlipMaster(handle)` returned 0x8029001c, and both returned 0x8029000b for handle -1
 - [sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion_, sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_, sceVideoOutAdjustColorSpaceConversion_, sceVideoOutSetGlobalBlendSpace](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - PPSA30630 imports these to configure color space conversion and global blend space. Color space conversion settings are accepted with size validation (32 bytes) but conversion blocks and blend space parameters are not applied to the presentation swapchain
 - [sceVideoOutDeleteVrrActiveStatusEvent](../../../core/libs/prx/libSceVideoOut/src/Event.cpp) (libSceVideoOut, NID `-q-vbO859Tw`) - the name hashes to the NID PPSA02530 imports and is listed in [sce_symbols](https://github.com/zecoxao/sce_symbols) `aerolib.csv` at `fe2cc2948e`. The signature `(eq, handle)` and the behaviour, removing the handle's VRR status registration from the queue as the other `Delete*Event` calls do, follow sceVideoOutAddVrrActiveStatusEvent; no title has been observed calling it
 - [sceVideoOutCursorEnable, sceVideoOutCursorDisable, sceVideoOutCursorSetImageAddress, sceVideoOutCursorSetPosition](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) - no cursor is shown: the image format and size are unknown, so a non-null image address and a cursor index other than 0 report not implemented, and `CursorSetPosition` returns 0 for every position but only (100, 100) was measured. Measured in a payload process on a PS5 (firmware 12.70) on a handle from `sceVideoOutOpen(0xff, 0, 0, NULL)` with no buffer registered: `CursorEnable` and `CursorSetImageAddress` with (handle, 0, NULL) returned 0x80290002, `CursorSetPosition(handle, 0, 100, 100)` and `CursorDisable(handle, 0)` returned 0, and all four returned 0x8029000b for handle -1. A closed handle is unmeasured and answered like -1. Parameters follow Prospero Win's [declarations](https://github.com/mpereiraesaa/prospero-win/blob/644e32e400c555e340d507383398c5d21b39b0b0/wine/ps5/pw_vulkan_radv.c#L65-L68).
@@ -17,21 +18,26 @@
 - [sceVideoOutRegisterBuffers2](../../../core/libs/prx/libSceVideoOut/src/Buffer.cpp) (libSceVideoOut) - buffer option 8 (STRICT_COLORIMETRY) is presented as option 0, with the stored values unchanged; what the console changes for it is unknown. Only options 0 and 8 are accepted
 - [sceVideoOutAddBufferAttributeOption](../../../core/libs/prx/libSceVideoOut/src/Buffer.cpp) (libSceVideoOut, NID `MBlv8YWoyOk`) - the signature `(VideoOutBufferAttribute2*, uint64_t option)` comes from [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/60977b29103452b9681ae10c7a9011d44965bf16/src/SharpProspero/Interop/VideoOut/VideoOut.cs#L174-L176) and the call site in PPSA25380, which passes 0x20 and ignores the result. The option is ORed into `attribute->option`; whether the console validates the bits, keeps them elsewhere or fails on an unknown option is unknown. A null attribute throws. Option 0x20 makes `sceVideoOutRegisterBuffers2` throw, as every option other than 0 and 8; what it selects for an overlay buffer is unknown
 - [sceVideoOutRegisterBuffers2](../../../core/libs/prx/libSceVideoOut/src/Buffer.cpp) (libSceVideoOut) - DCC buffers (category 1): `dcc_control` is taken as the CB_DCC_CONTROL block layout, only bits 0x10026c are accepted; `dcc_cb_register_clear_color` as the register-clear texel, only 32-bit values are presented
-- [sceVideoOutIsOutputSupported](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - mode 1 is supported; mode 15 is supported when the current host display runs at 120 Hz or above. Configuring mode 15 requires attribute3 bit 0x40; this single-bit mask is inferred from the measured full value 0x80040, not isolated by a console measurement. Vblanks run at 119.88 Hz until mode 1 restores 59.94 Hz. Display modes are read through SDL; a move to a slower display falls back the configured output mode to mode 1, fires the output-mode event and continues at 59.94 Hz. The console's exact fallback behaviour when a 120 Hz display is lost has not been measured; this fallback avoids the abort in #7877 and matches the HDMI output mode renegotiation that a display change requires. Selecting another host display mode and VRR are not implemented. The console answers per display and per title: with a 120 Hz TV it also answers 1 for mode 15 (119.88 Hz), and [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan/blob/5b5e4fc2d80fdb67a4f61ba9e6a8a424026bb8a5/docs/HARDWARE_FINDINGS.md) measured that `sceVideoOutConfigureOutput` accepts 15 only from a title whose param.json declares high-frame-rate output (attribute3 0x80040). Modes 4, 7, 8, 12-14, 16-17 and 19 return `VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE` here, as they did on the measured display. Mode 18 throws, because one console answered 0x80290016 and two others 0x8029001E, the last a PS5 on 13.40 with a 120 Hz TV (measured 2026-10-19 inside a retail title), whose answers for every other mode match the ones here. The name `VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE` for 0x8029001E is ours. Word 3 of the output options is accepted with any value, as on the console, and its meaning is unknown. PPSA12544 probes `0xd000000a`, which the console answers with 0x8029001E, so the title selects 3840 pixels; PPSA26344 at `0xCD0946` passes `(handle, 0xf, nullptr, nullptr, 0)` and branches on the result equalling 1
+- [sceVideoOutUnregisterBuffers](../../../core/libs/prx/libSceVideoOut/src/Buffer.cpp) (libSceVideoOut) - on a main-bus port (bus type 0) the set holding the buffer on screen is refused with `RESOURCE_BUSY` (0x80290009) and stays registered. EVO Player (PPSA99039) [measured](https://github.com/sainsaji/EVO-PLAYER-PS5/blob/2db44b5294657b12bf91666154a05f029ddb5aa2/projects/evoplayer/media/src/evo_agc_runtime.c#L2830-L2838) that, with a re-registration then failing `SLOT_OCCUPIED`, and Prospero Win (PPSA99995) [measured](https://github.com/mpereiraesaa/prospero-win/blob/59c48117119fd57cd33e7bc91c11fa0c8ebf8b3d/native/pw_videoout_ps5.c#L92-L97) it on firmware 12.02 after its flips went idle, with `sceVideoOutClose` succeeding next. Both titles open bus type 0. Not measured: the overlay bus, whose on-screen set is still released and taken off the composited output; a set with a pending flip that is not on screen, which still throws; and the answer after a blank flip.
+- [sceVideoOutIsOutputSupported](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - mode 1 is supported; mode 15 is supported when the current host display runs at 120 Hz or above, and otherwise answers 0 while `sceVideoOutConfigureOutput(15)` returns `UNAVAILABLE_OUTPUT_MODE` (0x80290019): [PS5_Vulkan measured](https://github.com/mihawk-99/PS5_Vulkan/blob/f410e67a0241b3e8edcdbcd2a9b285dfc4a412ed/docs/HARDWARE_FINDINGS.md#L3793-L3835) both on a base PS5 whose output was set to 1080p, in a title declaring high-frame-rate output, and 1 and 0 at 1440p. Which code a title without the declaration gets when both apply is not measured; the declaration is checked first here. Configuring mode 15 requires attribute3 bit 0x40; this single-bit mask is inferred from the measured full value 0x80040, not isolated by a console measurement. Vblanks run at 119.88 Hz until mode 1 restores 59.94 Hz. Display modes are read through SDL; a move to a slower display falls back the configured output mode to mode 1, fires the output-mode event and continues at 59.94 Hz. The console's exact fallback behaviour when a 120 Hz display is lost has not been measured; this fallback avoids the abort in #7877 and matches the HDMI output mode renegotiation that a display change requires. Selecting another host display mode and VRR are not implemented. The console answers per display and per title: with a 120 Hz TV it also answers 1 for mode 15 (119.88 Hz), and [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan/blob/5b5e4fc2d80fdb67a4f61ba9e6a8a424026bb8a5/docs/HARDWARE_FINDINGS.md) measured that `sceVideoOutConfigureOutput` accepts 15 only from a title whose param.json declares high-frame-rate output (attribute3 0x80040). Modes 4, 7, 8, 12-14, 16-17 and 19 return `VIDEO_OUT_ERROR_UNSUPPORTED_OUTPUT_MODE` here, as they did on the measured display. Mode 18 throws, because one console answered 0x80290016 and two others 0x8029001E, the last a PS5 on 13.40 with a 120 Hz TV (measured 2026-10-19 inside a retail title), whose answers for every other mode match the ones here. The name `VIDEO_OUT_ERROR_UNKNOWN_OUTPUT_MODE` for 0x8029001E is ours. Word 3 of the output options is accepted with any value, as on the console, and its meaning is unknown. PPSA12544 probes `0xd000000a`, which the console answers with 0x8029001E, so the title selects 3840 pixels; PPSA26344 at `0xCD0946` passes `(handle, 0xf, nullptr, nullptr, 0)` and branches on the result equalling 1
 - [sceVideoOutGetResolutionStatus](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - `screenSizeInInch` is 0, the value EDID uses for an undefined size, since the host display's size is not read; a PS5 (firmware 13.40, measured 2026-10-19 inside a retail title) reported its TV's 60.0f. The 48-byte layout, from the declarations in ps5-opengl and EVO-PLAYER-PS5 (#1578), is confirmed there: full size and pane 3840 x 2160, `refreshRate` 3, `flags` 0 and the rest 0 on the title's handle, 0x8029000B for handles 0 to 8. `flags` is 0 here too; its bits are unknown. The pane equals the full size because `sceVideoOutSetWindowModeMargins` applies no margins
 - [sceVideoOutGetOutputStatus](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - the status after a buffer is registered, a 1440p output and a display below 4K with the console's resolution on Automatic were not measured. A payload process on a PS5 (firmware 12.70) with no buffer registered reported `resolution` 2 right after `sceVideoOutOpen(0xff, 0, 0, NULL)` with the console's resolution on Automatic on a 4K display and 1 with it set to 1080p, and `dynamicRange` 2 with `flags` 0 on an HDR display with HDR on, while this code sets flag bit 0 whenever it reports dynamic range 2. `resolution` is 2 when the current display mode SDL reports for the window's display is at least 3840 pixels wide or 2160 high and 1 otherwise, read with the refresh rate and independent of the registered buffers; on Wayland SDL's mode is the output's logical size (from SDL's source, not run), so a scaled 3840x2160 output reports 1. `APS5_OUTPUT_RESOLUTION` replaces that size
 - [sceVideoOutOpen](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - the open param's first word is unknown (PPSA21564 passes 16; it is not the byte size, since the affinity mask is at offset 16); only 16 is accepted. PPSA26344's only call at `0xCCF5EA` passes `(0xFF, 0, 0, nullptr)`. Whether a non-null param continues past offset 24 is also unknown. Seven titles disassembled for this entry: PPSA18194 01.004.003 (0xABA44D) and PPSA21564 01.007.000 (0x2A0E65) pass a stack param with words 16, 0, 0, 1 and affinity 0x3E (PPSA18194) or 16, 1, 256, 1 and affinity 0x1FFF (PPSA21564), and zero its bytes 24 to 88 first. The other nine calls pass no param, as `(0xFF, 0, 0, nullptr)` (PPSA01494 01.100.002 0x26C661A, PPSA03984 01.020.000 0x4FAD792, PPSA21564 0x464783, PPSA30839 01.003.000 0x4D60AB, PPSA31162 02.000.001 0x54D3CB, PPSA34502 01.010.000 0x62AECA) or with a bus type read from a field (PPSA01494 0x2197A25, PPSA30839 0x54C6845, PPSA31162 0x69310F5)
 - [sceVideoOutGetBufferLabelAddress](../../../core/libs/prx/libSceVideoOut/src/Buffer.cpp) exposes a port-owned contiguous array of 16 aligned 64-bit labels and returns its count. Astro Bot PPSA21564's bundled AGC driver passes a pointer output and addresses each label at `base + index * 8`. The count, zero initialization on registration, and release of the previous displayed buffer when its replacement completes follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/23c41333822fe8eca4c609b43119180af63ae4ac/src/core/libraries/videoout/video_out.cpp) and its driver; PS5 console equivalence has not been measured. Labels live until the port closes, and reopening creates a new array. Error precedence follows the reference for null output and the existing open-port policy for handles. Exact scanout release timing, repeated same-buffer flips and concurrent guest label stores remain unverified. EOP-flip registration and interrupt tokens are the separate `sceVideoOutSubmitEopFlip` API.
 - [GPU flips](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut) - a command-buffer flip of a buffer index with no registered buffer when the GPU reaches it presents black and completes like any flip (flip event, count, `flipPendingNum`). The console's behaviour is unknown; PPSA05684 requires that it completes: its renderer submits a flip of buffer 0 while another thread waits for `sceVideoOutIsFlipPending` to reach 0 before registering the buffers, and `flipPendingNum` counts that flip from its submission as in shadPS4
 - [sceVideoOutSubmitFlip](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut, libSceAgcDriver) - in the [AGC driver](../../../core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/Submission.cpp), a CPU flip waits for the graphics-queue submissions ahead of it when the calling thread has submitted graphics-queue work itself: a title that submits a frame and flips it without waiting relies on that order, since emulated GPU work finishes later than the console's. A flip from a thread that has never submitted graphics-queue work is presented without waiting for queued submissions, unless a command-buffer or EOP flip ahead of it has not been reached. Such a thread can only know its frame is finished by waiting for it, as the PS5 RADV WSI's flip thread waits on the frame's fence. Whether the console ever orders a CPU flip behind the graphics queue is not measured; `APS5_CPU_FLIP_IN_ORDER=1` orders every CPU flip
-- [sceVideoOutGetVblankStatus](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - the third 64-bit word of the PS5 status (`reserved` in [SceTypes.hpp](../../../core/libs/SceTypes.hpp)) is written 0. On a PS5 (firmware 13.40, measured 2026-10-19) a retail title's own call, caught inside it, got count 0xb16b, `processTime` 0x381a8790 (941 s), third word 0x1c485ffaadc, `processTimeCounter` 0x15dd63c364b, flags 0x04 and phase 0: the third word is a running counter, about 970 s at ~2 GHz, consistent with a TSC, not zero. Its clock and what it counts from are not established. Closes when: the third word's source is measured and written
+- [sceVideoOutGetVblankStatus](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - the third 64-bit word of the PS5 status (`reserved` in [SceTypes.hpp](../../../core/libs/SceTypes.hpp)) is written 0. On a PS5 (firmware 13.40, measured 2026-10-19) a retail title's own call, caught inside it, got count 0xb16b, `processTime` 0x381a8790 (941 s), third word 0x1c485ffaadc, `processTimeCounter` 0x15dd63c364b, flags 0x04 and phase 0: the third word is a running counter, about 970 s at ~2 GHz, consistent with a TSC, not zero. Its clock and what it counts from are not established. Four titles disassembled for this entry never read it: PPSA21564 01.007.000 (at 0x2A5511) reads only `count`, to compute a rate, and PPSA01494 01.100.002 (0x6FEC788), PPSA30839 01.003.000 (0x54C7D39) and PPSA31162 02.000.001 (0x6932859) only `processTime`, which they compare with the flip status's. Closes when: the third word's source is measured and written
 - [sceVideoOutAddPreVblankStartEvent](../../../core/libs/prx/libSceVideoOut/src/Event.cpp) (libSceVideoOut) - how long before the vblank the console signals pre-vblank start is unknown. The event is triggered on each emulated vblank tick immediately before the vblank event, with its own count as the event data
 - [sceVideoOutRegisterBuffers, sceVideoOutGetFlipStatus, sceVideoOutGetVblankStatus](../../../core/libs/prx/libSceVideoOut/src/Buffer.cpp) (libSceVideoOut) - PS4 callers. A handle is treated as PS4 once buffers are registered through the PS4 `sceVideoOutRegisterBuffers`; from then on its flip and vblank status are written in the PS4 64- and 32-byte layouts, with `tsc` and `submitTsc` 0. A PS4 title that reads a status before it registers buffers gets the larger PS5 layout. The PS4 function accepts only linear A8R8G8B8_SRGB (0x80000000) and A8B8G8R8_SRGB (0x80002200) buffers without options; tiled PS4 buffers throw, as their layout differs from the PS5 tiling. Linear PS4 buffers may be 4 KiB aligned: the OpenOrbis graphics sample registers its second 1920x1080 buffer 8,294,400 bytes after the first. The PS4 alignment rule is not known
 - [sceVideoOutGetFlipStatus, sceVideoOutIsFlipPending](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - a null output together with an invalid handle throws, as only each alone was measured; a closed handle is unmeasured and answered like an invalid one. Measured in a payload process on a PS5 (firmware 12.70) on a handle from `sceVideoOutOpen(0xff, 0, 0, NULL)` with no buffer registered: `sceVideoOutGetFlipStatus` returned 0 and wrote 128 bytes, all zero except `flipArg` and `currentBuffer`, which were -1; a null output returned 0x80290002 and handle -1 returned 0x8029000b without writing the output; `sceVideoOutIsFlipPending` returned 0, and 0x8029000b for handle -1
+- [DialogInput](../../../core/libs/prx/libSceVideoOut/src/DialogInput.cpp) (libSceVideoOut) - the inputs that drive the overlay dialog are not measured: Enter, Space, a left click and Cross confirm; Escape, a right click and Circle cancel, whatever the confirm-button setting of the console; the arrow keys, Tab, the mouse wheel, the D-pad and the left stick move the focus. A click confirms the focused button wherever it lands, as the overlay has no hit test. Closes when: measured on a PS5
+- [VideoOutDriver](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut) - the overlay dialog is drawn only while a window exists and the title keeps flipping: a dialog that no flip drew within three seconds of its open is dropped, its caller finishes with the automatic answer and the input is released, while one that was drawn waits for the player even if the title stops flipping. The three seconds are a host choice. An IME keyboard or pad capture takes the overlay and the input from the dialog until it ends. While the dialog is shown the title gets no pad, keyboard or mouse input, and a key or mouse button the title saw pressed is released once. Closes when: measured on a PS5
+- [sceVideoOutRegisterBuffers2 past the last buffer](../../../core/libs/prx/libSceVideoOut/src/Buffer.cpp) (libSceVideoOut) - a call whose buffers run past index 15 returns `INVALID_VALUE` (0x80290001) and registers nothing. [PS5_Vulkan measured](https://github.com/mihawk-99/PS5_Vulkan/blob/f410e67a0241b3e8edcdbcd2a9b285dfc4a412ed/docs/HARDWARE_FINDINGS.md#L3773-L3791) that answer on a PS5 (firmware 13.40) for a fourth set at buffers 15 to 19, after three sets took buffers 0 to 14. Whether the console refused it for the sixteen buffer indices or for the number of sets is not measured: here four sets are accepted, and the other out-of-range arguments still throw.
 
 ### Functional
 
-- [sceVideoOutOpen](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - opening a bus that is already open returns `SCE_VIDEO_OUT_ERROR_RESOURCE_BUSY` (`0x80290009`), as [shadPS4's](https://github.com/shadps4-emu/shadPS4/blob/e0a466753a1aacbc8db8253be685bf7ab4d9daae/src/core/libraries/videoout/driver.cpp#L53-L60) PS4 driver does for its main port; the PS5 result is unverified. PPSA99764 opens the main bus twice and carries on, presenting through the first handle
+- [sceVideoOutOpen](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - opening a bus that is already open returns `SCE_VIDEO_OUT_ERROR_RESOURCE_BUSY` (`0x80290009`), as [shadPS4's](https://github.com/shadps4-emu/shadPS4/blob/e0a466753a1aacbc8db8253be685bf7ab4d9daae/src/core/libraries/videoout/driver.cpp#L53-L60) PS4 driver does for its main port; the PS5 result is unverified. PPSA99764 opens the main bus twice and carries on, presenting through the first handle. [KytyPS5](https://github.com/KytyPS5/KytyPS5/blob/5e837a9beac82c031868eaad9348d6a48245fb99/src/graphics/presentation/videoOut.cpp#L651-L662) (PS5) returns the same error for an already open bus; [fpPS4](https://github.com/red-prig/fpPS4/blob/04cefd43e6fddd1ab033e7980cd356d14c964905/src/ps4_libscevideoout.pas#L656-L667) (PS4) opens another handle instead
+- [sceVideoOutGetEventId, sceVideoOutGetEventData, sceVideoOutGetEventCount](../../../core/libs/prx/libSceVideoOut/src/Event.cpp) (libSceVideoOut) - the PS5 result is unverified for an event of another filter, for which all three return `VIDEO_OUT_ERROR_INVALID_EVENT` (`0x8029000D`), and for a VideoOut id this library never registers, for which sceVideoOutGetEventId returns the same code. Both follow the PS4 libraries of [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/cda4c7780adf59c84e2c70e080ac4f4a0ef7cdac/src/core/libraries/videoout/video_out.cpp#L187-L242) and [fpPS4](https://github.com/red-prig/fpPS4/blob/04cefd43e6fddd1ab033e7980cd356d14c964905/src/ps4_libscevideoout.pas#L719-L758); a null pointer throws here, where both return `VIDEO_OUT_ERROR_INVALID_ADDRESS`. #11376 (item 6) reports that PPSA28180 compares the result of sceVideoOutGetEventId for an event of another filter with `0x8029000D`; the call site was not checked here
 - [sceVideoOutOpen, bus 0x20](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - PPSA05666 opens the PS VR2 output as `sceVideoOutOpen(255, 0x20, 0, NULL)` after `sceHmd2ReprojectionEnableVrMode(0x2000F)`, and its own log calls the bus `SCE_VIDEO_OUT_BUS_TYPE_HMD2_MAIN`. The console answers `0x80290001` from a process that is not a game, with the headset connected and worn or not, for users 255 and 0 and for a null or zeroed open parameter, so that is returned here before the other argument checks; what a game gets with a headset attached is not measured. On the handle the title then calls `sceVideoOutRegisterBuffers2` with set 0, two buffers, a 4000x2040 attribute (tiling 0, pitch 0, pixel format `0x8100000022000000`), category 16 and a null option, where each `VideoOutBuffers.data` points at a 16-byte `{pointer, 2}` whose pointer is the structure it passed to `sceHmd2ReprojectionEnableMirroring`, holding per-eye 2000x2040 texture descriptors rather than frame memory; then `sceVideoOutConfigureOutput` and `sceVideoOutIsOutputSupported` with mode `0x2000F`, and the GPU waits on buffer 0 of that handle. None of that is modelled: the HMD output needs a VR backend. With the error code as its handle the title's next call, `sceVideoOutRegisterBuffers2`, throws here for the unknown handle; the console's answer to it is not measured. The TV bus answers `0x8029001E` to the HMD modes `0x20001` and `0x2000C` to `0x20010` on the console, as here
 - [Overlay output bus](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut, [libSceAgcDriver](../../../core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp)) - the overlay port's displayed buffer is blended over each main-bus presentation with premultiplied alpha on the encoded 8-bit values, each plane fit to the window. Unverified: premultiplied alpha is inferred from PPSA01670, whose 3840x2160 overlay held 527,020 translucent texels, none with a color channel above its alpha; linear-light blending and placing an overlay sized unlike the main buffer are unknown. 10-bit, PQ and float overlays throw. A new overlay shows at the next main flip. Over HDR10 it is not composited; CPU-decoded dumps (`APS5_NO_GPU_DUMP`, HDR10) hold the main plane only. A non-resident overlay is detiled on the CPU each present through a device-local image and a staging buffer of width x height x 4 bytes each per present slot (`FlipInFlight() + 1`, 2 by default)
 - [sceVideoOutSubmitEopFlip](../../../core/libs/prx/libSceVideoOut/src/Buffer.cpp) reserves a flip and returns an opaque DWORD token; presentation is driven by a matching graphics-queue `RELEASE_MEM` with `INT_SEL` 2 and that token in `INT_CTXID`. This five-argument ABI and packet use are inferred from PPSA21564's bundled AGC driver, whose original packet-emission routine is checked in an isolated host ABI probe. The console token encoding, output width beyond the observed DWORD, error policy and reservation capacity are unverified. Host tokens occupy `0x04000000..0x07ffffff`, never repeat within a process, and exhaustion throws. Closing cancels unsubmitted reservations; only live reservations match; consumed or cancelled context IDs execute as ordinary label writes without targeting a reopened port. Async-queue EOP flips throw. Buffer registration, flip modes, queue capacity and vsync presentation follow the existing host VideoOut model, not measured console behavior.
@@ -40,3 +46,194 @@
 - [Windows game controllers](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut) - SDL's DirectInput joystick backend is disabled at default hint priority before `SDL_InitSubSystem`, because its device enumeration blocks forever on some vendor HID devices (#1042). XInput and HIDAPI controllers are detected; controllers reachable only through DirectInput are not. Setting `SDL_DIRECTINPUT_ENABLED=1` restores them on hosts without such a device. SDL's Windows.Gaming.Input backend stays on by default. Setting `APS5_NO_WGI` turns it off at default hint priority, for hosts where it faults at `Windows.Gaming.Input.dll+0x10a84` a few seconds into every run: seen on Windows 10 Pro 22H2 (19045) with the Nefarius and Oculus virtual gamepad emulation buses installed and no physical controller connected. With it off, devices and features reachable only through Windows.Gaming.Input are lost: racing wheels, arcade sticks, flight sticks, HID pads without an HIDAPI driver, and Xbox One and Series trigger rumble.
 
 - The following pending declarations have unverified signatures and behavior; they are parameterless import-resolution declarations and throw through `NotImplemented_nid_no_patch`: [`sceDbgVideoOutAddOutputModeVr60Privilege`](../../../core/libs/prx/libSceVideoOut/Unimplemented.cpp).
+
+### Additional callable exports
+
+- The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/ea0a096e6231dbe7b98b5a308e2ac91e/00f8422a1ae71e32816d72ae579c2f2d097f63a0) records module, logical library, symbol type and NIDs for [InventoryExports.cpp](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp); it is a metadata summary rather than independent verification. Some NIDs belong to multiple logical libraries within the module.
+
+- [Additional callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) - 182 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 107 match the public 3.20 catalogue and 75 do not. These are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `sceVideoOutAddBuffer` | `4iy9hG9Du1s` |
+| `sceVideoOutAddBuffer4k2kPrivilege` | `twrSaoZ9cJs` |
+| `sceVideoOutAddBufferAnisoPrivilege` | `lm+1oyWKwy0` |
+| `sceVideoOutAddBufferHdrPrivilege` | `VAlir52gpQI` |
+| `sceVideoOutAddBufferYccPrivilege` | `D3s8DoEnuR4` |
+| `sceVideoOutAddDisplayPositionEvent` | `Cxb2w82t7lw` |
+| `sceVideoOutAddDriver` | `HtwSd4H2Tws` |
+| `sceVideoOutAddS3dHmdPrivilege` | `iT+aFczA7ak` |
+| `sceVideoOutAddSetModeEvent` | `AjtlFa2HRws` |
+| `sceVideoOutAddStereoBuffer` | `Ax1Qs3Cm95Q` |
+| `sceVideoOutAdjustColor2_` | `8Lf4Fp1TxA0` |
+| `sceVideoOutClearVrrMaster` | `WnHBARNFUyw` |
+| `sceVideoOutConfigureLayout` | `PeUUCAS9Kso` |
+| `sceVideoOutConfigureOptionsInitialize_` | `ktP9j1fN-zE` |
+| `sceVideoOutConfigureOutputEx` | `2CxY28ewv8g` |
+| `sceVideoOutConfigureOutputModeExSubmitDoneUnsafe_` | `-gYpMonpw2M` |
+| `sceVideoOutConfigureOutputModeEx_` | `lQh55Q8DUAg` |
+| `sceVideoOutConfigureOutputMode_` | `N1bEoJ4SRw4` |
+| `sceVideoOutControlHdcpEncryption` | `M-JkRj7X+No` |
+| `sceVideoOutCursorIsUpdatePending` | `HibOtezzT6M` |
+| `sceVideoOutCursorSetPositionStereo` | `735GfVO9v2s` |
+| `sceVideoOutCurveSamplePointsCalc_` | `kazBRXPqR7c` |
+| `sceVideoOutDebugAddVrrPrivilege` | `rAYR4zzw414` |
+| `sceVideoOutDebugBlankPipe` | `-9YA0lVAq+U` |
+| `sceVideoOutDebugReadCrc` | `4E8qvHf7Cj0` |
+| `sceVideoOutDebugSetDrr` | `itbQplM5K74` |
+| `sceVideoOutDebugSetGlobalAlpha` | `Y+0m4suevbk` |
+| `sceVideoOutDebugTriggerRefresh` | `8ZWscRWE6-s` |
+| `sceVideoOutDeleteDisplayPositionEvent` | `gbJ8QxXOR6g` |
+| `sceVideoOutDeleteDriver` | `KA515kD5rAY` |
+| `sceVideoOutDeleteSetModeEvent` | `fXCSkDTpJFg` |
+| `sceVideoOutDriverAddEvent` | `oeNtdmvV4II` |
+| `sceVideoOutDriverDecrementBufferLabel` | `0jGJbNTpSV4` |
+| `sceVideoOutDriverDeleteEvent` | `lOR+Nos+Je8` |
+| `sceVideoOutDriverGetBufferLabelAddress` | `NGyEl5aT4fc` |
+| `sceVideoOutDriverGetEopHandle` | `P1bIHoga4jE` |
+| `sceVideoOutDriverGetFinishedEopHandle` | `G6peSSDP4iA` |
+| `sceVideoOutDriverGetLatestEopHandle` | `GL8+3RHW5vk` |
+| `sceVideoOutDriverIncrementBufferLabel` | `Ztx4b2LhRDk` |
+| `sceVideoOutDriverResetBufferLabel` | `soAIjspgdt8` |
+| `sceVideoOutDriverTriggerEvent` | `OHnnkrUcShM` |
+| `sceVideoOutGetBufferInformation` | `5V8YGx9g0UA` |
+| `sceVideoOutGetCoredumpOutputMode` | `IZw2TINic+0` |
+| `sceVideoOutGetCurrentOutputMode_` | `W0iQAbGaTBg` |
+| `sceVideoOutGetDeviceInfoExOts_` | `p7FV-mU6EM0` |
+| `sceVideoOutGetDeviceInfoEx_` | `k6JLQGuPEYA` |
+| `sceVideoOutGetHdmiKsvList_` | `hZvzQy2VLKY` |
+| `sceVideoOutGetHdmiMonitorInfoNoMask_` | `421cr+-5Mus` |
+| `sceVideoOutGetHdmiMonitorInfo_` | `+XlDnumvLVA` |
+| `sceVideoOutGetHdmiRawEdid_` | `+sXvR1JH9Aw` |
+| `sceVideoOutGetMonitorInfo` | `lafoiUl5-5U` |
+| `sceVideoOutGetOutputStatusEx` | `HqiYk8A4mZ0` |
+| `sceVideoOutGetPipelineStatus` | `Ygv0S+Hi+hA` |
+| `sceVideoOutGetPortStatusInfoByBusSpecifier_` | `4TPW3H2f-lM` |
+| `sceVideoOutGetPortStatusInfo_` | `SDoPm73tOyI` |
+| `sceVideoOutGetPortStatusInfo` | `y4l-VBLsNio` |
+| `sceVideoOutGetStatusForWebcore` | `+tB28CUr9W0` |
+| `sceVideoOutGetVideoOutModeByBusSpecifier_` | `UazrNFzZPRU` |
+| `sceVideoOutHdmiMonitorInfoIsSupportedHdcpVersion` | `XNtZ16LIhf0` |
+| `sceVideoOutHdmiMonitorInfoIsSupportedVideoOutMode_` | `WBZrUaQY+EU` |
+| `sceVideoOutLockBuffer` | `7ifZFxWJ9Q4` |
+| `sceVideoOutRazorAddCallback` | `ZX7C79uOujU` |
+| `sceVideoOutRazorRecallCallbacks` | `hGcTks-qqIU` |
+| `sceVideoOutRazorRemoveCallback` | `zUDW7kIFclI` |
+| `sceVideoOutRegisterBufferAttribute` | `EJQifjOp8s4` |
+| `sceVideoOutRegisterStereoBuffers` | `lCTCOogRbk0` |
+| `sceVideoOutRemoveBuffer` | `H8teLntGkWs` |
+| `sceVideoOutSetAlphaControl` | `-zRnJ7WoWSY` |
+| `sceVideoOutSetBlankAfterResume` | `zILy8t+5bPo` |
+| `sceVideoOutSetContentType` | `KHBNAkJhT64` |
+| `sceVideoOutSetDisplayEventPosition` | `18NPivA-byc` |
+| `sceVideoOutSetGamutMetadata_` | `emayD9LHYsc` |
+| `sceVideoOutSetGlobalAlpha` | `Ujsmw0VOqOo` |
+| `sceVideoOutSetToneMap_` | `CxUz3nU06NE` |
+| `sceVideoOutSetVrrMaster` | `zzi147PCXzI` |
+| `sceVideoOutSubmitChangeBufferAttribute` | `IOdgHlCGU-k` |
+| `sceVideoOutSysAddSetModeEvent2` | `fYWVVDKZOCk` |
+| `sceVideoOutSysAddSetModeEvent` | `X8FN-5Nk-yE` |
+| `sceVideoOutSysAddVblankEvent2` | `Am8Hlr7tlxA` |
+| `sceVideoOutSysAddVblankEvent` | `Ek+VR4lcJQI` |
+| `sceVideoOutSysChangePipelineLayout` | `7gnD2bc0zvs` |
+| `sceVideoOutSysClose` | `dIb9LsrpkQM` |
+| `sceVideoOutSysConfigureLayout` | `FDTOhhPHtps` |
+| `sceVideoOutSysConfigureOutputMode` | `ox3wD142jZQ` |
+| `sceVideoOutSysConfigureOutput` | `ofkhJRiQua0` |
+| `sceVideoOutSysDeleteVblankEvent2` | `2EBuouuYKgM` |
+| `sceVideoOutSysDeleteVblankEvent` | `iwsJdAZCg34` |
+| `sceVideoOutSysFloatPort` | `sKtbl0gCX64` |
+| `sceVideoOutSysGetBus` | `7VSZJxxcTL8` |
+| `sceVideoOutSysGetColorConversionStatus` | `IpMhRnVgJUU` |
+| `sceVideoOutSysGetCurrentOutputMode` | `IysRiVOGIVM` |
+| `sceVideoOutSysGetDeviceInfo` | `2sgenMqwczM` |
+| `sceVideoOutSysGetFlipStatus` | `21sS8EU45cw` |
+| `sceVideoOutSysGetKsvList` | `Ur8iOIm0tyE` |
+| `sceVideoOutSysGetMonitorInfo_` | `vMLWuJckGv0` |
+| `sceVideoOutSysGetOutputStatus` | `Ip78YCQUrTo` |
+| `sceVideoOutSysGetPipelineStatus` | `dFhciCfO31s` |
+| `sceVideoOutSysGetResolutionStatus2` | `qLDCAl8ygCw` |
+| `sceVideoOutSysGetResolutionStatus` | `8XGijEoThE0` |
+| `sceVideoOutSysGetVblankStatus2` | `iYrCszX93AM` |
+| `sceVideoOutSysGetVblankStatus` | `d1AjT2uZJn0` |
+| `sceVideoOutSysGetVideoOutModeByBusSpecifier` | `AAELy8Yc3Mc` |
+| `sceVideoOutSysHdmiMonitorInfoIsMorpheus` | `3-9DXFGVg0M` |
+| `sceVideoOutSysInitMode` | `9cmjhjqa7Sg` |
+| `sceVideoOutSysIsModeS3d` | `iUigHJ2op4M` |
+| `sceVideoOutSysIsOutputSupported` | `Z0EyU29WqOg` |
+| `sceVideoOutSysIsSupportedByMonitorInfo_` | `mfxElr79O7Q` |
+| `sceVideoOutSysIsUserStatusHdr` | `q+vWPvYIh8o` |
+| `sceVideoOutSysIsUserStatusSystemDefault` | `O57F5ikhGxo` |
+| `sceVideoOutSysIsUserStatusVr` | `4XsQdhiOaAc` |
+| `sceVideoOutSysModeIsHdr` | `I7-lGGvFgBM` |
+| `sceVideoOutSysModeIsSystemDefault` | `5Y8uUbGMio0` |
+| `sceVideoOutSysModeIsVrLegacy` | `zecl8Gox+P0` |
+| `sceVideoOutSysModeIsVrNative` | `SgA2MtojPto` |
+| `sceVideoOutSysModeIsVr` | `QEiuHxjungc` |
+| `sceVideoOutSysOpenInternal` | `kP4l+nyBjRA` |
+| `sceVideoOutSysOpenVrNative` | `WUU+ufqgLJg` |
+| `sceVideoOutSysReadCrc64` | `eBvoaLwfBBQ` |
+| `sceVideoOutSysReadCrc` | `E8C608-pFng` |
+| `sceVideoOutSysResetAtGpuReset` | `djc8fOzOXxk` |
+| `sceVideoOutSysSetColorMode` | `gqK4its31ck` |
+| `sceVideoOutSysSetDcePipeMode` | `jvPer4hz+UU` |
+| `sceVideoOutSysSetDimmer2` | `X7tWmHNtoKg` |
+| `sceVideoOutSysSetDimmer` | `OOF0YO73GTA` |
+| `sceVideoOutSysSetHdcpEncryption` | `kxDKWwEobyA` |
+| `sceVideoOutSysSetHdrMetadata` | `-ka14VvHSX0` |
+| `sceVideoOutSysSetOverscanRatio` | `nMbAqI1ty8w` |
+| `sceVideoOutSysUpdateDisplayParameter` | `UFDoqv4XXC0` |
+| `sceVideoOutSysUpdatePrivilege` | `Jl91AhxKc0w` |
+| `sceVideoOutSysUpdateRenderingMode` | `4G37EIMMD+Q` |
+| `sceVideoOutUnlockBuffer` | `amghnA-Ev5s` |
+| `sceVideoOutUnregisterBufferAttribute` | `SRQSpP4QK5U` |
+| `Unknown` | `-5AIEU9+11g` |
+| `Unknown` | `0y3VgFMy99k` |
+| `Unknown` | `1r0tse0IXgU` |
+| `Unknown` | `32RkOEsOvQE` |
+| `Unknown` | `3xrSV8U0Hsg` |
+| `Unknown` | `7ZOVeum-aAg` |
+| `Unknown` | `8nnuVJFfTaM` |
+| `Unknown` | `99wK8O6hGtY` |
+| `Unknown` | `9ho7J3ihMlg` |
+| `Unknown` | `BIfepC2zRH4` |
+| `Unknown` | `Ek7XQBAkFYA` |
+| `Unknown` | `F3cj7Bea07w` |
+| `Unknown` | `IQMqDChUkMM` |
+| `Unknown` | `InORxXcUzR8` |
+| `Unknown` | `JDjWoYVTvdk` |
+| `Unknown` | `Ji+6MtHGDHU` |
+| `Unknown` | `LMgBlt8J+8A` |
+| `Unknown` | `M4lTPTxoeN0` |
+| `Unknown` | `MuM1bZDAvV8` |
+| `Unknown` | `N0AyfJuu8-w` |
+| `Unknown` | `NyVCSlocu3k` |
+| `Unknown` | `OWn+sZtXKbg` |
+| `Unknown` | `P5a32OulZQk` |
+| `Unknown` | `P96+z-0vEqs` |
+| `Unknown` | `QLfXO66LPcI` |
+| `Unknown` | `RGGakYPkFIo` |
+| `Unknown` | `UW7CnswVJFQ` |
+| `Unknown` | `VKBIGfxIuAA` |
+| `Unknown` | `Wu+K43K3ToE` |
+| `Unknown` | `XGIE4BsuS6A` |
+| `Unknown` | `aB6EqO5VB38` |
+| `Unknown` | `d7eh3psk1J8` |
+| `Unknown` | `fWJeR0LHh1s` |
+| `Unknown` | `iUybgvm4EPM` |
+| `Unknown` | `l-NHggThj7U` |
+| `Unknown` | `nrZ1di4tauc` |
+| `Unknown` | `oNJ4gsibB6c` |
+| `Unknown` | `pTxsULu4Nh0` |
+| `Unknown` | `q9HFykGcuWU` |
+| `Unknown` | `qWRDqFaC9GE` |
+| `Unknown` | `tHObJYt1qSM` |
+| `Unknown` | `udcfTO7aAyM` |
+| `Unknown` | `v9gmbZSAovI` |
+| `Unknown` | `vXMpe7Murfc` |
+| `Unknown` | `wKJpFhCTrX0` |
+| `Unknown` | `wZI4fmUJMlw` |
+| `Unknown` | `xqlbOlrMbBs` |
+| `Unknown` | `yGMBA0AKcgQ` |
+| `Unknown` | `yoK0AjkkBkI` |
+| `Unknown` | `ys239q8VgXY` |

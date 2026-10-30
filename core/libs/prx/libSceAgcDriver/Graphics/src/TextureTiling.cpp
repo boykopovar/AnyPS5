@@ -59,6 +59,24 @@ BlockLayout GetBlockLayout(TextureTileMode tileMode, std::uint32_t bytesPerEleme
         case TextureTileMode::kS64KBX:
         case TextureTileMode::kD64KBX:
         case TextureTileMode::kR64KBX: return {65536u, 1u << kLog2BlockThin64KB[index].width, 1u << kLog2BlockThin64KB[index].height};
+        case TextureTileMode::kGcnThin1D:
+        case TextureTileMode::kGcnDisplay1D:
+        case TextureTileMode::kGcnDisplay2D:
+        case TextureTileMode::kGcnThin2D:
+        case TextureTileMode::kGcnDepth2D64:
+        case TextureTileMode::kGcnDepth2D128:
+        case TextureTileMode::kGcnDepth2D256:
+        case TextureTileMode::kGcnDepth2D512:
+        case TextureTileMode::kGcnDepth2D1K:
+        case TextureTileMode::kGcnDepthPrt256:
+        case TextureTileMode::kGcnDepthPrt1K:
+        case TextureTileMode::kGcnDisplayPrt:
+        case TextureTileMode::kGcnDisplay2DPrt:
+        case TextureTileMode::kGcnThinPrt:
+        case TextureTileMode::kGcnThin2DPrt: {
+            const auto geometry = GcnTiling(tileMode, bytesPerElement);
+            return {geometry.blockBytes, geometry.blockWidth, geometry.blockHeight};
+        }
     }
     throw std::runtime_error("AGC graphics: GetBlockLayout encountered an unknown tile mode");
 }
@@ -101,7 +119,22 @@ bool GetMipTailLayout(TextureTileMode tileMode, const BlockLayout& block, std::u
     switch (tileMode) {
         case TextureTileMode::kLinear:
         case TextureTileMode::kStandard256B:
-        case TextureTileMode::kD256B: return false;
+        case TextureTileMode::kD256B:
+        case TextureTileMode::kGcnThin1D:
+        case TextureTileMode::kGcnDisplay1D:
+        case TextureTileMode::kGcnDisplay2D:
+        case TextureTileMode::kGcnThin2D:
+        case TextureTileMode::kGcnDepth2D64:
+        case TextureTileMode::kGcnDepth2D128:
+        case TextureTileMode::kGcnDepth2D256:
+        case TextureTileMode::kGcnDepth2D512:
+        case TextureTileMode::kGcnDepth2D1K:
+        case TextureTileMode::kGcnDepthPrt256:
+        case TextureTileMode::kGcnDepthPrt1K:
+        case TextureTileMode::kGcnDisplayPrt:
+        case TextureTileMode::kGcnDisplay2DPrt:
+        case TextureTileMode::kGcnThinPrt:
+        case TextureTileMode::kGcnThin2DPrt: return false;
         case TextureTileMode::kStandard4KB:
         case TextureTileMode::kD4KB:
         case TextureTileMode::kS4KBX:
@@ -248,6 +281,7 @@ std::vector<TileMipLayout> ComputeMipLayout(TextureTileMode tileMode, std::uint3
     Require(width != 0 && height != 0, "cannot compute mip layout for a zero-sized texture");
     Require(mipCount != 0 && mipCount <= 16u, "texture mip count is out of range");
 
+    Require(!IsGcnTiled(tileMode), "PS4 surfaces are laid out by ComputeGcnMipLayout from their pitch");
     const auto bytesPerElement = BytesPerElement(format);
     const auto texelWidth = BlockWidth(format);
     const auto texelHeight = BlockHeight(format);
@@ -279,7 +313,7 @@ std::array<std::uint32_t, 3> ThinBlockLayout(TextureTileMode tileMode, std::uint
 
 std::vector<std::pair<std::uint64_t, std::uint64_t>> CoveredMipBytes(TextureTileMode tileMode, std::uint32_t bytesPerElement, const TileMipLayout& mip) {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> covered;
-    if (mip.tail || mip.width == 0 || mip.height == 0) return covered;
+    if (mip.tail || mip.width == 0 || mip.height == 0 || mip.gcnSplitStride != 0) return covered;
     const auto add = [&](std::uint64_t begin, std::uint64_t end) {
         end = std::min(end, mip.tiledSize);
         if (begin >= end) return;
@@ -291,7 +325,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> CoveredMipBytes(TextureTile
         for (std::uint32_t row = 0; row < mip.height; ++row) add(static_cast<std::uint64_t>(row) * mip.pitchBytes, static_cast<std::uint64_t>(row) * mip.pitchBytes + rowBytes);
         return covered;
     }
-    const auto block = ThinBlockLayout(tileMode, bytesPerElement);
+    const auto block = ThinBlockLayout(MipTileMode(tileMode, mip), bytesPerElement);
     const auto wholeColumns = std::min(mip.width / block[1], mip.blocksPerRow);
     const auto wholeRows = mip.height / block[2];
     for (std::uint32_t row = 0; row < wholeRows && wholeColumns != 0; ++row) {
@@ -382,7 +416,173 @@ ThickLayout ComputeThickLayout(TextureTileMode tileMode, std::uint32_t format, s
     return result;
 }
 
+std::vector<TileMipLayout> ComputeGcnMipLayout(TextureTileMode tileMode, std::uint32_t format, std::uint32_t width, std::uint32_t height, std::uint32_t pitch, bool pow2Pad, std::uint32_t mipCount, bool linearGeneral, std::uint32_t layers) {
+    Require(layers != 0, "a PS4 surface has at least one slice");
+    Require(!linearGeneral || tileMode == TextureTileMode::kLinear, "LINEAR_GENERAL is a linear layout");
+    Require(width != 0 && height != 0 && pitch >= width, "cannot compute the mip layout of an empty PS4 texture");
+    Require(mipCount != 0 && mipCount <= 16u, "texture mip count is out of range");
+    Require(tileMode == TextureTileMode::kLinear || IsGcnTiled(tileMode), "PS4 texture tile mode has no modeled layout");
+    const auto bytes = BytesPerElement(format);
+    const auto texelWidth = BlockWidth(format);
+    const auto texelHeight = BlockHeight(format);
+    std::vector<TileMipLayout> mips(mipCount);
+    std::uint64_t offset = 0, linearOffset = 0;
+    for (std::uint32_t level = 0; level < mipCount; ++level) {
+        auto levelWidth = std::max(pitch >> level, 1u);
+        auto levelHeight = std::max(height >> level, 1u);
+        if (pow2Pad && level != 0) {
+            levelWidth = std::bit_ceil(levelWidth);
+            levelHeight = std::bit_ceil(levelHeight);
+        }
+        auto rowElements = (levelWidth + texelWidth - 1u) / texelWidth;
+        auto rows = (levelHeight + texelHeight - 1u) / texelHeight;
+        bool macro = false;
+        std::uint32_t macroWidth = 0;
+        std::uint32_t splitSlices = 1;
+        if (IsGcnMacroTiled(tileMode)) {
+            const auto geometry = GcnTiling(tileMode, bytes);
+            macro = level == 0 || (rowElements >= geometry.blockWidth && rows >= geometry.blockHeight);
+            if (macro) {
+                macroWidth = geometry.blockWidth;
+                splitSlices = geometry.splitSlices;
+                rowElements = AlignUp(rowElements, geometry.blockWidth);
+                rows = AlignUp(rows, geometry.blockHeight);
+            }
+        }
+        const bool micro = !macro && tileMode != TextureTileMode::kLinear;
+        if (micro) {
+            rowElements = AlignUp(rowElements, 8u);
+            rows = AlignUp(rows, 8u);
+            while (static_cast<std::uint64_t>(rowElements) * rows * bytes % 256u != 0) rowElements += 8u;
+        } else if (!macro && !linearGeneral) {
+            const auto pitchAlign = std::max(8u, 64u / bytes);
+            const auto sliceAlign = std::max(64u, 256u / bytes);
+            rowElements = AlignUp(rowElements, pitchAlign);
+            while (static_cast<std::uint64_t>(rowElements) * rows % sliceAlign != 0) rowElements += pitchAlign;
+        }
+        if (level == 0) Require(rowElements == (pitch + texelWidth - 1u) / texelWidth, "PS4 texture pitch " + std::to_string(pitch) + " is not padded the way its tile mode pads a row (" + std::to_string(rowElements * texelWidth) + ")");
+        auto& mip = mips[level];
+        mip.width = TexelLevelDimension(width, level, texelWidth);
+        mip.height = TexelLevelDimension(height, level, texelHeight);
+        mip.blocksPerRow = macro ? rowElements / macroWidth : micro ? rowElements / 8u : rowElements;
+        mip.gcnMicroTiled = micro && IsGcnMacroTiled(tileMode);
+        mip.gcnSplitStride = splitSlices > 1u ? static_cast<std::uint32_t>(static_cast<std::uint64_t>(rowElements) * rows * bytes / splitSlices) : 0u;
+        mip.pitchBytes = rowElements * bytes;
+        mip.tiledSize = static_cast<std::uint64_t>(rowElements) * rows * bytes;
+        mip.linearSize = static_cast<std::uint64_t>(mip.pitchBytes) * mip.height;
+        mip.tiledOffset = offset;
+        mip.linearOffset = linearOffset;
+        mip.tail = false;
+        mip.tailX = 0;
+        mip.tailY = 0;
+        offset += mip.tiledSize * layers;
+        linearOffset += mip.tiledSize;
+    }
+    return mips;
+}
+
+GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElement) {
+    Require(IsGcnTiled(tileMode), "PS4 tile geometry needs a PS4 tiled mode");
+    Require(std::has_single_bit(bytesPerElement) && bytesPerElement <= 16u, "unsupported bytes per element for PS4 tiling");
+    const auto x = [](std::uint32_t bit) { return 1u << bit; };
+    const auto y = [](std::uint32_t bit) { return 1u << (12u + bit); };
+    const std::array<std::uint32_t, 6> thin{x(0), y(0), x(1), y(1), x(2), y(2)};
+    const std::array<std::array<std::uint32_t, 6>, 5> display{{
+        {x(0), x(1), x(2), y(1), y(0), y(2)}, {x(0), x(1), x(2), y(0), y(1), y(2)}, {x(0), x(1), y(0), x(2), y(1), y(2)},
+        {x(0), y(0), x(1), x(2), y(1), y(2)}, {x(0), y(0), x(1), y(1), x(2), y(2)},
+    }};
+    const auto log2Bytes = static_cast<std::uint32_t>(std::countr_zero(bytesPerElement));
+    const bool displayOrder = tileMode == TextureTileMode::kGcnDisplay1D || tileMode == TextureTileMode::kGcnDisplay2D || tileMode == TextureTileMode::kGcnDisplayPrt || tileMode == TextureTileMode::kGcnDisplay2DPrt;
+    const auto& order = displayOrder ? display[log2Bytes] : thin;
+    const auto microBytes = 64u * bytesPerElement;
+    GcnTileGeometry geometry{};
+    if (IsGcnMicroTiled(tileMode)) {
+        geometry = {microBytes, 8u, 8u, {}};
+        for (std::uint32_t bit = 0; bit < order.size(); ++bit) geometry.equation[log2Bytes + bit] = order[bit];
+        return geometry;
+    }
+    struct MacroMode { std::uint32_t bankHeight; std::uint32_t banks; std::uint32_t aspect; };
+    constexpr std::array<MacroMode, 5> macroModes{{{4u, 16u, 4u}, {2u, 16u, 2u}, {1u, 16u, 2u}, {1u, 16u, 2u}, {1u, 8u, 1u}}};
+    constexpr std::array<MacroMode, 5> prtMacroModes{{{8u, 16u, 4u}, {4u, 16u, 4u}, {2u, 16u, 2u}, {1u, 16u, 2u}, {1u, 8u, 1u}}};
+    std::uint32_t tileSplit = std::min(1024u, std::max(256u, 2u * microBytes));
+    switch (tileMode) {
+        case TextureTileMode::kGcnDepth2D64: tileSplit = 64u; break;
+        case TextureTileMode::kGcnDepth2D128: tileSplit = 128u; break;
+        case TextureTileMode::kGcnDepth2D256:
+        case TextureTileMode::kGcnDepthPrt256: tileSplit = 256u; break;
+        case TextureTileMode::kGcnDepth2D512: tileSplit = 512u; break;
+        case TextureTileMode::kGcnDepth2D1K:
+        case TextureTileMode::kGcnDepthPrt1K: tileSplit = 1024u; break;
+        default: break;
+    }
+    const bool prt = IsGcnPrtTiled(tileMode);
+    const bool splitRotation = tileMode != TextureTileMode::kGcnDisplayPrt && tileMode != TextureTileMode::kGcnThinPrt;
+    const bool pipe8x16 = tileMode == TextureTileMode::kGcnDisplayPrt || tileMode == TextureTileMode::kGcnThinPrt;
+    const auto tileBytes = std::min(tileSplit, microBytes);
+    const auto log2TileBytes = static_cast<std::uint32_t>(std::countr_zero(tileBytes));
+    const auto& mode = (prt ? prtMacroModes : macroModes)[log2TileBytes - 6u];
+    constexpr std::uint32_t pipes = 8u, log2Pipes = 3u, pipeInterleaveBits = 8u;
+    const auto log2BankHeight = static_cast<std::uint32_t>(std::countr_zero(mode.bankHeight));
+    const auto bankBits = static_cast<std::uint32_t>(std::countr_zero(mode.banks));
+    geometry.blockWidth = 8u * pipes * mode.aspect;
+    geometry.blockHeight = 8u * mode.bankHeight * mode.banks / mode.aspect;
+    const auto macroBytes = tileBytes * mode.bankHeight;
+    Require(macroBytes % 256u == 0, "PS4 macro tile is not a whole number of pipe interleaves");
+    geometry.blockBytes = macroBytes * pipes * mode.banks;
+    const auto elementBits = log2TileBytes - log2Bytes;
+    geometry.splitSlices = microBytes / tileBytes;
+    for (auto bit = elementBits; bit < order.size(); ++bit) geometry.splitMasks[bit - elementBits] = order[bit];
+    std::array<std::uint32_t, 16> inner{};
+    for (std::uint32_t bit = 0; bit < elementBits; ++bit) inner[log2Bytes + bit] = order[bit];
+    auto innerBits = log2TileBytes;
+    for (std::uint32_t bit = 0; bit < log2BankHeight; ++bit) inner[innerBits++] = y(3u + bit);
+    const auto pipe = pipe8x16 ? std::array<std::uint32_t, 3>{x(4) | y(3) | x(5), x(3) | y(4), x(5) | y(5)} : std::array<std::uint32_t, 3>{x(3) | y(3) | x(4), x(4) | y(4), x(5) | y(5)};
+    const auto log2Aspect = static_cast<std::uint32_t>(std::countr_zero(mode.aspect));
+    const auto tx = [&](std::uint32_t bit) { return prt && bit >= log2Aspect ? 0u : x(3u + log2Pipes + bit); };
+    const auto ty = [&](std::uint32_t bit) { return prt && bit >= bankBits - log2Aspect ? 0u : y(3u + log2BankHeight + bit); };
+    std::array<std::uint32_t, 4> bank{};
+    switch (mode.banks) {
+        case 16u: bank = {tx(0) | ty(3), tx(1) | ty(2) | ty(3), tx(2) | ty(1), tx(3) | ty(0)}; break;
+        case 8u: bank = {tx(0) | ty(2), tx(1) | ty(1) | ty(2), tx(2) | ty(0), 0u}; break;
+        default: Require(false, "PS4 macro tile bank count is not modeled");
+    }
+    for (std::uint32_t split = 0; splitRotation && split < 4u && geometry.splitMasks[split] != 0; ++split) {
+        const auto rotation = ((mode.banks / 2u + 1u) << split) & (mode.banks - 1u);
+        for (std::uint32_t bit = 0; bit < bankBits; ++bit) {
+            if ((rotation >> bit) & 1u) bank[bit] ^= geometry.splitMasks[split];
+        }
+    }
+    Require(innerBits + log2Pipes + bankBits <= 16u, "PS4 macro tile exceeds 64 KiB");
+    for (std::uint32_t bit = 0; bit < pipeInterleaveBits; ++bit) geometry.equation[bit] = inner[bit];
+    for (std::uint32_t bit = 0; bit < log2Pipes; ++bit) geometry.equation[pipeInterleaveBits + bit] = pipe[bit];
+    for (std::uint32_t bit = 0; bit < bankBits; ++bit) geometry.equation[pipeInterleaveBits + log2Pipes + bit] = bank[bit];
+    for (auto bit = pipeInterleaveBits; bit < innerBits; ++bit) geometry.equation[bit + log2Pipes + bankBits] = inner[bit];
+    geometry.layerBankStep = prt ? 0u : mode.banks / 2u - 1u;
+    geometry.bankMask = mode.banks - 1u;
+    geometry.bankShift = pipeInterleaveBits + log2Pipes;
+    return geometry;
+}
+
+namespace {
+
+SurfaceGeometry describeGcnSurface(const GuestTextureResource& descriptor) {
+    Require(descriptor.dimension != TextureDimension::k3D && descriptor.dimension != TextureDimension::k2DMsaa, "PS4 3D and multisampled textures are not implemented");
+    const bool layered = descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
+    SurfaceGeometry geometry;
+    geometry.layers = layered ? descriptor.depthOrLastArray + 1u : 1u;
+    geometry.levelMajor = geometry.layers > 1u && descriptor.mipCount > 1u;
+    geometry.mips = ComputeGcnMipLayout(descriptor.tileMode, descriptor.format, descriptor.width, descriptor.height, descriptor.gcnPitch, descriptor.gcnPow2Pad, descriptor.mipCount, descriptor.gcnLinearGeneral, geometry.layers);
+    geometry.imageLayers = geometry.layers;
+    geometry.guestBytes = geometry.mips.back().tiledOffset + geometry.mips.back().tiledSize * geometry.layers;
+    geometry.layerBytes = geometry.guestBytes / geometry.layers;
+    for (const auto& mip : geometry.mips) geometry.sliceLinearBytes = std::max(geometry.sliceLinearBytes, mip.linearOffset + mip.linearSize);
+    return geometry;
+}
+
+}
+
 SurfaceGeometry DescribeSurface(const GuestTextureResource& descriptor) {
+    if (descriptor.gcnPitch != 0) return describeGcnSurface(descriptor);
     SurfaceGeometry geometry;
     if (descriptor.samples != 1u && descriptor.tileMode != TextureTileMode::kLinear) {
         Require(descriptor.samples == 2u || descriptor.samples == 4u || descriptor.samples == 8u, "multisampled surface fragment count is not implemented");
@@ -510,6 +710,7 @@ GuestTextureResource ArrayLayerWindow(const GuestTextureResource& viewed, std::u
 
 std::vector<TileMipLayout> ComputeElementMipLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount) {
     Require(width != 0 && height != 0 && mipCount != 0 && mipCount <= 16u, "invalid surface mip chain");
+    Require(!IsGcnTiled(tileMode), "PS4 surfaces are laid out by ComputeGcnMipLayout from their pitch");
     if (tileMode == TextureTileMode::kLinear) return ComputeLinearMipLayout(bytesPerElement, 1u, 1u, width, height, mipCount);
     return ComputeTiledMipLayout(tileMode, bytesPerElement, 1u, 1u, width, height, mipCount);
 }

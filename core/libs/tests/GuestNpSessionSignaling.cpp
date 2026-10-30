@@ -145,15 +145,20 @@ int main() {
     Require(sceNpSessionSignalingTerminate() == 0, "terminate failed");
     Require(sceNpSessionSignalingDestroyContext(contextId) == NotInitialized, "destroy after terminate");
     Require(sceNpSessionSignalingActivateUser(contextId, nullptr, nullptr) == NotInitialized, "activate user after terminate");
+    Require(sceNpSessionSignalingDeactivate(contextId, 1) == NotInitialized, "deactivate after terminate");
     Require(sceNpSessionSignalingGetConnectionInfo(contextId, 1, 1, nullptr) == NotInitialized, "connection info after terminate");
+    Require(sceNpSessionSignalingGetConnectionStatus(contextId, 1, nullptr, nullptr, nullptr) == NotInitialized, "connection status after terminate");
+    Require(sceNpSessionSignalingGetLocalNetInfo(contextId, nullptr) == NotInitialized, "local net info after terminate");
     Require(sceNpSessionSignalingGetGroupInfo(netContextId, 1, nullptr) == NotInitialized, "group info after terminate");
     Require(sceNpSessionSignalingGetGroupFromSessionId(netContextId, nullptr, nullptr) == NotInitialized, "group from session id after terminate");
     Require(sceNpSessionSignalingGetConnectionFromNetAddress(netContextId, 0, 0, nullptr) == NotInitialized, "connection from net address after terminate");
     Require(sceNpSessionSignalingGetConnectionFromNetAddress2(netContextId, 1, 0, 0, nullptr) == NotInitialized, "connection from group net address after terminate");
     Require(sceNpSessionSignalingGetConnectionFromPeerAddress(netContextId, nullptr, nullptr) == NotInitialized, "connection from peer address after terminate");
+    Require(sceNpSessionSignalingGetConnectionFromPeerAddress2(netContextId, 1, nullptr, nullptr) == NotInitialized, "connection from peer address 2 after terminate");
     Require(sceNpSessionSignalingActivateSession(contextId, nullptr, 0, nullptr, nullptr) == NotInitialized, "activate after terminate");
     Require(sceNpSessionSignalingTerminate() == NotInitialized, "repeated terminate");
     Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam)) == 0, "reinitialize");
     Require(sceNpSessionSignalingRequestPrepare(contextId, &requestId) == ContextNotFound, "reinitialize retained a context");
     Require(sceNpSessionSignalingTerminate() == 0, "final terminate");
+    Require(sceNpSessionSignalingCreateContext(reinterpret_cast<const SessionSignalingContextParam1*>(1), &contextId) == NotInitialized, "create context post-terminate");
 }

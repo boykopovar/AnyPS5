@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -66,11 +67,51 @@ void SetupBeforeInit() {
     Require(scePsmlMfsrIsCaptureInProgress(sentinel) == kErrNotInitialized);
 }
 
+void EnableFlagsReturnZero() {
+    Require(scePsmlMfsrEnableSpecularAA(0) == 0);
+    Require(scePsmlMfsrEnableSpecularAA(1) == 0);
+    Require(scePsmlMfsrEnableQuality8K(0) == 0);
+    Require(scePsmlMfsrEnableQuality8K(1) == 0);
+    Require(scePsmlMfsrEnableLightWeight(0) == 0);
+    Require(scePsmlMfsrEnableLightWeight(1) == 0);
+}
+
+void CreateContext1300SizeCheck() {
+    constexpr std::int32_t unsupportedResolution = static_cast<std::int32_t>(0x8A810013);
+    std::array<std::uint8_t, 0x30> param{};
+    const auto setType = [&](std::uint32_t value) { std::memcpy(param.data(), &value, sizeof(value)); };
+    const auto setDims = [&](std::uint16_t width, std::uint16_t height) {
+        std::memcpy(param.data() + 0x18, &width, sizeof(width));
+        std::memcpy(param.data() + 0x1a, &height, sizeof(height));
+    };
+    std::uint64_t contextStorage = 0;
+    void* const sentinel = &contextStorage;
+    void* context = sentinel;
+
+    setType(0);
+    for (const auto [w, h] : {std::pair{3841, 2160}, {3840, 2161}, {7680, 4320}}) {
+        setDims(static_cast<std::uint16_t>(w), static_cast<std::uint16_t>(h));
+        Require(scePsmlMfsrCreateContext1300(&context, param.data()) == unsupportedResolution);
+    }
+    for (const auto [w, h] : {std::pair{3840, 2160}, {1920, 1080}}) {
+        setDims(static_cast<std::uint16_t>(w), static_cast<std::uint16_t>(h));
+        Require(scePsmlMfsrCreateContext1300(&context, param.data()) == kErrNotInitialized);
+    }
+    setType(1);
+    setDims(7680, 4320);
+    Require(scePsmlMfsrCreateContext1300(&context, param.data()) == kErrNotInitialized);
+    Require(scePsmlMfsrCreateContext1300(&context, nullptr) == kErrNotInitialized);
+    Require(context == sentinel);
+}
+
 void Mfsr1OnBaseConsole() {
     constexpr std::int32_t unsupportedConsole = static_cast<std::int32_t>(0x8A810012);
+    EnableFlagsReturnZero();
     Require(scePsmlMfsrInit() == unsupportedConsole);
     Require(scePsmlMfsrInit() == unsupportedConsole);
     SetupBeforeInit();
+    EnableFlagsReturnZero();
+    CreateContext1300SizeCheck();
 }
 
 void ConcurrentCreatesUninitialized() {

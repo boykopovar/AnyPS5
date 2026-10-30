@@ -319,6 +319,19 @@ bool Exited(HANDLE native) {
     return WaitForSingleObject(native, 0) == WAIT_OBJECT_0;
 }
 
+using NtSuspendThreadFunction = LONG(NTAPI*)(HANDLE, PULONG);
+constexpr LONG ThreadIsTerminating = static_cast<LONG>(0xc000004bu);
+
+LONG SuspendTarget(HANDLE native) {
+    static const auto suspend = [] {
+        const auto found = reinterpret_cast<NtSuspendThreadFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSuspendThread")));
+        if (found == nullptr) throw std::runtime_error("sceKernelRaiseException: ntdll.dll has no NtSuspendThread");
+        return found;
+    }();
+    ULONG previous = 0;
+    return suspend(native, &previous);
+}
+
 bool RestoringContext(DWORD64 rip) {
     static const std::array<DWORD64, 2> stubs = [] {
         const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -695,7 +708,9 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
     alignas(16) Delivery delivery{handler, signum, {}, {}, SaveVectors ? 1u : 0u};
     const auto contextDeadline = std::chrono::steady_clock::now() + RetryLimit;
     for (;;) {
-        if (SuspendThread(native) == static_cast<DWORD>(-1)) {
+        const LONG suspended = SuspendTarget(native);
+        if (suspended == ThreadIsTerminating) return Attempt::Exited;
+        if (suspended < 0) {
             if (Exited(native)) return Attempt::Exited;
             throw std::runtime_error("sceKernelRaiseException: cannot suspend the target thread");
         }
@@ -1069,13 +1084,26 @@ int APS5_VABI sceKernelRemoveExceptionHandler(int signum) {
  return 0;
 }
 
+#ifdef _WIN32
+void DeliverPendingException_nid_no_patch(PthreadPrivate* thread) {
+ const int signum = thread->pendingException.exchange(-1, std::memory_order_acq_rel);
+ if (signum <= 0) return;
+ const auto handler = Handler(signum);
+ if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: the handler was removed before the signal was delivered");
+ RaiseOn(thread, handler, signum);
+}
+#endif
+
 int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  if (signum != RaisedSignal) return SCE_KERNEL_ERROR_EINVAL;
  if (thread == nullptr || thread->_finished.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_ESRCH;
  const auto handler = Handler(signum);
  if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: no handler installed for the signal");
 #ifdef _WIN32
- if (thread->suspended.load(std::memory_order_acquire)) throw std::runtime_error("sceKernelRaiseException: the target thread is still suspended at creation");
+ if (thread->suspended.load(std::memory_order_acquire)) {
+  int pending = 0;
+  if (thread->pendingException.compare_exchange_strong(pending, signum, std::memory_order_acq_rel) || pending > 0) return 0;
+ }
  return RaiseOn(thread, handler, signum) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 #else
  return RaiseOn(thread) ? 0 : SCE_KERNEL_ERROR_ESRCH;

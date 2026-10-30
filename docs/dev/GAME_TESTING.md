@@ -13,8 +13,8 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
   - Windows: `relinker --windows --registry src/eboot.elf app.exe`. Without `--windows` the output is an ELF file whatever its name, and Windows refuses to start it (exit code 216, "not compatible with the version of Windows").
 - A dump whose `app0` holds `ampr_assets.index` and `ampr_assets-*.pak` was repacked for [ampr_emu](https://github.com/drakmor/ampr_emu): the packed files were removed from `app0`, and only ampr_emu reads the packs. Restore them first with ampr_emu's `tools/ampr_pack.py unpack --index app0/ampr_assets.index --output <dir>` and copy the files missing from `app0`. Without them a Unity title stops at start-up on the missing `Media/Resources/unity default resources`.
 - Convert every module the title loads from its own folders (`sce_module/`, `Media/Modules/`, `Media/Plugins/`). Unity titles need `--module-dir Media/Modules --module-dir Media/Plugins`. The relinker writes each converted module as `<name>.guest.prx` into `app0/` beside the output, in the module's own folder, and lists it in the `Arrange the files like this` tree it prints. Keep the original `.prx` next to it.
-- `libs/` holds only AnyPS5's own libraries, from `build/core/libs/libs` (not `unpatched/`). A game module placed there fails to load (error 193 on Windows). A self-built `libs/` on Windows also needs `libgcc_s_seh-1.dll`, `libstdc++-6.dll` and `libwinpthread-1.dll` from the toolchain's `mingw64/bin`, or every library fails with error 126 ([USAGE](../user/USAGE.md#input-and-conversion)).
-- Run `tools/import_audit.py` on the registries. Exit code 1 lists imports that will fail or throw.
+- `libs/` holds only AnyPS5's own libraries, from `build/core/libs/libs` (not `unpatched/`). A game module placed there fails to load (error 193 on Windows). A self-built `libs/` on Windows also needs `libgcc_s_seh-1.dll`, `libstdc++-6.dll` and `libwinpthread-1.dll` from the toolchain's `mingw64/bin`, or every library fails with error 126 ([USAGE](../user/USAGE.md#runtime-layout)).
+- Run `tools/import_audit.py` on the registries. Exit code 1 means an import or a needed library is missing; the report also lists `stub` imports, which throw when called, and `--strict-stubs` makes them fail the audit too.
   `tools/audit_dump.py <app0> --relinker <relinker> --libs build/core/libs/libs` (`--windows` on Windows) does the
   unwrapping, the conversion with `--registry` and the audit in one step, from every module folder above and `.prx`
   files beside `eboot.bin`, into a temporary directory (or `--work <dir>`), reading the dump only.
@@ -44,6 +44,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 - `APS5_NO_PAD_INPUT=1` ignores keyboard and mouse, so a stray press doesn't move a measurement run.
 - `setarch x86_64 -R` (Linux only) turns off address randomisation so addresses match between runs.
 - On Windows, a `--windows-gui` build started without a console writes its output to `anyps5.log` beside the executable, replacing the previous run's file.
+- Some homebrew reopen stdout and stderr into their own storage before `main`, so `run.log` ends at `Transferring control to ELF entry point` while the title keeps running. Titles built on ps5-homebrew-ui, such as CD Player (PPSA98427), Afterglow (PPSA47770) and Surround Sound Studio (PPSA99051), write `download0/hui/dev/app.log` beside the executable and keep the previous run's log as `app.prev.log`. Read that file before reporting a hang or a silent exit.
 - On Windows the title needs a signed-in desktop. Started from an SSH session (session 0) it has no usable window. Start it inside the user's session instead, for example with a scheduled task that runs interactively. A newly created task does not start on battery power by default and fails silently; allow that in its settings.
 
 ## Check the GPU and the caches
@@ -79,7 +80,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 - **Stall:** no `[present]` lines for a long time while other periodic lines keep coming. Some titles present only when the view changes, so first send one input (`tools/pad_input.py`) and check whether presents resume.
 - **Slowdown:** presents per 10 s far below earlier runs of the same scene. Record the scene (save file or level), since it changes the numbers, and check power and caches first.
 - **Crash on Linux:** take the `ip` from `dmesg` and its offset in the image. Repeat the run under `gdb` (launched by gdb, not attached) for registers, the faulting instructions and all thread stacks.
-- **Crash on Windows:** the `FATAL: unhandled exception ...` report in the log lists the faulting `rip` (for example `app.exe+0x...`), the registers and a stack scan. `APS5_CRASH_INDIRECT_MEMORY=1` adds up to 64 bytes from each pointer in the register dump. `APS5_HANG_DUMP_SECS=<n>` writes a dump after a hang of n seconds. `APS5_TRACE_EXIT=1` reports the process exit point.
+- **Crash on Windows:** the `FATAL: unhandled exception ...` report in the log lists the faulting `rip` (for example `app.exe+0x...`), the registers and a stack scan. `APS5_CRASH_INDIRECT_MEMORY=1` adds up to 64 bytes from each pointer in the register dump. `APS5_HANG_DUMP_SECS=<n>` (Windows) prints the crash report with every thread n seconds after start-up and then aborts the title, so set it to a time after the title has stopped. `APS5_TRACE_EXIT=1` reports the process exit point.
 - **Traces (heavy):** `APS5_TRACE_FRAMES=<n>:<m>` or `APS5_TRACE_SECONDS=<s>:<len>` writes a capture for `tools/trace_digest.py`. Traces slow the title and can move the crash; say so when reporting.
 
 ## Measuring performance
@@ -111,7 +112,7 @@ Include, in this order:
 
 1. The build: the `main` commit, each PR applied on top with its head, and any local change. A result from an integration branch should stay distinguishable after one of its PRs merges.
 2. Title ID and content version, not only the game name.
-3. Host: CPU, OS (and kernel on Linux), the GPU as the `Selected GPU name=` line names it, the driver version, AC or battery, and the display refresh rate.
+3. Host: CPU, OS (and kernel on Linux), the GPU as the `Selected GPU name=` line names it, the driver version, AC or battery, and the display refresh rate. Start with `ANYPS5_HOST_REPORT=1` and paste the [host report](../user/USAGE.md#host-report) for the CPU, OS, GPU, driver and Vulkan items; AC or battery and the refresh rate are not in it.
 4. The exact command and every `APS5_*` / `ANYPS5_*` variable, the in-game settings if they differ from the defaults, and whether the caches were empty or warm.
 5. How far the title got (menu, a save, a scene) and what stopped it: the exit code and the last 200 log lines, plus the kernel line (Linux) or crash report (Windows) for a crash.
 6. Presents per 10 s, and the storage-image and budget lines (`[gpu] host import budget`, `[gpu] sampled texture cache budget`, `[texture-cache]`) if memory is involved.

@@ -80,6 +80,27 @@ void CheckBsearch() {
     before = constraintCalls;
     Require(bsearch_s_nid_postfix(&key, values, 0, tooLarge, CompareInts, &calls) == nullptr, "bsearch_s accepted an oversized element");
     RequireViolation(before, "bsearch_s: bad argument", 22);
+    struct ZeroStrideCase { std::size_t count; int lessCalls; int greaterCalls; };
+    const ZeroStrideCase zeroStrideCases[] = {{0, 0, 0}, {1, 1, 1}, {2, 2, 1}, {3, 2, 2}, {4, 3, 2}, {7, 3, 3}, {8, 4, 3}, {15, 4, 4}, {16, 5, 4}, {1023, 10, 10}, {1024, 11, 10}, {tooLarge - 1, 61, 61}};
+    for (const auto& entry : zeroStrideCases) for (const int zeroKey : {0, 1, 2}) {
+        before = constraintCalls;
+        calls = 0;
+        *__error_nid_postfix() = 97;
+        void* result = bsearch_s_nid_postfix(&zeroKey, values, entry.count, 0, CompareInts, &calls);
+        const void* expected = entry.count != 0 && zeroKey == 1 ? values : nullptr;
+        const int expectedCalls = zeroKey == 0 ? entry.lessCalls : zeroKey == 2 ? entry.greaterCalls : entry.count != 0;
+        Require(result == expected && calls == expectedCalls, "bsearch_s zero stride result or comparison count");
+        Require(constraintCalls == before && *__error_nid_postfix() == 97, "bsearch_s zero stride invoked a constraint or changed errno");
+    }
+    before = constraintCalls;
+    calls = 0;
+    Require(bsearch_s_nid_postfix(&key, values, tooLarge, 0, CompareInts, &calls) == nullptr && calls == 0, "bsearch_s searched an oversized count");
+    RequireViolation(before, "bsearch_s: bad argument", 22);
+    calls = 0;
+    Require(bsearch_s_nid_postfix(&values[0], values, 1, tooLarge - 1, CompareInts, &calls) == values && calls == 1, "bsearch_s rejected an RSIZE_MAX element size");
+    before = constraintCalls;
+    Require(bsearch_s_nid_postfix(nullptr, values, 7, 0, CompareInts, &calls) == nullptr, "bsearch_s zero stride accepted a null key");
+    RequireViolation(before, "bsearch_s: bad argument", 22);
 }
 
 void CheckWcstok() {

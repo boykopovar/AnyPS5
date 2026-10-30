@@ -26,6 +26,18 @@ def main():
             assert output.read_bytes() == b"preserve this output"
             assert sorted(path.name for path in work.iterdir()) == [output.name]
 
+        result = run("--version")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.startswith("relinker "), result.stdout
+        assert len(result.stdout.split()) == 2, result.stdout
+        assert result.stderr == "", result.stderr
+        assert output.read_bytes() == b"preserve this output"
+        assert sorted(path.name for path in work.iterdir()) == [output.name]
+
+        result = run("--version", str(source), str(output))
+        assert result.returncode == 0 and result.stdout.startswith("relinker "), result.stderr
+        assert output.read_bytes() == b"preserve this output"
+
         result = run()
         assert result.returncode == 1 and "Usage: relinker" in result.stderr
         for args in [("--help", "--unknown"), ("--unknown", "--help")]:
