@@ -245,6 +245,29 @@ struct LibreSslX509StoreContext {
     void* exData;
 };
 
+struct LibreSslOcspResponse {
+    Asn1String* responseStatus;
+    void* responseBytes;
+};
+
+struct LibreSslOcspRevokedInfo {
+    Asn1String* revocationTime;
+    Asn1String* revocationReason;
+};
+
+struct LibreSslOcspCertStatus {
+    int type;
+    void* value;
+};
+
+struct LibreSslOcspSingleResponse {
+    void* certId;
+    LibreSslOcspCertStatus* certStatus;
+    Asn1String* thisUpdate;
+    Asn1String* nextUpdate;
+    void* singleExtensions;
+};
+
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
@@ -419,9 +442,9 @@ const char* APS5_VABI OCSP_crl_reason_str_nid_postfix(std::int64_t reason);
 int APS5_VABI OCSP_resp_count_nid_postfix(void);
 int APS5_VABI OCSP_resp_get0_nid_postfix(void);
 int APS5_VABI OCSP_response_get1_basic_nid_postfix(void);
-int APS5_VABI OCSP_response_status_nid_postfix(void);
+int APS5_VABI OCSP_response_status_nid_postfix(const LibreSslOcspResponse* response);
 const char* APS5_VABI OCSP_response_status_str_nid_postfix(std::int64_t status);
-int APS5_VABI OCSP_single_get0_status_nid_postfix(void);
+int APS5_VABI OCSP_single_get0_status_nid_postfix(const LibreSslOcspSingleResponse* single, int* reason, Asn1String** revocationTime, Asn1String** thisUpdate, Asn1String** nextUpdate);
 int APS5_VABI OPENSSL_add_all_algorithms_noconf_nid_postfix(void);
 int APS5_VABI OPENSSL_load_builtin_modules_nid_postfix(void);
 int APS5_VABI PEM_X509_INFO_read_bio_nid_postfix(void);
