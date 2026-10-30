@@ -69,9 +69,58 @@ int main() {
     Require(sceNpWebApi2IntInitialize2(&args2) == invalidArgument && sceNpWebApi2IntInitialize2(nullptr) == invalidArgument);
     const int presence = sceNpWebApi2InitializeForPresence(1, 0x2000);
     Require(presence > 0 && sceNpWebApi2GetMemoryPoolStats(presence, &stats) == 0 && stats.pool_size == 0x2000);
+    constexpr int unavailable = static_cast<int>(0x80553406);
+    const int multipartUser = sceNpWebApi2CreateUserContext(presence, 1);
+    std::int64_t multipart = 0;
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, nullptr, "/v1/files", "POST", &multipart) == invalidArgument);
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", nullptr, "POST", &multipart) == invalidArgument);
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", nullptr, &multipart) == invalidArgument);
+    Require(multipart == 0);
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", &multipart) == 0 && multipart > 0);
+    std::int64_t nextMultipart = 0;
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", &nextMultipart) == 0 && nextMultipart > multipart);
+    Require(sceNpWebApi2CreateMultipartRequest(multipartUser, "fileManager", "/v1/files", "POST", nullptr) == 0);
+    unsigned char part[4]{1, 2, 3, 4};
+    Require(sceNpWebApi2SendMultipartRequest(multipart, 0, part, sizeof(part), nullptr) == invalidArgument);
+    Require(sceNpWebApi2SendMultipartRequest(multipart, -1, part, sizeof(part), nullptr) == invalidArgument);
+    Require(sceNpWebApi2SendMultipartRequest(multipart, 1, nullptr, sizeof(part), nullptr) == invalidArgument);
+    Require(sceNpWebApi2SendMultipartRequest(multipart, 1, part, 0, nullptr) == invalidArgument);
+    Require(sceNpWebApi2SendMultipartRequest(multipart, 1, part, sizeof(part), nullptr) == unavailable);
+    Require(sceNpWebApi2DeleteRequest(multipart) == 0 && sceNpWebApi2DeleteRequest(nextMultipart) == 0);
     for (const int created : {internal, internal2, presence}) {
         Require(sceNpWebApi2Terminate(created) == 0);
         Require(sceNpWebApi2GetMemoryPoolStats(created, &stats) == invalidContext);
     }
+
+    const int pushLibrary = sceNpWebApi2Initialize(1, 0x10000);
+    const int pushUser = sceNpWebApi2CreateUserContext(pushLibrary, 1);
+    const int otherUser = sceNpWebApi2CreateUserContext(pushLibrary, 2);
+    Require(pushLibrary > 0 && pushUser > 0 && otherUser > 0 && otherUser != pushUser);
+    std::int64_t sent = 0;
+    Require(sceNpWebApi2CreateRequest(pushUser, "sessionManager", "/v1/sessions", "GET", nullptr, nullptr) == invalidArgument);
+    Require(sceNpWebApi2CreateRequest(pushUser, "sessionManager", "/v1/sessions", "GET", nullptr, &sent) == 0 && sent > 0);
+    Require(sceNpWebApi2AddHttpRequestHeader(sent, "Accept", "application/json") == 0);
+    Require(sceNpWebApi2SendRequest(sent, nullptr, 0, nullptr) == unavailable);
+    Require(sceNpWebApi2AbortRequest(sent) == 0);
+    sceNpWebApi2CheckTimeout();
+    Require(sceNpWebApi2DeleteRequest(sent) == 0);
+    const int pushHandle = sceNpWebApi2PushEventCreateHandle(pushLibrary);
+    const int filter = sceNpWebApi2PushEventCreateFilter(pushLibrary, pushHandle, "sessionManager", 0, nullptr, 0);
+    const int nextFilter = sceNpWebApi2PushEventCreateFilter(pushLibrary, pushHandle, "sessionManager", 0, nullptr, 0);
+    Require(pushHandle > 0 && filter > 0 && nextFilter > 0 && nextFilter != filter);
+    int userArg = 0;
+    const int callback = sceNpWebApi2PushEventRegisterCallback(pushUser, filter, nullptr, &userArg);
+    const int contextCallback = sceNpWebApi2PushEventRegisterPushContextCallback(pushUser, nextFilter, nullptr, &userArg);
+    Require(callback > 0 && contextCallback > 0 && contextCallback != callback);
+    NpWebApi2PushContextId pushContext{};
+    Require(sceNpWebApi2PushEventCreatePushContext(pushUser, &pushContext) == unavailable);
+    Require(sceNpWebApi2PushEventStartPushContextCallback(pushUser, &pushContext) == 0);
+    Require(sceNpWebApi2PushEventUnregisterPushContextCallback(pushUser, contextCallback) == 0);
+    Require(sceNpWebApi2PushEventUnregisterCallback(pushUser, callback) == 0);
+    Require(sceNpWebApi2PushEventDeletePushContext(pushUser, &pushContext) == 0);
+    Require(sceNpWebApi2PushEventDeleteFilter(pushLibrary, nextFilter) == 0 && sceNpWebApi2PushEventDeleteFilter(pushLibrary, filter) == 0);
+    Require(sceNpWebApi2PushEventDeleteHandle(pushLibrary, pushHandle) == 0);
+    Require(sceNpWebApi2DeleteUserContext(otherUser) == 0 && sceNpWebApi2DeleteUserContext(pushUser) == 0);
+    Require(sceNpWebApi2Terminate(pushLibrary) == 0);
     return 0;
 }

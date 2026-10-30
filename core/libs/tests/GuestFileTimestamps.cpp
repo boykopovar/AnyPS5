@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -133,6 +134,16 @@ int main() {
     const KernelTimeval second[2]{{1000000002, 1}, {1000000003, 999999}};
     Require(futimes_nid_postfix(fd, second) == 0, "futimes on read-only descriptor");
     CheckTimes(path, fd, second);
+    const auto* unmapped = reinterpret_cast<const KernelTimeval*>(std::uintptr_t{0x10});
+    for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix}) {
+        *__error_nid_postfix() = 0;
+        Require(update(path.c_str(), unmapped) == -1 && *__error_nid_postfix() == 14, "unreadable times fault in utimes and lutimes");
+    }
+    *__error_nid_postfix() = 0;
+    Require(futimes_nid_postfix(fd, unmapped) == -1 && *__error_nid_postfix() == 14, "unreadable times fault in futimes");
+    Require(sceKernelUtimes_nid_postfix(path.c_str(), unmapped) == static_cast<int>(0x8002000eu), "unreadable times fault in sceKernelUtimes");
+    Require(sceKernelFutimes(fd, unmapped) == static_cast<int>(0x8002000eu), "unreadable times fault in sceKernelFutimes");
+    CheckTimes(path, fd, second);
     Require(sceKernelUtimes_nid_postfix(path.c_str(), first) == 0, "sceKernelUtimes fractional timestamp");
     CheckTimes(path, fd, first);
     Require(lutimes_nid_postfix(path.c_str(), second) == 0, "lutimes fractional timestamp");
@@ -255,6 +266,7 @@ int main() {
         FileStat linkStatus{};
         Require(lstat_nid_postfix(linkPath.c_str(), &linkStatus) == 0 && Same(linkStatus.st_mtim, first[1]), "symlink mtime updated");
 #endif
+        Require(unlink_nid_postfix(linkPath.c_str()) == 0, "remove the symlink");
     }
     int pipe[2];
     Require(pipe_nid_postfix(pipe) == 0, "create pipe");
@@ -263,6 +275,49 @@ int main() {
 #ifdef _WIN32
     Require(futimes_nid_postfix(pipe[0], first) == -1 && *__error_nid_postfix() == 22, "pipe timestamp update fails");
 #endif
+    const KernelTimeval invalidUsec[2] = {{first[0].tv_sec, -1}, {first[1].tv_sec, 0}};
+    Require(futimes_nid_postfix(pipe[0], invalidUsec) == -1 && *__error_nid_postfix() == 22, "negative usec rejected in futimes");
+    Require(futimes_nid_postfix(-1, first) == -1 && *__error_nid_postfix() == 9, "bad file descriptor in futimes");
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0, "close pipe");
+    const auto throughFile = (root / "file.txt" / "child").string();
+    for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix}) {
+        Require(update(throughFile.c_str(), first) == -1 && *__error_nid_postfix() == 20, "a path through a file reports ENOTDIR");
+    }
+#ifdef _WIN32
+    const auto fileLink = (root / "file-link.txt").string();
+    const auto directoryLink = (root / "directory-link").string();
+    const auto danglingLink = (root / "dangling-link").string();
+    const auto createLink = [](const std::string& link, const std::string& target, DWORD flags) {
+        wchar_t full[MAX_PATH];
+        GetFullPathNameW(std::filesystem::path(target).c_str(), MAX_PATH, full, nullptr);
+        return CreateSymbolicLinkW(std::filesystem::path(link).c_str(), full, flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+    };
+    if (createLink(fileLink, path, 0) && createLink(directoryLink, directory, SYMBOLIC_LINK_FLAG_DIRECTORY) &&
+        createLink(danglingLink, (root / "missing").string(), 0)) {
+        const auto modified = [](const char* name, bool link) {
+            FileStat status{};
+            Require((link ? lstat_nid_postfix(name, &status) : stat_nid_postfix(name, &status)) == 0, "stat a link fixture");
+            return status.st_mtim.tv_sec;
+        };
+        Require(utimes_nid_postfix(fileLink.c_str(), first) == 0 && modified(path.c_str(), false) == first[1].tv_sec, "utimes follows a file link");
+        Require(modified(fileLink.c_str(), true) != first[1].tv_sec, "utimes leaves the file link alone");
+        Require(utimes_nid_postfix(directoryLink.c_str(), second) == 0 && modified(directory.c_str(), false) == second[1].tv_sec,
+            "utimes follows a directory link");
+        Require(utimes_nid_postfix(danglingLink.c_str(), first) == -1 && *__error_nid_postfix() == 2, "utimes through a dangling link reports ENOENT");
+        Require(lutimes_nid_postfix(directoryLink.c_str(), first) == 0 && modified(directoryLink.c_str(), true) == first[1].tv_sec &&
+            modified(directory.c_str(), false) == second[1].tv_sec, "lutimes changes a directory link and not its target");
+        Require(lutimes_nid_postfix(danglingLink.c_str(), first) == 0 && modified(danglingLink.c_str(), true) == first[1].tv_sec,
+            "lutimes changes a dangling link");
+        const auto throughLink = fileLink + "/child";
+        for (const auto update : {utimes_nid_postfix, lutimes_nid_postfix}) {
+            Require(update(throughLink.c_str(), first) == -1 && *__error_nid_postfix() == 20, "a path through a file link reports ENOTDIR");
+        }
+        Require(RemoveDirectoryW(std::filesystem::path(directoryLink).c_str()) && DeleteFileW(std::filesystem::path(fileLink).c_str()) &&
+            DeleteFileW(std::filesystem::path(danglingLink).c_str()), "remove the link fixtures");
+    }
+#endif
+#ifdef _WIN32
+    DeleteFileW(std::filesystem::path(linkPath).c_str());
+#endif
     std::filesystem::remove_all(root);
 }

@@ -34,13 +34,16 @@ static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_ERANGE = 34;
 
 static KernelCpumask ReadCpuset(Pthread thread) {
-    std::uint8_t cpuset[GUEST_CPUSET_BYTES + 8];
+    constexpr std::size_t widest = 16;
+    std::uint8_t cpuset[widest + 8];
     std::memset(cpuset, 0xAB, sizeof(cpuset));
-    Require(pthread_getaffinity_np_nid_postfix(thread, GUEST_CPUSET_BYTES, cpuset) == 0);
-    for (std::size_t i = sizeof(KernelCpumask); i < GUEST_CPUSET_BYTES; ++i) Require(cpuset[i] == 0);
-    for (std::size_t i = GUEST_CPUSET_BYTES; i < sizeof(cpuset); ++i) Require(cpuset[i] == 0xAB);
+    Require(pthread_getaffinity_np_nid_postfix(thread, widest, cpuset) == 0);
+    for (std::size_t i = sizeof(KernelCpumask); i < widest; ++i) Require(cpuset[i] == 0);
+    for (std::size_t i = widest; i < sizeof(cpuset); ++i) Require(cpuset[i] == 0xAB);
     KernelCpumask mask = 0;
     std::memcpy(&mask, cpuset, sizeof(mask));
+    KernelCpumask narrow = ~KernelCpumask{0};
+    Require(pthread_getaffinity_np_nid_postfix(thread, sizeof(narrow), &narrow) == 0 && narrow == mask);
     return mask;
 }
 
@@ -277,11 +280,11 @@ int main() {
 
     Require(ReadCpuset(pthread_self_nid_postfix()) == available);
     std::uint8_t rawSet[GUEST_CPUSET_BYTES]{};
-    for (const std::size_t size : {std::size_t{0}, std::size_t{8}, std::size_t{31}, std::size_t{33}, std::size_t{64}})
+    for (const std::size_t size : {std::size_t{32}, std::size_t{33}, std::size_t{64}})
         Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), size, rawSet) == GUEST_ERANGE);
     Require(pthread_getaffinity_np_nid_postfix(nullptr, GUEST_CPUSET_BYTES, rawSet) == GUEST_EINVAL);
     Require(pthread_getaffinity_np_nid_postfix(nullptr, 0, rawSet) == GUEST_EINVAL);
-    Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), GUEST_CPUSET_BYTES, nullptr) == GUEST_EFAULT);
+    Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), 16, nullptr) == GUEST_EFAULT);
     Require(cpuset_getaffinity_nid_postfix(3, 1, scePthreadGetthreadid(), 8, processSet) == 0 && processSet[0] == available);
     Require(cpuset_getaffinity_nid_postfix(3, 1, 999999, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
     Require(cpuset_getaffinity_nid_postfix(3, 2, 999999, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_ESRCH);

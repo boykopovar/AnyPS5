@@ -13,6 +13,7 @@
 #include "prx/libc/include/General.hpp"
 #include "JisX0208.hpp"
 #include "JisX0212.hpp"
+#include "JisX0213.hpp"
 #include "Cp936.hpp"
 #include "Gb18030.hpp"
 #include "Cp949.hpp"
@@ -74,29 +75,92 @@ const uint8_t* singleByteProfile(SingleByte::Table table) {
     return PROFILES[3 + table];
 }
 
+bool singleByteTable(const void* profile, SingleByte::Table& table) {
+    for (std::size_t index = 0; index < SingleByte::Count; ++index) {
+        if (profile != singleByteProfile(static_cast<SingleByte::Table>(index))) continue;
+        table = static_cast<SingleByte::Table>(index);
+        return true;
+    }
+    return false;
+}
+
 const uint16_t* sbcHighTable(const void* profile) {
     if (profile == CP1251_PROFILE) return CP1251_HIGH;
     if (profile == CP1250_PROFILE) return CP1250_HIGH;
-    for (std::size_t table = 0; table < SingleByte::Count; ++table) {
-        if (profile == singleByteProfile(static_cast<SingleByte::Table>(table))) return SingleByte::HIGH[table];
-    }
-    return nullptr;
+    SingleByte::Table table;
+    return singleByteTable(profile, table) ? SingleByte::HIGH[table] : nullptr;
+}
+
+bool lowGraphicsUnassigned(const void* profile, uint8_t sbc) {
+    SingleByte::Table table;
+    return sbc >= 0x21 && sbc <= 0x7E && singleByteTable(profile, table) && SingleByte::LOW_GRAPHICS_UNASSIGNED[table];
+}
+
+const SingleByte::LowCode* lowCodes(const void* profile) {
+    SingleByte::Table table;
+    return singleByteTable(profile, table) ? SingleByte::LOW[table] : nullptr;
+}
+
+bool isSingleByte(const void* profile, SingleByte::Table expected) {
+    SingleByte::Table table;
+    return singleByteTable(profile, table) && table == expected;
+}
+
+bool isSevenBit(const void* profile) {
+    SingleByte::Table table;
+    return singleByteTable(profile, table) && SingleByte::SEVEN_BIT[table];
 }
 
 bool sbcToUnicode(const uint8_t* profile, uint8_t sbc, uint32_t& code) {
     code = sbc;
-    if (sbc < 0x80) return true;
+    if (isSingleByte(profile, SingleByte::JisX0201Katakana) && sbc >= 0x21 && sbc <= 0x7E) {
+        code = 0xFF61 + (sbc - 0x21);
+        return sbc <= 0x5F;
+    }
+    if (sbc < 0x80) {
+        if (lowGraphicsUnassigned(profile, sbc)) return false;
+        if (const SingleByte::LowCode* low = lowCodes(profile)) {
+            for (std::size_t i = 0; i < std::size(SingleByte::LOW[0]) && low[i].byte != 0; ++i) {
+                if (low[i].byte == sbc) code = low[i].code;
+            }
+        }
+        return true;
+    }
     if (const uint16_t* high = sbcHighTable(profile)) code = high[sbc - 0x80];
     else if (sbc < 0xA0) code = CP1252_HIGH[sbc - 0x80];
-    return code != 0;
+    return code != 0 && code != SingleByte::Unassigned;
+}
+
+int sbcError(const uint8_t* profile, uint8_t sbc, uint32_t& code) {
+    if (sbc >= 0x80 && isSevenBit(profile)) return CES_ERROR_INVALID_ENCODE;
+    return sbcToUnicode(profile, sbc, code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
 }
 
 bool unicodeToSbc(const uint8_t* profile, uint32_t code, uint8_t& sbc) {
+    if (isSingleByte(profile, SingleByte::JisX0201Katakana)) {
+        if (code >= 0xFF61 && code <= 0xFF9F) {
+            sbc = static_cast<uint8_t>(0x21 + (code - 0xFF61));
+            return true;
+        }
+        if (code >= 0x21 && code <= 0x7E) return false;
+    }
+    if (const SingleByte::LowCode* low = lowCodes(profile)) {
+        for (std::size_t i = 0; i < std::size(SingleByte::LOW[0]) && low[i].byte != 0; ++i) {
+            if (low[i].code == code) {
+                sbc = low[i].byte;
+                return true;
+            }
+            if (low[i].byte == code) return false;
+        }
+    }
+    if (code >= 0x80 && isSevenBit(profile)) return false;
     if (const uint16_t* high = sbcHighTable(profile)) {
         if (code < 0x80) {
+            if (lowGraphicsUnassigned(profile, static_cast<uint8_t>(code))) return false;
             sbc = static_cast<uint8_t>(code);
             return true;
         }
+        if (code == SingleByte::Unassigned) return false;
         for (uint32_t i = 0; i < 128; ++i) {
             if (high[i] == code) {
                 sbc = static_cast<uint8_t>(0x80 + i);
@@ -147,6 +211,28 @@ int decodeScalarUtf8(const uint8_t* utf8, uint32_t utf8max, uint32_t& length, ui
     return 0;
 }
 
+int decodeIso2022Utf8(const uint8_t* utf8, uint32_t utf8max, uint32_t& length, uint32_t& code) {
+    const uint8_t lead = utf8[0];
+    uint32_t minimum = 0;
+    if (lead < 0x80) {
+        length = 1;
+        code = lead;
+        return 0;
+    }
+    if ((lead & 0xE0) == 0xC0) { length = 2; code = lead & 0x1F; minimum = 0x80; }
+    else if ((lead & 0xF0) == 0xE0) { length = 3; code = lead & 0x0F; minimum = 0x800; }
+    else if ((lead & 0xF8) == 0xF0) { length = 4; code = lead & 0x07; minimum = 0x10000; }
+    else return CES_ERROR_INVALID_ENCODE;
+
+    for (uint32_t i = 1; i < length; ++i) {
+        if (i >= utf8max) return CES_ERROR_SRC_BUFFER_END;
+        if ((utf8[i] & 0xC0) != 0x80) return CES_ERROR_INVALID_ENCODE;
+        code = code << 6 | (utf8[i] & 0x3F);
+    }
+    if (code < minimum || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return CES_ERROR_INVALID_ENCODE;
+    return 0;
+}
+
 uint32_t encodeUtf8(uint32_t code, uint8_t* utf8) {
     if (code < 0x80) {
         utf8[0] = static_cast<uint8_t>(code);
@@ -176,6 +262,8 @@ constexpr uint8_t EUC_JP_X0208_SS2_TAG[8] = {'E', 'U', 'C', 'J', 'X', 'S', 'S', 
 constexpr uint8_t EUC_JP_X0208_SS3_TAG[8] = {'E', 'U', 'C', 'J', 'X', 'S', 'S', '3'};
 constexpr uint8_t SJIS_TAG[8] = {'S', 'J', 'I', 'S', '1', '9', '9', '7'};
 constexpr uint8_t SJIS_X0208_TAG[8] = {'S', 'J', 'I', 'S', 'X', '2', '0', '8'};
+constexpr uint8_t EUC_JIS2004_TAG[8] = {'E', 'U', 'C', 'J', 'I', 'S', '0', '4'};
+constexpr uint8_t SJIS2004_TAG[8] = {'S', 'J', 'I', 'S', '2', '0', '0', '4'};
 
 bool hasTag(const void* profile, const uint8_t (&tag)[8]) {
     return profile != nullptr && std::memcmp(profile, tag, sizeof(tag)) == 0;
@@ -203,6 +291,18 @@ bool isSjisX0208(const void* profile) {
 
 bool isSjis(const void* profile) {
     return hasTag(profile, SJIS_TAG) || isSjisX0208(profile);
+}
+
+bool isEucJis2004(const void* profile) {
+    return hasTag(profile, EUC_JIS2004_TAG);
+}
+
+bool isSjis2004(const void* profile) {
+    return hasTag(profile, SJIS2004_TAG);
+}
+
+bool isJis2004(const void* profile) {
+    return isEucJis2004(profile) || isSjis2004(profile);
 }
 
 struct JisChange {
@@ -356,11 +456,17 @@ constexpr uint32_t GB_CELLS = 126 * 190;
 struct Gb18030Tables {
     std::span<const uint32_t[3]> twoByte;
     std::span<const uint32_t[3]> fourByte;
-    std::span<const uint32_t[2]> fallback;
+    bool edition2005;
 };
 
-constexpr Gb18030Tables GB18030_2000{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, {}};
-constexpr Gb18030Tables GB18030_2005{Gb18030::TWO_BYTE_2005, Gb18030::FOUR_BYTE_2005, Gb18030::FALLBACK_2005};
+constexpr Gb18030Tables GB18030_2000{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, false};
+constexpr Gb18030Tables GB18030_2005{Gb18030::TWO_BYTE_2000, Gb18030::FOUR_BYTE_2000, true};
+constexpr uint32_t GB18030_SWAPPED_CELL = (0xA8 - 0x81) * 190 + (0xBC - 0x41);
+constexpr uint32_t GB18030_SWAPPED_LINEAR = (5 * 126 + (0xF4 - 0x81)) * 10 + 7;
+
+bool mapsGb18030Supplementary(const Gb18030Tables& tables, uint32_t code) {
+    return tables.edition2005 && code >= 0x20000 && code <= 0x2FFFF;
+}
 
 const Gb18030Tables* gb18030Tables(const void* profile) {
     if (profile == nullptr) return nullptr;
@@ -385,8 +491,18 @@ const uint32_t* findRun(std::span<const uint32_t[3]> runs, uint32_t key) {
 }
 
 uint32_t gb18030Cell(const Gb18030Tables& tables, uint32_t cell) {
+    if (tables.edition2005 && cell == GB18030_SWAPPED_CELL) return 0x1E3F;
     const uint32_t* run = findRun(tables.twoByte, cell);
     return run ? run[1] + cell - run[0] : Cp936::TO_UCS2[cell];
+}
+
+void putGbLinear(uint32_t linear, uint8_t* mbcs) {
+    mbcs[3] = static_cast<uint8_t>(0x30 + linear % 10);
+    linear /= 10;
+    mbcs[2] = static_cast<uint8_t>(0x81 + linear % 126);
+    linear /= 126;
+    mbcs[1] = static_cast<uint8_t>(0x30 + linear % 10);
+    mbcs[0] = static_cast<uint8_t>(0x81 + linear / 10);
 }
 
 void putGbCell(uint32_t cell, uint8_t* mbcs) {
@@ -412,8 +528,9 @@ int decodeGb18030(const Gb18030Tables& tables, const uint8_t* mbcs, uint32_t mbc
         const uint32_t linear = (((lead - 0x81) * 10 + (second - 0x30)) * 126 + (mbcs[2] - 0x81)) * 10 + (mbcs[3] - 0x30);
         const uint32_t* run = findRun(tables.fourByte, linear);
         if (!run) return unassigned(4, length);
+        code = tables.edition2005 && linear == GB18030_SWAPPED_LINEAR ? 0xE7C7 : run[1] + linear - run[0];
+        if (code > 0xFFFF && !mapsGb18030Supplementary(tables, code)) return unassigned(4, length);
         length = 4;
-        code = run[1] + linear - run[0];
         return 0;
     }
     if (second < 0x40 || second == 0x7F || second == 0xFF) return rejectTrail(second, 2, length);
@@ -448,22 +565,16 @@ int encodeGb18030(const Gb18030Tables& tables, uint32_t code, uint8_t* mbcs, uin
         length = 2;
         return 0;
     }
-    for (const auto& run : tables.fourByte) {
-        if (code - run[1] >= run[2]) continue;
-        uint32_t linear = run[0] + code - run[1];
-        mbcs[3] = static_cast<uint8_t>(0x30 + linear % 10);
-        linear /= 10;
-        mbcs[2] = static_cast<uint8_t>(0x81 + linear % 126);
-        linear /= 126;
-        mbcs[1] = static_cast<uint8_t>(0x30 + linear % 10);
-        mbcs[0] = static_cast<uint8_t>(0x81 + linear / 10);
+    if (code > 0xFFFF && !mapsGb18030Supplementary(tables, code)) return CES_ERROR_UNASSIGNED_CODE;
+    if (tables.edition2005 && code == 0xE7C7) {
+        putGbLinear(GB18030_SWAPPED_LINEAR, mbcs);
         length = 4;
         return 0;
     }
-    for (const auto& entry : tables.fallback) {
-        if (entry[0] != code) continue;
-        putGbCell(entry[1], mbcs);
-        length = 2;
+    for (const auto& run : tables.fourByte) {
+        if (code - run[1] >= run[2]) continue;
+        putGbLinear(run[0] + code - run[1], mbcs);
+        length = 4;
         return 0;
     }
     return CES_ERROR_UNASSIGNED_CODE;
@@ -522,7 +633,7 @@ bool isBig5(const void* profile) {
 }
 
 bool isMbcs(const void* profile) {
-    return isEucJp(profile) || isSjis(profile) || isSbc(profile) || isEucCn(profile) || isGb(profile) || isEucKr(profile) || isUhc(profile) || isBig5(profile);
+    return isEucJp(profile) || isSjis(profile) || isJis2004(profile) || isSbc(profile) || isEucCn(profile) || isGb(profile) || isEucKr(profile) || isUhc(profile) || isBig5(profile);
 }
 
 int decodeCp949(bool unified, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
@@ -688,7 +799,134 @@ int decodeEucJp(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint
     return rejectLead(length);
 }
 
+constexpr JisChange JIS_X0213_FALLBACKS[2] = {{0x216F, 0x00A5}, {0x2131, 0x203E}};
+constexpr uint8_t JIS_X0212_PLANE = 3;
+
+bool isJisX0213Plane2Row(uint32_t row) {
+    return std::find(std::begin(JIS_X0213_PLANE2_ROWS), std::end(JIS_X0213_PLANE2_ROWS), static_cast<uint8_t>(row)) != std::end(JIS_X0213_PLANE2_ROWS);
+}
+
+struct Jis2004Cell {
+    uint32_t code;
+    uint16_t cell;
+    uint8_t plane;
+};
+
+const std::vector<Jis2004Cell>& jis2004Reverse() {
+    static const std::vector<Jis2004Cell> reverse = [] {
+        std::vector<Jis2004Cell> entries;
+        for (uint8_t plane = 1; plane <= 2; ++plane) {
+            const uint32_t* table = plane == 1 ? JisX0213::PLANE1 : JisX0213::PLANE2;
+            for (uint32_t cell = 0; cell < 94 * 94; ++cell) {
+                if (table[cell] != 0) entries.push_back({table[cell], static_cast<uint16_t>(cell), plane});
+            }
+        }
+        for (const JisChange& fallback : JIS_X0213_FALLBACKS) entries.push_back({fallback.code, static_cast<uint16_t>(jisIndex(fallback.jis)), 1});
+        for (uint32_t cell = 0; cell < 94 * 94; ++cell) {
+            if (JisX0212::TO_UCS2[cell] != 0 && !isJisX0213Plane2Row(cell / 94 + 1)) entries.push_back({JisX0212::TO_UCS2[cell], static_cast<uint16_t>(cell), JIS_X0212_PLANE});
+        }
+        std::stable_sort(entries.begin(), entries.end(), [](const Jis2004Cell& a, const Jis2004Cell& b) { return a.code < b.code; });
+        return entries;
+    }();
+    return reverse;
+}
+
+int decodeJis2004(bool sjis, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
+    const uint8_t lead = mbcs[0];
+    if (lead < 0x80) {
+        length = 1;
+        code = lead;
+        return 0;
+    }
+    if (sjis) {
+        if (lead >= 0xA1 && lead <= 0xDF) {
+            length = 1;
+            code = 0xFF61 + (lead - 0xA1);
+            return 0;
+        }
+        if (!((lead >= 0x81 && lead <= 0x9F) || (lead >= 0xE0 && lead <= 0xFC))) return CES_ERROR_INVALID_ENCODE;
+        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+        int row = 0;
+        int cell = 0;
+        if (!sjisToJis(lead, mbcs[1], row, cell)) return CES_ERROR_INVALID_ENCODE;
+        length = 2;
+        if (row <= 94) code = JisX0213::PLANE1[(row - 1) * 94 + (cell - 1)];
+        else code = JisX0213::PLANE2[(JIS_X0213_PLANE2_ROWS[row - 95] - 1) * 94 + (cell - 1)];
+        return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
+    }
+    if (lead == 0x8E) {
+        if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xDF) return CES_ERROR_INVALID_ENCODE;
+        length = 2;
+        code = 0xFF61 + (mbcs[1] - 0xA1);
+        return 0;
+    }
+    if (lead == 0x8F) {
+        if (mbcsMax < 3) return CES_ERROR_SRC_BUFFER_END;
+        if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE || mbcs[2] < 0xA1 || mbcs[2] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+        length = 3;
+        const uint32_t cell = (mbcs[1] - 0xA1) * 94 + (mbcs[2] - 0xA1);
+        code = isJisX0213Plane2Row(mbcs[1] - 0xA0) ? JisX0213::PLANE2[cell] : JisX0212::TO_UCS2[cell];
+        return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
+    }
+    if (lead < 0xA1 || lead > 0xFE) return CES_ERROR_INVALID_ENCODE;
+    if (mbcsMax < 2) return CES_ERROR_SRC_BUFFER_END;
+    if (mbcs[1] < 0xA1 || mbcs[1] > 0xFE) return CES_ERROR_INVALID_ENCODE;
+    length = 2;
+    code = JisX0213::PLANE1[(lead - 0xA1) * 94 + (mbcs[1] - 0xA1)];
+    return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
+}
+
+int encodeJis2004(bool sjis, uint32_t code, uint8_t* mbcs, uint32_t& length) {
+    if (code < 0x80) {
+        length = 1;
+        mbcs[0] = static_cast<uint8_t>(code);
+        return 0;
+    }
+    if (code >= 0xFF61 && code <= 0xFF9F) {
+        const auto byte = static_cast<uint8_t>(0xA1 + (code - 0xFF61));
+        if (sjis) {
+            length = 1;
+            mbcs[0] = byte;
+        } else {
+            length = 2;
+            mbcs[0] = 0x8E;
+            mbcs[1] = byte;
+        }
+        return 0;
+    }
+    const auto& reverse = jis2004Reverse();
+    const auto found = std::lower_bound(reverse.begin(), reverse.end(), code, [](const Jis2004Cell& entry, uint32_t value) { return entry.code < value; });
+    if (found == reverse.end() || found->code != code) return CES_ERROR_UNASSIGNED_CODE;
+    const int row = found->cell / 94 + 1;
+    const int cell = found->cell % 94 + 1;
+    if (sjis) {
+        if (found->plane == JIS_X0212_PLANE) return CES_ERROR_UNASSIGNED_CODE;
+        int sjisRow = row;
+        if (found->plane == 2) {
+            const auto* position = std::find(std::begin(JIS_X0213_PLANE2_ROWS), std::end(JIS_X0213_PLANE2_ROWS), static_cast<uint8_t>(row));
+            if (position == std::end(JIS_X0213_PLANE2_ROWS)) return CES_ERROR_UNASSIGNED_CODE;
+            sjisRow = 95 + static_cast<int>(position - std::begin(JIS_X0213_PLANE2_ROWS));
+        }
+        jisToSjis(sjisRow, cell, mbcs[0], mbcs[1]);
+        length = 2;
+        return 0;
+    }
+    if (found->plane == 2 || found->plane == JIS_X0212_PLANE) {
+        mbcs[0] = 0x8F;
+        mbcs[1] = static_cast<uint8_t>(0xA0 + row);
+        mbcs[2] = static_cast<uint8_t>(0xA0 + cell);
+        length = 3;
+        return 0;
+    }
+    mbcs[0] = static_cast<uint8_t>(0xA0 + row);
+    mbcs[1] = static_cast<uint8_t>(0xA0 + cell);
+    length = 2;
+    return 0;
+}
+
 int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
+    if (isJis2004(profile)) return decodeJis2004(isSjis2004(profile), mbcs, mbcsMax, length, code);
     if (isEucKr(profile) || isUhc(profile)) return decodeCp949(isUhc(profile), mbcs, mbcsMax, length, code);
     if (isBig5(profile)) return decodeCp950(mbcs, mbcsMax, length, code);
     if (const Gb18030Tables* tables = gb18030Tables(profile)) return decodeGb18030(*tables, mbcs, mbcsMax, length, code);
@@ -696,7 +934,7 @@ int decodeMbcs(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint3
     const uint8_t lead = mbcs[0];
     if (isSbc(profile)) {
         length = 1;
-        return sbcToUnicode(static_cast<const uint8_t*>(profile), lead, code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
+        return sbcError(static_cast<const uint8_t*>(profile), lead, code);
     }
     if (isSjis(profile)) {
         const bool strict = isSjisX0208(profile);
@@ -794,6 +1032,7 @@ uint32_t jisAlias(uint32_t code) {
 }
 
 int encodeMbcs(const void* profile, uint32_t code, uint8_t* mbcs, uint32_t& length) {
+    if (isJis2004(profile)) return encodeJis2004(isSjis2004(profile), code, mbcs, length);
     if (isEucKr(profile) || isUhc(profile)) return encodeDbcs(cp949Reverse(), isEucKr(profile), code, mbcs, length);
     if (isBig5(profile)) return encodeDbcs(cp950Reverse(), false, code, mbcs, length);
     if (const Gb18030Tables* tables = gb18030Tables(profile)) return encodeGb18030(*tables, code, mbcs, length);
@@ -935,6 +1174,252 @@ int rejected(int result, uint32_t length, uint32_t* sourceSize, Unit* character,
     if (character) *character = 0;
     if (produced) *produced = 0;
     return result;
+}
+
+constexpr uint8_t ISO2022_RFC1468_TAG[8] = {'I', 'S', 'O', '2', '0', '2', '2', 'R'};
+constexpr uint8_t ISO2022_CP50221_TAG[8] = {'I', 'S', 'O', '2', '0', '2', '2', '1'};
+constexpr uint8_t ISO2022_CP50222_TAG[8] = {'I', 'S', 'O', '2', '0', '2', '2', '2'};
+constexpr uint32_t ISO2022_NO_CHARACTER = 0xFFFFFFFFu;
+
+bool isIso2022(const void* profile) {
+    return hasTag(profile, ISO2022_RFC1468_TAG) || hasTag(profile, ISO2022_CP50221_TAG) || hasTag(profile, ISO2022_CP50222_TAG);
+}
+
+bool iso2022Katakana(const void* profile) {
+    return hasTag(profile, ISO2022_CP50221_TAG) || hasTag(profile, ISO2022_CP50222_TAG);
+}
+
+bool iso2022ShiftsKatakana(const void* profile) {
+    return hasTag(profile, ISO2022_CP50222_TAG);
+}
+
+enum class Iso2022Set : uint8_t { Ascii, Roman, Jis0208, Katakana, Other };
+
+struct Iso2022State {
+    Iso2022Set set = Iso2022Set::Ascii;
+    bool shiftedOut = false;
+};
+
+bool isIso2022Rfc1468(const void* profile) {
+    return hasTag(profile, ISO2022_RFC1468_TAG);
+}
+
+Iso2022State iso2022Start(const void* profile) {
+    Iso2022State state;
+    state.set = isIso2022Rfc1468(profile) ? Iso2022Set::Roman : Iso2022Set::Ascii;
+    return state;
+}
+
+int iso2022Designation(const void* profile, Iso2022State& state, const uint8_t* iso, uint32_t isoMax, uint32_t& length) {
+    if (isoMax < 2) return CES_ERROR_SRC_BUFFER_END;
+    if (iso[1] != 0x28 && iso[1] != 0x24) return CES_ERROR_INVALID_ENCODE;
+    if (isoMax < 3) return CES_ERROR_SRC_BUFFER_END;
+    const bool multibyte = iso[1] == 0x24;
+    uint8_t final = iso[2];
+    length = 3;
+    if (multibyte && final == 0x28) {
+        if (isoMax < 4) return CES_ERROR_SRC_BUFFER_END;
+        final = iso[3];
+        length = 4;
+        if (final < 0x40 || final > 0x7E) return CES_ERROR_INVALID_ENCODE;
+        state.set = Iso2022Set::Other;
+        return 0;
+    }
+    if (final < 0x40 || final > 0x7E) return CES_ERROR_INVALID_ENCODE;
+    if (multibyte) state.set = final == 0x40 || final == 0x42 ? Iso2022Set::Jis0208 : Iso2022Set::Other;
+    else if (final == 0x42 || final == 0x4A) state.set = isIso2022Rfc1468(profile) ? Iso2022Set::Roman : Iso2022Set::Ascii;
+    else if (final == 0x49 && iso2022Katakana(profile) && !iso2022ShiftsKatakana(profile)) state.set = Iso2022Set::Katakana;
+    else state.set = Iso2022Set::Other;
+    return 0;
+}
+
+int decodeIso2022(const void* profile, Iso2022State& state, const uint8_t* iso, uint32_t isoMax, uint32_t& length, uint32_t& code) {
+    const uint8_t lead = iso[0];
+    code = ISO2022_NO_CHARACTER;
+    if (lead == 0x1B) {
+        if (const int result = iso2022Designation(profile, state, iso, isoMax, length); result != 0) return result;
+        return isoMax == length ? CES_ERROR_SRC_BUFFER_END : 0;
+    }
+    length = 1;
+    if (lead == 0x0E || lead == 0x0F) {
+        if (isoMax < 2) return CES_ERROR_SRC_BUFFER_END;
+        if (!iso2022ShiftsKatakana(profile)) return CES_ERROR_ILLEGAL_CODE;
+        state.shiftedOut = lead == 0x0E;
+        return 0;
+    }
+    if (lead >= 0x80) return CES_ERROR_INVALID_ENCODE;
+    const bool doubleOrKana = state.shiftedOut || state.set == Iso2022Set::Katakana || state.set == Iso2022Set::Jis0208;
+    if (lead < 0x20 || (lead == 0x7F && !doubleOrKana) || (lead == 0x20 && state.set == Iso2022Set::Other)) {
+        code = lead;
+        return 0;
+    }
+    if (lead == 0x7F) return CES_ERROR_UNASSIGNED_CODE;
+    if (state.shiftedOut || state.set == Iso2022Set::Katakana) {
+        if (lead == 0x20 || lead > 0x5F) return CES_ERROR_UNASSIGNED_CODE;
+        code = 0xFF61 + (lead - 0x21);
+        return 0;
+    }
+    if (state.set == Iso2022Set::Ascii) {
+        code = lead;
+        return 0;
+    }
+    if (state.set == Iso2022Set::Roman) {
+        code = sjisX0208Single(lead);
+        return 0;
+    }
+    if (state.set == Iso2022Set::Other) return CES_ERROR_ILLEGAL_CODE;
+    if (lead == 0x20) return CES_ERROR_UNASSIGNED_CODE;
+    if (isoMax < 2) return CES_ERROR_SRC_BUFFER_END;
+    const uint8_t trail = iso[1];
+    if (trail < 0x21 || trail > 0x7F) return CES_ERROR_INVALID_ENCODE;
+    length = 2;
+    code = jisX0208ToUnicode(isIso2022Rfc1468(profile) ? JisStrict::Sjis : JisStrict::None, (lead - 0x21) * 94 + (trail - 0x21));
+    return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
+}
+
+uint32_t iso2022Designate(Iso2022State& state, Iso2022Set set, uint8_t* out) {
+    if (state.set == set) return 0;
+    state.set = set;
+    out[0] = 0x1B;
+    out[1] = set == Iso2022Set::Jis0208 ? 0x24 : 0x28;
+    out[2] = set == Iso2022Set::Katakana ? 0x49 : 0x42;
+    return 3;
+}
+
+uint32_t iso2022ShiftIn(Iso2022State& state, uint8_t* out) {
+    if (!state.shiftedOut) return 0;
+    state.shiftedOut = false;
+    state.set = Iso2022Set::Other;
+    out[0] = 0x0F;
+    return 1;
+}
+
+const std::vector<JisCell>& iso2022CpReverse() {
+    static const auto reverse = [] {
+        auto entries = jisReverse(JisStrict::None);
+        for (const JisChange& change : JIS_X0208_CHANGES) entries.push_back({change.code, static_cast<uint16_t>(jisIndex(change.jis)), false});
+        for (const JisChange& fallback : JIS_X0208_EUC_FALLBACKS) entries.push_back({fallback.code, static_cast<uint16_t>(jisIndex(fallback.jis)), false});
+        entries.push_back({0xFF3C, static_cast<uint16_t>(jisIndex(JIS_X0208_BACKSLASH_CELL)), false});
+        std::stable_sort(entries.begin(), entries.end(), [](const JisCell& left, const JisCell& right) { return left.code < right.code; });
+        return entries;
+    }();
+    return reverse;
+}
+
+int encodeIso2022(const void* profile, Iso2022State& state, uint32_t code, uint8_t* out, uint32_t& length) {
+    length = 0;
+    const bool rfc1468 = isIso2022Rfc1468(profile);
+    if (code == 0xFEFF) return 0;
+    if (code == 0x0E || code == 0x0F || (code >= 0x80 && code <= 0x9F)) return CES_ERROR_UNSUPPORTED_CODE;
+    const Iso2022Set single = rfc1468 ? Iso2022Set::Roman : Iso2022Set::Ascii;
+    const bool roman = rfc1468 && (code == 0x00A5 || code == 0x203E);
+    if ((code < 0x80 && !(rfc1468 && (code == 0x5C || code == 0x7E))) || roman) {
+        const bool control = code < 0x20 || code == 0x7F;
+        length += iso2022ShiftIn(state, out + length);
+        if (!control || code == 0x0A || code == 0x0D) length += iso2022Designate(state, single, out + length);
+        out[length++] = roman ? (code == 0x00A5 ? 0x5C : 0x7E) : static_cast<uint8_t>(code);
+        return 0;
+    }
+    if (code >= 0xFF61 && code <= 0xFF9F) {
+        if (!iso2022Katakana(profile)) return CES_ERROR_UNSUPPORTED_CODE;
+        if (iso2022ShiftsKatakana(profile)) {
+            if (!state.shiftedOut) {
+                state.shiftedOut = true;
+                out[length++] = 0x0E;
+            }
+        } else {
+            length += iso2022Designate(state, Iso2022Set::Katakana, out + length);
+        }
+        out[length++] = static_cast<uint8_t>(0x21 + (code - 0xFF61));
+        return 0;
+    }
+    if (code > 0xFFFF) return CES_ERROR_UNASSIGNED_CODE;
+    const auto& reverse = rfc1468 ? jisReverse(JisStrict::Sjis) : iso2022CpReverse();
+    const auto found = std::lower_bound(reverse.begin(), reverse.end(), static_cast<uint16_t>(code), [](const JisCell& entry, uint16_t value) { return entry.code < value; });
+    if (found == reverse.end() || found->code != code || found->supplementary) return CES_ERROR_UNASSIGNED_CODE;
+    length += iso2022ShiftIn(state, out + length);
+    length += iso2022Designate(state, Iso2022Set::Jis0208, out + length);
+    out[length++] = static_cast<uint8_t>(0x21 + found->cell / 94);
+    out[length++] = static_cast<uint8_t>(0x21 + found->cell % 94);
+    return 0;
+}
+
+template<typename Source, typename Decode>
+int toIso2022(const void* context, const Source* source, uint32_t sourceMax, uint32_t* sourceLen, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, Decode decode) {
+    if (!context) return CES_ERROR_INVALID_PARAMETER;
+    const void* profile = contextProfile(context);
+    if (!isIso2022(profile)) return CES_ERROR_INVALID_PARAMETER;
+    if (!source) return CES_ERROR_INVALID_SRC_BUFFER;
+    Iso2022State state = iso2022Start(profile);
+    uint32_t read = 0;
+    uint32_t written = 0;
+    const auto fail = [&](int result) {
+        if (sourceLen) *sourceLen = read;
+        if (isoLen) *isoLen = written;
+        return result;
+    };
+    const auto emit = [&](const uint8_t* encoded, uint32_t size) {
+        if (iso) {
+            if (written + size > isoMax) return CES_ERROR_DST_BUFFER_END;
+            std::memcpy(iso + written, encoded, size);
+        }
+        written += size;
+        return 0;
+    };
+    while (read < sourceMax && source[read] != 0) {
+        uint32_t length = 0;
+        uint32_t code = 0;
+        if (const int result = decode(source + read, sourceMax - read, length, code); result != 0) return fail(result == CES_ERROR_INVALID_ENCODE && code >= 0xD800 && code <= 0xDFFF ? CES_ERROR_ILLEGAL_CODE : result);
+        if (code == 0x1B) return fail(read + length < sourceMax && source[read + length] != 0 ? CES_ERROR_ILLEGAL_CODE : CES_ERROR_SRC_BUFFER_END);
+        uint8_t encoded[8];
+        uint32_t size = 0;
+        if (const int result = encodeIso2022(profile, state, code, encoded, size); result != 0) return fail(result);
+        if (const int result = emit(encoded, size); result != 0) return fail(result);
+        read += length;
+    }
+    uint8_t tail[4];
+    uint32_t tailSize = iso2022ShiftIn(state, tail);
+    tailSize += iso2022Designate(state, iso2022Start(profile).set, tail + tailSize);
+    if (const int result = emit(tail, tailSize); result != 0) return fail(result);
+    if (sourceLen) *sourceLen = read;
+    if (isoLen) *isoLen = written;
+    return 0;
+}
+
+template<typename Target, typename Encode>
+int fromIso2022(const void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, Target* target, uint32_t targetMax, uint32_t* targetLen, Encode encode) {
+    if (!context) return CES_ERROR_INVALID_PARAMETER;
+    const void* profile = contextProfile(context);
+    if (!isIso2022(profile)) return CES_ERROR_INVALID_PARAMETER;
+    if (!iso) return CES_ERROR_INVALID_SRC_BUFFER;
+    Iso2022State state = iso2022Start(profile);
+    uint32_t read = 0;
+    uint32_t consumed = 0;
+    uint32_t written = 0;
+    const auto fail = [&](int result) {
+        if (isoLen) *isoLen = consumed;
+        if (targetLen) *targetLen = written;
+        return result;
+    };
+    while (read < isoMax && iso[read] != 0) {
+        uint32_t length = 0;
+        uint32_t code = 0;
+        if (const int result = decodeIso2022(profile, state, iso + read, isoMax - read, length, code); result != 0) return fail(result);
+        read += length;
+        if (code == ISO2022_NO_CHARACTER) continue;
+        consumed = read;
+        Target encoded[4];
+        const uint32_t size = encode(code, encoded);
+        if (size == 0) return fail(CES_ERROR_UNASSIGNED_CODE);
+        if (target) {
+            if (written + size > targetMax) return fail(CES_ERROR_DST_BUFFER_END);
+            std::memcpy(target + written, encoded, size * sizeof(Target));
+        }
+        written += size;
+    }
+    if (isoLen) *isoLen = consumed;
+    if (targetLen) *targetLen = written;
+    return 0;
 }
 
 int mbcsToUtf8(bool accepted, const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t* mbcsLen, uint8_t* utf8, uint32_t utf8Max, uint32_t* utf8Len) {
@@ -1123,7 +1608,7 @@ int unitTarget(const void*, uint32_t code, Unit* target, uint32_t& length) {
 int sbcToUnit(const uint8_t* profile, uint8_t sbc, const void* target, uint32_t& code) {
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     if (!target) return CES_ERROR_INVALID_DST_BUFFER;
-    return sbcToUnicode(profile, sbc, code) ? 0 : CES_ERROR_UNASSIGNED_CODE;
+    return sbcError(profile, sbc, code);
 }
 
 template<bool BigEndian>
@@ -1300,6 +1785,54 @@ const uint8_t* APS5_VABI sceCesRefersUcsProfileCp1258(void) {
     return singleByteProfile(SingleByte::Cp1258);
 }
 
+const uint8_t* APS5_VABI sceCesRefersUcsProfileAscii(void) {
+    return singleByteProfile(SingleByte::Ascii);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileAsciiWithKatakana(void) {
+    return singleByteProfile(SingleByte::AsciiWithKatakana);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileBs4730(void) {
+    return singleByteProfile(SingleByte::Bs4730);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileGbT1988(void) {
+    return singleByteProfile(SingleByte::GbT1988);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileGbT1988Tilde0x7e(void) {
+    return singleByteProfile(SingleByte::GbT1988Tilde0x7e);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201(void) {
+    return singleByteProfile(SingleByte::JisX0201);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201Katakana(void) {
+    return singleByteProfile(SingleByte::JisX0201Katakana);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201Roman(void) {
+    return singleByteProfile(SingleByte::JisX0201Roman);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201RomanTilde0x7e(void) {
+    return singleByteProfile(SingleByte::JisX0201RomanTilde0x7e);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileJisX0201Tilde0x7e(void) {
+    return singleByteProfile(SingleByte::JisX0201Tilde0x7e);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileKsX1003(void) {
+    return singleByteProfile(SingleByte::KsX1003);
+}
+
+const uint8_t* APS5_VABI sceCesRefersUcsProfileKsX1003Tilde0x7e(void) {
+    return singleByteProfile(SingleByte::KsX1003Tilde0x7e);
+}
+
 void* APS5_VABI sceCesUcsProfileInitSJis1997Cp932(void* sheet) {
     if (!sheet) return nullptr;
     std::memcpy(sheet, SJIS_TAG, sizeof(SJIS_TAG));
@@ -1420,7 +1953,7 @@ int APS5_VABI sceCesSbcToUtf8(const uint8_t* profile, uint8_t sbc, uint8_t* utf8
     if (!profile) return CES_ERROR_INVALID_PROFILE;
     if (!isSbc(profile)) return CES_ERROR_INVALID_PARAMETER;
     uint32_t code = 0;
-    if (!sbcToUnicode(profile, sbc, code)) return CES_ERROR_UNASSIGNED_CODE;
+    if (const int result = sbcError(profile, sbc, code); result != 0) return result;
     uint8_t encoded[4];
     const uint32_t length = encodeUtf8(code, encoded);
     if (utf8_len) *utf8_len = length;
@@ -2167,6 +2700,126 @@ int APS5_VABI sceCesUtf32beToBig5(const uint32_t* utf32, const void* profile, ui
 
 int APS5_VABI sceCesUtf32leToBig5(const uint32_t* utf32, const void* profile, uint8_t* big5Buffer, uint32_t big5Max, uint32_t* big5Size) {
     return utf32ToProfiled<false>(isBig5, utf32, profile, big5Buffer, big5Max, big5Size);
+}
+
+
+void* APS5_VABI sceCesUcsProfileInitEucJis2004(void* sheet) {
+    if (!sheet) return nullptr;
+    std::memcpy(sheet, EUC_JIS2004_TAG, sizeof(EUC_JIS2004_TAG));
+    return sheet;
+}
+
+void* APS5_VABI sceCesUcsProfileInitSJis2004X0213(void* sheet) {
+    if (!sheet) return nullptr;
+    std::memcpy(sheet, SJIS2004_TAG, sizeof(SJIS2004_TAG));
+    return sheet;
+}
+
+void* APS5_VABI sceCesUcsProfileInitIso2022JpRfc1468(void* sheet) {
+    if (!sheet) return nullptr;
+    std::memcpy(sheet, ISO2022_RFC1468_TAG, sizeof(ISO2022_RFC1468_TAG));
+    return sheet;
+}
+
+void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50221(void* sheet) {
+    if (!sheet) return nullptr;
+    std::memcpy(sheet, ISO2022_CP50221_TAG, sizeof(ISO2022_CP50221_TAG));
+    return sheet;
+}
+
+void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50222(void* sheet) {
+    if (!sheet) return nullptr;
+    std::memcpy(sheet, ISO2022_CP50222_TAG, sizeof(ISO2022_CP50222_TAG));
+    return sheet;
+}
+
+int APS5_VABI sceCesIso2022UcsContextInit(void* context, const void* profile) {
+    if (!context) return CES_ERROR_INVALID_PARAMETER;
+    if (!profile) {
+        std::memset(context, 0, 0x100);
+        return CES_ERROR_INVALID_PARAMETER;
+    }
+    std::memcpy(context, &profile, sizeof(profile));
+    return 0;
+}
+
+int APS5_VABI sceCesIso2022UcsContextInitCopy(void* context, const void* source) {
+    if (!context || !source) return CES_ERROR_INVALID_PARAMETER;
+    const void* profile = contextProfile(source);
+    std::memcpy(context, &profile, sizeof(profile));
+    return 0;
+}
+
+int APS5_VABI sceCesUtf8StrToIso2022Str(void* context, const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8Len, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen) {
+    if (!iso) return CES_ERROR_INVALID_DST_BUFFER;
+    return toIso2022(context, utf8, utf8max, utf8Len, iso, isoMax, isoLen, decodeIso2022Utf8);
+}
+
+int APS5_VABI sceCesUtf8StrGetIso2022Len(void* context, const uint8_t* utf8, uint32_t utf8max, uint32_t* utf8Len, uint32_t* isoLen) {
+    return toIso2022(context, utf8, utf8max, utf8Len, static_cast<uint8_t*>(nullptr), 0, isoLen, decodeIso2022Utf8);
+}
+
+int APS5_VABI sceCesIso2022StrToUtf8Str(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint8_t* utf8, uint32_t utf8max, uint32_t* utf8Len) {
+    if (!utf8) return CES_ERROR_INVALID_DST_BUFFER;
+    return fromIso2022(context, iso, isoMax, isoLen, utf8, utf8max, utf8Len, encodeUtf8);
+}
+
+int APS5_VABI sceCesIso2022StrGetUtf8Len(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* utf8Len) {
+    return fromIso2022(context, iso, isoMax, isoLen, static_cast<uint8_t*>(nullptr), 0, utf8Len, encodeUtf8);
+}
+
+int APS5_VABI sceCesUcs2StrToIso2022Str(void* context, const uint16_t* ucs2, uint32_t ucs2max, uint32_t* ucs2Len, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen) {
+    if (!iso) return CES_ERROR_INVALID_DST_BUFFER;
+    return toIso2022(context, ucs2, ucs2max, ucs2Len, iso, isoMax, isoLen, decodeUcs2);
+}
+
+int APS5_VABI sceCesUcs2StrGetIso2022Len(void* context, const uint16_t* ucs2, uint32_t ucs2max, uint32_t* ucs2Len, uint32_t* isoLen) {
+    return toIso2022(context, ucs2, ucs2max, ucs2Len, static_cast<uint8_t*>(nullptr), 0, isoLen, decodeUcs2);
+}
+
+int APS5_VABI sceCesIso2022StrToUcs2Str(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint16_t* ucs2, uint32_t ucs2max, uint32_t* ucs2Len) {
+    if (!ucs2) return CES_ERROR_INVALID_DST_BUFFER;
+    return fromIso2022(context, iso, isoMax, isoLen, ucs2, ucs2max, ucs2Len, encodeUcs2);
+}
+
+int APS5_VABI sceCesIso2022StrGetUcs2Len(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* ucs2Len) {
+    return fromIso2022(context, iso, isoMax, isoLen, static_cast<uint16_t*>(nullptr), 0, ucs2Len, encodeUcs2);
+}
+
+int APS5_VABI sceCesUtf16StrToIso2022Str(void* context, const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen) {
+    if (!iso) return CES_ERROR_INVALID_DST_BUFFER;
+    return toIso2022(context, utf16, utf16max, utf16Len, iso, isoMax, isoLen, decodeUtf16<NATIVE_BIG_ENDIAN>);
+}
+
+int APS5_VABI sceCesUtf16StrGetIso2022Len(void* context, const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, uint32_t* isoLen) {
+    return toIso2022(context, utf16, utf16max, utf16Len, static_cast<uint8_t*>(nullptr), 0, isoLen, decodeUtf16<NATIVE_BIG_ENDIAN>);
+}
+
+int APS5_VABI sceCesIso2022StrToUtf16Str(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len) {
+    if (!utf16) return CES_ERROR_INVALID_DST_BUFFER;
+    return fromIso2022(context, iso, isoMax, isoLen, utf16, utf16max, utf16Len, encodeUtf16);
+}
+
+int APS5_VABI sceCesIso2022StrGetUtf16Len(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* utf16Len) {
+    return fromIso2022(context, iso, isoMax, isoLen, static_cast<uint16_t*>(nullptr), 0, utf16Len, encodeUtf16);
+}
+
+int APS5_VABI sceCesUtf32StrToIso2022Str(void* context, const uint32_t* utf32, uint32_t utf32max, uint32_t* utf32Len, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen) {
+    if (!iso) return CES_ERROR_INVALID_DST_BUFFER;
+    return toIso2022(context, utf32, utf32max, utf32Len, iso, isoMax, isoLen, decodeUtf32);
+}
+
+int APS5_VABI sceCesUtf32StrGetIso2022Len(void* context, const uint32_t* utf32, uint32_t utf32max, uint32_t* utf32Len, uint32_t* isoLen) {
+    return toIso2022(context, utf32, utf32max, utf32Len, static_cast<uint8_t*>(nullptr), 0, isoLen, decodeUtf32);
+}
+
+int APS5_VABI sceCesIso2022StrToUtf32Str(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* utf32, uint32_t utf32max, uint32_t* utf32Len) {
+    if (!utf32) return CES_ERROR_INVALID_DST_BUFFER;
+    return fromIso2022(context, iso, isoMax, isoLen, utf32, utf32max, utf32Len, encodeUtf32);
+}
+
+int APS5_VABI sceCesIso2022StrGetUtf32Len(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* utf32Len) {
+    return fromIso2022(context, iso, isoMax, isoLen, static_cast<uint32_t*>(nullptr), 0, utf32Len, encodeUtf32);
 }
 
 }

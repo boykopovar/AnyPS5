@@ -137,7 +137,7 @@ int APS5_VABI sceNpTusTryAndSetVariableForCrossSave(int reqId, std::uint64_t tar
 int APS5_VABI sceNpTusTryAndSetVariableForCrossSaveVUser(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, std::int32_t opeType, std::int64_t variable, const std::int64_t* compareValue, const std::uint64_t* isLastChangedAuthor, const void* isLastChangedDate, void* resultVariable, std::uint64_t resultVariableSize, void* option);
 int APS5_VABI sceNpTusTryAndSetVariableVUser(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, std::int32_t opeType, std::int64_t variable, const std::int64_t* compareValue, const void* isLastChangedAuthor, const void* isLastChangedDate, void* resultVariable, std::uint64_t resultVariableSize, void* option);
 int APS5_VABI sceNpTssGetData();
-int APS5_VABI sceNpTusCreateNpTitleCtx();
+int APS5_VABI sceNpTusCreateNpTitleCtx(std::uint32_t serviceLabel, void* npId);
 int APS5_VABI sceNpTusGetData(int reqId, const void* targetNpId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, void* option);
 int APS5_VABI sceNpTusGetDataVUser(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, void* option);
 int APS5_VABI sceNpTusGetMultiSlotVariable(int reqId, const void* targetNpId, const std::int32_t* slotIds, void* variableArray, std::uint64_t variableArraySize, int arrayLen, void* option);

@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <string>
+#include <utility>
 
 namespace Elfpatcher::Windows {
 
@@ -15,6 +16,7 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
         throw Domain::RelinkerException("Invalid ELF dynamic symbol table size");
     PeRelocations result;
     std::map<std::uint64_t, std::uint64_t> ranges;
+    std::map<std::uint64_t, std::pair<std::uint64_t, std::uint64_t>> entries;
     const auto applyTable = [&](const std::vector<std::uint8_t>& table, const bool plt) {
         if (table.size() % 24 != 0)
             throw Domain::RelinkerException("Invalid ELF RELA table size");
@@ -25,14 +27,17 @@ PeRelocations WindowsRelocationBuilder::Apply(WindowsLoadImage& image, const Dom
             const auto type = static_cast<std::uint32_t>(info);
             const auto symbol = info >> 32;
             if ((plt && type != 7) || (type != 1 && type != 6 && type != 7 && type != 8 && type != 16 && type != 17 && type != 18))
-                throw Domain::RelinkerException("Unsupported Windows relocation type " + std::to_string(type), target);
+                throw Domain::RelinkerException("Relocation type " + std::to_string(type) + " is not supported for this target", target);
             if (target > std::numeric_limits<std::uint64_t>::max() - 8)
                 throw Domain::RelinkerException("Relocation target address overflow", target);
             const auto rva = image.GetRva(target, 8);
+            const auto applied = entries.find(target);
+            if (applied != entries.end() && applied->second == std::pair{info, addend}) continue;
             const auto next = ranges.lower_bound(target);
             if ((next != ranges.end() && next->first < target + 8) || (next != ranges.begin() && std::prev(next)->second > target))
                 throw Domain::RelinkerException("Overlapping ELF relocation targets", target);
             ranges.emplace(target, target + 8);
+            entries.emplace(target, std::pair{info, addend});
             if (type == 8) {
                 if (symbol != 0)
                     throw Domain::RelinkerException("RELATIVE relocation has a symbol index", target);

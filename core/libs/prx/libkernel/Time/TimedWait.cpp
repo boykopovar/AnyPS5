@@ -22,7 +22,7 @@ namespace TimedWait {
 namespace {
 
 constexpr std::uint64_t YIELD_BELOW_NANOS = 50000ULL;
-constexpr std::uint64_t LEAD_NANOS = 500000ULL;
+constexpr std::uint64_t LEAD_NANOS = 20000ULL;
 
 std::mutex& ChangeSleepersMutex() {
     static std::mutex mutex;
@@ -619,6 +619,11 @@ void SleepNanos(std::uint64_t nanos) {
     }
     SleepUntil(NowNanos() + nanos);
 #else
+    struct SleepRegistration {
+        std::atomic<int>* state = WaitState().bound;
+        SleepRegistration() { state->fetch_add(1, std::memory_order_seq_cst); }
+        ~SleepRegistration() { state->fetch_sub(1, std::memory_order_seq_cst); }
+    } registration;
     struct timespec req{};
     req.tv_sec = static_cast<time_t>(nanos / 1000000000ULL);
     req.tv_nsec = static_cast<long>(nanos % 1000000000ULL);

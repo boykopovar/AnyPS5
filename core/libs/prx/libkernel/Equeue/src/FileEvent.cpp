@@ -23,6 +23,8 @@
 #include <sys/event.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#elif defined(__EMSCRIPTEN__)
+#include <unistd.h>
 #else
 #include <dirent.h>
 #include <fcntl.h>
@@ -68,6 +70,7 @@ public:
         stopSignal = ends[1];
         ::fcntl(stopEvent, F_SETFD, FD_CLOEXEC);
         ::fcntl(stopSignal, F_SETFD, FD_CLOEXEC);
+#elif defined(__EMSCRIPTEN__)
 #else
         stopEvent = ::eventfd(0, EFD_CLOEXEC);
         if (stopEvent < 0) {
@@ -178,9 +181,17 @@ bool TakeSnapshot(HANDLE handle, Snapshot& snapshot) {
     }
     FILE_BASIC_INFO basic{};
     FILE_STANDARD_INFO standard{};
-    if (!::GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) ||
-        !::GetFileInformationByHandleEx(handle, FileStandardInfo, &standard, sizeof(standard))) {
-        return false;
+    FILE_BASIC_INFO settled{};
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        if (!::GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) ||
+            !::GetFileInformationByHandleEx(handle, FileStandardInfo, &standard, sizeof(standard)) ||
+            !::GetFileInformationByHandleEx(handle, FileBasicInfo, &settled, sizeof(settled))) {
+            return false;
+        }
+        if (settled.LastWriteTime.QuadPart == basic.LastWriteTime.QuadPart && settled.ChangeTime.QuadPart == basic.ChangeTime.QuadPart &&
+            settled.CreationTime.QuadPart == basic.CreationTime.QuadPart && settled.FileAttributes == basic.FileAttributes) {
+            break;
+        }
     }
     snapshot.size = static_cast<std::uint64_t>(standard.EndOfFile.QuadPart);
     snapshot.links = standard.NumberOfLinks;
@@ -457,6 +468,19 @@ int OpenHostWatch(int descriptor, std::uint32_t, HostWatch& host) {
     return 0;
 }
 
+#elif defined(__EMSCRIPTEN__)
+
+struct HostWatch {};
+
+void CloseHostWatch(HostWatch&) {}
+
+void RunHostWatch(std::shared_ptr<VnodeWatch>, HostWatch) {}
+
+int OpenHostWatch(int, std::uint32_t, HostWatch&) {
+    NotImplemented_nid_no_patch("EVFILT_VNODE in WebAssembly");
+    return GUEST_EINVAL;
+}
+
 #else
 
 struct HostWatch {
@@ -695,7 +719,7 @@ int VnodeDescriptorError(int descriptor) {
     if (!DescriptorIsOpen_nid_no_patch(descriptor)) {
         return GUEST_EBADF;
     }
-    return IsKqueueDescriptor(descriptor) ? GUEST_EINVAL : 0;
+    return IsKqueueDescriptor_nid_no_patch(descriptor) ? GUEST_EINVAL : 0;
 }
 
 }

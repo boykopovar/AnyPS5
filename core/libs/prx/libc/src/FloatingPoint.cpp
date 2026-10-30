@@ -53,7 +53,7 @@ int APS5_VABI fesetround_nid_postfix(int rounding) {
 int APS5_VABI fetestexcept_nid_postfix(int exceptions) {
     std::uint16_t status;
     asm volatile("fnstsw %0" : "=am"(status));
-    return (status | _mm_getcsr()) & static_cast<unsigned>(exceptions) & Exceptions;
+    return static_cast<int>((status | _mm_getcsr()) & static_cast<unsigned>(exceptions));
 }
 
 int APS5_VABI fegetexceptflag_nid_postfix(std::uint16_t* flags, int exceptions) {
@@ -81,6 +81,14 @@ void APS5_VABI _Feraise_nid_postfix(int exceptions) {
 int APS5_VABI fesetexceptflag_nid_postfix(const std::uint16_t* flags, int exceptions) {
     if (flags == nullptr) throw std::invalid_argument("fesetexceptflag: null flags");
     ReplaceFlags(static_cast<unsigned>(exceptions) & Exceptions, *flags);
+    return 0;
+}
+
+int APS5_VABI feraiseexcept_nid_postfix(int exceptions) {
+    const auto raised = static_cast<unsigned>(exceptions);
+    if ((raised & ~Exceptions) != 0) throw std::invalid_argument("feraiseexcept: unsupported exception bits");
+    ReplaceFlags(raised, raised);
+    asm volatile("fwait");
     return 0;
 }
 

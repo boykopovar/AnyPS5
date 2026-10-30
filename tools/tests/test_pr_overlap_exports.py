@@ -129,5 +129,60 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(set(explicit) & set(named), {("core/libs/prx/libSceExample", "Pz262plj20w")})
 
 
+    def test_overlaps_reports_same_exports_for_different_names_with_matching_nid(self):
+        nid = "vPP6vKHY8Tg"
+        prs = {
+            1: {
+                "author": "author1",
+                "depends": set(),
+                "added": set(),
+                "exports": {"_sceSdmaNop"},
+                "added_exports": {("core/libs/prx/libSceSdma", nid): {"_sceSdmaNop"}},
+                "tree": None,
+            },
+            2: {
+                "author": "author2",
+                "depends": set(),
+                "added": set(),
+                "exports": set(),
+                "added_exports": {("core/libs/prx/libSceSdma", nid): {"sceSdmaPending_001_nid_no_patch"}},
+                "tree": None,
+            },
+        }
+        found = pr_overlap.overlaps(prs, 1, 2)
+        self.assertIsNotNone(found)
+        self.assertEqual(found["exports"], {"_sceSdmaNop", "sceSdmaPending_001_nid_no_patch"})
+
+    def test_overlaps_does_not_report_export_conflict_for_shared_dependency(self):
+        nid = "vPP6vKHY8Tg"
+        prs = {
+            1: {
+                "author": "author1",
+                "depends": {3},
+                "added": set(),
+                "exports": {"_sceSdmaNop"},
+                "added_exports": {("core/libs/prx/libSceSdma", nid): {"_sceSdmaNop"}},
+                "tree": None,
+            },
+            2: {
+                "author": "author2",
+                "depends": {3},
+                "added": set(),
+                "exports": {"_sceSdmaNop"},
+                "added_exports": {("core/libs/prx/libSceSdma", nid): {"_sceSdmaNop"}},
+                "tree": None,
+            },
+            3: {
+                "author": "author3",
+                "depends": set(),
+                "added": set(),
+                "exports": {"_sceSdmaNop"},
+                "added_exports": {("core/libs/prx/libSceSdma", nid): {"_sceSdmaNop"}},
+                "tree": None,
+            },
+        }
+        self.assertIsNone(pr_overlap.overlaps(prs, 1, 2))
+
+
 if __name__ == "__main__":
     unittest.main()

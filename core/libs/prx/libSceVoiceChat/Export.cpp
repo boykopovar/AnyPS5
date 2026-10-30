@@ -25,6 +25,11 @@ void logSoft(const char* func, const char* what) {
     std::fprintf(stderr, "[SOFT-VOICECHAT] %s -> %s\n", func, what);
     std::fflush(stderr);
 }
+
+int offlineRequest(const char* func) {
+    logSoft(func, "SIGNED_OUT (offline)");
+    return VOICECHAT_ERROR_SIGNED_OUT;
+}
 }  // namespace
 
 extern "C" {
@@ -43,37 +48,28 @@ int APS5_VABI sceVoiceChatCreateRequest(void* a, void* b) {
     return VOICECHAT_ERROR_SIGNED_OUT;
 }
 
-#define VOICECHAT_OFFLINE_REQUEST(NAME) \
-    int APS5_VABI NAME(int requestId, void* a, void* b) { \
-        (void)requestId; \
-        (void)a; \
-        (void)b; \
-        logSoft(#NAME, "SIGNED_OUT (offline)"); \
-        return VOICECHAT_ERROR_SIGNED_OUT; \
-    }
+int APS5_VABI sceVoiceChatRequestRegisterSession(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestUnregisterSession(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestCreateGameSessionVoiceChatChannel(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestDeleteGameSessionVoiceChatChannel(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestJoinGameSessionVoiceChatChannel(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestLeaveGameSessionVoiceChatChannel(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestCreatePlayerSessionVoiceChatChannel(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestDeletePlayerSessionVoiceChatChannel(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestJoinPlayerSessionVoiceChatChannel(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestLeavePlayerSessionVoiceChatChannel(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestCreateVoiceChatGroup(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestJoinVoiceChatGroup(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestLeaveVoiceChatGroup(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestDeleteVoiceChatGroup(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
 
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestRegisterSession)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestUnregisterSession)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestCreateGameSessionVoiceChatChannel)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestDeleteGameSessionVoiceChatChannel)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestJoinGameSessionVoiceChatChannel)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestLeaveGameSessionVoiceChatChannel)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestCreatePlayerSessionVoiceChatChannel)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestDeletePlayerSessionVoiceChatChannel)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestJoinPlayerSessionVoiceChatChannel)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestLeavePlayerSessionVoiceChatChannel)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestCreateVoiceChatGroup)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestJoinVoiceChatGroup)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestLeaveVoiceChatGroup)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestDeleteVoiceChatGroup)
-
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequest0)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequest1)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestAcsTts)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestAction)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestSetMemberVolume)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestUpdateGameSessionVoiceChatChannelName)
-VOICECHAT_OFFLINE_REQUEST(sceVoiceChatRequestUpdatePlayerSessionVoiceChatChannelName)
+int APS5_VABI sceVoiceChatRequest0(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequest1(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestAcsTts(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestAction(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestSetMemberVolume(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestUpdateGameSessionVoiceChatChannelName(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
+int APS5_VABI sceVoiceChatRequestUpdatePlayerSessionVoiceChatChannelName(int requestId, void* a, void* b) { (void)requestId; (void)a; (void)b; return offlineRequest(__func__); }
 
 int APS5_VABI sceVoiceChatAbortRequest(int requestId) {
     (void)requestId;
