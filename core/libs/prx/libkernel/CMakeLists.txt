@@ -57,6 +57,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Socket/src/SocketConnect.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/EventFlag/src/EventFlag.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/Module.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/ModuleArgs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/DynamicLoader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/ModuleInfo.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Module/src/Tls.cpp
