@@ -363,6 +363,22 @@ int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterPairOnCompletion(Apr::C
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressOnCompletion() { return sizeof(Apr::WriteAddressCommand); }
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteCounterOnCompletion() { return sizeof(Apr::WriteCounterCommand); }
+
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromTimeCounterOnCompletion(volatile std::uint64_t* address) {
+    if (!ValidWriteAddress(address)) return MeasureInvalid;
+    return sizeof(Apr::WriteAddressFromCounterCommand);
+}
+
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromCounterOnCompletion(volatile std::uint64_t* address, std::uint8_t counter) {
+    (void)counter;
+    if (!ValidWriteAddress(address)) return MeasureInvalid;
+    return sizeof(Apr::WriteAddressFromCounterCommand);
+}
+
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion(volatile std::uint64_t* address, std::uint8_t counter) {
+    if (!ValidWriteAddress(address) || (counter & 1u) != 0u) return MeasureInvalid;
+    return sizeof(Apr::WriteAddressFromCounterCommand);
+}
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWaitOnAddress() { return sizeof(Apr::WaitCommand); }
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWaitOnCounter() { return sizeof(Apr::WaitCommand); }
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompletion() { return sizeof(Apr::WriteKernelEventQueueCommand); }

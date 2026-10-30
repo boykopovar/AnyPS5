@@ -13,6 +13,7 @@
 namespace {
 
 constexpr int RangeError = 34;
+constexpr int DomainError = 33;
 constexpr int InvalidArgument = 22;
 constexpr short Denormal = -2;
 constexpr short Finite = -1;
@@ -442,6 +443,89 @@ void TestLongDoubleHelpers() {
     Require(_LLog_nid_postfix(8.0L, -1) == 3.0L && _LLog_nid_postfix(8.0L, -3) == 3.0L, "_LLog base 2");
 }
 
+long double Extended(std::uint64_t mantissa, std::uint16_t signExponent) {
+    unsigned char bytes[sizeof(long double)]{};
+    std::memcpy(bytes, &mantissa, sizeof(mantissa));
+    std::memcpy(bytes + sizeof(mantissa), &signExponent, sizeof(signExponent));
+    long double value;
+    std::memcpy(&value, bytes, sizeof(value));
+    return value;
+}
+
+bool SameBits(long double value, std::uint64_t mantissa, std::uint16_t signExponent) {
+    unsigned char bytes[sizeof(long double)];
+    std::memcpy(bytes, &value, sizeof(value));
+    std::uint64_t actualMantissa;
+    std::uint16_t actualSignExponent;
+    std::memcpy(&actualMantissa, bytes, sizeof(actualMantissa));
+    std::memcpy(&actualSignExponent, bytes + sizeof(actualMantissa), sizeof(actualSignExponent));
+    return actualMantissa == mantissa && actualSignExponent == signExponent;
+}
+
+void TestLongLog() {
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; int base; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
+        {0x8000000000000000ull, 0x4002, 0, 0x851591f9dd5b9b41ull, 0x4000}, {0xfa00000000000000ull, 0x4008, 1, 0xc000000000000000ull, 0x4000},
+        {0xfa00000000000000ull, 0x4008, 5, 0xc000000000000000ull, 0x4000}, {0x8000000000000000ull, 0x4002, -1, 0xc000000000000000ull, 0x4000},
+        {0x8000000000000000ull, 0x3fff, 0, 0, 0x0000}, {0x8000000000000000ull, 0x4000, 0, 0xb17217f7d1cf79acull, 0x3ffe},
+        {0xa000000000000000ull, 0x4002, 1, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x3ffe, -1, 0x8000000000000000ull, 0xbfff},
+        {0xc000000000000000ull, 0x4000, 0, 0x8c9f53d5681854bbull, 0x3fff}, {0xb333333333333333ull, 0x3ffe, 0, 0xb69e192709fa762aull, 0xbffd},
+        {0x9c3d73864f3805c0ull, 0x0c17, 0, 0x8fe95c8a78a8b80eull, 0xc00c}, {0xd1ba8323fe558c61ull, 0x73e6, 1, 0xfa00000000000000ull, 0x400a},
+        {0xe000000000000000ull, 0x4001, -1, 0xb3abb3faa02166cdull, 0x4000},
+        {0xb9ac82c8410c3c68ull, 0x3ff2, 1, 0xf01e4bc814a4fb4cull, 0xc000}, {0x98a9e5bdab7504d1ull, 0x3ff5, 1, 0xbbc2f513876414b1ull, 0xc000},
+        {0xcb41eecb51a96e38ull, 0x3ff8, 1, 0xf40409ebb181947aull, 0xbfff}, {0xecad15fd3a0eaf66ull, 0x3ffd, 0, 0xc589acfa7c6c1534ull, 0xbffe},
+        {0xc86e97283b961889ull, 0x3ffe, 1, 0xd9a59da3f27f263eull, 0xbffb}, {0xf164446eb384ba65ull, 0x4001, 1, 0xe0a894064e71356aull, 0x3ffe},
+        {0x8000000000000000ull, 0x7fff, 0, 0x8000000000000000ull, 0x7fff}, {0xc000000000000001ull, 0xffff, 1, 0xc000000000000001ull, 0xffff},
+    };
+    for (const auto& test : cases) {
+        *__error_nid_postfix() = 12345;
+        const long double result = _LLog_nid_postfix(Extended(test.inputMantissa, test.inputSignExponent), test.base);
+        if (!SameBits(result, test.outputMantissa, test.outputSignExponent) || *__error_nid_postfix() != 12345) {
+            std::fprintf(stderr, "Dinkumware internals: _LLog failed for %016llx:%04x base %d\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent, test.base);
+            std::exit(1);
+        }
+    }
+    for (const std::uint16_t signExponent : {0x0000, 0x8000, 0x3fff, 0xbfff}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        *__error_nid_postfix() = 0;
+        const long double zero = _LLog_nid_postfix(Extended(0, signExponent), 0);
+        Require(SameBits(zero, 0x8000000000000000ull, 0xffff) && *__error_nid_postfix() == RangeError && std::fetestexcept(FE_DIVBYZERO) != 0, "_LLog of a zero mantissa");
+    }
+    for (const long double input : {-1.0L, -0x1p-16445L, Extended(0x8000000000000000ull, 0xffff)}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        *__error_nid_postfix() = 0;
+        Require(SameBits(_LLog_nid_postfix(input, -1), 0xc000000000000000ull, 0x7fff) && *__error_nid_postfix() == DomainError && std::fetestexcept(FE_INVALID) != 0, "_LLog of a negative argument");
+    }
+    *__error_nid_postfix() = 0;
+}
+
+std::uint16_t X87ControlWord() {
+    std::uint16_t control;
+    asm volatile("fnstcw %0" : "=m"(control));
+    return control;
+}
+
+void TestLongLogAt53Bits() {
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; int base; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
+        {0x8000000000000000ull, 0x4002, 0, 0x851591f9dd5b9800ull, 0x4000}, {0xfa00000000000000ull, 0x4008, 1, 0xc000000000000000ull, 0x4000},
+        {0x8000000000000000ull, 0x4000, 0, 0xb17217f7d1cf7800ull, 0x3ffe}, {0xb333333333333333ull, 0x3ffe, 0, 0xb69e192709fa8000ull, 0xbffd},
+        {0x9c3d73864f3805c0ull, 0x0c17, 0, 0x8fe95c8a78a8b800ull, 0xc00c}, {0xe000000000000000ull, 0x4001, -1, 0xb3abb3faa0216800ull, 0x4000},
+        {0xf164446eb384ba65ull, 0x4001, 1, 0xe0a894064e713800ull, 0x3ffe},
+    };
+    const std::uint16_t saved = X87ControlWord();
+    const auto control = static_cast<std::uint16_t>((saved & ~0x0300u) | 0x0200u);
+    for (const auto& test : cases) {
+        const long double input = Extended(test.inputMantissa, test.inputSignExponent);
+        asm volatile("fldcw %0" : : "m"(control) : "memory");
+        const long double result = _LLog_nid_postfix(input, test.base);
+        const std::uint16_t after = X87ControlWord();
+        asm volatile("fldcw %0" : : "m"(saved) : "memory");
+        if (!SameBits(result, test.outputMantissa, test.outputSignExponent) || after != control) {
+            std::fprintf(stderr, "Dinkumware internals: _LLog at 53 bits failed for %016llx:%04x base %d\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent, test.base);
+            std::exit(1);
+        }
+    }
+}
+
 }
 
 int main() {
@@ -454,4 +538,6 @@ int main() {
     TestArithmetic();
     TestDispatch();
     TestLongDoubleHelpers();
+    TestLongLog();
+    TestLongLogAt53Bits();
 }

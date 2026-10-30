@@ -1,4 +1,5 @@
 #include <elfpatcher/general/GuestModuleWriter.hpp>
+#include <elfpatcher/general/AddressDistance.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
@@ -155,8 +156,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     constexpr std::size_t kArgsDisplacement = 3, kTargetDisplacement = 0x11, kResultDisplacement = 0x19;
     constexpr std::size_t kStubSize = 0x1f;
     const auto stubDisplacement = [](std::uint64_t target, std::uint64_t next) {
-        const auto distance = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(next);
-        if (distance < std::numeric_limits<std::int32_t>::min() || distance > std::numeric_limits<std::int32_t>::max())
+        std::int64_t distance = 0;
+        if (!SignedDistance(target, next, distance) || distance < std::numeric_limits<std::int32_t>::min() || distance > std::numeric_limits<std::int32_t>::max())
             throw Domain::RelinkerException("Guest initializer exceeds relative branch range");
         return static_cast<std::uint32_t>(static_cast<std::int32_t>(distance));
     };
@@ -183,8 +184,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     const auto finalizer = [&](std::uint64_t target) {
         if (target == 0) return std::uint64_t{};
         const auto start = address();
-        const auto distance = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(start + 11);
-        if (distance < std::numeric_limits<std::int32_t>::min() || distance > std::numeric_limits<std::int32_t>::max())
+        std::int64_t distance = 0;
+        if (!SignedDistance(target, start + 11, distance) || distance < std::numeric_limits<std::int32_t>::min() || distance > std::numeric_limits<std::int32_t>::max())
             throw Domain::RelinkerException("Guest finaliser exceeds relative branch range");
         bytes.insert(bytes.end(), {0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xe9});
         Io::AppendU32(bytes, static_cast<std::uint32_t>(distance));

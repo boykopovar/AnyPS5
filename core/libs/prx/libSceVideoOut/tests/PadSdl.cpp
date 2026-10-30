@@ -6,6 +6,7 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -84,6 +85,32 @@ void HandOff(PadInput& padInput, const DisplayWindow& window, int device) {
     Require((Pad::ReadState(0).buttons & Cross) != 0);
     button(SDL_CONTROLLER_BUTTON_A, false);
     trigger(false);
+
+    ModalDialogSetPresenter_nid_postfix(true);
+    ModalDialogRequest request;
+    request.message = u"Continue?";
+    request.buttons = {u"Yes", u"No"};
+    request.cancel = 1;
+    Require(ModalDialogOpen_nid_postfix(request));
+    padInput.Update(window);
+    Require((Pad::ReadState(0).buttons & Intercepted) != 0);
+    button(SDL_CONTROLLER_BUTTON_A, true);
+    const PadData answering = Pad::ReadState(0);
+    Require(answering.buttons == Intercepted && answering.left_stick_x == 128 && answering.left_stick_y == 128);
+    std::size_t chosen = 9;
+    Require(ModalDialogPoll_nid_postfix(chosen) == ModalDialogState::Answered && chosen == 0);
+    padInput.Update(window);
+    Require((Pad::ReadState(0).buttons & (Cross | Intercepted)) == 0);
+    button(SDL_CONTROLLER_BUTTON_A, false);
+    button(SDL_CONTROLLER_BUTTON_A, true);
+    Require((Pad::ReadState(0).buttons & Cross) != 0);
+    button(SDL_CONTROLLER_BUTTON_A, false);
+
+    Require(ModalDialogOpen_nid_postfix(request));
+    Require(ModalDialogCapturesInput_nid_postfix());
+    ModalDialogClose_nid_postfix();
+    ModalDialogReset_nid_postfix();
+    ModalDialogSetPresenter_nid_postfix(false);
 }
 
 }

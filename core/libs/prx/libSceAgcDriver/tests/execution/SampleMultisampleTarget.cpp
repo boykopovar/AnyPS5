@@ -1246,7 +1246,7 @@ int main(int argc, char** argv) {
         CheckOverwrittenTarget(*device);
         CheckClaimedTargets(*device);
         if (!AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).storageImageMultisample) {
-            std::puts("multisampled target fills, stores and swizzle modes not tested: storage image multisampling unavailable");
+            std::puts("multisampled target fills, stores and swizzle modes skipped, the device has no shaderStorageImageMultisample");
             return VulkanTestSkipped;
         }
         const auto colorBytes = AgcDriver::Graphics::MultisampledColorBytes(color);

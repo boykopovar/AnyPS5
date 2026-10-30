@@ -254,7 +254,6 @@ int APS5_VABI sceKernelGetDebugMenuModeForPsmForRcmgr(void);
 int APS5_VABI sceKernelGetDebugMenuModeForRcmgr(void);
 int APS5_VABI sceKernelGetDefaultToolMemorySize(void);
 int APS5_VABI sceKernelGetEmergencyErrorLog(void);
-int APS5_VABI sceKernelGetExecutableModuleHandle(void);
 int APS5_VABI sceKernelGetExtLibcHandle(void);
 int APS5_VABI sceKernelGetFakeFinalizeMenuForRcmgr(void);
 int APS5_VABI sceKernelGetFirstImageAddr(void);

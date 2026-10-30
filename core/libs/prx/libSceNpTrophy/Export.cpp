@@ -558,8 +558,7 @@ int APS5_VABI sceNpTrophySystemCreateHandle(void) {
 }
 
 int APS5_VABI sceNpTrophySystemDbgCtl(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemDebugLockTrophy(void) {
@@ -588,13 +587,11 @@ int APS5_VABI sceNpTrophySystemDestroyTrophyConfig(void) {
 }
 
 int APS5_VABI sceNpTrophySystemGetDbgParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemGetDbgParamInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemGetGroupIcon(void) {
@@ -718,13 +715,11 @@ int APS5_VABI sceNpTrophySystemRemoveUserData(void) {
 }
 
 int APS5_VABI sceNpTrophySystemSetDbgParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemSetDbgParamInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemUnregisterTitleSyncedCallback(void) {

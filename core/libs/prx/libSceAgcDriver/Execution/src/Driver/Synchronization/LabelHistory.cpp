@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <string_view>
@@ -19,14 +20,61 @@ void Driver::noteLabelStore(std::uint64_t address, std::span<const std::byte> by
     }
 }
 
-bool Driver::storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t* writer) {
+namespace {
+
+std::uint64_t queueDword(std::uint32_t queue, std::uint64_t dword) {
+    return dword | (static_cast<std::uint64_t>(queue) << 56u);
+}
+
+}
+
+void Driver::noteLabelPass(std::span<const std::uint32_t> packet, std::uint32_t queue) {
+    const auto opcode = (packet[0] >> 8u) & 0xffu;
+    if ((opcode != 0x3c && opcode != 0x93) || packet.size() < 7 || ((packet[1] >> 4u) & 3u) != 1u) return;
+    const auto bytes = Pm4::WaitAwaitedBytes(packet);
+    const std::uint64_t address = (packet[2] & (bytes == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
+    const auto passed = eventSerial.load(std::memory_order_acquire);
+    std::lock_guard lock(labelStoresMutex);
+    for (std::size_t offset = 0; offset < bytes; offset += 4) labelPasses[queueDword(queue, address + offset)] = passed;
+}
+
+void Driver::noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t queue) {
+    const auto take = [&](std::uint64_t address, std::uint64_t bytes) {
+        for (std::uint64_t offset = 0; offset < bytes; offset += 4) {
+            const auto key = queueDword(queue, address + offset);
+            if (const auto pass = labelPasses.find(key); pass != labelPasses.end()) labelTaken[key] = pass->second;
+        }
+    };
+    switch ((packet[0] >> 8u) & 0xffu) {
+        case 0x37: case 0x49: {
+            const auto label = Pm4::DecodeLabelWrite(packet);
+            if (!label.has_value() || !KeepsLabelStore(label->address, label->Bytes().size())) return;
+            std::lock_guard lock(labelStoresMutex);
+            take(label->address, label->Bytes().size());
+            return;
+        }
+        case 0x40: case 0x50: case 0x83: break;
+        default: return;
+    }
+    auto stores = Pm4::DecodeStores(packet);
+    std::erase_if(stores, [](const Pm4::PacketStore& store) { return store.conditional || !KeepsLabelStore(store.address, static_cast<std::size_t>(store.bytes)); });
+    if (stores.empty()) return;
+    std::lock_guard lock(labelStoresMutex);
+    for (const auto& store : stores) take(store.address, store.bytes);
+}
+
+bool Driver::storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer) {
     std::lock_guard lock(labelStoresMutex);
     const auto low = labelStores.find(address);
     if (low == labelStores.end()) return false;
     const auto high = bytes == 8 ? labelStores.find(address + 4) : labelStores.end();
     if (bytes == 8 && high == labelStores.end()) return false;
+    std::uint64_t taken = 0;
+    for (std::size_t offset = 0; offset < bytes; offset += 4) {
+        if (const auto found = labelTaken.find(queueDword(queue, address + offset)); found != labelTaken.end()) taken = std::max(taken, found->second);
+    }
     for (const auto& store : low->second) {
-        if (store.stamp <= received) continue;
+        if (store.stamp <= received || (store.queue != queue && store.stamp <= taken)) continue;
         std::uint64_t value = store.value;
         if (bytes == 8) {
             const auto upper = std::find_if(high->second.begin(), high->second.end(), [&](const LabelStore& other) { return other.stamp == store.stamp; });

@@ -1,6 +1,8 @@
 # libSceFreeType technical debt
 
 ### Unknown function info
+- [autofitter glyph-to-script-map](../../../core/libs/prx/libSceFreeType/src/ModuleProperties.cpp) assumes the FreeType LP64 face/map carrier and translates the guest face to its host face. The returned 16-bit map borrows host face storage and is valid only while that face is alive; the setter returns the bundled FreeType error. This is an exception to the general unsupported-property note below. Console ABI, glyph classification and firmware behavior are unverified.
+
 - [FT_New_Size, FT_Activate_Size and FT_Done_Size](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console signatures, errors and generic-finalizer ordering are unverified; the LP64 guest adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). Private size fields are bridge-owned. Sizes created outside the bridge throw when selected.
 
 - [FT_Get_PS_Font_Info and FT_Has_PS_Glyph_Names](../../../core/libs/prx/libSceFreeType/src/PostScriptInfo.cpp) (libSceFreeType) - console ABI, backend version and errors are unverified; these follow bundled FreeType 2.13.3. Font information uses an LP64 guest record with borrowed strings valid until the face is destroyed. Glyph-name reliability is queried from the font driver rather than inferred from the face flags.
