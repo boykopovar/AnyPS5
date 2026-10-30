@@ -935,4 +935,14 @@ int APS5_VABI mono_win32_compat_MoveMemory();
 int APS5_VABI mono_win32_compat_ZeroMemory();
 int APS5_VABI pss_io_icall_install_functions();
 
+
+int APS5_VABI libmonosgenInventory_3dGA5GMBfKg_nid_no_patch();
+int APS5_VABI libmonosgenInventory_8_minus_JmYcbkQ08_nid_no_patch();
+int APS5_VABI libmonosgenInventory_XhQzeIK2U_plus_8_nid_no_patch();
+int APS5_VABI libmonosgenInventory_Xi3QM_plus_g_plus_r2s_nid_no_patch();
+int APS5_VABI libmonosgenInventory_i0Id_plus_4VhajI_nid_no_patch();
+int APS5_VABI libmonosgenInventory_kYFBv6Hq2qI_nid_no_patch();
+int APS5_VABI libmonosgenInventory_lTtap_plus_n_plus_GpI_nid_no_patch();
+int APS5_VABI libmonosgenInventory_qFzDK1mmkmk_nid_no_patch();
+
 }

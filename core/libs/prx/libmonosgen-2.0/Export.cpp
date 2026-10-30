@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libmonosgen-2.0/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -3722,5 +3723,49 @@ int APS5_VABI mono_win32_compat_ZeroMemory() {
 int APS5_VABI pss_io_icall_install_functions() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libmonosgenInventory_3dGA5GMBfKg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3dGA5GMBfKg", libmonosgenInventory_3dGA5GMBfKg_nid_no_patch);
+
+int APS5_VABI libmonosgenInventory_8_minus_JmYcbkQ08_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("8-JmYcbkQ08", libmonosgenInventory_8_minus_JmYcbkQ08_nid_no_patch);
+
+int APS5_VABI libmonosgenInventory_XhQzeIK2U_plus_8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("XhQzeIK2U+8", libmonosgenInventory_XhQzeIK2U_plus_8_nid_no_patch);
+
+int APS5_VABI libmonosgenInventory_Xi3QM_plus_g_plus_r2s_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Xi3QM+g+r2s", libmonosgenInventory_Xi3QM_plus_g_plus_r2s_nid_no_patch);
+
+int APS5_VABI libmonosgenInventory_i0Id_plus_4VhajI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("i0Id+4VhajI", libmonosgenInventory_i0Id_plus_4VhajI_nid_no_patch);
+
+int APS5_VABI libmonosgenInventory_kYFBv6Hq2qI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("kYFBv6Hq2qI", libmonosgenInventory_kYFBv6Hq2qI_nid_no_patch);
+
+int APS5_VABI libmonosgenInventory_lTtap_plus_n_plus_GpI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lTtap+n+GpI", libmonosgenInventory_lTtap_plus_n_plus_GpI_nid_no_patch);
+
+int APS5_VABI libmonosgenInventory_qFzDK1mmkmk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qFzDK1mmkmk", libmonosgenInventory_qFzDK1mmkmk_nid_no_patch);
 
 }

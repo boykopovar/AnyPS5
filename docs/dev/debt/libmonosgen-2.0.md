@@ -936,3 +936,18 @@
 | `mono_win32_compat_MoveMemory` | `UvH0srCBqEI` |
 | `mono_win32_compat_ZeroMemory` | `33aeRemQ8VA` |
 | `pss_io_icall_install_functions` | `9Qbi8rLzfpI` |
+
+### Additional unidentified exports
+
+- Eight [callable exports](../../../core/libs/prx/libmonosgen-2.0/Export.cpp) are throwing placeholders. Names, signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `3dGA5GMBfKg` |
+| `Unknown` | `8-JmYcbkQ08` |
+| `Unknown` | `XhQzeIK2U+8` |
+| `Unknown` | `Xi3QM+g+r2s` |
+| `Unknown` | `i0Id+4VhajI` |
+| `Unknown` | `kYFBv6Hq2qI` |
+| `Unknown` | `lTtap+n+GpI` |
+| `Unknown` | `qFzDK1mmkmk` |
