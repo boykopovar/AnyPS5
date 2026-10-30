@@ -50,4 +50,18 @@ int APS5_VABI SystemDialogOpen();
 int APS5_VABI SystemServiceParamGetInt();
 int APS5_VABI SystemServiceParamGetString();
 
+
+int APS5_VABI libReactNativeWebAppLauncherInventory__plus_ucrAt9fI7c_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_06N_minus_dAyE_plus_HY_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_41blU2JCqLQ_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_BGgSEXB1Now_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_CAK_minus_S2JVdsk_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_QxCdpkEsOgo_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_Tjj_plus__plus_S2qvOU_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_f5NHqUziG_plus_4_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_mI_minus_ltMuVN_plus_Q_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_vDup_plus_0mWZf8_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_wR1ucKGDM9Q_nid_no_patch();
+int APS5_VABI libReactNativeWebAppLauncherInventory_xPA_minus_tXzPGpc_nid_no_patch();
+
 }

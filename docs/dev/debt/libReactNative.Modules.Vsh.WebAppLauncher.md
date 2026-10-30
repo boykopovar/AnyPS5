@@ -51,3 +51,22 @@
 | `SystemDialogOpen` | `AVyuvygnd0w` |
 | `SystemServiceParamGetInt` | `Ewd+kXqU2Bc` |
 | `SystemServiceParamGetString` | `vqMvoe76W6k` |
+
+### Additional unidentified exports
+
+- Twelve [callable exports](../../../core/libs/prx/libReactNative.Modules.Vsh.WebAppLauncher/Export.cpp) are throwing placeholders. Names, signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `+ucrAt9fI7c` |
+| `Unknown` | `06N-dAyE+HY` |
+| `Unknown` | `41blU2JCqLQ` |
+| `Unknown` | `BGgSEXB1Now` |
+| `Unknown` | `CAK-S2JVdsk` |
+| `Unknown` | `QxCdpkEsOgo` |
+| `Unknown` | `Tjj++S2qvOU` |
+| `Unknown` | `f5NHqUziG+4` |
+| `Unknown` | `mI-ltMuVN+Q` |
+| `Unknown` | `vDup+0mWZf8` |
+| `Unknown` | `wR1ucKGDM9Q` |
+| `Unknown` | `xPA-tXzPGpc` |

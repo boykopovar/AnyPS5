@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libReactNative.Modules.Vsh.WebAppLauncher/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -182,5 +183,69 @@ int APS5_VABI SystemServiceParamGetInt() {
 int APS5_VABI SystemServiceParamGetString() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libReactNativeWebAppLauncherInventory__plus_ucrAt9fI7c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+ucrAt9fI7c", libReactNativeWebAppLauncherInventory__plus_ucrAt9fI7c_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_06N_minus_dAyE_plus_HY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("06N-dAyE+HY", libReactNativeWebAppLauncherInventory_06N_minus_dAyE_plus_HY_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_41blU2JCqLQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("41blU2JCqLQ", libReactNativeWebAppLauncherInventory_41blU2JCqLQ_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_BGgSEXB1Now_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("BGgSEXB1Now", libReactNativeWebAppLauncherInventory_BGgSEXB1Now_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_CAK_minus_S2JVdsk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("CAK-S2JVdsk", libReactNativeWebAppLauncherInventory_CAK_minus_S2JVdsk_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_QxCdpkEsOgo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("QxCdpkEsOgo", libReactNativeWebAppLauncherInventory_QxCdpkEsOgo_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_Tjj_plus__plus_S2qvOU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Tjj++S2qvOU", libReactNativeWebAppLauncherInventory_Tjj_plus__plus_S2qvOU_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_f5NHqUziG_plus_4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("f5NHqUziG+4", libReactNativeWebAppLauncherInventory_f5NHqUziG_plus_4_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_mI_minus_ltMuVN_plus_Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mI-ltMuVN+Q", libReactNativeWebAppLauncherInventory_mI_minus_ltMuVN_plus_Q_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_vDup_plus_0mWZf8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("vDup+0mWZf8", libReactNativeWebAppLauncherInventory_vDup_plus_0mWZf8_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_wR1ucKGDM9Q_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("wR1ucKGDM9Q", libReactNativeWebAppLauncherInventory_wR1ucKGDM9Q_nid_no_patch);
+
+int APS5_VABI libReactNativeWebAppLauncherInventory_xPA_minus_tXzPGpc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("xPA-tXzPGpc", libReactNativeWebAppLauncherInventory_xPA_minus_tXzPGpc_nid_no_patch);
 
 }
