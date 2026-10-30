@@ -74,7 +74,13 @@ struct Options {
 
 class Frames {
 public:
+    void SetSize(std::uint32_t displayWidth, std::uint32_t displayHeight) {
+        width = displayWidth;
+        height = displayHeight;
+    }
+
     void MarkReady() {
+        AgcDriverTracePresent_nid_postfix(width, height);
         std::lock_guard lock(mutex);
         ready.push_back(Clock::now());
     }
@@ -98,6 +104,8 @@ private:
     mutable std::mutex mutex;
     std::vector<Clock::time_point> ready;
     std::exception_ptr failure;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
 };
 
 class ReplayFlip final : public AgcDriver::IFlipRequest {
@@ -726,6 +734,8 @@ int run(const Options& options) {
         if (chunk.kind == FrameMemoryKind::Delta) replay.groups[chunk.group].push_back(&chunk);
     }
     const auto& calls = reader.Calls();
+    const auto display = std::find_if(calls.begin(), calls.end(), [](const FrameCall& call) { return call.kind == FrameCallKind::DisplayBuffer && call.values.size() >= 4; });
+    if (display != calls.end()) replay.frames.SetSize(static_cast<std::uint32_t>(display->values[2]), static_cast<std::uint32_t>(display->values[3]));
     const auto frameStart = std::find_if(calls.begin(), calls.end(), [](const FrameCall& call) { return call.kind == FrameCallKind::FrameStart; });
     for (auto call = calls.begin(); call != frameStart; ++call) replay.execute(*call);
     replay.recording = true;
