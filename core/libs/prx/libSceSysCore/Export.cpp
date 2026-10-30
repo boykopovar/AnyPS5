@@ -297,4 +297,32 @@ int APS5_VABI sceSysCoreReceiveEvent() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+int APS5_VABI sceApplicationExitSpawn3() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceApplicationKickCoredump3() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceApplicationNotifyUnmountForExitSpawn() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceApplicationSendResultOfDebuggerRestoreRequest() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceApplicationSendResultOfDebuggerSaveRequest() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceApplicationSwitchToPprNativeMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceApplicationSwitchToPprNativeMode2() {
+    NotImplemented_nid_no_patch(__func__);
+}
 }

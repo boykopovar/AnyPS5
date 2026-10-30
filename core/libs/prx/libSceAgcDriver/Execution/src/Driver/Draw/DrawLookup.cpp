@@ -81,19 +81,21 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             for (const auto value : pixel.targetExportPacking) mix(static_cast<std::uint64_t>(value));
             mix(pixel.dualSourceBlend);
             mix(pixel.reversedBlend);
-            mix(pixel.targetMerge.target);
-            mix(pixel.targetMerge.mask);
-            mix(pixel.targetMerge.samples);
-            mix(static_cast<std::uint64_t>(pixel.targetMerge.packing));
-            mix(pixel.targetMerge.blendControl);
-            mix(pixel.targetMerge.layered);
-            mix(pixel.targetMerge.firstSlice);
-            mix(pixel.targetMerge.lastSlice);
-            for (const auto word : pixel.targetMerge.descriptor) mix(word);
-            mix(pixel.targetMerge.depthStencilWrites);
-            mix(pixel.targetMerge.depthStencilTests);
-            if (pixel.targetMerge.blend.enabled) {
-                const auto& blend = pixel.targetMerge.blend;
+            mix(pixel.targetMerges.size());
+            for (const auto& merge : pixel.targetMerges) {
+                mix(merge.target);
+                mix(merge.mask);
+                mix(merge.samples);
+                mix(static_cast<std::uint64_t>(merge.packing));
+                mix(merge.blendControl);
+                mix(merge.layered);
+                mix(merge.firstSlice);
+                mix(merge.lastSlice);
+                for (const auto word : merge.descriptor) mix(word);
+                mix(merge.depthStencilWrites);
+                mix(merge.depthStencilTests);
+                if (!merge.blend.enabled) continue;
+                const auto& blend = merge.blend;
                 mix(blend.snorm);
                 mix(blend.colorSource);
                 mix(blend.colorDestination);

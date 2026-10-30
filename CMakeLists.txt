@@ -32,6 +32,7 @@ endfunction()
 option(BUILD_TESTING "Build and register relinker tests" OFF)
 option(ANYPS5_RELINKER_ONLY "Build the relinker without system libraries or third-party dependencies" OFF)
 option(ANYPS5_BUILD_WASM "Build the browser relinker" OFF)
+option(ANYPS5_RELINKER_CLI "Build the native relinker command line" ON)
 if(ANYPS5_BUILD_WASM)
     if(NOT EMSCRIPTEN)
         message(FATAL_ERROR "ANYPS5_BUILD_WASM requires emcmake and Emscripten")
@@ -65,6 +66,7 @@ option(ANYPS5_ENABLE_ASAN "Build Linux targets with AddressSanitizer and use an 
 option(ANYPS5_ENABLE_TSAN "Build Linux targets with ThreadSanitizer" OFF)
 option(APS5_ENABLE_TIMING_LOG "Write frame timings asynchronously to frame-timing.log" OFF)
 option(APS5_ENABLE_TRACY "Build the Tracy profiler client and report performance timer scopes as Tracy zones" OFF)
+option(ANYPS5_LIBRESSL_ORACLE "Build guest_libressl_oracle, which compares libSceLibreSsl with LibreSSL 2.5.4 downloaded from ftp.openbsd.org" OFF)
 option(ANYPS5_USE_SYSTEM_DEPS "Resolve SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools from the system instead of the bundled submodules" OFF)
 add_compile_definitions(APS5_ENABLE_TIMING_LOG=$<BOOL:${APS5_ENABLE_TIMING_LOG}>)
 include(cmake/SystemDeps.cmake)
@@ -162,6 +164,25 @@ if(BUILD_TESTING)
         core/shader/recompiler/IntermediateRepresentation/include)
     add_test(NAME shader_ir_use_rewrite COMMAND shader_ir_use_rewrite_tests)
     set_tests_properties(shader_ir_use_rewrite PROPERTIES TIMEOUT 20)
+    add_test_executable(shader_ssa_pass_reads_tests
+        core/shader/recompiler/tests/SsaPassReads.cpp
+        core/shader/recompiler/Optimization/src/SsaBuilder/SsaPass.cpp
+        core/shader/recompiler/Optimization/src/SsaBuilder/SsaDefTable.cpp
+        core/shader/recompiler/Optimization/src/SsaBuilder/SsaVariable.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrProgram.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrValue.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrBlock.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrOpcode.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrType.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/GuestRegister.cpp)
+    target_include_directories(shader_ssa_pass_reads_tests PRIVATE
+        core/shader/recompiler
+        core/shader/recompiler/IntermediateRepresentation/include
+        core/shader/recompiler/Optimization/include
+        core/shader/recompiler/RdnaDecoder/include
+        core/shader/recompiler/ControlFlow/include)
+    add_test(NAME shader_ssa_pass_reads COMMAND shader_ssa_pass_reads_tests)
+    set_tests_properties(shader_ssa_pass_reads PROPERTIES TIMEOUT 20)
     add_test_executable(pad_command_file_tests core/libs/prx/libScePad/tests/InputCommandFile.cpp)
     target_include_directories(pad_command_file_tests PRIVATE core/libs)
     add_test(NAME pad_command_file COMMAND pad_command_file_tests)
@@ -169,6 +190,8 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_mingw_host_only_test_targets.py)
+        add_test(NAME build_changed_guest_tests COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_changed_guest_tests.py)
         add_test(NAME shader_cache_native_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/tests/test_shader_cache_native_paths.py
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ShaderCacheVersion.cmake ${CMAKE_COMMAND})
@@ -266,7 +289,18 @@ if(BUILD_TESTING)
         add_test(NAME select_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py)
         add_test(NAME check_main_sync COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_main_sync.py)
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_main_sync.py CheckMainSyncTests)
+        set_tests_properties(check_main_sync PROPERTIES TIMEOUT 30)
+        set(check_main_sync_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_main_sync.py")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${check_main_sync_source}")
+        file(STRINGS "${check_main_sync_source}" check_main_sync_classes REGEX "^class [A-Za-z0-9_]*Tests\\(")
+        foreach(test_class IN LISTS check_main_sync_classes)
+            string(REGEX REPLACE "^class ([A-Za-z0-9_]+).*" "\\1" test_class "${test_class}")
+            if(NOT test_class STREQUAL "CheckMainSyncTests")
+                add_test(NAME check_main_sync_${test_class} COMMAND ${Python3_EXECUTABLE} "${check_main_sync_source}" ${test_class})
+                set_tests_properties(check_main_sync_${test_class} PROPERTIES TIMEOUT 30)
+            endif()
+        endforeach()
         set(select_tests_source "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${select_tests_source}")
         file(STRINGS "${select_tests_source}" select_tests_classes REGEX "^class [A-Za-z0-9_]*Tests\\(")
@@ -507,6 +541,7 @@ set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HVF ON CACHE BOOL "" FORCE)
 set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
 if(NOT ANYPS5_USE_SYSTEM_DEPS)
     add_subdirectory(3rdparty/freetype EXCLUDE_FROM_ALL)

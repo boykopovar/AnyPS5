@@ -564,17 +564,19 @@ void AddTargetMerge(const ShaderPixelInputInfo& pixel, ShaderInfo& info) {
     ImageResource image;
     image.source = std::numeric_limits<std::uint32_t>::max();
     image.resourceClass = ImageResourceClass::Storage;
-    image.numericClass = pixel.mergeBlend.enabled ? IrTextureNumericClass::Float : IrTextureNumericClass::Uint;
-    image.dimension = pixel.mergeSamples > 1u ? RdnaImageDimension::Dim2DMsaa : pixel.mergeLayered ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
     image.read = true;
     image.written = true;
     image.fmaskCompatible = false;
     image.targetMerge = true;
-    info.images.push_back(image);
-    info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    for (const auto& merge : pixel.merges) {
+        image.numericClass = merge.blend.enabled ? IrTextureNumericClass::Float : IrTextureNumericClass::Uint;
+        image.dimension = pixel.mergeSamples > 1u ? RdnaImageDimension::Dim2DMsaa : merge.layered ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
+        info.images.push_back(image);
+        info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    }
     AddInput(info, StageInputKind::FragCoord, 0, 4, "gl_FragCoord");
     if (pixel.mergeSamples > 1u) AddInput(info, StageInputKind::SampleId, 0, 1, "gl_SampleID");
-    if (pixel.mergeLayered) AddInput(info, StageInputKind::Layer, 0, 1, "gl_Layer");
+    if (std::ranges::any_of(pixel.merges, &TargetMerge::layered)) AddInput(info, StageInputKind::Layer, 0, 1, "gl_Layer");
 }
 
 void CollectSamplerUses(const IrProgram& program, ShaderInfo& info) {
@@ -649,7 +651,7 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
     }
     CollectBuiltinInputs(program, next);
     CollectOutputs(program, inputInfo, next);
-    if (program.Resources().stage == IrShaderStage::Pixel && inputInfo.pixel->mergeMask != 0u) AddTargetMerge(*inputInfo.pixel, next);
+    if (program.Resources().stage == IrShaderStage::Pixel && !inputInfo.pixel->merges.empty()) AddTargetMerge(*inputInfo.pixel, next);
     if ((program.Resources().stage == IrShaderStage::Vertex || program.Resources().stage == IrShaderStage::Mesh) && inputInfo.vertex != nullptr && inputInfo.vertex->pointList) AddOutput(next, StageOutputKind::PointSize, 0, 0, "gl_PointSize");
     CollectSamplerUses(program, next);
     program.Info() = std::move(next);

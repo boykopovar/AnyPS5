@@ -9,6 +9,7 @@
 
 namespace PosixThread {
 
+constexpr int GUEST_EPERM = 1;
 constexpr int GUEST_ESRCH = 3;
 constexpr int GUEST_EFAULT = 14;
 constexpr int GUEST_EINVAL = 22;

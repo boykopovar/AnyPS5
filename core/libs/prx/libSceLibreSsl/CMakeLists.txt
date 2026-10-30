@@ -130,7 +130,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_libressl_x509_store_context_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslX509StoreContext.cpp)
     target_include_directories(guest_libressl_x509_store_context_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_libressl_x509_store_context_tests PRIVATE libSceLibreSsl)
+    target_link_libraries(guest_libressl_x509_store_context_tests PRIVATE libSceLibreSsl libc)
     configure_windows_unwind(guest_libressl_x509_store_context_tests)
     add_test(NAME guest_libressl_x509_store_context COMMAND guest_libressl_x509_store_context_tests)
     set_tests_properties(guest_libressl_x509_store_context PROPERTIES TIMEOUT 30)
@@ -225,6 +225,7 @@ if(BUILD_TESTING)
     add_test_executable(guest_libressl_object_allocation_tests
         tests/ObjectTextAllocation.cpp src/ObjectText.cpp src/ObjectTable.cpp src/Error.cpp)
     target_include_directories(guest_libressl_object_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_compile_features(guest_libressl_object_allocation_tests PRIVATE cxx_std_23)
     target_link_libraries(guest_libressl_object_allocation_tests PRIVATE libc)
     configure_windows_unwind(guest_libressl_object_allocation_tests)
     add_test(NAME guest_libressl_object_allocation COMMAND guest_libressl_object_allocation_tests)
@@ -263,6 +264,49 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_x509_verify_param guest_libressl_x509_verify_param_allocator PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_x509_verify_param guest_libressl_x509_verify_param_allocator PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
+if(BUILD_TESTING AND ANYPS5_LIBRESSL_ORACLE)
+    include(ExternalProject)
+    set(libressl_reference_build "${CMAKE_BINARY_DIR}/libressl-reference-build")
+    set(libressl_reference_timestamp)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+        set(libressl_reference_timestamp DOWNLOAD_EXTRACT_TIMESTAMP ON)
+    endif()
+    ExternalProject_Add(libressl_reference
+        URL https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/libressl-2.5.4.tar.gz
+        URL_HASH SHA256=107a5b522fbb8318d4c3be668075e5e607296f0a9255d71674caa94571336efa
+        ${libressl_reference_timestamp}
+        PREFIX "${CMAKE_BINARY_DIR}/libressl-reference"
+        BINARY_DIR "${libressl_reference_build}"
+        CMAKE_ARGS
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+            "-DCMAKE_C_FLAGS=-D_GNU_SOURCE -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=implicit-int"
+        BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target crypto ssl
+        INSTALL_COMMAND ""
+        BUILD_BYPRODUCTS "${libressl_reference_build}/crypto/libcrypto.a" "${libressl_reference_build}/ssl/libssl.a")
+    ExternalProject_Get_Property(libressl_reference SOURCE_DIR)
+    add_test_executable(guest_libressl_oracle_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Oracle.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/OracleReference.cpp)
+    add_dependencies(guest_libressl_oracle_tests libressl_reference)
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/tests/OracleReference.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${SOURCE_DIR}/include"
+        COMPILE_DEFINITIONS "WIN32_LEAN_AND_MEAN;NOCRYPT")
+    target_include_directories(guest_libressl_oracle_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_oracle_tests PRIVATE libSceLibreSsl libSceLibreSsl3 libc
+        "${libressl_reference_build}/ssl/libssl.a" "${libressl_reference_build}/crypto/libcrypto.a")
+    if(WIN32)
+        target_link_libraries(guest_libressl_oracle_tests PRIVATE ws2_32)
+    endif()
+    configure_windows_unwind(guest_libressl_oracle_tests)
+    add_test(NAME guest_libressl_oracle COMMAND guest_libressl_oracle_tests)
+    set_tests_properties(guest_libressl_oracle PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_oracle PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 endif()

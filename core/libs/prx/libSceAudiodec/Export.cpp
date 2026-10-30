@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <memory>
 #include <mutex>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceAudiodec/src/Codecs.hpp"
@@ -34,6 +35,8 @@ constexpr std::int32_t ERROR_M4AAC_INVALID_SAMPLING_FREQ = static_cast<std::int3
 constexpr std::int32_t ERROR_M4AAC_INVALID_ENABLE_HEAAC = static_cast<std::int32_t>(0x807F0302);
 constexpr std::int32_t ERROR_M4AAC_INVALID_CONFIG_NUMBER = static_cast<std::int32_t>(0x807F0303);
 constexpr std::int32_t ERROR_M4AAC_INVALID_MAX_CHANNELS = static_cast<std::int32_t>(0x807F0304);
+constexpr std::int32_t ERROR_M4AAC_INVALID_ENABLE_NONDELAY_OUTPUT = static_cast<std::int32_t>(0x807F0305);
+constexpr std::int32_t ERROR_M4AAC_INVALID_SURROUND_CHANNEL_INTERLEAVE_ORDER = static_cast<std::int32_t>(0x807F0306);
 constexpr std::int32_t ERROR_AT9_INVALID_CONFIG_DATA = static_cast<std::int32_t>(0x807F1000);
 
 constexpr std::uint32_t TYPE_AT9 = 1;
@@ -136,14 +139,14 @@ void fillMp3Info(AudiodecMp3Info* info, const Audiodec::Mp3Header& header) {
 }
 
 std::int32_t createAac(const AudiodecParamM4aac* param, AudiodecM4aacInfo* info, Instance& instance) {
-    std::uint32_t extensionMode = 0;
-    std::uint32_t outputMode = 0;
+    std::uint32_t enableNondelayOutput = 0;
+    std::uint32_t surroundChannelInterleaveOrder = 0;
     const auto* bytes = reinterpret_cast<const std::byte*>(param);
-    if (param->ui_size >= 28) std::memcpy(&extensionMode, bytes + 24, sizeof(extensionMode));
-    if (extensionMode > 1) return static_cast<std::int32_t>(0x807F0305);
-    if (param->ui_size == 32) std::memcpy(&outputMode, bytes + 28, sizeof(outputMode));
-    if (outputMode > 2) return static_cast<std::int32_t>(0x807F0306);
-    if (extensionMode != 0 || outputMode != 0) throw std::runtime_error("M4AAC extended decoding modes are not implemented");
+    if (param->ui_size >= 28) std::memcpy(&enableNondelayOutput, bytes + 24, sizeof(enableNondelayOutput));
+    if (enableNondelayOutput > 1) return ERROR_M4AAC_INVALID_ENABLE_NONDELAY_OUTPUT;
+    if (param->ui_size == 32) std::memcpy(&surroundChannelInterleaveOrder, bytes + 28, sizeof(surroundChannelInterleaveOrder));
+    if (surroundChannelInterleaveOrder > 2) return ERROR_M4AAC_INVALID_SURROUND_CHANNEL_INTERLEAVE_ORDER;
+    if (surroundChannelInterleaveOrder != 0) throw std::runtime_error("M4AAC surround channel interleave order " + std::to_string(surroundChannelInterleaveOrder) + " is not implemented");
     if (param->ui_config_number != M4AAC_CONFIG_ADTS && param->ui_config_number != M4AAC_CONFIG_RAW) return ERROR_M4AAC_INVALID_CONFIG_NUMBER;
     const std::uint32_t sampleRate = Audiodec::AacSampleRate(param->ui_sampling_freq_index);
     if (param->ui_config_number == M4AAC_CONFIG_RAW && sampleRate == 0) return ERROR_M4AAC_INVALID_SAMPLING_FREQ;
@@ -169,6 +172,14 @@ Instance* find(std::int32_t handle) {
 }
 
 extern "C" {
+
+int APS5_VABI sceAudiodecUnregisterCodec() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAudiodecGetAjmContext() {
+    NotImplemented_nid_no_patch(__func__);
+}
 
 int32_t APS5_VABI sceAudiodecInitLibrary(uint32_t codec_type) {
     if (!validType(codec_type)) return ERROR_INVALID_TYPE;

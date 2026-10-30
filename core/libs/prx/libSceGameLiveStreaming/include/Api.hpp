@@ -57,7 +57,7 @@ int APS5_VABI sceGameLiveStreamingTerminate(void);
 int APS5_VABI sceGameLiveStreamingGetCurrentStatus2(GameLiveStreamingStatus2* status);
 int APS5_VABI sceGameLiveStreamingGetProgramInfo(GameLiveStreamingProgramInfo* info);
 int APS5_VABI sceGameLiveStreamingScreenInitialize(void);
-int APS5_VABI sceGameLiveStreamingScreenInitializeSeparateModeParameter(void);
+int APS5_VABI sceGameLiveStreamingScreenInitializeSeparateModeParameter(void* parameter);
 int APS5_VABI sceGameLiveStreamingScreenTerminate(void);
 int APS5_VABI sceGameLiveStreamingScreenCloseSeparateMode(void);
 int APS5_VABI sceGameLiveStreamingScreenConfigureSeparateMode(void);

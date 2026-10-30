@@ -223,7 +223,7 @@ GuestTextureResource TargetMergeSurface(const ColorTarget& color);
 bool DepthStencilWrites(const State& state);
 bool DepthStencilTests(const State& state);
 std::uint32_t LateTestMergeSplitTargets(const State& state);
-ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state);
+std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state);
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state);
 bool PartialSampleMask(const State& state);
 bool UniformSampleMask(const State& state);

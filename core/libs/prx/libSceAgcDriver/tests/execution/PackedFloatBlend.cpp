@@ -338,10 +338,11 @@ std::uint32_t Draw(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ColorTa
     fragment.shader.code = snapshot.code;
     fragment.context.pixel = AgcDriver::Graphics::DecodePixelStageInfo(context, AgcDriver::Graphics::ExportMappings(state));
     fragment.context.pixel->targetExportPacking = AgcDriver::Graphics::ExportPackings(state);
-    fragment.context.pixel->targetMerge = AgcDriver::Graphics::ExportTargetMerge(state);
+    fragment.context.pixel->targetMerges = AgcDriver::Graphics::ExportTargetMerges(state);
     fragment.context.pixel->layerExported = layered;
-    const auto& merge = fragment.context.pixel->targetMerge;
-    Require((merge.mask != 0u) == merged && merge.mask == color.partialWriteMask && merge.blendControl == color.mergeBlend && (!merged || merge.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10), "the draw's target merge disagrees with its blend and write mask");
+    const auto& merges = fragment.context.pixel->targetMerges;
+    const auto merge = merges.empty() ? ShaderRecompiler::TargetMerge{} : merges.front();
+    Require(merges.size() == (merged ? 1u : 0u) && merge.mask == color.partialWriteMask && merge.blendControl == color.mergeBlend && (!merged || merge.packing == ShaderRecompiler::ColorExportPacking::Float11_11_10), "the draw's target merge disagrees with its blend and write mask");
     Require(!merged || (merge.layered == (color.arrayLastSlice != 0u) && merge.firstSlice == (merge.layered ? color.arraySlice : 0u) && merge.lastSlice == (merge.layered ? color.arraySlice + color.layers - 1u : 0u)), "the draw's target merge does not address the target's array from its first slice");
     const ShaderRecompiler::SrtRuntime runtime{};
     const auto invocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, fragment);

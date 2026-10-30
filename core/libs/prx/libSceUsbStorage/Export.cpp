@@ -232,6 +232,15 @@ std::uint64_t CopyString(char (&destination)[256], const std::string& text, cons
 
 extern "C" {
 
+int APS5_VABI sceUsbStorageClearFakeMapLockForDebug() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceUsbStorageCheckSystemDefaultMountPoint() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+
 std::int32_t APS5_VABI sceUsbStorageInit(void* attr) {
     if (attr != nullptr) throw std::runtime_error("sceUsbStorageInit: a thread attribute is not implemented");
     auto& service = State();
