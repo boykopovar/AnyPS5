@@ -100,6 +100,8 @@
 
 ### Functional
 
+- [Runtime constant data](../../../core/libs/prx/libc/src/RuntimeConstantsData.cpp) exposes 45 distinct, read-only objects with names matching a public NID catalogue and bytes and sizes matching two version-labelled images whose labels are not authenticated. Exact C++ object types, any required relationships between objects and host-runtime identity are unverified.
+
 - [C++ placeholder data](../../../core/libs/prx/libc/src/PlaceholderData.cpp) exposes 20 distinct, read-only one-byte objects by guest NID. Their names match a public NID catalogue and their bytes and sizes match two version-labelled images whose labels are not authenticated. Their exact C++ types and identity relative to host standard-library objects are unverified.
 
 - [Numeric limits data](../../../core/libs/prx/libc/src/NumericLimitsData.cpp) exposes 128 read-only one- and four-byte objects by guest NID. Names match a public NID catalogue, and bytes and sizes match two version-labelled images whose labels are not authenticated. The underlying C++ object types, pointer identity and behavior when linked with the host C++ runtime remain unverified.

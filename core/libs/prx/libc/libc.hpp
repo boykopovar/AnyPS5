@@ -9,3 +9,4 @@
 #include "prx/libc/include/RttiNames.hpp"
 #include "prx/libc/include/NumericLimitsData.hpp"
 #include "prx/libc/include/PlaceholderData.hpp"
+#include "prx/libc/include/RuntimeConstantsData.hpp"
