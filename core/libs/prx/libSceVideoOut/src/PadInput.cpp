@@ -20,6 +20,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
 
 PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
 }
@@ -293,6 +294,7 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP;
     if (!input || ignoreInput) return;
     if (event.type == SDL_KEYDOWN && ImeCapturesKeyboard_nid_postfix()) return;
+    if (event.type != SDL_KEYUP && event.type != SDL_MOUSEBUTTONUP && ModalDialogCapturesInput_nid_postfix()) return;
     keyboardMouse.SetTitleReadsMouse(MouseIsOpen_nid_no_patch());
     const auto requests = keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now());
     if (requests.toggleFullscreen && window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) window.ToggleFullscreen();
@@ -342,8 +344,10 @@ void PadInput::publish(std::uint64_t frame) {
 
 PadInputState PadInput::handOff(int slot, PadInputState state) {
     auto& held = slots[slot].heldThroughCapture;
-    if (ImeCapturesPad_nid_postfix()) {
-        if (slot == 0) ImePublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
+    const bool imeCaptures = ImeCapturesPad_nid_postfix();
+    if (imeCaptures || ModalDialogCapturesInput_nid_postfix()) {
+        if (slot == 0 && imeCaptures) ImePublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
+        else if (slot == 0) ModalDialogPublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
         held = state.buttons;
         PadInputState neutral;
         neutral.hasMotion = false;

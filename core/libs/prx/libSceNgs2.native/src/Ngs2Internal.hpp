@@ -18,6 +18,7 @@
 #include "PitchShift.hpp"
 
 static constexpr std::uint32_t NGS2_MAX_CHANNELS = 8;
+static constexpr std::uint32_t NGS2_MAX_RACK_CHANNELS = SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS;
 static constexpr std::uint32_t MIN_GRAIN_SAMPLES = 64;
 
 struct Ngs2System;

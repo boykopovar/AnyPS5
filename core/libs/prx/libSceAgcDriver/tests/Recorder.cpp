@@ -11177,6 +11177,40 @@ int pipelineCacheFileTests(const Device& device) {
         Require(holds(reloaded.Handle(), 1), "an invalid cache file was not replaced by the saving object's pipelines");
     }
     {
+        PipelineCache restoring(context, properties);
+        Require(holds(restoring.Handle(), 1), "the valid cache file lost a pipeline");
+        {
+            std::ofstream corrupt(path, std::ios::binary | std::ios::trunc);
+            corrupt << "corrupted pipeline cache header with 24 bytes";
+        }
+        PipelineCache invalidHeader(context, properties, false);
+        Require(!PipelineCacheTestAccess::HasHeader(invalidHeader), "an invalid cache header was accepted as present");
+        restoring.SaveNow();
+    }
+    {
+        PipelineCache reloaded(context, properties);
+        Require(holds(reloaded.Handle(), 1), "an invalid cache header was not replaced by the unchanged cache object");
+    }
+    {
+#ifdef _WIN32
+        _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
+#else
+        setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
+#endif
+        PipelineCache emptyPath(context, properties);
+        build(emptyPath.Handle(), 0);
+        StderrCapture capture;
+        emptyPath.SaveNow();
+        const auto output = capture.Finish();
+        Require(output.find("cannot write") == std::string::npos, "an empty cache path attempted to write to disk");
+        Require(holds(emptyPath.Handle(), 0), "an empty cache path failed to retain in-memory pipelines");
+#ifdef _WIN32
+        _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
+#else
+        setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
+#endif
+    }
+    {
         PipelineCache busy(context, properties);
         build(busy.Handle(), 0);
         std::promise<void> held;

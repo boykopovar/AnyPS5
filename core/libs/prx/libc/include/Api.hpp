@@ -1416,6 +1416,7 @@ int APS5_VABI dl_iterate_phdr_nid_postfix(int (*callback)(dl_phdr_info*, std::si
 [[noreturn]] void APS5_VABI __cxa_bad_cast_nid_postfix();
 [[noreturn]] void APS5_VABI __cxa_bad_typeid_nid_postfix();
 [[noreturn]] void APS5_VABI __cxa_throw_bad_array_new_length_nid_postfix();
+[[noreturn]] void APS5_VABI _ZSt6_ThrowRKSt20bad_array_new_length_nid_postfix(const LibcException::ExceptionObject* error);
 [[noreturn]] void APS5_VABI _ZSt11_Xbad_allocv_nid_postfix();
 [[noreturn]] void APS5_VABI _ZSt14_Xout_of_rangePKc_nid_postfix(const char* message);
 [[noreturn]] void APS5_VABI _ZSt14_Xlength_errorPKc_nid_postfix(const char* message);

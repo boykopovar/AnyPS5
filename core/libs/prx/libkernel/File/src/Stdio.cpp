@@ -944,9 +944,6 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
 #endif
     const int type = operation & 8 ? 8 : operation & 2 ? 2 : operation & 1 ? 1 : 0;
     if (type == 0) return PosixFailure(GUEST_EBADF);
-#ifdef _WIN32
-    if (File::IsDirectoryDescriptor(d)) return 0;
-#endif
     if (NativeFlock(d, type | (operation & 4)) != 0) {
 #ifdef _WIN32
         const auto error = ::GetLastError();

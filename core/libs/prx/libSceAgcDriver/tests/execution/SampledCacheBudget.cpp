@@ -329,6 +329,48 @@ private:
     std::uint8_t* memory = nullptr;
 };
 
+class PartialSurface {
+public:
+    explicit PartialSurface(const Context& context, std::size_t bytes = SurfaceBytes) : context(context), span(bytes) {
+        memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+        Require(memory != nullptr, "cannot reserve the partial surface");
+        GuestAllocations::Mutation().Add(memory, bytes, true, true, true);
+    }
+
+    ~PartialSurface() {
+        ClearCachedTextures(context.device);
+        GuestAllocations::Mutation().Remove(memory);
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(memory, span);
+#else
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, span);
+        munmap(memory, span);
+#endif
+        GuestArena::GuestArenaRelease_nid_postfix(memory, span);
+    }
+
+    PartialSurface(const PartialSurface&) = delete;
+    PartialSurface& operator=(const PartialSurface&) = delete;
+
+    void Commit(std::size_t offset, std::size_t bytes, std::uint8_t fill) {
+#ifdef _WIN32
+        GuestArena::GuestArenaCommit_nid_postfix(memory + offset, bytes, PAGE_READWRITE, bytes);
+#else
+        Require(mmap(memory + offset, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != MAP_FAILED, "cannot commit a page of the partial surface");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory + offset, bytes);
+#endif
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(memory + offset), bytes);
+        std::memset(memory + offset, fill, bytes);
+    }
+
+    std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(memory); }
+
+private:
+    const Context& context;
+    std::size_t span = 0;
+    std::uint8_t* memory = nullptr;
+};
+
 std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
     return {
         static_cast<std::uint32_t>(address >> 8u),
@@ -1173,10 +1215,94 @@ void recoveryTests(Context context, const std::string& mode) {
 
 }
 
+ShaderRecompiler::RecompileResult StorageProgram(std::uint64_t address) {
+    ShaderRecompiler::DescriptorBinding binding{};
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    binding.descriptorSet = 0;
+    binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
+    binding.count = 1;
+    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    binding.imageWritten.assign(1, false);
+    binding.imageSamplers.assign(1, 0u);
+    const auto words = Descriptor(address);
+    binding.guestDescriptor.assign(words.begin(), words.end());
+    ShaderRecompiler::RecompileResult program;
+    program.bindings.push_back(std::move(binding));
+    return program;
+}
+
+void collectRefusalTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    constexpr std::size_t PageBytes = 4096;
+    constexpr auto collect = static_cast<std::size_t>(ShaderResources::FastFail::Collect);
+    PartialSurface surface(context);
+    surface.Commit(0, SurfaceBytes - PageBytes, 0x5a);
+    ClearCachedTextures(context.device);
+    const auto program = SampledProgram(surface.Address());
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto sampled = std::make_shared<ShaderResources>(context, shader);
+    Require(sampled->Reusable() && sampled->SampledTextures().size() == 1, "the template over the partial surface is not reusable");
+    ShaderResources::ProofReport report{};
+    Require(sampled->Revalidate(shader, &report), "a template over a surface with an uncommitted page did not prove current");
+    Require(report.path == ShaderResources::ProofPath::Full, "a template over a surface with an uncommitted page took the fast proof");
+    const auto before = ShaderResources::CollectRefusalCounts();
+    const auto walksBefore = ShaderResources::FullWalkNanoseconds();
+    Require(sampled->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full, "the second proof over the uncommitted page did not take the full walk");
+    Require(sampled->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full, "the third proof over the uncommitted page did not take the full walk");
+    const auto after = ShaderResources::CollectRefusalCounts();
+    const auto walksAfter = ShaderResources::FullWalkNanoseconds();
+    Require(after.sampled - before.sampled == 2, "two collect refusals of a sampled surface were not counted");
+    Require(after.uncommitted - before.uncommitted == 2, "collect refusals over an uncommitted page were not counted as uncommitted");
+    Require(after.storage == before.storage && after.unwatched == before.unwatched && after.other == before.other, "a sampled surface's collect refusal was counted under another kind or cause");
+    Require(after.surfaces == 1 && after.bytes == SurfaceBytes, "two refusals of one surface were not counted as one surface of its bytes");
+    Require(walksAfter[collect] > walksBefore[collect], "the full walks after a collect refusal were not timed");
+    const auto storageProgram = StorageProgram(surface.Address());
+    const CompiledShader storageShader{ShaderRecompiler::ShaderStage::Compute, &storageProgram, 0};
+    auto storage = std::make_shared<ShaderResources>(context, storageShader);
+    Require(storage->Reusable() && storage->StorageImages().size() == 1, "the storage template over the partial surface is not reusable");
+    Require(storage->Revalidate(storageShader, &report) && report.path == ShaderResources::ProofPath::Full, "a storage template over a surface with an uncommitted page did not take the full walk");
+    const auto withStorage = ShaderResources::CollectRefusalCounts();
+    Require(withStorage.storage - after.storage == 1 && withStorage.sampled == after.sampled, "a storage image's collect refusal was not counted as a storage one");
+    Require(withStorage.uncommitted - after.uncommitted == 1, "a storage image's collect refusal over an uncommitted page was not counted as uncommitted");
+    Require(withStorage.surfaces == 1 && withStorage.bytes == SurfaceBytes, "a storage refusal of the same surface was counted as another surface");
+    Block block(context);
+    const auto hostProgram = SampledProgram(block.Surface(0));
+    const CompiledShader hostShader{ShaderRecompiler::ShaderStage::Compute, &hostProgram, 0};
+    auto hosted = std::make_shared<ShaderResources>(context, hostShader);
+    Require(hosted->Reusable() && hosted->SampledTextures().size() == 1, "the template over the host-allocated surface is not reusable");
+    Require(hosted->Revalidate(hostShader, &report) && report.path == ShaderResources::ProofPath::Full, "a template over a host-allocated surface did not take the full walk");
+    const auto outside = ShaderResources::CollectRefusalCounts();
+    Require(outside.sampled - withStorage.sampled == 1 && outside.unwatched - withStorage.unwatched == 1, "a host-allocated surface's collect refusal was not counted as unwatched");
+    Require(outside.uncommitted == withStorage.uncommitted && outside.other == withStorage.other, "a host-allocated surface's collect refusal was counted under another cause");
+    Require(outside.surfaces == 2 && outside.bytes == 2 * SurfaceBytes, "the host-allocated surface was not counted as a second surface");
+    hosted.reset();
+    surface.Commit(SurfaceBytes - PageBytes, PageBytes, 0);
+    const auto committed = ShaderResources::CollectRefusalCounts();
+    Require(sampled->Revalidate(shader, &report), "the template did not prove current once the page was committed");
+    Require(storage->Revalidate(storageShader, &report), "the storage template did not prove current once the page was committed");
+    const auto final = ShaderResources::CollectRefusalCounts();
+    Require(final.sampled == committed.sampled && final.storage == committed.storage, "a proof over a committed surface counted a collect refusal");
+    sampled.reset();
+    storage.reset();
+    ClearCachedTextures(context.device);
+    std::puts("collect refusal counters passed");
+}
+
 int main(int argc, char** argv) {
     try {
         const bool memory = argc > 1 && std::string(argv[1]) == "memory";
         const std::string mode = argc > 1 ? argv[1] : "";
+        if (mode == "collect-refusals") {
+#ifdef _WIN32
+            _putenv_s("APS5_PROFILE_DRAW", "1");
+#else
+            setenv("APS5_PROFILE_DRAW", "1", 1);
+#endif
+        }
         if (mode == "device-selection-cpu") {
             deviceSelectionTests();
             return 0;
@@ -1238,6 +1364,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             if (!lookupChangedTests(context)) return VulkanTestSkipped;
             std::puts("resource cache lookup-changed tests passed");
+            return 0;
+        }
+        if (mode == "collect-refusals") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            collectRefusalTests(context);
+            std::puts("resource cache collect refusal tests passed");
             return 0;
         }
         if (memory) {

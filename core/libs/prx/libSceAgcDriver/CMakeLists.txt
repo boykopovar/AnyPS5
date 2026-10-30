@@ -3082,9 +3082,11 @@ if(BUILD_TESTING)
 
     add_test(NAME agc_address_copy_cap COMMAND agc_driver_graphics_tests --address-copy-cap)
     add_test(NAME agc_address_copy_cap_remembered COMMAND agc_driver_graphics_tests --address-copy-cap-remembered)
-    set_tests_properties(agc_address_copy_cap agc_address_copy_cap_remembered PROPERTIES TIMEOUT 30)
+    add_test(NAME agc_address_copy_cap_mirror COMMAND agc_driver_graphics_tests --address-copy-cap-mirror)
+    add_test(NAME agc_address_space_unwatched_mirror_import COMMAND agc_driver_graphics_tests --unwatched-mirror-import)
+    set_tests_properties(agc_address_copy_cap agc_address_copy_cap_remembered agc_address_copy_cap_mirror agc_address_space_unwatched_mirror_import PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(agc_address_copy_cap agc_address_copy_cap_remembered PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(agc_address_copy_cap agc_address_copy_cap_remembered agc_address_copy_cap_mirror agc_address_space_unwatched_mirror_import PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_emulated_color_compare_srgb_decode COMMAND agc_driver_emulated_color_compare_tests)
     set_tests_properties(agc_driver_emulated_color_compare_srgb_decode PROPERTIES
@@ -3242,7 +3244,7 @@ if(BUILD_TESTING)
         set_tests_properties(${agcGuestMemoryLifetimeTests} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND Python3_Interpreter_FOUND)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND Python3_Interpreter_FOUND AND ANYPS5_RELINKER_CLI)
         add_library(agc_guest_memory_lifetime_fixture SHARED tests/GuestMemoryLifetimeFixture.cpp)
         target_include_directories(agc_guest_memory_lifetime_fixture PRIVATE
                 ${LIBS_INCLUDE_DIR}
@@ -3309,9 +3311,10 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_resource_cache_storage_clear COMMAND agc_driver_sampled_cache_budget_tests resource-clear)
     add_test(NAME agc_driver_resource_cache_replaced_texture COMMAND agc_driver_sampled_cache_budget_tests resource-replaced)
     add_test(NAME agc_driver_resource_cache_lookup_changed COMMAND agc_driver_sampled_cache_budget_tests resource-lookup-changed)
-    set_tests_properties(agc_driver_resource_cache_storage_admission agc_driver_resource_cache_oversized_storage_admission agc_driver_resource_cache_storage_clear agc_driver_resource_cache_replaced_texture agc_driver_resource_cache_lookup_changed PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_driver_resource_cache_collect_refusals COMMAND agc_driver_sampled_cache_budget_tests collect-refusals)
+    set_tests_properties(agc_driver_resource_cache_storage_admission agc_driver_resource_cache_oversized_storage_admission agc_driver_resource_cache_storage_clear agc_driver_resource_cache_replaced_texture agc_driver_resource_cache_lookup_changed agc_driver_resource_cache_collect_refusals PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(agc_driver_sampled_cache_budget_memory agc_driver_sampled_cache_budget_without_storage_image_multisample agc_driver_resource_cache_storage_admission agc_driver_resource_cache_oversized_storage_admission agc_driver_resource_cache_storage_clear agc_driver_resource_cache_replaced_texture agc_driver_resource_cache_lookup_changed PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_sampled_cache_budget_memory agc_driver_sampled_cache_budget_without_storage_image_multisample agc_driver_resource_cache_storage_admission agc_driver_resource_cache_oversized_storage_admission agc_driver_resource_cache_storage_clear agc_driver_resource_cache_replaced_texture agc_driver_resource_cache_lookup_changed agc_driver_resource_cache_collect_refusals PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     # The driver draw test again with the draw key off: the draw cache then keys on the decoded vertex
@@ -3391,14 +3394,16 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME agc_driver_draw_cache_reuse_inline COMMAND agc_driver_draw_cache_reuse_tests)
     set_tests_properties(agc_driver_draw_cache_reuse_inline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=0;APS5_VERIFY_DRAW_RECIPE=1;APS5_VERIFY_REGISTER_KEYS=1" SKIP_RETURN_CODE 77)
-    set_tests_properties(agc_driver_draw_cache_reuse agc_driver_draw_cache_reuse_off agc_driver_draw_cache_reuse_verify agc_driver_draw_cache_reuse_inline PROPERTIES FAIL_REGULAR_EXPRESSION "FATAL:")
+    add_test(NAME agc_driver_draw_cache_reuse_indirect COMMAND agc_driver_draw_cache_reuse_tests)
+    set_tests_properties(agc_driver_draw_cache_reuse_indirect PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_CACHE_INDIRECT=1;APS5_PROFILE_DRAW=1" SKIP_RETURN_CODE 77)
+    set_tests_properties(agc_driver_draw_cache_reuse agc_driver_draw_cache_reuse_off agc_driver_draw_cache_reuse_verify agc_driver_draw_cache_reuse_inline agc_driver_draw_cache_reuse_indirect PROPERTIES FAIL_REGULAR_EXPRESSION "FATAL:")
     set_property(TEST agc_driver_draw_cache_reuse agc_driver_draw_cache_reuse_off APPEND PROPERTY ENVIRONMENT "APS5_VERIFY_DRAW_RECIPE=1" "APS5_VERIFY_REGISTER_KEYS=1")
     add_test(NAME agc_driver_draw_data_hit_user_words_verify COMMAND agc_driver_draw_data_hit_user_words_tests)
     set_tests_properties(agc_driver_draw_data_hit_user_words_verify PROPERTIES ENVIRONMENT "APS5_VERIFY_DRAW_DATA_HITS=1" SKIP_RETURN_CODE 77)
     add_test(NAME agc_driver_draw_data_hit_user_words_refresh COMMAND agc_driver_draw_data_hit_user_words_tests)
     set_tests_properties(agc_driver_draw_data_hit_user_words_refresh PROPERTIES ENVIRONMENT "APS5_DRAW_PIPELINE=1" SKIP_RETURN_CODE 77)
     if(WIN32)
-        set_tests_properties(agc_driver_draw_cache_reuse_off agc_driver_draw_cache_reuse_verify agc_driver_draw_cache_reuse_inline agc_driver_draw_data_hit_user_words_verify agc_driver_draw_data_hit_user_words_refresh PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_draw_cache_reuse_off agc_driver_draw_cache_reuse_verify agc_driver_draw_cache_reuse_inline agc_driver_draw_cache_reuse_indirect agc_driver_draw_data_hit_user_words_verify agc_driver_draw_data_hit_user_words_refresh PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
