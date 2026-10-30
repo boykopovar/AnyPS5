@@ -350,7 +350,7 @@ extern "C" {
 int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
     if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
     static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::memcpy(version, parameters + 0x10, sizeof(*version));
+    if (!GuestCopyOut_nid_no_patch(version, parameters + 0x10, sizeof(*version))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 

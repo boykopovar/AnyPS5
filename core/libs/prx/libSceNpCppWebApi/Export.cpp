@@ -791,6 +791,175 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDow
     return 0;
 }
 
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V129SetDataInfoRequestBodyFactory6createEPNS1_6Common10LibContextEPvmPNS5_12IntrusivePtrINS3_22SetDataInfoRequestBodyEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi10uploadDataEiRKNS4_21ParameterToUploadDataERNS1_6Common19UpStreamTransactionINS8_12IntrusivePtrINS3_22UploadDataResponseBodyEEENSA_INS4_25UploadDataResponseHeadersEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi10uploadDataEiRKNS4_42ParameterWithBinaryRequestBodyToUploadDataERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_22UploadDataResponseBodyEEENSA_INS4_25UploadDataResponseHeadersEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi11setDataInfoEiRKNS4_22ParameterToSetDataInfoERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS4_26SetDataInfoResponseHeadersEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi12downloadDataEiRKNS4_23ParameterToDownloadDataERNS1_6Common11TransactionINS8_12IntrusivePtrINS8_6BinaryEEENSA_INS4_27DownloadDataResponseHeadersEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
+    (void)value;
+    return InitializeParameter(self, context, text != nullptr);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadData21setxPsnNpServiceLabelEj(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadData22setxPsnAtomicOperationENS5_19XPsnAtomicOperationE(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadData9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadDataC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadDataD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21deleteMultiDataByUserEiRKNS4_32ParameterToDeleteMultiDataByUserERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfo10initializeEPNS1_6Common10LibContextEPKciNS6_12IntrusivePtrINS3_22SetDataInfoRequestBodyEEE(void* self, const std::uint64_t* context, const char* text, int value, const IntrusivePtr* body) {
+    (void)value;
+    return InitializeParameterWithBody(self, context, text != nullptr, body);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfo22setxPsnAtomicOperationENS5_19XPsnAtomicOperationE(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfo24setxPsnAtomicOperationIdEPKc(void* self, const char* text) {
+    return SetParameterText(self, text);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfo9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfoC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfoD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData17setnpServiceLabelEj(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* first, const char* second) {
+    return InitializeParameter(self, context, first != nullptr && second != nullptr);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser17setnpServiceLabelEj(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUserC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUserD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser17setnpServiceLabelEj(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
+    (void)value;
+    return InitializeParameter(self, context, text != nullptr);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadData14setRequestBodyEPKhm(void* self, const void* data, std::size_t size) {
+    if (static_cast<const ParameterObject*>(self)->implementation == nullptr) return ParameterNotInitialized;
+    if (data == nullptr && size != 0) return ParameterInvalidArgument;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadData9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadDataC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadDataD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus22getLastUpdatedDateTimeEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus7getInfoEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24getXPsnAtomicOperationIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24hasXPsnAtomicOperationIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common10InitParamsC1Ev(void* self) {
     (void)self;
     return 0;

@@ -288,6 +288,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_report.py)
         add_test(NAME select_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py)
+        add_test(NAME tools_self_inspect COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_inspect_self.py)
+        set_tests_properties(tools_self_inspect PROPERTIES TIMEOUT 20)
         add_test(NAME check_main_sync COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_main_sync.py CheckMainSyncTests)
         set_tests_properties(check_main_sync PROPERTIES TIMEOUT 30)
@@ -474,6 +476,8 @@ if(BUILD_TESTING)
                 set_tests_properties(check_compile_${test_case} PROPERTIES TIMEOUT 30)
             endif()
         endforeach()
+        add_test(NAME tools_seed_check COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_check_configure_seed.py)
+        set_tests_properties(tools_seed_check PROPERTIES TIMEOUT 20)
         add_test(NAME performance_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_compare.py)
         set_tests_properties(performance_compare PROPERTIES TIMEOUT 20)

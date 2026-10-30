@@ -29,10 +29,10 @@ jobs:
         include:
           - platform: linux
             runner: ubuntu-latest
-            timeout: 30
+            timeout: 60
           - platform: windows
             runner: windows-latest
-            timeout: 45
+            timeout: 60
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
     defaults:
