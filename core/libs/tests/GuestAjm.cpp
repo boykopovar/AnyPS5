@@ -2135,6 +2135,53 @@ void TestInlineBufferLayout(InlineBuffer inlineBuffer) {
     Require(BatchWord(batch, 24) == 0xCDCDCDC7 && BatchWord(batch, 28) == 0 && address == batch.data() + 32);
 }
 
+using RunBufferRa = void* (APS5_VABI*)(void*, uint32_t, uint64_t, const void*, size_t, void*, size_t, void*, size_t, void*);
+
+RunBufferRa ResolveRunBufferRa(const char* library, const char* name) {
+#ifdef _WIN32
+    const HMODULE module = LoadLibraryA(library);
+    Require(module != nullptr);
+    auto* symbol = reinterpret_cast<void*>(GetProcAddress(module, name));
+#else
+    void* module = dlopen(library, RTLD_NOW);
+    Require(module != nullptr);
+    auto* symbol = dlsym(module, name);
+#endif
+    if (!symbol) {
+        std::fprintf(stderr, "%s is not exported by %s\n", name, library ? library : "libSceAjm.native.prx");
+        std::abort();
+    }
+    return reinterpret_cast<RunBufferRa>(symbol);
+}
+
+void TestRunBufferLayout(RunBufferRa runBufferRa) {
+    std::uint8_t input[16] = {};
+    std::uint8_t output[32] = {};
+    std::uint8_t sideband[24] = {};
+    void* returnAddress = reinterpret_cast<void*>(0x12345678);
+    std::vector<std::uint8_t> batch(128, 0xCD);
+    void* at = runBufferRa(batch.data(), 0x1234, 0x56789abcdef0ull, input, sizeof(input), output, sizeof(output), sideband, sizeof(sideband), returnAddress);
+    Require(static_cast<std::uint8_t*>(at) == batch.data() + 80);
+    Require(BatchWord(batch, 0) == (0x1234 << 6) && BatchWord(batch, 4) == 72);
+    Require(BatchWord(batch, 8) == 6 && BatchWord(batch, 12) == 0);
+    const void* readRa = nullptr;
+    std::memcpy(&readRa, batch.data() + 16, sizeof(readRa));
+    Require(readRa == returnAddress);
+    Require(BatchWord(batch, 24) == 1 && BatchWord(batch, 28) == sizeof(input));
+    const void* readInput = nullptr;
+    std::memcpy(&readInput, batch.data() + 32, sizeof(readInput));
+    Require(readInput == input);
+    Require(BatchWord(batch, 40) == (4 | ((static_cast<std::uint32_t>(0x56789abcdef0ull >> 32) & 0xFFFFFu) << 6)) && BatchWord(batch, 44) == static_cast<std::uint32_t>(0x56789abcdef0ull));
+    Require(BatchWord(batch, 48) == 17 && BatchWord(batch, 52) == sizeof(output));
+    const void* readOutput = nullptr;
+    std::memcpy(&readOutput, batch.data() + 56, sizeof(readOutput));
+    Require(readOutput == output);
+    Require(BatchWord(batch, 64) == 18 && BatchWord(batch, 68) == sizeof(sideband));
+    const void* readSideband = nullptr;
+    std::memcpy(&readSideband, batch.data() + 72, sizeof(readSideband));
+    Require(readSideband == sideband);
+}
+
 void TestConsoleInlineBuffer(std::uint32_t context, const char* ajmiLibrary) {
 #ifdef _WIN32
     const char* nativeLibrary = "libSceAjm.native.prx";
@@ -2144,6 +2191,10 @@ void TestConsoleInlineBuffer(std::uint32_t context, const char* ajmiLibrary) {
     const InlineBuffer inlineBuffer = ResolveInlineBuffer(nativeLibrary, "sceAjmBatchJobInlineBuffer");
     TestInlineBufferLayout(inlineBuffer);
     TestInlineBufferLayout(ResolveInlineBuffer(ajmiLibrary, "sceAjmBatchJobInlineBuffer_nid_disambig1"));
+    const RunBufferRa nativeRunBuffer = ResolveRunBufferRa(nativeLibrary, "sceAjmBatchJobRunBufferRa");
+    TestRunBufferLayout(nativeRunBuffer);
+    const RunBufferRa ajmiRunBuffer = ResolveRunBufferRa(ajmiLibrary, "sceAjmBatchJobRunBufferRa_nid_disambig1");
+    TestRunBufferLayout(ajmiRunBuffer);
     const void* address = nullptr;
 
     std::vector<std::uint8_t> stream(1024, 0);
@@ -2157,7 +2208,7 @@ void TestConsoleInlineBuffer(std::uint32_t context, const char* ajmiLibrary) {
     std::vector<std::uint8_t> jobs(4096, 0xCD);
     void* at = inlineBuffer(jobs.data(), initialize, sizeof(initialize), &address);
     at = sceAjmBatchJobControlBufferRa(at, instance, 0x6001, address, sizeof(initialize), result, sizeof(result), nullptr);
-    at = sceAjmBatchJobRunBufferRa(at, instance, 0x800000001001, stream.data(), stream.size(), pcm.data(), pcm.size() * sizeof(std::int16_t), &decoded, sizeof(decoded), nullptr);
+    at = ajmiRunBuffer(at, instance, 0x800000001001, stream.data(), stream.size(), pcm.data(), pcm.size() * sizeof(std::int16_t), &decoded, sizeof(decoded), nullptr);
     Require(StartBuffer(context, jobs.data(), static_cast<std::uint8_t*>(at) - jobs.data()) == 0);
     Require(result[0] == 0 && result[1] == 0);
     Require(decoded.stream.result == 0x18 && decoded.stream.inputConsumed == 1024 && decoded.stream.outputWritten == 1024 * 2 && decoded.frames == 4);
