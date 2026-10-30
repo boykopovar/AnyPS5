@@ -115,4 +115,10 @@ int APS5_VABI YGNodeStyleSetWidth();
 int APS5_VABI YGNodeStyleSetWidthAuto();
 int APS5_VABI YGNodeStyleSetWidthPercent();
 
+
+int APS5_VABI libSceFacebookYogaInventory__plus_3fOvgdndrk_nid_no_patch();
+int APS5_VABI libSceFacebookYogaInventory_C9_plus_the7MAVg_nid_no_patch();
+int APS5_VABI libSceFacebookYogaInventory_rjfUd_plus_WSgRU_nid_no_patch();
+int APS5_VABI libSceFacebookYogaInventory_v4k2ZXffrmY_nid_no_patch();
+
 }

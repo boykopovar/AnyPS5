@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceFacebook.Yoga/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -442,5 +443,29 @@ int APS5_VABI YGNodeStyleSetWidthAuto() {
 int APS5_VABI YGNodeStyleSetWidthPercent() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceFacebookYogaInventory__plus_3fOvgdndrk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+3fOvgdndrk", libSceFacebookYogaInventory__plus_3fOvgdndrk_nid_no_patch);
+
+int APS5_VABI libSceFacebookYogaInventory_C9_plus_the7MAVg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("C9+the7MAVg", libSceFacebookYogaInventory_C9_plus_the7MAVg_nid_no_patch);
+
+int APS5_VABI libSceFacebookYogaInventory_rjfUd_plus_WSgRU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("rjfUd+WSgRU", libSceFacebookYogaInventory_rjfUd_plus_WSgRU_nid_no_patch);
+
+int APS5_VABI libSceFacebookYogaInventory_v4k2ZXffrmY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("v4k2ZXffrmY", libSceFacebookYogaInventory_v4k2ZXffrmY_nid_no_patch);
 
 }

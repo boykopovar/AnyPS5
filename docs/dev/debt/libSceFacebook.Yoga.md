@@ -116,3 +116,14 @@
 | `YGNodeStyleSetWidth` | `IhHOpdG2KGo` |
 | `YGNodeStyleSetWidthAuto` | `xXwYFScOgCo` |
 | `YGNodeStyleSetWidthPercent` | `37mIA-MjoWg` |
+
+### Additional unidentified exports
+
+- Four [callable exports](../../../core/libs/prx/libSceFacebook.Yoga/Export.cpp) are throwing placeholders. Names, signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `+3fOvgdndrk` |
+| `Unknown` | `C9+the7MAVg` |
+| `Unknown` | `rjfUd+WSgRU` |
+| `Unknown` | `v4k2ZXffrmY` |
