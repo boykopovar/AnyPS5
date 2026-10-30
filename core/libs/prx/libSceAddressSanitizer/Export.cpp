@@ -4,6 +4,7 @@
 #include "prx/libSceAddressSanitizer/src/ErrorReport.hpp"
 #include "prx/libSceAddressSanitizer/src/Report.hpp"
 #include "prx/libSceAddressSanitizer/src/Container.hpp"
+#include "prx/libSceAddressSanitizer/src/Ubsan.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -1695,44 +1696,40 @@ const char* APS5_VABI __ubsan_default_options() {
     return "";
 }
 
-int APS5_VABI __ubsan_get_current_report_data() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_get_current_report_data(const char** issueKind, const char** message, const char** filename, unsigned* line, unsigned* column, char** memoryAddress) {
+    AsanRuntime::Ubsan::GetCurrentReportData_nid_no_patch(issueKind, message, filename, line, column, memoryAddress);
 }
 
-int APS5_VABI __ubsan_handle_add_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_add_overflow(void* data, std::uintptr_t lhs, std::uintptr_t rhs) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::AddOverflow, data, lhs, rhs, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_add_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_add_overflow_abort(void* data, std::uintptr_t lhs, std::uintptr_t rhs) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::AddOverflow, data, lhs, rhs, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_alignment_assumption() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_alignment_assumption(void* data, std::uintptr_t pointer, std::uintptr_t alignment, std::uintptr_t offset) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::AlignmentAssumption, data, pointer, alignment, offset, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_alignment_assumption_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_alignment_assumption_abort(void* data, std::uintptr_t pointer, std::uintptr_t alignment, std::uintptr_t offset) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::AlignmentAssumption, data, pointer, alignment, offset, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_builtin_unreachable() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_builtin_unreachable(void* data) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::BuiltinUnreachable, data, 0, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_divrem_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_divrem_overflow(void* data, std::uintptr_t lhs, std::uintptr_t rhs) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::DivremOverflow, data, lhs, rhs, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_divrem_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_divrem_overflow_abort(void* data, std::uintptr_t lhs, std::uintptr_t rhs) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::DivremOverflow, data, lhs, rhs, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
 int APS5_VABI __ubsan_handle_dynamic_type_cache_miss() {
@@ -1745,24 +1742,22 @@ int APS5_VABI __ubsan_handle_dynamic_type_cache_miss_abort() {
     return 0;
 }
 
-int APS5_VABI __ubsan_handle_float_cast_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_float_cast_overflow(void* data, std::uintptr_t from) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::FloatCastOverflow, data, from, 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_float_cast_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_float_cast_overflow_abort(void* data, std::uintptr_t from) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::FloatCastOverflow, data, from, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_function_type_mismatch() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_function_type_mismatch(void* data, std::uintptr_t function) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::FunctionTypeMismatch, data, function, 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_function_type_mismatch_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_function_type_mismatch_abort(void* data, std::uintptr_t function) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::FunctionTypeMismatch, data, function, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
 int APS5_VABI __ubsan_handle_function_type_mismatch_v1() {
@@ -1775,69 +1770,63 @@ int APS5_VABI __ubsan_handle_function_type_mismatch_v1_abort() {
     return 0;
 }
 
-int APS5_VABI __ubsan_handle_implicit_conversion() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_implicit_conversion(void* data, std::uintptr_t source, std::uintptr_t destination) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::ImplicitConversion, data, source, destination, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_implicit_conversion_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_implicit_conversion_abort(void* data, std::uintptr_t source, std::uintptr_t destination) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::ImplicitConversion, data, source, destination, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_invalid_builtin() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_invalid_builtin(void* data) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::InvalidBuiltin, data, 0, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_invalid_builtin_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_invalid_builtin_abort(void* data) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::InvalidBuiltin, data, 0, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_load_invalid_value() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_load_invalid_value(void* data, std::uintptr_t value) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::LoadInvalidValue, data, value, 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_load_invalid_value_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_load_invalid_value_abort(void* data, std::uintptr_t value) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::LoadInvalidValue, data, value, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_missing_return() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_missing_return(void* data) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::MissingReturn, data, 0, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_mul_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_mul_overflow(void* data, std::uintptr_t lhs, std::uintptr_t rhs) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::MulOverflow, data, lhs, rhs, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_mul_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_mul_overflow_abort(void* data, std::uintptr_t lhs, std::uintptr_t rhs) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::MulOverflow, data, lhs, rhs, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_negate_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_negate_overflow(void* data, std::uintptr_t oldValue) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::NegateOverflow, data, oldValue, 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_negate_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_negate_overflow_abort(void* data, std::uintptr_t oldValue) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::NegateOverflow, data, oldValue, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_nonnull_arg() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_nonnull_arg(void* data) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::NonNullArg, data, 0, 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_nonnull_arg_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_nonnull_arg_abort(void* data) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::NonNullArg, data, 0, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
 int APS5_VABI __ubsan_handle_nonnull_return() {
@@ -1850,74 +1839,67 @@ int APS5_VABI __ubsan_handle_nonnull_return_abort() {
     return 0;
 }
 
-int APS5_VABI __ubsan_handle_nonnull_return_v1() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_nonnull_return_v1(void* data, void* location) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::NonNullReturn, data, reinterpret_cast<std::uintptr_t>(location), 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_nonnull_return_v1_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_nonnull_return_v1_abort(void* data, void* location) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::NonNullReturn, data, reinterpret_cast<std::uintptr_t>(location), 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_nullability_arg() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_nullability_arg(void* data) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::NullabilityArg, data, 0, 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_nullability_arg_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_nullability_arg_abort(void* data) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::NullabilityArg, data, 0, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_nullability_return_v1() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_nullability_return_v1(void* data, void* location) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::NullabilityReturn, data, reinterpret_cast<std::uintptr_t>(location), 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_nullability_return_v1_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_nullability_return_v1_abort(void* data, void* location) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::NullabilityReturn, data, reinterpret_cast<std::uintptr_t>(location), 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_out_of_bounds() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_out_of_bounds(void* data, std::uintptr_t index) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::OutOfBounds, data, index, 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_out_of_bounds_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_out_of_bounds_abort(void* data, std::uintptr_t index) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::OutOfBounds, data, index, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_pointer_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_pointer_overflow(void* data, std::uintptr_t base, std::uintptr_t result) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::PointerOverflow, data, base, result, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_pointer_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_pointer_overflow_abort(void* data, std::uintptr_t base, std::uintptr_t result) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::PointerOverflow, data, base, result, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_shift_out_of_bounds() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_shift_out_of_bounds(void* data, std::uintptr_t lhs, std::uintptr_t rhs) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::ShiftOutOfBounds, data, lhs, rhs, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_shift_out_of_bounds_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_shift_out_of_bounds_abort(void* data, std::uintptr_t lhs, std::uintptr_t rhs) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::ShiftOutOfBounds, data, lhs, rhs, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_sub_overflow() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_sub_overflow(void* data, std::uintptr_t lhs, std::uintptr_t rhs) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::SubOverflow, data, lhs, rhs, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_sub_overflow_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_sub_overflow_abort(void* data, std::uintptr_t lhs, std::uintptr_t rhs) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::SubOverflow, data, lhs, rhs, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
 int APS5_VABI __ubsan_handle_type_mismatch() {
@@ -1930,24 +1912,22 @@ int APS5_VABI __ubsan_handle_type_mismatch_abort() {
     return 0;
 }
 
-int APS5_VABI __ubsan_handle_type_mismatch_v1() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_type_mismatch_v1(void* data, std::uintptr_t pointer) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::TypeMismatch, data, pointer, 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_type_mismatch_v1_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_type_mismatch_v1_abort(void* data, std::uintptr_t pointer) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::TypeMismatch, data, pointer, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
-int APS5_VABI __ubsan_handle_vla_bound_not_positive() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_vla_bound_not_positive(void* data, std::uintptr_t bound) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::VlaBound, data, bound, 0, 0, false, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
 }
 
-int APS5_VABI __ubsan_handle_vla_bound_not_positive_abort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __ubsan_handle_vla_bound_not_positive_abort(void* data, std::uintptr_t bound) {
+    AsanRuntime::Ubsan::Handle_nid_no_patch(AsanRuntime::Ubsan::Check::VlaBound, data, bound, 0, 0, true, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    Die_nid_no_patch();
 }
 
 int APS5_VABI __ubsan_vptr_type_cache() {

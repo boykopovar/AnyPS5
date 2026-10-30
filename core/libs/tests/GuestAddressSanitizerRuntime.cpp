@@ -107,9 +107,222 @@ static int Memory() {
     return 0;
 }
 
+struct Type {
+    std::uint16_t kind;
+    std::uint16_t info;
+    char name[16];
+};
+
+static const Type signedInt = {0, 11, "'int'"};
+static const Type unsignedInt = {0, 10, "'unsigned int'"};
+static const Type boolType = {0, 6, "'bool'"};
+static const Type unsignedChar = {0, 6, "'unsigned char'"};
+static const Type doubleType = {1, 64, "'double'"};
+static const Type intArray = {0xffff, 0, "'int [4]'"};
+static const Type charPointer = {0xffff, 0, "'char *'"};
+static const Type functionPointer = {0xffff, 0, "'void (*)(int)'"};
+
+struct Location {
+    const char* file;
+    std::uint32_t line;
+    std::uint32_t column;
+};
+
+struct OverflowData {
+    Location loc;
+    const Type* type;
+};
+
+struct ShiftData {
+    Location loc;
+    const Type* lhs;
+    const Type* rhs;
+};
+
+struct TypeMismatchData {
+    Location loc;
+    const Type* type;
+    unsigned char logAlignment;
+    unsigned char kind;
+};
+
+struct NonNullArgData {
+    Location loc;
+    Location attrLoc;
+    int index;
+};
+
+struct ConversionData {
+    Location loc;
+    const Type* from;
+    const Type* to;
+    unsigned char kind;
+};
+
+struct FloatCastData {
+    Location loc;
+    const Type* from;
+    const Type* to;
+};
+
+struct BuiltinData {
+    Location loc;
+    unsigned char kind;
+};
+
+struct AlignmentData {
+    Location loc;
+    Location assumptionLoc;
+    const Type* type;
+};
+
+struct NonNullReturnData {
+    Location attrLoc;
+};
+
+struct FunctionData {
+    Location loc;
+    const Type* type;
+};
+
+static void APS5_VABI PrintDeathCallback() {
+    std::fputs("death callback\n", stderr);
+}
+
+static std::uintptr_t Word(std::int64_t value) {
+    return static_cast<std::uintptr_t>(value);
+}
+
+static void Sample() {
+}
+
+static int UbsanArithmetic() {
+    static OverflowData add = {{"test.cpp", 10, 5}, &signedInt};
+    static OverflowData sub = {{"test.cpp", 11, 6}, &unsignedInt};
+    static OverflowData mul = {{"test.cpp", 12, 7}, &signedInt};
+    static OverflowData negate = {{"test.cpp", 13, 8}, &signedInt};
+    static OverflowData divZero = {{"test.cpp", 14, 9}, &signedInt};
+    static OverflowData divMinus = {{"test.cpp", 15, 10}, &signedInt};
+    static ShiftData shiftLarge = {{"test.cpp", 16, 11}, &signedInt, &signedInt};
+    static ShiftData shiftNegative = {{"test.cpp", 17, 12}, &signedInt, &signedInt};
+    static ShiftData leftNegative = {{"test.cpp", 18, 13}, &signedInt, &signedInt};
+    static ShiftData leftBase = {{"test.cpp", 19, 14}, &signedInt, &signedInt};
+    static struct {
+        Location loc;
+        const Type* array;
+        const Type* index;
+    } bounds = {{"test.cpp", 20, 15}, &intArray, &signedInt};
+    static OverflowData vla = {{"test.cpp", 21, 16}, &signedInt};
+    __ubsan_handle_add_overflow(&add, 2147483647, 1);
+    __ubsan_handle_sub_overflow(&sub, 0, 1);
+    __ubsan_handle_mul_overflow(&mul, 65536, 65536);
+    __ubsan_handle_negate_overflow(&negate, 0x80000000u);
+    __ubsan_handle_divrem_overflow(&divZero, 5, 0);
+    __ubsan_handle_divrem_overflow(&divMinus, 0x80000000u, 0xffffffffu);
+    __ubsan_handle_shift_out_of_bounds(&shiftLarge, 1, 40);
+    __ubsan_handle_shift_out_of_bounds(&shiftNegative, 1, 0xffffffffu);
+    __ubsan_handle_shift_out_of_bounds(&leftNegative, 0xffffffffu, 3);
+    __ubsan_handle_shift_out_of_bounds(&leftBase, 1073741824, 2);
+    __ubsan_handle_out_of_bounds(&bounds, 4);
+    __ubsan_handle_vla_bound_not_positive(&vla, 0xfffffffdu);
+    return 0;
+}
+
+static int UbsanMisc() {
+    static TypeMismatchData nullLoad = {{"test.cpp", 30, 3}, &signedInt, 2, 0};
+    static TypeMismatchData misaligned = {{"test.cpp", 31, 4}, &signedInt, 2, 1};
+    static TypeMismatchData insufficient = {{"test.cpp", 32, 5}, &signedInt, 2, 0};
+    static NonNullArgData nonNull = {{"test.cpp", 33, 6}, {"decl.h", 5, 1}, 2};
+    static NonNullArgData nullability = {{"test.cpp", 34, 7}, {"decl.h", 6, 2}, 1};
+    static OverflowData pointerA = {{"test.cpp", 35, 8}, nullptr};
+    static OverflowData pointerB = {{"test.cpp", 36, 9}, nullptr};
+    static OverflowData pointerC = {{"test.cpp", 37, 10}, nullptr};
+    static OverflowData pointerD = {{"test.cpp", 38, 11}, nullptr};
+    static OverflowData invalid = {{"test.cpp", 39, 12}, &boolType};
+    static ConversionData conversion = {{"test.cpp", 40, 13}, &signedInt, &unsignedChar, 1};
+    static FloatCastData floatCast = {{"test.cpp", 41, 14}, &doubleType, &signedInt};
+    static BuiltinData builtin = {{"test.cpp", 42, 15}, 0};
+    static AlignmentData alignment = {{"test.cpp", 43, 16}, {"test.cpp", 44, 17}, &charPointer};
+    static NonNullReturnData returnData = {{"decl.h", 9, 2}};
+    static Location returnLocation = {"test.cpp", 45, 18};
+    static FunctionData function = {{"test.cpp", 46, 19}, &functionPointer};
+    const auto base = Address(16);
+    __ubsan_handle_type_mismatch_v1(&nullLoad, 0);
+    __ubsan_handle_type_mismatch_v1(&misaligned, base + 1);
+    __ubsan_handle_type_mismatch_v1(&insufficient, base);
+    __ubsan_handle_nonnull_arg(&nonNull);
+    __ubsan_handle_nullability_arg(&nullability);
+    __ubsan_handle_pointer_overflow(&pointerA, 0, 0);
+    __ubsan_handle_pointer_overflow(&pointerB, 0, 16);
+    __ubsan_handle_pointer_overflow(&pointerC, 0x1000, 0);
+    __ubsan_handle_pointer_overflow(&pointerD, 0x1000, 0x800);
+    __ubsan_handle_load_invalid_value(&invalid, 5);
+    __ubsan_handle_implicit_conversion(&conversion, 300, 44);
+    double huge = 1e10;
+    std::uint64_t bits;
+    std::memcpy(&bits, &huge, sizeof(bits));
+    __ubsan_handle_float_cast_overflow(&floatCast, bits);
+    __ubsan_handle_invalid_builtin(&builtin);
+    __ubsan_handle_alignment_assumption(&alignment, base + 3, 8, 0);
+    __ubsan_handle_nullability_return_v1(&returnData, &returnLocation);
+    __ubsan_handle_function_type_mismatch(&function, reinterpret_cast<std::uintptr_t>(&Sample));
+    return 0;
+}
+
+static int UbsanData() {
+    static OverflowData add = {{"test.cpp", 50, 4}, &signedInt};
+    __ubsan_handle_add_overflow(&add, Word(2147483647), 1);
+    const char* kind = nullptr;
+    const char* message = nullptr;
+    const char* file = nullptr;
+    unsigned line = 0;
+    unsigned column = 0;
+    char* memory = reinterpret_cast<char*>(1);
+    __ubsan_get_current_report_data(&kind, &message, &file, &line, &column, &memory);
+    std::printf("data kind=%s file=%s line=%u column=%u memory=%p message=%s\n", kind, file, line, column, static_cast<void*>(memory), message);
+    return 0;
+}
+
+static int UbsanDedup() {
+    static OverflowData add = {{"test.cpp", 60, 4}, &signedInt};
+    const char* capture = "ubsan-dedup.log";
+    std::freopen(capture, "w", stderr);
+    __ubsan_handle_add_overflow(&add, 2147483647, 1);
+    __ubsan_handle_add_overflow(&add, 2147483647, 1);
+    __ubsan_handle_add_overflow(&add, 2147483647, 1);
+    std::fclose(stderr);
+    std::FILE* file = std::fopen(capture, "r");
+    if (file == nullptr) return 1;
+    int reports = 0;
+    char line[512];
+    while (std::fgets(line, sizeof(line), file) != nullptr) {
+        if (std::strstr(line, "runtime error") != nullptr) ++reports;
+    }
+    std::fclose(file);
+    std::remove(capture);
+    std::printf("dedup count=%d\n", reports);
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) return 100;
     const std::string_view mode(argv[1]);
+    if (mode == "ubsan_arithmetic") return UbsanArithmetic();
+    if (mode == "ubsan_misc") return UbsanMisc();
+    if (mode == "ubsan_data") return UbsanData();
+    if (mode == "ubsan_dedup") return UbsanDedup();
+    if (mode == "ubsan_abort") {
+        static OverflowData sub = {{"test.cpp", 70, 2}, &unsignedInt};
+        __sanitizer_set_death_callback(PrintDeathCallback);
+        __ubsan_handle_sub_overflow_abort(&sub, 0, 1);
+        return 2;
+    }
+    if (mode == "ubsan_unreachable") {
+        static Location unreachable = {"test.cpp", 71, 3};
+        __sanitizer_set_death_callback(PrintDeathCallback);
+        __ubsan_handle_builtin_unreachable(&unreachable);
+        return 2;
+    }
     if (mode == "clean") return CleanAccess();
     if (mode == "contiguous") return Contiguous();
     if (mode == "double_ended") return DoubleEnded();

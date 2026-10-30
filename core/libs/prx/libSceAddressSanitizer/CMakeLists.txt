@@ -1,4 +1,4 @@
-add_library(libSceAddressSanitizer SHARED EXCLUDE_FROM_ALL Export.cpp)
+add_library(libSceAddressSanitizer SHARED EXCLUDE_FROM_ALL Export.cpp src/Ubsan.cpp)
 if(WIN32)
     target_sources(libSceAddressSanitizer PRIVATE src/ShadowWindows.cpp)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -18,7 +18,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_addresssanitizer_runtime_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_addresssanitizer_runtime_tests PRIVATE libSceAddressSanitizer libc)
     configure_windows_unwind(guest_addresssanitizer_runtime_tests)
-    foreach(mode clean contiguous double_ended memory exp_load4 exp_store16_noabort exp_loadN report_exp_store2 report_exp_load_n memcpy_source memset_poison memmove_poison memcpy_overlap memset_negative container_params double_ended_params)
+    foreach(mode clean contiguous double_ended memory exp_load4 exp_store16_noabort exp_loadN report_exp_store2 report_exp_load_n memcpy_source memset_poison memmove_poison memcpy_overlap memset_negative container_params double_ended_params ubsan_arithmetic ubsan_misc ubsan_data ubsan_dedup ubsan_abort ubsan_unreachable)
         add_test(NAME guest_addresssanitizer_runtime_${mode} COMMAND guest_addresssanitizer_runtime_tests ${mode})
         set_tests_properties(guest_addresssanitizer_runtime_${mode} PROPERTIES TIMEOUT 20)
         if(WIN32)
@@ -50,6 +50,18 @@ if(BUILD_TESTING)
         "ERROR: AddressSanitizer: bad parameters to __sanitizer_annotate_contiguous_container:.*beg     : 0x[0-9a-f]+.*new_mid : 0x[0-9a-f]+.ERROR: beg is not aligned by 8.*ABORTING")
     set_tests_properties(guest_addresssanitizer_runtime_double_ended_params PROPERTIES PASS_REGULAR_EXPRESSION
         "ERROR: AddressSanitizer: bad parameters to __sanitizer_annotate_double_ended_contiguous_container:.*storage_beg        : 0x[0-9a-f]+.*new_container_end  : 0x[0-9a-f]+.ERROR: storage_beg is not aligned by 8.*ABORTING")
+    set_tests_properties(guest_addresssanitizer_runtime_ubsan_arithmetic PROPERTIES PASS_REGULAR_EXPRESSION
+        "test.cpp:10:5: runtime error: signed integer overflow: 2147483647 [+] 1 cannot be represented in type 'int'.SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior test.cpp:10:5.test.cpp:11:6: runtime error: unsigned integer overflow: 0 - 1 cannot be represented in type 'unsigned int'.SUMMARY: .*test.cpp:12:7: runtime error: signed integer overflow: 65536 [*] 65536 cannot be represented in type 'int'.*test.cpp:13:8: runtime error: negation of -2147483648 cannot be represented in type 'int'. cast to an unsigned type to negate this value to itself.*test.cpp:14:9: runtime error: division by zero.*test.cpp:15:10: runtime error: division of -2147483648 by -1 cannot be represented in type 'int'.*test.cpp:16:11: runtime error: shift exponent 40 is too large for 32-bit type 'int'.*test.cpp:17:12: runtime error: shift exponent -1 is negative.*test.cpp:18:13: runtime error: left shift of negative value -1.*test.cpp:19:14: runtime error: left shift of 1073741824 by 2 places cannot be represented in type 'int'.*test.cpp:20:15: runtime error: index 4 out of bounds for type 'int .4.'.*test.cpp:21:16: runtime error: variable length array bound evaluates to non-positive value -3")
+    set_tests_properties(guest_addresssanitizer_runtime_ubsan_misc PROPERTIES PASS_REGULAR_EXPRESSION
+        "test.cpp:30:3: runtime error: load of null pointer of type 'int'.SUMMARY.*test.cpp:31:4: runtime error: store to misaligned address 0x[0-9a-f]+ for type 'int', which requires 4 byte alignment.*0x[0-9a-f]+: note: pointer points here. 00 00 00  00.*test.cpp:32:5: runtime error: load of address 0x[0-9a-f]+ with insufficient space for an object of type 'int'.*test.cpp:33:6: runtime error: null pointer passed as argument 2, which is declared to never be null.decl.h:5:1: note: nonnull attribute specified here.*test.cpp:34:7: runtime error: null pointer passed as argument 1, which is declared to never be null.decl.h:6:2: note: _Nonnull type annotation specified here.*test.cpp:35:8: runtime error: applying zero offset to null pointer.*test.cpp:36:9: runtime error: applying non-zero offset 16 to null pointer.*test.cpp:37:10: runtime error: applying non-zero offset to non-null pointer 0x000000001000 produced null pointer.*test.cpp:38:11: runtime error: addition of unsigned offset to 0x000000001000 overflowed to 0x000000000800.*test.cpp:39:12: runtime error: load of value 5, which is not a valid value for type 'bool'.*test.cpp:40:13: runtime error: implicit conversion from type 'int' of value 300 [(]32-bit, signed[)] to type 'unsigned char' changed the value to 44 [(]8-bit, unsigned[)].*test.cpp:41:14: runtime error: 1e[+]10 is outside the range of representable values of type 'int'.*test.cpp:42:15: runtime error: passing zero to ctz[(][)], which is not a valid argument.*test.cpp:43:16: runtime error: assumption of 8 byte alignment for pointer of type 'char [*]' failed.test.cpp:44:17: note: alignment assumption was specified here.*0x[0-9a-f]+: note: address is 1 aligned, misalignment offset is 3 bytes.*test.cpp:45:18: runtime error: null pointer returned from function declared to never return null.decl.h:9:2: note: _Nonnull return type annotation specified here.*test.cpp:46:19: runtime error: call to function [(]unknown[)] through pointer to incorrect function type 'void [(][*][)][(]int[)]'.*note: [(]unknown[)] defined here")
+    set_tests_properties(guest_addresssanitizer_runtime_ubsan_data PROPERTIES PASS_REGULAR_EXPRESSION
+        "data kind=signed-integer-overflow file=test.cpp line=50 column=4 memory=[^ ]+ message=Signed integer overflow: 2147483647 [+] 1 cannot be represented in type 'int'")
+    set_tests_properties(guest_addresssanitizer_runtime_ubsan_dedup PROPERTIES PASS_REGULAR_EXPRESSION
+        "dedup count=1")
+    set_tests_properties(guest_addresssanitizer_runtime_ubsan_abort PROPERTIES PASS_REGULAR_EXPRESSION
+        "test.cpp:70:2: runtime error: unsigned integer overflow: 0 - 1 cannot be represented in type 'unsigned int'.SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior test.cpp:70:2.death callback")
+    set_tests_properties(guest_addresssanitizer_runtime_ubsan_unreachable PROPERTIES PASS_REGULAR_EXPRESSION
+        "test.cpp:71:3: runtime error: execution reached an unreachable program point.SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior test.cpp:71:3.death callback")
     if(WIN32)
         add_test_executable(guest_addresssanitizer_mapping_tests ${LIBS_INCLUDE_DIR}/tests/GuestAddressSanitizerMapping.cpp)
         target_include_directories(guest_addresssanitizer_mapping_tests PRIVATE ${LIBS_INCLUDE_DIR})
