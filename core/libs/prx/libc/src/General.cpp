@@ -581,6 +581,9 @@ std::atomic<int> g_hostStandardError{-1};
 }
 
 extern "C" int KeepHostStandardError_nid_no_patch() {
+#ifdef __EMSCRIPTEN__
+    return 2;
+#else
     const std::lock_guard lock(g_hostStandardErrorMutex);
     if (const int kept = g_hostStandardError.load(); kept >= 0) return kept;
     const int kept = ::fcntl(2, F_DUPFD_CLOEXEC, 3);
@@ -599,6 +602,7 @@ extern "C" int KeepHostStandardError_nid_no_patch() {
     stderr = stream;
     g_hostStandardError.store(kept);
     return kept;
+#endif
 }
 
 extern "C" int HostStandardError_nid_no_patch() {
@@ -611,6 +615,9 @@ std::atomic<int> g_hostStandardOutput{-1};
 }
 
 extern "C" int KeepHostStandardOutput_nid_no_patch() {
+#ifdef __EMSCRIPTEN__
+    NotImplemented_nid_no_patch(__func__);
+#else
     const std::lock_guard lock(g_hostStandardOutputMutex);
     if (const int kept = g_hostStandardOutput.load(); kept >= 0) return kept;
     const int kept = ::fcntl(1, F_DUPFD_CLOEXEC, 3);
@@ -629,6 +636,7 @@ extern "C" int KeepHostStandardOutput_nid_no_patch() {
     stdout = stream;
     g_hostStandardOutput.store(kept);
     return kept;
+#endif
 }
 
 extern "C" int DuplicateHostDescriptor_nid_no_patch(int descriptor) {

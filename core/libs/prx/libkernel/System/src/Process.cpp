@@ -713,9 +713,11 @@ int APS5_VABI getresgid_nid_postfix(std::uint32_t* rgid, std::uint32_t* egid, st
     return 0;
 }
 
+#ifndef __EMSCRIPTEN__
 void APS5_VABI exit_nid_postfix(int code) {
     LibcExit_nid_no_patch(code);
 }
+#endif
 
 [[noreturn]] void APS5_VABI _exit_nid_postfix(int status) {
     LibcTerminate_nid_no_patch(status);
@@ -784,7 +786,8 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
 }
 
 int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit) {
-    if (limit == nullptr) {
+    GuestResourceLimit requested{};
+    if (limit == nullptr || !GuestCopyIn_nid_no_patch(&requested, limit, sizeof(requested))) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
@@ -793,7 +796,6 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
         return -1;
     }
 
-    GuestResourceLimit requested = *limit;
     if (requested.rlim_cur < 0)
         requested.rlim_cur = guestRlimitInfinity;
     if (requested.rlim_max < 0)
@@ -1230,7 +1232,7 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
 
     std::int64_t tableSize = limit.rlim_cur;
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));
 #endif
     if (tableSize > std::numeric_limits<int>::max())
