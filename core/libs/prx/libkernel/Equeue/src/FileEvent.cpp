@@ -178,9 +178,17 @@ bool TakeSnapshot(HANDLE handle, Snapshot& snapshot) {
     }
     FILE_BASIC_INFO basic{};
     FILE_STANDARD_INFO standard{};
-    if (!::GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) ||
-        !::GetFileInformationByHandleEx(handle, FileStandardInfo, &standard, sizeof(standard))) {
-        return false;
+    FILE_BASIC_INFO settled{};
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        if (!::GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) ||
+            !::GetFileInformationByHandleEx(handle, FileStandardInfo, &standard, sizeof(standard)) ||
+            !::GetFileInformationByHandleEx(handle, FileBasicInfo, &settled, sizeof(settled))) {
+            return false;
+        }
+        if (settled.LastWriteTime.QuadPart == basic.LastWriteTime.QuadPart && settled.ChangeTime.QuadPart == basic.ChangeTime.QuadPart &&
+            settled.CreationTime.QuadPart == basic.CreationTime.QuadPart && settled.FileAttributes == basic.FileAttributes) {
+            break;
+        }
     }
     snapshot.size = static_cast<std::uint64_t>(standard.EndOfFile.QuadPart);
     snapshot.links = standard.NumberOfLinks;

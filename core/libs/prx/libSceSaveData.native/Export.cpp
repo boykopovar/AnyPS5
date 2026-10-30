@@ -303,8 +303,9 @@ int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
     if (backup == nullptr || backup->dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    // The system copies the save directory to its backup area asynchronously; the copy itself is
-    // not observable by the title, only its completion event.
+    if (std::memchr(backup->dir_name->data, '\0', sizeof(backup->dir_name->data)) == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     SaveDataEvent event{};
     event.type = SAVE_DATA_EVENT_TYPE_BACKUP;
     event.error_code = SAVE_DATA_OK;
