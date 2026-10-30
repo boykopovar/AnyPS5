@@ -874,6 +874,28 @@ static void ApplyJobAffinity(PthreadPrivate& thread, void* handle) {
 }
 #endif
 
+static std::uint64_t GuestThreadMask() {
+    static const std::uint64_t mask = [] {
+        const auto requested = CpuTopology::MaskFromEnvironment("APS5_GUEST_AFFINITY_MASK");
+        if (requested != 0) return requested;
+        if (std::getenv("APS5_GUEST_AFFINITY") == nullptr) return std::uint64_t{0};
+        const auto& layout = CpuTopology::Get();
+        return layout.hybrid ? layout.efficient : std::uint64_t{0};
+    }();
+    return mask;
+}
+
+static void ApplyGuestAffinity(const PthreadPrivate& thread) {
+    const auto mask = GuestThreadMask();
+    if (mask == 0) return;
+    static std::once_flag summary;
+    std::call_once(summary, [mask] {
+        const auto& layout = CpuTopology::Get();
+        std::fprintf(stderr, "[affinity] guest threads -> 0x%llx (hybrid=%d efficient=0x%llx performant=0x%llx process=0x%llx)\n", static_cast<unsigned long long>(mask), layout.hybrid ? 1 : 0, static_cast<unsigned long long>(layout.efficient), static_cast<unsigned long long>(layout.performant), static_cast<unsigned long long>(layout.process));
+    });
+    CpuTopology::PinTraced(thread.name.empty() ? "guest thread" : thread.name.c_str(), nullptr, mask);
+}
+
 struct NativeThreadArgs {
     std::unique_ptr<ThreadArgs> guest;
     std::future<bool> start;
@@ -895,6 +917,7 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
             throw std::runtime_error("Guest thread stack is not fully committed");
         self->threadId = std::this_thread::get_id();
         CurrentGuestState().current = self;
+        ApplyGuestAffinity(*self);
         if (!self->name.empty()) {
             const std::wstring description(self->name.begin(), self->name.end());
             SetThreadDescription(GetCurrentThread(), description.c_str());
@@ -930,6 +953,7 @@ static void* StartNativeThread(void* opaque) {
         self->hostTid = static_cast<int>(gettid());
         RegisterGuestStackMapping(self);
 #endif
+        ApplyGuestAffinity(*self);
         args->initialized.set_value();
     } catch (...) {
         args->initialized.set_exception(std::current_exception());
