@@ -1,5 +1,9 @@
 # libSceNpCommon technical debt
 
+### Unknown function info
+
+Pending import declarations are matched to names in the local libSceNpCommon.sprx export table and the public [PS5 3.20 libSceNpCommon export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/main/libSceNpCommon.c); their NIDs are recomputed with tools/nid_names.py. Prototypes and behavior are unknown. Each parameterless declaration exists for import resolution and throws if called.
+
 ### Additional callable exports
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/5561dd3862eb9a93c9badc2c55c2a160/d2edbede1a59271c8a52737daeb278c82df297a7) records the module, library, symbol type and NIDs for the declarations in [InventoryExports.cpp](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp); it is a metadata summary rather than independent verification.
@@ -798,9 +802,7 @@
 | `Unknown` | `wnXVM2Zy49s` |
 | `Unknown` | `xJecuUi348c` |
 
-### Unknown function info
-
-Pending import declarations are matched to names in the local libSceNpCommon.sprx export table and the public [PS5 3.20 libSceNpCommon export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/main/libSceNpCommon.c); their NIDs are recomputed with tools/nid_names.py. Prototypes and behavior are unknown. Each parameterless declaration exists for import resolution and throws if called.
+### Unknown function info (continued)
 
 - [sceNpCloseSema](../../../core/libs/prx/libSceNpCommon/PendingExports.cpp) (NID `8hPzfjZzV88`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
 - [sceNpGetNavSdkVersion](../../../core/libs/prx/libSceNpCommon/PendingExports.cpp) (NID `QmDEFikd3VA`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
