@@ -11,7 +11,10 @@
 
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libSceHttp/src/Resolver.hpp"
+#include "prx/libSceNet/include/Net.hpp"
+#include "prx/libSceSsl/include/Ssl.hpp"
 #include "SslCertificateFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -35,31 +38,6 @@
 #include <utility>
 #include <thread>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceNetInit_nid_postfix(void);
-int APS5_VABI sceSslInit_nid_postfix(std::uint64_t);
-int APS5_VABI sceSslTerm_nid_postfix(int);
-int APS5_VABI sceHttpInit_nid_postfix(int, int, std::uint64_t);
-int APS5_VABI sceHttpTerm_nid_postfix(int);
-int APS5_VABI sceHttpCreateTemplate(int, const char*, int, int);
-int APS5_VABI sceHttpDeleteTemplate(int);
-int APS5_VABI sceHttpCreateConnectionWithURL(int, const char*, int);
-int APS5_VABI sceHttpDeleteConnection(int);
-int APS5_VABI sceHttpCreateRequestWithURL(int, int, const char*, std::uint64_t);
-int APS5_VABI sceHttpDeleteRequest(int);
-int APS5_VABI sceHttpAddRequestHeader(int, const char*, const char*, std::uint32_t);
-int APS5_VABI sceHttpSetConnectTimeOut(int, std::uint32_t);
-int APS5_VABI sceHttpSetResolveTimeOut(int, std::uint32_t);
-int APS5_VABI sceHttpsSetSslCallback(int, HttpsCallback, void*);
-int APS5_VABI sceHttpSendRequest(int, const void*, std::size_t);
-int APS5_VABI sceHttpGetStatusCode(int, int*);
-int APS5_VABI sceHttpGetLastErrno(int, int*);
-int APS5_VABI sceHttpGetResponseContentLength(int, int*, std::uint64_t*);
-int APS5_VABI sceHttpGetAllResponseHeaders(int, char**, std::size_t*);
-int APS5_VABI sceHttpReadData(int, void*, std::size_t);
-int APS5_VABI sceHttpSetResponseHeaderMaxSize(int, std::uint64_t);
-}
 
 #ifdef _WIN32
 using NativeSocket = SOCKET;

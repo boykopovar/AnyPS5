@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include <cstddef>
@@ -8,24 +9,8 @@
 #include <cstring>
 #include <new>
 
-extern "C" {
-int APS5_VABI sceHttpInit_nid_postfix(int, int, std::uint64_t);
-int APS5_VABI sceHttpTerm_nid_postfix(int);
-int APS5_VABI sceHttpAuthCacheFlush(int);
-int APS5_VABI sceHttpGetMemoryPoolStats(int, void*);
-int APS5_VABI sceHttpGetRegisteredCtxIds(int, int*, int*);
-int APS5_VABI sceHttpGetNonblock(int, int*);
-int APS5_VABI sceHttpCreateTemplate(int, const char*, int, int);
-int APS5_VABI sceHttpDeleteTemplate(int);
-}
-
 namespace {
 
-struct HttpMemoryPoolStats {
-    std::size_t poolSize;
-    std::size_t maxInuseSize;
-    std::size_t currentInuseSize;
-};
 static_assert(sizeof(HttpMemoryPoolStats) == 24);
 
 int g_allocationBudget = -1;
@@ -45,17 +30,17 @@ bool Inactive() {
 void CheckPoolStatsRejected(const int context, const int expected) {
     unsigned char buffer[sizeof(HttpMemoryPoolStats) + 16];
     std::memset(buffer, 0x5a, sizeof(buffer));
-    Require(sceHttpGetMemoryPoolStats(context, buffer) == expected, "unexpected HTTP pool-stats result");
+    Require(sceHttpGetMemoryPoolStats(context, reinterpret_cast<HttpMemoryPoolStats*>(buffer)) == expected, "unexpected HTTP pool-stats result");
     for (const unsigned char byte : buffer) Require(byte == 0x5a, "rejected pool-stats call modified its output");
 }
 
 void CheckPoolStats(const int context, const std::size_t expectedSize) {
     unsigned char buffer[sizeof(HttpMemoryPoolStats) + 16];
     std::memset(buffer, 0x5a, sizeof(buffer));
-    Require(sceHttpGetMemoryPoolStats(context, buffer) == 0, "live HTTP context has no pool stats");
+    Require(sceHttpGetMemoryPoolStats(context, reinterpret_cast<HttpMemoryPoolStats*>(buffer)) == 0, "live HTTP context has no pool stats");
     HttpMemoryPoolStats stats;
     std::memcpy(&stats, buffer, sizeof(stats));
-    Require(stats.poolSize == expectedSize && stats.maxInuseSize == 0 && stats.currentInuseSize == 0,
+    Require(stats.poolSize == expectedSize && stats.peakUsedSize == 0 && stats.usedSize == 0,
         "HTTP pool stats do not match the context");
     for (std::size_t i = sizeof(stats); i < sizeof(buffer); ++i)
         Require(buffer[i] == 0x5a, "pool-stats call overwrote bytes past its result");
