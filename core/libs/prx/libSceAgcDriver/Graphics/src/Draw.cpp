@@ -414,7 +414,7 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
     if (color.coverageSamples > color.samples) {
         for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
             for (std::uint32_t tileX = 0; tileX < layout.TilesX(); ++tileX) {
-                const auto nibble = layout.Nibble(tileX, tileY);
+                const auto nibble = layout.Nibble(tileX, tileY, color.cmaskSlice);
                 const auto code = (std::to_integer<std::uint32_t>(mask[nibble / 2u]) >> ((nibble % 2u) * 4u)) & 0xfu;
                 if (code != 0u && (code >> 2u) != 3u) {
                     char text[128];
@@ -440,7 +440,7 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
 
 void storeCmaskClearTexels(const ColorTarget& color, const CmaskLayout& layout, const std::vector<std::uint32_t>* tiles, const std::array<std::byte, 16>& texel) {
     StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
-    const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+    const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes, color.pipeBankXor);
     Require(surface.Bytes() == color.bytes, "CMASK fast clear over a color target whose layout differs from its surface");
     std::vector<std::byte> texels(surface.Bytes());
     GuestMemory::Read(color.address, texels, surface.Alignment());
