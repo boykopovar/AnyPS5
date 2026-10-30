@@ -129,6 +129,10 @@ static void CreateValidation() {
     Require(sceFontCreateWords(&badMemory, &source, 0, &words) == SCE_FONT_ERROR_INVALID_MEMORY && words == nullptr);
     Require(sceFontCreateWords(&fixture.memory, nullptr, 0, &words) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontCreateWords(&fixture.memory, &source, 0, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    FontTextSource noParser = source;
+    noParser.textParser = nullptr;
+    words = reinterpret_cast<FontWords*>(1);
+    Require(sceFontCreateWords(&fixture.memory, &noParser, 0, &words) == SCE_FONT_ERROR_INVALID_PARAMETER && words == nullptr);
     FontTextSource unknown = source;
     unknown.systemUse0 = 0;
     Require(sceFontCreateWords(&fixture.memory, &unknown, 0, &words) == SCE_FONT_ERROR_INVALID_TEXT_SOURCE && words == nullptr);

@@ -21,6 +21,11 @@ static constexpr std::uint8_t COMMAND_TYPE_INT = 3;
 static constexpr std::uint8_t COMMAND_TYPE_FLOAT_ARRAY = 0x11;
 static constexpr float MAX_MATRIX_LEVEL = 4.0f;
 static constexpr float MAX_MASTERING_GAIN = 32.0f;
+#ifdef APS5_NGS2_PS4_LIBRARY
+static constexpr bool PS4_LIBRARY = true;
+#else
+static constexpr bool PS4_LIBRARY = false;
+#endif
 
 struct Ngs2ReturnCode {
     int code;
@@ -258,7 +263,7 @@ static void SetMatrixLevels(Ngs2Voice& voice, std::uint32_t matrixId, const floa
         voice.matrices[matrixId].clear();
         return;
     }
-    if (matrixId >= voice.matrices.size() || numLevels == 0 || numLevels > NGS2_MAX_CHANNELS * NGS2_MAX_CHANNELS || levels == nullptr) {
+    if (matrixId >= voice.matrices.size() || numLevels == 0 || numLevels > NGS2_MAX_RACK_CHANNELS * NGS2_MAX_RACK_CHANNELS || levels == nullptr) {
         APS5_INVALID_ARG_EX;
     }
     auto& matrix = voice.matrices[matrixId];
@@ -272,7 +277,7 @@ static void SetPortMatrix(Ngs2Voice& voice, std::uint32_t port, std::int32_t mat
 }
 
 static Ngs2MatrixControl CaptureMatrixControl(const Ngs2Voice& voice, std::uint32_t index, const float* levels, std::uint32_t count) {
-    if (index >= voice.matrices.size() || count == 0 || count > NGS2_MAX_CHANNELS * NGS2_MAX_CHANNELS || levels == nullptr) APS5_INVALID_ARG_EX;
+    if (index >= voice.matrices.size() || count == 0 || count > NGS2_MAX_RACK_CHANNELS * NGS2_MAX_RACK_CHANNELS || levels == nullptr) APS5_INVALID_ARG_EX;
     Ngs2MatrixControl result{index, {levels, levels + count}};
     for (auto& level : result.levels) level = std::clamp(level, -MAX_MATRIX_LEVEL, MAX_MATRIX_LEVEL);
     return result;
@@ -878,10 +883,11 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCom
 }
 
 int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state, size_t state_size) {
+    if (PS4_LIBRARY && state_size < sizeof(state->state_flags)) return SCE_NGS2_ERROR_PS4_INVALID_STATE_SIZE;
     const Ngs2Lock lock;
     const Ngs2VoiceAccess access(voice_handle);
     auto* found = access.voice;
-    if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
+    if (found == nullptr) return PS4_LIBRARY ? SCE_NGS2_ERROR_PS4_INVALID_VOICE_HANDLE : SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
     if (state_size < sizeof(Ngs2VoiceState)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
     if (state == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     const auto& voice = *found;
@@ -985,6 +991,10 @@ int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t voice_handle, uint32_t* state_
     const Ngs2Lock lock;
     const Ngs2VoiceAccess access(voice_handle);
     const auto* found = access.voice;
+    if (found == nullptr && PS4_LIBRARY) {
+        *state_flags = 0;
+        return SCE_NGS2_ERROR_PS4_INVALID_VOICE_HANDLE;
+    }
     if (found == nullptr) return SCE_NGS2_ERROR_INVALID_VOICE_HANDLE;
     *state_flags = found->pendingPlay ? SCE_NGS2_VOICE_STATE_FLAG_INUSE : found->stateFlags;
     return SCE_NGS2_OK;

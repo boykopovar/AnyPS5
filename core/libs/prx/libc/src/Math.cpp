@@ -446,8 +446,18 @@ double APS5_VABI exp2_nid_postfix(double x) {
     return result;
 }
 double APS5_VABI ldexp_nid_postfix(double x, int exponent) { return std::ldexp(x, exponent); }
-double APS5_VABI scalbn_nid_postfix(double x, int exponent) { return std::scalbn(x, exponent); }
-float APS5_VABI scalbnf_nid_postfix(float x, int exponent) { return std::scalbn(x, exponent); }
+double APS5_VABI scalbn_nid_postfix(double x, int exponent) {
+    const int saved_errno = errno;
+    const double result = std::scalbn(x, exponent);
+    errno = saved_errno;
+    return result;
+}
+float APS5_VABI scalbnf_nid_postfix(float x, int exponent) {
+    const int saved_errno = errno;
+    const float result = std::scalbn(x, exponent);
+    errno = saved_errno;
+    return result;
+}
 long double APS5_VABI scalbnl_nid_postfix(long double x, int exponent) { return std::scalbn(x, exponent); }
 float APS5_VABI significandf_nid_postfix(float x) { return x == 0.0f || !std::isfinite(x) ? x : std::scalbn(x, -std::ilogb(x)); }
 double APS5_VABI significand_nid_postfix(double x) { return x == 0.0 || !std::isfinite(x) ? x : std::scalbn(x, -std::ilogb(x)); }
@@ -478,7 +488,6 @@ int APS5_VABI __isfinitef_nid_postfix(float x) { return std::isfinite(x) ? 1 : 0
 int APS5_VABI __isnormal_nid_postfix(double x) { return std::isnormal(x) ? 1 : 0; }
 int APS5_VABI __isnormalf_nid_postfix(float x) { return std::isnormal(x) ? 1 : 0; }
 int APS5_VABI __isinff_nid_postfix(float x) { return std::isinf(x) ? 1 : 0; }
-float APS5_VABI nearbyintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::nearbyintf(x); }
 long double APS5_VABI nearbyintl_nid_postfix(long double x) { return std::nearbyint(x); }
 double APS5_VABI nearbyint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::nearbyint(x); }
 
@@ -1652,7 +1661,12 @@ float APS5_VABI logf_nid_postfix(float x) {
 }
 float APS5_VABI log2f_nid_postfix(float x) { return std::log2(x); }
 double APS5_VABI log10_nid_postfix(double x) { return std::log10(x); }
-float APS5_VABI ldexpf_nid_postfix(float x, int exp) { return std::ldexp(x, exp); }
+float APS5_VABI ldexpf_nid_postfix(float x, int exp) {
+    const int saved_errno = errno;
+    const float result = std::scalbn(x, exp);
+    errno = saved_errno;
+    return result;
+}
 double APS5_VABI fmod_nid_postfix(double x, double y) {
     int saved_errno = errno;
     double result = std::fmod(x, y);

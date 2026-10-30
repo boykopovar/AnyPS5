@@ -1,11 +1,13 @@
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cerrno>
 #include <cfenv>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -16,7 +18,13 @@ namespace {
 
 constexpr long long ExponentLimit = 1000000000;
 constexpr int InvalidArgument = 22;
+constexpr int DomainError = 33;
 constexpr int RangeError = 34;
+
+constexpr long double LogPolynomial[] = {
+    0x87f45b3375e0c9edp-66L, 0x87a58c55129af2f8p-66L, 0x9d90cfd7547e4ed2p-66L, 0xba2e6ba9488d3d0cp-66L,
+    0xe38e393a60e2888bp-66L, 0x924924920646cc89p-65L, 0xcccccccccd00c2ebp-65L, 0xaaaaaaaaaaaaa334p-64L,
+};
 
 bool Hexadecimal(const char* text) {
     while (std::isspace(static_cast<unsigned char>(*text))) ++text;
@@ -426,8 +434,46 @@ float APS5_VABI _FLog_nid_postfix(float x, int base) {
 }
 
 long double APS5_VABI _LLog_nid_postfix(long double x, int base) {
-    if (base > 0) return log10l_nid_postfix(x);
-    return base == 0 ? logl_nid_postfix(x) : log2l_nid_postfix(x);
+    static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64);
+    std::uint64_t mantissa;
+    std::uint16_t signExponent;
+    std::memcpy(&mantissa, &x, sizeof(mantissa));
+    std::memcpy(&signExponent, reinterpret_cast<const unsigned char*>(&x) + sizeof(mantissa), sizeof(signExponent));
+    const int exponent = signExponent & 0x7fff;
+    const bool negative = (signExponent & 0x8000) != 0;
+    if (exponent == 0x7fff) {
+        if ((mantissa & 0x7fffffffffffffffull) != 0 || !negative) return x;
+    } else if (mantissa == 0) {
+        std::feraiseexcept(FE_DIVBYZERO);
+        *__error_nid_postfix() = RangeError;
+        return -std::numeric_limits<long double>::infinity();
+    }
+    if (negative) {
+        std::feraiseexcept(FE_INVALID);
+        *__error_nid_postfix() = DomainError;
+        return std::numeric_limits<long double>::quiet_NaN();
+    }
+    const int shift = std::countl_zero(mantissa);
+    int scale = std::max(exponent, 1) - shift - 0x3ffe;
+    const std::uint64_t normalized = mantissa << shift;
+    const std::uint16_t halfExponent = 0x3ffe;
+    long double fraction = 0;
+    std::memcpy(&fraction, &normalized, sizeof(normalized));
+    std::memcpy(reinterpret_cast<unsigned char*>(&fraction) + sizeof(normalized), &halfExponent, sizeof(halfExponent));
+    if (fraction < 0xb504f333f9de6484p-64L) {
+        fraction = fraction + fraction;
+        --scale;
+    }
+    const long double y = fraction - 1.0L;
+    const long double z = y / (fraction + 1.0L);
+    const long double w = z * z;
+    long double p = LogPolynomial[0];
+    for (std::size_t index = 1; index < std::size(LogPolynomial); ++index) p = p * w + LogPolynomial[index];
+    const long double q = z * (y - p * w);
+    const long double e = scale;
+    if (base == 0) return (y - (q + -0xfbe8e7bcd5e4f1dap-87L * e)) + e * 0x1.62e42cp-1f;
+    if (base > 0) return ((0xa937287195355babp-89L * y - (q * 0xde5bd8a937287195p-65L + -0xa13ef3fde623e256p-87L * e)) + y * 0x1.bcb7bp-2f) + e * 0x1.34413p-2f;
+    return ((q * -0xb8aa3b295c17f0bcp-63L + 0xa5705fc2eefa1ffbp-89L * y) + y * 0x1.715476p+0f) + e;
 }
 
 long double APS5_VABI _LDivide_nid_postfix(long double x, long double y) {
