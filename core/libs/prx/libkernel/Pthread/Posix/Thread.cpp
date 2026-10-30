@@ -368,7 +368,8 @@ int APS5_VABI pthread_getcpuclockid_nid_postfix(Pthread thread, int* clockId) {
     constexpr int guestFault = 14;
     if (!thread) return PosixThread::GUEST_EINVAL;
     if (!clockId) return guestFault;
-    *clockId = GuestThreadCpuClockId(thread);
+    const int id = GuestThreadCpuClockId(thread);
+    if (!GuestCopyOut_nid_no_patch(clockId, &id, sizeof(id))) return guestFault;
     return 0;
 }
 
