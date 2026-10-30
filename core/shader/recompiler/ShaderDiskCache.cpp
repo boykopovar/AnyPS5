@@ -1,4 +1,5 @@
 #include "ShaderDiskCache.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "CacheKey.hpp"
 #include "ShaderCachePack.hpp"
@@ -1456,7 +1457,7 @@ public:
         discoverPrebuilt();
         stopping = stopped;
         if (stopping) return;
-        writer = std::thread([this] { run(); });
+        writer = Libc::StartHostThread([this] { run(); });
         runningWriters.fetch_add(1, std::memory_order_acq_rel);
     }
 

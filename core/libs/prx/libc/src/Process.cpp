@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include <csignal>
+#include "prx/libc/include/HostThread.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -55,7 +56,7 @@ extern "C" void LibcRequestShutdown_nid_postfix() {
 extern "C" void LibcRequestExit_nid_postfix(int code) {
     if (exitRequested.exchange(true)) return;
     LibcRequestShutdown_nid_postfix();
-    std::thread([code] { LibcExitWithoutHandlers_nid_no_patch(code); }).detach();
+    Libc::StartHostThread([code] { LibcExitWithoutHandlers_nid_no_patch(code); }).detach();
 }
 
 extern "C" [[noreturn]] void LibcAwaitExit_nid_postfix() {
