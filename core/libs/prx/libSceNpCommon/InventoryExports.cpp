@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpCommon/include/InventoryExports.hpp"
+#include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
@@ -8,13 +9,13 @@ static_assert(sizeof(std::uintptr_t) == 8);
 
 std::uintptr_t _ZTVN3sce2np8SelectorE_nid_postfix[] {
     0, 0,
-    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8SelectorD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8SelectorD2Ev),
     reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8SelectorD0Ev),
 };
 
 std::uintptr_t _ZTVN3sce2np20BufferedStreamReaderE_nid_postfix[] {
     0, 0,
-    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np20BufferedStreamReaderD2Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np20BufferedStreamReaderD1Ev),
     reinterpret_cast<std::uintptr_t>(&_ZN3sce2np20BufferedStreamReaderD0Ev),
     reinterpret_cast<std::uintptr_t>(&_ZN3sce2np20BufferedStreamReader4ReadEPNS0_6HandleEPvmPm),
 };
@@ -37,7 +38,6 @@ std::uintptr_t _ZTVN3sce2np8msg_pack13MsgPackParserE_nid_postfix[] {
     reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack13MsgPackParserD1Ev),
     reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack13MsgPackParserD0Ev),
 };
-
 
 int APS5_VABI _ZN3sce2np10CancelLock3EndEPKciS3_() {
     NotImplemented_nid_no_patch(__func__);
@@ -771,10 +771,6 @@ int APS5_VABI _ZN3sce2np20BufferedStreamReaderD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce2np20BufferedStreamReaderD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3sce2np20BufferedStreamWriter4OpenEPNS0_12StreamWriterEm() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -806,10 +802,7 @@ int APS5_VABI _ZN3sce2np20BufferedStreamWriterD0Ev() {
 int APS5_VABI _ZN3sce2np20BufferedStreamWriterD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZN3sce2np20BufferedStreamWriterD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+APS5_EXPORT("MeAc+ooYzaI", _ZN3sce2np20BufferedStreamWriterD1Ev);
 
 int APS5_VABI _ZN3sce2np3Dir14MkdirRecursiveEPKctP16SceNpAllocatorEx() {
     NotImplemented_nid_no_patch(__func__);
@@ -1395,10 +1388,6 @@ int APS5_VABI _ZN3sce2np8SelectorD0Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce2np8SelectorD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3sce2np8WorkItem11SetFinishedEi() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1442,10 +1431,7 @@ int APS5_VABI _ZN3sce2np8msg_pack10MsgPackDocD0Ev() {
 int APS5_VABI _ZN3sce2np8msg_pack10MsgPackDocD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZN3sce2np8msg_pack10MsgPackDocD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+APS5_EXPORT("cVxiXMcEG2s", _ZN3sce2np8msg_pack10MsgPackDocD1Ev);
 
 int APS5_VABI _ZN3sce2np8msg_pack10MsgPackMap10IsValidKeyERKNS1_12MsgPackValueE() {
     NotImplemented_nid_no_patch(__func__);
@@ -1682,10 +1668,7 @@ int APS5_VABI _ZN3sce2np8msg_pack13MsgPackParserD0Ev() {
 int APS5_VABI _ZN3sce2np8msg_pack13MsgPackParserD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZN3sce2np8msg_pack13MsgPackParserD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+APS5_EXPORT("O9+ZlqCjPxE", _ZN3sce2np8msg_pack13MsgPackParserD1Ev);
 
 int APS5_VABI _ZN3sce2np8msg_pack13MsgPackString6CreateEP14SceNpAllocatorPS2_() {
     NotImplemented_nid_no_patch(__func__);
