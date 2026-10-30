@@ -13,7 +13,7 @@ std::uint32_t IrValue::Id() const {
     return id;
 }
 
-const std::vector<IrValue*>& IrValue::Arguments() const {
+const IrOperands& IrValue::Arguments() const {
     return arguments;
 }
 
@@ -39,9 +39,11 @@ void IrValue::ReplaceArgument(std::size_t index, IrValue* argument) {
     }
     IrValue* previous = arguments[index];
     if (previous != nullptr) {
-        const auto operandIt = std::find_if(previous->operandUses.begin(), previous->operandUses.end(), [this, index](const IrUse& use) {
-            return use.user == this && use.operand == index;
-        });
+        const auto operandIt = !previous->operandUses.empty() && previous->operandUses.back() == IrUse{this, index}
+            ? previous->operandUses.end() - 1
+            : std::find_if(previous->operandUses.begin(), previous->operandUses.end(), [this, index](const IrUse& use) {
+                return use.user == this && use.operand == index;
+            });
         if (operandIt != previous->operandUses.end()) {
             previous->operandUses.erase(operandIt);
         }

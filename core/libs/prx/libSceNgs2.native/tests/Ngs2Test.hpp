@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCENGS2_TESTS_NGS2TEST_HPP
 #define CORE_LIBS_PRX_LIBSCENGS2_TESTS_NGS2TEST_HPP
 
+#include "prx/libSceNgs2.native/include/Api.hpp"
 #include "prx/libSceNgs2.native/include/Ngs2Types.hpp"
 
 #include <cstdint>
@@ -76,10 +77,52 @@ inline bool FrameInfoThrows(const Ngs2WaveformFormat& format) {
     return threw;
 }
 
+#if defined(NGS2_TEST_GRAIN)
+inline constexpr std::uint32_t Grain = NGS2_TEST_GRAIN;
+#else
 inline constexpr std::uint32_t Grain = 8;
+#endif
+
+template <typename TSignal>
+inline float SamplerReference(std::uint32_t frame, float pitch, TSignal signal) {
+    const float position = frame * pitch;
+    const auto index = static_cast<std::uint32_t>(position);
+    const auto source = [&](std::uint32_t offset) { return offset < 4 ? 0.0f : signal(offset - 4); };
+    if (position == index) return source(index + 1);
+    Require(position - index == 0.5f);
+    return (source(index) * -0.0303300861f + source(index + 1) * 0.530330062f) +
+           (source(index + 2) * 0.530330062f + source(index + 3) * -0.0303300861f);
+}
 
 inline std::vector<std::vector<std::uint64_t>> buffers;
 inline std::size_t usedBuffers = 0;
+
+struct TestRackBuffer {
+    std::uintptr_t rack;
+    void* buffer;
+};
+inline std::vector<TestRackBuffer> testRackBuffers;
+
+inline int TestRackCreate(std::uintptr_t system, std::uint32_t id, const Ngs2RackOption* option,
+                          const Ngs2ContextBufferInfo* buffer, std::uintptr_t* rack) {
+    const int result = sceNgs2RackCreate(system, id, option, buffer, rack);
+    if (result == SCE_NGS2_OK) testRackBuffers.push_back({*rack, buffer->host_buffer});
+    return result;
+}
+
+inline void ResetBuffers(std::size_t first) {
+    for (auto it = testRackBuffers.begin(); it != testRackBuffers.end();) {
+        bool owned = false;
+        for (std::size_t i = first; i < usedBuffers; ++i) if (buffers[i].data() == it->buffer) owned = true;
+        if (!owned) { ++it; continue; }
+        const auto rack = it->rack;
+        testRackBuffers.erase(it);
+        const int result = sceNgs2RackDestroy(rack, nullptr);
+        Require(result == SCE_NGS2_OK || result == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
+        it = testRackBuffers.begin();
+    }
+    usedBuffers = first;
+}
 
 inline Ngs2ContextBufferInfo Buffer(const Ngs2ContextBufferInfo& query) {
     if (usedBuffers == buffers.size()) buffers.emplace_back();
@@ -106,7 +149,7 @@ inline uintptr_t CreateRack(uintptr_t system, std::uint32_t rackId) {
     Require(sceNgs2RackQueryBufferSize(rackId, nullptr, &query) == SCE_NGS2_OK);
     const auto info = Buffer(query);
     uintptr_t rack = 0;
-    Require(sceNgs2RackCreate(system, rackId, nullptr, &info, &rack) == SCE_NGS2_OK && rack != 0);
+    Require(TestRackCreate(system, rackId, nullptr, &info, &rack) == SCE_NGS2_OK && rack != 0);
     return rack;
 }
 

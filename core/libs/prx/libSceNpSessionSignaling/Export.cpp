@@ -276,4 +276,24 @@ int APS5_VABI sceNpSessionSignalingSetCustomProperty() {
     return 0;
 }
 
+int APS5_VABI sceNpSessionSignalingManualUdpAbortConnection() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSessionSignalingManualUdpCreateJoin() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSessionSignalingManualUdpEstablishConnection() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSessionSignalingManualUdpJoin() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpSessionSignalingRegisterInternalCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }
