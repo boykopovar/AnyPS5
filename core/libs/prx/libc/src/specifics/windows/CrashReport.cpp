@@ -4,6 +4,7 @@
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/FailureReport.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/CrashText.hpp"
 #include <algorithm>
@@ -32,8 +33,7 @@ void Report(const char* format, ...) {
     va_end(args);
     if (length <= 0) return;
     if (length > static_cast<int>(sizeof(buffer)) - 1) length = sizeof(buffer) - 1;
-    DWORD written = 0;
-    WriteFile(GetStdHandle(STD_ERROR_HANDLE), buffer, static_cast<DWORD>(length), &written, nullptr);
+    log_file::CrashWrite(log_file::StandardError, buffer, static_cast<std::size_t>(length));
 }
 
 void ReportAllThreads();

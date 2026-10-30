@@ -83,6 +83,7 @@ std::shared_ptr<Texture> MultisampleTargetFmaskTexture_nid_no_patch(const Contex
 void ClearMultisampleTargets(VkDevice device);
 void InstallResidentImageReadGuard_nid_no_patch();
 void UpdateResidentImageUnmapObserver_nid_no_patch();
+void ClaimMultisampleTargetMemory(std::uint64_t address, std::uint64_t bytes);
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);

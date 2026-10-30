@@ -303,7 +303,7 @@ int APS5_VABI sceKernelGetSystemLevelDebuggerModeForRcmgr(void);
 int APS5_VABI sceKernelGetSystemSwBeta(void);
 int APS5_VABI sceKernelGetThreadName(uint32_t id, char* name);
 int APS5_VABI sceKernelGetUniversalMode(void);
-int APS5_VABI sceKernelGetUpdVersion(void);
+int APS5_VABI sceKernelGetUpdVersion(std::uint32_t* version);
 int APS5_VABI sceKernelGetUtokenDataExecutionForRcmgr(void);
 int APS5_VABI sceKernelGetUtokenExpirationTimeNotafterForRcmgr(void);
 int APS5_VABI sceKernelGetUtokenExpirationTimeNotbeforeForRcmgr(void);
