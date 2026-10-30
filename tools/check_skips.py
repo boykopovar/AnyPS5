@@ -1,3 +1,4 @@
+import sys
 import argparse
 import re
 import xml.etree.ElementTree as ET
@@ -10,60 +11,85 @@ NO_DISPLAY = re.compile(r"skipped,.*no display", re.IGNORECASE)
 NO_VULKAN_DEVICE = re.compile(r"skipped,.*no usable Vulkan device", re.IGNORECASE)
 
 HIGH_REFRESH_LIMITATION = re.compile(r"current display does not provide 120 Hz", re.IGNORECASE)
+CTEST_SKIP_STATUS = re.compile(r"SKIP_RETURN_CODE=\d+|SKIP_REGULAR_EXPRESSION_MATCHED", re.IGNORECASE)
 
 WINDOWS_PREFIX = "agc"
+
+
+def device_limitations(output, patterns):
+    reasons = [match.group(0) for line in output.splitlines() if (match := re.search(r"skipped,.*", line, re.IGNORECASE))]
+    return bool(reasons) and all(any(pattern.search(reason) for pattern in patterns) for reason in reasons)
 
 
 def high_refresh_limitation(output):
     reasons = []
     for line in output.splitlines():
         reason = line.strip()
-        if reason.lower().startswith("skipped,"):
-            reason = reason[len("skipped,"):].strip()
+        if match := re.search(r"skipped,", reason, re.IGNORECASE):
+            reason = reason[match.end():].strip()
         if reason:
             reasons.append(reason)
     return bool(reasons) and all(HIGH_REFRESH_LIMITATION.fullmatch(reason) for reason in reasons)
 
 
-def skips(path):
-    for case in ET.parse(path).getroot().iter("testcase"):
-        if case.get("status") == "disabled":
-            raise ValueError(f"{path}: testcase {case.get('name')!r} is disabled and was not run")
+def skips(path, require_tests=False):
+    root = ET.parse(path).getroot()
+    if root.tag not in ("testsuite", "testsuites"):
+        raise ValueError(f"{path}: expected a JUnit testsuite or testsuites root, got {root.tag!r}")
+    found = False
+    for case in root.iter("testcase"):
+        found = True
         skipped = case.find("skipped")
+        ctest_skip = skipped is not None and CTEST_SKIP_STATUS.fullmatch(skipped.get("message", "").strip())
+        if case.get("status") == "disabled" or (case.get("status") == "notrun" and not ctest_skip):
+            raise ValueError(f"{path}: testcase {case.get('name')!r} is {case.get('status')} and was not run")
         if skipped is None:
             continue
         name = case.get("name")
         if not name:
             raise ValueError(f"{path}: skipped testcase has no name")
-        output = ["skipped, " + reason.strip() for reason in (skipped.get("message", ""), skipped.text or "") if reason.strip()]
+        output = ["skipped, " + reason.strip() for reason in (skipped.get("message", ""), skipped.text or "")
+                  if reason.strip() and not CTEST_SKIP_STATUS.fullmatch(reason.strip())]
         output += [case.findtext(channel) or "" for channel in ("system-out", "system-err")]
         yield name, "\n".join(output)
+    if require_tests and not found:
+        raise ValueError(f"{path}: report contains no testcases")
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="fail when a test is skipped that the job's device is not expected to skip")
     parser.add_argument("junit", type=Path, help="the file written by ctest --output-junit")
     parser.add_argument("--job", choices=("linux", "windows"), default="linux")
     parser.add_argument("--list", action="store_true", help="print the skipped tests and why the file says they skipped")
-    args = parser.parse_args()
+    parser.add_argument("--require-tests", action="store_true", help="fail if the report contains no testcases")
+    args = parser.parse_args(argv)
     try:
-        found = sorted(skips(args.junit))
+        found = sorted(skips(args.junit, require_tests=args.require_tests))
     except (OSError, ET.ParseError, ValueError) as error:
         parser.error(str(error))
     if args.list:
         for name, output in found:
-            reason = next((line.strip() for line in output.splitlines() if line.strip().lower().startswith("skipped")), "")
+            reason = next((match.group(0) for line in output.splitlines()
+                           if (match := re.search(r"skipped,.*", line, re.IGNORECASE))), "")
             print(f"{name}: {reason}")
-        raise SystemExit
+        return 0
     if args.job == "windows":
-        unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not NO_DISPLAY.search(output) and not NO_VULKAN_DEVICE.search(output) and not high_refresh_limitation(output)]
+        unexpected = [name for name, output in found if not name.startswith(WINDOWS_PREFIX) and not device_limitations(output, (NO_DISPLAY, NO_VULKAN_DEVICE)) and not high_refresh_limitation(output)]
         expected = f"any {WINDOWS_PREFIX}* test, which the runner has no Vulkan driver for, or a test that reports no display or Vulkan device or a display without a 120 Hz mode"
     else:
-        unexpected = [name for name, output in found if not DEVICE_LIMITATION.search(output) and not high_refresh_limitation(output)]
+        unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)]
         expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension, no display for a Vulkan window or a display without a 120 Hz mode"
     for name in unexpected:
         print(f"error: {name} skipped")
     if unexpected:
         print(f"{len(unexpected)} test(s) skipped for a reason that is not expected: the job lost that coverage and ctest still reports every test as passed")
-        raise SystemExit(1)
+        return 1
     print(f"{len(found)} test(s) skipped, all expected ({expected})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

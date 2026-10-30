@@ -1,3 +1,4 @@
+#include "prx/libScePlayGo/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -106,13 +107,15 @@ static UnlistedChunkAnswer UnlistedChunks() {
 
 static bool IsKnownChunk(uint16_t id) {
     const auto& chunks = Chunks();
-    if (chunks.defined) return chunks.ids.contains(id);
-    if (chunks.scenario || id == 0) return true;
+    if (chunks.ids.contains(id)) return true;
+    if (chunks.defined) return false;
     switch (UnlistedChunks()) {
     case UnlistedChunkAnswer::Installed: return true;
     case UnlistedChunkAnswer::Absent: return false;
     case UnlistedChunkAnswer::Stop: break;
     }
+    if (chunks.scenario)
+        throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat is missing and sce_sys/playgo-scenario.json lists no chunks, so chunk ID " + std::to_string(id) + " outside the listed ids 0 to " + std::to_string(PLAYGO_SCENARIO_CHUNK_COUNT - 1) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed or =absent to answer for this dump");
     throw std::runtime_error("scePlayGo: sce_sys/playgo-chunk.dat and sce_sys/playgo-scenario.json are missing, so chunk ID " + std::to_string(id) + " cannot be checked; set APS5_PLAYGO_UNLISTED_CHUNKS=installed or =absent to answer for this dump");
 }
 
@@ -201,6 +204,10 @@ int APS5_VABI scePlayGoGetProgress(int handle, const uint16_t* chunk_ids, uint32
     return 0;
 }
 
+int APS5_VABI scePlayGoGetRequiredDisc() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI scePlayGoGetSupportedOptionalChunk(int handle, std::uint32_t type, PlayGoOptionalChunk* option) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
@@ -249,6 +256,10 @@ int APS5_VABI scePlayGoSetInstallSpeed(int handle, int32_t speed) {
     return 0;
 }
 
+int APS5_VABI scePlayGoSetInstallSpeed2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI scePlayGoSetToDoList(int handle, const PlayGoToDo* todo_list, uint32_t number_of_entries) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!todo_list) return SCE_PLAYGO_ERROR_BAD_POINTER;
@@ -268,6 +279,10 @@ int APS5_VABI scePlayGoTerminate(void) {
 int APS5_VABI scePlayGoRequestNextChunk() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI scePlayGoRequestOptionalChunk() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI scePlayGoSetLanguageMask(int handle, uint64_t language_mask) {

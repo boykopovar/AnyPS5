@@ -1,3 +1,5 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -7,16 +9,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceKernelGetAppInfo(int pid, void* info);
-int APS5_VABI getpid_nid_postfix(void);
-int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid);
-int APS5_VABI sceKernelCreateUuidV4(std::uint8_t* uuid);
-}
-
-static constexpr int SCE_KERNEL_ERROR_EPERM = static_cast<int>(0x80020001);
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -86,9 +78,25 @@ int main(int argc, char** argv) {
     Require(sceKernelGetAppInfo(self, &info) == 0);
     Require(info.appId == 1);
     Require(std::strcmp(info.titleId, "PPSA97358") == 0);
-    Require(info.unknown1 == 0x5a5a5a5a5a5a5a5aull);
-    Require(info.unknown2[0] == 0x5a);
-    Require(sceKernelGetAppInfo(self + 1, &info) == SCE_KERNEL_ERROR_EPERM);
+    Require(info.unknown1 == 0);
+    Require(static_cast<std::uint8_t>(info.unknown2[0x3a]) == 0x5a);
+    std::uint8_t wide[0x100];
+    std::memset(wide, 0xff, sizeof(wide));
+    Require(sceKernelGetAppInfo(self, wide) == 0);
+    std::uint8_t expected[0x100];
+    std::memset(expected, 0xff, sizeof(expected));
+    std::memset(expected, 0, 0x58);
+    const std::uint32_t appId = 1;
+    std::memcpy(expected, &appId, sizeof(appId));
+    std::memcpy(expected + 0x10, "PPSA97358", 10);
+    std::memset(expected + 0x50, 0xff, 4);
+    Require(std::memcmp(wide, expected, sizeof(wide)) == 0);
+    std::memset(wide, 0xff, sizeof(wide));
+    Require(sceKernelGetAppInfo(0, wide) == 0);
+    std::memset(expected, 0xff, sizeof(expected));
+    std::memset(expected, 0, 0x58);
+    std::memset(expected + 0x50, 0xff, 4);
+    Require(std::memcmp(wide, expected, sizeof(wide)) == 0);
     Require(sceKernelGetAppInfo(self, nullptr) == 0);
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);

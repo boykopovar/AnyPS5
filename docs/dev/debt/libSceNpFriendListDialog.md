@@ -1,5 +1,9 @@
 # libSceNpFriendListDialog technical debt
 
+### Silent stubs
+
+- [libSceNpFriendListDialog](../../../core/libs/prx/libSceNpFriendListDialog/Export.cpp) - the friend list dialog (`sceNpFriendListDialogOpenA` and `sceNpFriendListDialogGetResultA`) runs the common-dialog state machine but shows nothing and reports the user as having cancelled, as there is no PSN friend list. The signatures are from [Orbital's type database](https://github.com/AlexAltea/orbital/blob/b321fcdbd700cc02da1cb1ad25412781d5ec73c6/tools/ida/db_types.json); the result layout beyond the leading `int32_t` result code is not known, so nothing else is written.
+
 ### Unknown function info
 
-- [sceNpFriendListDialogClose, sceNpFriendListDialogGetResult, sceNpFriendListDialogGetResultA, sceNpFriendListDialogGetStatus, sceNpFriendListDialogInitialize, sceNpFriendListDialogOpen, sceNpFriendListDialogOpenA, sceNpFriendListDialogTerminate and sceNpFriendListDialogUpdateStatus](../../../core/libs/prx/libSceNpFriendListDialog/Export.cpp) (libSceNpFriendListDialog) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpFriendListDialog.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceNpFriendListDialogGetResult and sceNpFriendListDialogOpen](../../../core/libs/prx/libSceNpFriendListDialog/Export.cpp) (libSceNpFriendListDialog) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpFriendListDialog.c), but Orbital has prototypes only for the `A` variants and no credible prototypes were found for these. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified

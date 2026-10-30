@@ -1,9 +1,18 @@
+#include "prx/libSceSrcUtl/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
+
+int APS5_VABI sceSrcUtilityCreateEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSrcUtilityDeleteEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
 
 int APS5_VABI sceSrcUtilityFinalize() {
     NotImplemented_nid_no_patch(__func__);
@@ -13,6 +22,10 @@ int APS5_VABI sceSrcUtilityFinalize() {
 int APS5_VABI sceSrcUtilityFlush() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceSrcUtilityGetAjmContext() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceSrcUtilityGetDelaySamples() {
@@ -49,5 +62,9 @@ int APS5_VABI sceSrcUtilitySetPriority() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+int APS5_VABI sceSrcUtilityTerminateEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 }

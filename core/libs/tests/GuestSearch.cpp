@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdlib>
@@ -7,7 +8,7 @@
 #include <cstdio>
 #include <source_location>
 using Comparator = int (APS5_VABI *)(const void*, const void*);
-extern "C" void* APS5_VABI bsearch_nid_postfix(const void*, const void*, std::size_t, std::size_t, Comparator);
+
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (!value) { std::fprintf(stderr, "Guest search failed at line %u\n", location.line()); std::abort(); }
 }

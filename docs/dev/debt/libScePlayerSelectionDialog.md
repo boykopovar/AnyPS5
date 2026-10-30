@@ -6,4 +6,4 @@
 
 ### Unknown function info
 
-- [scePlayerSelectionDialogParamInitialize](../../../core/libs/prx/libScePlayerSelectionDialog/Export.cpp) (libScePlayerSelectionDialog) - returns `COMMON_DIALOG_ERROR_ARG_NULL` on a null parameter and throws `NotImplemented_nid_no_patch` for non-null pointers because `ScePlayerSelectionDialogParam` struct layout and default fields remain unverified.
+- [scePlayerSelectionDialogParamInitialize](../../../core/libs/prx/libScePlayerSelectionDialog/Export.cpp) (libScePlayerSelectionDialog) - zeroes the parameter, sets the common dialog base size and address-derived magic, and sets the public size. The console defaults for caller-owned fields and the exact behavior when reinitializing a populated parameter remain unverified.

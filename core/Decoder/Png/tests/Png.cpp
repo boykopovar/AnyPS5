@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -50,6 +51,17 @@ static const std::uint8_t GRAY1[] = {
     0x42, 0x60, 0x82,
 };
 
+static const std::uint8_t GRAY1_TRNS[] = {
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0xDC, 0x59, 0x42,
+    0x27, 0x00, 0x00, 0x00, 0x02, 0x74, 0x52, 0x4E, 0x53, 0x00, 0x02, 0x98, 0x9D, 0xAC, 0x14, 0x00,
+    0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0x70, 0x00, 0x00, 0x00, 0x42, 0x00,
+    0x41, 0x84, 0xBF, 0x8E, 0x62, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60,
+    0x82,
+};
+
+static const std::uint8_t PNG_SIGNATURE[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+
 static void AppendBigEndian32(std::vector<std::uint8_t>& bytes, std::uint32_t value) {
     for (int shift = 24; shift >= 0; shift -= 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
 }
@@ -62,6 +74,130 @@ static std::vector<std::uint8_t> HeaderOnly(std::uint32_t width, std::uint32_t h
     bytes.insert(bytes.end(), {bitDepth, colorType, 0, 0, interlace, 0, 0, 0, 0});
     bytes.insert(bytes.end(), {0, 0, 0, 0, 'I', 'E', 'N', 'D', 0, 0, 0, 0});
     return bytes;
+}
+
+static std::uint32_t Crc32(std::span<const std::uint8_t> bytes) {
+    std::uint32_t crc = 0xFFFFFFFFu;
+    for (const std::uint8_t byte : bytes) {
+        crc ^= byte;
+        for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) != 0 ? 0xEDB88320u : 0u);
+    }
+    return ~crc;
+}
+
+static std::uint32_t Adler32(std::span<const std::uint8_t> bytes) {
+    std::uint32_t low = 1;
+    std::uint32_t high = 0;
+    for (const std::uint8_t byte : bytes) {
+        low = (low + byte) % 65521;
+        high = (high + low) % 65521;
+    }
+    return high << 16 | low;
+}
+
+static void AppendTestChunk(std::vector<std::uint8_t>& png, const char* type, std::span<const std::uint8_t> data) {
+    AppendBigEndian32(png, static_cast<std::uint32_t>(data.size()));
+    const std::size_t start = png.size();
+    png.insert(png.end(), type, type + 4);
+    png.insert(png.end(), data.begin(), data.end());
+    AppendBigEndian32(png, Crc32(std::span<const std::uint8_t>(png.data() + start, png.size() - start)));
+}
+
+static std::vector<std::uint8_t> ZlibStore(std::span<const std::uint8_t> bytes) {
+    Require(bytes.size() <= 0xFFFF);
+    const std::uint16_t length = static_cast<std::uint16_t>(bytes.size());
+    const std::uint16_t inverse = static_cast<std::uint16_t>(~length);
+    std::vector<std::uint8_t> output{0x78, 0x01, 0x01, static_cast<std::uint8_t>(length), static_cast<std::uint8_t>(length >> 8),
+                                     static_cast<std::uint8_t>(inverse), static_cast<std::uint8_t>(inverse >> 8)};
+    output.insert(output.end(), bytes.begin(), bytes.end());
+    AppendBigEndian32(output, Adler32(bytes));
+    return output;
+}
+
+static std::vector<std::uint8_t> GrayLowBitPng(std::uint8_t bitDepth, std::span<const std::uint8_t> samples,
+                                               std::optional<std::uint16_t> transparency,
+                                               std::optional<std::uint16_t> precedingTransparency = std::nullopt) {
+    Require(bitDepth == 1 || bitDepth == 2 || bitDepth == 4);
+    std::vector<std::uint8_t> rows(1 + (samples.size() * bitDepth + 7) / 8, 0);
+    std::size_t bit = 0;
+    for (const std::uint8_t sample : samples) {
+        Require(sample < (1u << bitDepth));
+        rows[1 + bit / 8] |= static_cast<std::uint8_t>(sample << (8 - bitDepth - bit % 8));
+        bit += bitDepth;
+    }
+
+    std::vector<std::uint8_t> ihdr;
+    AppendBigEndian32(ihdr, static_cast<std::uint32_t>(samples.size()));
+    AppendBigEndian32(ihdr, 1);
+    ihdr.insert(ihdr.end(), {bitDepth, 0, 0, 0, 0});
+
+    std::vector<std::uint8_t> png(PNG_SIGNATURE, PNG_SIGNATURE + sizeof(PNG_SIGNATURE));
+    AppendTestChunk(png, "IHDR", ihdr);
+    if (precedingTransparency.has_value()) {
+        const std::uint8_t key[2] = {static_cast<std::uint8_t>(*precedingTransparency >> 8), static_cast<std::uint8_t>(*precedingTransparency)};
+        AppendTestChunk(png, "tRNS", key);
+    }
+    if (transparency.has_value()) {
+        const std::uint8_t key[2] = {static_cast<std::uint8_t>(*transparency >> 8), static_cast<std::uint8_t>(*transparency)};
+        AppendTestChunk(png, "tRNS", key);
+    }
+    AppendTestChunk(png, "IDAT", ZlibStore(rows));
+    AppendTestChunk(png, "IEND", std::span<const std::uint8_t>());
+    return png;
+}
+
+static std::uint8_t GrayScale(std::uint8_t bitDepth) {
+    if (bitDepth == 1) return 255;
+    if (bitDepth == 2) return 85;
+    return 17;
+}
+
+static void RequireGrayTransparency(std::uint8_t bitDepth, std::span<const std::uint8_t> samples, std::uint16_t key,
+                                    std::uint8_t transparentSample, std::optional<std::uint16_t> precedingKey = std::nullopt) {
+    const std::vector<std::uint8_t> png = GrayLowBitPng(bitDepth, samples, key, precedingKey);
+    const std::vector<std::uint8_t> original = png;
+    const auto header = Decoder::Png::ParseHeader(png);
+    Require(header.has_value());
+    Require(header->width == static_cast<std::uint32_t>(samples.size()) && header->height == 1 && header->bitDepth == bitDepth);
+    Require(header->colorType == Decoder::Png::ColorType::Grayscale && header->hasTransparency);
+
+    const auto image = Decoder::Png::Decode(png);
+    Require(image.has_value() && image->pixels.size() == samples.size() * 4);
+    const std::uint8_t scale = GrayScale(bitDepth);
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        const std::uint8_t gray = static_cast<std::uint8_t>(samples[i] * scale);
+        Require(image->pixels[i * 4] == gray && image->pixels[i * 4 + 1] == gray && image->pixels[i * 4 + 2] == gray);
+        Require(image->pixels[i * 4 + 3] == (samples[i] == transparentSample ? 0 : 255));
+    }
+    Require(png == original);
+}
+
+static void RequireGrayOpaque(std::uint8_t bitDepth, std::span<const std::uint8_t> samples) {
+    const std::vector<std::uint8_t> png = GrayLowBitPng(bitDepth, samples, std::nullopt);
+    const std::vector<std::uint8_t> original = png;
+    const auto header = Decoder::Png::ParseHeader(png);
+    Require(header.has_value() && !header->hasTransparency);
+    const auto image = Decoder::Png::Decode(png);
+    Require(image.has_value() && image->pixels.size() == samples.size() * 4);
+    const std::uint8_t scale = GrayScale(bitDepth);
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        const std::uint8_t gray = static_cast<std::uint8_t>(samples[i] * scale);
+        Require(image->pixels[i * 4] == gray && image->pixels[i * 4 + 1] == gray && image->pixels[i * 4 + 2] == gray);
+        Require(image->pixels[i * 4 + 3] == 255);
+    }
+    Require(png == original);
+}
+
+static void RequireTruncatedTransparency() {
+    const std::uint8_t samples[] = {0, 1};
+    const std::vector<std::uint8_t> png = GrayLowBitPng(1, samples, 0x0002);
+    const std::size_t transparencyOffset = sizeof(PNG_SIGNATURE) + 25;
+    const std::vector<std::uint8_t> truncated(png.begin(), png.begin() + transparencyOffset + 9);
+    const std::vector<std::uint8_t> original = truncated;
+    const auto header = Decoder::Png::ParseHeader(truncated);
+    Require(header.has_value() && !header->hasTransparency);
+    (void)Decoder::Png::Decode(truncated);
+    Require(truncated == original);
 }
 
 static void RequireRoundTrip(std::uint32_t channels, Decoder::Png::ColorType colorType) {
@@ -175,6 +311,42 @@ int main() {
     Require(gray1.has_value());
     const std::uint8_t levels[8] = {0, 255, 0, 255, 255, 0, 0, 255};
     for (int i = 0; i < 8; ++i) Require(gray1->pixels[i * 4] == levels[i] && gray1->pixels[i * 4 + 3] == 255);
+
+    const auto gray1TrnsHeader = Decoder::Png::ParseHeader(GRAY1_TRNS);
+    Require(gray1TrnsHeader.has_value());
+    Require(gray1TrnsHeader->width == 2 && gray1TrnsHeader->height == 1 && gray1TrnsHeader->bitDepth == 1);
+    Require(gray1TrnsHeader->colorType == Decoder::Png::ColorType::Grayscale && gray1TrnsHeader->hasTransparency);
+    const auto gray1Trns = Decoder::Png::Decode(GRAY1_TRNS);
+    Require(gray1Trns.has_value());
+    Require(gray1Trns->pixels == std::vector<std::uint8_t>({0, 0, 0, 0, 255, 255, 255, 255}));
+
+    const std::uint8_t gray1Samples[] = {0, 1, 0, 1, 1, 0, 0, 1};
+    RequireGrayTransparency(1, gray1Samples, 0x0000, 0);
+    RequireGrayTransparency(1, gray1Samples, 0x0002, 0);
+    RequireGrayTransparency(1, gray1Samples, 0x0100, 0);
+    RequireGrayTransparency(1, gray1Samples, 0xFF02, 0);
+    RequireGrayTransparency(1, gray1Samples, 0xFFFF, 1);
+    RequireGrayTransparency(1, gray1Samples, 0x0001, 1, 0x0002);
+    RequireGrayOpaque(1, gray1Samples);
+
+    const std::uint8_t gray2Samples[] = {0, 1, 2, 3};
+    RequireGrayTransparency(2, gray2Samples, 0x0001, 1);
+    RequireGrayTransparency(2, gray2Samples, 0x0005, 1);
+    RequireGrayTransparency(2, gray2Samples, 0x0100, 0);
+    RequireGrayTransparency(2, gray2Samples, 0x0101, 1);
+    RequireGrayTransparency(2, gray2Samples, 0xFF05, 1);
+    RequireGrayTransparency(2, gray2Samples, 0xFFFF, 3);
+    RequireGrayOpaque(2, gray2Samples);
+
+    const std::uint8_t gray4Samples[] = {0, 3, 10, 15, 1};
+    RequireGrayTransparency(4, gray4Samples, 0x0003, 3);
+    RequireGrayTransparency(4, gray4Samples, 0x0013, 3);
+    RequireGrayTransparency(4, gray4Samples, 0x0100, 0);
+    RequireGrayTransparency(4, gray4Samples, 0x0103, 3);
+    RequireGrayTransparency(4, gray4Samples, 0xFF13, 3);
+    RequireGrayTransparency(4, gray4Samples, 0xFFFF, 15);
+    RequireGrayOpaque(4, gray4Samples);
+    RequireTruncatedTransparency();
 
     const auto interlaced = Decoder::Png::ParseHeader(HeaderOnly(3, 4, 8, 6, 1));
     Require(interlaced.has_value() && interlaced->interlaced && !interlaced->hasTransparency);

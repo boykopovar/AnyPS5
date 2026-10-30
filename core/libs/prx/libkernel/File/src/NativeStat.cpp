@@ -1,5 +1,6 @@
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
+#include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
@@ -137,7 +138,7 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
 #if defined(__APPLE__)
     sb->st_birthtim.tv_sec = static_cast<std::int64_t>(st.st_birthtimespec.tv_sec);
     sb->st_birthtim.tv_nsec = static_cast<std::int64_t>(st.st_birthtimespec.tv_nsec);
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__EMSCRIPTEN__)
     sb->st_birthtim = sb->st_ctim;
 #else
     sb->st_birthtim.tv_sec = static_cast<std::int64_t>(st.st_birthtim.tv_sec);
@@ -171,6 +172,14 @@ void FillFileStat(int nativeDescriptor, FileStat* sb) {
 
 bool FillFileStatFromDescriptor(int fd, FileStat* sb) {
     if (FillArchivedStatFromDescriptor(fd, sb)) return true;
+    if (File::IsDirectoryDescriptor(fd) && !File::IsNativeDirectoryDescriptor(fd)) {
+        const auto directory = DirectoryDescriptorPath(fd);
+        if (!directory) { errno = ENOENT; return false; }
+        if (FillArchivedStat(*directory, sb)) return true;
+        if (TryFillFileStat(*directory, sb)) return true;
+        errno = ENOENT;
+        return false;
+    }
     NativeStat st{};
     if (DoFstat(fd, &st) != 0) return false;
     CopyNativeStat(st, sb);

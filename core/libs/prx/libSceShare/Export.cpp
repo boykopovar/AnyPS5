@@ -1,3 +1,4 @@
+#include "prx/libSceShare/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -5,22 +6,6 @@
 #include "prx/libc/include/General.hpp"
 
 // Capture and sharing are not emulated; policy and parameter calls are accepted.
-
-struct ShareScreenshotParamExtended {
-    std::uint64_t size;
-    std::uint32_t source;
-    std::uint32_t mode;
-    const char* text;
-};
-
-struct ShareVideoClipParamExtended {
-    std::uint64_t size;
-    std::uint64_t value8;
-    std::uint64_t value16;
-    std::uint32_t mode;
-    std::uint32_t reserved;
-    const char* text;
-};
 
 static_assert(sizeof(ShareScreenshotParamExtended) == 24);
 static_assert(offsetof(ShareScreenshotParamExtended, text) == 16);

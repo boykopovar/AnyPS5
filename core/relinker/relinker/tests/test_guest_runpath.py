@@ -52,13 +52,19 @@ def main():
                     if resolved != expected or (label.startswith("absolute") and actual != run_path):
                         failures.append((str(relative), label, actual, str(resolved), str(expected)))
                     checked += 1
-        for index, run_path in enumerate(("relative/libs", "C:/host/libs", "C:\\host\\libs", "\\\\server\\share")):
+        for index, run_path in enumerate(("relative/libs", "C:/host/libs", "C:\\host\\libs", "\\\\server\\share",
+                                          "$ORIGIN/libs:", "$ORIGIN::/opt/libs", "$ORIGIN:relative/libs", "/opt/libs:")):
             output = work / f"invalid-{index}.elf"
             result = subprocess.run([str(relinker), "--rpath", run_path, str(source), str(output)],
                                     capture_output=True, text=True, timeout=20)
             assert result.returncode == 2 and "run path must be absolute or begin with $ORIGIN" in result.stderr, (
                 run_path, result.returncode, result.stdout, result.stderr)
             assert not output.exists()
+        output = work / "repeated.elf"
+        result = subprocess.run([str(relinker), "--rpath", "$ORIGIN/a", "--rpath", "$ORIGIN/b", str(source), str(output)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode != 0 and "--rpath cannot be repeated" in result.stdout + result.stderr and not output.exists(), (
+            result.returncode, result.stdout, result.stderr)
         assert not failures, failures
         print(f"Guest run path tests passed: {checked} module/path combinations")
 

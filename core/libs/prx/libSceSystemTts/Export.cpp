@@ -1,3 +1,4 @@
+#include "prx/libSceSystemTts/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -28,6 +29,22 @@ int APS5_VABI sceSystemTtsSpeakRequest() {
 int APS5_VABI sceSystemTtsUnregisterCallback() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceSystemTtsConvertText() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemTtsPauseResume() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemTtsRepeat() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemTtsWait() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

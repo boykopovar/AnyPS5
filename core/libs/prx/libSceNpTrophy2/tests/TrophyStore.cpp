@@ -1,3 +1,4 @@
+#include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
@@ -22,14 +23,6 @@
 #else
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI sceNpTrophy2CreateContext(int*, int, uint32_t, uint64_t);
-int APS5_VABI sceNpTrophy2DestroyContext(int);
-int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*);
-int APS5_VABI sceNpTrophy2GetTrophyInfo(int, int, int, NpTrophy2Details*, NpTrophy2Data*);
-int APS5_VABI sceNpTrophy2GetTrophyInfoArray(int, int, uint32_t, uint32_t, NpTrophy2Details*, NpTrophy2Data*, uint32_t*);
-}
 
 namespace {
 
@@ -245,7 +238,6 @@ void testQueries() {
     check(throws([listener] { NpTrophy2RemoveUnlockListener_nid_no_patch(listener); }), "a removed listener was removed again");
     check(sceNpTrophy2DestroyContext(context) == 0 && sceNpTrophy2DestroyContext(other) == 0, "contexts were not destroyed");
 }
-
 
 void testPostedUnlockRules() {
     std::filesystem::create_directories("app0/sce_sys/trophy2");

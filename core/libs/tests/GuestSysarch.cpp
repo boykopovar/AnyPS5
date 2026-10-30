@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <cstdint>
@@ -5,13 +7,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
-
-extern "C" {
-int APS5_VABI sysarch(int number, void* args);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

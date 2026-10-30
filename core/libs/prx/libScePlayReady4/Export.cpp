@@ -1,3 +1,4 @@
+#include "prx/libScePlayReady4/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -178,6 +179,27 @@ int APS5_VABI scePlayReadyProfileStart() {
 int APS5_VABI scePlayReadyProfileStop() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+
+int APS5_VABI scePlayReadyCdmiProcessLicenseAckResponse() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePlayReadyCdmiGetSessionId2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePlayReadyCdmiGenerateLicenseAckRequest() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePlayReadyCdmiGenerateRequest2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI scePlayReadyDomainJoinProcessResponse2() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

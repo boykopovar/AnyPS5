@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"

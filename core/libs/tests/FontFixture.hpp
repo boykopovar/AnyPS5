@@ -5,6 +5,7 @@
 #include <initializer_list>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace FontFixture {
@@ -18,6 +19,31 @@ inline std::vector<unsigned char> Words(std::initializer_list<int> values) {
     std::vector<unsigned char> out;
     for (const int value : values) Put16(out, value);
     return out;
+}
+
+inline std::vector<unsigned char> BitmapFont() {
+    const std::string_view font =
+        "STARTFONT 2.1\n"
+        "FONT -anyps5-fixture-medium-r-normal--1-10-75-75-c-10-iso10646-1\n"
+        "SIZE 1 75 75\n"
+        "FONTBOUNDINGBOX 1 1 0 0\n"
+        "STARTPROPERTIES 4\n"
+        "FONT_ASCENT 1\n"
+        "FONT_DESCENT 0\n"
+        "CHARSET_REGISTRY \"ISO10646\"\n"
+        "CHARSET_ENCODING \"1\"\n"
+        "ENDPROPERTIES\n"
+        "CHARS 1\n"
+        "STARTCHAR A\n"
+        "ENCODING 65\n"
+        "SWIDTH 1000 0\n"
+        "DWIDTH 1 0\n"
+        "BBX 1 1 0 0\n"
+        "BITMAP\n"
+        "80\n"
+        "ENDCHAR\n"
+        "ENDFONT\n";
+    return {font.begin(), font.end()};
 }
 
 inline std::vector<unsigned char> BuildFont(int glyphCount, std::map<std::string, std::vector<unsigned char>> tables) {

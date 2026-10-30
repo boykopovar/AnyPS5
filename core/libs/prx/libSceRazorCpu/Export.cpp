@@ -1,3 +1,4 @@
+#include "prx/libSceRazorCpu/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -203,6 +204,34 @@ int APS5_VABI sceRazorCpuWorkloadRunEnd(void) {
 int APS5_VABI sceRazorCpuWorkloadSubmit(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceRazorCpuUserSignalWaitBegin() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuUserSignalPost() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuWriteBookmarkEnd() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuUserSignalWaitEnd() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuWorkloadRunBeginEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuUserSignalPostEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRazorCpuUserSignalWaitBeginEx() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

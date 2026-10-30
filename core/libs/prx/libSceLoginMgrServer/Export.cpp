@@ -1,3 +1,4 @@
+#include "prx/libSceLoginMgrServer/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -153,6 +154,14 @@ int APS5_VABI sceLoginMgrServerTerminate() {
 int APS5_VABI sceLoginMgrServerUpdateUserIdRalatedToPadUniqueId() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceLoginMgrServerNotifySafetyNoticeShownForGen2Vr() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLoginMgrServerCheckSafetyNoticeShownForGen2Vr() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

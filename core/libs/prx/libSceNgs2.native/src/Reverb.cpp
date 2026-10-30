@@ -292,9 +292,23 @@ bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
         Reset(reverb);
         reverb.changed = true;
     }
+    const std::uint32_t inputChannels = voice.InputChannels();
     const std::vector<float> input = voice.samples;
     std::vector<float> mono(grain), early(grain), late(grain);
-    MixDown(input.data(), channels, grain, mono.data());
+    MixDown(input.data(), inputChannels, grain, mono.data());
+    std::vector<float> mapped;
+    if (inputChannels != channels) {
+        mapped.assign(static_cast<std::size_t>(grain) * channels, 0.0f);
+        for (std::uint32_t dst = 0; dst < channels; dst++) {
+            for (std::uint32_t src = 0; src < inputChannels; src++) {
+                const float level = Ngs2DefaultLevel(inputChannels, src, channels, dst);
+                if (level == 0.0f) continue;
+                for (std::uint32_t i = 0; i < grain; i++) mapped[static_cast<std::size_t>(dst) * grain + i] += input[static_cast<std::size_t>(src) * grain + i] * level;
+            }
+        }
+        voice.samples.assign(static_cast<std::size_t>(grain) * channels, 0.0f);
+    }
+    const std::vector<float>& direct = inputChannels != channels ? mapped : input;
     if (reverb.changed) {
         std::vector<float> oldEarly(grain), oldLate(grain);
         RunTaps(reverb, reverb.taps, mono.data(), grain, oldEarly.data(), oldLate.data());
@@ -319,7 +333,7 @@ bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
     for (std::uint32_t channel = 0; channel < channels; channel++) {
         auto& state = reverb.channels[channel];
         float* out = voice.samples.data() + static_cast<std::size_t>(channel) * grain;
-        const float* in = input.data() + static_cast<std::size_t>(channel) * grain;
+        const float* in = direct.data() + static_cast<std::size_t>(channel) * grain;
         if (channel == LFE_CHANNEL) {
             std::copy(in, in + grain, out);
         } else {

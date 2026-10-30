@@ -185,6 +185,7 @@ public:
         auto copy = copyFor(target.format, target.samples, target.extent, stencil);
         kept.push_back(copy);
         const VkImageAspectFlags aspects = VK_IMAGE_ASPECT_DEPTH_BIT | (stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
+        const VkImageAspectFlags layoutAspects = VK_IMAGE_ASPECT_DEPTH_BIT | (HasStencil(target.format) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
         if (!copy->general) {
             VkImageMemoryBarrier toGeneral{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             toGeneral.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -193,7 +194,7 @@ public:
             toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             toGeneral.image = copy->image;
-            toGeneral.subresourceRange = {aspects, 0, 1, 0, 1};
+            toGeneral.subresourceRange = {layoutAspects, 0, 1, 0, 1};
             context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
             copy->general = true;
         }
