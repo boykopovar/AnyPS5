@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl/include/SslInternal.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
@@ -163,6 +164,14 @@ void FreeVerifyParam(LibreSslX509VerifyParam* param, const char* function) {
 } // namespace
 
 extern "C" {
+
+LibreSslX509VerifyParam* LibreSslNewVerifyParam_nid_no_patch() {
+    return NewVerifyParam();
+}
+
+void LibreSslFreeVerifyParam_nid_no_patch(LibreSslX509VerifyParam* param, const char* function) {
+    FreeVerifyParam(param, function);
+}
 
 LibreSslX509Store* APS5_VABI X509_STORE_new_nid_postfix(void) {
     auto* store = static_cast<LibreSslX509Store*>(malloc_nid_postfix(sizeof(LibreSslX509Store)));
