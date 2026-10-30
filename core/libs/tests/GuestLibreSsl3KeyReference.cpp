@@ -64,5 +64,7 @@ int main(int argc, char** argv) {
         CheckKey<LibreSsl3EvpPkey>(EVP_PKEY_up_ref_nid_postfix, 4);
     if (argc == 1 || std::strcmp(argv[1], "ec") == 0)
         CheckKey<LibreSsl3EcKey>(EC_KEY_up_ref_nid_postfix, 48);
+    if (argc == 1 || std::strcmp(argv[1], "ssl_ctx") == 0)
+        CheckKey<LibreSsl3SslCtx>(SSL_CTX_up_ref_nid_postfix, 40);
     return 0;
 }

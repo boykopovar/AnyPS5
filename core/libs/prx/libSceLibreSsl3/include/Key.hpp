@@ -24,7 +24,33 @@ struct LibreSsl3EcKey {
     void* extraData;
 };
 
+struct LibreSsl3SslCtx {
+    const void* method;
+    const void* quicMethod;
+    void* cipherList;
+    void* certStore;
+    std::int64_t sessionTimeout;
+    std::int32_t references;
+    void* extraCerts;
+    std::int32_t verifyMode;
+    std::uint64_t sidCtxLength;
+    unsigned char sidCtx[32];
+    void* param;
+    void* defaultPasswdCallback;
+    void* defaultPasswdCallbackUserdata;
+    std::uint16_t minTlsVersion;
+    std::uint16_t maxTlsVersion;
+    std::uint16_t minProtoVersion;
+    std::uint16_t maxProtoVersion;
+};
+
 static_assert(sizeof(LibreSsl3EvpPkey) == 32);
 static_assert(offsetof(LibreSsl3EvpPkey, references) == 4);
 static_assert(sizeof(LibreSsl3EcKey) == 64);
 static_assert(offsetof(LibreSsl3EcKey, references) == 48);
+static_assert(sizeof(LibreSsl3SslCtx) == 136);
+static_assert(offsetof(LibreSsl3SslCtx, references) == 40);
+static_assert(offsetof(LibreSsl3SslCtx, minTlsVersion) == 128);
+static_assert(offsetof(LibreSsl3SslCtx, maxTlsVersion) == 130);
+static_assert(offsetof(LibreSsl3SslCtx, minProtoVersion) == 132);
+static_assert(offsetof(LibreSsl3SslCtx, maxProtoVersion) == 134);
