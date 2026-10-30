@@ -225,7 +225,7 @@ int APS5_VABI sceCesIso2022StrToUtf32Str(void);
 int APS5_VABI sceCesIso2022StrToUtf8Str(void);
 int APS5_VABI sceCesIso2022UcsContextInit(void);
 int APS5_VABI sceCesIso2022UcsContextInitCopy(void);
-int APS5_VABI sceCesJisGetLevel(void);
+int APS5_VABI sceCesJisGetLevel(uint8_t plane, uint8_t row, uint8_t cell, uint32_t* level);
 int APS5_VABI sceCesJiscsToUcs(void);
 int APS5_VABI sceCesMbcsUcsSetMbcsReplacementCharCode(void);
 int APS5_VABI sceCesMbcsUcsSetMbcsReplacementCharUCode(void);
