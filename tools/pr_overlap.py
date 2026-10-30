@@ -8,7 +8,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 import nid_names
 
@@ -83,6 +83,7 @@ def progress(message):
 
 
 LAST_PAGE = re.compile(r'[?&]page=(\d+)>; rel="last"')
+NEXT_LINK = re.compile(r'<([^>]+)>\s*;\s*rel="next"', re.IGNORECASE)
 
 
 def page(url):
@@ -117,12 +118,27 @@ def open_prs(base):
     if not pages:
         raise ValueError("gh api returned no JSON pages")
     last = LAST_PAGE.search(head)
+    pushed_past_last = None
     if last:
         numbers = range(2, int(last.group(1)) + 1)
         with ThreadPoolExecutor(max_workers=8) as executor:
             for out in executor.map(lambda number: page(f"{url}&page={number}")[1], numbers):
                 pages.extend(json_pages(out))
         pushed_past_last = numbers.stop
+    elif NEXT_LINK.search(head):
+        current_page = 1
+        while next_link := NEXT_LINK.search(head):
+            values = parse_qs(urlsplit(next_link.group(1)).query, keep_blank_values=True).get("page", [])
+            if len(values) != 1 or re.fullmatch(r"[0-9]+", values[0]) is None or int(values[0]) <= current_page:
+                raise ValueError("gh api returned an invalid next page link")
+            current_page = int(values[0])
+            head, out = page(f"{url}&page={current_page}")
+            fetched = json_pages(out)
+            if not fetched:
+                raise ValueError("gh api returned no JSON pages")
+            pages.extend(fetched)
+        pushed_past_last = current_page + 1
+    if pushed_past_last is not None:
         while len(pages[-1]) == 100:
             pages.extend(json_pages(page(f"{url}&page={pushed_past_last}")[1]) or [[]])
             pushed_past_last += 1
@@ -343,8 +359,9 @@ def probe(pr):
         if status != "A":
             existing.add(path)
     if not any(path.startswith("core/libs/prx/") and path.endswith(".cpp") for path in files):
-        return files, set(), existing
-    return files, exports(git("diff", "-U0", "--no-color", f"refs/pr/base...{pr['ref']}", "--", "core/libs/prx/*.cpp")), existing
+        return files, (set(), {}), existing
+    diff = git("diff", "-U0", "--no-color", f"refs/pr/base...{pr['ref']}", "--", "core/libs/prx/*.cpp")
+    return files, (exports(diff), source_changed_exports(diff, "+")), existing
 
 
 def related(prs, executor):
@@ -353,11 +370,15 @@ def related(prs, executor):
     others = {n: pr for n, pr in prs.items() if n}
     base_paths = set(git("ls-tree", "-r", "--name-only", "-z", "refs/pr/base").split("\0"))
     chosen = {}
+    mine_files = mine["files"]
+    mine_exports = mine["exports"]
+    mine_keys = set(mine.get("added_exports", {}))
     for index, ((n, pr), (files, found, existing)) in enumerate(zip(others.items(), executor.map(probe, others.values())), 1):
-        if files & mine["files"] or found & mine["exports"] or existing - base_paths:
+        found_exports, found_added = found
+        if files & mine_files or (found_exports & mine_exports) or (set(found_added) & mine_keys) or existing - base_paths:
             chosen[n] = pr
         else:
-            pr.update(tree=None, files=set(), added=set(), exports=set())
+            pr.update(tree=None, files=set(), added=set(), exports=set(), added_exports={}, removed_exports={})
         if index % PROGRESS_EVERY == 0 or index == len(others):
             progress(f"probed {index}/{len(others)} pull requests, {len(chosen)} share files or exports with the branch")
     return chosen
@@ -418,7 +439,12 @@ def overlaps(prs, a, b):
     found = {"added": (pa["added"] & pb["added"]).difference(*(pr["added"] for pr in shared))}
     if pa["author"] != pb["author"]:
         found["conflicts"] = conflicts(pa, pb)
-        found["exports"] = (pa["exports"] & pb["exports"]).difference(*(pr["exports"] for pr in shared))
+        same_exports = (pa.get("exports", set()) & pb.get("exports", set())).difference(*(pr.get("exports", set()) for pr in shared))
+        shared_keys = set().union(*(pr.get("added_exports", {}) for pr in shared))
+        for key in (set(pa.get("added_exports", {})) & set(pb.get("added_exports", {}))) - shared_keys:
+            same_exports.update(pa["added_exports"][key])
+            same_exports.update(pb["added_exports"][key])
+        found["exports"] = same_exports
         if not (pa["tree"] and pb["tree"]):
             uncompared = pa.get("files", set()) & pb.get("files", set())
             if uncompared:
@@ -561,6 +587,8 @@ def main(argv=None):
         blob = f'https://github.com/{REPO}/blob/{git("rev-parse", "refs/pr/base").strip()}'
     except subprocess.CalledProcessError as error:
         raise SystemExit(describe_failure(error))
+    except ValueError as error:
+        raise SystemExit(f"pr_overlap: {error}")
     if args.branch:
         print(report(rows[0], blob, main_exports.get(0)) or "No overlap with open pull requests.", end="")
         return 0

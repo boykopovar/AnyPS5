@@ -173,7 +173,7 @@ class Module:
             name, shndx, value, kind = self.symbol(index)
             if shndx == 0 or not name:
                 continue
-            (thread_local if kind == STT_TLS else found).setdefault(value, name)
+            (thread_local if kind == STT_TLS else found).setdefault(value, []).append(name)
         return found, thread_local
 
     def code_segments(self):
@@ -219,7 +219,7 @@ def disassemble(code, vaddr):
     with tempfile.TemporaryDirectory() as directory:
         blob = Path(directory) / "text.bin"
         blob.write_bytes(code)
-        command = [objdump, "-D", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
+        command = [objdump, "-D", "--disassemble-zeroes", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
                    "--adjust-vma=%d" % vaddr, str(blob)]
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
@@ -253,7 +253,7 @@ def annotate_listing(listing, slots, exports, stubs, namer):
         head = LINE_ADDRESS.match(line)
         if head and int(head.group(1), 16) in exports:
             out.append("")
-            out.append("; ===== export " + namer.resolve(exports[int(head.group(1), 16)]))
+            out.extend("; ===== export " + namer.resolve(name) for name in exports[int(head.group(1), 16)])
         out.append(line + line_note(line, slots, stubs, namer))
     return out
 
@@ -265,8 +265,8 @@ def write_lines(path, lines):
 
 
 def export_lines(exports, thread_local, namer):
-    lines = ["%#x %s %s" % (address, exports[address], namer.resolve(exports[address])) for address in sorted(exports)]
-    lines += ["tls+%#x %s %s" % (offset, thread_local[offset], namer.resolve(thread_local[offset])) for offset in sorted(thread_local)]
+    lines = ["%#x %s %s" % (address, name, namer.resolve(name)) for address in sorted(exports) for name in exports[address]]
+    lines += ["tls+%#x %s %s" % (offset, name, namer.resolve(name)) for offset in sorted(thread_local) for name in thread_local[offset]]
     return lines
 
 
@@ -287,7 +287,9 @@ def annotate(module_path, prefix, namer):
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
     write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, stubs, namer))
-    return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), len(exports), len(thread_local), len(stubs), len(listing))
+    export_count = sum(len(names) for names in exports.values())
+    tls_count = sum(len(names) for names in thread_local.values())
+    return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), export_count, tls_count, len(stubs), len(listing))
 
 
 def parse_arguments(argv):

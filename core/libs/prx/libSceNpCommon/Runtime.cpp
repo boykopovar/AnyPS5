@@ -199,6 +199,23 @@ NpAllocator MemoryHeapAllocator(NpMemoryHeap* heap) {
     return {MemoryHeapAllocate, MemoryHeapReallocate, MemoryHeapRelease, heap};
 }
 
+constexpr std::size_t NP_OBJECT_HEADER_SIZE = 16;
+
+void* AllocateObject(std::size_t size, NpAllocator* allocator) {
+    auto* header = static_cast<std::uint8_t*>(allocator->allocate(size + NP_OBJECT_HEADER_SIZE, allocator->context));
+    if (header == nullptr) return nullptr;
+    std::memcpy(header, &allocator, sizeof(allocator));
+    return header + NP_OBJECT_HEADER_SIZE;
+}
+
+void ReleaseObject(void* object) {
+    if (object == nullptr) return;
+    auto* header = static_cast<std::uint8_t*>(object) - NP_OBJECT_HEADER_SIZE;
+    NpAllocator* allocator = nullptr;
+    std::memcpy(&allocator, header, sizeof(allocator));
+    allocator->release(header, allocator->context);
+}
+
 constexpr int NP_ERROR_NOT_INITIALIZED = static_cast<int>(0x80558001);
 constexpr int NP_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80558002);
 constexpr int NP_ERROR_ALREADY_QUEUED = static_cast<int>(0x80558006);
@@ -505,6 +522,46 @@ NpAllocator* APS5_VABI sceNpGlobalHeapGetAllocatorPtr(void) {
 NpAllocatorEx* APS5_VABI sceNpGlobalHeapGetAllocatorExPtr(void) {
     g_globalAllocatorEx = {MemoryHeapAllocator(&g_globalHeap), NP_ERROR_OUT_OF_MEMORY};
     return &g_globalAllocatorEx;
+}
+
+void* APS5_VABI _ZN3sce2np6ObjectnwEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator) {
+    return AllocateObject(size, allocator);
+}
+
+void* APS5_VABI _ZN3sce2np6ObjectnaEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator) {
+    return AllocateObject(size, allocator);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdlEPvR14SceNpAllocator(void* object, NpAllocator*) {
+    ReleaseObject(object);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdaEPvR14SceNpAllocator(void* object, NpAllocator*) {
+    ReleaseObject(object);
+}
+
+void* APS5_VABI _ZN3sce2np6ObjectnwEmR16SceNpAllocatorEx(std::size_t size, NpAllocatorEx* allocator) {
+    return AllocateObject(size, &allocator->allocator);
+}
+
+void* APS5_VABI _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(std::size_t size, NpAllocatorEx* allocator) {
+    return AllocateObject(size, &allocator->allocator);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdlEPvR16SceNpAllocatorEx(void* object, NpAllocatorEx*) {
+    ReleaseObject(object);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdaEPvR16SceNpAllocatorEx(void* object, NpAllocatorEx*) {
+    ReleaseObject(object);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdlEPv(void* object) {
+    ReleaseObject(object);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdaEPv(void* object) {
+    ReleaseObject(object);
 }
 
 int APS5_VABI sceNpAllocateKernelMemoryNoAlignment(std::uint64_t size, const char* name, void** address, NpKernelMemory* memory) {
