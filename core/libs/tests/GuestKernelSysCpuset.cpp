@@ -107,13 +107,15 @@ int main() {
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, -1, &setid) == 0);
     Require(setid == 0);
 
-    Require(cpuset_getid_nid_postfix(LevelRoot, WhichCpuset, -1, &setid) == -1 && Error() == Einval);
-    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, -1, &setid) == -1 && Error() == Einval);
-    Require(cpuset_getid_nid_postfix(LevelWhich, WhichCpuset, -1, &setid) == -1 && Error() == Einval);
+    Require(cpuset_getid_nid_postfix(LevelRoot, WhichCpuset, -1, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, -1, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelWhich, WhichCpuset, -1, &setid) == 0 && setid == 0);
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 999999, &setid) == -1 && Error() == Esrch);
-    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 4294967296LL, &setid) == -1 && Error() == Esrch);
-    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, -4294967296LL, &setid) == -1 && Error() == Esrch);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 4294967296LL, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, -4294967296LL, &setid) == 0 && setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 4294967296LL + 999999, &setid) == -1 && Error() == Esrch);
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 0, nullptr) == -1 && Error() == Efault);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, -1, nullptr) == -1 && Error() == Efault);
     Require(cpuset_getid_nid_postfix(LevelRoot, WhichCpuset, 0, &setid) == 0 && setid == 0);
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichCpuset, 0, &setid) == 0 && setid == 0);
     Require(cpuset_getid_nid_postfix(LevelWhich, WhichCpuset, 0, &setid) == 0 && setid == 0);

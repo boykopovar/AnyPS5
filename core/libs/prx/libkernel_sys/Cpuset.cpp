@@ -108,19 +108,23 @@ int APS5_VABI cpuset_getid_nid_postfix(int level, int which, std::int64_t id, in
         }
     } else {
         if (id == -1) {
-            return Fail(GuestEinval);
-        }
-        if (id < 0 || id > std::numeric_limits<int>::max()) {
-            return Fail(GuestEsrch);
-        }
-        std::lock_guard lock(setMutex);
-        if (validSets.find(static_cast<int>(id)) == validSets.end()) {
-            return Fail(GuestEsrch);
-        }
-        if (level == LevelRoot) {
-            resultId = RootSetId;
+            if (level == LevelRoot) {
+                resultId = RootSetId;
+            } else {
+                std::lock_guard lock(setMutex);
+                resultId = currentProcessSetId;
+            }
         } else {
-            resultId = static_cast<int>(id);
+            const int lookupId = static_cast<int>(id);
+            std::lock_guard lock(setMutex);
+            if (validSets.find(lookupId) == validSets.end()) {
+                return Fail(GuestEsrch);
+            }
+            if (level == LevelRoot) {
+                resultId = RootSetId;
+            } else {
+                resultId = lookupId;
+            }
         }
     }
     if (!GuestCopyOut_nid_no_patch(setid, &resultId, sizeof(resultId))) {
