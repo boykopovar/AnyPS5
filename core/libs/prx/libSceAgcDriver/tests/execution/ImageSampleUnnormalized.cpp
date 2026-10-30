@@ -98,14 +98,19 @@ struct SamplerCase {
     bool linear;
     bool border;
     bool atBaseLevel;
+    bool mirrorX = false;
+    bool mirrorY = false;
 };
 
-constexpr std::array<SamplerCase, 5> Samplers{{
+constexpr std::array<SamplerCase, 8> Samplers{{
     {"bilinear clamp-to-last-texel, point mips, MAX_LOD 0xfff", {0x00008092u, 0x00fff000u, 0x05500000u, 0u}, true, false, true},
     {"point clamp-to-last-texel, point mips", {0x00008092u, 0x00fff000u, 0x04000000u, 0u}, false, false, true},
     {"bilinear clamp-to-last-texel, linear mips, MIN_LOD 1, LOD bias 1.5", {0x00008092u, 0x00fff100u, 0x09500180u, 0u}, true, false, false},
     {"bilinear clamp-to-border, transparent black", {0x000080b6u, 0x00fff000u, 0x05500000u, 0u}, true, true, true},
     {"point clamp-to-border, no mips, transparent black", {0x000080b6u, 0u, 0u, 0u}, false, true, true},
+    {"bilinear mirror on X and Y, point mips", {0x00008089u, 0x00fff000u, 0x05500000u, 0u}, true, false, true, true, true},
+    {"point mirror-once on X, clamp-to-last-texel on Y", {0x00008093u, 0x00fff000u, 0x04000000u, 0u}, false, false, true, true, false},
+    {"bilinear clamp-to-last-texel on X, mirror-once on Y", {0x0000809au, 0x00fff000u, 0x05500000u, 0u}, true, false, true, false, true},
 }};
 
 struct Coordinate {
@@ -130,7 +135,7 @@ std::vector<Coordinate> Coordinates(std::uint32_t level) {
     for (std::int32_t k = 0; k < width; ++k) {
         for (const float fraction : {0.5f, 0.0f, 0.25f, 0.75f}) us.push_back(static_cast<float>(k) + fraction);
     }
-    for (const float edge : {-1.0f, -0.5f, static_cast<float>(width), static_cast<float>(width + 1), static_cast<float>(width) - 0.25f}) us.push_back(edge);
+    for (const float edge : {-1.0f, -0.5f, static_cast<float>(width), static_cast<float>(width + 1), static_cast<float>(width) - 0.25f, -0.25f, -0.75f, -2.0f, -3.25f, -static_cast<float>(width) + 0.5f, -static_cast<float>(width) - 1.5f}) us.push_back(edge);
     constexpr std::array<float, 3> fractions{0.5f, 0.0f, 0.75f};
     std::vector<Coordinate> result;
     for (std::size_t index = 0; index < us.size(); ++index) {
@@ -142,6 +147,8 @@ std::vector<Coordinate> Coordinates(std::uint32_t level) {
         const float v = static_cast<float>(x % height) + 0.5f;
         result.push_back({static_cast<float>(x) - 1.0f, v});
         result.push_back({static_cast<float>(x) + 2.0f, v});
+        result.push_back({static_cast<float>(x) + 0.5f, -v});
+        result.push_back({-static_cast<float>(x) - 0.25f, -1.0f - v});
     }
     return result;
 }
@@ -247,6 +254,8 @@ Samples Run(AgcDriver::VulkanDevice& device, const Program& program, const std::
 std::array<double, 4> Fetch(const SamplerCase& sampler, std::uint32_t level, std::int32_t x, std::int32_t y) {
     const auto width = LevelWidth(level);
     const auto height = LevelHeight(level);
+    if (sampler.mirrorX && x < 0) x = -x - 1;
+    if (sampler.mirrorY && y < 0) y = -y - 1;
     if (sampler.border && (x < 0 || x >= width || y < 0 || y >= height)) return {0.0, 0.0, 0.0, 0.0};
     return TexelOf(level, std::clamp(x, 0, width - 1), std::clamp(y, 0, height - 1));
 }
