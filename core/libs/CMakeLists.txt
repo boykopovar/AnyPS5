@@ -1027,6 +1027,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCppWebApi>")
     endif()
 
+    add_test_executable(guest_np_cpp_web_api_friends_tests tests/GuestNpCppWebApiFriends.cpp)
+    target_include_directories(guest_np_cpp_web_api_friends_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_friends_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_friends_tests)
+    add_test(NAME guest_np_cpp_web_api_friends COMMAND guest_np_cpp_web_api_friends_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_friends PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCppWebApi>")
+    endif()
+
     add_test_executable(guest_np_cpp_web_api_signed_out_tests tests/GuestNpCppWebApiSignedOut.cpp)
     target_include_directories(guest_np_cpp_web_api_signed_out_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_np_cpp_web_api_signed_out_tests PRIVATE libSceNpCppWebApi libc)
