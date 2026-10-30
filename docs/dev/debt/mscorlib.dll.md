@@ -382,7 +382,7 @@
 
 ### Managed runtime compatibility
 
-- [Managed exports](../../../core/libs/prx/mscorlib.dll/Export.cpp) - The older managed image has 20,795 additional callable NIDs absent from the later module, plus 396 data exports. None of those callable NIDs was found in any other module in the later inventory; only three have candidate names in the checked public catalog. They are not declared here. Runtime ownership, managed execution semantics, data layouts and initialization remain unverified. The logical module identity `mscorlib` differs from the physical image name; consumer-side resolution has not been verified. This branch does not implement a managed runtime.
+- [Managed exports](../../../core/libs/prx/mscorlib.dll/Export.cpp) - The older managed image has 20,795 additional callable NIDs absent from the later module, plus 396 data exports. None of those callable NIDs was found in any other module in the later inventory; only three have candidate names in the checked public catalog. They are not declared here. Runtime ownership, managed execution semantics, data layouts and initialization remain unverified. The logical module identity `mscorlib` differs from the physical image name. A synthetic consumer naming `mscorlib.dll.prx` as its dependency resolves a matching export from the compiled, NID-patched inventory library on macOS x86-64; the test uses an aborting placeholder shim and does not execute the export. No consumer using that dependency name was identified in the inspected module inventory, so real consumer-side resolution remains unverified. This branch does not implement a managed runtime.
 
 ### Managed data exports
 
