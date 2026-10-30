@@ -125,6 +125,8 @@ int main() {
     const std::map<std::uint64_t, std::string> contentPhysical{{1, "libSceAppContent"}};
     const std::array<std::string, 1> contentLogical{"libSceAppContentUtil.prx"};
     if (!Domain::ImportModule("nid#A#B", contentPhysical, contentLogical).empty()) return 42;
+    const std::array<std::string, 1> normalizedContent{"libSceAppContentUtil-module.prx"};
+    if (Domain::ImportModule("nid#A#B", content, normalizedContent) != normalizedContent[0]) return 44;
     const auto contentImage = Relinker::GuestImageReader().Read("content-consumer.prx", Fixture(false, "libSceAppContent.prx", "libSceAppContentUtil"), true);
     if (contentImage.Symbols.size() != 4 || contentImage.Symbols[3].Library != "libSceAppContent.prx") return 34;
     const std::map<std::uint64_t, std::string> versioned{{1, "libmonosgen-2.0"}};
@@ -138,5 +140,7 @@ int main() {
     const std::array<std::string, 1> sslLogical{"libSceLibreSSL.prx"};
     if (!Domain::ImportModule("nid#A#B", ssl3Physical, ssl3Logical).empty()) return 40;
     if (!Domain::ImportModule("nid#A#B", sslPhysical, sslLogical).empty()) return 41;
+    const std::array<std::string, 1> normalizedMono{"libmonosgen-module.prx"};
+    if (Domain::ImportModule("nid#A#B", modules, normalizedMono) != normalizedMono[0]) return 43;
     std::cout << "module mapping checks passed\n";
 }
