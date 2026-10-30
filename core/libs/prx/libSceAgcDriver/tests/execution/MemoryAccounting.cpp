@@ -1,4 +1,5 @@
 #include "VulkanTestDevice.hpp"
+#include "SpirvBackend/SpirvAnalysis.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PqToSdr.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
@@ -128,6 +129,28 @@ void presentationUploadAccounting(const Context& base) {
     std::puts("presentation upload allocation, resize and cleanup accounting passed");
 }
 
+void meshWindowAccounting(const Context& context) {
+    drain(context);
+    const auto baseline = MemoryAccounting::Read(context.device).allocations.size();
+    const auto bytes = (static_cast<std::uint64_t>(ShaderRecompiler::MeshWindowHeaderDwords) + static_cast<std::uint64_t>(ShaderRecompiler::MeshWindowSlots) * ShaderRecompiler::MeshWindowSlotDwords) * 4ull;
+    MeshWindowSetLayout(context);
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        PrepareMeshWindow(context);
+        const auto snapshot = MemoryAccounting::Read(context.device);
+        Require(snapshot.complete && snapshot.allocations.size() == baseline + 1, "mesh window allocation was not counted exactly once");
+        const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [](const auto& allocation) { return allocation.category == "mesh window"; });
+        Require(found != snapshot.allocations.end() && found->bytes >= bytes && found->retained == 0 && found->heap < context.memory.memoryHeapCount, "mesh window memory has the wrong accounting state");
+        Require(memory == VK_NULL_HANDLE || found->memory == memory, "preparing an existing mesh window replaced its allocation");
+        memory = found->memory;
+    }
+    ReleaseMeshWindow(context.device);
+    drain(context);
+    const auto released = MemoryAccounting::Read(context.device);
+    Require(released.complete && released.allocations.size() == baseline, "mesh window destruction left an allocation counted");
+    std::puts("mesh window allocation, repeated preparation and cleanup accounting passed");
+}
+
 }
 
 int main() {
@@ -158,6 +181,7 @@ int main() {
             Require(MemoryAccounting::Read(context.device).allocations.size() == baseline, "pixel function LDS destruction left an allocation counted");
             std::puts("pixel function LDS allocation accounting and cleanup passed");
         }
+        if (TargetHasCapability(device->Target(), spv::CapabilityMeshShadingEXT)) meshWindowAccounting(context);
         presentationAccounting(context);
         presentationUploadAccounting(context);
         {
