@@ -127,3 +127,5 @@
 | `Unknown` | `C9+the7MAVg` |
 | `Unknown` | `rjfUd+WSgRU` |
 | `Unknown` | `v4k2ZXffrmY` |
+
+- [Older callable NIDs](../../../core/libs/prx/libSceFacebook.Yoga/Export.cpp): 31 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.
