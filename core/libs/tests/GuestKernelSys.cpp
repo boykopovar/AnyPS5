@@ -4,6 +4,7 @@
 #include "prx/libSceAmpr/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
@@ -54,6 +55,39 @@ void Require(bool condition, std::source_location location = std::source_locatio
 
 int Error() {
     return *__error_nid_postfix();
+}
+
+void ThreadAndSessionTests(int descriptor) {
+    PthreadMutex mutex = nullptr;
+    Require(scePthreadMutexIsowned(&mutex) == 0);
+    Require(scePthreadMutexInit(&mutex, nullptr, "isowned") == 0);
+    Require(scePthreadMutexIsowned(&mutex) == 0);
+    Require(scePthreadMutexLock(&mutex) == 0);
+    Require(scePthreadMutexIsowned(&mutex) == SceKernelError(1));
+    int fromOther = -1;
+    std::thread([&] { fromOther = scePthreadMutexIsowned(&mutex); }).join();
+    Require(fromOther == 0);
+    Require(scePthreadMutexUnlock(&mutex) == 0);
+    Require(scePthreadMutexIsowned(&mutex) == 0);
+    Require(scePthreadMutexDestroy(&mutex) == 0);
+    Require(scePthreadMutexIsowned(&mutex) == 0);
+
+    const char record[] = "trace";
+    *__error_nid_postfix() = 0;
+    Require(utrace_nid_postfix(record, sizeof(record)) == 0 && Error() == 0);
+    Require(utrace_nid_postfix(nullptr, 0) == 0);
+    Require(utrace_nid_postfix(nullptr, 4096) == 0 && Error() == 0);
+
+    const int session = getsid_nid_postfix(0);
+    Require(session > 0);
+    Require(tcsetsid_nid_postfix(descriptor, session + 1) == -1 && Error() == 22);
+    Require(tcsetsid_nid_postfix(-1, session + 1) == -1 && Error() == 22);
+    Require(tcsetsid_nid_postfix(descriptor, session) == -1 && Error() == 25);
+    Require(tcsetsid_nid_postfix(-1, session) == -1 && Error() == 9);
+    const int socketDescriptor = socket_nid_postfix(2, 2, 0);
+    Require(socketDescriptor >= 0);
+    Require(tcsetsid_nid_postfix(socketDescriptor, session) == -1 && Error() == 25);
+    Require(close_nid_postfix(socketDescriptor) == 0);
 }
 
 bool ChrootThrows(const std::string& path) {
@@ -986,6 +1020,7 @@ int main() {
     CheckPathconf(root, file);
     const int descriptor = open_nid_postfix(file.c_str(), 0, 0);
     Require(descriptor >= 0);
+    ThreadAndSessionTests(descriptor);
     KernelStatfs publicStats{};
     auto* viaPublic = reinterpret_cast<unsigned char*>(&publicStats);
     KernelStatfs syscallStats{};

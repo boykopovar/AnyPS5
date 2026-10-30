@@ -1540,7 +1540,7 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
     if (File::IoctlRequestMalformed(request)) return Fail(25);
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
-    if (!argument) return Fail(14);
+    if (!argument && (request & 0x1fff0000 || !(request & 0x20000000))) return Fail(14);
     if (request != 0x8004667e && request != 0x4004667f) return Fail(25);
     std::lock_guard lock(socket->modeMutex);
     if (request == 0x4004667f && socket->receiveShut) {
