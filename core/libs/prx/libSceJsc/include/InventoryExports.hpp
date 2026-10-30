@@ -363,4 +363,10 @@ int APS5_VABI _ZNK9Inspector22RemoteInspectionTarget22remoteDebuggingAllowedEv()
 
 int APS5_VABI libSceJscInventory_TYvNAgirhfM_nid_no_patch();
 
+int APS5_VABI libSceJscInventory_4AXLxzY843A_nid_no_patch();
+int APS5_VABI libSceJscInventory_AnZ5fEIIS40_nid_no_patch();
+int APS5_VABI libSceJscInventory_GtiYvkQcGr4_nid_no_patch();
+int APS5_VABI libSceJscInventory_RD9UWM_plus_gJiI_nid_no_patch();
+int APS5_VABI libSceJscInventory_xu3rtZhKLb0_nid_no_patch();
+
 }

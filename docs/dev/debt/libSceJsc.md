@@ -378,3 +378,5 @@
 ### Additional unidentified export
 
 - [NID `TYvNAgirhfM`](../../../core/libs/prx/libSceJsc/Export.cpp) is a throwing placeholder. Its name, signature and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
+
+- [Five additional NIDs](../../../core/libs/prx/libSceJsc/Export.cpp) have callable entries in both version-labelled Jsc images. The later image also contains these NIDs in a distinct WebKit provider; behavior and equivalence are unverified, and future provider additions require loader analysis. Names, signatures and behavior are unknown; all five declarations throw.
