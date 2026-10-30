@@ -93,7 +93,7 @@ def build_module(tags=DEFAULT_TAGS, values=None, symbols=DEFAULT_SYMBOLS, reloca
 
 
 def instruction(listing, mnemonic):
-    pattern = re.compile(r"^\s*[0-9a-f]+:\s+(?:\w+\s+)?%s\b" % mnemonic)
+    pattern = re.compile(r"^\s*[0-9a-f]+:\s+(?:\w+\s+)*%s\b" % mnemonic)
     return next(line for line in listing if pattern.search(line))
 
 
@@ -104,6 +104,14 @@ def with_relocation(module, table_offset, index, slot, symbol_index, kind):
 
 
 class ImportRelocationTests(unittest.TestCase):
+    def test_symbol_entry_size_must_match_elf64(self):
+        for size in (None, 0, 16, 32):
+            with self.subTest(size=size):
+                tags = tuple(tag for tag in DEFAULT_TAGS if tag != 11 or size is not None)
+                data = build_module(tags=tags, values={} if size is None else {11: size})
+                with self.assertRaisesRegex(annotate_module.ModuleError, "DT_SYMENT"):
+                    annotate_module.Module(data)
+
     def test_tables_cannot_read_file_padding_past_the_load_segment(self):
         for tag in (5, 6, 23):
             with self.subTest(tag=tag):
@@ -261,6 +269,45 @@ class AnnotateModuleTests(unittest.TestCase):
         self.annotate(build_module(code=code_bytes(b"\xf2")))
         self.assertTrue(instruction(self.read(".asm").splitlines(), "call").endswith("; -> " + IMPORT_NAME))
 
+    def test_eip_relative_stubs_and_calls_use_wrapped_got_addresses(self):
+        for address in (CODE_ADDRESS, 0xFFFFF000, 0x100001000):
+            for prefix in (b"\x67", b"\xf2\x67", b"\x3e\x67", b"\xf2\x3e\x67"):
+                with self.subTest(address=address, prefix=prefix):
+                    length = len(prefix) + 6
+                    code = prefix + b"\xff\x25" + struct.pack("<I", (SLOT - address - length) & 0xFFFFFFFF)
+                    code += b"\xe8" + struct.pack("<i", -length - 5) + b"\xc3"
+                    module = bytearray(build_module(code=code))
+                    struct.pack_into("<Q", module, 64 + 16, address)
+                    summary = self.annotate(bytes(module))
+                    self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+                    listing = self.read(".asm").splitlines()
+                    self.assertTrue(instruction(listing, "jmp").endswith("; GOT " + IMPORT_NAME))
+                    self.assertTrue(instruction(listing, "call").endswith("; -> " + IMPORT_NAME))
+
+    def test_eip_references_do_not_name_the_unwrapped_address(self):
+        address = 0x100001000
+        for opcode in (b"\xff\x15", b"\x48\x8b\x05"):
+            with self.subTest(opcode=opcode):
+                length = 1 + len(opcode) + 4
+                code = b"\x67" + opcode + struct.pack("<I", (SLOT - address - length) & 0xFFFFFFFF) + b"\xc3"
+                symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+                module = bytearray(build_module(code=code, symbols=symbols,
+                                               relocations=((SLOT, 1), (0x100000000 + SLOT, 3))))
+                struct.pack_into("<Q", module, 64 + 16, address)
+                self.annotate(bytes(module))
+                line = next(line for line in self.read(".asm").splitlines() if "(%eip)" in line)
+                self.assertTrue(line.endswith("; GOT " + IMPORT_NAME), line)
+                self.assertNotIn("; GOT " + SECOND_IMPORT_NAME, self.read(".asm"))
+
+    def test_segment_relative_operands_do_not_name_flat_import_slots(self):
+        for segment in (b"\x64", b"\x65"):
+            for address_prefix in (b"", b"\x67"):
+                with self.subTest(segment=segment, address_prefix=address_prefix):
+                    summary = self.annotate(build_module(code=code_bytes(segment + address_prefix)))
+                    self.assertIn("0 stubs", summary)
+                    self.assertNotIn("; GOT ", self.read(".asm"))
+                    self.assertNotIn("; -> ", self.read(".asm"))
+
     def test_none_relocation_does_not_annotate_a_stub_or_call(self):
         module = with_relocation(build_module(), 0x2280, 0, SLOT, 1, 0)
         summary = self.annotate(module)
@@ -340,6 +387,34 @@ class AnnotateModuleTests(unittest.TestCase):
         first, second = listing.index("; ===== segment 0x1000"), listing.index("; ===== segment 0x3000")
         self.assertLess(first, second)
         self.assertTrue(any(re.match(r"^\s*3000:\s+ret\b", line) for line in listing[second:]))
+
+    def test_empty_executable_segments_do_not_abort_other_disassembly(self):
+        for memory_size in (0, 0x1000):
+            for address in (0, 0x3000):
+                with self.subTest(memory_size=memory_size, address=address):
+                    module = bytearray(build_module(extra_code=b""))
+                    struct.pack_into("<Q", module, 64 + 3 * 56 + 16, address)
+                    struct.pack_into("<Q", module, 64 + 3 * 56 + 40, memory_size)
+                    if address == 0:
+                        module[64:64 + 4 * 56] = module[64 + 3 * 56:64 + 4 * 56] + module[64:64 + 3 * 56]
+                    summary = self.annotate(bytes(module))
+                    self.assertIn("1 imports, 1 exports, 0 tls, 1 stubs", summary)
+                    listing = self.read(".asm")
+                    self.assertEqual(listing.count("; ===== segment"), 1)
+                    self.assertIn("; ===== segment 0x1000", listing)
+                    self.assertIn("; -> " + IMPORT_NAME, listing)
+                    self.assertIn("; ===== export " + EXPORT_NAME, listing)
+
+    def test_only_empty_executable_segments_fail_before_writing_reports(self):
+        self.assert_fails(build_module(code=b"", extra_code=b"", symbols=[DEFAULT_SYMBOLS[0]]),
+                          "no executable PT_LOAD segment with file-backed data")
+        for suffix in (".asm", ".imports.txt", ".exports.txt"):
+            self.assertFalse((self.root / ("out" + suffix)).exists())
+
+    def test_nonempty_executable_segment_past_end_of_file_is_still_rejected(self):
+        module = bytearray(build_module(extra_code=b"\xc3"))
+        struct.pack_into("<Q", module, 64 + 3 * 56 + 32, 2)
+        self.assert_fails(bytes(module), "extends past the end of the file")
 
     def test_zero_run_preserves_instructions_and_export_label(self):
         code = b"\x90" + bytes(16) + b"\xc3"
