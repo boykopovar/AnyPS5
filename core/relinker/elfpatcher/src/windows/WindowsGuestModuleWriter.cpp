@@ -205,7 +205,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     for (const auto slot : guest.FiniArray) runtime.FiniArrayRvas.push_back(image.GetRva(slot, 8));
     runtime.InitRva = guest.HasInit ? image.GetRva(guest.Init) : 0;
     runtime.UnmatchedImportModules.assign(guest.Dynamic.UnmatchedImportModules.begin(), guest.Dynamic.UnmatchedImportModules.end());
-    runtime.FiniRva = guest.Fini == 0 ? 0 : image.GetRva(guest.Fini);
+    runtime.FiniRva = guest.HasFini ? image.GetRva(guest.Fini) : 0;
     auto result = WindowsPeWriter().Write(sections, entry, directories);
     const auto characteristics = Io::ReadU16(result, 0x80 + 22);
     Io::WriteU16(result, 0x80 + 22, static_cast<std::uint16_t>((characteristics | 0x2000) & ~1u));

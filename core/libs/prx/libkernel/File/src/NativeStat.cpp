@@ -138,7 +138,7 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
 #if defined(__APPLE__)
     sb->st_birthtim.tv_sec = static_cast<std::int64_t>(st.st_birthtimespec.tv_sec);
     sb->st_birthtim.tv_nsec = static_cast<std::int64_t>(st.st_birthtimespec.tv_nsec);
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__EMSCRIPTEN__)
     sb->st_birthtim = sb->st_ctim;
 #else
     sb->st_birthtim.tv_sec = static_cast<std::int64_t>(st.st_birthtim.tv_sec);
