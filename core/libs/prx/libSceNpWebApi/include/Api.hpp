@@ -36,4 +36,32 @@ int APS5_VABI sceNpWebApiUnregisterPushEventCallback(int titleUserCtxId, int cal
 int APS5_VABI sceNpWebApiUnregisterServicePushEventCallback(int titleUserCtxId, int callbackId);
 int APS5_VABI sceNpWebApiUtilityParseNpId();
 
+int APS5_VABI sceNpWebApiAbortHandle();
+int APS5_VABI sceNpWebApiAddHttpRequestHeader();
+int APS5_VABI sceNpWebApiAddMultipartPart();
+int APS5_VABI sceNpWebApiCheckTimeout();
+int APS5_VABI sceNpWebApiClearAllUnusedConnection();
+int APS5_VABI sceNpWebApiClearUnusedConnection();
+int APS5_VABI sceNpWebApiCreateMultipartRequest();
+int APS5_VABI sceNpWebApiGetConnectionStats();
+int APS5_VABI sceNpWebApiGetErrorCode();
+int APS5_VABI sceNpWebApiInitializeForPresence();
+int APS5_VABI sceNpWebApiIntCreateCtxIndExtdPushEventFilter();
+int APS5_VABI sceNpWebApiIntCreateRequest();
+int APS5_VABI sceNpWebApiIntCreateServicePushEventFilter();
+int APS5_VABI sceNpWebApiIntInitialize();
+int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallback();
+int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallbackA();
+int APS5_VABI sceNpWebApiRegisterExtdPushEventCallback();
+int APS5_VABI sceNpWebApiRegisterNotificationCallback();
+int APS5_VABI sceNpWebApiSendMultipartRequest();
+int APS5_VABI sceNpWebApiSendMultipartRequest2();
+int APS5_VABI sceNpWebApiSendRequest2();
+int APS5_VABI sceNpWebApiSetHandleTimeout();
+int APS5_VABI sceNpWebApiSetMaxConnection();
+int APS5_VABI sceNpWebApiSetMultipartContentType();
+int APS5_VABI sceNpWebApiSetRequestTimeout();
+int APS5_VABI sceNpWebApiUnregisterNotificationCallback();
+int APS5_VABI sceNpWebApiVshInitialize();
+
 }

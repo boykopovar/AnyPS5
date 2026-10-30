@@ -61,6 +61,16 @@ int main() {
     Require(AutoRedirect(request) == -1);
     Require(AuthEnabled(tmpl) == 0 && AutoRedirect(tmpl) == 0);
 
+    const std::uint32_t sslVersions[] = {2, 3, 4, 5};
+    for (const std::uint32_t version : sslVersions) {
+        Require(sceHttp2SetMinSslVersion(tmpl, version) == 0);
+        Require(sceHttp2SetMinSslVersion(request, version) == 0);
+    }
+    const int deleted = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://localhost/", 0);
+    Require(deleted > 0 && sceHttp2DeleteRequest(deleted) == 0);
+    const int unknownIds[] = {0, -1, 0x7fffffff, deleted};
+    for (const int unknown : unknownIds) Require(sceHttp2SetMinSslVersion(unknown, 5) == InvalidId);
+
     Require(sceHttp2SetAuthEnabled(tmpl, 1) == 0);
     Require(sceHttp2AddRequestHeader(tmpl, "X-Late", "1", 0) == 0);
     Require(AuthEnabled(request) == 1);

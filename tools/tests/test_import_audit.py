@@ -2561,6 +2561,23 @@ class ImportAuditTests(unittest.TestCase):
                      + STUB_SOURCE.format(name="sceUnreferencedPending"))
         self.assertEqual(self.work.run(registry, "--strict-stubs")[0], 0)
 
+    def test_conditional_stubs_reads_utf8_source_with_explicit_encoding(self):
+        original_read_text = Path.read_text
+        recorded_calls = []
+
+        def recording_read_text(path_self, *args, **kwargs):
+            recorded_calls.append((path_self, kwargs))
+            return original_read_text(path_self, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            lib_dir = Path(directory)
+            cpp_file = lib_dir / "Export.cpp"
+            cpp_file.write_bytes(f"// Non-ASCII \u2014 em-dash\n{DONE_SOURCE.format(name='sceCustomStub')}".encode("utf-8"))
+            with patch.object(Path, "read_text", side_effect=recording_read_text, autospec=True):
+                stubs = import_audit.conditional_stubs(lib_dir)
+            self.assertEqual(stubs, {"sceCustomStub"})
+            self.assertTrue(recorded_calls)
+            self.assertEqual(recorded_calls[0][1].get("encoding"), "utf-8")
 
 
 class StrictProviderTests(unittest.TestCase):

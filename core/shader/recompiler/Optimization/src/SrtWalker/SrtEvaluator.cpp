@@ -239,6 +239,9 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
     } else {
         const auto relative = (immediate & ~std::int64_t {3}) + static_cast<std::int64_t>(static_cast<std::uint32_t>(offset) & ~3u);
         if (!AddSignedAddress(base & ~std::uint64_t {3}, relative, address)) {
+            if (_inaccessible != nullptr && _runtime.accessible != nullptr && LoadedFromMemory(*handle.Value())) {
+                *_inaccessible = {inst.Value(), ((base & ~std::uint64_t {3}) + static_cast<std::uint64_t>(relative)) & AddressMask};
+            }
             return false;
         }
     }

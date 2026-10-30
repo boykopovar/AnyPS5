@@ -279,9 +279,9 @@ std::uint32_t Draw(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ColorTa
     fragment.shader.code = snapshot.code;
     fragment.context.pixel = AgcDriver::Graphics::DecodePixelStageInfo(context, AgcDriver::Graphics::ExportMappings(state));
     fragment.context.pixel->targetExportPacking = AgcDriver::Graphics::ExportPackings(state);
-    fragment.context.pixel->targetMerge = AgcDriver::Graphics::ExportTargetMerge(state);
-    Require(fragment.context.pixel->pixelKillEnable == ((setup.shaderControl & LateKill) != 0u) && !fragment.context.pixel->earlyZ && fragment.context.pixel->targetMerge.depthStencilWrites == (partial && setup.depth != 0 && setup.depthWrite), "the draw's pixel kill under late tests or its depth and stencil writes did not decode");
-    Require((fragment.context.pixel->targetMerge.mask != 0u) == partial && fragment.context.pixel->targetMerge.mask == color.partialWriteMask, "the draw's target merge disagrees with its write mask");
+    fragment.context.pixel->targetMerges = AgcDriver::Graphics::ExportTargetMerges(state);
+    Require(fragment.context.pixel->pixelKillEnable == ((setup.shaderControl & LateKill) != 0u) && !fragment.context.pixel->earlyZ && std::ranges::all_of(fragment.context.pixel->targetMerges, [&](const ShaderRecompiler::TargetMerge& merge) { return merge.depthStencilWrites == (setup.depth != 0 && setup.depthWrite); }), "the draw's pixel kill under late tests or its depth and stencil writes did not decode");
+    Require(fragment.context.pixel->targetMerges.size() == (partial ? 1u : 0u) && (!partial || fragment.context.pixel->targetMerges.front().mask == color.partialWriteMask), "the draw's target merge disagrees with its write mask");
     const ShaderRecompiler::SrtRuntime runtime{};
     const auto invocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, fragment);
     const auto pixelResult = invocation.Materialize(*invocation.Capture(runtime));

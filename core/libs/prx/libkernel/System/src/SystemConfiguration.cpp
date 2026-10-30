@@ -12,8 +12,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -93,7 +95,7 @@ const SystemInteger* FindSystemInteger(const int* name) {
 }
 
 bool IsLeafMib(const int* name) {
-    return FindSystemInteger(name) != nullptr || (name[0] == 6 && (name[1] == 2 || name[1] == 3 || name[1] == 5 || name[1] == 7)) || (name[0] == 1 && (name[1] == 21 || name[1] == 37 || name[1] == 50));
+    return FindSystemInteger(name) != nullptr || (name[0] == 6 && (name[1] == 2 || name[1] == 3 || name[1] == 5 || name[1] == 7)) || (name[0] == 1 && (name[1] == 21 || name[1] == 37 || name[1] == 50)) || (name[0] == 2 && name[1] == 2);
 }
 
 KernelTimeval BootTime() {
@@ -105,6 +107,32 @@ KernelTimeval BootTime() {
         return KernelTimeval{nanos / 1000000000LL, nanos % 1000000000LL / 1000LL};
     }();
     return bootTime;
+}
+
+struct GuestLoadAverage {
+    std::uint32_t ldavg[3];
+    std::int64_t fscale;
+};
+static_assert(sizeof(GuestLoadAverage) == 24);
+
+std::uint32_t ScaledLoad(double average, std::int64_t fscale) {
+    const auto scaled = average * static_cast<double>(fscale) + 0.5;
+    if (!(scaled > 0.0)) return 0;
+    if (scaled >= static_cast<double>(std::numeric_limits<std::uint32_t>::max())) return std::numeric_limits<std::uint32_t>::max();
+    return static_cast<std::uint32_t>(scaled);
+}
+
+GuestLoadAverage HostLoadAverage() {
+    GuestLoadAverage load;
+    std::memset(&load, 0, sizeof(load));
+    load.fscale = 1 << 11;
+#ifndef _WIN32
+    double averages[3]{};
+    if (getloadavg(averages, 3) == 3) {
+        for (int index = 0; index < 3; ++index) load.ldavg[index] = ScaledLoad(averages[index], load.fscale);
+    }
+#endif
+    return load;
 }
 
 constexpr std::size_t MaximumSysctlName = 1024;
@@ -385,6 +413,14 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         const std::uint64_t physmem = static_cast<std::uint64_t>(pages) * PS5_PAGE_SIZE;
         return CopyOut(&physmem, sizeof(physmem), oldValue, oldLength);
     }
+    if (nameLength == 2 && name[0] == 2 && name[1] == 2) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        const GuestLoadAverage load = HostLoadAverage();
+        return CopyOut(&load, sizeof(load), oldValue, oldLength);
+    }
     if (nameLength == 2) {
         if (const auto* entry = FindSystemString(name)) {
             if (newValue != nullptr) {
@@ -550,6 +586,10 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
     }
     if (std::strcmp(name, "kern.boottime") == 0) {
         static constexpr int mib[] = {1, 21};
+        return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
+    }
+    if (std::strcmp(name, "vm.loadavg") == 0) {
+        static constexpr int mib[] = {2, 2};
         return sysctl_nid_postfix(mib, 2, oldValue, oldLength, newValue, newLength);
     }
     if (std::strcmp(name, "kern.arandom") == 0) {
@@ -735,6 +775,7 @@ int APS5_VABI sysctlnametomib_nid_postfix(const char* name, int* mib, std::size_
         {"kern.proc.pathname", {1, 14, 12}, 3},
         {"kern.ps_strings", {1, 32}, 2},
         {"kern.rng_pseudo", {1, 50}, 2},
+        {"vm.loadavg", {2, 2}, 2},
     };
     if (name == nullptr || size == nullptr) throw std::invalid_argument(std::string(__func__) + ": null name or size");
     const std::size_t nameLength = strnlen(name, MaximumSysctlName);
