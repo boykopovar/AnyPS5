@@ -677,6 +677,62 @@ void* APS5_VABI reallocarray_nid_postfix(void* ptr, size_t nmemb, size_t size) {
     return realloc_nid_postfix(ptr, nmemb * size);
 }
 
+/*
+ * Copyright (c) 2008, 2017 Otto Moerbeek <otto@drijf.net>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+void* APS5_VABI recallocarray_nid_postfix(void* ptr, size_t oldnmemb, size_t nmemb, size_t size) {
+    if (size != 0 && nmemb > std::numeric_limits<size_t>::max() / size) {
+        errno = 12;
+        return nullptr;
+    }
+    if (ptr == nullptr) {
+        void* result = calloc_nid_postfix(nmemb, size);
+        if (result == nullptr && nmemb != 0 && size != 0) errno = 12;
+        return result;
+    }
+    if (size != 0 && oldnmemb > std::numeric_limits<size_t>::max() / size) {
+        errno = 22;
+        return nullptr;
+    }
+    const size_t newsize = nmemb * size;
+    const size_t oldsize = oldnmemb * size;
+    if (newsize <= oldsize) {
+        const size_t d = oldsize - newsize;
+        if (d < oldsize / 2 && d < 16384) {
+            auto* bytes = static_cast<volatile unsigned char*>(ptr);
+            for (size_t index = 0; index < d; ++index) bytes[newsize + index] = 0;
+            return ptr;
+        }
+    }
+    void* newptr = malloc_nid_postfix(newsize);
+    if (newptr == nullptr) {
+        errno = 12;
+        return nullptr;
+    }
+    if (newsize > oldsize) {
+        std::memcpy(newptr, ptr, oldsize);
+        std::memset(static_cast<char*>(newptr) + oldsize, 0, newsize - oldsize);
+    } else {
+        std::memcpy(newptr, ptr, newsize);
+    }
+    auto* oldbytes = static_cast<volatile unsigned char*>(ptr);
+    for (size_t index = 0; index < oldsize; ++index) oldbytes[index] = 0;
+    free_nid_postfix(ptr);
+    return newptr;
+}
+
 void* APS5_VABI memalign_nid_postfix(size_t alignment, size_t size) {
     if (!ApplicationHeapDefault_nid_no_patch()) {
         if (!validAlignment(alignment)) {

@@ -140,7 +140,7 @@ jobs:
                   touches('core/libs/tests/register_context/', 'core/libs/tests/RegisterContext.cpp', libc),
                 writeWatch: edits('write-watch') || touches('core/libs/tests/write_watch/', 'core/libs/tests/WriteWatch.cpp', libc),
                 mingwHostTests: edits('eligibility') || edits('windows') || touches(
-                  'core/libs/', 'tools/build_mingw_host_only_tests.py',
+                  'core/libs/', 'tools/build_mingw_host_only_tests.py', 'tools/build_changed_guest_tests.py', 'tools/tests/test_build_changed_guest_tests.py',
                   'tools/tests/test_mingw_host_only_test_targets.py', 'CMakeLists.txt'
                 ),
               };
@@ -703,6 +703,10 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: cmd
         run: python tools/build_mingw_host_only_tests.py build changed.txt
+      - name: Build and run changed guest core/libs tests
+        if: github.event_name == 'pull_request'
+        shell: cmd
+        run: python tools/build_changed_guest_tests.py build changed.txt
       - id: libs
         if: github.event_name != 'pull_request'
         shell: cmd

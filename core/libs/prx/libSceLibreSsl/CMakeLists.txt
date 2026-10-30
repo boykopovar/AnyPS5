@@ -130,7 +130,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_libressl_x509_store_context_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslX509StoreContext.cpp)
     target_include_directories(guest_libressl_x509_store_context_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_libressl_x509_store_context_tests PRIVATE libSceLibreSsl)
+    target_link_libraries(guest_libressl_x509_store_context_tests PRIVATE libSceLibreSsl libc)
     configure_windows_unwind(guest_libressl_x509_store_context_tests)
     add_test(NAME guest_libressl_x509_store_context COMMAND guest_libressl_x509_store_context_tests)
     set_tests_properties(guest_libressl_x509_store_context PROPERTIES TIMEOUT 30)

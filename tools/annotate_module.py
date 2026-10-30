@@ -219,7 +219,7 @@ def disassemble(code, vaddr):
     with tempfile.TemporaryDirectory() as directory:
         blob = Path(directory) / "text.bin"
         blob.write_bytes(code)
-        command = [objdump, "-D", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
+        command = [objdump, "-D", "--disassemble-zeroes", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
                    "--adjust-vma=%d" % vaddr, str(blob)]
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
