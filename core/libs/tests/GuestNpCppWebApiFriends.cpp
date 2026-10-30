@@ -27,6 +27,10 @@ static void WriteCount(void* object, const std::size_t offset, const std::int32_
     std::memcpy(static_cast<std::uint8_t*>(object) + offset, &value, sizeof(value));
 }
 
+static void WriteWord(void* object, const std::size_t offset, const std::uint64_t value) {
+    std::memcpy(static_cast<std::uint8_t*>(object) + offset, &value, sizeof(value));
+}
+
 static void TestParameterLifecycle() {
     alignas(16) unsigned char parameter[0x58];
     std::memset(parameter, 0x5a, sizeof(parameter));
@@ -53,17 +57,46 @@ static void TestParameterLifecycle() {
 }
 
 static void TestOfflineCalls() {
-    Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi24getFriendsPlayerSessionsEiRKNS4_35ParameterToGetFriendsPlayerSessionsERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_36GetFriendsPlayerSessionsResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE() == 0x80552907,
-            "getFriendsPlayerSessions did not report a signed-out console");
-    alignas(8) unsigned char transaction[0x40] = {};
+    alignas(8) unsigned char transaction[0x40];
+    std::memset(transaction, 0x5a, sizeof(transaction));
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(transaction) == 0,
             "the transaction constructor failed");
-    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE() == 0x80552907,
+    for (std::size_t index = 0; index < 0x10; ++index)
+        Require(transaction[index] == 0, "the transaction constructor did not clear its two words");
+    for (std::size_t index = 0x10; index < sizeof(transaction); ++index)
+        Require(transaction[index] == 0x5a, "the transaction constructor wrote past its two words");
+
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE(transaction, nullptr) == 0x80553503,
+            "start accepted a null context");
+    std::uint64_t uninitialized = 0;
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE(transaction, &uninitialized) == 0x80553502,
+            "start accepted an uninitialized context");
+    std::uint64_t context = 1;
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE(transaction, &context) == 0x80552907,
             "start did not report a signed-out console");
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi24getFriendsPlayerSessionsEiRKNS4_35ParameterToGetFriendsPlayerSessionsERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_36GetFriendsPlayerSessionsResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE(0, nullptr, transaction) == 0x80553508,
+            "getFriendsPlayerSessions accepted an unstarted transaction");
     Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE6finishEv() == 0x80553508,
             "finish did not report an unstarted transaction");
-    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_() == 0x80552907,
-            "getResponse did not report a signed-out console");
+
+    int objectMarker = 0;
+    int contextMarker = 0;
+    IntrusivePtr sentinel{&objectMarker, CountDelete, &contextMarker};
+    IntrusivePtr response = sentinel;
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_(transaction, &response) == 0x80553508,
+            "getResponse accepted an unstarted transaction");
+    Require(response.object == sentinel.object && response.deleter == sentinel.deleter && response.libContext == sentinel.libContext,
+            "getResponse touched the output of an unstarted transaction");
+
+    WriteWord(transaction, 0, 1);
+    WriteWord(transaction, 8, 1);
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi24getFriendsPlayerSessionsEiRKNS4_35ParameterToGetFriendsPlayerSessionsERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_36GetFriendsPlayerSessionsResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE(0, nullptr, transaction) == 0x80552907,
+            "getFriendsPlayerSessions did not report a signed-out console for a started transaction");
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_(transaction, &response) == 0x80552907,
+            "getResponse did not report a signed-out console for a started transaction");
+    Require(response.object == sentinel.object && response.deleter == sentinel.deleter && response.libContext == sentinel.libContext,
+            "getResponse touched the output of a started transaction");
+
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_14SessionManager2V136GetFriendsPlayerSessionsResponseBodyEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(transaction) == 0,
             "the transaction destructor failed");
 }
