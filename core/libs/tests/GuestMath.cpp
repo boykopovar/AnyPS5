@@ -2477,7 +2477,10 @@ int main() {
     srand_nid_postfix(1);
     Require(rand_nid_postfix() == 408024109 && rand_nid_postfix() == 11635919 && rand_nid_postfix() == 196474438);
     srand_nid_postfix(0);
+    Require(_Randseed_nid_postfix == 0);
     Require(rand_nid_postfix() == 0 && rand_nid_postfix() == 408024109);
+    _Randseed_nid_postfix = 0;
+    Require(rand_nid_postfix() == 0 && _Randseed_nid_postfix == 1);
     srand_nid_postfix(0xffffffffu);
     Require(rand_nid_postfix() == 876841727 && rand_nid_postfix() == 830605684);
     for (int step = 0; step < 1000; ++step) Require(static_cast<unsigned int>(rand_nid_postfix()) <= 0x3fffffffu);

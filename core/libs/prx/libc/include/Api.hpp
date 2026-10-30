@@ -735,6 +735,7 @@ int APS5_VABI __fpclassifyf_nid_postfix(float x);
 int APS5_VABI __signbitf_nid_postfix(float x);
 int APS5_VABI __signbitl_nid_postfix(long double x);
 int APS5_VABI __isfinitel_nid_postfix(long double x);
+extern std::uint64_t _Randseed_nid_postfix;
 int APS5_VABI rand_nid_postfix();
 int APS5_VABI rand_r_nid_postfix(unsigned int* state);
 void APS5_VABI srand_nid_postfix(unsigned int seed);
