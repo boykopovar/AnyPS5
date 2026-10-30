@@ -9484,7 +9484,7 @@ public:
             if (op == spv::OpCompositeExtract) extracted[words[cursor + 2]] = words[cursor + 3];
             if (op == spv::OpConstant && length == 4u) constants[words[cursor + 2]] = words[cursor + 3];
             if (op == spv::OpBitcast || op == spv::OpFSub || op == spv::OpISub || op == spv::OpConvertUToF || op == spv::OpConvertFToU) sources[words[cursor + 2]] = words[cursor + 3];
-            for (std::size_t operand = 3; op == spv::OpCompositeConstruct && operand < length; ++operand) composites[words[cursor + 2]].push_back(words[cursor + operand]);
+            for (std::size_t operand = 3; (op == spv::OpCompositeConstruct || op == spv::OpConstantComposite) && operand < length; ++operand) composites[words[cursor + 2]].push_back(words[cursor + operand]);
             if (length > 2u && op != spv::OpTypeVector && op != spv::OpTypeImage && op != spv::OpTypeSampledImage && op != spv::OpStore && op != spv::OpDecorate && op != spv::OpMemberDecorate && op != spv::OpName && op != spv::OpImageWrite) resultTypes[words[cursor + 2]] = words[cursor + 1];
             cursor += length;
         }
