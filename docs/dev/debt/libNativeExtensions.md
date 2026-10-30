@@ -50,3 +50,5 @@
 | `Unknown` | `PYd486Ryp+4` |
 | `Unknown` | `QfxvUZ0N9zc` |
 | `Unknown` | `tw7mDSn+8Ng` |
+
+- [Older callable NIDs](../../../core/libs/prx/libNativeExtensions/Export.cpp): 11 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.
