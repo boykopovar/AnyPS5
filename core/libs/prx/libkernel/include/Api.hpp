@@ -261,6 +261,7 @@ int APS5_VABI mlockall_nid_postfix(int flags);
 int APS5_VABI munlockall_nid_postfix();
 int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags);
 int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice);
+int APS5_VABI posix_madvise_nid_postfix(void* address, std::size_t length, int advice);
 int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char* vec);
 int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
 int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);

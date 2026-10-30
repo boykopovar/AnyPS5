@@ -1126,6 +1126,8 @@ std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, st
     return PosixResult(sceKernelWrite(descriptor, buffer == nullptr ? &emptyBuffer : buffer, count));
 }
 
+const bool g_libcWriteHookRegistered = (LibcSetGuestWriteHook_nid_no_patch(&_write_nid_postfix), true);
+
 int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
     if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
     std::string copy;
@@ -1290,7 +1292,11 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (base < 0) return SceErrorFromErrno(errno);
     if (basep != nullptr) *basep = static_cast<int64_t>(base);
     std::vector<char> host(static_cast<std::size_t>(nbytes) < 4096 ? 4096 : static_cast<std::size_t>(nbytes));
+#ifdef __EMSCRIPTEN__
+    const auto read = ::getdents(fd, reinterpret_cast<struct dirent*>(host.data()), host.size());
+#else
     const auto read = ::syscall(SYS_getdents64, fd, host.data(), host.size());
+#endif
     if (read < 0) return SceErrorFromErrno(errno);
     std::size_t written = 0;
     off_t resume = base;

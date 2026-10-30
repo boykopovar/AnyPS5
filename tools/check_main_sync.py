@@ -1,4 +1,5 @@
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -109,6 +110,7 @@ def main(argv=None):
     parser.add_argument("--repo", type=Path, default=Path("."), help="the repository to check (default: the current directory)")
     parser.add_argument("--fetch", action="store_true", help="fetch the base's remote first")
     parser.add_argument("--strict", action="store_true", help="also fail when the branch is behind the base")
+    parser.add_argument("--json", action="store_true", help="write the report as JSON instead of text")
     args = parser.parse_args(argv)
     try:
         def fetch(ref):
@@ -131,7 +133,7 @@ def main(argv=None):
         data = report(args.repo, base, args.head)
     except (RuntimeError, OSError) as error:
         parser.error(str(error))
-    print(render(data))
+    print(json.dumps(data, ensure_ascii=True) if args.json else render(data))
     if data["conflicts"] or (args.strict and data["behind"]):
         return 1
     return 0

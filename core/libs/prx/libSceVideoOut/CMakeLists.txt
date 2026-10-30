@@ -1,11 +1,13 @@
 add_library(libSceVideoOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/InventoryExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Buffer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Output.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoOutDriver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DisplayWindow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PadInput.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PadStatusSdl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Telemetry.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MouseInput.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/KeyboardInput.cpp
@@ -107,7 +109,7 @@ if(BUILD_TESTING)
     endforeach()
 
     set_target_properties(video_out_flip_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    foreach(flipMode IN ITEMS lifetime reopen decode controls overlay unopened ps4 resolution resolution_override fresh)
+    foreach(flipMode IN ITEMS lifetime reopen decode controls overlay padstatus unopened ps4 resolution resolution_override fresh)
         if(flipMode STREQUAL "lifetime")
             add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests)
         else()
@@ -172,6 +174,11 @@ if(BUILD_TESTING)
         set_tests_properties(pad_input_mapping PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(pad_status_sdl_tests tests/PadStatusSdl.cpp src/PadStatusSdl.cpp)
+    target_include_directories(pad_status_sdl_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
+    set_target_properties(pad_status_sdl_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_host_test_executable(pad_status_sdl_tests)
+    add_test(NAME pad_status_sdl COMMAND pad_status_sdl_tests)
     add_test_executable(pad_output_pacing_tests tests/PadOutputPacing.cpp)
     target_include_directories(pad_output_pacing_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(pad_output_pacing_tests PRIVATE libc)
@@ -181,6 +188,17 @@ if(BUILD_TESTING)
         set_tests_properties(pad_output_pacing PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(pad_host_volume_tests tests/HostVolumeInput.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../libScePad/src/HostVolumeState.cpp)
+    target_include_directories(pad_host_volume_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
+    target_link_libraries(pad_host_volume_tests PRIVATE SDL2-static)
+    if(MINGW)
+        target_compile_options(pad_host_volume_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(pad_host_volume_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME pad_host_volume COMMAND pad_host_volume_tests)
 endif()
 
 if(BUILD_TESTING)

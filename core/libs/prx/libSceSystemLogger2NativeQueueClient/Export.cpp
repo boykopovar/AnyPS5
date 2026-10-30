@@ -31,4 +31,28 @@ int APS5_VABI sceSystemLogger2NativeQueueClientSetNativeQueueConfig() {
     return 0;
 }
 
+int APS5_VABI sceSystemLogger2NativeQueueClientSetBatchDeliveryResult() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2NativeQueueClientSetEventFilter() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2NativeQueueClientCheckData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2NativeQueueClientGetEvent2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2NativeQueueClientInitialize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSystemLogger2NativeQueueClientTerminate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

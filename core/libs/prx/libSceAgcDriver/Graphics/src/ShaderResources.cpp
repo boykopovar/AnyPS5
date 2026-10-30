@@ -3819,6 +3819,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     // (3) Buffers staged in device memory (GuestBufferMemory::AllowDeviceStaging) are copied in
     // from their imports anew for this use, after the flushes above and before the work is
     // recorded; a failure to record leaves the object unusable for this dispatch, not the batch.
+    if (!guestMemory.StagingDecisionsCurrent()) return finish(fast, false, ProofFailure::Changed);
     if (auto* recorder = Recorder::Active(); recorder != nullptr) {
         try {
             guestMemory.RecordStagingCopies(*recorder);
