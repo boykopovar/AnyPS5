@@ -13,10 +13,12 @@ int main() {
     std::atomic<int> result{-1};
     std::thread waiter([&] { result.store(sceKernelWaitSema(sem, 1, nullptr)); });
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    KernelSemaPrivate* object = KernelSemaObjectForTests_nid_no_patch(sem);
+    if (object == nullptr) return 4;
     for (;;) {
         {
-            std::lock_guard lock(sem->mutex);
-            if (sem->waiterCount != 0) break;
+            std::lock_guard lock(object->mutex);
+            if (object->waiterCount != 0) break;
         }
         if (std::chrono::steady_clock::now() >= deadline) {
             sceKernelSignalSema(sem, 1);

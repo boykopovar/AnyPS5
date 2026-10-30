@@ -53,6 +53,73 @@ static void RequireInvalidArguments() {
     Require(sceKernelDeleteSema(sem) == SCE_OK);
 }
 
+static void RequireDeletedHandles() {
+    KernelSema sem = nullptr;
+    Require(sceKernelCreateSema(&sem, "deleted", 0, 1, 3, nullptr) == SCE_OK);
+    Require(sceKernelDeleteSema(sem) == SCE_OK);
+    Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelSignalSema(sem, 1) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelDeleteSema(sem) == SCE_KERNEL_ERROR_ESRCH);
+    KernelUseconds timeout = 1000;
+    int waiters = -1;
+    Require(sceKernelWaitSema(sem, 1, &timeout) == SCE_KERNEL_ERROR_ESRCH && timeout == 1000);
+    Require(sceKernelCancelSema(sem, 0, &waiters) == SCE_KERNEL_ERROR_ESRCH && waiters == -1);
+
+    KernelSema live = nullptr;
+    Require(sceKernelCreateSema(&live, "live", 0, 1, 3, nullptr) == SCE_OK);
+    Require(sceKernelPollSema(live, 1) == SCE_OK);
+    Require(sceKernelSignalSema(live, 1) == SCE_OK);
+    Require(sceKernelDeleteSema(live) == SCE_OK);
+
+    KernelSema unknown = reinterpret_cast<KernelSema>(&waiters);
+    Require(sceKernelPollSema(unknown, 1) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelDeleteSema(unknown) == SCE_KERNEL_ERROR_ESRCH);
+}
+
+static void RequireDeletedHandleNotReused() {
+    for (int round = 0; round < 64; ++round) {
+        KernelSema deleted = nullptr;
+        Require(sceKernelCreateSema(&deleted, "first", 0, 1, 3, nullptr) == SCE_OK);
+        Require(sceKernelDeleteSema(deleted) == SCE_OK);
+        KernelSema next = nullptr;
+        Require(sceKernelCreateSema(&next, "second", 0, 1, 3, nullptr) == SCE_OK);
+        Require(next != deleted);
+        int waiters = -1;
+        KernelUseconds timeout = 1000;
+        Require(sceKernelPollSema(deleted, 1) == SCE_KERNEL_ERROR_ESRCH);
+        Require(sceKernelSignalSema(deleted, 1) == SCE_KERNEL_ERROR_ESRCH);
+        Require(sceKernelWaitSema(deleted, 1, &timeout) == SCE_KERNEL_ERROR_ESRCH && timeout == 1000);
+        Require(sceKernelCancelSema(deleted, 0, &waiters) == SCE_KERNEL_ERROR_ESRCH && waiters == -1);
+        Require(sceKernelDeleteSema(deleted) == SCE_KERNEL_ERROR_ESRCH);
+        Require(sceKernelPollSema(next, 1) == SCE_OK);
+        Require(sceKernelPollSema(next, 1) == SCE_KERNEL_ERROR_EBUSY);
+        Require(sceKernelSignalSema(next, 1) == SCE_OK);
+        Require(sceKernelDeleteSema(next) == SCE_OK);
+    }
+}
+
+static void* APS5_VABI PollUntilDeleted(void* arg) {
+    const KernelSema sem = *static_cast<KernelSema*>(arg);
+    for (int round = 0; round < 1000000; ++round) {
+        const int result = sceKernelPollSema(sem, 1);
+        if (result == SCE_KERNEL_ERROR_ESRCH) return nullptr;
+        Require(result == SCE_OK || result == SCE_KERNEL_ERROR_EBUSY);
+        sceKernelSignalSema(sem, 1);
+    }
+    std::abort();
+}
+
+static void RequireDeleteDuringUse() {
+    for (int round = 0; round < 50; ++round) {
+        KernelSema sem = nullptr;
+        Require(sceKernelCreateSema(&sem, "racing", 0, 1, 1, nullptr) == SCE_OK);
+        Pthread poller = nullptr;
+        Require(scePthreadCreate(&poller, nullptr, PollUntilDeleted, &sem, nullptr) == SCE_OK);
+        Require(sceKernelDeleteSema(sem) == SCE_OK);
+        Require(scePthreadJoin(poller, nullptr) == SCE_OK);
+    }
+}
+
 int main() {
     KernelUseconds nullTimeout = 1000;
     int nullWaiters = -1;
@@ -113,4 +180,7 @@ int main() {
     Require(sceKernelDeleteSema(sem) == SCE_OK);
 
     RequireInvalidArguments();
+    RequireDeletedHandles();
+    RequireDeletedHandleNotReused();
+    RequireDeleteDuringUse();
 }

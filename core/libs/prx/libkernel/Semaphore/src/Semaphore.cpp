@@ -2,11 +2,14 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 KernelSemaPrivate::KernelSemaPrivate(std::int32_t initCount, std::int32_t maxCount, std::string name, bool isFifo)
@@ -18,7 +21,21 @@ static bool TraceSync() {
  return enabled;
 }
 
+static std::mutex liveSemasMutex;
+static std::unordered_map<KernelSema, std::shared_ptr<KernelSemaPrivate>> liveSemas;
+static std::uintptr_t lastSemaHandle = 0;
+
+static std::shared_ptr<KernelSemaPrivate> FindSema(KernelSema handle) {
+ std::lock_guard<std::mutex> lock(liveSemasMutex);
+ const auto found = liveSemas.find(handle);
+ return found == liveSemas.end() ? nullptr : found->second;
+}
+
 extern "C" {
+
+KernelSemaPrivate* KernelSemaObjectForTests_nid_no_patch(KernelSema handle) {
+ return FindSema(handle).get();
+}
 
 int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t attr, int init, int max, void* opt) {
  (void)opt;
@@ -32,12 +49,20 @@ int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t at
   NotImplemented_nid_no_patch("sceKernelCreateSema with attribute bit 0x100");
  }
 
- *sem = new KernelSemaPrivate(init, max, std::string(name), attr == 1);
+ auto created = std::make_shared<KernelSemaPrivate>(init, max, std::string(name), attr == 1);
+ KernelSema handle = nullptr;
+ {
+  std::lock_guard<std::mutex> lock(liveSemasMutex);
+  handle = reinterpret_cast<KernelSema>(++lastSemaHandle);
+  liveSemas.emplace(handle, std::move(created));
+ }
+ *sem = handle;
  if (TraceSync()) std::fprintf(stderr, "[sema] create %p '%s' attr=0x%x init=%d max=%d\n", static_cast<void*>(*sem), name, attr, init, max);
  return KERNEL_SEMA_OK;
 }
 
-int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
+int APS5_VABI sceKernelPollSema(KernelSema handle, int need) {
+ const auto sem = FindSema(handle);
  if (sem == nullptr) {
   return SCE_KERNEL_ERROR_ESRCH;
  }
@@ -53,7 +78,8 @@ int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
  return KERNEL_SEMA_OK;
 }
 
-int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
+int APS5_VABI sceKernelSignalSema(KernelSema handle, int count) {
+ const auto sem = FindSema(handle);
  if (sem == nullptr) {
   return SCE_KERNEL_ERROR_ESRCH;
  }
@@ -67,12 +93,13 @@ int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
  }
  const auto before = sem->tokenCount;
  sem->tokenCount += count;
- if (TraceSync()) std::fprintf(stderr, "[sema] signal %p '%s' count=%d have=%d->%d\n", static_cast<void*>(sem), sem->name.c_str(), count, before, sem->tokenCount);
+ if (TraceSync()) std::fprintf(stderr, "[sema] signal %p '%s' count=%d have=%d->%d\n", static_cast<void*>(handle), sem->name.c_str(), count, before, sem->tokenCount);
  sem->condition.NotifyAll();
  return KERNEL_SEMA_OK;
 }
 
-int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) {
+int APS5_VABI sceKernelWaitSema(KernelSema handle, int need, KernelUseconds* time) {
+ const auto sem = FindSema(handle);
  if (sem == nullptr) {
   return SCE_KERNEL_ERROR_ESRCH;
  }
@@ -94,13 +121,13 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
    }
    sem->condition.NotifyAll();
   }
- } waiterGuard{sem, generation};
+ } waiterGuard{sem.get(), generation};
 
  const auto waitStart = std::chrono::steady_clock::now();
  const void* caller = __builtin_return_address(0);
- if (TraceSync()) std::fprintf(stderr, "[sema] wait begin %p '%s' need=%d have=%d timeout=%lld caller=%p\n", static_cast<void*>(sem), sem->name.c_str(), need, sem->tokenCount, time ? static_cast<long long>(*time) : -1LL, caller);
+ if (TraceSync()) std::fprintf(stderr, "[sema] wait begin %p '%s' need=%d have=%d timeout=%lld caller=%p\n", static_cast<void*>(handle), sem->name.c_str(), need, sem->tokenCount, time ? static_cast<long long>(*time) : -1LL, caller);
  const auto traceSyncWaitEnd = [&](int result) {
-  if (TraceSync()) std::fprintf(stderr, "[sema] wait end %p '%s' result=0x%x have=%d caller=%p\n", static_cast<void*>(sem), sem->name.c_str(), result, sem->tokenCount, caller);
+  if (TraceSync()) std::fprintf(stderr, "[sema] wait end %p '%s' result=0x%x have=%d caller=%p\n", static_cast<void*>(handle), sem->name.c_str(), result, sem->tokenCount, caller);
  };
  const auto traceWait = [&](bool timedOut) {
   KernelTraceWait_nid_postfix("sema", caller, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
@@ -143,7 +170,8 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
  return KERNEL_SEMA_OK;
 }
 
-int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads) {
+int APS5_VABI sceKernelCancelSema(KernelSema handle, int count, int* threads) {
+ const auto sem = FindSema(handle);
  if (sem == nullptr) {
   return SCE_KERNEL_ERROR_ESRCH;
  }
@@ -162,17 +190,22 @@ int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads) {
  return KERNEL_SEMA_OK;
 }
 
-int APS5_VABI sceKernelDeleteSema(KernelSema sem) {
- if (sem == nullptr) {
-  return SCE_KERNEL_ERROR_ESRCH;
+int APS5_VABI sceKernelDeleteSema(KernelSema handle) {
+ std::shared_ptr<KernelSemaPrivate> sem;
+ {
+  std::lock_guard<std::mutex> lock(liveSemasMutex);
+  const auto found = liveSemas.find(handle);
+  if (found == liveSemas.end()) {
+   return SCE_KERNEL_ERROR_ESRCH;
+  }
+  sem = std::move(found->second);
+  liveSemas.erase(found);
  }
 
  std::unique_lock<std::mutex> lock(sem->mutex);
  sem->deleted = true;
  sem->condition.NotifyAll();
  sem->condition.Wait(lock, [&] { return sem->waiterCount == 0; });
- lock.unlock();
- delete sem;
  return KERNEL_SEMA_OK;
 }
 
