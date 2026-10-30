@@ -658,6 +658,40 @@ class AssemblyTests(unittest.TestCase):
                 self.assertTrue(code.is_file())
 
 
+class HsaRunnerTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "HSA runner is built on Linux")
+    def test_invalid_dispatch_sizes_fail_before_hsa_or_file_access(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(hw_oracle, "CACHE", Path(directory)):
+            try:
+                runner = hw_oracle.oracle()
+            except (OSError, subprocess.CalledProcessError, SystemExit) as error:
+                self.skipTest(f"HSA runner cannot be built: {error}")
+            cases = (
+                (["missing.co", "not-an-int", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "1x", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "0", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "1025", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "1", "missing.in", "missing.out", "not-an-int"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "1x"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "0"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "17"], "OUT_DWORDS"),
+            )
+            for arguments, name in cases:
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run([runner, *arguments], capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn(f"{name} must be", result.stderr)
+                    self.assertNotIn("hsa_", result.stderr)
+                    self.assertNotIn("missing.co", result.stderr)
+            for threads, out_dwords in (("1", "1"), ("1024", "16")):
+                with self.subTest(threads=threads, out_dwords=out_dwords):
+                    result = subprocess.run(
+                        [runner, "missing.co", threads, "missing.in", "missing.out", out_dwords],
+                        capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertNotIn("must be", result.stderr)
+
+
 class HipRuntimeTests(unittest.TestCase):
     def test_runtime_defaults_to_hip_on_windows_only(self):
         environment = {key: value for key, value in os.environ.items() if key != "HW_ORACLE_RUNTIME"}
