@@ -71,12 +71,6 @@ int main() {
                     break;
                 }
                 case 9: bytes[3] = 0x1C; Io::WriteU64(bytes, 16, 0x8000000000000000ULL); break;
-                case 11: {
-                    bytes[3] = 0x42;
-                    Io::WriteU16(bytes, 96, 0xFFFF);
-                    Io::WriteU16(bytes, 98, 0xFFFF);
-                    break;
-                }
                 case 10: {
                     segment.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
                     eh.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
@@ -248,6 +242,35 @@ int main() {
             lebRejected = std::string(error.what()).find("overflowing LEB128 value") != std::string::npos;
         }
         Require(lebRejected);
-        std::cout << "26 unwind record cases passed\n";
+        std::vector<std::uint8_t> lsdaU2Bytes(0x400, 0);
+        Io::WriteU32(lsdaU2Bytes, 0x200, 25);
+        lsdaU2Bytes[0x208] = 1;
+        const std::uint8_t ciePrefixU2[] = {'z', 'P', 'L', 'R', 0, 1, 0, 0x78, 11, 0};
+        std::copy(std::begin(ciePrefixU2), std::end(ciePrefixU2), lsdaU2Bytes.begin() + 0x209);
+        lsdaU2Bytes[0x212] = 0;
+        Io::WriteU64(lsdaU2Bytes, 0x213, 0x1000);
+        lsdaU2Bytes[0x21B] = 0x42;
+        lsdaU2Bytes[0x21C] = 0;
+        Io::WriteU32(lsdaU2Bytes, 0x220, 29);
+        Io::WriteU32(lsdaU2Bytes, 0x224, 0x24);
+        Io::WriteU64(lsdaU2Bytes, 0x228, 0xFFFFFFFFFFFFF000ULL);
+        Io::WriteU64(lsdaU2Bytes, 0x230, 0x20);
+        lsdaU2Bytes[0x238] = 2;
+        Io::WriteU16(lsdaU2Bytes, 0x239, 0xFFFF);
+        lsdaU2Bytes[0x300] = 1;
+        lsdaU2Bytes[0x302] = 3;
+        Io::WriteU64(lsdaU2Bytes, 0x304, 0x200);
+        Io::WriteU32(lsdaU2Bytes, 0x30C, 1);
+        Io::WriteU64(lsdaU2Bytes, 0x310, 0xFFFFFFFFFFFFF000ULL);
+        Io::WriteU64(lsdaU2Bytes, 0x318, 0x220);
+        Domain::ProgramHeader lsdaU2Load{}; lsdaU2Load.Type = 1; lsdaU2Load.Flags = 4; lsdaU2Load.FileSize = lsdaU2Bytes.size(); lsdaU2Load.MemorySize = lsdaU2Bytes.size(); lsdaU2Load.Alignment = 8;
+        Domain::ProgramHeader lsdaU2Eh = lsdaU2Load; lsdaU2Eh.Type = 0x6474E550; lsdaU2Eh.Offset = 0x300; lsdaU2Eh.MappedAddress = 0x300; lsdaU2Eh.FileSize = 32; lsdaU2Eh.MemorySize = 32; lsdaU2Eh.Alignment = 4;
+        bool lsdaU2Rejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaU2Bytes, {lsdaU2Load, lsdaU2Eh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaU2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(lsdaU2Rejected);
+        std::cout << "27 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
