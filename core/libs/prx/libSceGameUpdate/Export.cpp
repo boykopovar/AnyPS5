@@ -176,8 +176,28 @@ int APS5_VABI sceGameUpdateTerminate(void) {
     return 0;
 }
 
-int APS5_VABI sceGameUpdateCheckTitle() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGameUpdateCheckTitle(int requestId, uint32_t serviceLabel, GameUpdateCheckResult* result) {
+    (void)serviceLabel;
+    if (result == nullptr) {
+        return SCE_GAME_UPDATE_ERROR_INVALID_ARGUMENT;
+    }
+    if (result->size != sizeof(GameUpdateCheckResult)) {
+        return SCE_GAME_UPDATE_ERROR_INVALID_SIZE;
+    }
+    std::lock_guard lock(stateMutex);
+    if (!initialized) {
+        return SCE_GAME_UPDATE_ERROR_NOT_INITIALIZED;
+    }
+    Request* request = findRequest(requestId);
+    if (request == nullptr) {
+        return SCE_GAME_UPDATE_ERROR_REQUEST_NOT_FOUND;
+    }
+    if (request->aborted) {
+        return SCE_GAME_UPDATE_ERROR_ABORTED;
+    }
+    *result = {};
+    result->size = sizeof(GameUpdateCheckResult);
+    return 0;
 }
 
 }
