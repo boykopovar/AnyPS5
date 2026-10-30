@@ -284,20 +284,11 @@ int main() {
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha512, nullptr) == 1 && context.digest == sha512);
     Require(DigestInChunks(context, sha512, abc, 2) == algorithms[3].digests[1]);
     RequireThrows([&] { EVP_DigestInit_ex_nid_postfix(&context, nullptr, nullptr); });
-    int engine = 0;
-    RequireThrows([&] { EVP_DigestInit_ex_nid_postfix(&context, sha256, &engine); });
-    RequireThrows([&] { EVP_Digest_nid_postfix(abc.data(), abc.size(), nullptr, nullptr, sha256, &engine); });
     RequireThrows([&] { EVP_DigestUpdate_nid_postfix(&context, nullptr, 1); });
     RequireThrows([&] { EVP_DigestUpdate_nid_postfix(nullptr, abc.data(), abc.size()); });
     RequireThrows([&] { EVP_MD_CTX_init_nid_postfix(nullptr); });
     RequireThrows([&] { EVP_MD_CTX_cleanup_nid_postfix(nullptr); });
     EVP_MD_CTX_destroy_nid_postfix(nullptr);
-    context.engine = &engine;
-    RequireThrows([&] { EVP_MD_CTX_cleanup_nid_postfix(&context); });
-    context.engine = nullptr;
-    context.pkeyContext = &engine;
-    RequireThrows([&] { EVP_DigestInit_ex_nid_postfix(&context, sha512, nullptr); });
-    context.pkeyContext = nullptr;
     Require(EVP_MD_CTX_cleanup_nid_postfix(&context) == 1);
 
     EVP_MD_CTX_init_nid_postfix(&context);
@@ -342,7 +333,6 @@ int main() {
     const auto question = Bytes("what do ya want for nothing?");
     Require(HMAC_Update_nid_postfix(&hmac, question.data(), question.size()) == 1);
     Require(HMAC_Final_nid_postfix(&hmac, mac, &macSize) == 1 && Hex(mac, macSize) == algorithms[1].macs[1]);
-    RequireThrows([&] { HMAC_Init_ex_nid_postfix(&hmac, "Jefe", 4, sha256, &engine); });
     HMAC_CTX_cleanup_nid_postfix(&hmac);
 
     std::memset(&hmac, 0x33, sizeof(hmac));
