@@ -28,7 +28,6 @@ inline std::string ImportModuleName(std::string name) {
     if (name == "libmonosgen-2.0") name = "libmonosgen";
     if (name == "libSceLibreSSl3") name = "libSceLibreSsl3";
     if (name == "libSceLibreSSL") name = "libSceLibreSsl";
-    if (name == "libSceJson2") name = "libSceJson";
     std::replace(name.begin(), name.end(), '.', '_');
     return name;
 }
@@ -62,9 +61,11 @@ inline std::string ImportModule(const std::string& symbol, const std::map<std::u
     if (name.empty()) return {};
     if (ModuleSuffix(name).empty()) name += ".prx";
     if (std::find(dependencies.begin(), dependencies.end(), name) != dependencies.end()) return name;
+    const auto normalized = ImportModuleName(name);
+    const auto lookup = normalized == "libSceJson" ? std::string("libSceJson2") : normalized;
     std::string matched;
     for (const auto& dependency : dependencies) {
-        if (ImportModuleName(dependency) != ImportModuleName(name)) continue;
+        if (ImportModuleName(dependency) != lookup) continue;
         if (!matched.empty() && matched != dependency) throw RelinkerException("Ambiguous import module dependency: " + name);
         matched = dependency;
     }
