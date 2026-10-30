@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceHttpCache/include/InventoryExports.hpp"
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
 #include <array>
@@ -1003,5 +1004,10 @@ int APS5_VABI sceHttpCacheRemoveTag() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+int APS5_VABI libSceHttpCacheUnknown_Y3bCbdeHzNg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Y3bCbdeHzNg", libSceHttpCacheUnknown_Y3bCbdeHzNg_nid_no_patch);
 
 }
