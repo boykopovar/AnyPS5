@@ -11,7 +11,7 @@ static const void* const Unset = &Number[0];
 
 static LibreSsl3Rsa FilledRsa() {
     LibreSsl3Rsa rsa {};
-    rsa.meth = &Number[1];
+    rsa.method = &Number[1];
     rsa.n = &Number[2];
     rsa.e = &Number[3];
     rsa.d = &Number[4];
