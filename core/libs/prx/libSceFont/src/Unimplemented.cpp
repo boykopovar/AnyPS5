@@ -358,12 +358,12 @@ int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter
     return Font::WordsFindWordCharacters(words, firstCharacter, endCharacter, lastCharacter, nextCharacter);
 }
 
-int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* frame, const void* data, std::uint32_t dataSize, float x, float y, float width, float height, FontGraphicsFill** fill) {
+int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* frame, const void* data, std::uint32_t dataSize, std::uint32_t firstMode, std::uint32_t secondMode, std::int32_t firstCount, std::int32_t firstLayout, std::int32_t secondLayout, std::int32_t secondCount, FontGraphicsFill** fill) {
+int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

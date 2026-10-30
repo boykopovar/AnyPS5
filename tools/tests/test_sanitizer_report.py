@@ -6,6 +6,7 @@ import io
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sanitizer_report
@@ -133,6 +134,27 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertIn(summary.name, stderr)
         self.assertTrue(stderr.startswith("sanitizer_report: "))
         self.assertNotIn("Traceback", stderr)
+
+    def test_summary_symlink_loop_resolution_failure_exits_with_2(self):
+        junit = self.write(suite(case("passes")), "report.xml")
+        summary = Path(self.directory.name) / "summary_mock.md"
+        with unittest.mock.patch.object(Path, "resolve", side_effect=RuntimeError("Symlink loop from 'summary_mock.md'")):
+            code, stdout, stderr = self.run_main(junit, "--summary", summary)
+            self.assertEqual(code, 2)
+            self.assertEqual(stdout, "")
+            self.assertTrue(stderr.startswith("sanitizer_report: "))
+
+        loop_a = Path(self.directory.name) / "loop_a.md"
+        loop_b = Path(self.directory.name) / "loop_b.md"
+        try:
+            loop_a.symlink_to(loop_b)
+            loop_b.symlink_to(loop_a)
+        except OSError:
+            return
+        code, stdout, stderr = self.run_main(junit, "--summary", loop_a)
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertTrue(stderr.startswith("sanitizer_report: "))
 
     def write_known(self, *lines):
         return self.write("\n".join(lines) + "\n", "known.txt")
@@ -311,6 +333,7 @@ class SummaryInputAliasTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(output.read_bytes(), b"existing\n" + completed.stdout)
             self.assertEqual(source.read_text(), suite(case("unit")))
+
 
 
 if __name__ == "__main__":

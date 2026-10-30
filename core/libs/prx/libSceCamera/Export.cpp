@@ -174,7 +174,6 @@ int APS5_VABI sceCamera2GetAutoWhiteBalance(void) {
 }
 
 int APS5_VABI sceCameraAudioClose(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -213,9 +212,8 @@ int APS5_VABI sceCamera2GetCalibrationData(void) {
     return 0;
 }
 
-int APS5_VABI sceCameraAudioGetData(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceCameraAudioGetData(void* data) {
+    return data ? 0 : SCE_CAMERA_ERROR_PARAM;
 }
 
 int APS5_VABI sceCamera2SetHue(void) {
@@ -238,9 +236,8 @@ int APS5_VABI sceCameraWaitForEveReady(void) {
     return 0;
 }
 
-int APS5_VABI sceCameraAudioGetData2(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceCameraAudioGetData2(void* data) {
+    return data ? 0 : SCE_CAMERA_ERROR_PARAM;
 }
 
 int APS5_VABI sceCameraSetAppModuleFocus(void) {
@@ -354,7 +351,6 @@ int APS5_VABI sceCameraSetVideoSync(void) {
 }
 
 int APS5_VABI sceCameraAudioReset(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 }

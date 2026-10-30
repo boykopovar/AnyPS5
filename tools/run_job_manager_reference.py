@@ -77,7 +77,7 @@ def run(args, directory):
         output.chmod(output.stat().st_mode | 0o111)
     dependencies = set(read_host_imports(helper)) | {"libc.prx"}
     for registry in directory.glob("*.registry.json"):
-        dependencies.update(entry["library"] for entry in json.loads(registry.read_text())
+        dependencies.update(entry["library"] for entry in json.loads(registry.read_text(encoding="utf-8"))
                             if entry.get("library") not in ("jobref.prx", "libSceJobManager.prx"))
     if args.host:
         dependencies.add("libSceJobManager.prx")
@@ -107,7 +107,7 @@ def run(args, directory):
     summary = {"provider": "host" if args.host else "guest", "module_sha256": module_hash,
                "selection": getattr(args, "suite", None) or "custom",
                "excluded_cases": [case for case in CASES if case not in args.cases], "cases": results}
-    (directory / "results.json").write_text(json.dumps(summary, indent=2) + "\n")
+    (directory / "results.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return 0 if all(result["status"] == "passed" for result in results) else 1
 
 

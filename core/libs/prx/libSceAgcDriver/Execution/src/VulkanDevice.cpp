@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/CompileBudget.hpp"
 #include "BdaAbi.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
@@ -15,6 +16,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
+#include "prx/libSceAgcDriver/Execution/include/HostReportSources.hpp"
+#include "prx/libSceAgcDriver/Execution/include/HostReportVulkan.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FragmentBarycentric.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp"
@@ -63,6 +66,7 @@
 #include <future>
 #include <fstream>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <mutex>
@@ -142,6 +146,35 @@ void check(VkResult result, const char* operation) {
 
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("Vulkan presentation: ") + reason);
+}
+
+void checkHostRequirements(const HostGpuQuery& query, bool printReport) {
+    HostGpuFacts gpu;
+    try {
+        gpu = CollectHostGpuFacts(query);
+    } catch (const std::exception& error) {
+        if (printReport) std::fprintf(stderr, "AnyPS5 host report: the GPU could not be queried: %s\n", error.what());
+        return;
+    }
+    const bool lacking = !MissingRequirements(gpu).empty();
+    if (!printReport && !lacking) return;
+    auto facts = printReport ? CollectHostFacts(SystemHostSources()) : HostFacts{};
+    if (!printReport) {
+        try {
+            facts.redactions = SystemHostSources().redactions();
+        } catch (const std::exception&) {
+        }
+    }
+    if (printReport) {
+        static std::atomic<bool> printed{false};
+        if (!printed.exchange(true)) {
+            facts.gpu = gpu;
+            const auto text = FormatHostReport(facts);
+            std::fputs(text.c_str(), stderr);
+            std::fflush(stderr);
+        }
+    }
+    if (lacking) throw std::runtime_error(DescribeMissingRequirements(gpu, facts.redactions));
 }
 
 bool CoreVulkanCapability(std::uint32_t capability) {
@@ -1131,6 +1164,7 @@ VulkanDevice::VulkanDevice(CompileOnly) : VulkanDevice(nullptr, true) {}
 
 VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) : state(std::make_unique<State>()), serial([] { static std::atomic<std::uint64_t> serials{0}; return serials.fetch_add(1, std::memory_order_relaxed) + 1; }()) {
     state->compileOnly = compileOnly;
+    const bool hostReport = !compileOnly && ParseHostReportSetting(std::getenv("ANYPS5_HOST_REPORT"));
     APS5_LOG_OUT("VulkanDevice constructor window=%p", static_cast<const void*>(window));
 #ifdef _WIN32
     state->library = SDL_LoadObject("vulkan-1.dll");
@@ -1212,6 +1246,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         return false;
     };
     std::string candidateNames;
+    std::vector<std::string> candidateList;
     const auto rankDeviceType = [](VkPhysicalDeviceType type) {
         switch (type) {
             case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 3;
@@ -1227,6 +1262,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         APS5_LOG_OUT("Physical device candidate=%p name=%s api=0x%x type=%d", reinterpret_cast<void*>(physical), properties.deviceName, properties.apiVersion, static_cast<int>(properties.deviceType));
         if (!candidateNames.empty()) candidateNames += ", ";
         candidateNames += properties.deviceName;
+        candidateList.emplace_back(properties.deviceName);
         if (properties.apiVersion < VK_API_VERSION_1_1) {
             continue;
         }
@@ -1310,6 +1346,19 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->subgroupControlBarriers = SubgroupControlBarrierUsable(driver.driverID);
         state->workgroupScopeFences = WorkgroupScopeFenceUsable(driver.driverID);
         state->ldsLockFences = LdsLockFencesRequired(driver.driverID);
+    }
+    {
+        HostGpuQuery hostQuery;
+        hostQuery.instanceProc = state->instanceProc;
+        hostQuery.instance = state->instance;
+        hostQuery.physical = selected;
+        hostQuery.surface = state->surface;
+        hostQuery.presentation = window != nullptr;
+        hostQuery.subgroupSize = state->subgroup.subgroupSize;
+        hostQuery.extensions = availableExtensions;
+        hostQuery.candidates = candidateList;
+        hostQuery.requestedPresentMode = std::getenv("ANYPS5_PRESENT_MODE");
+        checkHostRequirements(hostQuery, hostReport);
     }
     if (driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && hasExtension(VK_NV_SHADER_SM_BUILTINS_EXTENSION_NAME)) {
         VkPhysicalDeviceShaderSMBuiltinsPropertiesNV smBuiltins{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SM_BUILTINS_PROPERTIES_NV};
@@ -2336,6 +2385,11 @@ bool VulkanDevice::ReplayComputePipeline(const ShaderRecompiler::RecompileResult
         std::lock_guard pipelines(state->computePipelinesMutex);
         if (state->computePipelines.contains(key) || state->computePipelinesBuilding.contains(key)) return false;
     }
+    const CompileBudget::Hold hold(BackgroundCompileBudget(), shader.spirv.size() * sizeof(std::uint32_t));
+    {
+        std::lock_guard pipelines(state->computePipelinesMutex);
+        if (state->computePipelines.contains(key) || state->computePipelinesBuilding.contains(key)) return false;
+    }
     const auto context = graphicsContext();
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
     const auto layouts = Graphics::DescribeSetLayouts(context, shaders);
@@ -2359,6 +2413,8 @@ void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResu
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
     const auto pushStages = Graphics::PushConstantStages(shaders);
     if (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes) return;
+    if (HasComputePipeline(shader)) return;
+    const CompileBudget::Hold hold(BackgroundCompileBudget(), shader.spirv.size() * sizeof(std::uint32_t));
     if (HasComputePipeline(shader)) return;
     const auto layouts = Graphics::DescribeSetLayouts(context, shaders);
     static_cast<void>(computePipeline(context, shader, layouts.layouts.main, layouts.mainKey, pushStages, programAddress));
@@ -3641,8 +3697,8 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         plane = nullptr;
     }
     const auto planeSource = plane != nullptr ? OverlayPlaneSource(graphicsContext(), *plane) : PlaneSource{};
-    const auto keyboardView = SystemOverlayView();
-    const bool keyboard = keyboardView.has_value();
+    const auto systemLayout = SystemOverlayLayout(state->extent);
+    const bool keyboard = systemLayout.has_value();
     const bool drawsOver = overlay || keyboard || plane != nullptr;
     if (display != nullptr && resident == nullptr) {
         static_cast<void>(DisplayBufferSize(*display));
@@ -3817,7 +3873,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     }
     if (keyboard) {
         if (!state->keyboard) state->keyboard = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
-        state->keyboard->RecordRects(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || plane != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, LayOutKeyboard(*keyboardView, state->extent));
+        state->keyboard->RecordRects(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || plane != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, *systemLayout);
     }
     if (overlay) {
         if (!state->overlay) state->overlay = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
@@ -4068,6 +4124,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.pixelFunctionStorageDwords = state->pixelFunctionStorageDwords;
     target.deviceScopeLdsMemoryBarriers = !state->workgroupScopeFences;
     target.ldsLockFences = state->ldsLockFences;
+    target.meshWindowBuffer = state->driverId == VK_DRIVER_ID_NVIDIA_PROPRIETARY && std::getenv("APS5_NO_MESH_WINDOW_BUFFER") == nullptr;
     target.srgbDecodeFormats = state->srgbDecodeFormats & ~state->srgbCopyFormats;
     target.vertexSubgroups = (state->subgroup.supportedStages & VK_SHADER_STAGE_VERTEX_BIT) != 0;
     if (state->meshShader) {

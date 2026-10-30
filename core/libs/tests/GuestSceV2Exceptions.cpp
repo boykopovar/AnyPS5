@@ -27,6 +27,13 @@ int SceV2Selector = 0;
 const void* SceV2Caught = nullptr;
 }
 
+struct LocinfoCall { GuestLocale::SceV2Locinfo* self; const char* name; };
+
+extern "C" void APS5_VABI SceV2ConstructLocinfo(const void* argument) {
+    const auto* call = static_cast<const LocinfoCall*>(argument);
+    _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(call->self, call->name);
+}
+
 static unsigned failures = 0;
 
 static void Require(bool value, const char* what) {
@@ -173,6 +180,42 @@ static void CheckSyserrorMap() {
     Require(_ZSt13_Syserror_mapi_nid_postfix(99999) == nullptr, "unversioned _Syserror_map(unknown) stays null");
 }
 
+static void CheckLocinfo() {
+    const TypeRecord runtimeError = Named("NSt8__sce_v213runtime_errorE");
+    const TypeRecord logicError = Named("NSt8__sce_v211logic_errorE");
+    const char untouched[] = "untouched";
+
+    GuestLocale::SceV2Locinfo locinfo {};
+    locinfo.reserved = 0x5a5a5a5a5a5a5a5aull;
+    _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(&locinfo, "");
+    Require(locinfo.name != nullptr && std::strcmp(locinfo.name, "C") == 0, "_Locinfo(empty) stores C");
+    Require(locinfo.name == locinfo.classicName, "_Locinfo stores the classic name twice");
+    _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(&locinfo, "C");
+    Require(locinfo.classicName != nullptr && std::strcmp(locinfo.classicName, "C") == 0, "_Locinfo(C) stores C");
+    _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(&locinfo);
+    Require(locinfo.reserved == 0x5a5a5a5a5a5a5a5aull, "_Locinfo preserves the caller word at offset 0");
+
+    const char* const rejected[] {nullptr, "POSIX", "c", "C.UTF-8", "CX", "en_US.UTF-8"};
+    for (const char* name : rejected) {
+        GuestLocale::SceV2Locinfo invalid {};
+        invalid.reserved = 0x5a5a5a5a5a5a5a5aull;
+        invalid.classicName = untouched;
+        LocinfoCall call {&invalid, name};
+        SceV2CatchType = &runtimeError;
+        SceV2OtherType = &logicError;
+        SceV2Selector = 0;
+        inspected[0] = 0;
+        inspectBytes = sizeof(void*);
+        SceV2Catch(reinterpret_cast<Thrower>(SceV2ConstructLocinfo), &call);
+        Require(SceV2Selector == 2, "_Locinfo(non-C) throws");
+        Require(std::strcmp(inspected, "NSt8__sce_v213runtime_errorE|bad locale name") == 0, "_Locinfo(non-C) message");
+        Require(invalid.name != nullptr && std::strcmp(invalid.name, "C") == 0, "_Locinfo stores C before rejecting the name");
+        Require(invalid.classicName == untouched, "_Locinfo leaves offset 0x10 untouched when rejecting the name");
+        Require(invalid.reserved == 0x5a5a5a5a5a5a5a5aull, "_Locinfo preserves the caller word when rejecting the name");
+    }
+    inspectBytes = sizeof(LibcException::ExceptionObject);
+}
+
 static void CheckTicks() {
     const auto before = _Xtime_get_ticks_nid_postfix();
     const auto ticks = _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix();
@@ -185,6 +228,7 @@ int main() {
     CheckThrowers();
     CheckCopies();
     CheckSyserrorMap();
+    CheckLocinfo();
     CheckTicks();
     if (failures) return 1;
     std::puts("guest std::__sce_v2 exceptions: PASS");
