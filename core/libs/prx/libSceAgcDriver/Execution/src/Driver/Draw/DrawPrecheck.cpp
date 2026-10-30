@@ -78,7 +78,9 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
         require(!drawParameters.indirect, "indirect DB depth copies are unsupported");
         auto copyDraw = DepthCopyDraw(queue, *copy);
         std::uint32_t splitTargets = 0;
-        return draw(copyDraw, packet, submission, packetOffset, rejected, splitTargets);
+        const auto verdict = draw(copyDraw, packet, submission, packetOffset, rejected, splitTargets);
+        require(verdict != DrawVerdict::Split, "a DB depth copy asked for a late-test merge split");
+        return verdict;
     }
     if (Graphics::DepthResummarizeDrawsNothing(queue)) return DrawVerdict::Nothing;
     rejected = Graphics::DepthMaintenanceRejection(queue);

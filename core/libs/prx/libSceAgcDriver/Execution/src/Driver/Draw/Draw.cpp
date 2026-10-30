@@ -203,6 +203,7 @@ struct DrawTail {
     QueueState* queue = nullptr;
     std::span<const std::uint32_t> packet;
     std::string* rejected = nullptr;
+    std::uint32_t* splitTargets = nullptr;
     std::uint64_t traceToken = 0;
     VulkanDevice::DrawTraceContext trace{};
     std::string ownRejected;
@@ -795,6 +796,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     tail.queue = &queue;
     tail.packet = packet;
     tail.rejected = &rejected;
+    tail.splitTargets = &splitTargets;
     tail.gpuLock = &gpuLock;
     return finishDraw(tail, timing);
 }
@@ -1034,10 +1036,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     }
 
     if (tail.queue != nullptr && pipelined && !deferredLabels().labels.empty()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Labels);
-    if (recordQueuedLabelsAfterCapture(submission.queue, memory)) {
-        std::uint32_t splitTargets = 0;
-        return draw(*tail.queue, packet, submission, packetOffset, rejected, splitTargets);
-    }
+    if (recordQueuedLabelsAfterCapture(submission.queue, memory)) return draw(*tail.queue, packet, submission, packetOffset, rejected, *tail.splitTargets);
 
     bool rectListBuilt = false;
 
