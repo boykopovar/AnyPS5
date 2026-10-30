@@ -49,3 +49,5 @@
 | `_ZNK15AbstractStorage14YoutubeStorage10GetServiceEv` | `uVLETIxb0yA` |
 | `_ZNK15AbstractStorage14YoutubeStorage13GetCapabilityEv` | `jgO+nc-VCgU` |
 | `_ZNK15AbstractStorage14YoutubeStorage7GetStatEPNS_4StatE` | `GGthfnlokVw` |
+
+- [Older callable NIDs](../../../core/libs/prx/libSceAbstractYoutube/Export.cpp): 20 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.
