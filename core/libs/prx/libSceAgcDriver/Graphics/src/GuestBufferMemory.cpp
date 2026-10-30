@@ -21,6 +21,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <linux/udmabuf.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -4243,6 +4244,16 @@ bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size
 namespace {
 
 bool privateAnonymousReadWrite(std::uint64_t begin, std::uint64_t end) {
+#ifdef PROCMAP_QUERY
+    static const int mapsFile = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+    if (mapsFile >= 0) {
+        procmap_query query{};
+        query.size = sizeof(query);
+        query.query_addr = begin;
+        if (ioctl(mapsFile, PROCMAP_QUERY, &query) == 0) return end <= query.vma_end && query.vma_flags == (PROCMAP_QUERY_VMA_READABLE | PROCMAP_QUERY_VMA_WRITABLE) && query.inode == 0;
+        if (errno == ENOENT) return false;
+    }
+#endif
     std::FILE* maps = std::fopen("/proc/self/maps", "r");
     if (maps == nullptr) return false;
     bool covered = false;
