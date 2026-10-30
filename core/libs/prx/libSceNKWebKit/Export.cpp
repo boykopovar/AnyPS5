@@ -35668,3 +35668,13 @@ int APS5_VABI libSceNKWebKitUnknown_zpeJoENXwDY_nid_no_patch() {
 APS5_EXPORT("zpeJoENXwDY", libSceNKWebKitUnknown_zpeJoENXwDY_nid_no_patch);
 
 }
+
+extern "C" {
+
+extern const std::int64_t libSceNKWebKitBlobToEndOfFile_nid_no_patch = -1;
+bool libSceNKWebKitHas3DRendering_nid_no_patch = true;
+
+APS5_EXPORT("NUaLW57Xu7U", libSceNKWebKitBlobToEndOfFile_nid_no_patch);
+APS5_EXPORT("yssxWr+ar0U", libSceNKWebKitHas3DRendering_nid_no_patch);
+
+}
