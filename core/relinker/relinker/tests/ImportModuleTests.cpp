@@ -82,5 +82,16 @@ int main() {
     if (!Domain::ImportModule("nid#A#B", audioNativeModule, audioLegacy).empty()) return 36;
     const auto audioImage = Relinker::GuestImageReader().Read("audio-consumer.prx", Fixture(false, "libSceAudiodec.native.prx", "libSceAudiodec"), true);
     if (audioImage.Symbols.size() != 4 || audioImage.Symbols[3].Library != "libSceAudiodec.native.prx") return 19;
+    const std::map<std::uint64_t, std::string> versioned{{1, "libmonosgen-2.0"}};
+    const std::array<std::string, 1> legacy{"libmonosgen.prx"};
+    const std::array<std::string, 2> both{"libmonosgen.prx", "libmonosgen-2.0.prx"};
+    if (!Domain::ImportModule("nid#A#B", versioned, legacy).empty()) return 5;
+    if (Domain::ImportModule("nid#A#B", modules, both) != both[0]) return 6;
+    const std::map<std::uint64_t, std::string> ssl3Physical{{1, "libSceLibreSsl3"}};
+    const std::array<std::string, 1> ssl3Logical{"libSceLibreSSl3.prx"};
+    const std::map<std::uint64_t, std::string> sslPhysical{{1, "libSceLibreSsl"}};
+    const std::array<std::string, 1> sslLogical{"libSceLibreSSL.prx"};
+    if (!Domain::ImportModule("nid#A#B", ssl3Physical, ssl3Logical).empty()) return 40;
+    if (!Domain::ImportModule("nid#A#B", sslPhysical, sslLogical).empty()) return 41;
     std::cout << "module mapping checks passed\n";
 }
