@@ -47,7 +47,7 @@ class ConfigureSeedPathTests(unittest.TestCase):
                    "resource.setrlimit(resource.RLIMIT_FSIZE, (64, 64)); "
                    "sys.path.insert(0, sys.argv[1]); import configure_seed; configure_seed.main(sys.argv[2:])")
         result = subprocess.run([sys.executable, "-c", program, str(TOOL.parent), str(self.cache), str(seed)],
-                                capture_output=True, text=True, timeout=5)
+                                capture_output=True, encoding="utf-8", timeout=5)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.stdout, "")
@@ -62,11 +62,11 @@ class ConfigureSeedPathTests(unittest.TestCase):
         seed = self.root / "seed.cmake"
         program = "import os,sys; os.umask(0o027); sys.path.insert(0,sys.argv[1]); import configure_seed; configure_seed.main(sys.argv[2:])"
         arguments = [sys.executable, "-c", program, str(TOOL.parent), str(self.cache), str(seed)]
-        result = subprocess.run(arguments, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(arguments, capture_output=True, encoding="utf-8", timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(seed.stat().st_mode & 0o777, 0o640)
         seed.chmod(0o600)
-        result = subprocess.run(arguments, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(arguments, capture_output=True, encoding="utf-8", timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(seed.stat().st_mode & 0o777, 0o600)
 
@@ -110,7 +110,7 @@ class ConfigureSeedPathTests(unittest.TestCase):
 
     def run_seed(self, seed, *options):
         return subprocess.run([sys.executable, str(TOOL), str(self.cache), str(seed), *options],
-                              capture_output=True, text=True)
+                              capture_output=True, encoding="utf-8")
 
     def assert_rejected(self, seed, *options):
         result = self.run_seed(seed, *options)
@@ -124,7 +124,7 @@ class ConfigureSeedPathTests(unittest.TestCase):
     def test_unreadable_cache_is_reported_without_a_traceback(self):
         missing = self.root / "no cache dir" / "CMakeCache.txt"
         result = subprocess.run([sys.executable, str(TOOL), str(missing), str(self.root / "seed.cmake")],
-                                capture_output=True, text=True)
+                                capture_output=True, encoding="utf-8")
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn(str(missing), result.stderr)
         self.assertNotIn("Traceback", result.stderr)
@@ -373,7 +373,7 @@ class ChecksParsingTests(unittest.TestCase):
                             ("--include", "ARCH_SIZE"), ("--exclude", "ARCH_SIZE")):
                 with self.subTest(options=options):
                     result = subprocess.run([sys.executable, str(TOOL), str(cache), str(seed), *options],
-                                            capture_output=True, text=True)
+                                            capture_output=True, encoding="utf-8")
                     self.assertEqual(result.returncode, 0, result.stderr)
                     text = seed.read_text(encoding="utf-8")
                     self.assertNotIn("ARCH_SIZE", text)
