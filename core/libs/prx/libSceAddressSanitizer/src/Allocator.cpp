@@ -1,6 +1,7 @@
 #include "prx/libSceAddressSanitizer/src/Allocator.hpp"
-#include "prx/libSceAddressSanitizer/src/ShadowCheck.hpp"
+#include "prx/libSceAddressSanitizer/src/ShadowRequire.hpp"
 #include "prx/libSceAddressSanitizer/src/Container.hpp"
+#include "prx/libSceAddressSanitizer/src/Describe.hpp"
 #include "prx/libSceAddressSanitizer/src/ErrorReport.hpp"
 #include "prx/libSceAddressSanitizer/src/Report.hpp"
 #include "prx/libSceAddressSanitizer/src/ShadowAddressSpace.hpp"
@@ -107,14 +108,6 @@ std::size_t SizeClassId(std::size_t size) {
     return kMidClass + ((l - kMidSizeLog) << kS) + hbits + (lbits > 0);
 }
 
-void RequireShadow(std::uintptr_t address, std::size_t size, const char* function) {
-    const auto begin = ShadowBase + (address >> 3);
-    const auto end = ShadowBase + ((address + size - 1) >> 3) + 1;
-    if (!ShadowRangeAvailable_nid_no_patch(begin, std::min(end, ShadowBase + ShadowSize))) {
-        ShadowUnavailable_nid_no_patch(function);
-    }
-}
-
 Chunk* Locate(State& state, std::uintptr_t address) {
     auto it = state.chunks.upper_bound(address);
     if (it == state.chunks.begin()) {
@@ -161,19 +154,19 @@ constexpr const char* kHint = "HINT: if you don't care about these errors you ma
 
 [[noreturn]] void ReportDoubleFree(std::uintptr_t address, std::uintptr_t pc) {
     std::string text = Header("attempting double-free on " + Pointer(address) + " in thread " + Thread(CurrentTid_nid_no_patch()) + ":\n");
-    text += DescribeChunk_nid_no_patch(address, 1);
+    text += DescribeAddress_nid_no_patch(address, 1);
     Fail("double-free", address, pc, std::move(text));
 }
 
 [[noreturn]] void ReportFreeNotMalloced(std::uintptr_t address, std::uintptr_t pc) {
     std::string text = Header("attempting free on address which was not malloc()-ed: " + Pointer(address) + " in thread " + Thread(CurrentTid_nid_no_patch()) + "\n");
-    text += DescribeChunk_nid_no_patch(address, 1);
+    text += DescribeAddress_nid_no_patch(address, 1);
     Fail("bad-free", address, pc, std::move(text));
 }
 
 [[noreturn]] void ReportNotOwned(const char* function, const char* bug, std::uintptr_t address, std::uintptr_t pc) {
     std::string text = Header(std::string("attempting to call ") + function + "() for pointer which is not owned: " + Pointer(address) + "\n");
-    text += DescribeChunk_nid_no_patch(address, 1);
+    text += DescribeAddress_nid_no_patch(address, 1);
     Fail(bug, address, pc, std::move(text));
 }
 
@@ -249,9 +242,11 @@ void* AllocateLocked(State& state, std::size_t size, std::size_t alignment, std:
         ReportOutOfMemory(size, pc);
     }
     const auto raw = reinterpret_cast<std::uintptr_t>(block);
-    if (!ShadowRangeAvailable_nid_no_patch(ShadowBase + (raw >> 3), std::min(ShadowBase + ((raw + total - 1) >> 3) + 1, ShadowBase + ShadowSize))) {
+    try {
+        RequireShadowRange_nid_no_patch(raw, total, __func__);
+    } catch (...) {
         ::operator delete(block, std::align_val_t(alignment));
-        ShadowUnavailable_nid_no_patch(__func__);
+        throw;
     }
     const std::uintptr_t user = raw + left;
     PoisonShadow_nid_no_patch(raw, left, kHeapLeftRedzoneMagic);

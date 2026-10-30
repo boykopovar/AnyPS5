@@ -1,4 +1,4 @@
-add_library(libSceAddressSanitizer SHARED EXCLUDE_FROM_ALL Export.cpp src/Allocator.cpp src/Ubsan.cpp)
+add_library(libSceAddressSanitizer SHARED EXCLUDE_FROM_ALL Export.cpp src/Allocator.cpp src/Describe.cpp src/FakeStack.cpp src/Globals.cpp src/StackBounds.cpp src/Ubsan.cpp)
 if(WIN32)
     target_sources(libSceAddressSanitizer PRIVATE src/ShadowWindows.cpp)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -18,7 +18,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_addresssanitizer_runtime_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_addresssanitizer_runtime_tests PRIVATE libSceAddressSanitizer libc)
     configure_windows_unwind(guest_addresssanitizer_runtime_tests)
-    foreach(mode clean contiguous double_ended memory exp_load4 exp_store16_noabort exp_loadN report_exp_store2 report_exp_load_n memcpy_source memset_poison memmove_poison memcpy_overlap memset_negative container_params double_ended_params ubsan_arithmetic ubsan_misc ubsan_data ubsan_dedup ubsan_abort ubsan_unreachable heap heap_aligned heap_stats heap_double_free heap_bad_free heap_interior_free heap_usable_size_unowned heap_allocated_size_unowned heap_calloc_overflow heap_aligned_alloc_bad heap_posix_memalign_bad heap_memalign_bad heap_too_big heap_realloc_freed)
+    foreach(mode clean contiguous double_ended memory exp_load4 exp_store16_noabort exp_loadN report_exp_store2 report_exp_load_n memcpy_source memset_poison memmove_poison memcpy_overlap memset_negative container_params double_ended_params ubsan_arithmetic ubsan_misc ubsan_data ubsan_dedup ubsan_abort ubsan_unreachable heap heap_aligned heap_stats heap_double_free heap_bad_free heap_interior_free heap_usable_size_unowned heap_allocated_size_unowned heap_calloc_overflow heap_aligned_alloc_bad heap_posix_memalign_bad heap_memalign_bad heap_too_big heap_realloc_freed fake_stack no_return globals globals_elf fibers locate init globals_odr_indicator globals_odr_poison globals_describe describe_heap fiber_unstarted fiber_double_start)
         add_test(NAME guest_addresssanitizer_runtime_${mode} COMMAND guest_addresssanitizer_runtime_tests ${mode})
         set_tests_properties(guest_addresssanitizer_runtime_${mode} PROPERTIES TIMEOUT 20)
         if(WIN32)
@@ -86,6 +86,18 @@ if(BUILD_TESTING)
         "ERROR: AddressSanitizer: requested allocation size 0x20000000000 [(]0x[0-9a-f]+ after adjustments for alignment, red zones etc.[)] exceeds maximum supported size of 0x10000000000 [(]thread T[0-9]+[)].*SUMMARY: AddressSanitizer: allocation-size-too-big")
     set_tests_properties(guest_addresssanitizer_runtime_heap_realloc_freed PROPERTIES PASS_REGULAR_EXPRESSION
         "ERROR: AddressSanitizer: attempting double-free on 0x[0-9a-f]+ in thread T[0-9]+:.*is located 0 bytes inside of 10-byte region.*SUMMARY: AddressSanitizer: double-free")
+    set_tests_properties(guest_addresssanitizer_runtime_globals_odr_indicator PROPERTIES PASS_REGULAR_EXPRESSION
+        "ERROR: AddressSanitizer: odr-violation [(]0x[0-9a-f]+[)]:.  [[]1[]] size=24 'newer' test.cpp:5:6.  [[]2[]] size=13 'older' test.cpp:5:6.HINT: if you don't care about these errors you may set ASAN_OPTIONS=detect_odr_violation=0.SUMMARY: AddressSanitizer: odr-violation: global 'newer' at test.cpp:5:6.*ABORTING")
+    set_tests_properties(guest_addresssanitizer_runtime_globals_odr_poison PROPERTIES PASS_REGULAR_EXPRESSION
+        "ERROR: AddressSanitizer: odr-violation [(]0x[0-9a-f]+[)]:.  [[]1[]] size=24 'newer' test.cpp:5:6.  [[]2[]] size=13 'older' test.cpp:5:6.*ABORTING")
+    set_tests_properties(guest_addresssanitizer_runtime_globals_describe PROPERTIES PASS_REGULAR_EXPRESSION
+        "0x[0-9a-f]+ is located 2 bytes inside of global variable 'g2' defined in 'test.cpp:5:6' [(]0x[0-9a-f]+[)] of size 5.  'g2' is ascii string 'text'.0x[0-9a-f]+ is located 1 bytes after global variable 'g2' defined in 'test.cpp:5:6' [(]0x[0-9a-f]+[)] of size 5.*Address 0x[0-9a-f]+ is a wild pointer inside of access range of size 0x000000000001")
+    set_tests_properties(guest_addresssanitizer_runtime_describe_heap PROPERTIES PASS_REGULAR_EXPRESSION
+        "0x[0-9a-f]+ is located 3 bytes inside of 10-byte region [[]0x[0-9a-f]+,0x[0-9a-f]+[)].allocated by thread T[0-9]+ here:.    #0 0x[0-9a-f]+.0x[0-9a-f]+ is located 2 bytes after 10-byte region.*0x[0-9a-f]+ is located 4 bytes before 10-byte region.*freed by thread T[0-9]+ here:.    #0 0x[0-9a-f]+.previously allocated by thread T[0-9]+ here:.*Address 0x000000001000 is a wild pointer inside of access range of size 0x000000000001[.].Address 0x010000000000 is located in the low shadow area")
+    set_tests_properties(guest_addresssanitizer_runtime_fiber_unstarted PROPERTIES PASS_REGULAR_EXPRESSION
+        "ERROR: finishing a fiber switch that has not started")
+    set_tests_properties(guest_addresssanitizer_runtime_fiber_double_start PROPERTIES PASS_REGULAR_EXPRESSION
+        "ERROR: starting fiber switch while in fiber switch")
     if(WIN32)
         add_test_executable(guest_addresssanitizer_mapping_tests ${LIBS_INCLUDE_DIR}/tests/GuestAddressSanitizerMapping.cpp)
         target_include_directories(guest_addresssanitizer_mapping_tests PRIVATE ${LIBS_INCLUDE_DIR})

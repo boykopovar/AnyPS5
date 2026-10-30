@@ -1,4 +1,5 @@
 #pragma once
+#include "prx/libc/include/General.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <string>

@@ -5,6 +5,9 @@
 #include "prx/libSceAddressSanitizer/src/Report.hpp"
 #include "prx/libSceAddressSanitizer/src/Allocator.hpp"
 #include "prx/libSceAddressSanitizer/src/Container.hpp"
+#include "prx/libSceAddressSanitizer/src/Describe.hpp"
+#include "prx/libSceAddressSanitizer/src/FakeStack.hpp"
+#include "prx/libSceAddressSanitizer/src/Globals.hpp"
 #include "prx/libSceAddressSanitizer/src/Ubsan.hpp"
 #include <algorithm>
 #include <atomic>
@@ -301,9 +304,8 @@ static void CheckSmallRegion_nid_no_patch(std::uintptr_t address, std::uintptr_t
 
 extern "C" {
 
-int APS5_VABI __asan_addr_is_in_fake_stack() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI __asan_addr_is_in_fake_stack(void* fakeStack, void* address, void** begin, void** end) {
+    return AsanRuntime::FakeStack::AddrIsIn_nid_no_patch(fakeStack, address, begin, end);
 }
 
 int APS5_VABI __asan_address_is_poisoned(const volatile void* address) {
@@ -316,9 +318,8 @@ int APS5_VABI __asan_address_is_poisoned(const volatile void* address) {
     return FindFirstPoisoned_nid_no_patch(reinterpret_cast<const std::int8_t*>(AsanRuntime::ShadowBase), AsanRuntime::ShadowSize, value, 1).has_value() ? 1 : 0;
 }
 
-int APS5_VABI __asan_after_dynamic_init() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_after_dynamic_init() {
+    return;
 }
 
 void* APS5_VABI __asan_aligned_alloc(std::size_t alignment, std::size_t size) {
@@ -362,9 +363,8 @@ void APS5_VABI __asan_allocas_unpoison(std::uintptr_t top, std::uintptr_t bottom
     std::memset(reinterpret_cast<void*>(AsanRuntime::ShadowBase + (top >> 3)), 0, shadowSize);
 }
 
-int APS5_VABI __asan_before_dynamic_init() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_before_dynamic_init(const char* moduleName) {
+    static_cast<void>(moduleName);
 }
 
 void* APS5_VABI __asan_calloc(std::size_t count, std::size_t size) {
@@ -381,9 +381,8 @@ int APS5_VABI __asan_current_error_report_size() {
     return 0;
 }
 
-int APS5_VABI __asan_describe_address() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_describe_address(std::uintptr_t address) {
+    AsanRuntime::EmitDiagnostic_nid_no_patch(AsanRuntime::DescribeAddress_nid_no_patch(address, 1));
 }
 
 int APS5_VABI __asan_destroy_fake_stack() {
@@ -506,9 +505,8 @@ std::uintptr_t APS5_VABI __asan_get_alloc_stack(std::uintptr_t address, std::uin
     return 1;
 }
 
-int APS5_VABI __asan_get_current_fake_stack() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void* APS5_VABI __asan_get_current_fake_stack() {
+    return AsanRuntime::FakeStack::Current_nid_no_patch();
 }
 
 std::uintptr_t APS5_VABI __asan_get_free_stack(std::uintptr_t address, std::uintptr_t* trace, std::uintptr_t size, std::uint32_t* threadId) {
@@ -580,14 +578,14 @@ void APS5_VABI __asan_get_shadow_mapping(std::size_t* scale, std::size_t* offset
     if (offset) *offset = AsanRuntime::ShadowBase;
 }
 
-int APS5_VABI __asan_handle_no_return() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_handle_no_return() {
+    AsanRuntime::FakeStack::HandleNoReturn_nid_no_patch();
 }
 
-int APS5_VABI __asan_init() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_init() {
+    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
+        ShadowUnavailable_nid_no_patch(__func__);
+    }
 }
 
 int APS5_VABI __asan_init_v5() {
@@ -661,9 +659,20 @@ std::uintptr_t APS5_VABI __asan_load_cxx_array_cookie(std::uintptr_t* p) {
     return *p;
 }
 
-int APS5_VABI __asan_locate_address() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI __asan_locate_address(std::uintptr_t address, char* name, std::uintptr_t nameSize, std::uintptr_t* regionAddress, std::uintptr_t* regionSize) {
+    const AsanRuntime::RegionInfo region = AsanRuntime::LocateRegion_nid_no_patch(address);
+    if (name && nameSize > 0) {
+        const std::size_t length = std::min<std::size_t>(region.name.size(), nameSize - 1);
+        std::memcpy(name, region.name.data(), length);
+        name[length] = 0;
+    }
+    if (regionAddress) {
+        *regionAddress = region.begin;
+    }
+    if (regionSize) {
+        *regionSize = region.size;
+    }
+    return region.kind;
 }
 
 void* APS5_VABI __asan_malloc(std::size_t size) {
@@ -804,14 +813,12 @@ std::uintptr_t APS5_VABI __asan_region_is_poisoned(std::uintptr_t address, std::
     return FindFirstPoisoned_nid_no_patch(reinterpret_cast<const std::int8_t*>(AsanRuntime::ShadowBase), AsanRuntime::ShadowSize, address, size).value_or(0);
 }
 
-int APS5_VABI __asan_register_elf_globals() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_register_elf_globals(std::uintptr_t* flag, void* start, void* stop) {
+    AsanRuntime::Globals::RegisterRange_nid_no_patch(flag, start, stop);
 }
 
-int APS5_VABI __asan_register_globals() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_register_globals(void* globals, std::uintptr_t count) {
+    AsanRuntime::Globals::Register_nid_no_patch(static_cast<AsanRuntime::Globals::Global*>(globals), count);
 }
 
 int APS5_VABI __asan_register_image_globals() {
@@ -1150,169 +1157,136 @@ void APS5_VABI __asan_set_shadow_f8(std::uintptr_t address, std::uintptr_t size)
     if (size) std::memset(reinterpret_cast<void*>(address), 0xf8, size);
 }
 
-int APS5_VABI __asan_stack_free_0() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_0(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 0, size);
 }
 
-int APS5_VABI __asan_stack_free_1() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_1(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 1, size);
 }
 
-int APS5_VABI __asan_stack_free_10() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_10(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 10, size);
 }
 
-int APS5_VABI __asan_stack_free_2() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_2(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 2, size);
 }
 
-int APS5_VABI __asan_stack_free_3() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_3(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 3, size);
 }
 
-int APS5_VABI __asan_stack_free_4() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_4(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 4, size);
 }
 
-int APS5_VABI __asan_stack_free_5() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_5(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 5, size);
 }
 
-int APS5_VABI __asan_stack_free_6() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_6(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 6, size);
 }
 
-int APS5_VABI __asan_stack_free_7() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_7(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 7, size);
 }
 
-int APS5_VABI __asan_stack_free_8() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_8(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 8, size);
 }
 
-int APS5_VABI __asan_stack_free_9() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_stack_free_9(std::uintptr_t pointer, std::uintptr_t size) {
+    AsanRuntime::FakeStack::Free_nid_no_patch(pointer, 9, size);
 }
 
-int APS5_VABI __asan_stack_malloc_0() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_0(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(0, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_1() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_1(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(1, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_10() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_10(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(10, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_2() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_2(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(2, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_3() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_3(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(3, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_4() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_4(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(4, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_5() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_5(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(5, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_6() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_6(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(6, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_7() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_7(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(7, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_8() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_8(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(8, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_9() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_9(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(9, size, false, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_0() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_0(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(0, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_1() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_1(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(1, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_10() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_10(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(10, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_2() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_2(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(2, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_3() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_3(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(3, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_4() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_4(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(4, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_5() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_5(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(5, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_6() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_6(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(6, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_7() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_7(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(7, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_8() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_8(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(8, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
-int APS5_VABI __asan_stack_malloc_always_9() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::uintptr_t APS5_VABI __asan_stack_malloc_always_9(std::uintptr_t size) {
+    return reinterpret_cast<std::uintptr_t>(AsanRuntime::FakeStack::Malloc_nid_no_patch(9, size, true, reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0))));
 }
 
 void APS5_VABI __asan_store1(std::uintptr_t address) {
@@ -1405,14 +1379,12 @@ void APS5_VABI __asan_unpoison_stack_memory(std::uintptr_t address, std::uintptr
     UpdateStackShadow_nid_no_patch(reinterpret_cast<std::int8_t*>(AsanRuntime::ShadowBase), AsanRuntime::ShadowSize, address, size, false);
 }
 
-int APS5_VABI __asan_unregister_elf_globals() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_unregister_elf_globals(std::uintptr_t* flag, void* start, void* stop) {
+    AsanRuntime::Globals::UnregisterRange_nid_no_patch(flag, start, stop);
 }
 
-int APS5_VABI __asan_unregister_globals() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __asan_unregister_globals(void* globals, std::uintptr_t count) {
+    AsanRuntime::Globals::Unregister_nid_no_patch(static_cast<AsanRuntime::Globals::Global*>(globals), count);
 }
 
 int APS5_VABI __asan_unregister_image_globals() {
@@ -1514,9 +1486,8 @@ int APS5_VABI __sanitizer_dump_trace_pc_guard_coverage() {
     return 0;
 }
 
-int APS5_VABI __sanitizer_finish_switch_fiber() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_finish_switch_fiber(void* fakeStack, const void** bottomOld, std::uintptr_t* sizeOld) {
+    AsanRuntime::FakeStack::FinishSwitchFiber_nid_no_patch(fakeStack, bottomOld, sizeOld);
 }
 
 void APS5_VABI __sanitizer_free_hook(void*) {
@@ -1606,9 +1577,8 @@ int APS5_VABI __sanitizer_set_report_path() {
     return 0;
 }
 
-int APS5_VABI __sanitizer_start_switch_fiber() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_start_switch_fiber(void** fakeStackSave, const void* bottom, std::uintptr_t size) {
+    AsanRuntime::FakeStack::StartSwitchFiber_nid_no_patch(fakeStackSave, bottom, size);
 }
 
 int APS5_VABI __sanitizer_symbolize_global() {

@@ -381,6 +381,195 @@ static int HeapStats() {
     return 0;
 }
 
+#define FAKE_CLASS(n)                                                                  \
+    {                                                                                  \
+        const std::uintptr_t size = std::uintptr_t{64} << n;                           \
+        const std::uintptr_t first = __asan_stack_malloc_always_##n(size);             \
+        if (!first || __asan_region_is_poisoned(first, size)) return 10 + n;           \
+        __asan_stack_free_##n(first, size);                                            \
+        if (__asan_region_is_poisoned(first, size) != first) return 30 + n;            \
+        const std::uintptr_t second = __asan_stack_malloc_always_##n(size);            \
+        if (!second || second == first) return 50 + n;                                 \
+        __asan_stack_free_##n(second, size);                                           \
+    }
+
+static int FakeStack() {
+    if (__asan_stack_malloc_0(64) != 0 || __asan_stack_malloc_10(65536) != 0) return 1;
+    if (__asan_get_current_fake_stack() != nullptr) return 2;
+    if (__asan_addr_is_in_fake_stack(nullptr, buffer.data(), nullptr, nullptr) != nullptr) return 3;
+    FAKE_CLASS(0)
+    FAKE_CLASS(1)
+    FAKE_CLASS(2)
+    FAKE_CLASS(3)
+    FAKE_CLASS(4)
+    FAKE_CLASS(5)
+    FAKE_CLASS(6)
+    FAKE_CLASS(7)
+    FAKE_CLASS(8)
+    FAKE_CLASS(9)
+    FAKE_CLASS(10)
+    return 0;
+}
+
+static int NoReturn() {
+    volatile char local[256];
+    __asan_poison_memory_region(const_cast<char*>(local), sizeof(local));
+    if (!__asan_address_is_poisoned(const_cast<char*>(local) + 10)) return 1;
+    __asan_handle_no_return();
+    if (__asan_region_is_poisoned(reinterpret_cast<std::uintptr_t>(local), sizeof(local))) return 2;
+    return 0;
+}
+
+struct TestLocation {
+    const char* file;
+    int line;
+    int column;
+};
+
+struct TestGlobal {
+    std::uintptr_t beg;
+    std::uintptr_t size;
+    std::uintptr_t sizeWithRedzone;
+    const char* name;
+    const char* module;
+    std::uintptr_t hasDynamicInit;
+    const TestLocation* location;
+    std::uintptr_t odrIndicator;
+};
+
+alignas(64) static unsigned char globalArea[256];
+alignas(64) static unsigned char secondArea[64];
+static TestLocation globalLocation = {"test.cpp", 5, 6};
+static unsigned char odrIndicator;
+alignas(8) static TestGlobal globalTable[2];
+alignas(8) static TestGlobal secondTable[1];
+
+static std::uintptr_t Area(const unsigned char* base, std::size_t offset = 0) {
+    return reinterpret_cast<std::uintptr_t>(base) + offset;
+}
+
+static void FillGlobals(std::uintptr_t indicator) {
+    globalTable[0] = {Area(globalArea), 13, 64, "g1", "test.module", 0, &globalLocation, indicator};
+    globalTable[1] = {Area(globalArea, 128), 16, 32, "g2", "test.module", 0, &globalLocation, indicator ? indicator + 1 : 0};
+}
+
+static int Globals() {
+    std::memset(globalArea, 0, sizeof(globalArea));
+    FillGlobals(0);
+    __asan_register_globals(globalTable, 2);
+    const unsigned char* a = globalArea;
+    if (__asan_address_is_poisoned(a + 12) || !__asan_address_is_poisoned(a + 13) || !__asan_address_is_poisoned(a + 15) || !__asan_address_is_poisoned(a + 16) || !__asan_address_is_poisoned(a + 63)) return 1;
+    if (__asan_address_is_poisoned(a + 64) || __asan_address_is_poisoned(a + 128) || __asan_address_is_poisoned(a + 143) || !__asan_address_is_poisoned(a + 144) || !__asan_address_is_poisoned(a + 159) || __asan_address_is_poisoned(a + 160)) return 2;
+    if (!__asan_address_is_poisoned(globalTable)) return 3;
+    char name[8] = {};
+    std::uintptr_t begin = 0;
+    std::uintptr_t size = 0;
+    const char* kind = __asan_locate_address(Area(a, 5), name, sizeof(name), &begin, &size);
+    if (std::strcmp(kind, "global") || std::strcmp(name, "g1") || begin != Area(a) || size != 13) return 4;
+    kind = __asan_locate_address(Area(a, 134), name, 2, &begin, &size);
+    if (std::strcmp(kind, "global") || std::strcmp(name, "g") || begin != Area(a, 128) || size != 16) return 5;
+    __asan_unregister_globals(globalTable, 2);
+    if (__asan_region_is_poisoned(Area(a), 160) || __asan_address_is_poisoned(globalTable)) return 6;
+    kind = __asan_locate_address(Area(a, 5), name, sizeof(name), &begin, &size);
+    if (std::strcmp(kind, "heap-invalid") || name[0] != 0 || begin != 0 || size != 0) return 7;
+    return 0;
+}
+
+static int GlobalsElf() {
+    std::memset(globalArea, 0, sizeof(globalArea));
+    FillGlobals(0);
+    std::uintptr_t flag = 0;
+    __asan_register_elf_globals(&flag, globalTable, globalTable + 2);
+    if (flag != 1 || !__asan_address_is_poisoned(globalArea + 20)) return 1;
+    __asan_register_elf_globals(&flag, globalTable, globalTable + 2);
+    __asan_unregister_elf_globals(&flag, globalTable, globalTable + 2);
+    if (flag != 0 || __asan_region_is_poisoned(Area(globalArea), 160)) return 2;
+    __asan_unregister_elf_globals(&flag, globalTable, globalTable + 2);
+    __asan_register_elf_globals(&flag, nullptr, nullptr);
+    if (flag != 0) return 3;
+    return 0;
+}
+
+static int GlobalsOdrIndicator() {
+    std::memset(globalArea, 0, sizeof(globalArea));
+    std::memset(secondArea, 0, sizeof(secondArea));
+    odrIndicator = 0;
+    globalTable[0] = {Area(globalArea), 13, 64, "older", "test.module", 0, &globalLocation, reinterpret_cast<std::uintptr_t>(&odrIndicator)};
+    __asan_register_globals(globalTable, 1);
+    if (odrIndicator != 1) return 1;
+    secondTable[0] = {Area(secondArea), 24, 64, "newer", "other.module", 0, &globalLocation, reinterpret_cast<std::uintptr_t>(&odrIndicator)};
+    __asan_register_globals(secondTable, 1);
+    return 2;
+}
+
+static int GlobalsOdrPoison() {
+    std::memset(globalArea, 0, sizeof(globalArea));
+    globalTable[0] = {Area(globalArea), 13, 64, "older", "test.module", 0, &globalLocation, 0};
+    __asan_register_globals(globalTable, 1);
+    secondTable[0] = {Area(globalArea), 24, 64, "newer", "other.module", 0, &globalLocation, 0};
+    __asan_register_globals(secondTable, 1);
+    return 2;
+}
+
+static int GlobalsDescribe() {
+    std::memset(globalArea, 0, sizeof(globalArea));
+    std::memcpy(globalArea + 128, "text\0", 5);
+    FillGlobals(0);
+    globalTable[1].size = 5;
+    __asan_register_globals(globalTable, 2);
+    __asan_describe_address(Area(globalArea, 130));
+    __asan_describe_address(Area(globalArea, 134));
+    __asan_describe_address(Area(globalArea, 250));
+    return 0;
+}
+
+static int Fibers() {
+    static unsigned char fiberStack[4096];
+    void* save = nullptr;
+    __sanitizer_start_switch_fiber(&save, fiberStack, sizeof(fiberStack));
+    const void* oldBottom = nullptr;
+    std::size_t oldSize = 0;
+    __sanitizer_finish_switch_fiber(save, &oldBottom, &oldSize);
+    if (!oldBottom || oldSize == 0) return 1;
+    __sanitizer_start_switch_fiber(nullptr, oldBottom, oldSize);
+    const void* fiberBottom = nullptr;
+    std::size_t fiberSize = 0;
+    __sanitizer_finish_switch_fiber(nullptr, &fiberBottom, &fiberSize);
+    if (fiberBottom != fiberStack || fiberSize != sizeof(fiberStack)) return 2;
+    return 0;
+}
+
+static int Locate() {
+    char name[16] = {};
+    std::uintptr_t begin = 1;
+    std::uintptr_t size = 1;
+    char* p = static_cast<char*>(__asan_malloc(10));
+    const char* kind = __asan_locate_address(reinterpret_cast<std::uintptr_t>(p + 2), name, sizeof(name), &begin, &size);
+    if (std::strcmp(kind, "heap") || begin != reinterpret_cast<std::uintptr_t>(p) || size != 10 || name[0] != 0) return 1;
+    kind = __asan_locate_address(reinterpret_cast<std::uintptr_t>(p + 12), nullptr, 0, nullptr, nullptr);
+    if (std::strcmp(kind, "heap")) return 2;
+    kind = __asan_locate_address(std::uintptr_t{1} << 40, name, sizeof(name), &begin, &size);
+    if (std::strcmp(kind, "low shadow")) return 3;
+    kind = __asan_locate_address((std::uintptr_t{1} << 40) + (std::uintptr_t{1} << 37), name, sizeof(name), &begin, &size);
+    if (std::strcmp(kind, "shadow gap")) return 4;
+    kind = __asan_locate_address((std::uintptr_t{1} << 40) + (std::uintptr_t{1} << 44) - 8, name, sizeof(name), &begin, &size);
+    if (std::strcmp(kind, "high shadow")) return 5;
+    __asan_free(p);
+    return 0;
+}
+
+static int DescribeHeap() {
+    char* p = static_cast<char*>(__asan_malloc(10));
+    __asan_describe_address(reinterpret_cast<std::uintptr_t>(p + 3));
+    __asan_describe_address(reinterpret_cast<std::uintptr_t>(p + 12));
+    __asan_describe_address(reinterpret_cast<std::uintptr_t>(p - 4));
+    __asan_free(p);
+    __asan_describe_address(reinterpret_cast<std::uintptr_t>(p));
+    __asan_describe_address(std::uintptr_t{0x1000});
+    __asan_describe_address(std::uintptr_t{1} << 40);
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) return 100;
     const std::string_view mode(argv[1]);
@@ -451,6 +640,30 @@ int main(int argc, char* argv[]) {
         void* p = __asan_malloc(10);
         __asan_free(p);
         __asan_realloc(p, 20);
+        return 2;
+    }
+    if (mode == "fake_stack") return FakeStack();
+    if (mode == "no_return") return NoReturn();
+    if (mode == "globals") return Globals();
+    if (mode == "globals_elf") return GlobalsElf();
+    if (mode == "globals_odr_indicator") return GlobalsOdrIndicator();
+    if (mode == "globals_odr_poison") return GlobalsOdrPoison();
+    if (mode == "globals_describe") return GlobalsDescribe();
+    if (mode == "fibers") return Fibers();
+    if (mode == "locate") return Locate();
+    if (mode == "describe_heap") return DescribeHeap();
+    if (mode == "init") {
+        __asan_init();
+        __asan_poison_memory_region(buffer.data(), 16);
+        return __asan_address_is_poisoned(buffer.data()) ? 0 : 1;
+    }
+    if (mode == "fiber_unstarted") {
+        __sanitizer_finish_switch_fiber(nullptr, nullptr, nullptr);
+        return 2;
+    }
+    if (mode == "fiber_double_start") {
+        __sanitizer_start_switch_fiber(nullptr, buffer.data(), buffer.size());
+        __sanitizer_start_switch_fiber(nullptr, buffer.data(), buffer.size());
         return 2;
     }
     if (mode == "clean") return CleanAccess();
