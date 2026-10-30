@@ -1,6 +1,7 @@
-#include "prx/libSceLibreSsl/include/Api.hpp"
-#include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
