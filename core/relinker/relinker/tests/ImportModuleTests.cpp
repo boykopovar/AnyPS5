@@ -93,5 +93,7 @@ int main() {
     const std::array<std::string, 1> sslLogical{"libSceLibreSSL.prx"};
     if (!Domain::ImportModule("nid#A#B", ssl3Physical, ssl3Logical).empty()) return 40;
     if (!Domain::ImportModule("nid#A#B", sslPhysical, sslLogical).empty()) return 41;
+    const std::array<std::string, 1> normalizedMono{"libmonosgen-module.prx"};
+    if (Domain::ImportModule("nid#A#B", modules, normalizedMono) != normalizedMono[0]) return 43;
     std::cout << "module mapping checks passed\n";
 }
