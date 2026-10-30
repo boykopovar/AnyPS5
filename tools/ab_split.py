@@ -58,7 +58,7 @@ def parse_report(kind, text):
             programs[key] = programs.get(key, 0.0) + finite(float(ms))
         for name, ms in re.findall(r" ([a-z][a-z-]*) x\d+ ([\d.]+)ms [\d.]+MiB \(per present", classes_text):
             classes[name] = classes.get(name, 0.0) + finite(float(ms))
-        truncated = len(re.findall(r" (?<!draw )(0x[0-9a-f]+) x\d+ [\d.]+ms", programs_text)) >= 12
+        truncated = len(re.findall(r" (?:draw )?0x[0-9a-f]+ x\d+ [\d.]+ms", programs_text)) >= 12
         return {"total": total, "presents": presents, "programs": programs, "programs_truncated": truncated, "classes": classes}
     if kind == "draw":
         commits, per_commit = number(r": (\d+) commits at", text), number(r"commits at ([\d.]+) us each", text)

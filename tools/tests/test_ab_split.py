@@ -175,6 +175,19 @@ class AbSplitTests(unittest.TestCase):
         phase["reports"]["gputime"] = [short]
         self.assertEqual(ab_split.metrics(phase, ["0xff"], [])["0xff ms/present"], 0)
 
+    def test_draw_entries_occupy_top_twelve_slots(self):
+        short = ab_split.parse_report("gputime", gputime(400.0, 40.0, 8.0))
+        for draws in (1, 6, 12):
+            entries = [f"draw 0x{index:x} x1 1ms" for index in range(1, draws + 1)]
+            entries += [f"0x{index:x} x1 1ms" for index in range(draws + 1, 13)]
+            line = gputime(400.0, 40.0, 8.0)
+            line = line.split("by program:")[0] + "by program: " + " ".join(entries) + "; by class:" + line.split("; by class:")[1]
+            report = ab_split.parse_report("gputime", line)
+            self.assertTrue(report["programs_truncated"])
+            phase = {"settled": None, "end": None, "reports": {name: [] for name, _ in ab_split.KINDS}}
+            phase["reports"]["gputime"] = [short, report]
+            self.assertNotIn("0xff ms/present", ab_split.metrics(phase, ["0xff"], []))
+
     def test_a_log_without_phases_is_refused(self):
         with self.assertRaisesRegex(ValueError, "no \\[ab\\] phase lines"):
             ab_split.split([present(1.0, 1.0) + "\n"])
