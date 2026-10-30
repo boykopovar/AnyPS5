@@ -68,6 +68,13 @@ bool KnownHandle(int handle) {
     return PortOf(handle) >= 0 || SpecialHandle(handle);
 }
 
+bool OpenHandle(int handle) {
+    const int port = PortOf(handle);
+    return (port >= 0 && g_opened[port]) || SpecialHandle(handle);
+}
+
+constexpr std::size_t PAD_LEONARDO_UNIQUE_DATA_SIZE = 0x18;
+
 PadData SpecialData() {
     PadData data{};
     data.left_stick_x = data.left_stick_y = data.right_stick_x = data.right_stick_y = 0x80;
@@ -814,8 +821,11 @@ int APS5_VABI scePadVrControllerGetPhysicalUsbConnectionStatus(PadVrUsbConnectio
 }
 
 int APS5_VABI scePadParseUniqueDataLeonardo(std::int32_t handle, const PadLeonardoData* data, PadLeonardoUniqueData* uniqueData) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)handle;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (data == nullptr || uniqueData == nullptr) return PAD_ERROR_INVALID_ARG;
+    std::memset(static_cast<void*>(uniqueData), 0, PAD_LEONARDO_UNIQUE_DATA_SIZE);
+    return PAD_ERROR_INVALID_HANDLE;
 }
 
 int APS5_VABI scePadGetControllerTypeLeonardo(std::int32_t deviceId, std::int32_t* controllerType) {
@@ -957,8 +967,11 @@ int APS5_VABI scePadResetOrientationForTracker(std::int32_t handle) {
 }
 
 int APS5_VABI scePadGetMotionTimerUnit(std::int32_t handle, float* unit) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (unit == nullptr) return PAD_ERROR_INVALID_ARG;
+    *unit = 0.0f;
+    if (!OpenHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
 
 int APS5_VABI scePadSetVrTrackingMode(std::uint8_t mode) {
@@ -967,13 +980,17 @@ int APS5_VABI scePadSetVrTrackingMode(std::uint8_t mode) {
 }
 
 int APS5_VABI scePadGetMotionSensorPosition(std::int32_t handle, PadMotionSensorPosition* position) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (position == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (!OpenHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
 
 int APS5_VABI scePadGetSphereRadius(std::int32_t handle, float* radius) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (radius == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (OpenPortType(handle) != PAD_PORT_TYPE_SPECIAL) return PAD_ERROR_INVALID_HANDLE;
+    return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
 
 bool APS5_VABI scePadIsValidHandle(std::int32_t handle, std::int32_t portType) {
@@ -997,8 +1014,10 @@ bool APS5_VABI scePadIsMoveConnected(std::int32_t handle) {
 }
 
 int APS5_VABI scePadGetBluetoothAddress(std::int32_t handle, std::uint64_t* address) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
+    if (address == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (!OpenHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    return PAD_ERROR_DEVICE_NOT_CONNECTED;
 }
 
 int APS5_VABI scePadIsMoveReproductionModel(std::int32_t handle) {

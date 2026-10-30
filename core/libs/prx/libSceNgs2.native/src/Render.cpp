@@ -61,6 +61,7 @@ bool Ngs2FinishBlock(Ngs2Voice& voice) {
     };
     if (!repeat) {
         voice.blocks.pop_front();
+        Ngs2PublishBlockCount(voice);
         Ngs2BindSamplerBlock(voice, true);
     }
     const auto revision = voice.waveformRevision;
@@ -193,6 +194,10 @@ static constexpr Ngs2DefaultRow DEFAULT_MAP[NGS2_MAX_CHANNELS][NGS2_MAX_CHANNELS
 };
 
 float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest) {
+    if (sourceChannels > NGS2_MAX_CHANNELS || destChannels > NGS2_MAX_CHANNELS) {
+        throw std::runtime_error("NGS2: the default channel map from " + std::to_string(sourceChannels) +
+                                 " into " + std::to_string(destChannels) + " channels is not implemented");
+    }
     const auto& row = DEFAULT_MAP[sourceChannels - 1][source];
     switch (destChannels) {
         case 1: return row.mono;
@@ -512,6 +517,7 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
     for (auto* rack : system.racks) {
         for (auto& voice : rack->voices) {
             voice.ApplyPendingControls();
+            voice.decodePendingAtGrain = Ngs2DecodePending(voice);
             voice.rendered = false;
             Ngs2PublishSamplerState(voice);
             voices.push_back(&voice);

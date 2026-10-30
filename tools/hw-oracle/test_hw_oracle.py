@@ -108,6 +108,20 @@ class InputRowsTests(unittest.TestCase):
                     assemble.assert_not_called()
                     oracle.assert_not_called()
 
+    def test_cli_accepts_utf8_bom_in_body_and_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body, rows = (Path(directory) / name for name in ("body.s", "rows.txt"))
+            argv = ["hw_oracle.py", str(body), str(rows)]
+            argv += [item for name, value in MODES.items()
+                     for item in ["--" + name.replace("_", "-"), str(value)]]
+            for bom in ("body", "rows"):
+                with self.subTest(bom=bom):
+                    body.write_text("s_nop 0", encoding="utf-8-sig" if bom == "body" else "utf-8")
+                    rows.write_text("1 2 3 4\n", encoding="utf-8-sig" if bom == "rows" else "utf-8")
+                    with patch("sys.argv", argv), patch.object(hw_oracle, "run", return_value=[]) as run:
+                        hw_oracle.main()
+                    run.assert_called_once_with("s_nop 0", [(1, 2, 3, 4)], b"", False, False, **MODES, lds=4096)
+
     def test_successful_dispatch_without_output_cannot_reuse_previous_results(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = Path(directory) / "runner.py"
