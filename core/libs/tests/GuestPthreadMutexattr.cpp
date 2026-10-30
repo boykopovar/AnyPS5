@@ -82,10 +82,35 @@ static void CheckKind() {
     }
     Require(pthread_mutexattr_settype_nid_postfix(&attr, 2) == 0);
     Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 2);
-    for (const int invalid : {0, 5, -1})
-        Require(Throws([&] { pthread_mutexattr_setkind_np_nid_postfix(&attr, invalid); }));
-    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 2);
     PthreadMutex mutex = nullptr;
+    Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 0) == 0);
+    Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == 0);
+    for (const int invalid : {0, 5, -1}) {
+        Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, invalid) == 0);
+        Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == invalid);
+        type = -1;
+        if (invalid == 5) Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == GUEST_EINVAL && type == -1);
+        if (invalid != 5) Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == invalid);
+        Require(pthread_mutex_init_nid_postfix(&mutex, &attr) == GUEST_EINVAL && mutex == nullptr);
+    }
+    for (const int negative : {-2, -32768}) {
+        Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, negative) == 0);
+        type = 0;
+        Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == 0 && type == negative);
+    }
+    Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 0x8000) == 0);
+    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == -32768);
+    for (const int large : {32767, 0x12345}) {
+        Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, large) == 0);
+        type = -1;
+        Require(pthread_mutexattr_gettype_nid_postfix(&attr, &type) == GUEST_EINVAL && type == -1);
+    }
+    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 0x2345);
+    Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 0x10001) == 0);
+    Require(pthread_mutexattr_getkind_np_nid_postfix(attr) == 1);
+    Require(pthread_mutex_init_nid_postfix(&mutex, &attr) == 0);
+    Require(pthread_mutex_destroy_nid_postfix(&mutex) == 0);
+    Require(pthread_mutexattr_setkind_np_nid_postfix(&attr, 2) == 0);
     Require(pthread_mutex_init_nid_postfix(&mutex, &attr) == 0);
     Require(pthread_mutex_lock_nid_postfix(&mutex) == 0);
     Require(pthread_mutex_lock_nid_postfix(&mutex) == 0);

@@ -13,6 +13,7 @@
 namespace {
 
 constexpr int RangeError = 34;
+constexpr int DomainError = 33;
 constexpr int InvalidArgument = 22;
 constexpr short Denormal = -2;
 constexpr short Finite = -1;
@@ -209,6 +210,36 @@ void TestIntegerErrors() {
     Require(_Stoullx_nid_postfix("18446744073709551616", &end, 10, &error) == 18446744073709551615ull && error == RangeError && *__error_nid_postfix() == RangeError, "_Stoullx overflow");
 }
 
+void TestFloatingRounds() {
+    GuestFloatingPointEnvironment saved;
+    Require(fegetenv_nid_postfix(&saved) == 0, "save floating environment");
+    constexpr int Expected[]{1, 3, 2, 0};
+    const int savedErrno = *__error_nid_postfix();
+    for (const unsigned precision : {0u, 0x200u, 0x300u}) {
+        for (unsigned x87 = 0; x87 != 4; ++x87) {
+            for (unsigned sse = 0; sse != 4; ++sse) {
+                for (const unsigned flush : {0u, 0x40u, 0x8000u, 0x8040u}) {
+                    auto input = saved;
+                    input.control = (input.control & 0xffff0000u) | 0x7fu | precision | (x87 << 10u);
+                    input.status = (input.status & ~0x3fu) | 0x25u;
+                    input.mxcsr = 0x1fa5u | (sse << 13u) | flush;
+                    asm volatile("fldenv %0" : : "m"(input));
+                    asm volatile("ldmxcsr %0" : : "m"(input.mxcsr));
+                    *__error_nid_postfix() = 97;
+                    Require(_Fltrounds_nid_postfix() == Expected[x87], "_Fltrounds follows x87 independently of SSE");
+                    GuestFloatingPointEnvironment after;
+                    Require(fegetenv_nid_postfix(&after) == 0, "read floating environment");
+                    Require(after.control == input.control && (after.status & 0x3fu) == 0x25u && after.mxcsr == input.mxcsr, "_Fltrounds preserves controls and flags");
+                    Require(*__error_nid_postfix() == 97, "_Fltrounds preserves errno");
+                }
+            }
+        }
+    }
+    asm volatile("fldenv %0" : : "m"(saved));
+    asm volatile("ldmxcsr %0" : : "m"(saved.mxcsr));
+    *__error_nid_postfix() = savedErrno;
+}
+
 void TestDoubleHelpers() {
     const double e = 0x1.5bf0a8b145769p+1;
     CheckExp(1.0, 1.0, 0, e, Finite, 0, 0, "_Exp e");
@@ -253,6 +284,10 @@ void TestDoubleHelpers() {
     CheckExp(0.0, 1.0, 2000, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_Exp scaled overflow");
     CheckExp(1842.0, 1.0, 0, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_Exp inside the positive cutoff overflows");
     CheckExp(-1842.0, 1.0, 0, 0.0, Zero, ERANGE, FE_UNDERFLOW | FE_INEXACT, "_Exp inside the negative cutoff underflows");
+    CheckExp(-0x1.a3ae147ae147bp+3, 1.0, 3, 0x1.0e6b5a0a65117p-16, Finite, 0, FE_INEXACT, "_Exp rounds a negative exponent as titles do");
+    CheckExp(-0x1.e1fae147ae148p+6, 2.0, 3, 0x1.1e838b63af9c1p-170, Finite, 0, FE_INEXACT, "_Exp rounds a scaled small result as titles do");
+    CheckExp(0x1.b073b645a1cacp+7, -1.0, -1, -0x1.edef67d6786cep+310, Finite, 0, FE_INEXACT, "_Exp rounds a large negative product as titles do");
+    CheckExp(0x1.5c523eb57b55fp-53, 2.0, 0, 0x1.0000000000001p+1, Finite, 0, FE_INEXACT, "_Exp evaluates arguments above half an epsilon");
 
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
@@ -340,6 +375,10 @@ void TestDoubleHelpers() {
     CheckFExp(0.0f, 1.0f, 200, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_FExp scaled overflow");
     CheckFExp(229.0f, 1.0f, 0, INFINITY, Infinite, ERANGE, FE_OVERFLOW | FE_INEXACT, "_FExp inside the positive cutoff overflows");
     CheckFExp(-229.0f, 1.0f, 0, 0.0f, Zero, ERANGE, FE_UNDERFLOW | FE_INEXACT, "_FExp inside the negative cutoff underflows");
+    CheckFExp(-0x1.4fbe76p+0f, 1.0f, 3, 0x1.13e1bp+1f, Finite, 0, FE_INEXACT, "_FExp rounds a negative exponent as titles do");
+    CheckFExp(-0x1.fd4b92p+5f, 1.0f, -3, 0x1.1d1806p-95f, Finite, 0, FE_INEXACT, "_FExp rounds a scaled small result as titles do");
+    CheckFExp(0x1.5e147ap+4f, 2.0f, 3, 0x1.7b078cp+35f, Finite, 0, FE_INEXACT, "_FExp rounds a large product as titles do");
+    CheckFExp(0x1.0644b8p-24f, 0.25f, 2, 0x1.000002p+0f, Finite, 0, FE_INEXACT, "_FExp evaluates arguments above half an epsilon");
 
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
@@ -404,15 +443,101 @@ void TestLongDoubleHelpers() {
     Require(_LLog_nid_postfix(8.0L, -1) == 3.0L && _LLog_nid_postfix(8.0L, -3) == 3.0L, "_LLog base 2");
 }
 
+long double Extended(std::uint64_t mantissa, std::uint16_t signExponent) {
+    unsigned char bytes[sizeof(long double)]{};
+    std::memcpy(bytes, &mantissa, sizeof(mantissa));
+    std::memcpy(bytes + sizeof(mantissa), &signExponent, sizeof(signExponent));
+    long double value;
+    std::memcpy(&value, bytes, sizeof(value));
+    return value;
+}
+
+bool SameBits(long double value, std::uint64_t mantissa, std::uint16_t signExponent) {
+    unsigned char bytes[sizeof(long double)];
+    std::memcpy(bytes, &value, sizeof(value));
+    std::uint64_t actualMantissa;
+    std::uint16_t actualSignExponent;
+    std::memcpy(&actualMantissa, bytes, sizeof(actualMantissa));
+    std::memcpy(&actualSignExponent, bytes + sizeof(actualMantissa), sizeof(actualSignExponent));
+    return actualMantissa == mantissa && actualSignExponent == signExponent;
+}
+
+void TestLongLog() {
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; int base; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
+        {0x8000000000000000ull, 0x4002, 0, 0x851591f9dd5b9b41ull, 0x4000}, {0xfa00000000000000ull, 0x4008, 1, 0xc000000000000000ull, 0x4000},
+        {0xfa00000000000000ull, 0x4008, 5, 0xc000000000000000ull, 0x4000}, {0x8000000000000000ull, 0x4002, -1, 0xc000000000000000ull, 0x4000},
+        {0x8000000000000000ull, 0x3fff, 0, 0, 0x0000}, {0x8000000000000000ull, 0x4000, 0, 0xb17217f7d1cf79acull, 0x3ffe},
+        {0xa000000000000000ull, 0x4002, 1, 0x8000000000000000ull, 0x3fff}, {0x8000000000000000ull, 0x3ffe, -1, 0x8000000000000000ull, 0xbfff},
+        {0xc000000000000000ull, 0x4000, 0, 0x8c9f53d5681854bbull, 0x3fff}, {0xb333333333333333ull, 0x3ffe, 0, 0xb69e192709fa762aull, 0xbffd},
+        {0x9c3d73864f3805c0ull, 0x0c17, 0, 0x8fe95c8a78a8b80eull, 0xc00c}, {0xd1ba8323fe558c61ull, 0x73e6, 1, 0xfa00000000000000ull, 0x400a},
+        {0xe000000000000000ull, 0x4001, -1, 0xb3abb3faa02166cdull, 0x4000},
+        {0xb9ac82c8410c3c68ull, 0x3ff2, 1, 0xf01e4bc814a4fb4cull, 0xc000}, {0x98a9e5bdab7504d1ull, 0x3ff5, 1, 0xbbc2f513876414b1ull, 0xc000},
+        {0xcb41eecb51a96e38ull, 0x3ff8, 1, 0xf40409ebb181947aull, 0xbfff}, {0xecad15fd3a0eaf66ull, 0x3ffd, 0, 0xc589acfa7c6c1534ull, 0xbffe},
+        {0xc86e97283b961889ull, 0x3ffe, 1, 0xd9a59da3f27f263eull, 0xbffb}, {0xf164446eb384ba65ull, 0x4001, 1, 0xe0a894064e71356aull, 0x3ffe},
+        {0x8000000000000000ull, 0x7fff, 0, 0x8000000000000000ull, 0x7fff}, {0xc000000000000001ull, 0xffff, 1, 0xc000000000000001ull, 0xffff},
+    };
+    for (const auto& test : cases) {
+        *__error_nid_postfix() = 12345;
+        const long double result = _LLog_nid_postfix(Extended(test.inputMantissa, test.inputSignExponent), test.base);
+        if (!SameBits(result, test.outputMantissa, test.outputSignExponent) || *__error_nid_postfix() != 12345) {
+            std::fprintf(stderr, "Dinkumware internals: _LLog failed for %016llx:%04x base %d\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent, test.base);
+            std::exit(1);
+        }
+    }
+    for (const std::uint16_t signExponent : {0x0000, 0x8000, 0x3fff, 0xbfff}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        *__error_nid_postfix() = 0;
+        const long double zero = _LLog_nid_postfix(Extended(0, signExponent), 0);
+        Require(SameBits(zero, 0x8000000000000000ull, 0xffff) && *__error_nid_postfix() == RangeError && std::fetestexcept(FE_DIVBYZERO) != 0, "_LLog of a zero mantissa");
+    }
+    for (const long double input : {-1.0L, -0x1p-16445L, Extended(0x8000000000000000ull, 0xffff)}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        *__error_nid_postfix() = 0;
+        Require(SameBits(_LLog_nid_postfix(input, -1), 0xc000000000000000ull, 0x7fff) && *__error_nid_postfix() == DomainError && std::fetestexcept(FE_INVALID) != 0, "_LLog of a negative argument");
+    }
+    *__error_nid_postfix() = 0;
+}
+
+std::uint16_t X87ControlWord() {
+    std::uint16_t control;
+    asm volatile("fnstcw %0" : "=m"(control));
+    return control;
+}
+
+void TestLongLogAt53Bits() {
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; int base; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
+        {0x8000000000000000ull, 0x4002, 0, 0x851591f9dd5b9800ull, 0x4000}, {0xfa00000000000000ull, 0x4008, 1, 0xc000000000000000ull, 0x4000},
+        {0x8000000000000000ull, 0x4000, 0, 0xb17217f7d1cf7800ull, 0x3ffe}, {0xb333333333333333ull, 0x3ffe, 0, 0xb69e192709fa8000ull, 0xbffd},
+        {0x9c3d73864f3805c0ull, 0x0c17, 0, 0x8fe95c8a78a8b800ull, 0xc00c}, {0xe000000000000000ull, 0x4001, -1, 0xb3abb3faa0216800ull, 0x4000},
+        {0xf164446eb384ba65ull, 0x4001, 1, 0xe0a894064e713800ull, 0x3ffe},
+    };
+    const std::uint16_t saved = X87ControlWord();
+    const auto control = static_cast<std::uint16_t>((saved & ~0x0300u) | 0x0200u);
+    for (const auto& test : cases) {
+        const long double input = Extended(test.inputMantissa, test.inputSignExponent);
+        asm volatile("fldcw %0" : : "m"(control) : "memory");
+        const long double result = _LLog_nid_postfix(input, test.base);
+        const std::uint16_t after = X87ControlWord();
+        asm volatile("fldcw %0" : : "m"(saved) : "memory");
+        if (!SameBits(result, test.outputMantissa, test.outputSignExponent) || after != control) {
+            std::fprintf(stderr, "Dinkumware internals: _LLog at 53 bits failed for %016llx:%04x base %d\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent, test.base);
+            std::exit(1);
+        }
+    }
+}
+
 }
 
 int main() {
     TestStod();
     TestStoll();
     TestDoubleHelpers();
+    TestFloatingRounds();
     TestFloatErrors();
     TestIntegerErrors();
     TestArithmetic();
     TestDispatch();
     TestLongDoubleHelpers();
+    TestLongLog();
+    TestLongLogAt53Bits();
 }

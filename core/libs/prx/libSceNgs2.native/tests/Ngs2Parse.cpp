@@ -50,6 +50,24 @@ static std::vector<std::uint8_t> PcmFile(std::uint32_t channels, std::uint32_t s
     return file;
 }
 
+static std::vector<std::uint8_t> ExtensibleFile(std::uint32_t formatSize, const std::uint8_t* guid) {
+    const auto pcm = PcmFile(1, 44100, 16, 10, 0xfffe);
+    std::vector<std::uint8_t> format(pcm.begin() + 20, pcm.begin() + 60);
+    std::memcpy(format.data() + 24, guid, 16);
+    format.resize(formatSize);
+    std::vector<std::uint8_t> file;
+    PutTag(file, "RIFF");
+    Put32(file, 0);
+    PutTag(file, "WAVE");
+    PutTag(file, "fmt ");
+    Put32(file, formatSize);
+    file.insert(file.end(), format.begin(), format.end());
+    file.insert(file.end(), pcm.begin() + 60, pcm.end());
+    const auto riffSize = static_cast<std::uint32_t>(file.size() - 8);
+    std::memcpy(file.data() + 4, &riffSize, sizeof(riffSize));
+    return file;
+}
+
 static void TestParsePcm() {
     const auto file = PcmFile(2, 44100, 16, 100);
     Ngs2WaveformInfo info{};
@@ -88,6 +106,36 @@ static void TestParsePcm() {
     }
     const auto noChannels = PcmFile(0, 44100, 16, 10);
     Require(sceNgs2ParseWaveformData(noChannels.data(), noChannels.size(), &info) == SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT);
+}
+
+static void TestParseUnknownFormats() {
+    const std::uint8_t pcmGuid[16] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71};
+    const std::uint8_t unknownGuid[16] = {0xaa, 0xbb, 0xcc, 0xdd, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc};
+    Ngs2WaveformInfo info{};
+    for (const std::uint32_t tag : {0x0u, 0x2u, 0x11u, 0x55u, 0x165u, 0xffffu}) {
+        const auto wave = PcmFile(1, 44100, 16, 10, tag);
+        Require(sceNgs2ParseWaveformData(wave.data(), wave.size(), &info) == SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT);
+    }
+    for (const std::uint32_t formatSize : {0x10u, 0x18u, 0x26u}) {
+        const auto wave = ExtensibleFile(formatSize, pcmGuid);
+        Require(sceNgs2ParseWaveformData(wave.data(), wave.size(), &info) == SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT);
+    }
+    for (const std::uint32_t formatSize : {0x28u, 0x30u, 0x36u}) {
+        const auto wave = ExtensibleFile(formatSize, unknownGuid);
+        Require(sceNgs2ParseWaveformData(wave.data(), wave.size(), &info) == SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT);
+    }
+    const auto pcm = ExtensibleFile(0x34, pcmGuid);
+    Require(sceNgs2ParseWaveformData(pcm.data(), pcm.size(), &info) == SCE_NGS2_OK && info.format.waveform_type == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && info.num_samples == 10);
+
+    const auto wave = PcmFile(1, 44100, 16, 10, 0x55);
+    const char* const guestPath = "/aps5_ngs2_parse_unknown.wav";
+    const auto path = ResolvePath_nid_no_patch(guestPath);
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(wave.data()), static_cast<std::streamsize>(wave.size()));
+    }
+    Require(sceNgs2ParseWaveformFile(guestPath, 0, &info) == SCE_NGS2_ERROR_UNKNOWN_WAVEFORM_FORMAT);
+    std::filesystem::remove(path);
 }
 
 static void TestParseFile() {
@@ -138,17 +186,25 @@ static void TestParseFileBank() {
 }
 
 static void TestFrameInfoPcm() {
-    for (std::uint32_t channels = 1; channels <= 8; channels++) {
-        for (const std::uint32_t rate : {1u, 22050u, 48000u, 192000u}) {
-            const Ngs2WaveformFormat format{SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, channels, rate, 0, 0, 0};
-            std::uint32_t frameSize = 0xa1, frameSamples = 0xa2, units = 0xa3, delay = 0xa4;
-            Require(sceNgs2GetWaveformFrameInfo(&format, &frameSize, &frameSamples, &units, &delay) == SCE_NGS2_OK);
-            Require(frameSize == channels * 2 && frameSamples == 1 && units == 1 && delay == 0);
-            const auto file = PcmFile(channels, rate, 16, 10);
-            Ngs2WaveformInfo info{};
-            Require(sceNgs2ParseWaveformData(file.data(), file.size(), &info) == SCE_NGS2_OK);
-            Require(info.audio_frame_size == frameSize && info.num_audio_frame_samples == frameSamples);
-            Require(info.num_audio_unit_per_frame == units && info.num_delay_samples == delay);
+    const std::pair<std::uint32_t, std::uint32_t> types[] = {
+        {SCE_NGS2_WAVEFORM_TYPE_PCM_U8, 1}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2},
+        {SCE_NGS2_WAVEFORM_TYPE_PCM_I24L, 3}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I32L, 4},
+        {SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 4}, {SCE_NGS2_WAVEFORM_TYPE_PCM_F64L, 8},
+    };
+    for (const auto& [type, bytes] : types) {
+        for (std::uint32_t channels = 1; channels <= 8; channels++) {
+            for (const std::uint32_t rate : {1u, 22050u, 48000u, 192000u}) {
+                const Ngs2WaveformFormat format{type, channels, rate, 0, 0, 0};
+                std::uint32_t frameSize = 0xa1, frameSamples = 0xa2, units = 0xa3, delay = 0xa4;
+                Require(sceNgs2GetWaveformFrameInfo(&format, &frameSize, &frameSamples, &units, &delay) == SCE_NGS2_OK);
+                Require(frameSize == channels * bytes && frameSamples == 1 && units == 1 && delay == 0);
+                if (type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) continue;
+                const auto file = PcmFile(channels, rate, 16, 10);
+                Ngs2WaveformInfo info{};
+                Require(sceNgs2ParseWaveformData(file.data(), file.size(), &info) == SCE_NGS2_OK);
+                Require(info.audio_frame_size == frameSize && info.num_audio_frame_samples == frameSamples);
+                Require(info.num_audio_unit_per_frame == units && info.num_delay_samples == delay);
+            }
         }
     }
     const Ngs2WaveformFormat ignored{SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 2, 48000, 0x12345678, 3, 5};
@@ -180,13 +236,14 @@ static void TestFrameInfoErrors() {
         Require(sceNgs2GetWaveformFrameInfo(&format, &values[0], &values[1], &values[2], &values[3]) == SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT);
         Require(untouched());
     }
-    for (const std::uint32_t type : {0u, 0x10u, 0x11u, 0x13u, 0x14u, 0x16u, SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 0x19u, 0x41u, 0xffffffffu}) {
+    for (const std::uint32_t type : {0u, 0x10u, 0x13u, 0x19u, 0x41u, 0xffffffffu}) {
         Require(FrameInfoThrows({type, 2, 48000, 0, 0, 0}));
     }
 }
 
 int main() {
     TestParsePcm();
+    TestParseUnknownFormats();
     TestParseFile();
     TestParseFileBank();
     TestFrameInfoPcm();

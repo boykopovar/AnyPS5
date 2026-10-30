@@ -75,7 +75,10 @@ def cache_signature():
 def load_cache(path, signature):
     if not path.exists():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except RecursionError as error:
+        raise ValueError(f"{path}: history cache JSON is too deeply nested") from error
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 1 or not isinstance(data.get("rules"), str) or not isinstance(data.get("commits"), dict):
         raise ValueError(f"{path}: invalid history cache")
     if data["rules"] != signature:
@@ -105,7 +108,7 @@ def save_cache(path, signature, commits):
             temporary = Path(output.name)
             json.dump({"schema_version": 1, "rules": signature, "commits": commits}, output, sort_keys=True)
             output.write("\n")
-        if path.exists():
+        if os.name != "nt" and path.exists():
             temporary.chmod(stat.S_IMODE(path.stat().st_mode))
         os.replace(temporary, path)
     finally:
@@ -138,7 +141,10 @@ def labelled(day, span):
 
 
 def scale(peak):
-    step = next(s for s in (5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000) if peak <= s * 4)
+    magnitude = 1
+    while peak > 20 * magnitude:
+        magnitude *= 10
+    step = next(s * magnitude for s in (1, 2, 5) if peak <= s * magnitude * 4) if magnitude > 1 else 5
     return step, max(step, -(-peak // step) * step)
 
 
@@ -226,16 +232,24 @@ def page(points):
     ]) + "\n"
 
 
+def same_location(first, second):
+    return os.path.normcase(os.path.realpath(first)) == os.path.normcase(os.path.realpath(second))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
     parser.add_argument("--ref", default="HEAD", help="branch or commit whose first-parent history is measured")
     parser.add_argument("--cache", type=Path, help="reuse per-commit counts while the scanner, ISA list and Python version match")
     args = parser.parse_args(argv)
+    outputs = [args.output / name for name in ("history.json", "history.svg", "history.html")]
     try:
+        for index, path in enumerate(outputs):
+            for other in outputs[index + 1:]:
+                if (path.exists() and other.exists() and path.samefile(other)) or same_location(path, other):
+                    raise ValueError(f"generated reports cannot alias each other: {path.name} and {other.name}")
         if args.cache:
-            outputs = [args.output / name for name in ("history.json", "history.svg", "history.html")]
-            if any(args.cache.resolve() == path.resolve() or
+            if any(same_location(args.cache, path) or
                    (args.cache.exists() and path.exists() and args.cache.samefile(path)) for path in outputs):
                 raise ValueError("history cache must differ from generated reports")
         points = collect(args.ref, args.cache)

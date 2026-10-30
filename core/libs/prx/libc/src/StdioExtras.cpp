@@ -156,4 +156,44 @@ void APS5_VABI _ZdlPvmSt11align_val_t_nid_postfix(void* pointer, std::size_t, st
     if (pointer != nullptr) ApplicationHeapFree_nid_no_patch(pointer);
 }
 
+void* APS5_VABI _ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(std::size_t size, std::size_t alignment, const void*) noexcept {
+    try {
+        return _ZnwmSt11align_val_t_nid_postfix(size, alignment);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+
+void* APS5_VABI _ZnamSt11align_val_t_nid_postfix(std::size_t size, std::size_t alignment) {
+    return _ZnwmSt11align_val_t_nid_postfix(size, alignment);
+}
+
+void* APS5_VABI _ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(std::size_t size, std::size_t alignment, const void*) noexcept {
+    try {
+        return _ZnamSt11align_val_t_nid_postfix(size, alignment);
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+}
+
+void APS5_VABI _ZdaPvRKSt9nothrow_t_nid_postfix(void* pointer, const void*) noexcept {
+    _ZdaPv_nid_postfix(pointer);
+}
+
+void APS5_VABI _ZdlPvSt11align_val_tRKSt9nothrow_t_nid_postfix(void* pointer, std::size_t alignment, const void*) noexcept {
+    _ZdlPvSt11align_val_t_nid_postfix(pointer, alignment);
+}
+
+void APS5_VABI _ZdaPvSt11align_val_t_nid_postfix(void* pointer, std::size_t alignment) {
+    _ZdlPvSt11align_val_t_nid_postfix(pointer, alignment);
+}
+
+void APS5_VABI _ZdaPvmSt11align_val_t_nid_postfix(void* pointer, std::size_t, std::size_t alignment) {
+    _ZdaPvSt11align_val_t_nid_postfix(pointer, alignment);
+}
+
+void APS5_VABI _ZdaPvSt11align_val_tRKSt9nothrow_t_nid_postfix(void* pointer, std::size_t alignment, const void*) noexcept {
+    _ZdaPvSt11align_val_t_nid_postfix(pointer, alignment);
+}
+
 }
