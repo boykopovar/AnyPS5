@@ -430,6 +430,16 @@ alignas(256) constexpr std::array<std::uint32_t, 63> PointerLaneNotCode{
     0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 54> PointerBitFieldCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108502u, 0xf42c0404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
+    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
+    0x7e300503u, 0xd4c20030u, 0x00020618u, 0xbeb22430u, 0x8f198418u, 0xf4240b02u, 0x32000000u, 0xd4c10034u,
+    0x00002900u, 0xbf8cc07fu, 0xbf068112u, 0xbf840003u, 0x902c8413u, 0x872cff2cu, 0x00000fffu, 0xf40c0916u,
+    0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffeau, 0xbefe042eu, 0x7e120202u,
+    0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 63> PointerVsharpSelectCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
     0x8f108502u, 0xf42c0404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
@@ -2141,7 +2151,7 @@ void RunPointerArmTests(AgcDriver::VulkanDevice& device, bool copies) {
     std::puts("pointer table with a second record read: a T# through a record pointer whose low word passes a second read keyed by another lane checked, by the pointer's value");
 }
 
-enum class PointerMask { LaneAnd, High, HighSecond, HighSecondLane, LaneNot };
+enum class PointerMask { LaneAnd, High, HighSecond, HighSecondLane, LaneNot, BitField };
 
 void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
     Fill();
@@ -2151,7 +2161,7 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
     Keys = {};
     const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
     for (std::uint32_t record = 0; record < 2u; ++record) std::copy(images[record].begin(), images[record].end(), records[record].begin() + 16u);
-    const std::uint32_t pointerWord = shape == PointerMask::LaneNot ? 0u : 2u;
+    const std::uint32_t pointerWord = shape == PointerMask::LaneNot || shape == PointerMask::BitField ? 0u : 2u;
     for (std::uint32_t record = 0; record < 3u; ++record) {
         const auto pointer = reinterpret_cast<std::uintptr_t>(records[record % 2u].data());
         Table[record * 4u + pointerWord] = static_cast<std::uint32_t>(pointer);
@@ -2159,8 +2169,8 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
     }
     const auto secondBuffer = Buffer(second.data() + 8u, 32u);
     std::copy(secondBuffer.begin(), secondBuffer.end(), second.begin());
-    std::span<const std::uint32_t> code = shape == PointerMask::LaneAnd ? std::span<const std::uint32_t>(PointerLaneAndCode) : shape == PointerMask::High ? std::span<const std::uint32_t>(PointerHighCode) : shape == PointerMask::LaneNot ? std::span<const std::uint32_t>(PointerLaneNotCode) : shape == PointerMask::HighSecondLane ? std::span<const std::uint32_t>(PointerHighSecondLaneCode) : std::span<const std::uint32_t>(PointerHighSecondCode);
-    const std::string name = shape == PointerMask::LaneAnd ? "pointer table with lane-mask ANDs" : shape == PointerMask::High ? "pointer table with a high-word Phi" : shape == PointerMask::LaneNot ? "pointer table with a lane bit cleared from a lane mask" : shape == PointerMask::HighSecondLane ? "pointer table with a second-buffer high word under a lane-mask low word" : "pointer table with a high word from a second buffer";
+    std::span<const std::uint32_t> code = shape == PointerMask::BitField ? std::span<const std::uint32_t>(PointerBitFieldCode) : shape == PointerMask::LaneAnd ? std::span<const std::uint32_t>(PointerLaneAndCode) : shape == PointerMask::High ? std::span<const std::uint32_t>(PointerHighCode) : shape == PointerMask::LaneNot ? std::span<const std::uint32_t>(PointerLaneNotCode) : shape == PointerMask::HighSecondLane ? std::span<const std::uint32_t>(PointerHighSecondLaneCode) : std::span<const std::uint32_t>(PointerHighSecondCode);
+    const std::string name = shape == PointerMask::BitField ? "pointer table with a bit-field low word" : shape == PointerMask::LaneAnd ? "pointer table with lane-mask ANDs" : shape == PointerMask::High ? "pointer table with a high-word Phi" : shape == PointerMask::LaneNot ? "pointer table with a lane bit cleared from a lane mask" : shape == PointerMask::HighSecondLane ? "pointer table with a second-buffer high word under a lane-mask low word" : "pointer table with a high word from a second buffer";
     const auto run = [&] {
         const auto table = Buffer(Table.data(), 64u);
         const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
@@ -2213,6 +2223,14 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
         Require(untouched(faulted), name + ": " + what + " published copied output");
         Require(faulted.artifactId == taken.artifactId, name + ": " + what + " recompiled the shader");
     };
+    if (shape == PointerMask::BitField) {
+        Keys[3] = 0x0abcdef0u;
+        outside(2u, 1u, 0u, "a bit field of a key word as the low word");
+        Keys[3] = 0u;
+        outside(2u, 1u, 0u, "a zero bit field as the low word");
+        std::puts("pointer table with a bit-field low word: a T# through a record pointer whose low word passes a Phi with (key word >> 4) & 0xfff checked, and the bit-field arm faults outside the snapshot");
+        return;
+    }
     outside(2u, 1u, 0u, "a constant low word");
     if (shape == PointerMask::LaneAnd) {
         outside(2u, 2u, 0u, "a lane-mask Phi ANDed with a lane mask");
@@ -3184,6 +3202,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-high-second-lane") == 0) {
             RunPointerMaskTests(*device, PointerMask::HighSecondLane);
+            return 0;
+        }
+        if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-bit-field") == 0) {
+            RunPointerMaskTests(*device, PointerMask::BitField);
             return 0;
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-lane-not") == 0) {

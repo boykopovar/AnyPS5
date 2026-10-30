@@ -986,8 +986,22 @@ private:
         return !reads.empty();
     }
 
+    static bool BitFieldWord(const IrValue& word) {
+        if (word.ArgumentCount() != 2u) return false;
+        std::uint32_t operand = 0;
+        if (word.Opcode() == IrOpcode::ShiftRightLogical32) {
+            const IrValue* masked = word.Argument(0)->Resolve();
+            return immediateU32(word.Argument(1), operand) && operand != 0u && operand < 32u && masked->Opcode() == IrOpcode::BitwiseAnd32 && masked->ArgumentCount() == 2u && (immediateU32(masked->Argument(0), operand) || immediateU32(masked->Argument(1), operand));
+        }
+        if (word.Opcode() != IrOpcode::BitwiseAnd32) return false;
+        const bool left = immediateU32(word.Argument(0), operand);
+        if (!left && !immediateU32(word.Argument(1), operand)) return false;
+        const IrValue* shifted = word.Argument(left ? 1u : 0u)->Resolve();
+        return shifted->Opcode() == IrOpcode::ShiftRightLogical32 && shifted->ArgumentCount() == 2u && immediateU32(shifted->Argument(1), operand) && operand != 0u && operand < 32u;
+    }
+
     static bool PointerFreeWord(const IrValue& word) {
-        return (word.HasImmediate() && word.Type() == IrType::U32) || LaneMaskOperand(&word);
+        return (word.HasImmediate() && word.Type() == IrType::U32) || LaneMaskOperand(&word) || BitFieldWord(word);
     }
 
     static IrValue* MaskedRecordWord(const IrValue& word) {
