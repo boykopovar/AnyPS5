@@ -64,6 +64,12 @@ struct NpTitleIdParts {
     std::uint8_t index;
 };
 
+struct NpSemaphoreObject {
+    const void* const* vtable;
+    KernelSema sema;
+    std::int32_t state;
+};
+
 extern "C" {
 
 int APS5_VABI sceNpCmpOnlineId(const NpOnlineId* onlineId1, const NpOnlineId* onlineId2);
@@ -145,6 +151,7 @@ int APS5_VABI sceNpCreateSema(KernelSema* sema, std::uint32_t flags, int initial
 int APS5_VABI sceNpDeleteSema(KernelSema sema);
 int APS5_VABI sceNpPollSema(KernelSema sema);
 int APS5_VABI sceNpSignalSema(KernelSema sema);
+int APS5_VABI sceNpWaitSema(KernelSema sema, KernelUseconds* timeout);
 int APS5_VABI sceNpCreateThread(Pthread* thread, PthreadEntry entry, void* arg, int priority, std::size_t stackSize, KernelCpumask affinity, const char* name);
 int APS5_VABI sceNpThreadGetId(Pthread* thread);
 int APS5_VABI sceNpGetProcessId(void);
@@ -253,7 +260,6 @@ int APS5_VABI _ZN3sce2np15CancelableScopeD1Ev(void);
 int APS5_VABI _ZN3sce2np8JsonFileD2Ev(void);
 int APS5_VABI _ZN3sce2np9JsonArray12AddItemArrayEPPS1_(void);
 int APS5_VABI _ZN3sce2np14CalloutContextD0Ev(void);
-int APS5_VABI _ZN3sce2np9Semaphore4WaitEj(void);
 int APS5_VABI _ZN3sce2npeqERKNS0_4TimeES3_(void);
 int APS5_VABI _ZN3sce2np13RingBufMemory6ExpandEm(void);
 int APS5_VABI _ZThn8_N3sce2np10MemoryFile4ReadEPNS0_6HandleEPvmPm(void);
@@ -274,7 +280,6 @@ int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient10DisconnectEv(void);
 int APS5_VABI _ZN3sce2np3ipc10IpmiClient11IsConnectedEv(void);
 int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTypePKcPcS5_iPPhPmPiPvESA_(void);
 int APS5_VABI sceNpUtilParseJid(void);
-int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void);
 int APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(void);
 int APS5_VABI sceNpUtilXmlUnescape(void);
 int APS5_VABI sceNpXmlParse(void);
@@ -333,7 +338,6 @@ int APS5_VABI _ZN3sce2np12HttpTemplateC2Ev(void);
 int APS5_VABI _ZN3sce2np9EventFlag6CreateEPKcj(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient15RegisterServiceEPKNS1_17ServiceClientInfoE(void);
 int APS5_VABI _ZN3sce2np8WorkItemD0Ev(void);
-int APS5_VABI _ZN3sce2np9SemaphoreD2Ev(void);
 int APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(void);
 int APS5_VABI _ZN3sce2np9EventFlagD2Ev(void);
 int APS5_VABI _ZN3sce2np9RefObjectD1Ev(void);
@@ -373,6 +377,17 @@ int APS5_VABI _ZN3sce2np4Time12GetUserClockEPS1_(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient12AbortRequestEii(void);
 int APS5_VABI _ZNK3sce2np5Mutex6IsInitEv(void);
 
+void APS5_VABI _ZN3sce2np9SemaphoreC1Ev(NpSemaphoreObject* self);
+void APS5_VABI _ZN3sce2np9SemaphoreC2Ev(NpSemaphoreObject* self);
+void APS5_VABI _ZN3sce2np9SemaphoreD1Ev(NpSemaphoreObject* self);
+void APS5_VABI _ZN3sce2np9SemaphoreD2Ev(NpSemaphoreObject* self);
+void APS5_VABI _ZN3sce2np9SemaphoreD0Ev(NpSemaphoreObject* self);
+bool APS5_VABI _ZNK3sce2np9Semaphore6IsInitEv(const NpSemaphoreObject* self);
+int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(NpSemaphoreObject* self, int initial, int maximum, const char* name);
+int APS5_VABI _ZN3sce2np9Semaphore4OpenEPKc(NpSemaphoreObject* self, const char* name);
+void APS5_VABI _ZN3sce2np9Semaphore7DestroyEv(NpSemaphoreObject* self);
+int APS5_VABI _ZN3sce2np9Semaphore4WaitEj(NpSemaphoreObject* self, std::uint32_t usec);
+int APS5_VABI _ZN3sce2np9Semaphore6SignalEv(NpSemaphoreObject* self);
 [[noreturn]] void APS5_VABI sceNpPanic(void);
 
 }
