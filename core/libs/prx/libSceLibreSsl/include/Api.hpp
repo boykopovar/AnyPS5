@@ -245,6 +245,28 @@ struct LibreSslX509StoreContext {
     void* exData;
 };
 
+struct LibreSslCtxInternal {
+    unsigned char beforeQuietShutdown[292];
+    int quietShutdown;
+    unsigned char rest[168];
+};
+
+struct LibreSslCtx {
+    const void* method;
+    void* cipherList;
+    void* certStore;
+    std::int64_t sessionTimeout;
+    int references;
+    void* extraCerts;
+    int verifyMode;
+    unsigned int sidCtxLength;
+    unsigned char sidCtx[32];
+    void* param;
+    void* defaultPasswdCallback;
+    void* defaultPasswdCallbackUserdata;
+    LibreSslCtxInternal* internal;
+};
+
 extern "C" {
 
 std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value);
@@ -455,10 +477,10 @@ int APS5_VABI SSL_CTX_callback_ctrl_nid_postfix(void);
 int APS5_VABI SSL_CTX_check_private_key_nid_postfix(void);
 int APS5_VABI SSL_CTX_ctrl_nid_postfix(void);
 int APS5_VABI SSL_CTX_free_nid_postfix(void);
-int APS5_VABI SSL_CTX_get_cert_store_nid_postfix(void);
+void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(LibreSslCtx* ctx);
 int APS5_VABI SSL_CTX_get_ex_data_nid_postfix(void);
 int APS5_VABI SSL_CTX_get_ex_new_index_nid_postfix(std::int64_t argl, void* argp, LibreSslExNew newFunction, LibreSslExDup dupFunction, LibreSslExFree freeFunction);
-int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(void);
+int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(LibreSslCtx* ctx);
 int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(void);
 int APS5_VABI SSL_CTX_load_verify_mem_nid_postfix(void);
 int APS5_VABI SSL_CTX_new_nid_postfix(void);
@@ -470,13 +492,13 @@ int APS5_VABI SSL_CTX_set_cert_store_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_cert_verify_callback_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_cipher_list_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_client_cert_cb_nid_postfix(void);
-int APS5_VABI SSL_CTX_set_default_passwd_cb_nid_postfix(void);
-int APS5_VABI SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(void);
+void APS5_VABI SSL_CTX_set_default_passwd_cb_nid_postfix(LibreSslCtx* ctx, void* callback);
+void APS5_VABI SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(LibreSslCtx* ctx, void* userdata);
 int APS5_VABI SSL_CTX_set_ex_data_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_info_callback_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_msg_callback_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_next_proto_select_cb_nid_postfix(void);
-int APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(void);
+void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(LibreSslCtx* ctx, int mode);
 int APS5_VABI SSL_CTX_set_session_id_context_nid_postfix(void);
 int APS5_VABI SSL_CTX_set_verify_nid_postfix(void);
 int APS5_VABI SSL_CTX_use_PrivateKey_nid_postfix(void);
