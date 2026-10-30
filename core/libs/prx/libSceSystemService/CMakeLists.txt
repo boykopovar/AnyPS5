@@ -1,4 +1,4 @@
-add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp PendingExports.cpp LoadExec.cpp)
+add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp PendingExports.cpp LoadExec.cpp InventoryExports.cpp)
 target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage)
 configure_windows_unwind(libSceSystemService)
