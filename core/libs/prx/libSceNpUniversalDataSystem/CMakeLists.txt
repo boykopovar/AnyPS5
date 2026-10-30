@@ -16,6 +16,7 @@ target_include_directories(libSceNpUniversalDataSystem PRIVATE
 )
 target_link_libraries(libSceNpUniversalDataSystem PRIVATE libSceNpTrophy2 libc)
 configure_windows_unwind(libSceNpUniversalDataSystem)
+target_sources(libSceNpUniversalDataSystem PRIVATE LegacyExports.cpp)
 
 add_test_executable(np_uds_events_tests EXCLUDE_FROM_ALL
         tests/Events.cpp
