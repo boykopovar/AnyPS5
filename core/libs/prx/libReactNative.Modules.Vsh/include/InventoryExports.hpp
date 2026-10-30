@@ -70,4 +70,24 @@ int APS5_VABI sceRemotePlayClientStartMicCapture();
 int APS5_VABI sceRemotePlayClientStopMicCapture();
 int APS5_VABI sceRemotePlayClientTerminateStreaming();
 
+
+int APS5_VABI libReactNativeModulesVshInventory__plus_I5sPs9FLXw_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory__minus_9hYGDAsb4E_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_BzJsgzD97LU_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_IQNf2nnftNI_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_N3mcm_minus_qDFR0_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_OME2Be_plus_FlwA_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_PLEe_minus_toB_minus_KE_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_QGGsQrtLW9Y_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_Rm_plus_rgnBoPIE_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_SJU_plus_qK_plus_8yrM_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_T7dL_minus_hEySvU_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_b_plus_MJDz3HB6s_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_bbsP8_minus_e8GZA_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_fxEQAPDRhLw_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_j917Pp4k_minus_CI_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_lZ_minus_JDEqB34k_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_tKy_minus_Qdg_plus_FRc_nid_no_patch();
+int APS5_VABI libReactNativeModulesVshInventory_uQfQgwm36L4_nid_no_patch();
+
 }

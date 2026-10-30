@@ -71,3 +71,28 @@
 | `sceRemotePlayClientStartMicCapture` | `r9MlfKcu6N4` |
 | `sceRemotePlayClientStopMicCapture` | `jLpO843jV50` |
 | `sceRemotePlayClientTerminateStreaming` | `N1dFmppU9j0` |
+
+### Additional unidentified exports
+
+- Eighteen [callable exports](../../../core/libs/prx/libReactNative.Modules.Vsh/Export.cpp) are throwing placeholders. Names, signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `+I5sPs9FLXw` |
+| `Unknown` | `-9hYGDAsb4E` |
+| `Unknown` | `BzJsgzD97LU` |
+| `Unknown` | `IQNf2nnftNI` |
+| `Unknown` | `N3mcm-qDFR0` |
+| `Unknown` | `OME2Be+FlwA` |
+| `Unknown` | `PLEe-toB-KE` |
+| `Unknown` | `QGGsQrtLW9Y` |
+| `Unknown` | `Rm+rgnBoPIE` |
+| `Unknown` | `SJU+qK+8yrM` |
+| `Unknown` | `T7dL-hEySvU` |
+| `Unknown` | `b+MJDz3HB6s` |
+| `Unknown` | `bbsP8-e8GZA` |
+| `Unknown` | `fxEQAPDRhLw` |
+| `Unknown` | `j917Pp4k-CI` |
+| `Unknown` | `lZ-JDEqB34k` |
+| `Unknown` | `tKy-Qdg+FRc` |
+| `Unknown` | `uQfQgwm36L4` |

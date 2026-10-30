@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libReactNative.Modules.Vsh/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -262,5 +263,99 @@ int APS5_VABI sceRemotePlayClientStopMicCapture() {
 int APS5_VABI sceRemotePlayClientTerminateStreaming() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libReactNativeModulesVshInventory__plus_I5sPs9FLXw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+I5sPs9FLXw", libReactNativeModulesVshInventory__plus_I5sPs9FLXw_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory__minus_9hYGDAsb4E_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("-9hYGDAsb4E", libReactNativeModulesVshInventory__minus_9hYGDAsb4E_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_BzJsgzD97LU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("BzJsgzD97LU", libReactNativeModulesVshInventory_BzJsgzD97LU_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_IQNf2nnftNI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IQNf2nnftNI", libReactNativeModulesVshInventory_IQNf2nnftNI_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_N3mcm_minus_qDFR0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("N3mcm-qDFR0", libReactNativeModulesVshInventory_N3mcm_minus_qDFR0_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_OME2Be_plus_FlwA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("OME2Be+FlwA", libReactNativeModulesVshInventory_OME2Be_plus_FlwA_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_PLEe_minus_toB_minus_KE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PLEe-toB-KE", libReactNativeModulesVshInventory_PLEe_minus_toB_minus_KE_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_QGGsQrtLW9Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("QGGsQrtLW9Y", libReactNativeModulesVshInventory_QGGsQrtLW9Y_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_Rm_plus_rgnBoPIE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Rm+rgnBoPIE", libReactNativeModulesVshInventory_Rm_plus_rgnBoPIE_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_SJU_plus_qK_plus_8yrM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("SJU+qK+8yrM", libReactNativeModulesVshInventory_SJU_plus_qK_plus_8yrM_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_T7dL_minus_hEySvU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("T7dL-hEySvU", libReactNativeModulesVshInventory_T7dL_minus_hEySvU_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_b_plus_MJDz3HB6s_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("b+MJDz3HB6s", libReactNativeModulesVshInventory_b_plus_MJDz3HB6s_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_bbsP8_minus_e8GZA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("bbsP8-e8GZA", libReactNativeModulesVshInventory_bbsP8_minus_e8GZA_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_fxEQAPDRhLw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fxEQAPDRhLw", libReactNativeModulesVshInventory_fxEQAPDRhLw_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_j917Pp4k_minus_CI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("j917Pp4k-CI", libReactNativeModulesVshInventory_j917Pp4k_minus_CI_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_lZ_minus_JDEqB34k_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lZ-JDEqB34k", libReactNativeModulesVshInventory_lZ_minus_JDEqB34k_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_tKy_minus_Qdg_plus_FRc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tKy-Qdg+FRc", libReactNativeModulesVshInventory_tKy_minus_Qdg_plus_FRc_nid_no_patch);
+
+int APS5_VABI libReactNativeModulesVshInventory_uQfQgwm36L4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("uQfQgwm36L4", libReactNativeModulesVshInventory_uQfQgwm36L4_nid_no_patch);
 
 }
