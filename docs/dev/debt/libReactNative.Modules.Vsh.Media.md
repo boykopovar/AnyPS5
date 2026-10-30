@@ -45,3 +45,19 @@
 | `removeProhibitionFlagListener` | `7oRxmHRqfCY` |
 | `removeTelemetryErrorListener` | `JZMm1O3sBAU` |
 | `setVideoMode` | `po1M8887cuw` |
+
+### Additional unidentified exports
+
+- Nine [callable exports](../../../core/libs/prx/libReactNative.Modules.Vsh.Media/Export.cpp) are throwing placeholders. Names, signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `BIdvn6c-zAw` |
+| `Unknown` | `BwF-lBIdW5g` |
+| `Unknown` | `JwW+jnYDAcI` |
+| `Unknown` | `QWwXJ-KSWg4` |
+| `Unknown` | `S3lY-8Af+rw` |
+| `Unknown` | `Xn1h2KUpUN4` |
+| `Unknown` | `kYVOipktdO0` |
+| `Unknown` | `m4NzcIr-JJk` |
+| `Unknown` | `zj7-XSRULNw` |

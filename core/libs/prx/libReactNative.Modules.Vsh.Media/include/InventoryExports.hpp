@@ -44,4 +44,15 @@ int APS5_VABI removeProhibitionFlagListener();
 int APS5_VABI removeTelemetryErrorListener();
 int APS5_VABI setVideoMode();
 
+
+int APS5_VABI libReactNativeMediaInventory_BIdvn6c_minus_zAw_nid_no_patch();
+int APS5_VABI libReactNativeMediaInventory_BwF_minus_lBIdW5g_nid_no_patch();
+int APS5_VABI libReactNativeMediaInventory_JwW_plus_jnYDAcI_nid_no_patch();
+int APS5_VABI libReactNativeMediaInventory_QWwXJ_minus_KSWg4_nid_no_patch();
+int APS5_VABI libReactNativeMediaInventory_S3lY_minus_8Af_plus_rw_nid_no_patch();
+int APS5_VABI libReactNativeMediaInventory_Xn1h2KUpUN4_nid_no_patch();
+int APS5_VABI libReactNativeMediaInventory_kYVOipktdO0_nid_no_patch();
+int APS5_VABI libReactNativeMediaInventory_m4NzcIr_minus_JJk_nid_no_patch();
+int APS5_VABI libReactNativeMediaInventory_zj7_minus_XSRULNw_nid_no_patch();
+
 }
