@@ -53,6 +53,31 @@ private:
     const std::set<VirtualAddress>& importSlots;
     std::map<VirtualAddress, Cie> cies;
 
+    bool inTextSegment(VirtualAddress address) const {
+        bool hasText = false;
+        for (const auto& segment : headers) {
+            if (segment.Type == 1 && (segment.Flags & 1) != 0) {
+                hasText = true;
+                if (address >= segment.MappedAddress && address - segment.MappedAddress < segment.FileSize)
+                    return true;
+            }
+        }
+        return !hasText;
+    }
+
+    bool inTextSegment(VirtualAddress begin, VirtualAddress end) const {
+        bool hasText = false;
+        for (const auto& segment : headers) {
+            if (segment.Type == 1 && (segment.Flags & 1) != 0) {
+                hasText = true;
+                if (begin >= segment.MappedAddress && begin - segment.MappedAddress < segment.FileSize &&
+                    end >= segment.MappedAddress && end - segment.MappedAddress <= segment.FileSize)
+                    return true;
+            }
+        }
+        return !hasText;
+    }
+
     VirtualAddress checkedRangeEnd(VirtualAddress address, std::uint64_t size) const {
         if (size > std::numeric_limits<VirtualAddress>::max() - address)
             throw RelinkerException("Strict filter: unwind range overflowed", address);
@@ -140,7 +165,7 @@ private:
                 const bool negative = (value >> 63) != 0;
                 if (negative ? base < std::uint64_t{0} - value : value > std::numeric_limits<VirtualAddress>::max() - base)
                     throw RelinkerException("Strict filter: unwind pointer address overflowed", field);
-            } else if ((encoding & 0x0F) == 2 || (encoding & 0x0F) == 3) {
+            } else if ((encoding & 0x0F) == 1 || (encoding & 0x0F) == 2 || (encoding & 0x0F) == 3) {
                 if (value > std::numeric_limits<VirtualAddress>::max() - base)
                     throw RelinkerException("Strict filter: unwind pointer address overflowed", field);
             }
@@ -169,26 +194,40 @@ private:
             const auto character = read<std::uint8_t>(position);
             if (character == 0) break;
             augmentation.push_back(static_cast<char>(character));
+            if (augmentation.size() > 16) throw RelinkerException("Strict filter: unsupported CIE augmentation", address);
         }
-        if (version == 4 && (read<std::uint8_t>(position) != 8 || read<std::uint8_t>(position) != 0))
-            throw RelinkerException("Strict filter: unsupported CIE address size", address);
+        if (version == 4) {
+            if (position + 2 > end || read<std::uint8_t>(position) != 8 || read<std::uint8_t>(position) != 0)
+                throw RelinkerException("Strict filter: unsupported CIE address size", address);
+        }
+        if (position >= end) throw RelinkerException("Strict filter: CIE fields exceed record", address);
         leb(position);
+        if (position >= end) throw RelinkerException("Strict filter: CIE fields exceed record", address);
         leb(position, true);
-        if (version == 1) read<std::uint8_t>(position);
-        else leb(position);
+        if (position >= end) throw RelinkerException("Strict filter: CIE fields exceed record", address);
+        const auto returnAddressRegister = version == 1 ? static_cast<std::uint64_t>(read<std::uint8_t>(position)) : leb(position);
+        if (returnAddressRegister != 16) throw RelinkerException("Strict filter: unsupported return address register", address);
         Cie cie;
         if (!augmentation.empty()) {
             if (augmentation.front() != 'z') throw RelinkerException("Strict filter: unsupported CIE augmentation", address);
             cie.Augmented = true;
+            if (position >= end) throw RelinkerException("Strict filter: CIE fields exceed record", address);
             const auto size = leb(position);
             if (position > end || size > end - position)
                 throw RelinkerException("Strict filter: CIE augmentation exceeds record", address);
             const auto augmentationEnd = position + size;
             for (std::size_t index = 1; index < augmentation.size(); ++index) {
                 switch (augmentation[index]) {
-                    case 'L': cie.LsdaEncoding = read<std::uint8_t>(position); break;
-                    case 'R': cie.PointerEncoding = read<std::uint8_t>(position); break;
+                    case 'L':
+                        if (position >= augmentationEnd) throw RelinkerException("Strict filter: CIE augmentation size mismatch", address);
+                        cie.LsdaEncoding = read<std::uint8_t>(position);
+                        break;
+                    case 'R':
+                        if (position >= augmentationEnd) throw RelinkerException("Strict filter: CIE augmentation size mismatch", address);
+                        cie.PointerEncoding = read<std::uint8_t>(position);
+                        break;
                     case 'P': {
+                        if (position >= augmentationEnd) throw RelinkerException("Strict filter: CIE augmentation size mismatch", address);
                         const auto encoding = read<std::uint8_t>(position);
                         cie.Personality = encoded(position, encoding);
                         break;
@@ -197,7 +236,8 @@ private:
                     default: throw RelinkerException("Strict filter: unknown CIE augmentation field", position);
                 }
             }
-            if (position != augmentationEnd) throw RelinkerException("Strict filter: CIE augmentation size mismatch", address);
+            if (position > augmentationEnd) throw RelinkerException("Strict filter: CIE augmentation size mismatch", address);
+            position = augmentationEnd;
         }
         if (position > end) throw RelinkerException("Strict filter: CIE fields exceed record", address);
         cies.emplace(address, cie);
@@ -213,13 +253,18 @@ private:
         const auto cieOffset = read<std::uint32_t>(position);
         if (cieOffset == 0 || cieOffset > cieField) throw RelinkerException("Strict filter: invalid FDE CIE offset", address);
         const auto cie = readCie(cieField - cieOffset);
+        if (position >= end) throw RelinkerException("Strict filter: FDE fields exceed record", address);
         const auto begin = encoded(position, cie.PointerEncoding);
+        if (position >= end) throw RelinkerException("Strict filter: FDE fields exceed record", address);
         const auto size = encoded(position, cie.PointerEncoding & 0x0F);
         if (begin != expectedBegin || size > std::numeric_limits<VirtualAddress>::max() - begin)
             throw RelinkerException("Strict filter: inconsistent FDE function range", address);
         StrictCodeRegion region{begin, begin + size, {}};
+        if (region.End > region.Begin && !inTextSegment(region.Begin, region.End))
+            throw RelinkerException("Strict filter: FDE function range outside text segment", address);
         if (cie.Personality != 0) region.ExtraTargets.push_back(cie.Personality);
         if (cie.Augmented) {
+            if (position >= end) throw RelinkerException("Strict filter: FDE fields exceed record", address);
             const auto augmentationSize = leb(position);
             if (position > end || augmentationSize > end - position)
                 throw RelinkerException("Strict filter: FDE augmentation exceeds record", address);
@@ -230,6 +275,7 @@ private:
                 if (lsda != 0 && cie.Personality != 0) readLsda(lsda, region);
             }
             if (position > augmentationEnd) throw RelinkerException("Strict filter: FDE augmentation size mismatch", address);
+            position = augmentationEnd;
         }
         if (position > end) throw RelinkerException("Strict filter: FDE fields exceed record", address);
         return region;
@@ -255,7 +301,10 @@ private:
                 const bool negative = (callEncoding & 0x08) != 0 && (landing >> 63) != 0;
                 if (negative ? landingBase < std::uint64_t{0} - landing : landing > std::numeric_limits<VirtualAddress>::max() - landingBase)
                     throw RelinkerException("Strict filter: LSDA landing pad address overflowed", address);
-                region.ExtraTargets.push_back(landingBase + landing);
+                const auto landingPad = landingBase + landing;
+                if (!inTextSegment(landingPad))
+                    throw RelinkerException("Strict filter: LSDA landing pad outside text segment", address);
+                region.ExtraTargets.push_back(landingPad);
             }
         }
         if (position != tableEnd) throw RelinkerException("Strict filter: LSDA call-site table size mismatch", address);
