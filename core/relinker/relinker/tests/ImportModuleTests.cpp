@@ -76,5 +76,17 @@ int main() {
     catch (const Domain::RelinkerException&) {}
     const auto audioImage = Relinker::GuestImageReader().Read("audio-consumer.prx", Fixture(false, "libSceAudiodec.native.prx", "libSceAudiodec"), true);
     if (audioImage.Symbols.size() != 4 || audioImage.Symbols[3].Library != "libSceAudiodec.native.prx") return 19;
+    const std::map<std::uint64_t, std::string> ajm{{1, "libSceAjm"}};
+    const std::array<std::string, 1> ajmNative{"libSceAjm.native.prx"};
+    const std::array<std::string, 2> ajmBoth{"libSceAjm.prx", "libSceAjm.native.prx"};
+    const std::array<std::string, 1> ajmOther{"libSceAjm2.prx"};
+    const std::array<std::string, 2> ajmAmbiguous{"libSceAjm.native.prx", "libSceAjm.native.sprx"};
+    if (Domain::ImportModule("nid#A#B", ajm, ajmNative) != ajmNative[0]) return 20;
+    if (Domain::ImportModule("nid#A#B", ajm, ajmBoth) != ajmBoth[0]) return 21;
+    if (!Domain::ImportModule("nid#A#B", ajm, ajmOther).empty()) return 22;
+    try { Domain::ImportModule("nid#A#B", ajm, ajmAmbiguous); return 23; }
+    catch (const Domain::RelinkerException&) {}
+    const auto ajmImage = Relinker::GuestImageReader().Read("ajm-consumer.prx", Fixture(false, "libSceAjm.native.prx", "libSceAjm"), true);
+    if (ajmImage.Symbols.size() != 4 || ajmImage.Symbols[3].Library != "libSceAjm.native.prx") return 24;
     std::cout << "module mapping checks passed\n";
 }

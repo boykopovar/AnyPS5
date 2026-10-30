@@ -30,6 +30,7 @@ inline std::string ImportModuleName(std::string name) {
     if (name == "libSceLibreSSL") name = "libSceLibreSsl";
     if (name == "libSceJson2") name = "libSceJson";
     if (name == "libSceAudiodec.native") name = "libSceAudiodec";
+    if (name == "libSceAjm.native") name = "libSceAjm";
     std::replace(name.begin(), name.end(), '.', '_');
     return name;
 }
