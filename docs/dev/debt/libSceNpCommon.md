@@ -37,9 +37,9 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 
 ### Additional callable exports
 
-- The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/5561dd3862eb9a93c9badc2c55c2a160/fa7aea3cc979cf250f21711abb023cafd298381f) records the module, library, symbol type and NIDs for the declarations in [InventoryExports.cpp](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp); it is a metadata summary rather than independent verification. For the 421 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `0c1224731aef573b7cb8357beadfdbac6ef4e098d6607e6cba14503a64b68d06`. Image labels are not authenticated.
+- The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/c5c2b80f9df9b48496fbf773b2aa307a/7143affa622c9b33588346e8c08f3ff49b65e808#file-npcommon-callable-identities-768-json) records the module, library, symbol type and NIDs for the declarations in [InventoryExports.cpp](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp); it is a metadata summary rather than independent verification. For the 420 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/c5c2b80f9df9b48496fbf773b2aa307a/7143affa622c9b33588346e8c08f3ff49b65e808#file-npcommon-catalogue-absent-420-json) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `516d3c70069d1cc3aeed837cf5907fdb6a5834c33b34d60e3f43e0d0356e6e7b`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp) - 789 declarations throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 789; 368 match the public 3.20 catalogue, while 421 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp) - 768 declarations throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 768; 348 match the public 3.20 catalogue, while 420 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -307,15 +307,6 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 | `_ZN3sce2np3ipc17ServiceIpmiClientD0Ev` | `PmsH4f3z8Yk` |
 | `_ZN3sce2np3ipc17ServiceIpmiClientD1Ev` | `90XdvAqFFn8` |
 | `_ZN3sce2np3ipc17ServiceIpmiClientD2Ev` | `agYDXAyL-K8` |
-| `_ZN3sce2np4Cond4WaitEj` | `SLPuaDLbeD4` |
-| `_ZN3sce2np4Cond4dtorEv` | `BtXPJQEg41Y` |
-| `_ZN3sce2np4Cond6SignalEv` | `OQiPXR6gfj0` |
-| `_ZN3sce2np4Cond7DestroyEv` | `I5uzTXxbziU` |
-| `_ZN3sce2np4Cond8SignalToEP7pthread` | `TBnUmXjaheI` |
-| `_ZN3sce2np4Cond9SignalAllEv` | `-hchsElmzXY` |
-| `_ZN3sce2np4CondC1Ev` | `3z5EPY-ph14` |
-| `_ZN3sce2np4CondC2Ev` | `6nW8WXQYRgM` |
-| `_ZN3sce2np4CondD2Ev` | `6RQRpTn+-cc` |
 | `_ZN3sce2np4File8MoveDataEPNS0_6HandleElllPvm` | `alVg2J8Ssuc` |
 | `_ZN3sce2np4Path10AppendStrsEiP13__va_list_tag` | `hcH2bHZ6SdI` |
 | `_ZN3sce2np4Path10AppendStrsEiz` | `ahOJqm5WE4c` |
@@ -342,17 +333,6 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 | `_ZN3sce2np4PathD0Ev` | `0fwoTW7gqfM` |
 | `_ZN3sce2np4PathD1Ev` | `-3UvpBs-26g` |
 | `_ZN3sce2np4Time12ParseRFC3339EPKc` | `EpJtzzWZSwE` |
-| `_ZN3sce2np5Mutex4InitEPKcj` | `aTNOl9EB4V4` |
-| `_ZN3sce2np5Mutex4LockEv` | `VM+CXTW4F-s` |
-| `_ZN3sce2np5Mutex4ctorEv` | `I1kBZV6keO4` |
-| `_ZN3sce2np5Mutex4dtorEv` | `mo+gaebiE+M` |
-| `_ZN3sce2np5Mutex6UnlockEv` | `eYgHIWx0Hco` |
-| `_ZN3sce2np5Mutex7TryLockEv` | `TJNrs69haak` |
-| `_ZN3sce2np5MutexC1Ev` | `O1AvlQU33pI` |
-| `_ZN3sce2np5MutexC2Ev` | `2beu2bHw6qo` |
-| `_ZN3sce2np5MutexD0Ev` | `omf1GoUEJCA` |
-| `_ZN3sce2np5MutexD1Ev` | `9zi9FTPol74` |
-| `_ZN3sce2np5MutexD2Ev` | `CI7ciM21NXs` |
 | `_ZN3sce2np5NpEnv8GetNpEnvEPS1_` | `uuyEiBHghY4` |
 | `_ZN3sce2np6Handle10CancelImplEi` | `-c9QK+CpQLg` |
 | `_ZN3sce2np6Handle7DestroyEv` | `1atFu71dFAU` |
@@ -699,7 +679,6 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 | `_ZNK3sce2np20BufferedStreamWriter8IsOpenedEv` | `ek1vZf9hlaU` |
 | `_ZNK3sce2np3ipc10IpmiClient6IsInitEv` | `GI-kJrlbsDQ` |
 | `_ZNK3sce2np3ipc17ServiceIpmiClient6IsInitEv` | `C8SMKrvRkl8` |
-| `_ZNK3sce2np4Cond6IsInitEv` | `1YezZ6DJXgY` |
 | `_ZNK3sce2np4Path6GetStrEv` | `8qEFhKvl2Cw` |
 | `_ZNK3sce2np4Path7IsEmptyEv` | `d-LQfrbYBuY` |
 | `_ZNK3sce2np6Handle6IsInitEv` | `Z68UCklzmHs` |

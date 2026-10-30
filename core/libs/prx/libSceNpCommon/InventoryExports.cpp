@@ -1060,42 +1060,6 @@ int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClientD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce2np4Cond4WaitEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np4Cond4dtorEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np4Cond6SignalEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np4Cond7DestroyEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np4Cond8SignalToEP7pthread() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np4Cond9SignalAllEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np4CondC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np4CondC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np4CondD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3sce2np4File8MoveDataEPNS0_6HandleElllPvm() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1197,50 +1161,6 @@ int APS5_VABI _ZN3sce2np4PathD1Ev() {
 }
 
 int APS5_VABI _ZN3sce2np4Time12ParseRFC3339EPKc() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5Mutex4InitEPKcj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5Mutex4LockEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5Mutex4ctorEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5Mutex4dtorEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5Mutex6UnlockEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5Mutex7TryLockEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5MutexC1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5MutexC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5MutexD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5MutexD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3sce2np5MutexD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -2625,10 +2545,6 @@ int APS5_VABI _ZNK3sce2np3ipc10IpmiClient6IsInitEv() {
 }
 
 int APS5_VABI _ZNK3sce2np3ipc17ServiceIpmiClient6IsInitEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce2np4Cond6IsInitEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
