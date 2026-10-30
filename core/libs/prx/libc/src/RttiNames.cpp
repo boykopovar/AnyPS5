@@ -48,9 +48,6 @@ APS5_EXPORT("3op2--wf660", LibcGuest_ZTSPKv_nid_no_patch);
 extern const char LibcGuest_ZTSSi_nid_no_patch[] = "Si";
 APS5_EXPORT("46haDPRVtPo", LibcGuest_ZTSSi_nid_no_patch);
 
-extern const char LibcGuest_ZTSN10__cxxabiv120__function_type_infoE_nid_no_patch[] = "N10__cxxabiv120__function_type_infoE";
-APS5_EXPORT("4ZXlZy7iRWI", LibcGuest_ZTSN10__cxxabiv120__function_type_infoE_nid_no_patch);
-
 extern const char LibcGuest_ZTSPw_nid_no_patch[] = "Pw";
 APS5_EXPORT("4r--aFJyPpI", LibcGuest_ZTSPw_nid_no_patch);
 
@@ -90,17 +87,11 @@ APS5_EXPORT("8Ce6O0B-KpA", LibcGuest_ZTSPKe_nid_no_patch);
 extern const char LibcGuest_ZTSPt_nid_no_patch[] = "Pt";
 APS5_EXPORT("8OSy0MMQ7eI", LibcGuest_ZTSPt_nid_no_patch);
 
-extern const char LibcGuest_ZTSN10__cxxabiv117__class_type_infoE_nid_no_patch[] = "N10__cxxabiv117__class_type_infoE";
-APS5_EXPORT("8Vs1AjNm2mE", LibcGuest_ZTSN10__cxxabiv117__class_type_infoE_nid_no_patch);
-
 extern const char LibcGuest_ZTSSt7codecvtIDsc9_MbstatetE_nid_no_patch[] = "St7codecvtIDsc9_MbstatetE";
 APS5_EXPORT("9XL3Tlgx6lc", LibcGuest_ZTSSt7codecvtIDsc9_MbstatetE_nid_no_patch);
 
 extern const char LibcGuest_ZTSSt10bad_typeid_nid_no_patch[] = "St10bad_typeid";
 APS5_EXPORT("ALcclvT4W3Q", LibcGuest_ZTSSt10bad_typeid_nid_no_patch);
-
-extern const char LibcGuest_ZTSN10__cxxabiv120__si_class_type_infoE_nid_no_patch[] = "N10__cxxabiv120__si_class_type_infoE";
-APS5_EXPORT("AQlqO860Ztc", LibcGuest_ZTSN10__cxxabiv120__si_class_type_infoE_nid_no_patch);
 
 extern const char LibcGuest_ZTSSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_no_patch[] = "St7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE";
 APS5_EXPORT("B9rn6eKNPJg", LibcGuest_ZTSSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_no_patch);
@@ -140,9 +131,6 @@ APS5_EXPORT("H61hE9pLBmU", LibcGuest_ZTSSt9exception_nid_no_patch);
 
 extern const char LibcGuest_ZTSPh_nid_no_patch[] = "Ph";
 APS5_EXPORT("HHVZLHmCfI4", LibcGuest_ZTSPh_nid_no_patch);
-
-extern const char LibcGuest_ZTSN10__cxxabiv121__vmi_class_type_infoE_nid_no_patch[] = "N10__cxxabiv121__vmi_class_type_infoE";
-APS5_EXPORT("I1Ru2fZJDoE", LibcGuest_ZTSN10__cxxabiv121__vmi_class_type_infoE_nid_no_patch);
 
 extern const char LibcGuest_ZTSSt15basic_streambufIcSt11char_traitsIcEE_nid_no_patch[] = "St15basic_streambufIcSt11char_traitsIcEE";
 APS5_EXPORT("IfWUkB7Snkc", LibcGuest_ZTSSt15basic_streambufIcSt11char_traitsIcEE_nid_no_patch);
@@ -240,9 +228,6 @@ APS5_EXPORT("TuKJRIKcceA", LibcGuest_ZTSSt9basic_iosIcSt11char_traitsIcEE_nid_no
 extern const char LibcGuest_ZTSSt11regex_error_nid_no_patch[] = "St11regex_error";
 APS5_EXPORT("UG6HJeH5GNI", LibcGuest_ZTSSt11regex_error_nid_no_patch);
 
-extern const char LibcGuest_ZTSN10__cxxabiv119__pointer_type_infoE_nid_no_patch[] = "N10__cxxabiv119__pointer_type_infoE";
-APS5_EXPORT("UVft3+rc06o", LibcGuest_ZTSN10__cxxabiv119__pointer_type_infoE_nid_no_patch);
-
 extern const char LibcGuest_ZTSw_nid_no_patch[] = "w";
 APS5_EXPORT("UXS8VgAnIP4", LibcGuest_ZTSw_nid_no_patch);
 
@@ -290,9 +275,6 @@ APS5_EXPORT("au+YxKwehQM", LibcGuest_ZTSN10__cxxabiv116__enum_type_infoE_nid_no_
 
 extern const char LibcGuest_ZTSPj_nid_no_patch[] = "Pj";
 APS5_EXPORT("bEbjy6yceWo", LibcGuest_ZTSPj_nid_no_patch);
-
-extern const char LibcGuest_ZTSN10__cxxabiv117__pbase_type_infoE_nid_no_patch[] = "N10__cxxabiv117__pbase_type_infoE";
-APS5_EXPORT("bPUMNZBqRqQ", LibcGuest_ZTSN10__cxxabiv117__pbase_type_infoE_nid_no_patch);
 
 extern const char LibcGuest_ZTSSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_no_patch[] = "St8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE";
 APS5_EXPORT("bn3sb2SwGk8", LibcGuest_ZTSSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_no_patch);
