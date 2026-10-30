@@ -93,6 +93,18 @@ int main() {
             catch (const std::exception&) { rejected = true; }
             Require(rejected);
         }
-        std::cout << "17 unwind record cases passed\n";
+        auto tableOverflow = Fixture();
+        tableOverflow[3] = 0x32;
+        Io::WriteU16(tableOverflow, 16, 0xFFFF);
+        Io::WriteU16(tableOverflow, 18, 0xFFFF);
+        Domain::ProgramHeader highLoad{}; highLoad.Type = 1; highLoad.MappedAddress = 0xFFFFFFFFFFFFF000ULL; highLoad.FileSize = 128;
+        Domain::ProgramHeader highEh = highLoad; highEh.Type = 0x6474E550; highEh.FileSize = 32;
+        bool overflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(tableOverflow, {highLoad, highEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            overflowRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(overflowRejected);
+        std::cout << "18 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
