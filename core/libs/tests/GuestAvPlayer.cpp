@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <new>
@@ -806,6 +807,8 @@ void TestPlayback() {
     Check(sceAvPlayerPostInit(player, &post) == 0, "post init failed");
     Check(sceAvPlayerPostInit(player, nullptr) == InvalidParams, "post init accepted null data");
     Check(sceAvPlayerStreamCount(player) == OperationFailed, "stream count without a source");
+    Check(sceAvPlayerSetTrickSpeed(player, 100) == OperationFailed, "trick speed accepted without a source");
+    Check(sceAvPlayerSetTrickSpeed(player, 0) == OperationFailed, "trick speed checked the speed before the source");
     Check(!sceAvPlayerIsActive(player), "active without a source");
     Check(sceAvPlayerAddSource(player, "/app0/missing.mp4") == OperationFailed, "missing file accepted");
     Check(sceAvPlayerAddSource(player, "/app0/missing/../avplayer.mp4") == OperationFailed, "missing parent accepted");
@@ -1041,6 +1044,7 @@ void TestExtendedExports() {
     Check(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == 0, "bandwidth rejected");
     Check(sceAvPlayerSetAvailableBandwidth(nullptr, 4000, 1000, 8000) == InvalidParams, "bandwidth accepted for a null player");
     Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Check(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == OperationFailed, "bandwidth accepted after a source");
     Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
     CheckStreamInfoEx(player);
     Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
@@ -1257,6 +1261,27 @@ void TestRestartAfterPausedJumpKeepsClockRunning() {
         return last >= 200;
     }), "playback froze after a restart that followed a paused jump");
     Check(sceAvPlayerCurrentTime(player) > 0, "clock stayed frozen after the restart");
+    Check(sceAvPlayerClose(player) == 0, "close failed");
+}
+
+void TestJumpPastTheLatestTimeReportsTheDuration() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    std::uint64_t duration = 0;
+    for (const auto stream : {VideoStream, EnglishAudioStream}) {
+        AvPlayerStreamInfo info{};
+        Check(sceAvPlayerGetStreamInfo(player, stream, &info) == 0, "stream info failed");
+        duration = std::max(duration, info.duration);
+    }
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Check(sceAvPlayerJumpToTime(player, std::numeric_limits<std::uint64_t>::max()) == 0, "jump to the latest time failed");
+    Check(sceAvPlayerStart(player) == 0, "start failed");
+    const auto current = sceAvPlayerCurrentTime(player);
+    Check(current == duration, "current time " + std::to_string(current) + " after a jump to the latest time, expected the duration " + std::to_string(duration));
     Check(sceAvPlayerClose(player) == 0, "close failed");
 }
 
@@ -2056,6 +2081,7 @@ int main(int argc, char** argv) {
         TestPs5ExtendedInitLayout();
         TestAutoStartKeepsStartedPlayback();
         TestRestartAfterPausedJumpKeepsClockRunning();
+        TestJumpPastTheLatestTimeReportsTheDuration();
         TestUnsyncedVideoKeepsUpWithAudio();
         TestNoSyncVideoCanLeadAudioClock();
         TestLoopWarningWaitsForPlayback();

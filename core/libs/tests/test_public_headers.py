@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from functools import cache
 from pathlib import Path
 
@@ -171,12 +172,30 @@ def compile_headers(compiler, compiler_args, groups, workers=4):
 
     def compile_one(group):
         includes = "".join(f'#include "{header.relative_to(LIBS).as_posix()}"\n' for header in group)
-        result = subprocess.run([compiler, *compiler_args, "-std=c++20", *warnings, "-fsyntax-only", "-x", "c++", f"-I{LIBS}", f"-I{ROOT / '3rdparty/freetype/include'}", "-"], input=includes * 2, text=True, capture_output=True)
-        if result.returncode:
-            raise RuntimeError(f"Header compilation failed: {group}\n{result.stdout}{result.stderr}")
+        with tempfile.TemporaryDirectory() as directory:
+            dependencies = Path(directory) / "headers.d"
+            result = subprocess.run([compiler, *compiler_args, "-std=c++20", *warnings, "-fsyntax-only", "-MD", "-MF", str(dependencies), "-MT", "public_headers", "-x", "c++", f"-I{LIBS}", f"-I{ROOT / '3rdparty/freetype/include'}", "-"], input=includes * 2, text=True, capture_output=True)
+            if result.returncode:
+                raise RuntimeError(f"Header compilation failed: {group}\n{result.stdout}{result.stderr}")
+            text = dependencies.read_text(encoding="utf-8").replace("\\\n", "")
+            if not text.startswith("public_headers:"):
+                raise RuntimeError(f"Invalid compiler dependency output: {dependencies}")
+            names = re.findall(r"(?:\\[ \t]|[^\s])+", text.removeprefix("public_headers:"))
+            paths = [Path(re.sub(r"\\([ \t#\\])", r"\1", name).replace("$$", "$")).resolve() for name in names]
+            forbidden = [path for path in paths if path.is_relative_to((ROOT / "3rdparty").resolve())]
+            if forbidden:
+                raise RuntimeError(f"Public headers depend on 3rdparty: {group}\n" + "\n".join(map(str, forbidden)))
 
+    errors = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        list(pool.map(compile_one, groups))
+        futures = [(group, pool.submit(compile_one, group)) for group in groups]
+        for group, future in futures:
+            try:
+                future.result()
+            except Exception as error:
+                errors.append(f"{group}: {error}")
+    if errors:
+        raise RuntimeError(f"{len(errors)} header compilation units failed:\n\n" + "\n\n".join(errors))
 
 
 def main():

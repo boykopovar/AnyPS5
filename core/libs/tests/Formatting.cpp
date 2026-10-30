@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
+#include "prx/libc/include/ScanQuadLength.hpp"
 #include <algorithm>
 #include <array>
 #include <climits>
@@ -74,6 +75,18 @@ static int APS5_VABI PrintList(const char* format, ...) {
     const int result = vprintf_nid_postfix(format, &list);
     __builtin_sysv_va_end(args);
     return result;
+}
+
+static void CheckIgnoredLengths() {
+    char output[96];
+    Require(snprintf_nid_postfix(output, sizeof(output), "%Ld|%Lx|%Lu|%Lo", -1985229329, 0x89abcdefu, 0x89abcdefu, 0x89abcdefu) == 43 &&
+        std::strcmp(output, "-1985229329|89abcdef|2309737967|21152746757") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "[%5Ld][%-8.3Lx]", 0x41424344, 0x41424344) == 22 && std::strcmp(output, "[1094861636][41424344]") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%hhc%Lc%zc|%hhs|%Ls|%zs", 0x44, 0x45, 0x46, "ab", "ab", "ab") == 12 && std::strcmp(output, "DEF|ab|ab|ab") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%hf|%llf|%ze|%ja", 1.5, 1.5, 1.5, 1.5) == 39 && std::strcmp(output, "1.500000|1.500000|1.500000e+00|0x1.8p+0") == 0);
+    Require(snprintf_nid_postfix(output, sizeof(output), "%hp|%Lp", reinterpret_cast<void*>(0x1234), reinterpret_cast<void*>(0x1234)) == 9 && std::strcmp(output, "1234|1234") == 0);
+    struct { int count; int guard; } written = {-1, -1};
+    Require(snprintf_nid_postfix(output, sizeof(output), "a%Ln", &written.count) == 1 && written.count == 1 && written.guard == -1);
 }
 
 static void CheckSizeLimits() {
@@ -151,6 +164,62 @@ static bool CheckWidePrecision() {
         if (capacity) Require(output[copied] == 0);
     }
     return correct;
+}
+
+static void CheckIntegerScanWidths() {
+    int value = 7;
+    *__error_nid_postfix() = 0;
+    Require(sscanf_nid_postfix("2147483648", "%d", &value) == 1 && value == -2147483647 - 1 && *__error_nid_postfix() == 0);
+    Require(sscanf_nid_postfix("0xFFFFFFFF", "%i", &value) == 1 && value == -1 && *__error_nid_postfix() == 0);
+    Require(sscanf_nid_postfix("99999999999999999999", "%d", &value) == 1 && value == -1 && *__error_nid_postfix() == 34);
+    unsigned unsignedValue = 7;
+    Require(sscanf_nid_postfix("4294967296", "%u", &unsignedValue) == 1 && unsignedValue == 0);
+    Require(sscanf_nid_postfix("100000001", "%x", &unsignedValue) == 1 && unsignedValue == 1);
+    Require(sscanf_nid_postfix("40000000001", "%o", &unsignedValue) == 1 && unsignedValue == 1);
+    short shortValue = 7;
+    Require(sscanf_nid_postfix("5000000000", "%hd", &shortValue) == 1 && shortValue == -3584);
+    signed char charValue = 7;
+    Require(sscanf_nid_postfix("300", "%hhd", &charValue) == 1 && charValue == 44);
+    Require(sscanf_nid_postfix("4294967295", "%u", &unsignedValue) == 1 && unsignedValue == 4294967295u);
+    unsigned short unsignedShort = 7;
+    Require(sscanf_nid_postfix("40000", "%hu", &unsignedShort) == 1 && unsignedShort == 40000);
+    Require(sscanf_nid_postfix("70000", "%hu", &unsignedShort) == 1 && unsignedShort == 4464);
+    Require(sscanf_nid_postfix("ffff", "%hx", &unsignedShort) == 1 && unsignedShort == 0xffff);
+    unsigned char unsignedChar = 7;
+    Require(sscanf_nid_postfix("200", "%hhu", &unsignedChar) == 1 && unsignedChar == 200);
+    Require(sscanf_nid_postfix("300", "%hhu", &unsignedChar) == 1 && unsignedChar == 44);
+    Require(sscanf_nid_postfix("377", "%hho", &unsignedChar) == 1 && unsignedChar == 255);
+    *__error_nid_postfix() = 0;
+    Require(sscanf_nid_postfix("-2147483649", "%d", &value) == 1 && value == 0x7fffffff && *__error_nid_postfix() == 0);
+    Require(sscanf_nid_postfix("-1", "%u", &unsignedValue) == 1 && unsignedValue == 0xffffffffu && *__error_nid_postfix() == 0);
+    Require(sscanf_nid_postfix("99999999999", "%x", &unsignedValue) == 1 && unsignedValue == 0x99999999u && *__error_nid_postfix() == 0);
+    Require(sscanf_nid_postfix("70000", "%hd", &shortValue) == 1 && shortValue == 0x1170 && *__error_nid_postfix() == 0);
+    long long quad = 0x5555555555555555ll;
+    Require(sscanf_nid_postfix("9223372036854775808", "%lld", &quad) == 1 && quad == 0x7fffffffffffffffll && *__error_nid_postfix() == 34);
+    unsigned long long unsignedQuad = 0x5555555555555555ull;
+    *__error_nid_postfix() = 0;
+    Require(sscanf_nid_postfix("18446744073709551616", "%llu", &unsignedQuad) == 1 && unsignedQuad == 0xffffffffffffffffull && *__error_nid_postfix() == 34);
+    quad = 0x5555555555555555ll;
+    *__error_nid_postfix() = 0;
+    Require(sscanf_nid_postfix("5", "%qd", &quad) == 0 && quad == 0x5555555555555555ll && *__error_nid_postfix() == 0);
+    int leading = 0;
+    Require(sscanf_nid_postfix("7 5", "%d %qd", &leading, &quad) == 1 && leading == 7 && quad == 0x5555555555555555ll);
+    leading = 0;
+    Require(ScanList("7 5", "%d %qd", &leading, &quad) == 1 && leading == 7 && quad == 0x5555555555555555ll);
+    char16_t quadWide[4] = {u'!', u'!', u'!', u'!'};
+    Require(sscanf_nid_postfix("ab cd", "%qS", quadWide) == 0 && quadWide[0] == u'!');
+    leading = 0;
+    Require(sscanf_nid_postfix("%qd 9", "%%qd %d", &leading) == 1 && leading == 9);
+    const char* const quadFormat = "%*3d %%q %[^q]%qd";
+    Require(LibcDetail::FindQuadScanDirective(quadFormat) == quadFormat + 14);
+    Require(LibcDetail::FindQuadScanDirective("%d %%qd %lld") == nullptr);
+    int first = 7;
+    int second = 7;
+    int position = 0;
+    Require(sscanf_nid_postfix("12 34", "%d %d%n", &first, &second, &position) == 2 && first == 12 && second == 34 && position == 5);
+    value = 7;
+    Require(sscanf_nid_postfix("x", "%d", &value) == 0 && value == 7);
+    Require(sscanf_nid_postfix("1 x", "%d %d", &first, &value) == 1 && first == 1 && value == 7);
 }
 
 static void CheckSecureFormat() {
@@ -388,6 +457,7 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(ScanListS("123 test", "%d %s", &scanNum, scanWord, 8u) == 2 && scanNum == 123 && std::strcmp(scanWord, "test") == 0);
     char tooSmall[4] = {'x', 'x', 'x', 'x'};
     Require(ScanListS("abcdef", "%s", tooSmall, 4u) == 0 && tooSmall[0] == '\0');
+    CheckIntegerScanWidths();
     std::puts("Formatting checks passed: 10000 iterations");
 }
 
@@ -492,4 +562,26 @@ static void CheckDecimalFloat() {
     }
 }
 
-int main() { CheckSizeLimits(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }
+static void CheckLongDoubleHexFloat() {
+    constexpr struct {
+        const char* format;
+        long double value;
+        const char* expected;
+    } cases[] = {
+        {"[%La]", 0.1L, "[0x1.999999999999999ap-4]"}, {"[%LA]", 1.0L, "[0X1P+0]"}, {"[%.3La]", 0.1L, "[0x1.99ap-4]"},
+        {"[%.0La]", 1.5L, "[0x2p+0]"}, {"[%#.0La]", 0.1L, "[0x2.p-4]"}, {"[%La]", 0.0L, "[0x0p+0]"}, {"[%La]", -0.0L, "[-0x0p+0]"},
+        {"[%La]", 0x1p-16445L, "[0x1p-16445]"}, {"[%La]", 0x1.fffffffffffffffep16383L, "[0x1.fffffffffffffffep+16383]"},
+        {"[%.15La]", 0x1.fffffffffffffffep0L, "[0x2.000000000000000p+0]"}, {"[%-+12.2La]", -2.0L, "[-0x1.00p+1  ]"},
+        {"[%010La]", 1.5L, "[0x001.8p+0]"}, {"[%.20La]", 0.1L, "[0x1.999999999999999a0000p-4]"},
+    };
+    for (const auto& item : cases) {
+        char buffer[64];
+        const int written = snprintf_nid_postfix(buffer, sizeof(buffer), item.format, item.value);
+        if (written != static_cast<int>(std::strlen(item.expected)) || std::strcmp(buffer, item.expected) != 0) {
+            std::fprintf(stderr, "%s of %La gave \"%s\", expected \"%s\"\n", item.format, item.value, buffer, item.expected);
+            Require(false);
+        }
+    }
+}
+
+int main() { CheckSizeLimits(); CheckIgnoredLengths(); RunChecks(); CheckHexFloat(); CheckDecimalFloat(); CheckLongDoubleHexFloat(); CheckAllocatingFormat(); return CheckWidePrecision() ? 0 : 1; }

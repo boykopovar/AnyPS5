@@ -29,6 +29,10 @@ layout(constant_id = 19) const uint EQ15 = 0u;
 // Nonzero: block extent in elements (thick 3D blocks are not the thin 2D shape derived below).
 layout(constant_id = 20) const uint BLOCK_WIDTH = 0u;
 layout(constant_id = 21) const uint BLOCK_HEIGHT = 0u;
+layout(constant_id = 22) const uint SPLIT0 = 0u;
+layout(constant_id = 23) const uint SPLIT1 = 0u;
+layout(constant_id = 24) const uint SPLIT2 = 0u;
+layout(constant_id = 25) const uint SPLIT3 = 0u;
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -64,6 +68,7 @@ layout(push_constant) uniform Push {
     uint columnBegin;
     uint rowBegin;
     uint pipeBankXor;
+    uint splitStride;
 } params;
 
 uint equationBit(uint mask, uvec2 p) {
@@ -242,6 +247,10 @@ void main() {
 
     uint blockIndex = block.y * params.blocksPerRow + block.x;
     uint tiledOffset = blockIndex * BLOCK_BYTES + blockOffset(swizzle);
+    if (SPLIT0 != 0u) {
+        uint split = equationBit(SPLIT0, p) | (equationBit(SPLIT1, p) << 1) | (equationBit(SPLIT2, p) << 2) | (equationBit(SPLIT3, p) << 3);
+        tiledOffset += split * params.splitStride;
+    }
     if (tiledOffset < params.rangeBegin || tiledOffset >= params.rangeEnd) {
         return;
     }

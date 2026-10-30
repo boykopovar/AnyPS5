@@ -92,6 +92,17 @@ int main() {
     CheckThread(GUEST_SCHED_FIFO, 256, RTP_PRIO_FIFO);
     Require(LookupError(2, 0, &self) == GUEST_ESRCH);
     Require(LookupError(RTP_LOOKUP, 0, nullptr) == GUEST_EFAULT);
+    auto* unmapped = reinterpret_cast<GuestRtPrio*>(std::uintptr_t{0x10});
+    Require(LookupError(RTP_LOOKUP, 0, unmapped) == GUEST_EFAULT);
+    Require(LookupError(RTP_SET, 0, unmapped) == GUEST_EFAULT);
+    Require(LookupError(RTP_SET, 999999, unmapped) == GUEST_ESRCH);
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<GuestRtPrio*>(page);
+    *readOnly = {7, 7};
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    Require(LookupError(RTP_LOOKUP, 0, readOnly) == GUEST_EFAULT);
+    Require(readOnly->type == 7 && readOnly->prio == 7);
     Require(LookupError(RTP_LOOKUP, 1, &self) == GUEST_ESRCH);
     Require(LookupError(RTP_LOOKUP, 999999, &self) == GUEST_ESRCH);
     bool threw = false;
