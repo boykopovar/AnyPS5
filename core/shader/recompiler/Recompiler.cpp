@@ -1066,16 +1066,20 @@ SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::s
 
 const ResourceSnapshot& mergeTargetImage(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults, ResourceSnapshot& merged) {
     const auto& images = variant.info.info.images;
-    const auto image = std::ranges::find_if(images, [](const ImageResource& candidate) { return candidate.targetMerge; });
+    const auto mergeImage = [](const ImageResource& candidate) { return candidate.targetMerge; };
+    const auto image = std::ranges::find_if(images, mergeImage);
     if (image == images.end() || registrationDefaults) return snapshot;
-    if (!request.context.pixel || request.context.pixel->targetMerge.mask == 0u) throw std::runtime_error("ShaderRecompiler: a color target merge variant was materialized without the merged target");
-    if (image + 1 != images.end() || snapshot.images.size() + 1u != images.size()) throw std::runtime_error("ShaderRecompiler: the captured images do not precede the color target merge image");
+    if (!request.context.pixel || request.context.pixel->targetMerges.empty()) throw std::runtime_error("ShaderRecompiler: a color target merge variant was materialized without the merged target");
+    const auto& merges = request.context.pixel->targetMerges;
+    if (static_cast<std::size_t>(image - images.begin()) != snapshot.images.size() || snapshot.images.size() + merges.size() != images.size() || !std::all_of(image, images.end(), mergeImage)) throw std::runtime_error("ShaderRecompiler: the captured images do not precede the color target merge images");
     merged = snapshot;
-    DescriptorValue descriptor;
-    std::ranges::copy(request.context.pixel->targetMerge.descriptor, descriptor.dwords.begin());
-    descriptor.dwordCount = 8u;
-    descriptor.availableDwordMask = 0xffu;
-    merged.images.push_back(descriptor);
+    for (const auto& merge : merges) {
+        DescriptorValue descriptor;
+        std::ranges::copy(merge.descriptor, descriptor.dwords.begin());
+        descriptor.dwordCount = 8u;
+        descriptor.availableDwordMask = 0xffu;
+        merged.images.push_back(descriptor);
+    }
     return merged;
 }
 
@@ -1753,12 +1757,13 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(request.context.pixel->reversedBlend);
         mix(static_cast<std::uint64_t>(request.context.pixel->rasterPrimitive));
         mix(request.context.pixel->layerExported);
-        const auto& merge = request.context.pixel->targetMerge;
-        mix(merge.target);
-        mix(merge.mask);
-        mix(merge.samples);
-        for (const auto word : merge.descriptor) mix(word);
-        if (merge.blend.enabled) {
+        mix(request.context.pixel->targetMerges.size());
+        for (const auto& merge : request.context.pixel->targetMerges) {
+            mix(merge.target);
+            mix(merge.mask);
+            mix(merge.samples);
+            for (const auto word : merge.descriptor) mix(word);
+            if (!merge.blend.enabled) continue;
             mix(merge.blend.snorm);
             mix(merge.blend.colorSource);
             mix(merge.blend.colorDestination);
