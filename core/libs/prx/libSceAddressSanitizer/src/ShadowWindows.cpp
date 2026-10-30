@@ -1,4 +1,5 @@
 #include "ShadowAddressSpace.hpp"
+#include "BackingMemory.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -9,6 +10,7 @@
 #include <atomic>
 #include <bit>
 #include <cstdint>
+#include <limits>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -139,6 +141,44 @@ extern "C" bool ShadowRangeAvailable_nid_no_patch(std::uintptr_t begin, std::uin
     if (begin == end || holes.empty()) return true;
     const auto hole = FirstEndingAfter(holes, begin);
     return hole == holes.end() || hole->first >= end;
+}
+
+extern "C" void* AllocateBacking_nid_no_patch(std::size_t size, std::size_t alignment) noexcept {
+    if (size == 0 || !std::has_single_bit(alignment) || !InitializeShadow_nid_no_patch()) return nullptr;
+    using AllocateFunction = PVOID (WINAPI*)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
+    static const auto allocate = [] {
+        const auto module = GetModuleHandleW(L"KernelBase.dll");
+        return module ? reinterpret_cast<AllocateFunction>(GetProcAddress(module, "VirtualAlloc2")) : nullptr;
+    }();
+    if (!allocate || size > std::numeric_limits<std::size_t>::max() - (pageSize - 1)) return nullptr;
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::uintptr_t granularity = info.dwAllocationGranularity;
+    const auto bytes = (size + pageSize - 1) & ~(pageSize - 1);
+    const auto limit = std::min<std::uintptr_t>((1ull << 47), reinterpret_cast<std::uintptr_t>(info.lpMaximumApplicationAddress) + 1) & ~(granularity - 1);
+    const auto requiredAlignment = std::max<std::size_t>(alignment, granularity);
+    if (requiredAlignment >= limit) return nullptr;
+    const Range applicationRanges[] = {{ShadowBase + ShadowSize, limit}, {granularity, ShadowBase}};
+    for (const auto& application : applicationRanges) {
+        for (const auto& reservation : reservations) {
+            const auto begin = (std::max(application.first, (reservation.first - ShadowBase) << 3) + requiredAlignment - 1) & ~(requiredAlignment - 1);
+            const auto end = std::min(application.second, (reservation.second - ShadowBase) << 3) & ~(granularity - 1);
+            if (begin >= end || bytes > end - begin) continue;
+            MEM_ADDRESS_REQUIREMENTS requirements{};
+            requirements.LowestStartingAddress = reinterpret_cast<void*>(begin);
+            requirements.HighestEndingAddress = reinterpret_cast<void*>(end - 1);
+            requirements.Alignment = requiredAlignment;
+            MEM_EXTENDED_PARAMETER parameter{};
+            parameter.Type = MemExtendedParameterAddressRequirements;
+            parameter.Pointer = &requirements;
+            if (void* block = allocate(nullptr, nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE, &parameter, 1)) return block;
+        }
+    }
+    return nullptr;
+}
+
+extern "C" void FreeBacking_nid_no_patch(void* pointer, std::size_t) noexcept {
+    if (pointer) VirtualFree(pointer, 0, MEM_RELEASE);
 }
 
 }

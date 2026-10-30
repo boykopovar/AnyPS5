@@ -1,4 +1,5 @@
 #include "prx/libSceAddressSanitizer/src/FakeStack.hpp"
+#include "prx/libSceAddressSanitizer/src/BackingMemory.hpp"
 #include "prx/libSceAddressSanitizer/include/Api.hpp"
 #include "prx/libSceAddressSanitizer/src/Container.hpp"
 #include "prx/libSceAddressSanitizer/src/ErrorReport.hpp"
@@ -6,7 +7,7 @@
 #include "prx/libSceAddressSanitizer/src/StackBounds.hpp"
 #include <algorithm>
 #include <cstdio>
-#include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <new>
 #include <set>
@@ -104,16 +105,17 @@ bool IsRegistered(void* stack) {
 Stack* Create(std::uintptr_t stackSizeLog) {
     stackSizeLog = std::min<std::uintptr_t>(std::max<std::uintptr_t>(stackSizeLog, kMinStackSizeLog), kMaxStackSizeLog);
     const std::size_t size = RequiredSize(stackSizeLog);
-    void* block = std::calloc(1, size);
+    void* block = AllocateBacking_nid_no_patch(size, alignof(Stack));
     if (!block) {
         throw std::bad_alloc();
     }
     try {
         RequireShadowRange_nid_no_patch(reinterpret_cast<std::uintptr_t>(block), size, __func__);
     } catch (...) {
-        std::free(block);
+        FreeBacking_nid_no_patch(block, alignof(Stack));
         throw;
     }
+    std::memset(block, 0, size);
     auto* stack = static_cast<Stack*>(block);
     stack->stackSizeLog = stackSizeLog;
     Registry& registry = GetRegistry();
@@ -129,7 +131,7 @@ void Destroy(Stack* stack) {
         std::lock_guard lock(registry.mutex);
         registry.stacks.erase(stack);
     }
-    std::free(stack);
+    FreeBacking_nid_no_patch(stack, alignof(Stack));
 }
 
 struct ThreadState {

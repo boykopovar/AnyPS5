@@ -1,9 +1,11 @@
 #include "ShadowAddressSpace.hpp"
+#include "BackingMemory.hpp"
 
 #if defined(__linux__)
 #include <sys/mman.h>
 #include <atomic>
 #include <mutex>
+#include <new>
 
 namespace AsanRuntime {
 
@@ -35,6 +37,15 @@ extern "C" bool InitializeShadow_nid_no_patch() noexcept {
 
 extern "C" bool ShadowRangeAvailable_nid_no_patch(std::uintptr_t begin, std::uintptr_t end) noexcept {
     return begin >= ShadowBase && end <= ShadowBase + ShadowSize && begin <= end && InitializeShadow_nid_no_patch();
+}
+
+extern "C" void* AllocateBacking_nid_no_patch(std::size_t size, std::size_t alignment) noexcept {
+    if (!InitializeShadow_nid_no_patch()) return nullptr;
+    return ::operator new(size, std::align_val_t(alignment), std::nothrow);
+}
+
+extern "C" void FreeBacking_nid_no_patch(void* pointer, std::size_t alignment) noexcept {
+    ::operator delete(pointer, std::align_val_t(alignment));
 }
 
 }

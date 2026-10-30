@@ -1,4 +1,5 @@
 #include "prx/libSceAddressSanitizer/src/Allocator.hpp"
+#include "prx/libSceAddressSanitizer/src/BackingMemory.hpp"
 #include "prx/libSceAddressSanitizer/src/ShadowRequire.hpp"
 #include "prx/libSceAddressSanitizer/src/Container.hpp"
 #include "prx/libSceAddressSanitizer/src/Describe.hpp"
@@ -14,7 +15,6 @@
 #include <limits>
 #include <map>
 #include <mutex>
-#include <new>
 #include <utility>
 
 namespace AsanRuntime::Heap {
@@ -202,7 +202,7 @@ void Recycle(State& state, std::uintptr_t raw) {
     state.stats.reallyFreed += chunk.size;
     state.stats.munmaps++;
     state.stats.munmaped += chunk.total;
-    ::operator delete(reinterpret_cast<void*>(chunk.raw), std::align_val_t(chunk.alignment));
+    FreeBacking_nid_no_patch(reinterpret_cast<void*>(chunk.raw), chunk.alignment);
 }
 
 void Quarantine(State& state, std::uintptr_t raw, std::size_t size) {
@@ -237,7 +237,7 @@ void* AllocateLocked(State& state, std::size_t size, std::size_t alignment, std:
     const std::size_t left = RoundUp(redzone, alignment);
     const std::size_t body = RoundUp(size, kGranularity);
     const std::size_t total = left + body + redzone;
-    void* block = ::operator new(total, std::align_val_t(alignment), std::nothrow);
+    void* block = AllocateBacking_nid_no_patch(total, alignment);
     if (!block) {
         ReportOutOfMemory(size, pc);
     }
@@ -245,7 +245,7 @@ void* AllocateLocked(State& state, std::size_t size, std::size_t alignment, std:
     try {
         RequireShadowRange_nid_no_patch(raw, total, __func__);
     } catch (...) {
-        ::operator delete(block, std::align_val_t(alignment));
+        FreeBacking_nid_no_patch(block, alignment);
         throw;
     }
     const std::uintptr_t user = raw + left;

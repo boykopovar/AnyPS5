@@ -136,6 +136,13 @@ if(BUILD_TESTING)
     set_tests_properties(guest_addresssanitizer_runtime_coverage PROPERTIES PASS_REGULAR_EXPRESSION
         "SanitizerCoverage: ./guest_addresssanitizer_runtime_tests[^ ]*[.][0-9]+[.]sancov: 2 PCs written")
     if(WIN32)
+        add_test_executable(guest_addresssanitizer_backing_tests ${LIBS_INCLUDE_DIR}/tests/GuestAddressSanitizerBacking.cpp)
+        target_include_directories(guest_addresssanitizer_backing_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_addresssanitizer_backing_tests PRIVATE libSceAddressSanitizer libc)
+        configure_windows_unwind(guest_addresssanitizer_backing_tests)
+        add_test(NAME guest_addresssanitizer_backing_layout COMMAND guest_addresssanitizer_backing_tests)
+        set_tests_properties(guest_addresssanitizer_backing_layout PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAddressSanitizer>")
         add_test_executable(guest_addresssanitizer_mapping_tests ${LIBS_INCLUDE_DIR}/tests/GuestAddressSanitizerMapping.cpp)
         target_include_directories(guest_addresssanitizer_mapping_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_addresssanitizer_mapping_tests PRIVATE libSceAddressSanitizer libc)
