@@ -1,5 +1,6 @@
 import contextlib
 import io
+import locale
 import os
 import subprocess
 import sys
@@ -83,11 +84,48 @@ class AuditDumpTests(unittest.TestCase):
             code = audit_dump.main([str(argument) for argument in arguments])
         return code, errors.getvalue()
 
+    def test_conversion_decodes_both_streams_as_utf8_under_a_legacy_locale(self):
+        message = "module-\u754c-\U0001f3ae.prx"
+        payload = message.encode("utf-8")
+        child = f"import os; os.write(1, {payload!r}); os.write(2, {payload!r})"
+        run = subprocess.run
+
+        def relink(command, **options):
+            return run([sys.executable, "-c", child], timeout=5, **options)
+
+        with mock.patch.object(locale, "getpreferredencoding", return_value="cp1252"), \
+                mock.patch.object(locale, "getencoding", return_value="cp1252", create=True), \
+                mock.patch.object(subprocess, "run", side_effect=relink):
+            result = audit_dump.convert(self.relinker, self.root / "source", self.root / "app.elf", [], False)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, message)
+        self.assertEqual(result.stderr, message)
+
+    def test_non_utf8_diagnostic_bytes_preserve_the_conversion_failure(self):
+        payload = b"FAIL: native diagnostic \xff\n"
+        run = subprocess.run
+        for stream in (1, 2):
+            with self.subTest(stream=stream):
+                child = f"import os, sys; os.write({stream}, {payload!r}); sys.exit(3)"
+
+                def relink(command, **options):
+                    return run([sys.executable, "-c", child], timeout=5, **options)
+
+                with mock.patch.object(locale, "getpreferredencoding", return_value="utf-8"), \
+                        mock.patch.object(locale, "getencoding", return_value="utf-8", create=True), \
+                        mock.patch.object(subprocess, "run", side_effect=relink), \
+                        mock.patch.object(audit_dump.import_audit, "main") as audit:
+                    code, errors = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs")
+                self.assertEqual(code, 2)
+                self.assertIn("relinker exited with 3", errors)
+                self.assertIn("FAIL: native diagnostic \ufffd", errors)
+                audit.assert_not_called()
+
     def test_the_audit_gets_every_registry_library_and_module_directory(self):
         self.module("sce_module/libc.prx")
         work = self.root / "work"
 
-        def relink(command, capture_output, text):
+        def relink(command, **options):
             output = Path(command[-1]).parent
             (output / "app.registry.json").write_text("[]")
             (output / "app.libc.prx.guest.prx.registry.json").write_text("[]")
@@ -110,7 +148,7 @@ class AuditDumpTests(unittest.TestCase):
         (work / "source" / "sce_module").mkdir(parents=True)
         (work / "source" / "sce_module" / "gone.prx").write_bytes(ELF)
 
-        def relink(command, capture_output, text):
+        def relink(command, **options):
             (Path(command[-1]).parent / "app.registry.json").write_text("[]")
             return subprocess.CompletedProcess(command, 0, "", "")
 

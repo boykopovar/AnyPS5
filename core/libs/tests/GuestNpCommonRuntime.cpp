@@ -31,6 +31,7 @@ constexpr int NpOutOfRange = static_cast<int>(0x8055800E);
 constexpr int NpInvalidArgument = static_cast<int>(0x80558009);
 constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
+constexpr int NpStreamBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpTitleIdInvalid = static_cast<int>(0x80559E11);
 constexpr int NpTitleIdBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int KernelNotPermitted = static_cast<int>(0x80020001);
@@ -576,6 +577,63 @@ void TestHexAndCopies() {
 
 }
 
+void TestMemoryStreams() {
+    using Read = int(APS5_VABI*)(NpMemoryStreamReader*, void*, void*, std::size_t, std::size_t*);
+    using Write = int(APS5_VABI*)(NpMemoryStreamWriter*, void*, const void*, std::size_t, std::size_t*);
+    using Destroy = void(APS5_VABI*)(void*);
+
+    const char text[] = "abcdefgh";
+    NpMemoryStreamReader reader;
+    std::memset(&reader, 0x77, sizeof(reader));
+    _ZN3sce2np18MemoryStreamReaderC1EPKvm(&reader, text, 8);
+    Require(reader.data == text && reader.size == 8 && reader.position == 0, "a reader starts at the beginning of its buffer");
+    std::array<char, 8> out {};
+    std::size_t count = 99;
+    Require(reinterpret_cast<Read>(reader.vtable[2])(&reader, nullptr, out.data(), 5, &count) == 0 && count == 5 &&
+                std::memcmp(out.data(), "abcde", 5) == 0 && reader.position == 5,
+        "a read through the vtable copies the requested bytes");
+    out.fill(0);
+    Require(_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(&reader, nullptr, out.data(), 8, &count) == 0 && count == 3 &&
+                std::memcmp(out.data(), "fgh", 3) == 0 && out[3] == 0 && reader.position == 8,
+        "a read past the end is cut to what remains");
+    count = 99;
+    Require(_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(&reader, nullptr, out.data(), 8, &count) == 0 && count == 0,
+        "an exhausted reader reports 0 bytes");
+    reader.position = 12;
+    Require(_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(&reader, nullptr, out.data(), 8, &count) == 0 && count == 0 &&
+                reader.position == 12,
+        "a position beyond the size reads nothing");
+
+    std::array<char, 6> buffer {};
+    NpMemoryStreamWriter writer;
+    _ZN3sce2np18MemoryStreamWriterC2EPvm(&writer, buffer.data(), 6);
+    Require(reinterpret_cast<Write>(writer.vtable[2])(&writer, nullptr, "abcd", 4, &count) == 0 && count == 4 && writer.position == 4,
+        "a write through the vtable stores the bytes");
+    count = 99;
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "xyz", 3, &count) == NpStreamBufferTooSmall &&
+                count == 99 && writer.position == 4,
+        "a write that does not fit is refused whole");
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "xy", 2, nullptr) == 0 && writer.position == 6 &&
+                std::memcmp(buffer.data(), "abcdxy", 6) == 0,
+        "a write may fill the buffer exactly without a count pointer");
+    _ZN3sce2np18MemoryStreamWriterC1EPvm(&writer, buffer.data(), 0);
+    writer.position = 3;
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "a", 1, &count) == NpStreamBufferTooSmall &&
+                _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "", 0, &count) == 0 && writer.position == 3,
+        "a writer of size 0 has no room whatever its position");
+    _ZN3sce2np18MemoryStreamWriterC1EPvm(&writer, nullptr, 2);
+    Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "abcdef", 6, &count) == 0 && count == 6 &&
+                _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "ab", 2, &count) == 0 && writer.position == 8,
+        "a writer without a buffer only counts");
+
+    reinterpret_cast<Destroy>(reader.vtable[0])(&reader);
+    _ZN3sce2np18MemoryStreamReaderD2Ev(&reader);
+    Require(reader.data == text && reader.size == 8 && reader.position == 12, "the reader destructors leave the object untouched");
+    reinterpret_cast<Destroy>(writer.vtable[0])(&writer);
+    _ZN3sce2np18MemoryStreamWriterD2Ev(&writer);
+    Require(writer.data == nullptr && writer.size == 2 && writer.position == 8, "the writer destructors leave the object untouched");
+}
+
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
@@ -584,6 +642,7 @@ int main() {
     TestHeaps();
     TestObjects();
     TestObjectsThroughStoredAllocator();
+    TestMemoryStreams();
     TestTitleIdObjects();
     TestBase64();
     TestNumbers();

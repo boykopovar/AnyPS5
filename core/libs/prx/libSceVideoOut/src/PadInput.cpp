@@ -357,7 +357,9 @@ void PadInput::Update(const DisplayWindow& window) {
         return;
     }
     const bool changed = keyboardMouse.Advance(std::chrono::steady_clock::now());
-    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed) {
+    const bool captured = ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix();
+    const bool captureChanged = std::exchange(padCaptured, captured) != captured;
+    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed || captured || captureChanged) {
         publish(window.FrameNumber(), 0);
     }
     for (int slot = 1; slot < PAD_MAX_CONTROLLERS; ++slot) {
@@ -377,6 +379,7 @@ PadInputState PadInput::handOff(int slot, PadInputState state) {
     auto& held = slots[slot].heldThroughCapture;
     const bool imeCaptures = ImeCapturesPad_nid_postfix();
     if (imeCaptures || ModalDialogCapturesInput_nid_postfix()) {
+        if (slot == 0) PadApplyInjectedInput_nid_postfix(&state);
         if (slot == 0 && imeCaptures) ImePublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
         else if (slot == 0) ModalDialogPublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
         held = state.buttons;

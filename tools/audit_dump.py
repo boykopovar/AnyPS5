@@ -72,7 +72,7 @@ def convert(relinker, source, output, extra, windows):
     for relative in extra:
         command += ["--module-dir", relative]
     command += [str(source / "eboot.elf"), str(output)]
-    return subprocess.run(command, capture_output=True, text=True)
+    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def comparison_path(path, links=frozenset()):
