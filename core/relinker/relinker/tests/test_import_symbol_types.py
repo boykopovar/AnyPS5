@@ -1,5 +1,6 @@
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tempfile
 
@@ -51,6 +52,15 @@ def main():
                     imports = [("FFFFFFFFFFF", 2), ("DDDDDDDDDDD", 1), ("NNNNNNNNNNN", kind)]
                     case = Path(directory) / f"{relocation_type}-{binding}-{kind}"
                     case.mkdir()
+                    if kind == 6:
+                        (case / "sce_module").mkdir()
+                        (case / "input.elf").write_bytes(importing_executable(imports, binding, relocation_type))
+                        result = subprocess.run([str(relinker), str(case / "input.elf"), str(case / "output.elf")],
+                                                capture_output=True, text=True, encoding="utf-8", timeout=30)
+                        assert result.returncode == 2 and "FAIL: Non-TLS relocation names an STT_TLS symbol" in result.stderr, (
+                            relocation_type, binding, result.returncode, result.stderr)
+                        assert not (case / "output.elf").exists(), (relocation_type, binding)
+                        continue
                     output = relink(relinker, case, importing_executable(imports, binding, relocation_type), {})
                     symbols = imported_symbols(output.read_bytes())
                     expected = {name: (binding << 4) | symbol_type for name, symbol_type in imports}

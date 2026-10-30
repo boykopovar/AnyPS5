@@ -70,6 +70,13 @@ int main() {
     Require(descriptor[6] == reinterpret_cast<std::uintptr_t>(sources) && descriptor[7] == reinterpret_cast<std::uintptr_t>(sources));
     for (std::size_t index = 8; index < 16; ++index) Require(descriptor[index] == 0);
     commandBatch = {commands, 0, sizeof(commands)};
+    Require(sceAcm_FFT(&commandBatch, 512, 0, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 256, 1, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 4096, 1, 0, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 2, sources, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 2, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, nullptr, 0, outputs, 0) == BadPointer);
+    Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, nullptr, 0) == BadPointer);
     Require(sceAcm_FFT(&commandBatch, 2048, 1, 0, sources, 0, outputs, 0) == BadPointer);
     Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, outputs, 3) == BadPointer);
     Require(sceAcm_FFT(&commandBatch, 512, 1, 0, sources, 0, outputs, 0) == 0);
@@ -111,6 +118,7 @@ int main() {
     Require(sceAcmContextDestroy(context1) == 0);
     Require(sceAcmContextDestroy(context1) == BadContext);
     Require(sceAcmBatchStartBuffer(context1, nullptr, 0, nullptr, &batch1) == BadContext);
+    Require(sceAcmBatchStartBuffers(context1, 0, nullptr, nullptr, &batch1) == BadContext);
     Require(sceAcmBatchWait(context1, batch1, 0) == BadContext);
 
     Require(sceAcmContextDestroy(context2) == 0);

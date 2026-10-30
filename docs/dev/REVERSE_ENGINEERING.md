@@ -38,9 +38,9 @@ The PS5 uses the System V AMD64 calling convention: integer and pointer argument
 A call site doesn't settle what the library writes, which error codes it returns, its side effects, or the values a
 title happens to accept. "The title continues if it gets 0" is not "the console returns 0". Everything that the call
 site and the other sources leave open throws (`NotImplemented_nid_no_patch`), as in
-[libSceAudioIn](debt/libSceAudioIn.md): the signature came from a call site, the meaning of the result did not, so the
-export still throws. A silent stub is allowed only when it affects the UI ([CONTRIBUTING](../../CONTRIBUTING.md)): a
-read that always reports no data, or a write that drops its data, is not UI.
+[libSceNpManager](debt/libSceNpManager.md): the signature came from a call site, what the library writes into the
+buffer did not, so the export still throws. A silent stub is allowed only when it affects the UI
+([CONTRIBUTING](../../CONTRIBUTING.md)): a read that always reports no data, or a write that drops its data, is not UI.
 
 ## Finding the call sites
 

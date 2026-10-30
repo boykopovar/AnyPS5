@@ -328,9 +328,12 @@ int main() {
     std::memcpy(&utf32Be, "\x00\x00\x65\xE5", 4);
     Require(sceCesUtf32beToSJis(&utf32Be, sjis, mbcs, sizeof(mbcs), &produced) == 0 && std::memcmp(mbcs, "\x93\xFA", 2) == 0);
     Require(sceCesUtf32beToSJis(nullptr, sjis, mbcs, sizeof(mbcs), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf32leToSJis(nullptr, sjis, mbcs, sizeof(mbcs), &produced) == invalidSrcBuffer);
     std::uint32_t utf32Le = 0;
     std::memcpy(&utf32Le, "\xE5\x65\x00\x00", 4);
     Require(sceCesUtf32leToEucJp(&utf32Le, euc, mbcs, sizeof(mbcs), &produced) == 0 && std::memcmp(mbcs, "\xC6\xFC", 2) == 0);
+    Require(sceCesUtf32leToEucJp(nullptr, euc, mbcs, sizeof(mbcs), &produced) == invalidSrcBuffer);
+    Require(sceCesUtf32beToEucJp(nullptr, euc, mbcs, sizeof(mbcs), &produced) == invalidSrcBuffer);
 
     constexpr int microsoftForms[] = {0x00A2, 0x00A3, 0x00A5, 0x00AC, 0x2014, 0x2016, 0x203E, 0x2212, 0x301C, 0xFEFF};
     for (int code = 1; code < 0x10000; ++code) {
@@ -354,6 +357,7 @@ int main() {
     Require(sceCesSJisCodeToJisX0208(0x0041, &ku, &ten) == invalidEncode);
     Require(sceCesSJisCodeToJisX0208(0x827F, &ku, &ten) == invalidEncode);
     Require(sceCesSJisCodeToJisX0208(0x82A0, nullptr, &ten) == invalidDstBuffer);
+    Require(sceCesSJisCodeToJisX0208(0x82A0, &ku, nullptr) == invalidDstBuffer);
     Require(sceCesJisX0208ToSJisCode(4, 2, &sjisCode) == 0 && sjisCode == 0x82A0);
     Require(sceCesJisX0208ToSJisCode(0, 2, &sjisCode) == invalidEncode);
     Require(sceCesJisX0208ToSJisCode(4, 95, &sjisCode) == invalidEncode);

@@ -30,9 +30,17 @@ def resolve_base(repo, name):
     raise RuntimeError(f"no base ref found ({name or ', '.join(BASES)}); fetch the upstream remote first")
 
 
+def git_version(repo):
+    match = re.match(r"git version (\d+)\.(\d+)", git(repo, "version", check=False).stdout)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
 def conflicts(repo, base, head):
     result = git(repo, "merge-tree", "-z", "--write-tree", "--name-only", "--no-messages", base, head, check=False)
     if result.returncode not in (0, 1):
+        version = git_version(repo)
+        if version and version < (2, 38):
+            raise RuntimeError(f"git merge-tree --write-tree needs git 2.38 or newer; this git is {version[0]}.{version[1]}")
         raise RuntimeError(f"git merge-tree failed: {result.stderr.strip()}")
     if result.returncode == 0:
         return []
@@ -44,7 +52,7 @@ def merged_pull_requests(repo, mergebase, base, paths):
     found = {}
     if not paths:
         return found
-    for line in lines(repo, "-c", "core.quotepath=off", "log", "--first-parent", "--format=%h %s", f"{mergebase}..{base}", "--", *paths):
+    for line in lines(repo, "--literal-pathspecs", "-c", "core.quotepath=off", "log", "--first-parent", "--format=%h %s", f"{mergebase}..{base}", "--", *paths):
         match = PULL_REQUEST.search(line)
         if match:
             found[int(match.group(1) or match.group(2))] = line.split(" ", 1)[0]
@@ -121,7 +129,7 @@ def main(argv=None):
                         break
         base = resolve_base(args.repo, args.base)
         data = report(args.repo, base, args.head)
-    except RuntimeError as error:
+    except (RuntimeError, OSError) as error:
         parser.error(str(error))
     print(render(data))
     if data["conflicts"] or (args.strict and data["behind"]):

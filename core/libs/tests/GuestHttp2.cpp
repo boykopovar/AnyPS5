@@ -19,6 +19,8 @@ static bool Throws(TCall call) {
 int main() {
     Require(sceHttp2CreateCookieBox(0xffff) == static_cast<int>(0x817b121du));
     const int box = sceHttp2CreateCookieBox(0x10000);
+    Require(sceHttp2Init(1, 1, 0x10000, 0) == static_cast<int>(0x817B11FE));
+    Require(Throws([] { sceHttp2Init(1, 1, 0x10000, -1); }));
     const int context = sceHttp2Init(1, 1, 0x10000, 4);
     const int tmpl = sceHttp2CreateTemplate(context, "agent", 3, 0);
     const int proxyTemplate = sceHttp2CreateTemplate(context, "agent", 3, 1);
@@ -35,7 +37,8 @@ int main() {
     Require(sceHttp2SetRequestNoContentLength(request) == 0);
     Require(Throws([&] { sceHttp2AddRequestHeader(request, "bad:name", "value", 0); }));
     Require(Throws([&] { sceHttp2AddRequestHeader(request, "x-header", "value\r\ninjected: yes", 0); }));
-    Require(Throws([&] { sceHttp2AddRequestHeader(request, "connection", "keep-alive", 0); }));
+    Require(Throws([&] { sceHttp2AddRequestHeader(request, "keep-alive", "timeout=5", 0); }));
+    Require(sceHttp2AddRequestHeader(request, "connection", "keep-alive", 0) == static_cast<int>(0x804311FE));
     Require(Throws([] { sceHttp2WebSocketSetPingInterval(0, 1000000); }));
     for (const int id : {tmpl, request}) {
         Require(Throws([&] { sceHttp2SetMinSslVersion(id, 0); }));
@@ -49,8 +52,8 @@ int main() {
         Require(Throws([&] { sceHttp2SslDisableOption(id, 0x20); }));
     }
     Http2MemoryPoolStats stats{1, 2, 3, 4};
-    Require(Throws([&] { sceHttp2GetMemoryPoolStats(context, &stats); }));
-    Require(stats.pool_size == 1 && stats.current_inuse_size == 3);
+    Require(sceHttp2GetMemoryPoolStats(context, &stats) == 0);
+    Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "http2-unsupported-async") == 0);
     Require(sceKernelAddUserEventEdge(eq, request) == 0);
