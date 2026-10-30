@@ -1,5 +1,6 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -329,6 +330,28 @@ static void NullAddresses() {
     Require(sceKernelSyncOnAddressWake(&word, -1) == 0);
 }
 
+static void UnreadableAddressFailsWithEfault() {
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    auto* address = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    Require(sceKernelSyncOnAddressWait32(address, 1, &timeout, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(timeout == SHORT_TIMEOUT);
+}
+
+static void RegisteredReadableAddressKeepsWaitSemantics() {
+    std::uint32_t word = 2;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(&word, sizeof(word), true, true, false);
+    }
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait32(&word, 1, &timeout, nullptr) == SCE_KERNEL_ERROR_EAGAIN && timeout == SHORT_TIMEOUT);
+    Require(sceKernelSyncOnAddressWait32(&word, 2, &timeout, nullptr) == SCE_KERNEL_ERROR_ETIMEDOUT && timeout == 0);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(&word);
+    }
+}
+
 int main() {
     FailsAgainWhenTheValueDiffers();
     TimesOutWhileTheValueMatches();
@@ -342,4 +365,6 @@ int main() {
     WakeReleasesNarrowWaitersAtTheirOwnAddress();
     MisalignedAddressesWaitAndWake();
     NullAddresses();
+    UnreadableAddressFailsWithEfault();
+    RegisteredReadableAddressKeepsWaitSemantics();
 }
