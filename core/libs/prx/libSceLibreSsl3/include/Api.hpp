@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "EvpDigest.hpp"
 #include "prx/libSceLibreSsl3/include/Key.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 
@@ -21,12 +22,12 @@ int APS5_VABI ERR_load_crypto_strings_nid_postfix(void);
 int APS5_VABI ERR_peek_last_error_nid_postfix(void);
 int APS5_VABI ERR_print_errors_cb_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void);
-int APS5_VABI EVP_DigestInit_nid_postfix(void);
+int APS5_VABI EVP_DigestInit_nid_postfix(LibreSsl3::DigestContext* context, const LibreSsl3::DigestMethod* digest);
 int APS5_VABI EVP_DigestSignFinal_nid_postfix(void);
 int APS5_VABI EVP_DigestSignInit_nid_postfix(void);
 int APS5_VABI EVP_EncryptInit_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_free_nid_postfix(void);
-int APS5_VABI EVP_MD_CTX_new_nid_postfix(void);
+void APS5_VABI EVP_MD_CTX_free_nid_postfix(LibreSsl3::DigestContext* context);
+LibreSsl3::DigestContext* APS5_VABI EVP_MD_CTX_new_nid_postfix();
 int APS5_VABI EVP_PKCS82PKEY_nid_postfix(void);
 int APS5_VABI EVP_PKEY_CTX_ctrl_nid_postfix(void);
 int APS5_VABI EVP_PKEY_CTX_new_nid_postfix(void);
@@ -46,8 +47,8 @@ int APS5_VABI EVP_VerifyFinal_nid_postfix(void);
 int APS5_VABI EVP_aes_128_wrap_nid_postfix(void);
 int APS5_VABI EVP_aes_192_wrap_nid_postfix(void);
 int APS5_VABI EVP_aes_256_wrap_nid_postfix(void);
-int APS5_VABI EVP_sha1_nid_postfix(void);
-int APS5_VABI EVP_sha224_nid_postfix(void);
+const LibreSsl3::DigestMethod* APS5_VABI EVP_sha1_nid_postfix();
+const LibreSsl3::DigestMethod* APS5_VABI EVP_sha224_nid_postfix();
 int APS5_VABI OBJ_cmp_nid_postfix(void);
 int APS5_VABI OBJ_txt2obj_nid_postfix(void);
 int APS5_VABI OCSP_CERTID_free_nid_postfix(void);
