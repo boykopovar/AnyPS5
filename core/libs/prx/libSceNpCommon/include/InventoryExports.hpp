@@ -3,6 +3,12 @@
 #include "SceTypes.hpp"
 
 extern "C" {
+extern std::uintptr_t _ZTVN3sce2np9JsonArrayE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np8JsonNullE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np8JsonBoolE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np10JsonStringE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np10JsonObjectE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np10JsonNumberE_nid_postfix[];
 extern std::uintptr_t _ZTVN3sce2np12SelectorItemE_nid_postfix[];
 extern std::uintptr_t _ZTVN3sce2np9JsonValueE_nid_postfix[];
 extern std::uintptr_t _ZTVN3sce2np8msg_pack17MsgPackStringImplE_nid_postfix[];

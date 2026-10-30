@@ -8,6 +8,67 @@ extern "C" {
 
 static_assert(sizeof(std::uintptr_t) == 8);
 
+[[noreturn]] static void APS5_VABI NpJsonNumberDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+[[noreturn]] static void APS5_VABI NpJsonNumberDeletingDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+std::uintptr_t _ZTVN3sce2np10JsonNumberE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&NpJsonNumberDestructor),
+    reinterpret_cast<std::uintptr_t>(&NpJsonNumberDeletingDestructor),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np10JsonNumber5ClearEv),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np10JsonNumber10CloneValueEP16SceNpAllocatorEx),
+};
+
+[[noreturn]] static void APS5_VABI NpJsonObjectDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+[[noreturn]] static void APS5_VABI NpJsonObjectDeletingDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+std::uintptr_t _ZTVN3sce2np10JsonObjectE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&NpJsonObjectDestructor),
+    reinterpret_cast<std::uintptr_t>(&NpJsonObjectDeletingDestructor),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np10JsonObject5ClearEv),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np10JsonObject10CloneValueEP16SceNpAllocatorEx),
+};
+
+[[noreturn]] static void APS5_VABI NpJsonStringDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+[[noreturn]] static void APS5_VABI NpJsonStringDeletingDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+std::uintptr_t _ZTVN3sce2np10JsonStringE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&NpJsonStringDestructor),
+    reinterpret_cast<std::uintptr_t>(&NpJsonStringDeletingDestructor),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np10JsonString5ClearEv),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np10JsonString10CloneValueEP16SceNpAllocatorEx),
+};
+
+[[noreturn]] static void APS5_VABI NpJsonBoolDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+[[noreturn]] static void APS5_VABI NpJsonBoolDeletingDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+std::uintptr_t _ZTVN3sce2np8JsonBoolE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&NpJsonBoolDestructor),
+    reinterpret_cast<std::uintptr_t>(&NpJsonBoolDeletingDestructor),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8JsonBool5ClearEv),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8JsonBool10CloneValueEP16SceNpAllocatorEx),
+};
+
+[[noreturn]] static void APS5_VABI NpJsonNullDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+[[noreturn]] static void APS5_VABI NpJsonNullDeletingDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+std::uintptr_t _ZTVN3sce2np8JsonNullE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&NpJsonNullDestructor),
+    reinterpret_cast<std::uintptr_t>(&NpJsonNullDeletingDestructor),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8JsonNull5ClearEv),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8JsonNull10CloneValueEP16SceNpAllocatorEx),
+};
+
+[[noreturn]] static void APS5_VABI NpJsonArrayDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+[[noreturn]] static void APS5_VABI NpJsonArrayDeletingDestructor(void*) { NotImplemented_nid_no_patch(__func__); }
+std::uintptr_t _ZTVN3sce2np9JsonArrayE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&NpJsonArrayDestructor),
+    reinterpret_cast<std::uintptr_t>(&NpJsonArrayDeletingDestructor),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np9JsonArray5ClearEv),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np9JsonArray10CloneValueEP16SceNpAllocatorEx),
+};
+
+
 std::uintptr_t _ZTVN3sce2np9JsonValueE_nid_postfix[] {
     0, 0,
     reinterpret_cast<std::uintptr_t>(&_ZN3sce2np9JsonValueD1Ev),
