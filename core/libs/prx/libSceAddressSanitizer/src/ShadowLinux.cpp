@@ -32,5 +32,10 @@ extern "C" bool InitializeShadow_nid_no_patch() noexcept {
 #endif
 }
 
+
+extern "C" bool ShadowRangeAvailable_nid_no_patch(std::uintptr_t begin, std::uintptr_t end) noexcept {
+    return begin >= ShadowBase && end <= ShadowBase + ShadowSize && begin <= end && InitializeShadow_nid_no_patch();
+}
+
 }
 #endif

@@ -3,6 +3,7 @@
 #include "prx/libSceAddressSanitizer/src/ShadowCheck.hpp"
 #include "prx/libSceAddressSanitizer/src/ErrorReport.hpp"
 #include "prx/libSceAddressSanitizer/src/Report.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
@@ -15,15 +16,21 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
+static void RequireShadow_nid_no_patch(std::uintptr_t address, std::uintptr_t size, const char* function) {
+    const auto begin = AsanRuntime::ShadowBase + (address >> 3);
+    const auto end = size == 0 ? begin : AsanRuntime::ShadowBase + ((address + size - 1) >> 3) + 1;
+    if (!AsanRuntime::ShadowRangeAvailable_nid_no_patch(begin, std::min(end, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) {
+        ShadowUnavailable_nid_no_patch(function);
+    }
+}
+
 static void UpdateIntraObjectShadow_nid_no_patch(std::uintptr_t address, std::uintptr_t size, bool poison, const char* function) {
     const auto end = address + size;
     if (size == 0 || size > 4096 || end < address || (end & 7) != 0 || end > (1ull << 47) ||
         (address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && end > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(function);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(function);
-    }
+    RequireShadow_nid_no_patch(address, size, function);
     auto* shadow = reinterpret_cast<std::uint8_t*>(AsanRuntime::ShadowBase + (address >> 3));
     auto* shadowEnd = reinterpret_cast<std::uint8_t*>(AsanRuntime::ShadowBase + (end >> 3));
     if ((address & 7) != 0) {
@@ -115,7 +122,7 @@ static std::atomic<void (APS5_VABI*)()> deathCallback{nullptr};
     std::unique_lock lock(reportMutex);
     const bool inMemory = address < (1ULL << 47) &&
         !(address >= AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize) &&
-        AsanRuntime::InitializeShadow_nid_no_patch();
+        AsanRuntime::ShadowRangeAvailable_nid_no_patch(AsanRuntime::ShadowBase + (address >> 3), std::min(AsanRuntime::ShadowBase + (address >> 3) + 3, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize));
     const char* bug = "unknown-crash";
     std::uint8_t shadowValue = 0;
     if (inMemory) {
@@ -124,7 +131,8 @@ static std::atomic<void (APS5_VABI*)()> deathCallback{nullptr};
     *AsanRuntime::CurrentErrorReport_nid_no_patch() = {true, pc, bp, sp, address, isWrite, accessSize, bug};
     std::string text;
     AsanRuntime::AppendReportHeader_nid_no_patch(text, bug, address, pc, bp, sp, isWrite, accessSize);
-    if (inMemory) {
+    const auto dumpCenter = (AsanRuntime::ShadowBase + (address >> 3)) & ~static_cast<std::uintptr_t>(15);
+    if (inMemory && AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(dumpCenter - 80, AsanRuntime::ShadowBase), std::min(dumpCenter + 96, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) {
         AsanRuntime::AppendShadowMemory_nid_no_patch(text, AsanRuntime::ShadowBase, AsanRuntime::ShadowSize, address);
     }
     std::fputs(text.c_str(), stderr);
@@ -154,9 +162,7 @@ static void CheckAccess_nid_no_patch(std::uintptr_t address, std::uintptr_t size
         (address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && address + size > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(function);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(function);
-    }
+    RequireShadow_nid_no_patch(address, size, function);
     const auto* shadow = reinterpret_cast<const std::uint8_t*>(AsanRuntime::ShadowBase + (address >> 3));
     std::uintptr_t value = shadow[0];
     if (size > 8) {
@@ -199,9 +205,7 @@ int APS5_VABI __asan_address_is_poisoned(const volatile void* address) {
         (value >= AsanRuntime::ShadowBase && value < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize)) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(__func__);
-    }
+    RequireShadow_nid_no_patch(value, 1, __func__);
     return FindFirstPoisoned_nid_no_patch(reinterpret_cast<const std::int8_t*>(AsanRuntime::ShadowBase), AsanRuntime::ShadowSize, value, 1).has_value() ? 1 : 0;
 }
 
@@ -233,9 +237,7 @@ void APS5_VABI __asan_alloca_poison(std::uintptr_t addr, std::uintptr_t size) {
         (leftRedzoneAddr < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && rightRedzoneEnd > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(__func__);
-    }
+    RequireShadow_nid_no_patch(leftRedzoneAddr, rightRedzoneEnd - leftRedzoneAddr, __func__);
     std::uintptr_t partialRzAligned = partialRzAddr & ~static_cast<std::uintptr_t>(7);
     FastPoisonShadow_nid_no_patch(leftRedzoneAddr, kAllocaRedzoneSize, kAsanAllocaLeftMagic);
     FastPoisonShadowPartialRightRedzone_nid_no_patch(partialRzAligned, partialRzAddr % 8, rightRzAddr - partialRzAligned, kAsanAllocaRightMagic);
@@ -250,9 +252,7 @@ void APS5_VABI __asan_allocas_unpoison(std::uintptr_t top, std::uintptr_t bottom
         (top < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && bottom > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(__func__);
-    }
+    RequireShadow_nid_no_patch(top, bottom - top, __func__);
     std::memset(reinterpret_cast<void*>(AsanRuntime::ShadowBase + (top >> 3)), 0, shadowSize);
 }
 
@@ -549,9 +549,7 @@ std::uintptr_t APS5_VABI __asan_load_cxx_array_cookie(std::uintptr_t* p) {
         (address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && address + 8 > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(__func__);
-    }
+    RequireShadow_nid_no_patch(address, 8, __func__);
     std::uint8_t sval = *reinterpret_cast<std::uint8_t*>(AsanRuntime::ShadowBase + (address >> 3));
     if (sval == kAsanArrayCookieMagic) {
         return *p;
@@ -613,9 +611,7 @@ void APS5_VABI __asan_poison_cxx_array_cookie(std::uintptr_t p) {
         (p < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && p + 1 > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(__func__);
-    }
+    RequireShadow_nid_no_patch(p, 1, __func__);
     if (!kPoisonArrayCookie) {
         return;
     }
@@ -636,9 +632,7 @@ void APS5_VABI __asan_poison_memory_region(const volatile void* addr, std::uintp
         (begAddr < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && endAddr > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(__func__);
-    }
+    RequireShadow_nid_no_patch(begAddr, size + 1, __func__);
     ShadowSegmentEndpoint beg(begAddr);
     ShadowSegmentEndpoint end(endAddr);
     if (beg.chunk == end.chunk) {
@@ -674,9 +668,7 @@ void APS5_VABI __asan_poison_stack_memory(std::uintptr_t address, std::uintptr_t
         (address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && address + size > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(__func__);
-    }
+    RequireShadow_nid_no_patch(address, size, __func__);
     UpdateStackShadow_nid_no_patch(reinterpret_cast<std::int8_t*>(AsanRuntime::ShadowBase), AsanRuntime::ShadowSize, address, size, true);
 }
 
@@ -707,9 +699,7 @@ std::uintptr_t APS5_VABI __asan_region_is_poisoned(std::uintptr_t address, std::
         (address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && end > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(__func__);
-    }
+    RequireShadow_nid_no_patch(address, size, __func__);
     return FindFirstPoisoned_nid_no_patch(reinterpret_cast<const std::int8_t*>(AsanRuntime::ShadowBase), AsanRuntime::ShadowSize, address, size).value_or(0);
 }
 
@@ -985,79 +975,79 @@ void APS5_VABI __asan_set_error_report_callback(void (APS5_VABI* callback)(const
 
 void APS5_VABI __asan_set_shadow_00(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0x00, size);
 }
 
 void APS5_VABI __asan_set_shadow_01(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0x01, size);
 }
 
 void APS5_VABI __asan_set_shadow_02(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0x02, size);
 }
 
 void APS5_VABI __asan_set_shadow_03(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0x03, size);
 }
 
 void APS5_VABI __asan_set_shadow_04(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0x04, size);
 }
 
 void APS5_VABI __asan_set_shadow_05(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0x05, size);
 }
 
 void APS5_VABI __asan_set_shadow_06(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0x06, size);
 }
 
 void APS5_VABI __asan_set_shadow_07(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0x07, size);
 }
 
 void APS5_VABI __asan_set_shadow_f1(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0xf1, size);
 }
 
 void APS5_VABI __asan_set_shadow_f2(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0xf2, size);
 }
 
 void APS5_VABI __asan_set_shadow_f3(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0xf3, size);
 }
 
 void APS5_VABI __asan_set_shadow_f5(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0xf5, size);
 }
 
 void APS5_VABI __asan_set_shadow_f8(std::uintptr_t address, std::uintptr_t size) {
     if (address == 0 || size > std::numeric_limits<std::uintptr_t>::max() - address) InvalidArgument_nid_no_patch(__func__);
-    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::InitializeShadow_nid_no_patch()) ShadowUnavailable_nid_no_patch(__func__);
+    if (address + size > AsanRuntime::ShadowBase && address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && !AsanRuntime::ShadowRangeAvailable_nid_no_patch(std::max(address, AsanRuntime::ShadowBase), std::min(address + size, AsanRuntime::ShadowBase + AsanRuntime::ShadowSize))) ShadowUnavailable_nid_no_patch(__func__);
     if (size) std::memset(reinterpret_cast<void*>(address), 0xf8, size);
 }
 
@@ -1288,9 +1278,7 @@ void APS5_VABI __asan_unpoison_memory_region(const volatile void* addr, std::uin
         (begAddr < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && endAddr > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(__func__);
-    }
+    RequireShadow_nid_no_patch(begAddr, size + 1, __func__);
     ShadowSegmentEndpoint beg(begAddr);
     ShadowSegmentEndpoint end(endAddr);
     if (beg.chunk == end.chunk) {
@@ -1314,9 +1302,7 @@ void APS5_VABI __asan_unpoison_stack_memory(std::uintptr_t address, std::uintptr
         (address < AsanRuntime::ShadowBase + AsanRuntime::ShadowSize && address + size > AsanRuntime::ShadowBase)) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!AsanRuntime::InitializeShadow_nid_no_patch()) {
-        ShadowUnavailable_nid_no_patch(__func__);
-    }
+    RequireShadow_nid_no_patch(address, size, __func__);
     UpdateStackShadow_nid_no_patch(reinterpret_cast<std::int8_t*>(AsanRuntime::ShadowBase), AsanRuntime::ShadowSize, address, size, false);
 }
 
