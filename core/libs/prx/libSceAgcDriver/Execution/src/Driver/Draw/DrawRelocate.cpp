@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/RelocationRuns.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -78,11 +79,6 @@ void Driver::tagVariantRuns(DispatchVariant& variant, std::span<const ShaderReco
             if (reads[i].second >= 0 && ((reads[i].first & 3u) != 0 || !covered(reads[i].first))) drop(reads[i].second);
         }
     }
-    const auto origin = [&](std::uint64_t address) -> std::int8_t {
-        const auto found = std::lower_bound(reads.begin(), reads.end(), std::make_pair(address, std::numeric_limits<std::int32_t>::min()));
-        if (found == reads.end() || found->first != address || found->second < 0) return -1;
-        return (relocatable >> found->second & 1u) != 0 ? static_cast<std::int8_t>(found->second) : std::int8_t {-1};
-    };
     variant.relocatableWords = relocatable;
     for (std::size_t index = 0; index < regions.size(); ++index) {
         const auto& region = regions[index];
@@ -95,17 +91,11 @@ void Driver::tagVariantRuns(DispatchVariant& variant, std::span<const ShaderReco
             variant.runs.emplace_back(region.guestAddress, region.guestAddress + region.bytes.size());
             continue;
         }
-        std::size_t start = 0;
-        auto current = count != 0 ? origin(region.guestAddress) : std::int8_t {-1};
-        for (std::size_t word = 1; word <= count; ++word) {
-            const auto next = word < count ? origin(region.guestAddress + word * sizeof(std::uint32_t)) : std::int8_t {-2};
-            if (next == current) continue;
-            AppendSharedWords(variant.shared, variant.runs.size(), offset + start, region.bytes.subspan(start * sizeof(std::uint32_t), (word - start) * sizeof(std::uint32_t)), supplied);
-            variant.runs.emplace_back(region.guestAddress + start * sizeof(std::uint32_t), region.guestAddress + word * sizeof(std::uint32_t));
-            variant.runBases.push_back(current);
-            start = word;
-            current = next;
-        }
+        ForEachRelocationRun(region.guestAddress, count, reads, relocatable, [&](std::size_t first, std::size_t last, std::int8_t origin) {
+            AppendSharedWords(variant.shared, variant.runs.size(), offset + first, region.bytes.subspan(first * sizeof(std::uint32_t), (last - first) * sizeof(std::uint32_t)), supplied);
+            variant.runs.emplace_back(region.guestAddress + first * sizeof(std::uint32_t), region.guestAddress + last * sizeof(std::uint32_t));
+            variant.runBases.push_back(origin);
+        });
     }
 }
 
