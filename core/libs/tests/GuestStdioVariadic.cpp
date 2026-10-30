@@ -277,6 +277,13 @@ int main() {
     Require(ScanSecureStream(tailInput, "%d", &number) == 0, "vfscanf_s matching failure");
     Require(fscanf_s_nid_postfix(tailInput, " x %*f%n %d", &count, &number) == 1 && count == 5 && number == 7, "fscanf_s suppression and %n");
     Require(fscanf_s_nid_postfix(tailInput, "%d", &number) == EOF, "fscanf_s at end of file");
+    char literalTarget[32];
+    std::memset(literalTarget, 0xa5, sizeof(literalTarget));
+    count = -77;
+    errno = 97;
+    Require(fscanf_s_nid_postfix(tailInput, "x%2c%n", literalTarget, 32u, &count) == 0 && errno == 97 && count == -77, "fscanf_s literal mismatch at end of file");
+    Require(static_cast<unsigned char>(literalTarget[0]) == 0xa5 && static_cast<unsigned char>(literalTarget[31]) == 0xa5, "fscanf_s literal mismatch leaves the destination");
+    Require(fscanf_s_nid_postfix(tailInput, "%%") == EOF, "fscanf_s %% at end of file");
     tailInput->Close();
     delete tailInput;
 
