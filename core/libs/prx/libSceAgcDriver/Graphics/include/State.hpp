@@ -10,11 +10,19 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include "Recompiler.hpp"
 
 namespace AgcDriver::Graphics {
+
+class Buffer;
+
+struct TessellationCapture {
+    std::shared_ptr<Buffer> header;
+    std::shared_ptr<Buffer> items;
+};
 
 enum class ShaderPath {
     Vertex,
@@ -32,8 +40,12 @@ struct ShaderStages {
     std::optional<ShaderRecompiler::TessellationConfiguration> tessellation;
     float minTessellationLevel = 1.0f;
     float maxTessellationLevel = 64.0f;
+    std::uint32_t hullWaveSize = 64;
+    std::optional<ShaderRecompiler::MeshConfiguration> tessellationGeometry;
     bool legacyVertex = false;
 };
+
+inline constexpr std::uint16_t UnclampedBlendMask = 0xffffu;
 
 struct ColorTarget {
     std::uint64_t address;
@@ -124,6 +136,8 @@ struct State {
     bool hasColorTarget;
     bool rectList = false;
     bool quadList = false;
+    bool rasterizerDiscard = false;
+    std::shared_ptr<const TessellationCapture> tessellationCapture;
     bool dualSourceBlend = false;
     std::uint32_t reversedBlend = 0;
     VkExtent2D renderExtent;
@@ -146,6 +160,7 @@ struct State {
     } depthRemap;
     bool alphaToCoverage = false;
     bool ditheredAlphaToCoverage = false;
+    std::uint8_t ditheredAlphaSamples = 8;
     bool perSampleShading = false;
     bool mergedCoverage = false;
     bool truncatedCoverage = false;
@@ -183,7 +198,11 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = 
 void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
+void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
+std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
+std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
+std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset, bool depthRemap);
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state);
 std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 VkExtent2D SampleLocationGrid(const State& state);
@@ -201,7 +220,7 @@ std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t expor
 GuestTextureResource TargetMergeSurface(const ColorTarget& color);
 bool DepthStencilWrites(const State& state);
 bool DepthStencilTests(const State& state);
-ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state);
+std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state);
 ShaderRecompiler::RasterPrimitive RasterPrimitiveOf(const State& state);
 bool PartialSampleMask(const State& state);
 bool UniformSampleMask(const State& state);
@@ -291,7 +310,7 @@ struct DrawKeyRange {
     std::uint32_t count;
 };
 inline constexpr std::array<DrawKeyRange, 52> DrawKeyRegisters{{
-    {RegisterBank::Context, 0x000, 1}, {RegisterBank::Context, 0x002, 1}, {RegisterBank::Context, 0x005, 1}, {RegisterBank::Context, 0x007, 7}, {RegisterBank::Context, 0x010, 6}, {RegisterBank::Context, 0x01a, 5},
+    {RegisterBank::Context, 0x000, 1}, {RegisterBank::Context, 0x002, 2}, {RegisterBank::Context, 0x005, 1}, {RegisterBank::Context, 0x007, 7}, {RegisterBank::Context, 0x010, 6}, {RegisterBank::Context, 0x01a, 5},
     {RegisterBank::Context, 0x080, 4}, {RegisterBank::Context, 0x08c, 4}, {RegisterBank::Context, 0x090, 2}, {RegisterBank::Context, 0x094, 2}, {RegisterBank::Context, 0x0b4, 2}, {RegisterBank::Context, 0x105, 4}, {RegisterBank::Context, 0x10b, 3}, {RegisterBank::Context, 0x10f, 6},
     // SPI_PS_INPUT_CNTL_0..31, SPI_PS_INPUT_ENA/ADDR, SPI_PS_IN_CONTROL .. SPI_BARYC_CNTL, SPI_SHADER_POS/Z/COL_FORMAT,
     // CB_BLEND0..7_CONTROL, GE_MAX_OUTPUT_PER_SUBGROUP.

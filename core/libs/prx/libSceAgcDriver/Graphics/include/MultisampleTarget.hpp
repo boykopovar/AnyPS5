@@ -12,6 +12,8 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace AgcDriver::Graphics {
 
@@ -72,7 +74,7 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image = nullptr);
 void KeepMultisampleTarget_nid_no_patch(const std::shared_ptr<void>& owner);
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target);
-VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource);
+VkImageView MultisampleTargetStorageView(const Context& context, const GuestTextureResource& resource, bool uintStorage = false);
 bool MultisampleTargetStorable(const Context& context, const ColorTarget& target);
 void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkImageView destinationView);
 bool MultisampledColorFillAbsorbs(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
@@ -84,6 +86,7 @@ void UpdateResidentImageUnmapObserver_nid_no_patch();
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);
 
 }
 

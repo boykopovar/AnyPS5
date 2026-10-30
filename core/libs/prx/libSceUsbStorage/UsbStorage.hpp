@@ -12,13 +12,40 @@ inline constexpr std::int32_t InvalidArgument = static_cast<std::int32_t>(0x80f4
 inline constexpr std::int32_t DeviceNotFound = static_cast<std::int32_t>(0x80f40004);
 inline constexpr std::int32_t NotSupported = static_cast<std::int32_t>(0x80f40005);
 
-inline constexpr std::int32_t CallbackEventTypeFirst = 1;
-inline constexpr std::int32_t CallbackEventTypeLast = 2;
+inline constexpr std::int32_t MountEvent = 1;
+inline constexpr std::int32_t UnmountEvent = 2;
+
+inline constexpr std::uint64_t ReadOnlyFlag = 1ull << 4;
+inline constexpr std::uint64_t FatFlag = 1ull << 6;
+inline constexpr std::uint64_t ExFatFlag = 1ull << 7;
+
+inline constexpr std::size_t MaxDevices = 8;
+inline constexpr std::size_t MountPointSize = 128;
 
 }
 
-struct UsbStorageEvent;
-struct UsbStorageDeviceInfo;
+struct UsbStorageEvent {
+    std::uint32_t event;
+    std::uint32_t device;
+    std::uint64_t flags;
+};
+
+struct UsbStorageDeviceInfo {
+    std::uint64_t volumeSize;
+    std::uint64_t reserved;
+    std::uint16_t vendorId;
+    std::uint16_t productId;
+    std::uint16_t bcdDevice;
+    char vendor[256];
+    std::uint8_t padding[2];
+    std::uint64_t vendorLength;
+    char product[256];
+    std::uint64_t productLength;
+    char serialNumber[256];
+    std::uint64_t serialNumberLength;
+    std::uint64_t flags;
+};
+
 using UsbStorageCallback = void (APS5_VABI *)(const UsbStorageEvent* event, void* userData);
 
 extern "C" {
