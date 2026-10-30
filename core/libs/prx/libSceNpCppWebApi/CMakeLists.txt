@@ -2,6 +2,18 @@ add_library(libSceNpCppWebApi SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceNpCppWebApi PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNpCppWebApi)
 
+if(BUILD_TESTING)
+    add_test_executable(guest_np_cpp_web_api_matchmaking_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCppWebApiMatchmaking.cpp)
+    target_include_directories(guest_np_cpp_web_api_matchmaking_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_cpp_web_api_matchmaking_tests PRIVATE libSceNpCppWebApi libc)
+    configure_windows_unwind(guest_np_cpp_web_api_matchmaking_tests)
+    add_test(NAME guest_np_cpp_web_api_matchmaking COMMAND guest_np_cpp_web_api_matchmaking_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_cpp_web_api_matchmaking
+            PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 if(MINGW)
     foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
         string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")

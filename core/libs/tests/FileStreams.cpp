@@ -219,6 +219,53 @@ static int APS5_VABI ScanList(FileStream* stream, const char* format, ...) {
     return result;
 }
 
+static void CheckScanInputFailureErrno(const std::string& path) {
+    const int savedError = errno;
+    for (const bool variadicList : {false, true}) {
+        for (const int seed : {0, 22, 97}) {
+            for (const char* input : {"", " "}) {
+                for (const char* format : {"%d", "%*d"}) {
+                    auto* native = std::tmpfile();
+                    Require(native != nullptr);
+                    Require(std::fwrite(input, 1, std::strlen(input), native) == std::strlen(input));
+                    std::rewind(native);
+                    FileStream stream(native);
+                    int value = 123;
+                    errno = seed;
+                    const int result = variadicList ? ScanList(&stream, format, &value) : fscanf_nid_postfix(&stream, format, &value);
+                    Require(result == EOF && errno == seed, "Stream scan input exhaustion changed errno");
+                    Require(value == 123 && feof_nid_postfix(&stream) != 0 && ferror_nid_postfix(&stream) == 0);
+                    Require(std::fclose(native) == 0);
+                }
+            }
+        }
+#if defined(__GLIBC__)
+        auto* errorNative = std::tmpfile();
+        Require(errorNative != nullptr);
+        const int writeOnly = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        Require(writeOnly >= 0);
+        Require(::dup2(writeOnly, ::fileno(errorNative)) >= 0 && ::close(writeOnly) == 0);
+        FileStream readError(errorNative);
+        int unchanged = 123;
+        errno = 97;
+        const int failed = variadicList ? ScanList(&readError, "%d", &unchanged) : fscanf_nid_postfix(&readError, "%d", &unchanged);
+        Require(failed == EOF && errno != 97, "Stream scan lost its read error");
+        Require(unchanged == 123 && ferror_nid_postfix(&readError) != 0, "Stream scan did not keep its read error indicator");
+        Require(std::fclose(errorNative) == 0 && std::remove(path.c_str()) == 0);
+#endif
+        auto* native = std::tmpfile();
+        Require(native != nullptr && std::fputs("1e99999", native) >= 0);
+        std::rewind(native);
+        FileStream stream(native);
+        float value = 0;
+        errno = 97;
+        const int result = variadicList ? ScanList(&stream, "%f", &value) : fscanf_nid_postfix(&stream, "%f", &value);
+        Require(result == 1 && errno == ERANGE, "Stream scan lost its conversion range error");
+        Require(std::fclose(native) == 0);
+    }
+    errno = savedError;
+}
+
 static std::string ReadWhole(const std::string& path) {
     auto* stream = fopen_nid_postfix(path.c_str(), "rb");
     Require(stream != nullptr);
@@ -278,6 +325,7 @@ static void CheckReadAfterWrite(const std::string& path, const char* mode, const
 }
 
 static void CheckUpdateStreamReadsAfterWrites(const std::string& base) {
+    CheckScanInputFailureErrno(base + ".scan-error");
     const std::string path = base + ".update";
     constexpr char overwritten[] = "AB23456789";
     CheckReadAfterWrite(path, "r+b", overwritten, [](FileStream* stream) {
