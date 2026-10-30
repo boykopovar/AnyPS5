@@ -108,6 +108,7 @@ struct AudioOut2Context {
     std::deque<AudioOut2Grain> pendingGrains;
     std::deque<std::chrono::steady_clock::time_point> pendingSince;
     SDL_AudioDeviceID padDevice = 0;
+    float padSpeakerFallbackGain = 1.0f;
     std::chrono::steady_clock::time_point nextPadProbe;
     AudioOut2PadLayout padLayout;
     std::vector<float> padMix;
@@ -129,6 +130,8 @@ struct AudioOut2Context {
     bool deviceBacked = false;
     std::atomic<std::uint32_t> publishedQueueLevel{0};
 };
+
+AudioOut2Context* AudioOut2FindContext(AudioOut2ContextHandle ctx);
 
 // Mixes every port of the context that carries PCM data into out (stereo float, frames frames), summing
 // onto the zeroed buffer. Returns the number of ports mixed.

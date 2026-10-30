@@ -347,12 +347,10 @@ void ForgetDirectoryStream_nid_no_patch(int descriptor) {
     g_forgetDirectoryDescriptor(descriptor);
 }
 
-static FileStream* OpenDirectoryStream(const std::filesystem::path& path) {
-    if (!g_openDirectoryDescriptor) throw std::runtime_error("fopen: libkernel has not registered its directory descriptors");
+static std::FILE* OpenDirectoryHandle(const std::filesystem::path& path, const std::string& = {}) {
+    if (!g_openDirectoryDescriptor) throw std::runtime_error("OpenDirectoryHandle: libkernel has not registered its directory descriptors");
     const auto filename = HostOpenName(path);
     if (!filename) { errno = GuestErrnoFromHost_nid_no_patch(errno); return nullptr; }
-    const auto release = [](void* pointer) { ::operator delete(pointer); };
-    std::unique_ptr<void, decltype(release)> storage(::operator new(sizeof(FileStream)), release);
     const int descriptor = g_openDirectoryDescriptor(filename->c_str());
     if (descriptor < 0) {
         const int error = GuestErrnoFromHost_nid_no_patch(errno);
@@ -365,8 +363,15 @@ static FileStream* OpenDirectoryStream(const std::filesystem::path& path) {
         ForgetDirectoryStream_nid_no_patch(descriptor);
         ::_close(descriptor);
         errno = error;
-        return nullptr;
     }
+    return native;
+}
+
+static FileStream* OpenDirectoryStream(const std::filesystem::path& path) {
+    const auto release = [](void* pointer) { ::operator delete(pointer); };
+    std::unique_ptr<void, decltype(release)> storage(::operator new(sizeof(FileStream)), release);
+    auto* native = OpenDirectoryHandle(path);
+    if (!native) return nullptr;
     auto* stream = new (storage.get()) FileStream(native, true);
     storage.release();
     stream->MarkDirectory();
@@ -389,6 +394,19 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
             errno = error;
             return nullptr;
         }
+#ifdef _WIN32
+        if (std::error_code status; !parsed->writes && std::filesystem::is_directory(path, status)) {
+            if (stream->IsHostStandard()) throw std::runtime_error("freopen: reopening a standard stream onto a directory is not implemented");
+            if (!stream->Reopen(path, parsed->native.c_str(), OpenDirectoryHandle)) {
+                const int error = errno;
+                if (stream->IsDynamic()) delete stream;
+                errno = error;
+                return nullptr;
+            }
+            stream->MarkDirectory();
+            return stream;
+        }
+#endif
         if (stream->Reopen(path, parsed->native.c_str(), OpenNative)) {
 #ifdef _WIN32
             if (parsed->append && !AppendOnlyDescriptor(_fileno(stream->GetHandle()))) {
@@ -558,6 +576,7 @@ int APS5_VABI fseeko_nid_postfix(FileStream* stream, std::int64_t offset, int or
     const int nativeError = errno;
     stream->SyncStatus();
     if (result) errno = nativeError == EOVERFLOW ? 84 : nativeError;
+    else stream->SetLowSurrogate(0);
     return result;
 }
 
@@ -656,6 +675,62 @@ void* APS5_VABI reallocarray_nid_postfix(void* ptr, size_t nmemb, size_t size) {
         return nullptr;
     }
     return realloc_nid_postfix(ptr, nmemb * size);
+}
+
+/*
+ * Copyright (c) 2008, 2017 Otto Moerbeek <otto@drijf.net>
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+void* APS5_VABI recallocarray_nid_postfix(void* ptr, size_t oldnmemb, size_t nmemb, size_t size) {
+    if (size != 0 && nmemb > std::numeric_limits<size_t>::max() / size) {
+        errno = 12;
+        return nullptr;
+    }
+    if (ptr == nullptr) {
+        void* result = calloc_nid_postfix(nmemb, size);
+        if (result == nullptr && nmemb != 0 && size != 0) errno = 12;
+        return result;
+    }
+    if (size != 0 && oldnmemb > std::numeric_limits<size_t>::max() / size) {
+        errno = 22;
+        return nullptr;
+    }
+    const size_t newsize = nmemb * size;
+    const size_t oldsize = oldnmemb * size;
+    if (newsize <= oldsize) {
+        const size_t d = oldsize - newsize;
+        if (d < oldsize / 2 && d < 16384) {
+            auto* bytes = static_cast<volatile unsigned char*>(ptr);
+            for (size_t index = 0; index < d; ++index) bytes[newsize + index] = 0;
+            return ptr;
+        }
+    }
+    void* newptr = malloc_nid_postfix(newsize);
+    if (newptr == nullptr) {
+        errno = 12;
+        return nullptr;
+    }
+    if (newsize > oldsize) {
+        std::memcpy(newptr, ptr, oldsize);
+        std::memset(static_cast<char*>(newptr) + oldsize, 0, newsize - oldsize);
+    } else {
+        std::memcpy(newptr, ptr, newsize);
+    }
+    auto* oldbytes = static_cast<volatile unsigned char*>(ptr);
+    for (size_t index = 0; index < oldsize; ++index) oldbytes[index] = 0;
+    free_nid_postfix(ptr);
+    return newptr;
 }
 
 void* APS5_VABI memalign_nid_postfix(size_t alignment, size_t size) {
@@ -823,6 +898,17 @@ int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestCo
     if (count > 1 && size != 0)
         SortElements(static_cast<unsigned char*>(base), count, size, [compare, context](const void* left, const void* right) { return compare(left, right, context); });
     return 0;
+}
+
+void APS5_VABI qsort_r_nid_postfix(void* base, size_t count, size_t size, void* thunk, int (APS5_VABI *compare)(void*, const void*, const void*)) {
+    if (!compare) throw std::invalid_argument("qsort_r: null comparator");
+    if (size == 0) throw std::invalid_argument("qsort_r: zero element size");
+    if (count == 0) return;
+    if (!base) throw std::invalid_argument("qsort_r: null base");
+    if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("qsort_r: array size overflow");
+    if (count == 1) return;
+
+    SortElements(static_cast<unsigned char*>(base), count, size, [compare, thunk](const void* left, const void* right) { return compare(thunk, left, right); });
 }
 
 }

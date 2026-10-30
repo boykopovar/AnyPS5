@@ -101,6 +101,8 @@ public:
             if (size && !array) throw RelinkerException("Strict filter: incomplete constructor array metadata");
             if (!size || *size == 0) continue;
             if (*size % 8 != 0) throw RelinkerException("Strict filter: invalid constructor array size", *array);
+            if (*size > std::numeric_limits<VirtualAddress>::max() - *array)
+                throw RelinkerException("Strict filter: constructor array address overflow", *array);
             for (std::uint64_t offset = 0; offset < *size; offset += 8) {
                 const auto slot = *array + offset;
                 const auto position = input.Pointers.find(slot);

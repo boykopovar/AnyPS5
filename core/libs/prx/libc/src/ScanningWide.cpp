@@ -240,7 +240,7 @@ private:
     }
 
     std::size_t IntegerSize(const std::string& length) const {
-        if (length.empty()) return sizeof(std::int32_t);
+        if (length.empty() || length == "L") return sizeof(std::int32_t);
         if (length == "hh") return sizeof(std::int8_t);
         if (length == "h") return sizeof(std::int16_t);
         if (length == "l" || length == "ll" || length == "j" || length == "z" || length == "t") return sizeof(std::int64_t);
@@ -286,11 +286,11 @@ private:
             directive.setBegin = format;
             if (*format == u']') ++format;
             while (*format != 0 && *format != u']') ++format;
-            if (*format == 0) Fail("unterminated scanset");
-            directive.setEnd = format++;
-            for (const char16_t* member = directive.setBegin + 1; member + 1 < directive.setEnd; ++member) {
-                if (*member == u'-') Fail("scanset range is implementation-defined");
+            if (*format == 0) {
+                directive.conversion = 0;
+                return directive;
             }
+            directive.setEnd = format++;
         }
         return directive;
     }
@@ -319,7 +319,7 @@ private:
         case u'S':
         case u'C': return Outcome::Matching;
         case u'n': return Count(directive);
-        default: Fail("unsupported conversion " + std::to_string(directive.conversion));
+        default: return Outcome::Matching;
         }
     }
 
@@ -361,7 +361,6 @@ private:
     }
 
     Outcome Pointer(const Directive& directive) {
-        if (!directive.length.empty()) Fail("invalid pointer length modifier " + directive.length);
         return Integer(directive, 16, false, sizeof(void*));
     }
 
@@ -397,7 +396,12 @@ private:
 
     static bool InSet(const Directive& directive, char16_t character) {
         bool found = false;
-        for (const char16_t* member = directive.setBegin; member != directive.setEnd && !found; ++member) found = *member == character;
+        for (const char16_t* member = directive.setBegin; member != directive.setEnd && !found;) {
+            if (directive.setEnd - member >= 3 && member[1] == u'-') {
+                found = character >= member[0] && character <= member[2];
+                member += 3;
+            } else found = *member++ == character;
+        }
         return found != directive.setExcluded;
     }
 
@@ -410,8 +414,6 @@ private:
     }
 
     Outcome Text(const Directive& directive) {
-        if (!directive.length.empty() && directive.length != "l")
-            Fail("invalid string length modifier " + directive.length);
         void* target = nullptr;
         std::size_t capacity = 0;
         if (!directive.suppress) {

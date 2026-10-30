@@ -98,8 +98,20 @@ int main() {
         Require(parsed.title == "Example" && parsed.titleId == "CUSA00000", "Incorrect title metadata");
         Require(parsed.downloadDataSizeMiB == 64, "Incorrect download data size");
         Require(parsed.userDefinedParams[0] == 23566 && parsed.userDefinedParams[1] == 0 && parsed.userDefinedParams[2] == -7 && parsed.userDefinedParams[3] == 0, "Incorrect user defined params");
+        Require(parsed.paramSfoAttribute == 0u, "An absent ATTRIBUTE is not 0");
 
         auto entries = Valid();
+        entries.push_back(Integer("ATTRIBUTE", 0x00800000));
+        Require(Parse(path, Build(entries)).paramSfoAttribute == 0x00800000u, "Incorrect ATTRIBUTE");
+        entries.back() = Integer("ATTRIBUTE", -1);
+        Require(Parse(path, Build(entries)).paramSfoAttribute == 0xFFFFFFFFu, "ATTRIBUTE lost its high bit");
+        entries.back() = Text("ATTRIBUTE", "8388608");
+        Require(Parse(path, Build(entries)).paramSfoAttribute == 0u, "A text ATTRIBUTE was read as an integer");
+        entries.back() = Integer("ATTRIBUTE", 0x00800000);
+        entries.back().data.pop_back();
+        Rejects(path, Build(entries), "ATTRIBUTE is not a 32-bit integer");
+
+        entries = Valid();
         entries.erase(entries.begin() + 2);
         Rejects(path, Build(entries), "missing TITLE");
         entries = Valid();

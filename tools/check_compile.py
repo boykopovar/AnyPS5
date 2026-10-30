@@ -8,7 +8,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 CPP = (".cpp", ".cc", ".cxx", ".c")
 DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only", "-save-temps", "--save-temps",
@@ -38,6 +38,10 @@ MAX_RESPONSE_FILE_DEPTH = 20
 def capture(command, cwd=None, encoding="utf-8"):
     return subprocess.run(command, capture_output=True, text=True, encoding=encoding,
                           errors="replace", cwd=cwd)
+
+
+def real(path):
+    return Path(os.path.realpath(path))
 
 
 def ninja_encoding(ninja):
@@ -110,13 +114,13 @@ def entries(build):
 
 
 def entry_key(entry, root):
-    directory = Path(entry["directory"]).resolve()
+    directory = real(entry["directory"])
     source = Path(entry["file"])
     if not source.is_absolute():
         source = directory / source
-    source = source.resolve()
+    source = real(source)
     try:
-        return source.relative_to(Path(root).resolve()).as_posix()
+        return source.relative_to(real(root)).as_posix()
     except ValueError:
         return source.as_posix()
 
@@ -206,7 +210,7 @@ def expand_response_files(arguments, directory, seen=frozenset()):
             response = Path(argument[1:])
             if not response.is_absolute():
                 response = directory / response
-            resolved = response.resolve()
+            resolved = real(response)
             if resolved in seen:
                 raise ValueError(f"response file cycle at {resolved}")
             if len(seen) >= MAX_RESPONSE_FILE_DEPTH:
@@ -244,8 +248,37 @@ def preprocessor_arguments(argument):
     return "-Wp," + ",".join(kept) if kept else None
 
 
+def launcher_prefix(arguments):
+    if len(arguments) < 3 or PureWindowsPath(arguments[0]).stem.lower() != "cmake" or arguments[1:3] != ["-E", "env"]:
+        return []
+    index = 3
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            index += 1
+            break
+        if argument == "--modify":
+            if index + 1 == len(arguments):
+                raise ValueError("missing operand for cmake -E env --modify")
+            index += 2
+            continue
+        if argument.startswith("--unset="):
+            index += 1
+            continue
+        if argument.startswith("-"):
+            raise ValueError(f"unsupported cmake -E env option {argument}")
+        if "=" not in argument:
+            break
+        index += 1
+    if index == len(arguments):
+        raise ValueError("cmake -E env launcher has no command")
+    return arguments[:index]
+
+
 def syntax_arguments(arguments, directory, source):
     validate_arguments(arguments)
+    if prefix := launcher_prefix(arguments):
+        return [*prefix, *syntax_arguments(arguments[len(prefix):], directory, source)]
     if any(argument.startswith("@") for argument in arguments[1:]):
         compiler = Path(arguments[0]).stem.lower()
         if compiler in ("cl", "clang-cl") or any(argument in ("--driver-mode=cl", "--rsp-quoting=windows") for argument in arguments):
@@ -294,11 +327,11 @@ def syntax_arguments(arguments, directory, source):
             candidate = Path(argument)
             if not candidate.is_absolute():
                 candidate = directory / candidate
-            if candidate.resolve() == wanted:
+            if real(candidate) == wanted:
                 index += 1
                 continue
             if positional:
-                trimmed.append(str(candidate.resolve()))
+                trimmed.append(str(real(candidate)))
                 index += 1
                 continue
         elif (argument not in WITHOUT_VALUE and not argument.startswith(JOINED_OPTIONS) and "=" not in argument and index + 1 < len(arguments)
@@ -335,9 +368,13 @@ def check(root, build, files, jobs=1):
     commands = index(build, root)
     tasks = []
     for file in files:
-        source = file.resolve()
         try:
-            name = source.relative_to(root.resolve()).as_posix()
+            file.stat()
+        except FileNotFoundError:
+            pass
+        source = real(file)
+        try:
+            name = source.relative_to(real(root)).as_posix()
         except ValueError:
             name = source.as_posix()
         tasks.append((source, name, build, commands.get(name)))
