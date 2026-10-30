@@ -4,6 +4,13 @@
 
 extern "C" {
 
+extern std::uintptr_t _ZTVN3sce2np8SelectorE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np20BufferedStreamReaderE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np20BufferedStreamWriterE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np8msg_pack10MsgPackDocE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np8msg_pack13MsgPackParserE_nid_postfix[];
+
+
 int APS5_VABI _ZN3sce2np10CancelLock3EndEPKciS3_();
 int APS5_VABI _ZN3sce2np10CancelLock5BeginEPNS0_6HandleEPKciS5_();
 int APS5_VABI _ZN3sce2np10CancelLockC1Ev();

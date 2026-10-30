@@ -4,6 +4,41 @@
 
 extern "C" {
 
+static_assert(sizeof(std::uintptr_t) == 8);
+
+std::uintptr_t _ZTVN3sce2np8SelectorE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8SelectorD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8SelectorD0Ev),
+};
+
+std::uintptr_t _ZTVN3sce2np20BufferedStreamReaderE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np20BufferedStreamReaderD2Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np20BufferedStreamReaderD0Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np20BufferedStreamReader4ReadEPNS0_6HandleEPvmPm),
+};
+
+std::uintptr_t _ZTVN3sce2np20BufferedStreamWriterE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np20BufferedStreamWriterD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np20BufferedStreamWriterD0Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np20BufferedStreamWriter5WriteEPNS0_6HandleEPKvmPm),
+};
+
+std::uintptr_t _ZTVN3sce2np8msg_pack10MsgPackDocE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack10MsgPackDocD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack10MsgPackDocD0Ev),
+};
+
+std::uintptr_t _ZTVN3sce2np8msg_pack13MsgPackParserE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack13MsgPackParserD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack13MsgPackParserD0Ev),
+};
+
+
 int APS5_VABI _ZN3sce2np10CancelLock3EndEPKciS3_() {
     NotImplemented_nid_no_patch(__func__);
 }

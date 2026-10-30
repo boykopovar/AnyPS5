@@ -915,3 +915,7 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 - [_ZN3sce2np4Time12GetUserClockEPS1_](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `vINvzJOaqws`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
 - [_ZN3sce2np3ipc17ServiceIpmiClient12AbortRequestEii](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `tQOrMf4KtIo`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
 - [_ZNK3sce2np5Mutex6IsInitEv](../../../core/libs/prx/libSceNpCommon/PendingExportsRound7.cpp) (NID `Yc+qj4TIEY0`) - the signature and behavior are unknown. The no-parameter declaration only resolves the import; it makes no ABI claim. Calls throw through `NotImplemented_nid_no_patch`.
+
+### Partial virtual tables
+
+- [Selector, buffered stream and message-pack virtual tables](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp) have the observed slot layout, but their targets remain throwing declarations. They do not implement the underlying classes or virtual calls.
