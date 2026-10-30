@@ -22,6 +22,8 @@ inline std::atomic<LookupHook>& LookupHookSlot() {
 struct Settings {
     Http2RedirectCallback redirectCallback = nullptr;
     void* redirectArgument = nullptr;
+    HttpsCallback sslCallback = nullptr;
+    void* sslArgument = nullptr;
     std::string userAgent;
     std::vector<std::pair<std::string, std::string>> headers;
     std::uint64_t contentLength = 0;

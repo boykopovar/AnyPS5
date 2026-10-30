@@ -535,6 +535,102 @@ void RedirectRequestMethods(int ssl) {
     }
 }
 
+struct SslObservation {
+    int context = 0;
+    int request = 0;
+    int calls = 0;
+    int decision = 0;
+    unsigned int errors = 0;
+    bool abort = false;
+    bool remove = false;
+    bool fail = false;
+};
+
+int APS5_VABI SslCallback(int context, unsigned int errors, void* const* certificates, int count, void* argument) {
+    auto& observed = *static_cast<SslObservation*>(argument);
+    Require(context == observed.context, "SSL callback receives SSL context ID");
+    Require(certificates && count > 0 && certificates[0], "SSL callback receives real certificate handles");
+    std::size_t size = 0;
+    Require(sceSslGetSerialNumber(context, certificates[0], nullptr, &size) == 0 && size > 0 && size < 1024, "inspect peer certificate in callback");
+    std::vector<unsigned char> serial(size);
+    Require(sceSslGetSerialNumber(context, certificates[0], serial.data(), &size) == 0 && size == serial.size(), "read peer serial in callback");
+    ++observed.calls;
+    observed.errors |= errors;
+    if (observed.abort) Require(sceHttp2AbortRequest(observed.request) == 0, "abort from SSL callback");
+    if (observed.remove) Require(sceHttp2DeleteRequest(observed.request) == 0, "delete from SSL callback");
+    if (observed.fail) throw std::runtime_error("SSL callback exception");
+    return observed.decision;
+}
+
+int nullSslCalls = 0;
+int APS5_VABI NullSslArgument(int context, unsigned int, void* const* certificates, int count, void* argument) {
+    Require(context > 0 && certificates && count > 0 && argument == nullptr, "null SSL callback argument");
+    ++nullSslCalls;
+    return 0;
+}
+
+void SslCallbacks(int trusted) {
+    const int untrusted = sceSslInit_nid_postfix(8 * 1024 * 1024);
+    Require(untrusted > 0, "SSL untrusted test context");
+    for (int mode = 0; mode < 12; ++mode) {
+        const bool noTrust = mode == 1 || mode == 5 || mode == 10;
+        const int context = noTrust ? untrusted : trusted;
+        Server server(Mode::Normal);
+        Client client(context);
+        SslObservation observed, changed;
+        observed.context = changed.context = context;
+        observed.decision = mode == 2 ? -1 : mode == 3 ? 7 : 0;
+        observed.abort = mode == 6;
+        observed.remove = mode == 7;
+        observed.fail = mode == 8;
+        if (mode != 11) Require(sceHttp2SetSslCallback(client.tmpl, SslCallback, &observed) == 0, "template SSL callback");
+        if (mode == 4 || mode == 5) Require(sceHttp2SetSslCallback(client.tmpl, nullptr, &observed) == 0, "clear SSL callback with argument");
+        if (mode == 9) Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "enable numeric-host verification");
+        if (mode == 10) Require(sceHttp2SslDisableOption(client.tmpl, 0x3d) == 0, "disable named verification checks");
+        client.Create(server.Url());
+        observed.request = changed.request = client.request;
+        if (mode == 11) Require(sceHttp2SetSslCallback(client.request, SslCallback, &observed) == 0, "request SSL callback override");
+        else Require(sceHttp2SetSslCallback(client.tmpl, SslCallback, &changed) == 0, "template mutation after request creation");
+        const bool failure = mode == 2 || mode == 3 || mode == 5 || mode == 6 || mode == 7 || mode == 8;
+        if (failure) Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "SSL callback refusal or cancellation fails request");
+        else {
+            Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "SSL callback accepted real handshake");
+            Response(client, 200);
+        }
+        server.Join();
+        Require(changed.calls == 0 && observed.calls == (mode == 4 || mode == 5 ? 0 : 1), "SSL callback snapshot and invocation count");
+        if (mode == 1) Require((observed.errors & 0x20) != 0, "untrusted chain flags reported");
+        else if (mode == 9) Require((observed.errors & 0x4) != 0, "host-name error reported");
+        else Require(observed.errors == 0, "successful or disabled checks report no error");
+        if (observed.remove) Require(sceHttp2DeleteRequest(client.request) == static_cast<int>(0x817b1100), "SSL callback deletion persists");
+    }
+    {
+        Server server(Mode::Normal);
+        Client client(trusted);
+        Require(sceHttp2SetSslCallback(client.tmpl, NullSslArgument, nullptr) == 0, "SSL null user argument registration");
+        client.Create(server.Url());
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "SSL null user argument send");
+        Response(client, 200);
+        server.Join();
+        Require(nullSslCalls == 1, "SSL null user argument delivery");
+    }
+    {
+        Server target(Mode::Normal);
+        Server redirect(Mode::Redirect, target.Url(), 307);
+        Client client(trusted, 1);
+        SslObservation observed;
+        observed.context = trusted;
+        Require(sceHttp2SetSslCallback(client.tmpl, SslCallback, &observed) == 0, "SSL callback for redirected requests");
+        client.Create(redirect.Url());
+        Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "redirect with SSL verification callback");
+        Response(client, 200);
+        redirect.Join();
+        target.Join();
+        Require(observed.calls == 2 && observed.errors == 0, "each TLS hop reports its chain");
+    }
+    Require(sceSslTerm_nid_postfix(untrusted) == 0, "untrusted SSL context cleanup");
+}
+
 void GzipRedirect(int ssl) {
     for (const auto mode : {Mode::Normal, Mode::Gzip}) {
         Server target(mode);
@@ -943,6 +1039,8 @@ int main(int argc, char** argv) {
     } else if (argc == 2 && std::string_view(argv[1]) == "--dns-first") {
         FirstNetworkRequest(ssl);
 #endif
+    } else if (argc == 2 && std::string_view(argv[1]) == "--ssl-callbacks") {
+        SslCallbacks(ssl);
     } else if (argc == 2 && std::string_view(argv[1]) == "--redirects") {
         GzipRedirect(ssl);
         RedirectPolicies(ssl);

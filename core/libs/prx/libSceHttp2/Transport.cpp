@@ -302,6 +302,7 @@ struct Request::State {
     std::atomic<bool> cancelled{false};
     bool started = false;
     bool callbackActive = false;
+    std::unique_lock<std::mutex>* callbackLock = nullptr;
     bool ready = false;
     bool ended = false;
     int status = 0;
@@ -341,6 +342,7 @@ struct Request::State {
     ~State() { Close(); }
 
     void Close() {
+        callbackLock = nullptr;
         if (session) nghttp2_session_del(std::exchange(session, nullptr));
         if (ssl >= 0) sceSslDeleteConnection(std::exchange(ssl, -1));
         if (socket >= 0) sceNetSocketClose(std::exchange(socket, -1));
@@ -351,6 +353,32 @@ struct Request::State {
     Clock::time_point Deadline(std::uint32_t duration) const {
         Require(duration != 0, "sceHttp2: zero timeout semantics are unknown");
         return std::min(totalDeadline, Clock::now() + std::chrono::microseconds(duration));
+    }
+
+    template<class TCallback>
+    int InvokeCallback(std::unique_lock<std::mutex>& lock, TCallback callback) {
+        callbackActive = true;
+        lock.unlock();
+        try {
+            const int result = callback();
+            lock.lock();
+            callbackActive = false;
+            Check(totalDeadline);
+            return result;
+        } catch (...) {
+            if (!lock.owns_lock()) lock.lock();
+            callbackActive = false;
+            throw;
+        }
+    }
+
+    static int APS5_VABI Verify_nid_no_patch(int context, unsigned int errors, void** certificates, int count, void* argument) {
+        auto& state = *static_cast<State*>(argument);
+        Require(state.callbackLock && state.settings.sslCallback, "sceHttp2: unexpected SSL callback phase");
+        const int decision = state.InvokeCallback(*state.callbackLock, [&] {
+            return state.settings.sslCallback(context, errors, certificates, count, state.settings.sslArgument);
+        });
+        return decision == 0 ? 0 : -1;
     }
 
     void Check(Clock::time_point deadline) const {
@@ -476,12 +504,14 @@ struct Request::State {
         Require(sceSslDisableVerifyOption(ssl, 0x3d) == 0 && sceSslEnableVerifyOption(ssl, settings.verifyFlags) == 0,
             "sceHttp2: SSL verification options rejected");
         Require(sceSslSetAlpn(ssl, "h2") == 0, "sceHttp2: ALPN setup failed");
+        if (settings.sslCallback) Require(sceSslSetVerifyCallback(ssl, Verify_nid_no_patch, this) == 0, "sceHttp2: SSL callback setup failed");
         for (;;) {
             Check(connectDeadline);
             result = sceSslConnect(ssl);
             if (result == WantRead || result == WantWrite) Wait(result == WantWrite, connectDeadline);
             else break;
         }
+        if (settings.sslCallback) Require(sceSslSetVerifyCallback(ssl, nullptr, nullptr) == 0, "sceHttp2: SSL callback cleanup failed");
         Require(result == 0, "sceHttp2: TLS failed; console error mapping is unknown");
         const char* selected = sceSslGetAlpnSelected(ssl);
         Require(selected && std::string_view(selected) == "h2", "sceHttp2: server did not negotiate h2; fallback contract is unknown");
@@ -660,7 +690,7 @@ struct Request::State {
     std::unique_lock<std::mutex> Lock() {
         std::unique_lock lock(mutex, std::try_to_lock);
         Require(lock.owns_lock(), "sceHttp2: concurrent operation on one request is not implemented");
-        Require(!callbackActive, "sceHttp2: operation during redirect callback is not implemented");
+        Require(!callbackActive, "sceHttp2: operation during request callback is not implemented");
         if (failure) std::rethrow_exception(failure);
         Require(!cancelled.load(), "sceHttp2: request cancelled; console error mapping is unknown");
         return lock;
@@ -691,7 +721,9 @@ int Request::Send(const void* data, std::size_t size) {
             const int active = state->capacity->active.fetch_add(1);
             state->acquired = true;
             Require(active < state->capacity->maximum, "sceHttp2: connection slot waiting is not implemented");
+            state->callbackLock = &lock;
             state->networkResult = state->Connect();
+            state->callbackLock = nullptr;
             if (state->networkResult < 0) { state->Close(); return state->networkResult; }
             state->Setup(payload, payloadSize);
             const auto sendDeadline = state->Deadline(state->settings.sendTimeout);
@@ -714,19 +746,9 @@ int Request::Send(const void* data, std::size_t size) {
             std::string method = retrieve ? "GET" : state->method;
             if (const auto callback = state->settings.redirectCallback) {
                 const char* selected = method.c_str();
-                state->callbackActive = true;
-                lock.unlock();
-                int result;
-                try {
-                    result = callback(state->id, state->status, &selected, state->location.c_str(), state->settings.redirectArgument);
-                } catch (...) {
-                    lock.lock();
-                    state->callbackActive = false;
-                    throw;
-                }
-                lock.lock();
-                state->callbackActive = false;
-                state->Check(state->totalDeadline);
+                const int result = state->InvokeCallback(lock, [&] {
+                    return callback(state->id, state->status, &selected, state->location.c_str(), state->settings.redirectArgument);
+                });
                 if (result != 0) break;
                 Require(selected, "sceHttp2: redirect callback returned a null method");
                 method = selected;
