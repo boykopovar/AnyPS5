@@ -40,8 +40,17 @@ static int CreateWebSocket(int tmpl, const char* url) {
     return sceHttp2WebSocketCreateRequest(tmpl, url, WebSocketText, WebSocketData, WebSocketClose, WebSocketError, g_receive.data(), g_receive.size(), nullptr, nullptr);
 }
 
+static void RequireNullMessageRejected(int id) {
+    const Http2AsyncOption asyncOption{};
+    Require(sceHttp2WebSocketSendTextMessageAsync(id, nullptr, 0, nullptr, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendTextMessageAsync(id, nullptr, 0xff, &asyncOption, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendDataMessageAsync(id, nullptr, 2, 0, nullptr, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendDataMessageAsync(id, nullptr, 0, 0xff, &asyncOption, nullptr) == InvalidValue);
+}
+
 static void RequireNotWebSocket(int id) {
     const std::uint16_t status = 1000;
+    RequireNullMessageRejected(id);
     Require(sceHttp2WebSocketSetPingInterval(id, 1000000) == InvalidId);
     Require(sceHttp2WebSocketSetPingTimeout(id, 1000000) == InvalidId);
     Require(sceHttp2WebSocketSendTextMessageAsync(id, "hi", 0, nullptr, nullptr) == InvalidId);
@@ -95,6 +104,7 @@ static void TestWebSockets() {
     for (const int invalid : {0, -1, 0x7777, plain, tmpl, context}) RequireNotWebSocket(invalid);
 
     const std::uint16_t status = 1000;
+    RequireNullMessageRejected(socket);
     Require(sceHttp2WebSocketSendTextMessageAsync(socket, "hi", 0, nullptr, nullptr) == NotConnected);
     Require(sceHttp2WebSocketSendTextMessageAsync(socket, "hi", 0, nullptr, &marker) == InvalidValue);
     Require(sceHttp2WebSocketSendDataMessageAsync(socket, "hi", 2, 0, nullptr, nullptr) == NotConnected);

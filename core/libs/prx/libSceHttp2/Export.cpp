@@ -437,19 +437,17 @@ int APS5_VABI sceHttp2WebSocketCloseAsync(std::int32_t requestId, const std::uin
 }
 
 int APS5_VABI sceHttp2WebSocketSendTextMessageAsync(std::int32_t requestId, const char* text, std::uint8_t flags, const Http2AsyncOption* asyncOption, const void* option) {
-    (void)text;
     (void)flags;
     (void)asyncOption;
-    if (option != nullptr) return ERROR_INVALID_VALUE;
+    if (option != nullptr || text == nullptr) return ERROR_INVALID_VALUE;
     return IsWebSocket(requestId) ? ERROR_NOT_CONNECTED : ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceHttp2WebSocketSendDataMessageAsync(std::int32_t requestId, const void* data, std::size_t dataSize, std::uint8_t flags, const Http2AsyncOption* asyncOption, const void* option) {
-    (void)data;
     (void)dataSize;
     (void)flags;
     (void)asyncOption;
-    if (option != nullptr) return ERROR_INVALID_VALUE;
+    if (option != nullptr || data == nullptr) return ERROR_INVALID_VALUE;
     return IsWebSocket(requestId) ? ERROR_NOT_CONNECTED : ERROR_INVALID_ID;
 }
 
