@@ -166,6 +166,16 @@ static void CheckCapacities(Scan scan) {
         int number = -1;
         Field h;
         Require(scan("5 xy", "%d %2c", &number, h.text, std::size_t{1}) == 2 && number == 5 && h.Holds("x~", 2), "Clamped character after an integer");
+        Field i;
+        Field j;
+        Require(scan("abc", "%2147483648c%c", i.text, std::size_t{4}, j.text, std::size_t{1}) == 2 && i.Holds("a~", 2) && j.Holds("b~", 2),
+            "Character width above INT_MAX reads one character");
+        Field k;
+        Require(scan("abc", "%2147483648c", k.text, std::size_t{2}) == 1 && k.Holds("a~", 2), "Character width above INT_MAX with size 2");
+        Field l;
+        Field m;
+        Require(scan("abcd", "%4294967298c%c", l.text, std::size_t{4}, m.text, std::size_t{1}) == 2 && l.Holds("ab~", 3) && m.Holds("c~", 2),
+            "Character width keeps its low 32 bits");
     }
     {
         Field a;

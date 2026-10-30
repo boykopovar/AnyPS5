@@ -405,7 +405,9 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             std::size_t taken = width;
             std::size_t overrun = 0;
             if (bounded) {
-                const std::size_t wanted = width != 0 ? width : (conversion == 'c' ? 1 : SIZE_MAX);
+                const auto characterWidth = static_cast<std::uint32_t>(width);
+                const std::size_t wanted = conversion == 'c' && element == 1 ? (characterWidth == 0 || characterWidth > INT_MAX ? 1 : characterWidth)
+                    : width != 0 ? width : (conversion == 'c' ? 1 : SIZE_MAX);
                 const std::size_t available = std::strlen(field);
                 taken = std::min({wanted, capacity, available});
                 if (conversion == 'c' && element != 1) overrun = std::min(wanted, available) - taken;
