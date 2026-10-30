@@ -1001,7 +1001,7 @@ private:
     }
 
     static bool PointerFreeWord(const IrValue& word) {
-        return (word.HasImmediate() && word.Type() == IrType::U32) || LaneMaskOperand(&word) || BitFieldWord(word);
+        return (word.HasImmediate() && word.Type() == IrType::U32) || LaneMaskOperand(&word);
     }
 
     static IrValue* MaskedRecordWord(const IrValue& word) {
@@ -1098,7 +1098,7 @@ private:
                 auto* lowWord = pending.back().first->Resolve();
                 auto* highWord = pending.back().second->Resolve();
                 pending.pop_back();
-                if (!seen.emplace(lowWord, highWord).second || PointerFreeWord(*lowWord)) continue;
+                if (!seen.emplace(lowWord, highWord).second || PointerFreeWord(*lowWord) || BitFieldWord(*lowWord)) continue;
                 if (lowWord->IsPhi()) {
                     const bool paired = highWord->IsPhi() && highWord->Parent() == lowWord->Parent();
                     for (std::size_t index = 0; index < lowWord->ArgumentCount(); ++index) {
