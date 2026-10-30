@@ -868,6 +868,10 @@ std::uint64_t guardedColorBytes(const ColorTarget& target) {
     return bytes;
 }
 
+void storeEarlierStorageResults(const ColorTarget& target) {
+    static_cast<void>(StorageTexture::FlushPending(target.address, static_cast<std::size_t>(guardedColorBytes(target)), nullptr, "multisampled color target"));
+}
+
 void claimOverlapping(std::uint64_t address, std::uint64_t bytes, const TargetUse* claimant) {
     for (const auto& range : guarded()) {
         if (!range.fmask && range.use.get() != claimant && address < range.address + range.bytes && range.address < address + bytes) range.use->claimed.store(true, std::memory_order_release);
@@ -1273,12 +1277,14 @@ bool TakeMultisampledClear(MultisampledCmask& cmask, MultisampledColorFill& colo
 }
 
 SampleOrderTarget MultisampleTargetOrderTarget(const Context& context, const ColorTarget& target) {
+    storeEarlierStorageResults(target);
     std::lock_guard lock(targetsMutex());
     auto& found = acquire(context, target);
     return {found.image, found.OrderView(), found.orderFormat, target.extent, target.samples, SampleOrderMethod::Storage, found.shared_from_this()};
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, VkImage* image) {
+    storeEarlierStorageResults(target);
     std::lock_guard lock(targetsMutex());
     auto& acquired = acquire(context, target);
     if (image != nullptr) *image = acquired.image;
@@ -1286,6 +1292,7 @@ VkImageView MultisampleTargetView(const Context& context, const ColorTarget& tar
 }
 
 VkImageView MultisampleTargetView(const Context& context, const ColorTarget& target, std::shared_ptr<void>& owner, VkImage* image) {
+    storeEarlierStorageResults(target);
     std::lock_guard lock(targetsMutex());
     auto& acquired = acquire(context, target);
     owner = acquired.shared_from_this();
@@ -1373,6 +1380,7 @@ std::shared_ptr<Texture> MultisampleTargetFirstSample(const Context& context, co
 }
 
 void MaterializeMultisampleTargetClear(const Context& context, const ColorTarget& target) {
+    storeEarlierStorageResults(target);
     std::lock_guard lock(targetsMutex());
     acquire(context, target);
 }
@@ -1409,6 +1417,7 @@ bool MultisampleTargetStorable(const Context& context, const ColorTarget& target
 }
 
 void ResolveMultisampleTarget(const Context& context, const ColorTarget& source, StorageTexture& destination, VkImageView destinationView) {
+    storeEarlierStorageResults(source);
     std::lock_guard lock(targetsMutex());
     auto& target = acquire(context, source);
     target.Keep();
