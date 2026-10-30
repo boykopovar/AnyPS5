@@ -26,7 +26,7 @@ static void CheckClockRefused(const PthreadCondattr* attr, KernelClockid* clockI
     bool threw = false;
     try {
         pthread_condattr_getclock_nid_postfix(attr, clockId);
-    } catch (const std::runtime_error&) {
+    } catch (const std::invalid_argument&) {
         threw = true;
     }
     Require(threw);
@@ -75,7 +75,7 @@ int main() {
     Require(scePthreadCondattrSetpshared(&attr, 0) == SCE_OK);
     Require(scePthreadCondattrGetpshared(&attr, &sharing) == SCE_OK && sharing == 0);
     Require(pthread_condattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
-    for (const KernelClockid clock : {-1, 3, 5, 12, 13, 14, 15}) {
+    for (const KernelClockid clock : {-1, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}) {
         Require(scePthreadCondattrSetclock(&attr, clock) == SceEinval);
         CheckClock(&attr, Monotonic);
         Require(pthread_condattr_setclock_nid_postfix(&attr, clock) == GuestEinval);

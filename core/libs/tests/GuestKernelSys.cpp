@@ -489,7 +489,7 @@ void CheckCondattrClock() {
     Require(scePthreadCondattrSetclock(&attr, Monotonic) == 0);
     Require(scePthreadCondattrGetclock(&attr, &clock) == 0 && clock == Monotonic);
     bool getclockThrew = false;
-    try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::runtime_error&) { getclockThrew = true; }
+    try { scePthreadCondattrGetclock(&attr, nullptr); } catch (const std::invalid_argument&) { getclockThrew = true; }
     Require(getclockThrew);
     Require(scePthreadCondattrDestroy(&attr) == 0 && attr == nullptr);
     clock = -1;

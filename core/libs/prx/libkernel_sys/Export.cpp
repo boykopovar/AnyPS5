@@ -1141,7 +1141,7 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
 
 int APS5_VABI scePthreadCondattrGetclock(const PthreadCondattr* attr, KernelClockid* clockId) {
     if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    if (!clockId) throw std::runtime_error("scePthreadCondattrGetclock: null clock id");
+    if (!clockId) throw std::invalid_argument("scePthreadCondattrGetclock: null clock id");
     *clockId = (*attr)->_clockid;
     return 0;
 }
