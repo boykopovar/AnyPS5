@@ -62,6 +62,40 @@ def log():
 
 
 class AbSplitTests(unittest.TestCase):
+    def test_concatenated_runs_cannot_mix_phase_statistics(self):
+        lines = log() + log()
+        with self.assertRaisesRegex(ValueError, "multiple A/B runs"):
+            ab_split.split(lines)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mixed.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(path), "--json"],
+                                    capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("multiple A/B runs", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_concatenated_runs_without_a_second_header_are_refused(self):
+        lines = log() + [line for line in log() if not line.startswith("[ab] in-run A/B:")]
+        with self.assertRaisesRegex(ValueError, "phase index restarts"):
+            ab_split.split(lines)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "headerless.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(path), "--json"],
+                                    capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("phase index restarts", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_partial_capture_starting_at_a_later_phase_is_accepted(self):
+        lines = [line for line in log() if not line.startswith("[ab] in-run A/B:")]
+        start = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 begins"))
+        result = ab_split.split(lines[start:])
+        self.assertEqual([phase["index"] for phase in result["phases"]], [1, 2, 3])
+
     def test_settled_phase_requires_matching_kind_and_index(self):
         lines = [
             "[ab] phase A 0 begins at present 100 (t 10.000 s)\n",

@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -8,6 +9,17 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import progress
+
+
+def excessive_nesting():
+    depth = sys.getrecursionlimit() + 64
+    for _ in range(8):
+        try:
+            json.loads("[" * depth + "]" * depth)
+        except RecursionError:
+            return "[" * (depth + 128) + "]" * (depth + 128)
+        depth *= 2
+    raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
 class ProgressSnapshotTests(unittest.TestCase):
@@ -57,6 +69,23 @@ class ProgressSnapshotTests(unittest.TestCase):
                 self.assertEqual(stdout.getvalue(), "")
                 self.assertIn(str(paths[position]), stderr.getvalue())
                 self.assertIn(message, stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_deeply_nested_snapshots_are_usage_errors(self):
+        for position in (0, 1):
+            with self.subTest(position=position), tempfile.TemporaryDirectory() as directory:
+                paths = [Path(directory) / "base snapshot.json", Path(directory) / "head snapshot.json"]
+                for path in paths:
+                    path.write_text(json.dumps(self.snapshot()), encoding="utf-8")
+                paths[position].write_text(excessive_nesting(), encoding="utf-8")
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                    with self.assertRaises(SystemExit) as raised:
+                        progress.main(["--compare", *map(str, paths)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertIn(str(paths[position]), stderr.getvalue())
+                self.assertNotIn("must be an object", stderr.getvalue())
                 self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_non_object_snapshots_are_usage_errors(self):
@@ -165,8 +194,8 @@ class ProgressTests(unittest.TestCase):
         report = progress.report(base, head)
         self.assertIn("**System libraries**", report)
         self.assertIn("| Library | Name |", report)
-        self.assertIn("| libScePad | 1/2 (50.00%) | 2/2 (100.00%) | +50.00 pp |", report)
-        self.assertIn("| libSceVideoOut | 3/4 (75.00%) | 2/4 (50.00%) | -25.00 pp |", report)
+        self.assertIn("| libScePad | 1/2 (50.00%) | 2/2 (100.00%) | +50.00% |", report)
+        self.assertIn("| libSceVideoOut | 3/4 (75.00%) | 2/4 (50.00%) | -25.00% |", report)
         table = report.split("#### Changed libraries (implemented exports)")[1]
         self.assertNotIn("libSceUnused", table)
         self.assertLess(table.index("libScePad"), table.index("libSceVideoOut"))
@@ -174,7 +203,7 @@ class ProgressTests(unittest.TestCase):
     def test_report_includes_changed_function_names_when_counts_stay_equal(self):
         base = self.report_snapshot(self.report_library("libScePad", ["Old"], ["Pending"]))
         head = self.report_snapshot(self.report_library("libScePad", ["New"], ["Pending"]))
-        self.assertIn("| libScePad | 1/2 (50.00%) | 1/2 (50.00%) | +0.00 pp |", progress.report(base, head))
+        self.assertIn("| libScePad | 1/2 (50.00%) | 1/2 (50.00%) | +0.00% |", progress.report(base, head))
 
     def test_report_marks_new_removed_and_empty_libraries_without_percentages(self):
         base = self.report_snapshot(self.report_library("libSceRemoved", ["Ready"]),
@@ -256,32 +285,65 @@ class ProgressTests(unittest.TestCase):
                                     self.report_snapshot(after)["libraries"])[0]
         self.assertIn("(+<0.0001%, +1 implemented functions)", headline)
 
-    def test_report_rounds_percentage_point_change_without_negative_zero(self):
+    def test_percent_change_is_n_a_when_a_percentage_is_missing(self):
+        self.assertEqual(progress.percent_change(None, 50), "n/a")
+        self.assertEqual(progress.percent_change(50, None), "n/a")
+        self.assertEqual(progress.percent_change(None, None), "n/a")
+
+    def test_percent_change_keeps_the_sign_and_two_decimals(self):
+        self.assertEqual(progress.percent_change(50, 100), "+50.00%")
+        self.assertEqual(progress.percent_change(75, 50), "-25.00%")
+        self.assertEqual(progress.percent_change(0, 100), "+100.00%")
+        self.assertEqual(progress.percent_change(100, 0), "-100.00%")
+        self.assertEqual(progress.percent_change(33.33, 66.67), "+33.34%")
+
+    def test_percent_change_never_prints_a_negative_zero(self):
+        self.assertEqual(progress.percent_change(50, 50), "+0.00%")
+        self.assertEqual(progress.percent_change(50, 49.996), "+0.00%")
+        self.assertEqual(progress.percent_change(49.996, 50), "+0.00%")
+
+    def test_report_headline_writes_its_change_in_percent_for_gains_and_losses(self):
+        gain = progress.report(self.report_snapshot(self.report_library("libScePad", ["R"], ["A", "B"])),
+                               self.report_snapshot(self.report_library("libScePad", ["R", "A"], ["B"])))
+        loss = progress.report(self.report_snapshot(self.report_library("libScePad", ["R", "A"], ["B"])),
+                               self.report_snapshot(self.report_library("libScePad", ["R"], ["A", "B"])))
+        self.assertRegex(gain.splitlines()[0], r"\*\*: [0-9.]+% \(\+[0-9.]+%[,)]")
+        self.assertRegex(loss.splitlines()[0], r"\*\*: [0-9.]+% \(-[0-9.]+%[,)]")
+
+    def test_report_table_writes_its_change_in_percent_and_never_in_pp(self):
         base = self.report_snapshot(self.report_library("libScePad", ["Ready"], ["A", "B"]))
         head = self.report_snapshot(self.report_library("libScePad", ["Ready", "A"], ["B"]))
-        self.assertIn("| libScePad | 1/3 (33.33%) | 2/3 (66.67%) | +33.33 pp |", progress.report(base, head))
+        report = progress.report(base, head)
+        row = next(line for line in report.splitlines() if line.startswith("| libScePad | 1/3"))
+        self.assertTrue(row.endswith("| +33.33% |"), row)
+        self.assertNotIn(" pp", report)
+
+    def test_report_rounds_percentage_change_without_negative_zero(self):
+        base = self.report_snapshot(self.report_library("libScePad", ["Ready"], ["A", "B"]))
+        head = self.report_snapshot(self.report_library("libScePad", ["Ready", "A"], ["B"]))
+        self.assertIn("| libScePad | 1/3 (33.33%) | 2/3 (66.67%) | +33.33% |", progress.report(base, head))
         before = dict(self.report_library("libSceLarge", ["Ready"]), todo=100000)
         after = dict(before, todo=100001)
-        self.assertIn("| -<0.0001 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
-        self.assertNotIn("-0.00 pp", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        self.assertIn("| -<0.0001% |", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
+        self.assertNotIn("-0.00%", progress.report(self.report_snapshot(before), self.report_snapshot(after)))
 
     def test_report_shows_a_library_change_that_two_decimals_would_hide(self):
         before = dict(self.report_library("libc", ["A"], ["T"]), done=1340, todo=11)
         after = dict(self.report_library("libc", ["A", "B"], ["T"]), done=1341, todo=11)
-        self.assertIn("| libc | 1340/1351 (99.19%) | 1341/1352 (99.19%) | +0.0006 pp |",
+        self.assertIn("| libc | 1340/1351 (99.19%) | 1341/1352 (99.19%) | +0.0006% |",
                       progress.report(self.report_snapshot(before), self.report_snapshot(after)))
         same = dict(self.report_library("libc", ["B"], ["T"]), done=1340, todo=11)
-        self.assertIn("| +0.00 pp |", progress.report(self.report_snapshot(before), self.report_snapshot(same)))
+        self.assertIn("| +0.00% |", progress.report(self.report_snapshot(before), self.report_snapshot(same)))
 
     def test_report_compares_libraries_whose_counts_are_floats(self):
         before = dict(self.report_library("libc", ["A"], ["T"]), done=1.0, todo=2.0)
         after = dict(self.report_library("libc", ["A", "B"], ["T"]), done=2.0, todo=3.0)
         report = progress.report(self.report_snapshot(before), self.report_snapshot(after))
-        self.assertIn("| libc | 1.0/3.0 (33.33%) | 2.0/5.0 (40.00%) | +6.67 pp |", report)
+        self.assertIn("| libc | 1.0/3.0 (33.33%) | 2.0/5.0 (40.00%) | +6.67% |", report)
         tiny_before = dict(before, done=1340.0, todo=11.0)
         tiny_after = dict(after, done=1341.0, todo=11.0)
         report = progress.report(self.report_snapshot(tiny_before), self.report_snapshot(tiny_after))
-        self.assertIn("| +0.00 pp |", report)
+        self.assertIn("| +0.00% |", report)
 
     def test_report_limits_library_rows(self):
         head = self.report_snapshot(*(self.report_library(f"libSce{i:03}", ["Ready"]) for i in range(103)))
@@ -718,7 +780,7 @@ class ProgressTests(unittest.TestCase):
             first, second = output / "progress.json", output / "progress.html"
             first.write_text("json report", encoding="utf-8")
             try:
-                second.hardlink_to(first)
+                os.link(first, second)
             except OSError:
                 self.skipTest("hard links are not available")
             others = {name: output / name for name in ("badge-libraries.svg", "badge-shaders.svg", "progress.svg")}
