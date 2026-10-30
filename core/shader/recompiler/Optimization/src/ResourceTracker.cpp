@@ -14,6 +14,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <span>
 #include <string>
 #include <tuple>
@@ -517,6 +518,113 @@ private:
         return MatchScale(scaled, key, stride) && std::has_single_bit(stride) && stride >= 4u && (mask & ~(stride - 1u)) != 0u && key->Type() == IrType::U32;
     }
 
+    static IrValue* ActiveLaneValue(IrValue* value, const IrValue* mask) {
+        value = value->Resolve();
+        while (mask != nullptr && Detail::IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(mask, value->Argument(0))) {
+            value = value->Argument(1)->Resolve();
+        }
+        return value;
+    }
+
+    static std::uint32_t ScaledBase(IrValue* value, const IrValue* mask, IrValue*& base) {
+        value = ActiveLaneValue(value, mask);
+        std::uint32_t immediate = 0;
+        std::uint32_t scale = 1u;
+        while (value->ArgumentCount() == 2u && immediateU32(value->Argument(1), immediate) && ((value->Opcode() == IrOpcode::ShiftLeftLogical32 && immediate < 32u) || value->Opcode() == IrOpcode::IMul32)) {
+            const std::uint64_t next = static_cast<std::uint64_t>(scale) * (value->Opcode() == IrOpcode::IMul32 ? immediate : 1u << immediate);
+            if (next > std::numeric_limits<std::uint32_t>::max()) {
+                break;
+            }
+            scale = static_cast<std::uint32_t>(next);
+            value = ActiveLaneValue(value->Argument(0), mask);
+        }
+        base = value;
+        return scale;
+    }
+
+    struct MultipleSearch {
+        std::vector<const IrValue*> visiting;
+        std::unordered_map<const IrValue*, std::uint32_t> known;
+        const IrValue* mask = nullptr;
+        bool cycle = false;
+    };
+
+    std::uint32_t KnownMultiple(IrValue* value, MultipleSearch& search, std::uint32_t depth) const {
+        value = ActiveLaneValue(value, search.mask);
+        std::uint32_t immediate = 0;
+        if (immediateU32(value, immediate)) {
+            return immediate;
+        }
+        if (std::ranges::find(search.visiting, value) != search.visiting.end()) {
+            search.cycle = true;
+            return 0u;
+        }
+        if (const auto found = search.known.find(value); found != search.known.end()) {
+            return found->second;
+        }
+        if (depth == 0u || value->Type() != IrType::U32) {
+            return 1u;
+        }
+        const bool outerCycle = search.cycle;
+        search.cycle = false;
+        auto& visiting = search.visiting;
+        visiting.push_back(value);
+        const auto product = [](std::uint32_t multiple, std::uint32_t scale) {
+            const std::uint64_t result = static_cast<std::uint64_t>(multiple) * scale;
+            return result > std::numeric_limits<std::uint32_t>::max() ? std::uint32_t{1u} << std::countr_zero(scale) : static_cast<std::uint32_t>(result);
+        };
+        std::uint32_t multiple = 1u;
+        const auto op = value->Opcode();
+        if (value->IsPhi()) {
+            multiple = 0u;
+            for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
+                multiple = std::gcd(multiple, KnownMultiple(value->Argument(index), search, depth - 1u));
+            }
+        } else if ((op == IrOpcode::ShiftLeftLogical32 || op == IrOpcode::IMul32) && value->ArgumentCount() == 2u && immediateU32(value->Argument(1), immediate)) {
+            IrValue* base = nullptr;
+            const auto scale = ScaledBase(value, search.mask, base);
+            multiple = product(KnownMultiple(base, search, depth - 1u), scale);
+        } else if (op == IrOpcode::IAdd32 && value->ArgumentCount() == 2u) {
+            IrValue* left = nullptr;
+            IrValue* right = nullptr;
+            const auto leftScale = ScaledBase(value->Argument(0), search.mask, left);
+            const auto rightScale = ScaledBase(value->Argument(1), search.mask, right);
+            const std::uint64_t sum = static_cast<std::uint64_t>(leftScale) + rightScale;
+            if (EquivalentValue(m_program.Resources(), left, right) && sum <= std::numeric_limits<std::uint32_t>::max()) {
+                multiple = product(KnownMultiple(left, search, depth - 1u), static_cast<std::uint32_t>(sum));
+            } else {
+                multiple = std::gcd(KnownMultiple(value->Argument(0), search, depth - 1u), KnownMultiple(value->Argument(1), search, depth - 1u));
+            }
+        } else if (Detail::IsRuntimeSelect(op) && value->ArgumentCount() == 3u) {
+            multiple = std::gcd(KnownMultiple(value->Argument(1), search, depth - 1u), KnownMultiple(value->Argument(2), search, depth - 1u));
+        } else if (op == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u && search.mask == nullptr) {
+            search.mask = value->Argument(1)->Resolve();
+            multiple = KnownMultiple(value->Argument(0), search, depth - 1u);
+            search.mask = nullptr;
+        }
+        visiting.pop_back();
+        if (!search.cycle) {
+            search.known.emplace(value, multiple);
+        }
+        search.cycle = search.cycle || outerCycle;
+        return multiple;
+    }
+
+    bool MatchFirstLaneOffset(IrValue* value, IrValue*& key, std::uint32_t& stride) const {
+        value = value->Resolve();
+        if (value->Opcode() != IrOpcode::ReadFirstLane || value->ArgumentCount() != 2u || value->Type() != IrType::U32) {
+            return false;
+        }
+        MultipleSearch search;
+        const auto multiple = KnownMultiple(value, search, firstLaneMultipleDepth);
+        if (multiple < 4u || multiple % 4u != 0u) {
+            return false;
+        }
+        key = value;
+        stride = multiple;
+        return true;
+    }
+
     static bool ReadsThroughDescriptor(const IrValue* value) {
         std::vector<const IrValue*> pending{value};
         std::vector<const IrValue*> seen;
@@ -701,7 +809,7 @@ private:
             return TryMakeIndirectColumn(handle, *heapHandle, sampler, words, descriptorOffset, first, plan);
         }
         if (!MatchAffineOffset(offset, key, stride, addend)) {
-            if (!MatchMaskedOffset(offset, key, stride)) {
+            if (!MatchMaskedOffset(offset, key, stride) && (address || !MatchFirstLaneOffset(offset, key, stride))) {
                 return false;
             }
             masked = true;
@@ -932,6 +1040,7 @@ private:
     }
 
     static constexpr std::uint32_t phiSearchDepth = 8u;
+    static constexpr std::uint32_t firstLaneMultipleDepth = 32u;
 
     static bool SplittableImageRead(const IrValue& inst) {
         switch (inst.Opcode()) {
@@ -2085,7 +2194,9 @@ private:
         image.depthBitsCompatible = image.depthBitsCompatible && memory.dataBits == 32u;
         image.constantSwizzleCompatible = image.constantSwizzleCompatible && (op == IrOpcode::ImageSampleRaw || op == IrOpcode::ImageGatherRaw);
         const bool cubeFaceLoad = op == IrOpcode::ImageRead && !memory.imageHasMip && memory.imageSampleFlags == 0u;
-        const bool cubeFaceSample = op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags == 0u || memory.imageSampleFlags == RdnaImageSampleFlagLevelZero || memory.imageSampleFlags == RdnaImageSampleFlagLod);
+        const auto addressedFlags = memory.imageSampleFlags & ~RdnaImageSampleFlagAdjust;
+        image.adjustedSample = image.adjustedSample || (op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags & RdnaImageSampleFlagAdjust) != 0u);
+        const bool cubeFaceSample = op == IrOpcode::ImageSampleRaw && (addressedFlags == 0u || addressedFlags == RdnaImageSampleFlagLevelZero || addressedFlags == RdnaImageSampleFlagLod);
         const bool cubeFaceStore = op == IrOpcode::ImageWrite && !memory.imageHasMip;
         image.cubeFaceCompatible = image.cubeFaceCompatible && (cubeFaceLoad || cubeFaceSample || cubeFaceStore) && !memory.imagePacked && memory.imageByElements == 0u;
         image.volumeArraySampleCompatible = image.volumeArraySampleCompatible && cubeFaceSample && !memory.imageR128 && !memory.imagePacked && memory.imageByElements == 0u;
@@ -2102,6 +2213,7 @@ private:
         image.flatLineCompatible = image.flatLineCompatible && flatLineAccess && !memory.imagePacked && memory.imageByElements == 0u;
         image.flatVolumeLineCompatible = image.flatVolumeLineCompatible && (flatLineLoad || flatLineSample) && !memory.imagePacked && memory.imageByElements == 0u;
         image.dimensionQueryOnly = image.dimensionQueryOnly && op == IrOpcode::ImageQueryDimensions;
+        image.sampledOnly = image.sampledOnly && ImageOpcodeInfoOf(op).needsSampler;
         if ((memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u) {
             constexpr auto unsupported = RdnaImageSampleFlagLod | RdnaImageSampleFlagDerivative;
             if (op == IrOpcode::ImageGatherRaw || (memory.imageSampleFlags & unsupported) != 0u) image.emulatedCompare |= EmulatedCompare::Unsupported;

@@ -154,6 +154,14 @@ def paths(arguments):
             yield value
 
 
+def changed_paths(path):
+    data = Path(path).read_bytes()
+    if b"\0" in data:
+        return [name for name in data.decode("utf-8").split("\0") if name]
+    text = data.decode("utf-8-sig")
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
 def chunks(names):
     batch, size = [], 0
     for name in names:
@@ -183,6 +191,9 @@ def load_graph(path):
     for name, paths in graph["closures"].items():
         if not isinstance(name, str) or not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
             raise ValueError(f"{path}: invalid test graph closure {name!r}")
+    for name, test in graph["tests"].items():
+        if test["target"] is not None and test["target"] not in graph["closures"]:
+            raise ValueError(f"{path}: invalid test graph entry {name!r}: missing closure for {test['target']!r}")
     return graph
 
 
@@ -199,7 +210,10 @@ def dump(build, out):
                 deps[current].add(path)
     listing, listed = build.tests()
     graph = listing["backtraceGraph"]
-    targets = {build.target(t) for t in listed} - {None}
+    arguments = {test["name"]: {build.output(path) for path in paths((test.get("command") or [])[1:])} - {None}
+                 for test in listed}
+    outputs = set(build.outputs(sorted(set().union(*arguments.values()))))
+    targets = ({build.target(t) for t in listed} - {None}) | outputs
     nodes = build.walk(sorted(targets))
     closures = {}
     for target in sorted(targets):
@@ -222,13 +236,14 @@ def dump(build, out):
             registered.add(build.repo(graph["files"][graph["nodes"][node]["file"]]))
             node = graph["nodes"][node].get("parent")
         props = {p["name"]: p["value"] for p in test.get("properties", [])}
-        arguments = sorted({build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None})
-        tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": arguments,
+        inputs = {build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None}
+        inputs.update(path for target in arguments[test["name"]] & outputs for path in closures[target])
+        tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": sorted(inputs),
                                "requires": props.get("FIXTURES_REQUIRED", []), "sets": props.get("FIXTURES_SETUP", []),
                                "depends": props.get("DEPENDS", []), "target": build.target(test)}
     with open(out, "w", encoding="utf-8") as file:
         json.dump({"tests": tests, "closures": closures}, file)
-    print(f"{len(tests)} tests, {len(closures)} test executables, {len(deps)} objects with header deps")
+    print(f"{len(tests)} tests, {len(closures)} build targets, {len(deps)} objects with header deps")
 
 
 def select(graph, changed, reasons=None):
@@ -305,10 +320,10 @@ def main(argv=None):
     s = sub.add_parser("select", help="write a ninja file and a ctest index list for a configured tree")
     s.add_argument("build")
     s.add_argument("graph")
-    s.add_argument("changed", help="file with one changed path per line")
+    s.add_argument("changed", help="file with newline-separated or Git -z NUL-separated changed paths")
     e = sub.add_parser("explain", help="explain saved-graph selections without a configured build; CTest may add fixtures")
     e.add_argument("graph", type=Path)
-    e.add_argument("changed", type=Path, help="file with one changed path per line")
+    e.add_argument("changed", type=Path, help="file with newline-separated or Git -z NUL-separated changed paths")
     c = sub.add_parser("ctest", help="run ctest on a tree, limited to the selected tests if select wrote any")
     c.add_argument("build")
     c.add_argument("arguments", nargs=argparse.REMAINDER, help="ctest arguments")
@@ -320,7 +335,7 @@ def main(argv=None):
     if args.command == "explain":
         try:
             graph = load_graph(args.graph)
-            changed = [line.strip() for line in args.changed.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+            changed = changed_paths(args.changed)
             reasons = {}
             picked, full = select(graph, changed, reasons)
         except (OSError, ValueError) as error:
@@ -343,7 +358,7 @@ def main(argv=None):
         return 0
     try:
         graph = load_graph(args.graph)
-        changed = [line.strip() for line in Path(args.changed).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+        changed = changed_paths(args.changed)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     picked, full = select(graph, changed)

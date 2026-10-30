@@ -82,6 +82,29 @@ void RangeTests() {
     Require(!DecodePatternFillRange(data, packet), "multidimensional fill was accepted");
 }
 
+void GcnRangeTests() {
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{64, 1, 1}, 0, {true, false, false}, false, 1};
+    constexpr std::array<std::uint32_t, 16> data{0, 0, 0, 0, 0x80600830u, 0x00040002u, 1, 0x20024004u, 0x40a00000u, 0x00047002u, 0x001fe000u, 0x18024004u, 0x806008acu, 0x00100002u, 1, 0x20077facu};
+    const auto& code = GcnPatternFillKernel;
+    Require(MatchesGcnPatternFillKernel(code, data, compute), "PS4 pattern fill kernel was not recognized");
+    Require(!MatchesPatternFillKernel(code, data, compute), "the PS4 fill matched the PS5 kernel");
+    for (std::size_t word = 0; word < code.size(); ++word) {
+        auto altered = code;
+        altered[word] ^= 1;
+        Require(!MatchesGcnPatternFillKernel(altered, data, compute), "a different shader matched the PS4 fill kernel");
+    }
+    for (const auto& [word, bits] : std::array<std::pair<std::size_t, std::uint32_t>, 4>{{{5, 0x000c0000u}, {11, 0x00003000u}, {7, 0x00800000u}, {7, 0x00000001u}}}) {
+        auto altered = data;
+        altered[word] ^= bits;
+        Require(!MatchesGcnPatternFillKernel(code, altered, compute), "unsupported PS4 fill descriptor matched");
+    }
+    constexpr std::array<std::uint32_t, 5> packet{0xc0031500u, 0x7f80u, 1, 1, 1};
+    const auto range = DecodeGcnPatternFillRange(data, packet);
+    Require(range && range->source == 0x280600830ull && range->destination == 0x240a00000ull && range->control == 0x2806008acull, "PS4 fill addresses kept bits above 44");
+    Require(range->invocations == 0x7f80u * 64u && range->records == 0x1fe000u, "PS4 fill range changed");
+    Require(range->UniformBytes(0x1fe000u, 0) == 8355840u, "PS4 render target clear does not cover the target");
+}
+
 std::vector<std::uint32_t> Commands(std::span<const std::uint32_t> data, std::uint32_t threads, std::uint32_t wave, bool partial, bool indirect) {
     std::vector<std::uint32_t> words;
     const auto registers = [&](std::uint32_t first, std::span<const std::uint32_t> values) {
@@ -209,6 +232,7 @@ void Benchmark() {
 int main(int argc, char** argv) {
     try {
         RangeTests();
+        GcnRangeTests();
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;

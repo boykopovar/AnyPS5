@@ -23,6 +23,9 @@ void Pass::Write(Variable variable, IrBlock* block, IrValue* value) {
 }
 
 IrValue* Pass::Read(Variable variable, IrBlock* root) {
+    if (IrValue* cached = std::visit([&](auto tag) { return _definitions.Get(*root, tag); }, variable)) {
+        return cached;
+    }
     std::vector<ReadState> stack{ReadState{}, ReadState{.block = root}};
     const auto preparePhi = [&]() {
         auto& state = stack.back();
@@ -45,7 +48,9 @@ IrValue* Pass::Read(Variable variable, IrBlock* root) {
             case ReadStep::Start: {
                 IrValue* def = std::visit([&](auto tag) { return _definitions.Get(*block, tag); }, variable);
                 if (def != nullptr) {
-                    state.result = def;
+                    stack.pop_back();
+                    stack.back().result = def;
+                    break;
                 } else if (!block->IsSsaSealed()) {
                     IrValue& phi = _program.CreateValue(IrOpcode::Phi, VariableType(variable));
                     block->InsertInstructionBefore(nullptr, &phi);

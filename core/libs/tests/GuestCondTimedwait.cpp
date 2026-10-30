@@ -17,6 +17,7 @@ static constexpr int POSIX_EPERM = 1;
 static constexpr int POSIX_EINVAL = 22;
 static constexpr int POSIX_ETIMEDOUT = 60;
 static constexpr int MUTEX_TYPE_RECURSIVE = 2;
+static constexpr KernelClockid CLOCK_MONOTONIC_ID = 4;
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -101,6 +102,44 @@ static void RelativeWait() {
     Require(scePthreadMutexDestroy(&signalled.mutex) == SCE_OK);
 }
 
+static KernelTimespec MonotonicAfter(std::int64_t nanoseconds) {
+    KernelTimespec now{};
+    Require(sceKernelClockGettime(CLOCK_MONOTONIC_ID, &now) == SCE_OK);
+    const auto total = now.tv_nsec + nanoseconds;
+    return KernelTimespec{now.tv_sec + total / 1000000000, total % 1000000000};
+}
+
+static void MonotonicClockWait() {
+    Signalled signalled;
+    PthreadCondattr attr = nullptr;
+    Require(pthread_condattr_init_nid_postfix(&attr) == 0);
+    Require(pthread_condattr_setclock_nid_postfix(&attr, CLOCK_MONOTONIC_ID) == 0);
+    Require(scePthreadMutexInit(&signalled.mutex, nullptr, nullptr) == SCE_OK);
+    Require(pthread_cond_init_nid_postfix(&signalled.cond, &attr) == 0);
+    Require(pthread_condattr_destroy_nid_postfix(&attr) == 0);
+
+    Require(scePthreadMutexLock(&signalled.mutex) == SCE_OK);
+    const auto start = std::chrono::steady_clock::now();
+    const auto soon = MonotonicAfter(50000000);
+    Require(pthread_cond_timedwait_nid_postfix(&signalled.cond, &signalled.mutex, &soon) == POSIX_ETIMEDOUT);
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40));
+    RequireHeldByCaller(signalled);
+
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, Signaller, &signalled, nullptr) == SCE_OK);
+    const auto later = MonotonicAfter(10000000000);
+    const auto waitStart = std::chrono::steady_clock::now();
+    while (!signalled.ready)
+        Require(pthread_cond_timedwait_nid_postfix(&signalled.cond, &signalled.mutex, &later) == 0);
+    Require(std::chrono::steady_clock::now() - waitStart < std::chrono::seconds(5));
+    RequireHeldByCaller(signalled);
+    Require(scePthreadMutexUnlock(&signalled.mutex) == SCE_OK);
+    Require(scePthreadJoin(thread, nullptr) == SCE_OK);
+
+    Require(pthread_cond_destroy_nid_postfix(&signalled.cond) == 0);
+    Require(scePthreadMutexDestroy(&signalled.mutex) == SCE_OK);
+}
+
 static void SignalTo() {
     Signalled signalled;
     signalled.target = scePthreadSelf();
@@ -153,6 +192,7 @@ static void SignalToEveryRound(bool recursive) {
 
 int main() {
     RelativeWait();
+    MonotonicClockWait();
     SignalTo();
     SignalToEveryRound(false);
     SignalToEveryRound(true);

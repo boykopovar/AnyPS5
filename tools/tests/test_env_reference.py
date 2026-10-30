@@ -84,6 +84,97 @@ class EnvReferenceTests(unittest.TestCase):
         found = env_reference.reads([root / "core"])
         self.assertIn("APS5_MULTILINE", found)
 
+    def test_long_multiline_reads_are_checked_and_keep_their_locations(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('auto a = std::getenv(\n\n\n\n"APS5_DEEP_STRING");\n'
+                          'auto b = EnvInt(\n\n\n\n"APS5_DEEP_COUNT", 17);\n', encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_DEEP_STRING"], [(source.as_posix(), 1, "string", "")])
+        self.assertEqual(found["APS5_DEEP_COUNT"], [(source.as_posix(), 6, "integer", "17")])
+        doc = root / "ENVIRONMENT.md"
+        doc.write_text("", encoding="utf-8")
+        out = io.StringIO()
+        self.assertEqual(env_reference.check(found, doc, BOTH, out), 1)
+        self.assertIn("APS5_DEEP_STRING", out.getvalue())
+        self.assertIn("APS5_DEEP_COUNT", out.getvalue())
+
+    def test_long_multiline_reads_keep_surrounding_expression_context(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('auto a = std::getenv(\n\n\n\n"APS5_DEEP_PRESENT") != nullptr;\n'
+                          'auto b = atoi(\n\n\n\nstd::getenv(\n\n\n\n"APS5_DEEP_INTEGER"));\n'
+                          'auto c = std::getenv(\n\n\n\n"APS5_DEEP_DEFAULT") ? 0 : 99;\n',
+                          encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_DEEP_PRESENT"], [(source.as_posix(), 1, "presence", "")])
+        self.assertEqual(found["APS5_DEEP_INTEGER"], [(source.as_posix(), 10, "integer", "")])
+        self.assertEqual(found["APS5_DEEP_DEFAULT"], [(source.as_posix(), 15, "string", "99")])
+
+    def test_short_reads_in_long_expressions_keep_their_kind_and_default(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('auto integer = atoi(\n\n\n\nstd::getenv("APS5_SHORT_INTEGER"));\n'
+                          'auto present = std::getenv("APS5_SHORT_PRESENT")\n\n\n\n!= nullptr;\n'
+                          'auto text = std::getenv("APS5_STILL_STRING");\n'
+                          'if (text != nullptr) text = nullptr;\n'
+                          'auto fallback = std::getenv("APS5_SHORT_DEFAULT")\n\n\n\n? 1 : 42;\n',
+                          encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_SHORT_INTEGER"], [(source.as_posix(), 5, "integer", "")])
+        self.assertEqual(found["APS5_SHORT_PRESENT"], [(source.as_posix(), 6, "presence", "")])
+        self.assertEqual(found["APS5_STILL_STRING"], [(source.as_posix(), 11, "string", "")])
+        self.assertEqual(found["APS5_SHORT_DEFAULT"], [(source.as_posix(), 13, "string", "42")])
+
+    def test_statement_boundaries_ignore_comments_and_literals(self):
+        cases = (
+            ('auto value = atoi(/* ;{} */ std::getenv("APS5_VALUE"));', "integer", ""),
+            ('auto value = std::getenv("APS5_VALUE") /* ;{} */ != nullptr;', "presence", ""),
+            ("auto value = std::getenv(\"APS5_VALUE\") ? ';' : 99;", "string", "99"),
+            ('auto value = std::atoi((std::puts(R"tag(;{})tag"), std::getenv("APS5_VALUE")));', "integer", ""),
+            ('auto value = std::atoi((std::puts(";{}"), std::getenv("APS5_VALUE")));', "integer", ""),
+        )
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        for text, kind, default in cases:
+            with self.subTest(source=text):
+                source.write_text(text + "\n", encoding="utf-8")
+                found = env_reference.reads([root / "core"])
+                self.assertEqual(found["APS5_VALUE"], [(source.as_posix(), 1, kind, default)])
+
+    def test_multiple_reads_in_one_statement_keep_independent_kinds_and_defaults(self):
+        cases = (
+            ('consume(std::getenv("APS5_STRING"),\n\n\n\n'
+             'std::getenv("APS5_PRESENT") != nullptr);',
+             {"APS5_STRING": ("string", ""), "APS5_PRESENT": ("presence", "")}),
+            ('consume(std::getenv("APS5_FIRST_PRESENT") != nullptr,\n\n\n\n'
+             'std::getenv("APS5_LAST_STRING"));',
+             {"APS5_FIRST_PRESENT": ("presence", ""), "APS5_LAST_STRING": ("string", "")}),
+            ('consume(atoi(std::getenv("APS5_COUNT")),\n\n\n\n'
+             'std::getenv("APS5_OTHER_STRING"));',
+             {"APS5_COUNT": ("integer", ""), "APS5_OTHER_STRING": ("string", "")}),
+            ('consume(std::getenv("APS5_FALLBACK") ? 1 : 42,\n\n\n\n'
+             'std::getenv("APS5_NO_DEFAULT"));',
+             {"APS5_FALLBACK": ("string", "42"), "APS5_NO_DEFAULT": ("string", "")}),
+            ('consume(atoi((std::puts(R"tag(;,{})tag"), std::getenv("APS5_NESTED_COUNT"))),\n'
+             'std::getenv("APS5_NEXT_STRING"));',
+             {"APS5_NESTED_COUNT": ("integer", ""), "APS5_NEXT_STRING": ("string", "")}),
+        )
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        for text, expected in cases:
+            with self.subTest(source=text):
+                source.write_text(text + "\n", encoding="utf-8")
+                found = env_reference.reads([root / "core"])
+                self.assertEqual(set(found), set(expected))
+                for name, classification in expected.items():
+                    self.assertEqual(found[name][0][2:], classification)
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(env_reference.main(["--root", str(root / "core"), "--table"]), 0)
+                for name, (kind, default) in expected.items():
+                    self.assertIn(f"| `{name}` | {kind} |", output.getvalue())
+                    self.assertIn(f"| {default} |", output.getvalue())
+
     def test_whitespace_before_parentheses_preserves_names_kinds_and_defaults(self):
         root = self.fixture()
         source = root / "core" / "Sample.cpp"

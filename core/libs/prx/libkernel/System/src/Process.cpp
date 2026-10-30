@@ -294,6 +294,8 @@ std::mutex openFileLimitMutex;
 std::optional<GuestResourceLimit> guestOpenFileLimit;
 std::mutex processLimitMutex;
 GuestResourceLimit guestProcessResourceLimit{guestProcessLimit, guestProcessLimit};
+std::mutex coreLimitMutex;
+GuestResourceLimit guestCoreLimit{guestRlimitInfinity, guestRlimitInfinity};
 }
 
 namespace {
@@ -653,17 +655,25 @@ int APS5_VABI getppid_nid_postfix(void) {
 }
 
 int APS5_VABI sceKernelGetAppInfo(int pid, void* info) {
-    if (pid != getpid_nid_postfix()) return SCE_KERNEL_ERROR_EPERM;
+    const bool own = pid == getpid_nid_postfix();
+    if (!own && pid != 0) NotImplemented_nid_no_patch("sceKernelGetAppInfo: a pid other than the caller's and 0");
     if (info == nullptr) return 0;
+    constexpr std::size_t StructureBytes = 0x58;
     constexpr std::size_t TitleIdOffset = 0x10;
     constexpr std::size_t TitleIdBytes = 10;
-    const auto titleId = GetAppTitleId_nid_postfix();
-    char field[TitleIdBytes] = {};
-    std::strncpy(field, titleId.value, sizeof(field) - 1);
+    constexpr std::size_t MarkerOffset = 0x50;
     auto* bytes = static_cast<std::uint8_t*>(info);
-    const std::uint32_t appId = 1;
-    std::memcpy(bytes, &appId, sizeof(appId));
-    std::memcpy(bytes + TitleIdOffset, field, TitleIdBytes);
+    std::memset(bytes, 0, StructureBytes);
+    if (own) {
+        const auto titleId = GetAppTitleId_nid_postfix();
+        char field[TitleIdBytes] = {};
+        std::strncpy(field, titleId.value, sizeof(field) - 1);
+        const std::uint32_t appId = 1;
+        std::memcpy(bytes, &appId, sizeof(appId));
+        std::memcpy(bytes + TitleIdOffset, field, TitleIdBytes);
+    }
+    const std::uint32_t marker = 0xffffffffu;
+    std::memcpy(bytes + MarkerOffset, &marker, sizeof(marker));
     return 0;
 }
 
@@ -703,9 +713,11 @@ int APS5_VABI getresgid_nid_postfix(std::uint32_t* rgid, std::uint32_t* egid, st
     return 0;
 }
 
+#ifndef __EMSCRIPTEN__
 void APS5_VABI exit_nid_postfix(int code) {
     LibcExit_nid_no_patch(code);
 }
+#endif
 
 [[noreturn]] void APS5_VABI _exit_nid_postfix(int status) {
     LibcTerminate_nid_no_patch(status);
@@ -747,6 +759,7 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
     } else if (WIFSIGNALED(encoded) || WIFSTOPPED(encoded)) {
         const int hostSignal = WIFSIGNALED(encoded) ? WTERMSIG(encoded) : WSTOPSIG(encoded);
         int guestSignal = hostSignal;
+#ifndef __APPLE__
         switch (hostSignal) {
         case 7: guestSignal = 10; break;
         case 10: guestSignal = 30; break;
@@ -764,6 +777,7 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
             return -1;
         default: break;
         }
+#endif
         encoded = WIFSTOPPED(encoded) ? ((encoded & ~0xff00) | (guestSignal << 8)) : ((encoded & ~0x7f) | guestSignal);
     }
     if (status != nullptr) *status = encoded;
@@ -772,7 +786,8 @@ int APS5_VABI waitpid_nid_postfix(int pid, int* status, int options) {
 }
 
 int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limit) {
-    if (limit == nullptr) {
+    GuestResourceLimit requested{};
+    if (limit == nullptr || !GuestCopyIn_nid_no_patch(&requested, limit, sizeof(requested))) {
         *__error_nid_postfix() = guestFault;
         return -1;
     }
@@ -781,7 +796,6 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
         return -1;
     }
 
-    GuestResourceLimit requested = *limit;
     if (requested.rlim_cur < 0)
         requested.rlim_cur = guestRlimitInfinity;
     if (requested.rlim_max < 0)
@@ -806,6 +820,13 @@ int APS5_VABI setrlimit_nid_postfix(int resource, const GuestResourceLimit* limi
         guestProcessResourceLimit = requested;
         return 0;
     }
+    if (resource == guestRlimitCore && requested.rlim_max == current.rlim_max) {
+        std::lock_guard lock(coreLimitMutex);
+        guestCoreLimit.rlim_cur = requested.rlim_cur;
+        return 0;
+    }
+    if ((resource == guestRlimitData || resource == guestRlimitStack) && requested.rlim_cur == current.rlim_cur && requested.rlim_max > current.rlim_max)
+        return 0;
     if (requested.rlim_cur != current.rlim_cur || requested.rlim_max != current.rlim_max)
         throw std::runtime_error("setrlimit: changing the limit of resource " + std::to_string(resource) + " is not supported");
     return 0;
@@ -1145,9 +1166,13 @@ int APS5_VABI getrlimit_nid_postfix(int resource, GuestResourceLimit* limit) {
         result = guestProcessResourceLimit;
         break;
     }
+    case guestRlimitCore: {
+        std::lock_guard lock(coreLimitMutex);
+        result = guestCoreLimit;
+        break;
+    }
     case guestRlimitCpu:
     case guestRlimitFsize:
-    case guestRlimitCore:
     case guestRlimitRss:
     case guestRlimitMemlock:
     case guestRlimitSbsize:
@@ -1207,7 +1232,7 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
 
     std::int64_t tableSize = limit.rlim_cur;
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));
 #endif
     if (tableSize > std::numeric_limits<int>::max())

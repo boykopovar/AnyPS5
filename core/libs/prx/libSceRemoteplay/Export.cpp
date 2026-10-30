@@ -1,28 +1,70 @@
+#include "prx/libSceRemoteplay/include/InventoryExports.hpp"
 #include "prx/libSceRemoteplay/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
-#include <stdexcept>
-#include <string>
+#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 constexpr int REMOTEPLAY_CONNECTION_STATUS_DISCONNECT = 0;
+constexpr int REMOTEPLAY_ERROR_INVALID_ARG = static_cast<int>(0x80FC0001);
+constexpr int REMOTEPLAY_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80FC0003);
+constexpr int REMOTEPLAY_ERROR_NOT_INITIALIZED = static_cast<int>(0x80FC0004);
+constexpr std::size_t REMOTEPLAY_MINIMUM_HEAP_SIZE = 0x1800;
+
+namespace {
+
+enum class RemoteplayState : std::uint32_t {
+ None,
+ Terminated,
+ Initialized,
+};
+
+std::mutex g_stateMutex;
+RemoteplayState g_state = RemoteplayState::None;
+
+}
 
 extern "C" {
 
+int APS5_VABI sceRemoteplayIsRemoteViewering() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRemoteplayNotifyCanWakeup() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRemoteplayRegistCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRemoteplayUnregistCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+
 int APS5_VABI sceRemoteplayGetConnectionStatus(int user_id, int* status) {
  (void)user_id;
- if (!status) APS5_INVALID_ARG_EX;
+ std::lock_guard lock(g_stateMutex);
+ if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
+ if (!status) return REMOTEPLAY_ERROR_INVALID_ARG;
  *status = REMOTEPLAY_CONNECTION_STATUS_DISCONNECT;
  return 0;
 }
 
 int APS5_VABI sceRemoteplayInitialize(void* heap, size_t heap_size) {
- if (!heap || heap_size == 0) APS5_INVALID_ARG_EX;
+ std::lock_guard lock(g_stateMutex);
+ if (g_state == RemoteplayState::Initialized) return REMOTEPLAY_ERROR_ALREADY_INITIALIZED;
+ if (heap && heap_size < REMOTEPLAY_MINIMUM_HEAP_SIZE) return REMOTEPLAY_ERROR_INVALID_ARG;
+ g_state = RemoteplayState::Initialized;
  return 0;
 }
 
 int APS5_VABI sceRemoteplayTerminate(void) {
+ std::lock_guard lock(g_stateMutex);
+ if (g_state != RemoteplayState::Initialized) return REMOTEPLAY_ERROR_NOT_INITIALIZED;
+ g_state = RemoteplayState::Terminated;
  return 0;
 }
 

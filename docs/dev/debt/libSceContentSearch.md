@@ -2,6 +2,15 @@
 
 ### Unknown function info
 
+- [libSceContentSearch additional exports](../../../core/libs/prx/libSceContentSearch/Export.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `sceContentSearchAddAvContentCreatedEventCondition` | `HzLPPnuWTek` |
+| `sceContentSearchDisableAvContentCreatedEvent` | `cb8Dl69jk7A` |
+| `sceContentSearchEnableAvContentCreatedEvent` | `vlOqhFPOLDs` |
+| `sceContentSearchGetContentIdByAvContentCreatedEvent` | `2Dj56xvkS5M` |
+
 - [sceContentBinderEnd, sceContentBinderGetNumOfDifference, sceContentBinderInitialize, sceContentBinderIsUpdated, sceContentBinderReset, sceContentBinderSearchDifference, sceContentBinderStart, sceContentBinderTerminate, sceContentSearchGetApplicationLastUpdateId, sceContentSearchGetMyApplicationIndex, sceContentSearchGetNumOfApplication and sceContentSearchSearchApplication](../../../core/libs/prx/libSceContentSearch/Export.cpp) (libSceContentSearch) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceContentSearch.c), but no credible prototypes were found in the cited sources. They are declared without parameters solely to resolve known imports and make no ABI claim.
 
 ### Functional

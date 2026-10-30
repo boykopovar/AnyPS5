@@ -22,6 +22,7 @@
 #endif
 #include <windows.h>
 #else
+#include <dlfcn.h>
 #include <sys/mman.h>
 #endif
 #include <array>
@@ -266,6 +267,26 @@ std::array<std::uint32_t, 2> AddressWords(const Block& block) {
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
 }
 
+void KeepVulkanDriversLoaded() {
+#if defined(__GLIBC__)
+    static const VkInstance instance = [] {
+        VkInstance created = VK_NULL_HANDLE;
+        void* loader = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+        if (loader == nullptr) return created;
+        const auto instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(loader, "vkGetInstanceProcAddr"));
+        const auto create = instanceProc != nullptr ? reinterpret_cast<PFN_vkCreateInstance>(instanceProc(VK_NULL_HANDLE, "vkCreateInstance")) : nullptr;
+        if (create == nullptr) return created;
+        VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+        application.apiVersion = VK_API_VERSION_1_1;
+        VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+        info.pApplicationInfo = &application;
+        if (create(&info, nullptr, &created) != VK_SUCCESS) created = VK_NULL_HANDLE;
+        return created;
+    }();
+    static_cast<void>(instance);
+#endif
+}
+
 void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32
     _putenv_s(name, value.c_str());
@@ -471,6 +492,37 @@ std::vector<ShaderRecompiler::PipelineIdentity> ReadJournalComputeIdentities(con
         while (cursor % 8u != 0) ++cursor;
     }
     return identities;
+}
+
+void ReplayRacesDispatchTests() {
+    using namespace NarrowConstantStoreFixture;
+    constexpr std::uint32_t Pipelines = 32;
+    Block compute(BlockBytes);
+    const auto words = AddressWords(compute);
+    std::vector<std::vector<std::uint32_t>> codes;
+    for (std::uint32_t salt = 16; salt < 16 + Pipelines; ++salt) codes.push_back(ComputeCode(salt));
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device recording the raced pipelines could not be opened");
+        device->WaitForPipelineJournalReplay();
+        for (const auto& code : codes) device->Dispatch(CompileCompute(*device, code, words, 32), 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    const auto before = Snapshot();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device racing the replay could not be opened");
+        std::vector<ShaderRecompiler::RecompileResult> shaders;
+        for (const auto& code : codes) shaders.push_back(CompileCompute(*device, code, words, 32));
+        for (std::size_t index = 0; index < shaders.size(); ++index) device->Dispatch(shaders[index], 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(codes[index].data()));
+        device->WaitIdle();
+        device->WaitForPipelineJournalReplay();
+        const auto after = Snapshot();
+        Require(after.journal.replayRejected == before.journal.replayRejected && after.journal.replayFailed == before.journal.replayFailed, "the raced replay rejected or failed a compute pipeline");
+        const auto visited = (after.journal.replayedCompute - before.journal.replayedCompute) + (after.journal.replayPresent - before.journal.replayPresent);
+        Require(device->ComputePipelinesCreated() == visited, "a dispatch and the replay both built a compute pipeline: " + std::to_string(device->ComputePipelinesCreated()) + " built for " + std::to_string(visited) + " replayed");
+    }
 }
 
 void NewestEntriesTests() {
@@ -712,6 +764,7 @@ int main(int argc, char** argv) {
                 std::filesystem::remove_all(directory, error);
             }
         } cleanup{directory};
+        KeepVulkanDriversLoaded();
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
@@ -721,6 +774,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         JournalTests();
+        ReplayRacesDispatchTests();
         NewestEntriesTests();
         EvictionTests();
         EvictionWatermarkTests();

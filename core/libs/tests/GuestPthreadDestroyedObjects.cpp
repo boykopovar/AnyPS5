@@ -42,6 +42,7 @@ int main() {
     Require(reinterpret_cast<std::uintptr_t>(cond) == 1);
     Require(scePthreadCondSignal(&cond) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadCondBroadcast(&cond) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadCondSignalto(&cond, scePthreadSelf()) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadCondWait(&cond, &mutex) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_cond_signal_nid_postfix(&cond) == POSIX_EINVAL);
     Require(scePthreadCondDestroy(&cond) == SCE_KERNEL_ERROR_EINVAL);

@@ -114,6 +114,59 @@ void screenshotBinding() {
     require(rejects("Screenshot = WHEEL:Up\n"), "the screenshot key refuses the mouse wheel");
 }
 
+std::size_t padStatusBindingsOn(const Pad::InputConfiguration& configuration, SDL_Scancode key) {
+    std::size_t count = 0;
+    for (const auto& binding : configuration.bindings) count += binding.control == Pad::InputControl::ShowPadStatus && binding.key == key ? 1 : 0;
+    return count;
+}
+
+void padStatusBinding() {
+    useConfig("Cross = KEY:F\n");
+    const auto defaults = Pad::LoadInputMapping();
+    require(padStatusBindingsOn(defaults, SDL_SCANCODE_F9) == 1, "F9 shows the pad status by default");
+    std::size_t padStatus = 0;
+    std::size_t onF9 = 0;
+    for (const auto& binding : defaults.bindings) {
+        padStatus += binding.control == Pad::InputControl::ShowPadStatus ? 1 : 0;
+        onF9 += binding.key == SDL_SCANCODE_F9 ? 1 : 0;
+    }
+    require(padStatus == 1, "the pad status has more than one default input");
+    require(onF9 == 1, "another default binding uses F9");
+    require(Pad::InputMapping.size() == 40, "the default bindings changed besides the pad status key");
+    useConfig("ShowPadStatus = KEY:F4\n");
+    const auto moved = Pad::LoadInputMapping();
+    require(padStatusBindingsOn(moved, SDL_SCANCODE_F4) == 1 && padStatusBindingsOn(moved, SDL_SCANCODE_F9) == 0, "the pad status key moves to another key");
+    useConfig("showpadstatus = key:f4\nSHOWPADSTATUS = KEY:F3\nShowPadStatus = KEY:F4\n");
+    const auto alternates = Pad::LoadInputMapping();
+    require(padStatusBindingsOn(alternates, SDL_SCANCODE_F4) == 1 && padStatusBindingsOn(alternates, SDL_SCANCODE_F3) == 1 && padStatusBindingsOn(alternates, SDL_SCANCODE_F9) == 0, "the pad status keeps alternate keys, once each, whatever the case");
+    require(rejects("ShowPadStatus = MOUSE:Left\n"), "the pad status key refuses a mouse button");
+    require(rejects("ShowPadStatus = MOUSE:X2\n"), "the pad status key refuses another mouse button");
+    require(rejects("ShowPadStatus = WHEEL:Up\n"), "the pad status key refuses the mouse wheel");
+    require(rejects("ShowPadStatus = KEY:NoSuchKey\n"), "the pad status key refuses an unknown key");
+    require(rejects("ShowPadStatus =\n"), "the pad status key refuses an empty source");
+}
+
+void padStatusConflicts() {
+    useConfig("ShowPadStatus = KEY:F10\n");
+    const auto sharedKey = Pad::LoadInputMapping();
+    std::size_t overlayOnF10 = 0;
+    for (const auto& binding : sharedKey.bindings) overlayOnF10 += binding.control == Pad::InputControl::TogglePerformanceOverlay && binding.key == SDL_SCANCODE_F10 ? 1 : 0;
+    require(padStatusBindingsOn(sharedKey, SDL_SCANCODE_F10) == 1 && overlayOnF10 == 1, "the pad status and the overlay cannot share a key");
+    useConfig("Cross = KEY:F9\n");
+    const auto taken = Pad::LoadInputMapping();
+    bool crossOnF9 = false;
+    for (const auto& binding : taken.bindings) crossOnF9 = crossOnF9 || (binding.control == Pad::InputControl::Button && binding.button == Pad::PadButton::Cross && binding.key == SDL_SCANCODE_F9);
+    require(crossOnF9 && padStatusBindingsOn(taken, SDL_SCANCODE_F9) == 1, "a pad button on F9 removes the pad status key");
+    useConfig("TogglePerformanceOverlay = KEY:F9\n");
+    const auto overlayOnPadStatusKey = Pad::LoadInputMapping();
+    bool overlayOnF9 = false;
+    for (const auto& binding : overlayOnPadStatusKey.bindings) overlayOnF9 = overlayOnF9 || (binding.control == Pad::InputControl::TogglePerformanceOverlay && binding.key == SDL_SCANCODE_F9);
+    require(overlayOnF9 && padStatusBindingsOn(overlayOnPadStatusKey, SDL_SCANCODE_F9) == 1, "the overlay on F9 removes the pad status key");
+    useConfig("ShowPadStatus = KEY:F4\nTogglePerformanceOverlay = KEY:F9\n");
+    const auto swapped = Pad::LoadInputMapping();
+    require(padStatusBindingsOn(swapped, SDL_SCANCODE_F4) == 1 && padStatusBindingsOn(swapped, SDL_SCANCODE_F9) == 0, "moving the pad status key off F9 keeps it off");
+}
+
 void mouseLookDefault() {
     useConfig("Cross = KEY:F\n");
     const auto settings = Pad::LoadInputMapping().settings;
@@ -277,6 +330,8 @@ int main() try {
     settingsReject();
     performanceOverlayBinding();
     screenshotBinding();
+    padStatusBinding();
+    padStatusConflicts();
     mouseLookDefault();
     mouseLookParse();
     mouseLookReject();

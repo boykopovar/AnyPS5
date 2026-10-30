@@ -1498,11 +1498,19 @@ constexpr std::uint32_t TargetWidth = 64;
 constexpr std::uint32_t TargetHeight = 32;
 alignas(256) std::array<std::byte, TargetWidth * TargetHeight * 4> Pixels{};
 alignas(256) std::array<std::uint32_t, 4 * 4> VertexResults{};
-alignas(256) std::array<std::uint32_t, 4> PixelResults{};
+alignas(256) std::array<std::uint32_t, 8> PixelResults{};
 alignas(256) std::array<std::uint32_t, 4 * 4> GraphicsTable{};
 constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 
-std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& device, std::uint32_t vertexKey, std::uint32_t pixelKey) {
+alignas(256) constexpr std::array<std::uint32_t, 25> SharedSamplerCode{
+    0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u, 0xf4080900u, 0xfa000040u, 0xf4080a00u, 0xfa000050u,
+    0x7e0202ffu, 0x3c400000u, 0x7e0402ffu, 0x3e000000u,
+    0xf09c8f08u, 0x01090401u, 0xf09c8f08u, 0x010a0c01u,
+    0x7e100280u, 0xe0781000u, 0x80070408u, 0xe0781010u, 0x80070c08u,
+    0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u,
+};
+
+std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& device, std::uint32_t vertexKey, std::uint32_t pixelKey, bool sharedSampler = false) {
     const auto target = device.Target();
     Pixels.fill(std::byte{0});
     VertexResults.fill(0xdeadbeefu);
@@ -1537,9 +1545,15 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     std::copy(table.begin(), table.end(), pixelUserData.begin());
     pixelUserData[4] = pixelKey;
     std::copy(pixelOutput.begin(), pixelOutput.end(), pixelUserData.begin() + 8);
-    const std::array<ShaderRecompiler::MemoryRegion, 2> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelTableCode.data()), std::as_bytes(std::span(PixelTableCode))}, {reinterpret_cast<std::uintptr_t>(GraphicsTable.data()), std::as_bytes(std::span(GraphicsTable))}}};
+    const std::span<const std::uint32_t> pixelCode = sharedSampler ? std::span<const std::uint32_t>(SharedSamplerCode) : std::span<const std::uint32_t>(PixelTableCode);
+    if (sharedSampler) {
+        const auto root = reinterpret_cast<std::uintptr_t>(Srt.data());
+        pixelUserData = {static_cast<std::uint32_t>(root), static_cast<std::uint32_t>(root >> 32u)};
+        std::copy(pixelOutput.begin(), pixelOutput.end(), Srt.begin() + 8);
+    }
+    const std::array<ShaderRecompiler::MemoryRegion, 3> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}, {reinterpret_cast<std::uintptr_t>(GraphicsTable.data()), std::as_bytes(std::span(GraphicsTable))}, {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))}}};
     ShaderRecompiler::RecompileRequest fragment{
-        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelTableCode.data()), PixelTableCode, 0, {}},
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
         {64, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         target,
         PixelPushLayout(vertexPush, target)
@@ -1570,6 +1584,41 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     return {vertexResult.PipelineVariantId(), pixelResult.PipelineVariantId()};
 }
 
+void RunSharedSamplerTests(AgcDriver::VulkanDevice& device, const std::string& mode, bool draw) {
+    Require(mode == "uint" || mode == "sint" || mode == "point", "unknown shared sampler mode");
+    Fill();
+    const auto floatImage = Image(FloatTexels.data(), Format32Float);
+    const auto integerImage = mode == "sint" ? Image(SintTexels.data(), Format32SInt) : Image(UintTexels.data(), Format32UInt);
+    const auto& sampler = mode == "point" ? PointClamp : LinearWrap;
+    std::array<std::uint32_t, 8> images{};
+    std::copy(integerImage.begin(), integerImage.end(), images.begin());
+    std::copy(floatImage.begin(), floatImage.end(), images.begin() + 4);
+    std::copy(sampler.begin(), sampler.end(), Srt.begin() + 12);
+    std::copy(images.begin(), images.end(), Srt.begin() + 16);
+    const auto integer = mode == "sint" ? static_cast<std::uint32_t>(SintTexels[0]) : UintTexels[0];
+    const auto filtered = std::bit_cast<std::uint32_t>(mode == "point" ? FloatTexels[0] : 0.5f);
+    if (draw) {
+        std::copy(floatImage.begin(), floatImage.end(), GraphicsTable.begin());
+        DrawTables(device, 0u, 0u, true);
+        Require(PixelResults[0] == integer, "shared sampler draw: integer texel changed");
+        Require(PixelResults[4] == filtered, "shared sampler draw: float filtering changed");
+    } else {
+        alignas(256) constexpr std::array<std::uint32_t, 29> code{
+            0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u, 0xf4080900u, 0xfa000040u, 0xf4080a00u, 0xfa000050u,
+            0x360200bfu, 0x7e020d01u, 0x060202ffu, 0x3f400000u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u,
+            0xf09c8f08u, 0x01090401u, 0xf09c8f08u, 0x010a0c01u,
+            0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u,
+            0xe0781000u, 0x80070408u, 0xe0781400u, 0x80070c08u, 0xbf810000u,
+        };
+        const auto result = RunDirectCode(device, code, sampler, images);
+        Require(Output[0] == integer, "shared sampler dispatch: integer texel changed");
+        Require(Output[256] == filtered, "shared sampler dispatch: float filtering changed");
+        Require(Holds(result.samplers, sampler), "shared sampler dispatch: original sampler missing");
+        Require(Holds(result.samplers, mode == "point" ? PointClamp : PointWrap), "shared sampler dispatch: point sampler missing");
+    }
+    std::printf("shared sampler %s %s: integer=%u float_bits=%u passed\n", draw ? "draw" : "dispatch", mode.c_str(), integer, filtered);
+}
+
 void RunGraphicsTests(AgcDriver::VulkanDevice& device) {
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
     const auto uintImage = Image(UintTexels.data(), Format32UInt);
@@ -1585,6 +1634,9 @@ void RunGraphicsTests(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) Require(VertexResults[vertex * 4u] == static_cast<std::uint32_t>(SintTexels[0]), "image table graphics: the vertex stage read the wrong entry after the keys changed");
     Require(PixelResults[0] == std::bit_cast<std::uint32_t>(FloatTexels[0]), "image table graphics: the pixel stage read the wrong entry after the keys changed");
     Require(first == second, "image table graphics: other table keys built another pipeline");
+    for (const auto* mode : {"uint", "sint", "point"}) {
+        for (const bool draw : {false, true}) RunSharedSamplerTests(device, mode, draw);
+    }
 }
 
 }

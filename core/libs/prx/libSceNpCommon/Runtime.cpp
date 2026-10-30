@@ -1,4 +1,3 @@
-#include "prx/libSceSaveData/SaveDataCore.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceNpCommon/include/Api.hpp"
@@ -95,6 +94,40 @@ bool IsOnlineIdText(const char* text) {
 }
 
 constexpr int NP_ERROR_BUFFER_TOO_SMALL = static_cast<int>(0x80558008);
+
+constexpr int NP_ERROR_TITLE_ID_INVALID = static_cast<int>(0x80559E11);
+constexpr int NP_ERROR_TITLE_ID_BUFFER_TOO_SMALL = static_cast<int>(0x80559E0D);
+constexpr std::size_t NP_TITLE_ID_CODE_LENGTH = 9;
+constexpr std::size_t NP_TITLE_ID_LENGTH = 12;
+
+void* const NpTitleIdVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np9NpTitleIdD1Ev), reinterpret_cast<void*>(&_ZN3sce2np9NpTitleIdD0Ev),
+};
+
+bool SameTitleId(const char* lhs, const char* rhs) {
+    return std::strncmp(lhs, rhs, NP_TITLE_ID_LENGTH) == 0;
+}
+
+bool IsTitleIdLetter(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+bool IsTitleIdDigit(char c) {
+    return c >= '0' && c <= '9';
+}
+
+int StoreTitleId(NpTitleIdObject* out, const char* text, std::size_t length, std::size_t expected) {
+    if (length != expected) return NP_ERROR_TITLE_ID_INVALID;
+    if (!std::all_of(text, text + 4, IsTitleIdLetter) || !std::all_of(text + 4, text + NP_TITLE_ID_CODE_LENGTH, IsTitleIdDigit))
+        return NP_ERROR_TITLE_ID_INVALID;
+    if (expected == NP_TITLE_ID_LENGTH && (text[9] != '_' || !IsTitleIdDigit(text[10]) || !IsTitleIdDigit(text[11])))
+        return NP_ERROR_TITLE_ID_INVALID;
+    out->titleId = {};
+    std::memcpy(out->titleId.data, text, NP_TITLE_ID_CODE_LENGTH);
+    std::memcpy(out->titleId.data + NP_TITLE_ID_CODE_LENGTH, "_00", 3);
+    return 0;
+}
 constexpr std::size_t NP_SDK_VERSION_SIZE = 8;
 constexpr std::size_t NP_RFC3339_BUFFER_MIN = 0x80;
 constexpr std::size_t NP_USER_ID_LIST_SIZE = 20;
@@ -198,6 +231,38 @@ void DestroyMemoryHeap(NpMemoryHeap* heap) {
 
 NpAllocator MemoryHeapAllocator(NpMemoryHeap* heap) {
     return {MemoryHeapAllocate, MemoryHeapReallocate, MemoryHeapRelease, heap};
+}
+
+constexpr std::size_t NP_OBJECT_HEADER_SIZE = 16;
+
+constexpr int NP_ERROR_STREAM_BUFFER_TOO_SMALL = static_cast<int>(0x80559E0D);
+constexpr std::size_t NP_MEMORY_STREAM_SIZE = 0x20;
+
+void* const NpMemoryStreamReaderVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamReaderD1Ev), reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamReaderD0Ev),
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm),
+};
+
+void* const NpMemoryStreamWriterVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamWriterD1Ev), reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamWriterD0Ev),
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm),
+};
+
+void* AllocateObject(std::size_t size, NpAllocator* allocator) {
+    auto* header = static_cast<std::uint8_t*>(allocator->allocate(size + NP_OBJECT_HEADER_SIZE, allocator->context));
+    if (header == nullptr) return nullptr;
+    std::memcpy(header, &allocator, sizeof(allocator));
+    return header + NP_OBJECT_HEADER_SIZE;
+}
+
+void ReleaseObject(void* object) {
+    if (object == nullptr) return;
+    auto* header = static_cast<std::uint8_t*>(object) - NP_OBJECT_HEADER_SIZE;
+    NpAllocator* allocator = nullptr;
+    std::memcpy(&allocator, header, sizeof(allocator));
+    allocator->release(header, allocator->context);
 }
 
 constexpr int NP_ERROR_NOT_INITIALIZED = static_cast<int>(0x80558001);
@@ -508,6 +573,46 @@ NpAllocatorEx* APS5_VABI sceNpGlobalHeapGetAllocatorExPtr(void) {
     return &g_globalAllocatorEx;
 }
 
+void* APS5_VABI _ZN3sce2np6ObjectnwEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator) {
+    return AllocateObject(size, allocator);
+}
+
+void* APS5_VABI _ZN3sce2np6ObjectnaEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator) {
+    return AllocateObject(size, allocator);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdlEPvR14SceNpAllocator(void* object, NpAllocator*) {
+    ReleaseObject(object);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdaEPvR14SceNpAllocator(void* object, NpAllocator*) {
+    ReleaseObject(object);
+}
+
+void* APS5_VABI _ZN3sce2np6ObjectnwEmR16SceNpAllocatorEx(std::size_t size, NpAllocatorEx* allocator) {
+    return AllocateObject(size, &allocator->allocator);
+}
+
+void* APS5_VABI _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(std::size_t size, NpAllocatorEx* allocator) {
+    return AllocateObject(size, &allocator->allocator);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdlEPvR16SceNpAllocatorEx(void* object, NpAllocatorEx*) {
+    ReleaseObject(object);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdaEPvR16SceNpAllocatorEx(void* object, NpAllocatorEx*) {
+    ReleaseObject(object);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdlEPv(void* object) {
+    ReleaseObject(object);
+}
+
+void APS5_VABI _ZN3sce2np6ObjectdaEPv(void* object) {
+    ReleaseObject(object);
+}
+
 int APS5_VABI sceNpAllocateKernelMemoryNoAlignment(std::uint64_t size, const char* name, void** address, NpKernelMemory* memory) {
     if (memory == nullptr) return NP_ERROR_NULL_OBJECT;
     const int result = MapKernelMemory(memory, size, name);
@@ -770,6 +875,169 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
         std::putchar('\n');
     }
     std::putchar('\n');
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size) {
+    self->vtable = &NpMemoryStreamReaderVtable[2];
+    self->data = data;
+    self->size = size;
+    self->position = 0;
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderC2EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size) {
+    _ZN3sce2np18MemoryStreamReaderC1EPKvm(self, data, size);
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD1Ev(NpMemoryStreamReader*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD2Ev(NpMemoryStreamReader*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD0Ev(NpMemoryStreamReader* self) {
+    _ZdlPvm_nid_postfix(self, NP_MEMORY_STREAM_SIZE);
+}
+
+int APS5_VABI _ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(NpMemoryStreamReader* self, void*, void* out, std::size_t size, std::size_t* read) {
+    std::size_t count = 0;
+    if (self->position < self->size) {
+        count = std::min(size, self->size - self->position);
+        std::memcpy(out, static_cast<const std::uint8_t*>(self->data) + self->position, count);
+        self->position += count;
+    }
+    *read = count;
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterC1EPvm(NpMemoryStreamWriter* self, void* data, std::size_t size) {
+    self->vtable = &NpMemoryStreamWriterVtable[2];
+    self->data = data;
+    self->size = size;
+    self->position = 0;
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterC2EPvm(NpMemoryStreamWriter* self, void* data, std::size_t size) {
+    _ZN3sce2np18MemoryStreamWriterC1EPvm(self, data, size);
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD1Ev(NpMemoryStreamWriter*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD2Ev(NpMemoryStreamWriter*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(NpMemoryStreamWriter* self) {
+    _ZdlPvm_nid_postfix(self, NP_MEMORY_STREAM_SIZE);
+}
+
+int APS5_VABI _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(NpMemoryStreamWriter* self, void*, const void* data, std::size_t size, std::size_t* written) {
+    if (self->data != nullptr) {
+        const std::size_t room = self->size == 0 ? 0 : self->size - self->position;
+        if (room < size) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
+        std::memcpy(static_cast<std::uint8_t*>(self->data) + self->position, data, size);
+    }
+    self->position += size;
+    if (written != nullptr) *written = size;
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC1Ev(NpTitleIdObject* self) {
+    self->vtable = &NpTitleIdVtable[2];
+    self->titleId = {};
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC2Ev(NpTitleIdObject* self) {
+    _ZN3sce2np9NpTitleIdC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC1ERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other) {
+    self->vtable = &NpTitleIdVtable[2];
+    self->titleId = other->titleId;
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC2ERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other) {
+    _ZN3sce2np9NpTitleIdC1ERKS1_(self, other);
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC1ERK12SceNpTitleId(NpTitleIdObject* self, const NpTitleId* titleId) {
+    self->vtable = &NpTitleIdVtable[2];
+    self->titleId = *titleId;
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC2ERK12SceNpTitleId(NpTitleIdObject* self, const NpTitleId* titleId) {
+    _ZN3sce2np9NpTitleIdC1ERK12SceNpTitleId(self, titleId);
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdD1Ev(NpTitleIdObject*) {}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdD2Ev(NpTitleIdObject*) {}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdD0Ev(NpTitleIdObject* self) {
+    _ZN3sce2np6ObjectdlEPv(self);
+}
+
+NpTitleIdObject* APS5_VABI _ZN3sce2np9NpTitleIdaSERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other) {
+    self->titleId = other->titleId;
+    return self;
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleId5ClearEv(NpTitleIdObject* self) {
+    self->titleId = {};
+}
+
+bool APS5_VABI _ZNK3sce2np9NpTitleId7IsEmptyEv(const NpTitleIdObject* self) {
+    return self->titleId.data[0] == '\0';
+}
+
+bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsEPKc(const NpTitleIdObject* self, const char* titleId) {
+    return SameTitleId(self->titleId.data, titleId);
+}
+
+bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsERKS1_(const NpTitleIdObject* self, const NpTitleIdObject* other) {
+    return SameTitleId(self->titleId.data, other->titleId.data);
+}
+
+bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsERK12SceNpTitleId(const NpTitleIdObject* self, const NpTitleId* titleId) {
+    return SameTitleId(self->titleId.data, titleId->data);
+}
+
+int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(NpTitleIdObject* out, const char* text) {
+    return StoreTitleId(out, text, std::strlen(text), NP_TITLE_ID_CODE_LENGTH);
+}
+
+int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKcm(NpTitleIdObject* out, const char* text, std::size_t length) {
+    return StoreTitleId(out, text, length, NP_TITLE_ID_CODE_LENGTH);
+}
+
+int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKc(NpTitleIdObject* out, const char* text) {
+    return StoreTitleId(out, text, std::strlen(text), NP_TITLE_ID_LENGTH);
+}
+
+int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKcm(NpTitleIdObject* out, const char* text, std::size_t length) {
+    return StoreTitleId(out, text, length, NP_TITLE_ID_LENGTH);
+}
+
+int APS5_VABI _ZN3sce2np9NpTitleId5BuildERKS1_Pcm(const NpTitleIdObject* titleId, char* text, std::size_t size) {
+    if (size <= NP_TITLE_ID_LENGTH) return NP_ERROR_TITLE_ID_BUFFER_TOO_SMALL;
+    std::memset(text, 0, size);
+    std::memcpy(text, titleId->titleId.data, NP_TITLE_ID_LENGTH + 1);
+    return 0;
+}
+
+bool APS5_VABI _ZN3sce2npeqERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, const NpTitleIdObject* rhs) {
+    return SameTitleId(lhs->titleId.data, rhs->titleId.data);
+}
+
+bool APS5_VABI _ZN3sce2npeqERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs) {
+    return SameTitleId(lhs->titleId.data, rhs->data);
+}
+
+bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, const NpTitleIdObject* rhs) {
+    return !SameTitleId(lhs->titleId.data, rhs->titleId.data);
+}
+
+bool APS5_VABI _ZN3sce2npneERK12SceNpTitleIdRKNS0_9NpTitleIdE(const NpTitleId* lhs, const NpTitleIdObject* rhs) {
+    return !SameTitleId(lhs->data, rhs->titleId.data);
+}
+
+bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs) {
+    return !SameTitleId(lhs->titleId.data, rhs->data);
 }
 
 }
