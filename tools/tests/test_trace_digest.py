@@ -357,7 +357,7 @@ class TraceDigestTests(unittest.TestCase):
         result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace)],
                                 capture_output=True, text=True, encoding="utf-8", timeout=20)
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertTrue(result.stderr.startswith("FAIL: the summary line has no 'ms' field"), result.stderr)
+        self.assertTrue(result.stderr.startswith(f"FAIL: {summary}:1: window.ms must be a"), result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(result.stdout, "")
 
@@ -1384,6 +1384,50 @@ class IntervalSchemaTests(unittest.TestCase):
         digest = trace_digest.digest_intervals(loaded)
         self.assertEqual(digest["intervals"][0]["busiest_worker"]["pct"], 125)
         self.assertIn("0-0", trace_digest.markdown_intervals(digest))
+
+
+class CaptureSchemaTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        self.trace = root / SUMMARY["trace"]
+        with gzip.open(self.trace, "wt", encoding="utf-8") as handle:
+            json.dump({"traceEvents": EVENTS}, handle)
+        self.summary = root / "aps5-summary.jsonl"
+
+    def write(self, record, line=1):
+        prefix = "\n" * (line - 1)
+        self.summary.write_text(prefix + json.dumps(record) + "\n", encoding="utf-8")
+
+    def test_invalid_capture_fields_report_physical_line_numbers(self):
+        baseline = dict(SUMMARY)
+        changes = [("window", None), ("window", 5), ("window", {}), ("window", dict(SUMMARY["window"], spec=7)),
+                   ("window", dict(SUMMARY["window"], first_present=-1)), ("window", dict(SUMMARY["window"], ms="40")),
+                   ("presents", -1), ("frame_ms", None), ("gpu_busy_ms_per_present", -1), ("gpu", None),
+                   ("trace_dropped", None)]
+        for field, value in changes:
+            with self.subTest(field=field, value=value):
+                record = dict(baseline)
+                if field == "window" and isinstance(value, dict):
+                    record["window"] = value
+                else:
+                    record[field] = value
+                self.write(record, line=2)
+                with self.assertRaisesRegex(ValueError, r"aps5-summary\.jsonl:2:"):
+                    trace_digest.load_summary(self.summary, self.trace)
+
+    def test_json_and_markdown_reject_bad_capture_summaries_without_tracebacks(self):
+        record = dict(SUMMARY, gpu=None)
+        self.write(record, line=1)
+        for options in ([], ["--json"]):
+            with self.subTest(options=options):
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(self.trace), *options],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("aps5-summary.jsonl:1:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
 
 
 if __name__ == "__main__":
