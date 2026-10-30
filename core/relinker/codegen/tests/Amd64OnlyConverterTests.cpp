@@ -475,6 +475,54 @@ void stubRelocations() {
     requireFailure([&] { Codegen::ApplyStubRelocations(body, narrow, 0x1000, 0x2000, 0); }, "Stub relocation narrower than a displacement was accepted");
 }
 
+void eipRelativeStubRelocations() {
+    const Bytes lea = {0x67, 0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x80};
+    const Bytes sha = {0x65, 0x67, 0x0F, 0x38, 0xCC, 0x15, 0x00, 0x00, 0x00, 0x80};
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    auto loweredSha = matcher->Match(sha.data(), sha.size());
+    require(loweredSha && loweredSha->Relocations.size() == 1, "EIP-relative SHA operand has no relocation");
+    Codegen::StubBodyBuilder moved;
+    moved.Move(lea, 4);
+    auto movedBody = moved.Finish();
+    Codegen::StubBodyBuilder rewritten;
+    rewritten.RipRelative(lea, 4, static_cast<std::int64_t>(lea.size()) - 0x80000000ll);
+    auto rewrittenBody = rewritten.Finish();
+    const auto check = [](Bytes body, const std::vector<Codegen::StubRelocation>& relocations, const std::size_t originalLength) {
+        for (const std::uint64_t site : {0x1000ull, 0x100000000ull, 0x7FFF00000000ull}) {
+            for (const std::uint64_t distance : {0x100ull, 0x90000000ull}) {
+                const auto stub = site + distance;
+                Codegen::ApplyStubRelocations(body, relocations, site, stub, 0);
+                const auto& relocation = relocations.front();
+                const auto actual = static_cast<std::uint32_t>(stub + relocation.InstructionEnd + read<std::int32_t>(body, relocation.DisplacementOffset));
+                const auto expected = static_cast<std::uint32_t>(site + originalLength - 0x80000000ull);
+                require(actual == expected, "EIP-relative relocation changed the effective address");
+            }
+        }
+    };
+    check(loweredSha->StubBody, loweredSha->Relocations, sha.size());
+    check(movedBody.Bytes, movedBody.Relocations, lea.size());
+    check(rewrittenBody.Bytes, rewrittenBody.Relocations, lea.size());
+    const Bytes ripLea = {0x48, 0x8D, 0x05, 0x67, 0x00, 0x00, 0x80};
+    Codegen::StubBodyBuilder rip;
+    rip.Move(ripLea, 3);
+    auto ripBody = rip.Finish();
+    requireFailure([&] { Codegen::ApplyStubRelocations(ripBody.Bytes, ripBody.Relocations, 0x100000000ull, 0x100000100ull, 0); }, "A displacement byte was mistaken for an address-size prefix");
+    Codegen::StubBodyBuilder ripRewritten;
+    ripRewritten.RipRelative(ripLea, 3, static_cast<std::int64_t>(ripLea.size()) - 0x80000000ll);
+    auto ripRewrittenBody = ripRewritten.Finish();
+    requireFailure([&] { Codegen::ApplyStubRelocations(ripRewrittenBody.Bytes, ripRewrittenBody.Relocations, 0x100000000ull, 0x100000100ull, 0); }, "A rewritten RIP-relative operand wrapped at 32 bits");
+    const Bytes ripSha = {0x65, 0x0F, 0x38, 0xCC, 0x15, 0x00, 0x00, 0x00, 0x80};
+    auto loweredRipSha = matcher->Match(ripSha.data(), ripSha.size());
+    require(loweredRipSha && loweredRipSha->Relocations.size() == 1, "RIP-relative SHA operand has no relocation");
+    requireFailure([&] { Codegen::ApplyStubRelocations(loweredRipSha->StubBody, loweredRipSha->Relocations, 0x100000000ull, 0x100000100ull, 0); }, "A reloaded RIP-relative SHA operand wrapped at 32 bits");
+    const Bytes branch = {0x67, 0xE9, 0x00, 0x00, 0x00, 0x80};
+    const Codegen::X64InstructionDecoder decoder;
+    Codegen::StubBodyBuilder jumped;
+    jumped.MoveControlFlow(branch, decoder.DecodeInstruction(branch.data(), branch.size()));
+    auto jumpBody = jumped.Finish();
+    requireFailure([&] { Codegen::ApplyStubRelocations(jumpBody.Bytes, jumpBody.Relocations, 0x100000000ull, 0x100000100ull, 0); }, "Address-size prefix incorrectly allowed a direct branch to wrap at 32 bits");
+}
+
 Bytes segmentFixture() {
     Bytes file(0x300, 0xCC);
     const Bytes text = {
@@ -2331,6 +2379,7 @@ int main() {
         goldenBodies();
         ripRelativeBodies();
         stubRelocations();
+        eipRelativeStubRelocations();
         registerFormExecution();
         immediateFormExecution();
         sha256Execution();

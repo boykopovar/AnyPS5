@@ -281,6 +281,42 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
         self.assertEqual(result.returncode, 1)
         self.assertIn("src/foo.cpp:1:1: error: no", result.stderr)
 
+    def test_symbolic_link_loops_are_reported_without_a_traceback(self):
+        loop = self.root / "loop.cpp"
+        other = self.root / "other.cpp"
+        try:
+            loop.symlink_to(other)
+            other.symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        source = self.source("unit.cpp")
+        script = self.compiler("import sys\nsys.exit(0)\n")
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{source}"'),
+                       self.entry("other.cpp", f'"{sys.executable}" "{script}" "{other}"')])
+        result = self.tool("unit.cpp", "loop.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("loop.cpp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        looping_build = self.root / "looping-build"
+        looping_build.symlink_to(looping_build)
+        self.manifest([self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{source}"'),
+                       {"directory": str(looping_build), "file": "other.cpp", "command": "cc other.cpp"},
+                       {"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), str(loop), str(source), "--", str(loop)]}])
+        result = self.tool("unit.cpp")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 translation units compile", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        response = self.build / "flags.rsp"
+        response.symlink_to(response)
+        self.manifest([{"directory": str(self.build), "file": str(source),
+                        "arguments": [sys.executable, str(script), "@flags.rsp", str(source)]}])
+        result = self.tool("unit.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("flags.rsp", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_a_new_untracked_translation_unit_is_checked(self):
         self.source("base.cpp")
         subprocess.run(["git", "-C", str(self.root), "add", "base.cpp"], check=True)
@@ -430,25 +466,41 @@ class CheckCompileDatabaseTests(CheckCompileFixture):
                 self.assertIn("compile_commands.json: expected an array of command objects", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
 
-    def test_invalid_entries_are_rejected_before_any_compiler_runs(self):
+    def test_non_object_entries_are_rejected_before_any_compiler_runs(self):
+        self.check_invalid_entries(lambda valid: [(value, "expected a command object")
+                                                  for value in (None, [], 42, "command")])
+
+    def test_invalid_directories_are_rejected_before_any_compiler_runs(self):
+        self.check_invalid_locations("directory")
+
+    def test_invalid_files_are_rejected_before_any_compiler_runs(self):
+        self.check_invalid_locations("file")
+
+    def test_invalid_commands_are_rejected_before_any_compiler_runs(self):
+        def cases(valid):
+            return [({key: value for key, value in valid.items() if key != "command"},
+                     "expected arguments or command"),
+                    *(({**valid, "command": value}, "command must be a nonempty string")
+                      for value in (None, [], 42, "", " \t")),
+                    ({**valid, "arguments": []},
+                     "arguments must be a nonempty list of strings with an executable")]
+        self.check_invalid_entries(cases)
+
+    def check_invalid_locations(self, field):
+        def cases(valid):
+            missing = dict(valid)
+            del missing[field]
+            return [(missing, f"missing {field}"),
+                    *(({**valid, field: value}, f"{field} must be a nonempty string")
+                      for value in (None, [], 42, ""))]
+        self.check_invalid_entries(cases)
+
+    def check_invalid_entries(self, cases):
         source = self.source("unit.cpp")
         invoked = self.root / "invoked"
         script = self.compiler("import sys\nfrom pathlib import Path\nPath(sys.argv[1]).touch()\n")
         valid = self.entry("unit.cpp", f'"{sys.executable}" "{script}" "{invoked}" "{source}"')
-        cases = [(value, "expected a command object") for value in (None, [], 42, "command")]
-        for field in ("directory", "file"):
-            missing = dict(valid)
-            del missing[field]
-            cases.append((missing, f"missing {field}"))
-            cases.extend(({**valid, field: value}, f"{field} must be a nonempty string")
-                         for value in (None, [], 42, ""))
-        cases.append(({key: value for key, value in valid.items() if key != "command"},
-                      "expected arguments or command"))
-        cases.extend(({**valid, "command": value}, "command must be a nonempty string")
-                     for value in (None, [], 42, "", " \t"))
-        cases.append(({**valid, "arguments": []},
-                      "arguments must be a nonempty list of strings with an executable"))
-        for invalid, message in cases:
+        for invalid, message in cases(valid):
             with self.subTest(invalid=invalid):
                 self.manifest([valid, invalid])
                 result = self.tool("--jobs", "2", "unit.cpp")

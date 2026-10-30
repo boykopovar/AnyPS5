@@ -1084,13 +1084,26 @@ int APS5_VABI sceKernelRemoveExceptionHandler(int signum) {
  return 0;
 }
 
+#ifdef _WIN32
+void DeliverPendingException_nid_no_patch(PthreadPrivate* thread) {
+ const int signum = thread->pendingException.exchange(-1, std::memory_order_acq_rel);
+ if (signum <= 0) return;
+ const auto handler = Handler(signum);
+ if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: the handler was removed before the signal was delivered");
+ RaiseOn(thread, handler, signum);
+}
+#endif
+
 int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  if (signum != RaisedSignal) return SCE_KERNEL_ERROR_EINVAL;
  if (thread == nullptr || thread->_finished.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_ESRCH;
  const auto handler = Handler(signum);
  if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: no handler installed for the signal");
 #ifdef _WIN32
- if (thread->suspended.load(std::memory_order_acquire)) throw std::runtime_error("sceKernelRaiseException: the target thread is still suspended at creation");
+ if (thread->suspended.load(std::memory_order_acquire)) {
+  int pending = 0;
+  if (thread->pendingException.compare_exchange_strong(pending, signum, std::memory_order_acq_rel) || pending > 0) return 0;
+ }
  return RaiseOn(thread, handler, signum) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 #else
  return RaiseOn(thread) ? 0 : SCE_KERNEL_ERROR_ESRCH;

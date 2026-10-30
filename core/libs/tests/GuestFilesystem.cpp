@@ -625,6 +625,29 @@ int main() {
             Require(close_nid_postfix(reused) == 0);
 #endif
         }
+        auto* reopened = fopen_nid_postfix(listed.string().c_str(), "r");
+        Require(reopened != nullptr && freopen_nid_postfix(root.string().c_str(), "r", reopened) == reopened);
+        FileStat reopenedStatus{};
+        Require(sceKernelFstat(fileno_nid_postfix(reopened), &reopenedStatus) == 0 && (reopenedStatus.st_mode & 0170000) == 0040000);
+        char reopenedText[8] = {};
+        *__error_nid_postfix() = 0;
+        Require(fread_nid_postfix(reopenedText, 1, sizeof(reopenedText), reopened) == 0 && *__error_nid_postfix() == 21 && ferror_nid_postfix(reopened) != 0);
+        Require(freopen_nid_postfix(listed.string().c_str(), "rb", reopened) == reopened && ferror_nid_postfix(reopened) == 0);
+        Require(sceKernelFstat(fileno_nid_postfix(reopened), &reopenedStatus) == 0 && (reopenedStatus.st_mode & 0170000) == 0100000);
+        Require(fread_nid_postfix(reopenedText, 1, sizeof(reopenedText), reopened) == 6 && std::memcmp(reopenedText, "listed", 6) == 0);
+        Require(freopen_nid_postfix(root.string().c_str(), "re", reopened) == reopened);
+        const int reopenedDescriptor = fileno_nid_postfix(reopened);
+        Require(reopenedDescriptor >= 0 && fclose_nid_postfix(reopened) == 0);
+#ifdef _WIN32
+        {
+            const int reused = open_nid_postfix(listed.string().c_str(), 0, 0);
+            char text[6]{};
+            Require(reused == reopenedDescriptor && read_nid_postfix(reused, text, sizeof(text)) == 6 && std::memcmp(text, "listed", 6) == 0);
+            Require(close_nid_postfix(reused) == 0);
+        }
+#endif
+        auto* updated = fopen_nid_postfix(listed.string().c_str(), "r");
+        Require(updated != nullptr && freopen_nid_postfix(root.string().c_str(), "r+", updated) == nullptr && *__error_nid_postfix() == 21);
         Require(std::filesystem::remove(listed));
     }
     Require(mkdir_nid_postfix((root / "missing" / "child").string().c_str(), 0700) == -1 && *__error_nid_postfix() == 2);
@@ -1131,6 +1154,10 @@ int main() {
         Require(checkRelativeLink(fileLink, 11));
         Require(checkRelativeLink(directoryLink, 16));
         Require(checkRelativeLink(danglingLink, 11));
+        const auto movedLink = root / "moved-dangling-link";
+        Require(rename_nid_postfix(danglingLink.string().c_str(), movedLink.string().c_str()) == 0 && checkRelativeLink(movedLink, 11));
+        Require(!std::filesystem::exists(root / "missing.txt"));
+        Require(rename_nid_postfix(movedLink.string().c_str(), danglingLink.string().c_str()) == 0 && checkRelativeLink(danglingLink, 11));
         const auto belowStatLoop = statLoop.string() + "\\inside";
         Require(sceKernelUnlink(belowStatLoop.c_str()) == static_cast<int>(0x8002003eu));
         Require(unlink_nid_postfix(belowStatLoop.c_str()) == -1 && *__error_nid_postfix() == 62);
