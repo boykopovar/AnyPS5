@@ -450,9 +450,20 @@ void RunGuestSamplerResourceTests() {
     const auto unnormalizedBiasedResult = DecodeSamplerResource(pack(unnormalizedBiased), true);
     requireUnnormalized(unnormalizedBiasedResult, "unnormalized S# with primary and secondary LOD bias");
     Require(unnormalizedBiasedResult.lodBias == 0.0f, "unnormalized coordinates must zero host lodBias");
-    Fields unnormalizedTruncated = unnormalizedBase;
-    unnormalizedTruncated.truncCoord = true;
-    rejectUnnormalized(unnormalizedTruncated, "unnormalized coordinates with TRUNC_COORD");
+    for (const std::uint32_t filter : {0u, 1u}) {
+        Fields unnormalizedUntruncated = unnormalizedBase;
+        unnormalizedUntruncated.xyMagFilter = filter;
+        unnormalizedUntruncated.xyMinFilter = filter;
+        Fields unnormalizedTruncated = unnormalizedUntruncated;
+        unnormalizedTruncated.truncCoord = true;
+        const auto truncatedResult = DecodeSamplerResource(pack(unnormalizedTruncated), true);
+        const auto untruncatedResult = DecodeSamplerResource(pack(unnormalizedUntruncated), true);
+        requireUnnormalized(truncatedResult, "unnormalized S# with TRUNC_COORD");
+        Require(truncatedResult.magFilter == untruncatedResult.magFilter && truncatedResult.minFilter == untruncatedResult.minFilter
+                && truncatedResult.addressModeU == untruncatedResult.addressModeU && truncatedResult.addressModeV == untruncatedResult.addressModeV
+                && truncatedResult.borderColor == untruncatedResult.borderColor,
+            "TRUNC_COORD must not change the host sampler of an unnormalized S#");
+    }
     auto truncatedBlend = pack(unnormalizedBase);
     truncatedBlend[0] |= 1u << 19u;
     reject([&] { DecodeSamplerResource(truncatedBlend, true); }, "unnormalized coordinates with MC_COORD_TRUNC");

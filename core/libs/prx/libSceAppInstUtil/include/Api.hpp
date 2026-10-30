@@ -124,5 +124,12 @@ int APS5_VABI sceAppInstUtilRestoreDataSource(void);
 int APS5_VABI sceAppInstUtilGetNeededStorageSize(void);
 int APS5_VABI sceAppInstUtilAppGetStorageDestType(void);
 int APS5_VABI sceAppInstUtilInstallAddons(void);
+int APS5_VABI sceAppInstUtilAppConvertAppDiscToDownload(void);
+int APS5_VABI sceAppInstUtilAppGetCustomThemeInfo(void);
+int APS5_VABI sceAppInstUtilAppGetInstallAddcontFromDiscStatus(void);
+int APS5_VABI sceAppInstUtilAppInstallCloudGame(void);
+int APS5_VABI sceAppInstUtilAppInstallMediaPlayer(void);
+int APS5_VABI sceAppInstUtilAppInstallRequestAddcontFromDisc(void);
+int APS5_VABI sceAppInstUtilAppSetSavedataUploadStatus(void);
 
 }
