@@ -23,13 +23,15 @@ if(BUILD_TESTING)
         add_test(NAME guest_addresssanitizer_mapping_collision COMMAND guest_addresssanitizer_mapping_tests collision)
         set_tests_properties(guest_addresssanitizer_mapping guest_addresssanitizer_mapping_collision PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAddressSanitizer>")
-        foreach(mode load4 storeN unaligned partial report_error)
+        foreach(mode load4 load16 storeN unaligned partial report_error)
             add_test(NAME guest_addresssanitizer_report_${mode} COMMAND guest_addresssanitizer_mapping_tests report ${mode})
             set_tests_properties(guest_addresssanitizer_report_${mode} PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAddressSanitizer>")
         endforeach()
         set_tests_properties(guest_addresssanitizer_report_load4 PROPERTIES PASS_REGULAR_EXPRESSION
             "ERROR: AddressSanitizer: use-after-poison on address 0x[0-9a-f]+ at pc 0x[0-9a-f]+ bp 0x[0-9a-f]+ sp 0x[0-9a-f]+.READ of size 4 at 0x[0-9a-f]+ thread T-1.Shadow bytes around the buggy address:.*=>0x[0-9a-f]+:.*f7.*Shadow byte legend.*callback present=1 type=0 size=4 desc=use-after-poison address=ok text=ok.ABORTING.death callback")
+        set_tests_properties(guest_addresssanitizer_report_load16 PROPERTIES PASS_REGULAR_EXPRESSION
+            "ERROR: AddressSanitizer: use-after-poison on address .*READ of size 16 at .*callback present=1 type=0 size=16 desc=use-after-poison address=ok text=ok.ABORTING.death callback")
         set_tests_properties(guest_addresssanitizer_report_storeN PROPERTIES PASS_REGULAR_EXPRESSION
             "ERROR: AddressSanitizer: use-after-poison on address .*WRITE of size 16 at .*callback present=1 type=1 size=16 desc=use-after-poison address=ok text=ok.ABORTING.death callback")
         set_tests_properties(guest_addresssanitizer_report_unaligned PROPERTIES PASS_REGULAR_EXPRESSION
