@@ -312,13 +312,6 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                     auto phaseLap = lap;
                     DispatchPhaseTiming phaseTiming{profile, lap, phaseMs, phaseLap};
                     insertDispatch(found->second.address, found->second.key, found->second.noDispatchCache, profile, found->second.registeredShader, found->second.forgetAtCapture, memory, found->second.shaderMemory, found->second.captured, found->second.capture, found->second.compiledResult, found->second.missedEntry, found->second.missedDiffering, found->second.attachVariant, phaseTiming);
-                    if (!localDevice->HasComputePipeline(*found->second.compiledResult)) {
-                        const auto compiledResult = found->second.compiledResult;
-                        const auto address = found->second.address;
-                        SubmitLibraryPrebuild([localDevice, compiledResult, address] {
-                            try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (const std::exception&) {}
-                        });
-                    }
                 }
                 bool bounded = false;
                 const auto itemWrites = DispatchWriteRanges(*found->second.compiledResult, bounded);
