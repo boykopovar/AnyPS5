@@ -269,10 +269,12 @@ void TestObjectsThroughStoredAllocator() {
     _ZN3sce2np6ObjectdaEPvR16SceNpAllocatorEx(_ZN3sce2np6ObjectnwEmR16SceNpAllocatorEx(8, &allocatorEx), &otherEx);
     Require(record.released == record.block.data() && other.released == nullptr, "delete[] with an extended allocator frees through the stored one");
 
+    Require(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(SIZE_MAX - 15, &allocator) == record.block.data() + 16 && record.size == 0,
+        "the size plus the header wraps unchecked, so a succeeding allocator is asked for 0 bytes");
+
     record.fail = true;
     Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
         "a failed array allocation returns null");
-    Require(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(SIZE_MAX - 15, &allocator) == nullptr && record.size == 0, "the size plus the header wraps");
 }
 
 struct ExRecord {
