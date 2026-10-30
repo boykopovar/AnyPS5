@@ -40,6 +40,7 @@ unsigned char npIdPcIds[2 * 44];
 unsigned char accountIdPcIds[2 * 16];
 
 using RankingFn = int (APS5_VABI*)(int, std::uint32_t, const void*, std::uint64_t, void*, std::uint64_t, void*, std::uint64_t, void*, std::uint64_t, std::uint64_t, void*, void*, void*);
+using AccountRankingFn = int (APS5_VABI*)(int, std::uint32_t, const std::uint64_t*, std::uint64_t, void*, std::uint64_t, void*, std::uint64_t, void*, std::uint64_t, std::uint64_t, void*, void*, void*);
 using RangeFn = int (APS5_VABI*)(int, std::uint32_t, std::uint32_t, void*, std::uint64_t, void*, std::uint64_t, void*, std::uint64_t, std::uint64_t, void*, void*, void*);
 using FriendsFn = int (APS5_VABI*)(int, std::uint32_t, int, void*, std::uint64_t, void*, std::uint64_t, void*, std::uint64_t, std::uint64_t, void*, void*, const NpScoreFriendRankingOption*);
 using GameDataFn = int (APS5_VABI*)(int, std::uint32_t, const void*, std::uint64_t*, std::uint64_t, void*, void*);
@@ -242,8 +243,8 @@ void CheckRangeAndFriendsA() {
 }
 
 void CheckAccountIds() {
-    const auto byAccountId = Resolve<RankingFn>("sceNpScoreGetRankingByAccountId");
-    const auto byAccountIdAsync = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdAsync");
+    const auto byAccountId = Resolve<AccountRankingFn>("sceNpScoreGetRankingByAccountId");
+    const auto byAccountIdAsync = Resolve<AccountRankingFn>("sceNpScoreGetRankingByAccountIdAsync");
     const auto byAccountIdPcId = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdPcId");
     const auto byAccountIdPcIdAsync = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdPcIdAsync");
     int req = NewRequest();
@@ -341,8 +342,8 @@ void CheckCrossSave() {
     const auto byRangeAsync = Resolve<RangeFn>("sceNpScoreGetRankingByRangeForCrossSaveAsync");
     const auto friends = Resolve<FriendsFn>("sceNpScoreGetFriendsRankingForCrossSave");
     const auto friendsAsync = Resolve<FriendsFn>("sceNpScoreGetFriendsRankingForCrossSaveAsync");
-    const auto byAccountId = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdForCrossSave");
-    const auto byAccountIdAsync = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdForCrossSaveAsync");
+    const auto byAccountId = Resolve<AccountRankingFn>("sceNpScoreGetRankingByAccountIdForCrossSave");
+    const auto byAccountIdAsync = Resolve<AccountRankingFn>("sceNpScoreGetRankingByAccountIdForCrossSaveAsync");
     const auto byAccountIdPcId = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdPcIdForCrossSave");
     const auto byAccountIdPcIdAsync = Resolve<RankingFn>("sceNpScoreGetRankingByAccountIdPcIdForCrossSaveAsync");
     int req = NewRequest();
