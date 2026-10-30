@@ -86,4 +86,9 @@ int APS5_VABI scePlayReadyReinitialize() {
     return 0;
 }
 
+
+int APS5_VABI scePlayReadyApiSetInitParamFlags() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

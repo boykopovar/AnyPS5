@@ -1679,6 +1679,42 @@ class ImportAuditTests(unittest.TestCase):
                 with self.assertRaisesRegex(import_audit.AuditError, "more than 256 preprocessor branch combinations"):
                     import_audit.source_stub_classes(source)
 
+    def test_unrelated_helper_host_branches_do_not_abort_source_classification(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(10))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     f"int PollDescriptors(int value) {{\n{blocks}    return value;\n}}\n"
+                     "int PollAgain(int value) { return PollDescriptors(value); }\n"
+                     "void FirstFail() { LastFail(); }\n"
+                     "void LastFail() { NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI scePoll(int value) { return PollAgain(value); }\n"
+                     "int APS5_VABI sceStub(int value) { FirstFail(); return value; }\n"
+                     "int APS5_VABI scePartial(int value) { if (value) FirstFail(); return value; }\n")
+        stubs, partial = import_audit.source_stub_classes(source)
+        stub = ("libHosts.prx", nid_names.compute_nid("sceStub"))
+        guarded = ("libHosts.prx", nid_names.compute_nid("scePartial"))
+        self.assertEqual(set(stubs), {stub, guarded})
+        self.assertEqual(partial, {guarded})
+
+    def test_relevant_helper_at_the_variant_limit_remains_a_stub(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(8))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     f"void Fail(int value) {{\n{blocks}    NotImplemented_nid_no_patch(__func__);\n}}\n"
+                     "int APS5_VABI sceStub(int value) { Fail(value); return value; }\n")
+        stub = ("libHosts.prx", nid_names.compute_nid("sceStub"))
+        self.assertEqual(import_audit.source_stub_classes(source), ({stub: "sceStub"}, set()))
+
+    def test_relevant_helper_host_branches_keep_the_variant_limit(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(9))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     f"void LastFail(int value) {{\n{blocks}    NotImplemented_nid_no_patch(__func__);\n}}\n"
+                     "void FirstFail(int value) { LastFail(value); }\n"
+                     "int APS5_VABI sceStub(int value) { FirstFail(value); return value; }\n")
+        with self.assertRaisesRegex(import_audit.AuditError, "more than 256 preprocessor branch combinations"):
+            import_audit.source_stub_classes(source)
+
     def test_partial_import_is_its_own_class(self):
         direct, guarded = nid_names.compute_nid("sceDirect"), nid_names.compute_nid("sceGuarded")
         stubs = {("libA.prx", direct): "sceDirect", ("libA.prx", guarded): "sceGuarded", ("libB.prx", guarded): "sceGuarded"}
@@ -2561,6 +2597,23 @@ class ImportAuditTests(unittest.TestCase):
                      + STUB_SOURCE.format(name="sceUnreferencedPending"))
         self.assertEqual(self.work.run(registry, "--strict-stubs")[0], 0)
 
+    def test_conditional_stubs_reads_utf8_source_with_explicit_encoding(self):
+        original_read_text = Path.read_text
+        recorded_calls = []
+
+        def recording_read_text(path_self, *args, **kwargs):
+            recorded_calls.append((path_self, kwargs))
+            return original_read_text(path_self, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            lib_dir = Path(directory)
+            cpp_file = lib_dir / "Export.cpp"
+            cpp_file.write_bytes(f"// Non-ASCII \u2014 em-dash\n{DONE_SOURCE.format(name='sceCustomStub')}".encode("utf-8"))
+            with patch.object(Path, "read_text", side_effect=recording_read_text, autospec=True):
+                stubs = import_audit.conditional_stubs(lib_dir)
+            self.assertEqual(stubs, {"sceCustomStub"})
+            self.assertTrue(recorded_calls)
+            self.assertEqual(recorded_calls[0][1].get("encoding"), "utf-8")
 
 
 class StrictProviderTests(unittest.TestCase):

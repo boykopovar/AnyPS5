@@ -4,10 +4,13 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
+#include <initializer_list>
 #include <source_location>
 #include <utility>
 #include <vector>
@@ -16,6 +19,8 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 using SelectProtocol = int (APS5_VABI*)(unsigned char**, unsigned char*, const unsigned char*, std::uint32_t, const unsigned char*, std::uint32_t);
@@ -28,6 +33,55 @@ void Require(bool condition, std::source_location location = std::source_locatio
         std::abort();
     }
 }
+
+template<typename TAction> void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
+    try { action(); } catch (const std::exception&) { return; }
+    Require(false, location);
+}
+
+class GuardedPages {
+public:
+    GuardedPages() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page_ = info.dwPageSize;
+        base_ = static_cast<unsigned char*>(VirtualAlloc(nullptr, 2 * page_, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(base_ != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(base_ + page_, page_, PAGE_NOACCESS, &previous) != 0);
+#else
+        page_ = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* const mapped = mmap(nullptr, 2 * page_, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        base_ = static_cast<unsigned char*>(mapped);
+        Require(mprotect(base_ + page_, page_, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(base_, 0, MEM_RELEASE);
+#else
+        munmap(base_, 2 * page_);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    unsigned char* End() const { return base_ + page_; }
+
+    unsigned char* Place(std::initializer_list<unsigned char> bytes) {
+        unsigned char* const start = End() - bytes.size();
+        std::copy(bytes.begin(), bytes.end(), start);
+        return start;
+    }
+
+private:
+    unsigned char* base_ = nullptr;
+    std::size_t page_ = 0;
+};
 
 Protocol Encode(const Protocols& names) {
     Protocol result;
@@ -66,7 +120,16 @@ void CheckSelection(SelectProtocol select, const Protocols& peerNames, const Pro
     Require(peer == peerCopy && supported == supportedCopy);
 }
 
-void Run(SelectProtocol select) {
+void CheckRaw(SelectProtocol select, const unsigned char* peer, std::uint32_t peerLength, const unsigned char* supported,
+    std::uint32_t supportedLength, int expectedStatus, const unsigned char* expectedOutput, unsigned char expectedLength,
+    std::source_location location = std::source_location::current()) {
+    unsigned char* output = nullptr;
+    unsigned char length = 0xA5;
+    Require(select(&output, &length, peer, peerLength, supported, supportedLength) == expectedStatus, location);
+    Require(output == expectedOutput && length == expectedLength, location);
+}
+
+void RunValid(SelectProtocol select) {
     const Protocol http{'h', 't', 't', 'p', '/', '1', '.', '1'};
     const Protocol h2{'h', '2'};
     const Protocol h3{'h', '3'};
@@ -98,8 +161,56 @@ void Run(SelectProtocol select) {
     large.push_back(h2);
     CheckSelection(select, large, {h2});
     CheckSelection(select, {h2}, large);
+}
 
-    std::printf("LibreSSL protocol selection: 7056 generated pairs, and valid-list boundaries passed\n");
+void RunReported(SelectProtocol select) {
+    GuardedPages peerPages;
+    GuardedPages supportedPages;
+    {
+        const auto* peer = peerPages.Place({0, 2, 'h', '2'});
+        const auto* supported = supportedPages.Place({0});
+        CheckRaw(select, peer, 4, supported, 1, 1, peer + 1, 0);
+    }
+    {
+        const auto* peer = peerPages.Place({0, 2, 'h', '2'});
+        const auto* supported = supportedPages.Place({2, 'h', '2'});
+        CheckRaw(select, peer, 4, supported, 3, 1, peer + 2, 2);
+    }
+    {
+        const auto* peer = peerPages.Place({5, 'a', 'b'});
+        const auto* supported = supportedPages.Place({2, 'a', 'b'});
+        CheckRaw(select, peer, 3, supported, 3, 2, supported + 1, 2);
+    }
+    {
+        const auto* peer = peerPages.Place({2, 'h', '2'});
+        const auto* supported = supportedPages.Place({5, 'a', 'b'});
+        CheckRaw(select, peer, 3, supported, 3, 2, supported + 1, 5);
+    }
+    {
+        const auto* supported = supportedPages.Place({2, 'h', '2'});
+        CheckRaw(select, peerPages.End(), 0, supported, 3, 2, supported + 1, 2);
+        CheckRaw(select, nullptr, 0, supported, 3, 2, supported + 1, 2);
+    }
+    {
+        const auto* peer = peerPages.Place({2, 'h', '2'});
+        const auto* supported = supportedPages.Place({3, 'x', 'y', 'z'});
+        CheckRaw(select, peer, 3, supported, 0, 2, supported + 1, 3);
+    }
+    unsigned char* output = nullptr;
+    unsigned char length = 0;
+    const unsigned char list[]{2, 'h', '2'};
+    RequireThrows([&] { select(nullptr, &length, list, 3, list, 3); });
+    RequireThrows([&] { select(&output, nullptr, list, 3, list, 3); });
+    RequireThrows([&] { select(&output, &length, nullptr, 3, list, 3); });
+    RequireThrows([&] { select(&output, &length, list, 3, nullptr, 3); });
+    RequireThrows([&] { select(&output, &length, list, 3, nullptr, 0); });
+    Require(output == nullptr && length == 0);
+}
+
+void Run(SelectProtocol select) {
+    RunValid(select);
+    RunReported(select);
+    std::printf("LibreSSL protocol selection: 7056 generated pairs, valid-list boundaries and the reported unvalidated lists passed\n");
 }
 
 int main(int argc, char** argv) {

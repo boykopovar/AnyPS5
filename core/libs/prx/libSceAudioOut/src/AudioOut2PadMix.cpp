@@ -1,10 +1,51 @@
 #include "AudioOut2PadMix.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <cmath>
 #include <stdexcept>
+#include <string>
+
+static constexpr float DEFAULT_PAD_SPEAKER_FALLBACK_GAIN = 1.0f;
+static constexpr float PAD_SPEAKER_FALLBACK_MIN_DB = -60.0f;
+static constexpr float PAD_SPEAKER_FALLBACK_MAX_DB = 0.0f;
+
+static bool WordEquals(const char* first, const char* last, const char* word) {
+    const auto length = static_cast<std::size_t>(last - first);
+    if (std::strlen(word) != length) return false;
+    for (std::size_t index = 0; index < length; index++) {
+        if (std::tolower(static_cast<unsigned char>(first[index])) != word[index]) return false;
+    }
+    return true;
+}
+
+static bool IsMutedText(const char* text) {
+    while (std::isspace(static_cast<unsigned char>(*text))) text++;
+    const char* end = text + std::strlen(text);
+    while (end > text && std::isspace(static_cast<unsigned char>(end[-1]))) end--;
+    return WordEquals(text, end, "mute") || WordEquals(text, end, "off") || WordEquals(text, end, "-inf");
+}
+
+float AudioPadSpeakerFallbackGainFrom(const char* dbText) {
+    if (dbText == nullptr) return DEFAULT_PAD_SPEAKER_FALLBACK_GAIN;
+    const char* const text = dbText;
+    while (std::isspace(static_cast<unsigned char>(*dbText))) dbText++;
+    if (IsMutedText(dbText)) return 0.0f;
+    char* end = nullptr;
+    const float db = std::strtof(dbText, &end);
+    while (std::isspace(static_cast<unsigned char>(*end))) end++;
+    if (end == dbText || !std::isfinite(db) || *end != '\0' || db < PAD_SPEAKER_FALLBACK_MIN_DB || db > PAD_SPEAKER_FALLBACK_MAX_DB) {
+        throw std::runtime_error(std::string(AUDIO_PAD_SPEAKER_FALLBACK_ENV) + '=' + text + ": expected mute, off, -inf or a number of dB from -60 to 0");
+    }
+    return std::pow(10.0f, db / 20.0f);
+}
+
+float AudioPadSpeakerFallbackGain() {
+    return AudioPadSpeakerFallbackGainFrom(std::getenv(AUDIO_PAD_SPEAKER_FALLBACK_ENV));
+}
 
 AudioOut2Route AudioOut2RouteForPort(std::uint16_t type, std::uint32_t channels) {
     if (type == AUDIO_OUT2_PORT_TYPE_PAD_SPEAKER && (channels == 1 || channels == 2)) return AudioOut2Route::PadSpeaker;

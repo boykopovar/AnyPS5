@@ -3,6 +3,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "IntermediateRepresentation/IrBlock.hpp"
 #include "IntermediateRepresentation/IrValue.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -1313,10 +1314,10 @@ std::uint32_t SeriesWhenFar(SpirvEmitterState& state, std::uint32_t value, std::
     return Select(state, TypeF32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), distance, ConstantU32(state, 4u)), series, value);
 }
 
-std::uint32_t TrigLinearNearZero(SpirvEmitterState& state, std::uint32_t value, std::uint32_t distance, std::uint32_t linearConstant) {
+std::uint32_t TrigLinearNearZero(SpirvEmitterState& state, std::uint32_t value, std::uint32_t distance, std::uint32_t linearConstant, std::uint32_t limit) {
     const auto linear = Binary(state, spv::OpFMul, TypeF32(state), distance, linearConstant);
     const auto magnitude = Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), distance), ConstantU32(state, 0x7fffffffu));
-    const auto near = Binary(state, spv::OpULessThan, TypeBool(state), magnitude, ConstantU32(state, 0x39800000u));
+    const auto near = Binary(state, spv::OpULessThan, TypeBool(state), magnitude, limit);
     return Select(state, TypeF32(state), near, linear, value);
 }
 
@@ -1330,7 +1331,8 @@ std::uint32_t EmitFPSin(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto series = Select(state, TypeF32(state), pastEighth, CosTurnSeries(state, ExactSub(state, ConstantF32(state, 0x3e800000u), distance)), SinTurnSeries(state, distance));
     const auto value = SeriesWhenFar(state, EmitExt(state, TypeF32(state), GLSLstd450Sin, {Binary(state, spv::OpFMul, TypeF32(state), absolute, ConstantF32(state, 0x40c90fdbu))}), series);
     const auto linearConstant = Select(state, TypeF32(state), nearHalf, ConstantF32(state, 0x40c90fdbu), ConstantF32(state, 0x40c90fd5u));
-    const auto result = TrigLinearNearZero(state, value, distance, linearConstant);
+    const auto linearLimit = GcnGuestShaders() ? Select(state, TypeU32(state), nearHalf, ConstantU32(state, 0x39800000u), ConstantU32(state, 0x39c00000u)) : ConstantU32(state, 0x39800000u);
+    const auto result = TrigLinearNearZero(state, value, distance, linearConstant, linearLimit);
     return Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseOr, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), result), signBits));
 }
 
@@ -1345,7 +1347,7 @@ std::uint32_t EmitFPCos(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto pastThreeEighths = Binary(state, spv::OpFOrdGreaterThan, TypeBool(state), absolute, ConstantF32(state, 0x3ec00000u));
     const auto series = Select(state, TypeF32(state), pastThreeEighths, high, Select(state, TypeF32(state), pastEighth, middle, low));
     const auto value = SeriesWhenFar(state, EmitExt(state, TypeF32(state), GLSLstd450Cos, {Binary(state, spv::OpFMul, TypeF32(state), absolute, ConstantF32(state, 0x40c90fdbu))}), series);
-    return TrigLinearNearZero(state, value, distance, ConstantF32(state, 0x40c90fdbu));
+    return TrigLinearNearZero(state, value, distance, ConstantF32(state, 0x40c90fdbu), ConstantU32(state, 0x39800000u));
 }
 
 std::uint32_t EmitIdentity(SpirvValueEmitContext&, std::uint32_t value) {
