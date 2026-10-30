@@ -158,7 +158,8 @@ def resolve_summary_path(path):
     return resolved
 
 
-def load_summary_lines(path, numbered=False):
+def load_summary_lines(path, numbered=False, label=None):
+    display = label if label is not None else path
     records = []
     for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
         if not line.strip():
@@ -166,11 +167,11 @@ def load_summary_lines(path, numbered=False):
         try:
             record = json.loads(line)
         except json.JSONDecodeError as error:
-            raise ValueError(f"{path}:{number}: invalid JSON: {error.msg}") from error
+            raise ValueError(f"{display}:{number}: invalid JSON: {error.msg}") from error
         except RecursionError as error:
-            raise ValueError(f"{path}:{number}: JSON nesting is too deep") from error
+            raise ValueError(f"{display}:{number}: JSON nesting is too deep") from error
         if not isinstance(record, dict):
-            raise ValueError(f"{path}:{number}: summary record must be an object")
+            raise ValueError(f"{display}:{number}: summary record must be an object")
         records.append((number, record) if numbered else record)
     return records
 
@@ -183,7 +184,8 @@ def load_summary(path, trace_path):
         if not hint.exists() and not hint.is_symlink():
             return None
         candidate = resolve_summary_path(hint)
-    lines = load_summary_lines(candidate)
+    label = Path(path) if path else hint
+    lines = load_summary_lines(candidate, label=label)
     name = Path(trace_path).name
     alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
