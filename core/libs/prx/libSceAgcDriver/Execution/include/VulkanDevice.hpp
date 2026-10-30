@@ -256,6 +256,7 @@ public:
         double gpuBusyMs, gpuGapMs, lastSubmitAfterFlipMs, blitSubmitAfterFlipMs;
     };
     static PresentStatistics PresentCounts();
+    static std::uint64_t FillCompletionSyncCount();
     struct PresyncStatistics {
         std::uint64_t checked, presyncs, keyChecks, keyWaits;
     };
