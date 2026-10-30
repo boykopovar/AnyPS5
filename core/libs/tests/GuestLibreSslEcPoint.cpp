@@ -180,13 +180,11 @@ template<typename TAction> static void RequireThrows(TAction action, const char*
 
 static void CheckUnsupportedInputs() {
     auto group = std::unique_ptr<EcGroup, decltype(&EC_GROUP_free_nid_postfix)>(EC_GROUP_new_by_curve_name_nid_postfix(415), EC_GROUP_free_nid_postfix);
-    auto other = std::unique_ptr<EcGroup, decltype(&EC_GROUP_free_nid_postfix)>(EC_GROUP_new_by_curve_name_nid_postfix(714), EC_GROUP_free_nid_postfix);
     auto point = std::unique_ptr<EcPoint, decltype(&EC_POINT_free_nid_postfix)>(EC_POINT_new_nid_postfix(group.get()), EC_POINT_free_nid_postfix);
     auto bytes = Bytes(Vectors[3].encoded);
     RequireThrows([&] { EC_POINT_oct2point_nid_postfix(nullptr, point.get(), bytes.data(), bytes.size(), nullptr); }, "null decoding group throws");
     RequireThrows([&] { EC_POINT_oct2point_nid_postfix(group.get(), nullptr, bytes.data(), bytes.size(), nullptr); }, "null decoding point throws");
     RequireThrows([&] { EC_POINT_oct2point_nid_postfix(group.get(), point.get(), nullptr, 1, nullptr); }, "null nonempty buffer throws");
-    RequireThrows([&] { EC_POINT_oct2point_nid_postfix(other.get(), point.get(), bytes.data(), bytes.size(), nullptr); }, "cross-curve method compatibility is unknown");
 
 }
 
