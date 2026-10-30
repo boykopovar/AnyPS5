@@ -100,5 +100,17 @@ int main() {
     catch (const Domain::RelinkerException&) {}
     const auto dialogImage = Relinker::GuestImageReader().Read("dialog-consumer.prx", Fixture(false, "libSceMsgDialog.native.prx", "libSceMsgDialog"), true);
     if (dialogImage.Symbols.size() != 4 || dialogImage.Symbols[3].Library != "libSceMsgDialog.native.prx") return 29;
+    const std::map<std::uint64_t, std::string> content{{1, "libSceAppContentUtil"}};
+    const std::array<std::string, 1> contentProvider{"libSceAppContent.prx"};
+    const std::array<std::string, 2> contentBoth{"libSceAppContentUtil.prx", "libSceAppContent.prx"};
+    const std::array<std::string, 1> contentOther{"libSceAppContent2.prx"};
+    const std::array<std::string, 2> contentAmbiguous{"libSceAppContent.prx", "libSceAppContent.sprx"};
+    if (Domain::ImportModule("nid#A#B", content, contentProvider) != contentProvider[0]) return 30;
+    if (Domain::ImportModule("nid#A#B", content, contentBoth) != contentBoth[0]) return 31;
+    if (!Domain::ImportModule("nid#A#B", content, contentOther).empty()) return 32;
+    try { Domain::ImportModule("nid#A#B", content, contentAmbiguous); return 33; }
+    catch (const Domain::RelinkerException&) {}
+    const auto contentImage = Relinker::GuestImageReader().Read("content-consumer.prx", Fixture(false, "libSceAppContent.prx", "libSceAppContentUtil"), true);
+    if (contentImage.Symbols.size() != 4 || contentImage.Symbols[3].Library != "libSceAppContent.prx") return 34;
     std::cout << "module mapping checks passed\n";
 }
