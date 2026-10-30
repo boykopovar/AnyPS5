@@ -962,7 +962,7 @@ int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid) {
     HostEntropy_nid_no_patch(value.data(), sizeof(value));
     value[1] = (value[1] & 0x0fffffffu) | 0x40000000u;
     value[2] = (value[2] & 0xffffff3fu) | 0x80u;
-    std::memcpy(uuid, value.data(), sizeof(value));
+    if (!GuestCopyOut_nid_no_patch(uuid, value.data(), sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -972,7 +972,7 @@ int APS5_VABI sceKernelCreateUuidV4(std::uint8_t* uuid) {
     HostEntropy_nid_no_patch(value.data(), value.size());
     value[6] = static_cast<std::uint8_t>((value[6] & 0x0fu) | 0x40u);
     value[8] = static_cast<std::uint8_t>((value[8] & 0x3fu) | 0x80u);
-    std::memcpy(uuid, value.data(), value.size());
+    if (!GuestCopyOut_nid_no_patch(uuid, value.data(), value.size())) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 

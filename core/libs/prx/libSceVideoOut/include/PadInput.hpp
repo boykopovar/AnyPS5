@@ -63,6 +63,7 @@ private:
     VideoOutTelemetry::PadChangeFilter telemetryFilter;
     AgcDriver::PadStatusProvider statusProvider;
     bool padCaptured = false;
+    bool hostFocusSynced = false;
 };
 
 #endif

@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <source_location>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,8 +20,9 @@
 
 namespace {
 
-static void Require(bool condition) {
+static void Require(bool condition, std::source_location where = std::source_location::current()) {
     if (!condition) {
+        std::fprintf(stderr, "pad_sdl: check failed at line %u\n", static_cast<unsigned>(where.line()));
         std::abort();
     }
 }

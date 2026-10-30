@@ -1601,6 +1601,57 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(import_audit.source_stubs(source), {
             (library + ".prx", nid): "scePending" for library in ("libA", "libB", "libZOwner")})
 
+    def test_nested_callable_returns_do_not_make_unconditional_stubs_partial(self):
+        prefixes = (
+            "[] { return 1; };",
+            "auto callback = [] { return 1; };",
+            "auto callback = [saved = 1]() mutable noexcept -> int { return saved; };",
+            "auto callback = []<typename T>(T value) -> T { return value; };",
+            "auto callback = [saved = ({ auto nested = [] { return 1; }; nested(); })] { return saved; };",
+            "auto value = [] { return 1; }();",
+            "Consume([] { return 1; });",
+            "if ([] { return true; }()) {}",
+            "struct Local { int Value() { return 1; } };",
+            "class Local { public: int Value() { return 1; } };",
+        )
+        source = self.work.source
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                write_source(source, "libScopes",
+                             f"void Fail() {{ {prefix} NotImplemented_nid_no_patch(__func__); }}\n"
+                             f"int APS5_VABI sceDirect() {{ {prefix} NotImplemented_nid_no_patch(__func__); return 0; }}\n"
+                             "int APS5_VABI sceWrapped() { Fail(); return 0; }\n")
+                expected = {("libScopes.prx", nid_names.compute_nid(name)): name for name in ("sceDirect", "sceWrapped")}
+                self.assertEqual(import_audit.source_stub_classes(source), (expected, set()))
+
+    def test_outer_function_exits_remain_partial_beside_nested_callables(self):
+        exits = (
+            "return;",
+            "if (value) return;",
+            "if (value) { return; }",
+            "if (value) { auto nested = [] { return 1; }; return; }",
+            "exit_label: return;",
+            "exit_label: { return; }",
+            "[[likely]] if (value) return;",
+            "[[likely]] if (value) { return; }",
+            "GUARDED(value) { return; }",
+            "({ if (value) return; });",
+            "auto captured = [saved = ({ if (value) return; 1; })] { return saved; };",
+            "auto captured = [saved = ({ auto nested = [] { return 1; }; if (value) return; nested(); })] { return saved; };",
+            "int saved[] = {1}; auto captured = [first = saved[0], other = ({ if (value) return; 1; })] { return first + other; };",
+            "if (value) goto done;",
+        )
+        source = self.work.source
+        for exit_statement in exits:
+            with self.subTest(exit_statement=exit_statement):
+                write_source(source, "libScopes",
+                             "#define GUARDED(value) if (value)\n"
+                             "void Fail(int value) { auto callback = [] { return 1; }; "
+                             f"{exit_statement} NotImplemented_nid_no_patch(__func__); done: return; }}\n"
+                             "int APS5_VABI sceWrapped(int value) { Fail(value); return value; }\n")
+                stub = ("libScopes.prx", nid_names.compute_nid("sceWrapped"))
+                self.assertEqual(import_audit.source_stub_classes(source), ({stub: "sceWrapped"}, {stub}))
+
     def test_guarded_exports_are_partial_and_unconditional_ones_are_stubs(self):
         source = self.work.source
         write_source(source, "libGuard",

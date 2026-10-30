@@ -6,6 +6,14 @@
 
 extern "C" {
 
+int APS5_VABI sceNpGetSandboxMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpUtilGetSandboxMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceNpCloseSema(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

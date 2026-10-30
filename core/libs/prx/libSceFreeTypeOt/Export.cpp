@@ -39,6 +39,20 @@ std::int64_t ScaledSum(std::int64_t a, std::int64_t b, std::int64_t c, std::int6
     return CheckedMulDiv(a, b, divisor, true, function) + CheckedMulDiv(c, d, divisor, true, function);
 }
 
+std::int32_t IntegerSqrt(std::uint64_t value) {
+    std::uint64_t low = 0;
+    std::uint64_t high = 0xFFFFFFFF;
+    while (low < high) {
+        const std::uint64_t mid = (low + high + 1) >> 1;
+        if (mid * mid <= value) {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    return static_cast<std::int32_t>(low);
+}
+
 }
 
 extern "C" {
@@ -338,15 +352,30 @@ int APS5_VABI sceFreeTypeOtUnknown_yCEJIsjIOO8_nid_no_patch() {
 }
 APS5_EXPORT("yCEJIsjIOO8", sceFreeTypeOtUnknown_yCEJIsjIOO8_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_C7N2GuwqTA0_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtOutlineCopy_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("C7N2GuwqTA0", sceFreeTypeOtUnknown_C7N2GuwqTA0_nid_no_patch);
+APS5_EXPORT("Bhm8Injl0KA", sceFreeTypeOtOutlineCopy_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_JgtSc0g3G6E_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtOutlineDecompose_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("JgtSc0g3G6E", sceFreeTypeOtUnknown_JgtSc0g3G6E_nid_no_patch);
+APS5_EXPORT("++lgV9pRsO4", sceFreeTypeOtOutlineDecompose_nid_no_patch);
+
+int APS5_VABI sceFreeTypeOtOutlineGetOrientation_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("weVsBCT+TTQ", sceFreeTypeOtOutlineGetOrientation_nid_no_patch);
+
+int APS5_VABI sceFreeTypeOtTan_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dojyaLKzKN0", sceFreeTypeOtTan_nid_no_patch);
+
+int APS5_VABI sceFreeTypeOtSin_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("L1uHkWTazkI", sceFreeTypeOtSin_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_uDXTnGbAz44_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -357,30 +386,6 @@ int APS5_VABI sceFreeTypeOtUnknown_iruPsrXCN7U_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("iruPsrXCN7U", sceFreeTypeOtUnknown_iruPsrXCN7U_nid_no_patch);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 int APS5_VABI sceFreeTypeOtUnknown_2rcvKZfm5rI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -496,6 +501,14 @@ void APS5_VABI FT_Vector_Transform_Scaled_nid_postfix(FreeType::GuestVector* vec
         ScaledSum(vector->x, matrix->yx, vector->y, matrix->yy, divisor, __func__),
     };
     *vector = transformed;
+}
+
+std::int32_t APS5_VABI FT_SqrtFixed_nid_postfix(std::int32_t x) {
+    return x > 0 ? IntegerSqrt(static_cast<std::uint64_t>(x) << 16) : 0;
+}
+
+std::int32_t APS5_VABI FT_Sqrt32_nid_postfix(std::int32_t x) {
+    return IntegerSqrt(static_cast<std::uint32_t>(x));
 }
 
 std::uint32_t APS5_VABI ft_highpow2_nid_postfix(std::uint32_t value) {

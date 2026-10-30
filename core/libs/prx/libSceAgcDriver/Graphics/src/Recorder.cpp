@@ -1854,6 +1854,9 @@ std::atomic<std::int64_t> traceBarriersLeft{[] {
 }()};
 std::atomic<std::uint64_t> timingPresents{0};
 std::atomic<std::uint64_t> presentSerial{0};
+std::atomic<std::uint64_t> settledFrames{0};
+std::atomic<std::uint64_t> settledFrameBusyNs{0};
+std::atomic<bool> batchStampsRequested{false};
 std::atomic<std::uint64_t> timingDropped{0};
 struct TimingTotals { std::uint64_t count = 0; double ms = 0; std::uint64_t bytes = 0; };
 AgcDriver::Mutex timingMutex;
@@ -1919,7 +1922,7 @@ bool Recorder::GpuTimingEnabled() {
 }
 
 bool Recorder::BatchStampsEnabled() {
-    return GpuTimingEnabled() || DrawProfiled() || PerformanceTrace::Configured();
+    return GpuTimingEnabled() || DrawProfiled() || PerformanceTrace::Configured() || batchStampsRequested.load(std::memory_order_relaxed);
 }
 
 void Recorder::CountBarriers(CommandClass which, std::uint32_t count) {
@@ -2002,6 +2005,20 @@ void Recorder::CountPresent() {
 
 std::uint64_t Recorder::Presents() {
     return presentSerial.load(std::memory_order_relaxed);
+}
+
+void Recorder::NoteFrameGpuBusy(double milliseconds) {
+    settledFrameBusyNs.fetch_add(static_cast<std::uint64_t>(milliseconds * 1e6), std::memory_order_relaxed);
+    settledFrames.fetch_add(1, std::memory_order_release);
+}
+
+std::pair<std::uint64_t, double> Recorder::FrameGpuBusy() {
+    const auto frames = settledFrames.load(std::memory_order_acquire);
+    return {frames, static_cast<double>(settledFrameBusyNs.load(std::memory_order_relaxed)) / 1e6};
+}
+
+void Recorder::RequestBatchStamps() {
+    batchStampsRequested.store(true, std::memory_order_relaxed);
 }
 
 void Recorder::AddGpuTiming(CommandClass which, double nanoseconds, std::uint64_t bytes) {

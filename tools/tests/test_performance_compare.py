@@ -245,6 +245,23 @@ class PerformanceCompareTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_duplicate_json_fields_are_rejected_at_every_object_level(self):
+        record = json.dumps(self.baseline)
+        duplicates = (
+            (record.replace('"commit": "abc123"', '"commit": "wrong", "commit": "abc123"', 1), "commit"),
+            (record.replace('"spec": "frames 600:4"', '"spec": "seconds 0:1", "spec": "frames 600:4"', 1), "spec"),
+            (record.replace('"Driver.Packet": 12.0', '"Driver.Packet": 1.0, "Driver.Packet": 12.0', 1), "Driver.Packet"),
+        )
+        for content, field in duplicates:
+            with self.subTest(field=field):
+                self.before.write_text(content + "\n", encoding="utf-8")
+                original = self.before.read_bytes()
+                with self.assertRaises(ValueError) as raised:
+                    performance_compare.load_summary(self.before)
+                self.assertIn(f"before.jsonl:1: duplicate JSON field: {field!r}", str(raised.exception))
+                self.assertIsInstance(raised.exception.__cause__, ValueError)
+                self.assertEqual(self.before.read_bytes(), original)
+
     def test_percentage_overflow_is_an_error(self):
         self.baseline["gpu_busy_ms_per_present"] = 1e-308
         self.candidate["gpu_busy_ms_per_present"] = 1e308

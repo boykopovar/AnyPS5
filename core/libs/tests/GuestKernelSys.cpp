@@ -792,17 +792,24 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
 }
 
 static void CheckProcessQueries() {
-    KernelTitleWorkaround workaround{1, 0, {(1ull << 3) | (1ull << 0x39), ~0ull}};
-    std::int32_t enabled = -1;
-    Require(sceKernelTitleWorkaroundIsEnabled(nullptr, 3, &enabled) == static_cast<int>(0x8002000E));
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 3, nullptr) == static_cast<int>(0x8002000E));
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x3A, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, -1, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 3, &enabled) == 0 && enabled == 1);
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 4, &enabled) == 0 && enabled == 0);
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 63, &enabled) == static_cast<int>(0x80020016));
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x39, &enabled) == 0 && enabled == 1);
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x38, &enabled) == 0 && enabled == 0);
+    KernelTitleWorkaround workaround{1, 0, {(1ull << 3) | (1ull << 0x39) | (1ull << 63), (1ull << 0) | (1ull << 0x3F)}};
+    for (auto query : {sceKernelTitleWorkaroundIsEnabled, sceKernelTitleWorkdaroundIsEnabled}) {
+        std::int32_t enabled = -1;
+        Require(query(nullptr, 3, &enabled) == static_cast<int>(0x8002000E));
+        Require(query(&workaround, 3, nullptr) == static_cast<int>(0x8002000E));
+        Require(query(nullptr, 0x80, &enabled) == static_cast<int>(0x8002000E));
+        Require(query(&workaround, 0x80, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        Require(query(&workaround, -1, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        Require(query(&workaround, 3, &enabled) == 0 && enabled == 1);
+        Require(query(&workaround, 4, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 0x39, &enabled) == 0 && enabled == 1);
+        Require(query(&workaround, 0x3A, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 63, &enabled) == 0 && enabled == 1);
+        Require(query(&workaround, 64, &enabled) == 0 && enabled == 1);
+        Require(query(&workaround, 65, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 0x7E, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 0x7F, &enabled) == 0 && enabled == 1);
+    }
     Require(sceKernelGetProcessType(getpid_nid_postfix()) == 0);
     Require(sceKernelGetProcessType(-1) == 0 && sceKernelGetProcessType(0) == 0);
     Require(sceKernelGetProcessType(getpid_nid_postfix() + 1) == static_cast<int>(0x80020003));

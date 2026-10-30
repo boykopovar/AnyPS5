@@ -20,6 +20,7 @@ CLASSES = ("implemented", "partial", "stub", "absent", "module")
 CONDITIONAL = re.compile(r"(?:if|else|for|while|do|switch|case|default|try|catch|co_await|co_yield)\b")
 BRANCHING = re.compile(r"\?|&&|\|\||\b(?:and|or)\b")
 EXIT = re.compile(r"\b(?:return|co_return|goto)\b")
+FLOW_TOKEN = re.compile(r"\w+|[()[\]{}]")
 PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef|elif|else|endif)\b[^\n]*$", re.M)
 BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
@@ -503,6 +504,39 @@ def top_level_statements(body):
     return parts
 
 
+def function_exit(body):
+    for _, statement in top_level_statements(body):
+        depth, end, capture_depth, callable_scope = 0, 0, 0, False
+        for match in FLOW_TOKEN.finditer(statement):
+            if match.start() < end:
+                continue
+            token = match.group()
+            if token == "[":
+                before = statement[:match.start()].rstrip()
+                if not depth and not statement.startswith("[[", match.start()) and (
+                        not before or before[-1] in "=({,:;?!~&|+-*/%^<>" or before.endswith("]]")
+                        or re.search(r"\b(?:co_await|co_yield|throw)$", before)):
+                    capture_depth = depth + 1
+                depth += 1
+            elif token == "(":
+                depth += 1
+            elif token in (")", "]"):
+                if token == "]" and depth == capture_depth:
+                    callable_scope = True
+                    capture_depth = 0
+                depth -= 1
+            elif token == "{":
+                end = progress.body_end(statement, match.start()) + 1
+                statement_expression = depth and statement[:match.start()].rstrip().endswith("(")
+                if not callable_scope and (not depth or statement_expression) and function_exit(statement[match.start():end]):
+                    return True
+            elif not depth:
+                if EXIT.fullmatch(token):
+                    return True
+                callable_scope = callable_scope or token in ("class", "struct", "union")
+    return False
+
+
 def branch_variants(body):
     root = []
     lists, groups = [root], []
@@ -579,7 +613,7 @@ def unconditional_calls(body):
                 before = statement[:call.start()]
                 if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, offset + call.start()):
                     names.add(call.group(1))
-        if EXIT.search(statement):
+        if function_exit("{" + statement + "}"):
             break
     return names
 

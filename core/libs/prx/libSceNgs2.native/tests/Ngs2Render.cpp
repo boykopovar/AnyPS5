@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 static uintptr_t Sampler(uintptr_t system, const std::vector<std::int16_t>& pcm, std::uint32_t repeats, uintptr_t* rack = nullptr) {
@@ -852,6 +854,104 @@ static void TestMatrixLevelClamp() {
     bool empty = false;
     try { Control(sampler, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, 0, 0, levels}); } catch (const std::invalid_argument&) { empty = true; }
     Require(empty);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static Ngs2VoiceCommand PortVolumeCommand(std::uint32_t port, float volume, std::uint8_t type = 1) {
+    return Ngs2VoiceCommand{(port << 24) | 6, 0, type, 0, {.f = volume}};
+}
+
+static float PortVolume(uintptr_t voice, std::uint32_t port) {
+    Ngs2VoicePortInfo info{};
+    Require(sceNgs2VoiceGetPortInfo(voice, port, &info, sizeof(info)) == SCE_NGS2_OK);
+    return info.volume;
+}
+
+static bool SameBits(float a, float b) {
+    return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b);
+}
+
+static void TestPortVolumeClampedLikePs5() {
+    const std::vector<std::int16_t> pcm(Grain, 16384);
+    const float inf = INFINITY;
+    const float nan = std::bit_cast<float>(0x7fc00000u);
+    const float negativeNan = std::bit_cast<float>(0xffc00000u);
+    const float tiny = std::bit_cast<float>(0x000116c2u);
+    const auto check = [&](bool command, float sent, float stored) {
+        const auto system = CreateSystem();
+        const auto sampler = Sampler(system, pcm, 0);
+        Patch(sampler, Mastering(system, 1));
+        if (command) {
+            const auto set = PortVolumeCommand(0, sent);
+            Require(sceNgs2VoiceRunCommands(sampler, &set, 1) == SCE_NGS2_OK);
+        } else {
+            Control(sampler, SCE_NGS2_VOICE_PARAM_PORT_VOLUME, Ngs2VoicePortVolumeParam{{}, 0, sent});
+        }
+        Require(SameBits(PortVolume(sampler, 0), stored));
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        std::vector<float> out(Grain, -1.0f);
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1};
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        for (std::size_t i = 0; i < out.size(); ++i) Require(std::isnan(stored) ? std::isnan(out[i]) : out[i] == (i < 3 ? 0.0f : 0.5f * stored) && !std::signbit(out[i]));
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    };
+    for (const bool command : {false, true}) {
+        for (const auto& [sent, stored] : std::vector<std::pair<float, float>>{
+                 {0.0f, 0.0f}, {0.5f, 0.5f}, {1.0f, 1.0f}, {32.0f, 32.0f}, {33.0f, 32.0f}, {inf, 32.0f}, {-1.0f, 0.0f}, {-inf, 0.0f},
+                 {-0.0f, -0.0f}, {tiny, tiny}, {-1e-40f, 0.0f}, {nan, nan}, {negativeNan, negativeNan}}) {
+            check(command, sent, stored);
+        }
+    }
+    for (const auto& [sent, stored] : std::vector<std::pair<float, float>>{{2.0f, 2.0f}, {31.0f, 31.0f}, {32.5f, 32.0f}, {64.0f, 32.0f}, {1e30f, 32.0f}, {-0.5f, 0.0f}, {-1e30f, 0.0f}}) {
+        check(false, sent, stored);
+    }
+
+    const auto preset = [&](uintptr_t& system) {
+        system = CreateSystem();
+        const auto sampler = Sampler(system, pcm, 0);
+        Patch(sampler, Mastering(system, 1));
+        const auto set = PortVolumeCommand(0, 0.5f);
+        Require(sceNgs2VoiceRunCommands(sampler, &set, 1) == SCE_NGS2_OK);
+        return sampler;
+    };
+    const auto run = [&](const std::vector<Ngs2VoiceCommand>& commands, int result, float port0, std::uint32_t port = 1, float other = 1.0f) {
+        uintptr_t system = 0;
+        const auto sampler = preset(system);
+        Require(sceNgs2VoiceRunCommands(sampler, commands.data(), commands.size()) == result);
+        Require(SameBits(PortVolume(sampler, 0), port0) && SameBits(PortVolume(sampler, port), other));
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    };
+    for (const std::uint8_t type : {0x11, 0x02, 0x03, 0x04, 0x00}) run({PortVolumeCommand(0, 2.0f, type)}, SCE_NGS2_OK, 2.0f);
+    auto realDouble = PortVolumeCommand(0, 0.0f, 0x02);
+    const double two = 2.0;
+    std::memcpy(&realDouble.value, &two, sizeof(two));
+    run({realDouble}, SCE_NGS2_OK, 0.0f);
+    auto counted = PortVolumeCommand(0, 2.0f);
+    counted.count = 1;
+    run({counted}, SCE_NGS2_OK, 2.0f);
+    auto flagged = PortVolumeCommand(0, 2.0f);
+    flagged.flags = 1;
+    run({flagged}, SCE_NGS2_OK, 2.0f);
+    run({PortVolumeCommand(1, 2.0f)}, SCE_NGS2_OK, 0.5f, 1, 2.0f);
+    run({PortVolumeCommand(7, 2.0f)}, SCE_NGS2_OK, 0.5f, 7, 2.0f);
+    run({PortVolumeCommand(8, 2.0f)}, SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX, 0.5f);
+    run({PortVolumeCommand(255, 2.0f)}, SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX, 0.5f);
+    run({PortVolumeCommand(0, 2.0f), PortVolumeCommand(8, 3.0f), PortVolumeCommand(1, 4.0f)}, SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX, 0.5f);
+    run({PortVolumeCommand(0, 2.0f), PortVolumeCommand(0, 40.0f)}, SCE_NGS2_OK, 32.0f);
+    run({PortVolumeCommand(0, 2.0f), PortVolumeCommand(0, 3.0f, 0x03)}, SCE_NGS2_OK, 3.0f);
+    run({PortVolumeCommand(0, 3.0f, 0x03), PortVolumeCommand(0, 2.0f)}, SCE_NGS2_OK, 2.0f);
+
+    uintptr_t system = 0;
+    const auto sampler = preset(system);
+    const std::vector<Ngs2VoiceCommand> mixed{Ngs2VoiceCommand{2, 0, 4, 0, {.u = SCE_NGS2_VOICE_EVENT_PLAY}}, PortVolumeCommand(8, 2.0f)};
+    bool threw = false;
+    try { sceNgs2VoiceRunCommands(sampler, mixed.data(), mixed.size()); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    const auto master = Mastering(system, 1);
+    const auto masterVolume = PortVolumeCommand(0, 2.0f);
+    threw = false;
+    try { sceNgs2VoiceRunCommands(master, &masterVolume, 1); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -2052,6 +2152,9 @@ int main() {
     TestSetupClearsCallback();
     TestMasteringGain();
     TestMatrixLevelClamp();
+
+    TestPortVolumeClampedLikePs5();
+
     TestStereoIntoSurround();
     TestLock();
     TestRackLockLeavesQueries();

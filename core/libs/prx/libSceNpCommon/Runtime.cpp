@@ -235,6 +235,136 @@ NpAllocator MemoryHeapAllocator(NpMemoryHeap* heap) {
 
 constexpr std::size_t NP_OBJECT_HEADER_SIZE = 16;
 
+constexpr int NP_ERROR_STREAM_BUFFER_TOO_SMALL = static_cast<int>(0x80559E0D);
+constexpr std::size_t NP_MEMORY_STREAM_SIZE = 0x20;
+
+void* const NpMemoryStreamReaderVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamReaderD1Ev), reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamReaderD0Ev),
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm),
+};
+
+void* const NpMemoryStreamWriterVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamWriterD1Ev), reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamWriterD0Ev),
+    reinterpret_cast<void*>(&_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm),
+};
+constexpr int NP_ERROR_STREAM_SHORT = static_cast<int>(0x80559E10);
+constexpr std::size_t NP_STREAM_CHUNK = 0x100;
+
+int StreamRead(NpStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read) {
+    using Read = int(APS5_VABI*)(NpStreamReader*, void*, void*, std::size_t, std::size_t*);
+    return reinterpret_cast<Read>(self->vtable[2])(self, handle, out, size, read);
+}
+
+int StreamWrite(NpStreamWriter* self, void* handle, const void* data, std::size_t size, std::size_t* written) {
+    using Write = int(APS5_VABI*)(NpStreamWriter*, void*, const void*, std::size_t, std::size_t*);
+    return reinterpret_cast<Write>(self->vtable[2])(self, handle, data, size, written);
+}
+
+int StreamNotify(NpStreamCtx* ctx, const void* data, std::size_t size) {
+    using Notify = int(APS5_VABI*)(NpStreamCtx*, const void*, std::size_t);
+    return ctx == nullptr ? 0 : reinterpret_cast<Notify>(ctx->vtable[2])(ctx, data, size);
+}
+
+int ReadAll(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
+    auto* cursor = static_cast<std::uint8_t*>(out);
+    std::size_t got = 0;
+    std::size_t total = 0;
+    for (std::size_t remaining = size; remaining != 0; remaining = size - total) {
+        int result = StreamRead(self, handle, cursor, remaining, &got);
+        if (result < 0) return result;
+        result = StreamNotify(ctx, cursor, got);
+        if (result < 0) return result;
+        if (remaining < got) sceNpPanic();
+        if (got == 0) {
+            *read = total;
+            return 0;
+        }
+        total += got;
+        cursor += got;
+    }
+    std::uint8_t probe = 0;
+    int result = StreamRead(self, handle, &probe, 1, &got);
+    if (result < 0) return result;
+    result = StreamNotify(ctx, &probe, got);
+    if (result < 0) return result;
+    if (got != 0) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
+    *read = size;
+    return 0;
+}
+
+int SkipAll(NpStreamReader* self, void* handle, NpStreamCtx* ctx, std::int64_t* skipped) {
+    std::uint8_t buffer[NP_STREAM_CHUNK];
+    while (true) {
+        std::size_t got = 0;
+        int result = StreamRead(self, handle, buffer, sizeof(buffer), &got);
+        if (result >= 0) result = StreamNotify(ctx, buffer, got);
+        if (skipped != nullptr) *skipped += static_cast<std::int64_t>(got);
+        if (result < 0) return result;
+        if (got == 0) return 0;
+    }
+}
+
+int ReadData(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
+    auto* bytes = static_cast<std::uint8_t*>(out);
+    std::size_t total = 0;
+    std::size_t got = 0;
+    int result = 0;
+    do {
+        result = StreamRead(self, handle, bytes + total, size - total, &got);
+        if (result >= 0) result = StreamNotify(ctx, bytes + total, got);
+        if (result < 0) break;
+        total += got;
+    } while (got != 0 && total != size);
+    if (result >= 0) result = total == size ? 0 : NP_ERROR_STREAM_SHORT;
+    if (read != nullptr) *read = total;
+    return result;
+}
+
+int SkipData(NpStreamReader* self, void* handle, NpStreamCtx* ctx, std::int64_t size, std::int64_t* skipped) {
+    std::uint8_t buffer[NP_STREAM_CHUNK];
+    int result = 0;
+    while (size >= 1) {
+        std::size_t done = 0;
+        result = ReadData(self, handle, ctx, buffer, std::min(static_cast<std::size_t>(size), sizeof(buffer)), &done);
+        if (skipped != nullptr) *skipped += static_cast<std::int64_t>(done);
+        size -= static_cast<std::int64_t>(done);
+        if (result < 0) return result;
+    }
+    return 0;
+}
+
+int WriteFilledData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, char fill, std::int64_t size) {
+    std::uint8_t buffer[NP_STREAM_CHUNK];
+    std::memset(buffer, static_cast<std::uint8_t>(fill), sizeof(buffer));
+    while (size > 0) {
+        std::size_t written = 0;
+        int result = StreamWrite(self, handle, buffer, std::min(static_cast<std::size_t>(size), sizeof(buffer)), &written);
+        if (result < 0) return result;
+        result = StreamNotify(ctx, buffer, written);
+        if (result < 0) return result;
+        size -= static_cast<std::int64_t>(written);
+    }
+    return 0;
+}
+
+int WriteData(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* data, std::size_t size, std::size_t* written) {
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    std::size_t total = 0;
+    std::size_t got = 0;
+    int result = 0;
+    while (total < size) {
+        result = StreamWrite(self, handle, bytes + total, size - total, &got);
+        if (result >= 0) result = StreamNotify(ctx, bytes + total, got);
+        if (result < 0) break;
+        total += got;
+    }
+    if (result >= 0) result = 0;
+    if (written != nullptr) *written = total;
+    return result;
+}
+
 void* AllocateObject(std::size_t size, NpAllocator* allocator) {
     auto* header = static_cast<std::uint8_t*>(allocator->allocate(size + NP_OBJECT_HEADER_SIZE, allocator->context));
     if (header == nullptr) return nullptr;
@@ -862,6 +992,65 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
     std::putchar('\n');
 }
 
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size) {
+    self->vtable = &NpMemoryStreamReaderVtable[2];
+    self->data = data;
+    self->size = size;
+    self->position = 0;
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderC2EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size) {
+    _ZN3sce2np18MemoryStreamReaderC1EPKvm(self, data, size);
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD1Ev(NpMemoryStreamReader*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD2Ev(NpMemoryStreamReader*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD0Ev(NpMemoryStreamReader* self) {
+    _ZdlPvm_nid_postfix(self, NP_MEMORY_STREAM_SIZE);
+}
+
+int APS5_VABI _ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(NpMemoryStreamReader* self, void*, void* out, std::size_t size, std::size_t* read) {
+    std::size_t count = 0;
+    if (self->position < self->size) {
+        count = std::min(size, self->size - self->position);
+        std::memcpy(out, static_cast<const std::uint8_t*>(self->data) + self->position, count);
+        self->position += count;
+    }
+    *read = count;
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterC1EPvm(NpMemoryStreamWriter* self, void* data, std::size_t size) {
+    self->vtable = &NpMemoryStreamWriterVtable[2];
+    self->data = data;
+    self->size = size;
+    self->position = 0;
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterC2EPvm(NpMemoryStreamWriter* self, void* data, std::size_t size) {
+    _ZN3sce2np18MemoryStreamWriterC1EPvm(self, data, size);
+}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD1Ev(NpMemoryStreamWriter*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD2Ev(NpMemoryStreamWriter*) {}
+
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(NpMemoryStreamWriter* self) {
+    _ZdlPvm_nid_postfix(self, NP_MEMORY_STREAM_SIZE);
+}
+
+int APS5_VABI _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(NpMemoryStreamWriter* self, void*, const void* data, std::size_t size, std::size_t* written) {
+    if (self->data != nullptr) {
+        const std::size_t room = self->size == 0 ? 0 : self->size - self->position;
+        if (room < size) return NP_ERROR_STREAM_BUFFER_TOO_SMALL;
+        std::memcpy(static_cast<std::uint8_t*>(self->data) + self->position, data, size);
+    }
+    self->position += size;
+    if (written != nullptr) *written = size;
+    return 0;
+}
 
 void APS5_VABI _ZN3sce2np9NpTitleIdC1Ev(NpTitleIdObject* self) {
     self->vtable = &NpTitleIdVtable[2];
@@ -964,6 +1153,68 @@ bool APS5_VABI _ZN3sce2npneERK12SceNpTitleIdRKNS0_9NpTitleIdE(const NpTitleId* l
 
 bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs) {
     return !SameTitleId(lhs->titleId.data, rhs->data);
+}
+
+int APS5_VABI _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
+    int result = StreamRead(self, handle, out, size, read);
+    if (result < 0) return result;
+    if (ctx != nullptr) result = StreamNotify(ctx, out, *read);
+    return result < 0 ? result : 0;
+}
+
+int APS5_VABI _ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPvmPm(NpStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read) {
+    return ReadAll(self, handle, nullptr, out, size, read);
+}
+
+int APS5_VABI _ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
+    return ReadAll(self, handle, ctx, out, size, read);
+}
+
+int APS5_VABI _ZN3sce2np12StreamReader7SkipAllEPNS0_6HandleEPl(NpStreamReader* self, void* handle, std::int64_t* skipped) {
+    return SkipAll(self, handle, nullptr, skipped);
+}
+
+int APS5_VABI _ZN3sce2np12StreamReader7SkipAllEPNS0_6HandleEPNS0_9StreamCtxEPl(NpStreamReader* self, void* handle, NpStreamCtx* ctx, std::int64_t* skipped) {
+    return SkipAll(self, handle, ctx, skipped);
+}
+
+int APS5_VABI _ZN3sce2np12StreamReader8ReadDataEPNS0_6HandleEPvmPm(NpStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read) {
+    return ReadData(self, handle, nullptr, out, size, read);
+}
+
+int APS5_VABI _ZN3sce2np12StreamReader8ReadDataEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
+    return ReadData(self, handle, ctx, out, size, read);
+}
+
+int APS5_VABI _ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleElPl(NpStreamReader* self, void* handle, std::int64_t size, std::int64_t* skipped) {
+    return SkipData(self, handle, nullptr, size, skipped);
+}
+
+int APS5_VABI _ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleEPNS0_9StreamCtxElPl(NpStreamReader* self, void* handle, NpStreamCtx* ctx, std::int64_t size, std::int64_t* skipped) {
+    return SkipData(self, handle, ctx, size, skipped);
+}
+
+int APS5_VABI _ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEcl(NpStreamWriter* self, void* handle, char fill, std::int64_t size) {
+    return WriteFilledData(self, handle, nullptr, fill, size);
+}
+
+int APS5_VABI _ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEPNS0_9StreamCtxEcl(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, char fill, std::int64_t size) {
+    return WriteFilledData(self, handle, ctx, fill, size);
+}
+
+int APS5_VABI _ZN3sce2np12StreamWriter5WriteEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* data, std::size_t size, std::size_t* written) {
+    int result = StreamWrite(self, handle, data, size, written);
+    if (result < 0) return result;
+    if (ctx != nullptr) result = StreamNotify(ctx, data, *written);
+    return result < 0 ? result : 0;
+}
+
+int APS5_VABI _ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPKvmPm(NpStreamWriter* self, void* handle, const void* data, std::size_t size, std::size_t* written) {
+    return WriteData(self, handle, nullptr, data, size, written);
+}
+
+int APS5_VABI _ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* data, std::size_t size, std::size_t* written) {
+    return WriteData(self, handle, ctx, data, size, written);
 }
 
 }

@@ -1,4 +1,5 @@
 #include "prx/libScePad/include/InputMapping.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -9,6 +10,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -44,6 +46,18 @@ bool rejects(const std::string& text) {
         return true;
     }
     return false;
+}
+
+std::vector<SDL_Scancode> keysFor(Pad::InputControl control) {
+    std::vector<SDL_Scancode> keys;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) {
+        if (binding.control == control && binding.key != SDL_SCANCODE_UNKNOWN) keys.push_back(binding.key);
+    }
+    return keys;
+}
+
+bool hasKey(const std::vector<SDL_Scancode>& keys, SDL_Scancode key) {
+    return std::find(keys.begin(), keys.end(), key) != keys.end();
 }
 
 std::uint8_t plainStickByte(std::int16_t axis) {
@@ -132,7 +146,7 @@ void padStatusBinding() {
     }
     require(padStatus == 1, "the pad status has more than one default input");
     require(onF9 == 1, "another default binding uses F9");
-    require(Pad::InputMapping.size() == 40, "the default bindings changed besides the pad status key");
+    require(Pad::InputMapping.size() == 43, "the default bindings changed besides the pad status and host volume keys");
     useConfig("ShowPadStatus = KEY:F4\n");
     const auto moved = Pad::LoadInputMapping();
     require(padStatusBindingsOn(moved, SDL_SCANCODE_F4) == 1 && padStatusBindingsOn(moved, SDL_SCANCODE_F9) == 0, "the pad status key moves to another key");
@@ -165,6 +179,121 @@ void padStatusConflicts() {
     useConfig("ShowPadStatus = KEY:F4\nTogglePerformanceOverlay = KEY:F9\n");
     const auto swapped = Pad::LoadInputMapping();
     require(padStatusBindingsOn(swapped, SDL_SCANCODE_F4) == 1 && padStatusBindingsOn(swapped, SDL_SCANCODE_F9) == 0, "moving the pad status key off F9 keeps it off");
+}
+
+void volumeUpAction() {
+    useConfig("volumeup = KEY:F2\nVolumeUp = KEY:F3\n");
+    const auto keys = keysFor(Pad::InputControl::VolumeUp);
+    require(keys.size() == 2 && hasKey(keys, SDL_SCANCODE_F2) && hasKey(keys, SDL_SCANCODE_F3), "VolumeUp takes a first key and an alternate, case-insensitively");
+    useConfig("VolumeUp = KEY:F2\nVolumeUp = KEY:F2\n");
+    const auto duplicated = keysFor(Pad::InputControl::VolumeUp);
+    require(duplicated.size() == 1 && duplicated[0] == SDL_SCANCODE_F2, "a duplicate VolumeUp line is ignored");
+    require(rejects("VolumeUp = MOUSE:Left\n"), "VolumeUp refuses a mouse button");
+    require(rejects("VolumeUp = MOUSE:X1\n"), "VolumeUp refuses another mouse button");
+    require(rejects("VolumeUp = WHEEL:Up\n"), "VolumeUp refuses the mouse wheel");
+    require(rejects("VolumeUp = KEY:NoSuchKey\n"), "VolumeUp refuses an unknown key name");
+    require(rejects("VolumeUp =\n"), "VolumeUp refuses an empty source");
+    require(rejects("VolumeUp = F2\n"), "VolumeUp refuses a source without a type");
+}
+
+void volumeDownAction() {
+    useConfig("volumedown = KEY:F2\nVolumeDown = KEY:F3\n");
+    const auto keys = keysFor(Pad::InputControl::VolumeDown);
+    require(keys.size() == 2 && hasKey(keys, SDL_SCANCODE_F2) && hasKey(keys, SDL_SCANCODE_F3), "VolumeDown takes a first key and an alternate, case-insensitively");
+    useConfig("VolumeDown = KEY:F2\nVolumeDown = KEY:F2\n");
+    const auto duplicated = keysFor(Pad::InputControl::VolumeDown);
+    require(duplicated.size() == 1 && duplicated[0] == SDL_SCANCODE_F2, "a duplicate VolumeDown line is ignored");
+    require(rejects("VolumeDown = MOUSE:Left\n"), "VolumeDown refuses a mouse button");
+    require(rejects("VolumeDown = MOUSE:X1\n"), "VolumeDown refuses another mouse button");
+    require(rejects("VolumeDown = WHEEL:Up\n"), "VolumeDown refuses the mouse wheel");
+    require(rejects("VolumeDown = KEY:NoSuchKey\n"), "VolumeDown refuses an unknown key name");
+    require(rejects("VolumeDown =\n"), "VolumeDown refuses an empty source");
+    require(rejects("VolumeDown = F2\n"), "VolumeDown refuses a source without a type");
+}
+
+void toggleMuteAction() {
+    useConfig("togglemute = KEY:F2\nToggleMute = KEY:F3\n");
+    const auto keys = keysFor(Pad::InputControl::ToggleMute);
+    require(keys.size() == 2 && hasKey(keys, SDL_SCANCODE_F2) && hasKey(keys, SDL_SCANCODE_F3), "ToggleMute takes a first key and an alternate, case-insensitively");
+    useConfig("ToggleMute = KEY:F2\nToggleMute = KEY:F2\n");
+    const auto duplicated = keysFor(Pad::InputControl::ToggleMute);
+    require(duplicated.size() == 1 && duplicated[0] == SDL_SCANCODE_F2, "a duplicate ToggleMute line is ignored");
+    require(rejects("ToggleMute = MOUSE:Left\n"), "ToggleMute refuses a mouse button");
+    require(rejects("ToggleMute = MOUSE:X1\n"), "ToggleMute refuses another mouse button");
+    require(rejects("ToggleMute = WHEEL:Up\n"), "ToggleMute refuses the mouse wheel");
+    require(rejects("ToggleMute = KEY:NoSuchKey\n"), "ToggleMute refuses an unknown key name");
+    require(rejects("ToggleMute =\n"), "ToggleMute refuses an empty source");
+    require(rejects("ToggleMute = F2\n"), "ToggleMute refuses a source without a type");
+}
+
+void volumeDownDefault() {
+    useConfig("Cross = KEY:F\n");
+    const auto keys = keysFor(Pad::InputControl::VolumeDown);
+    require(keys.size() == 1 && keys[0] == SDL_SCANCODE_F5, "F5 is the only default VolumeDown key");
+    useConfig("VolumeDown = KEY:F2\n");
+    const auto moved = keysFor(Pad::InputControl::VolumeDown);
+    require(moved.size() == 1 && moved[0] == SDL_SCANCODE_F2, "a VolumeDown line replaces the built-in key");
+}
+
+void volumeUpDefault() {
+    useConfig("Cross = KEY:F\n");
+    const auto keys = keysFor(Pad::InputControl::VolumeUp);
+    require(keys.size() == 1 && keys[0] == SDL_SCANCODE_F6, "F6 is the only default VolumeUp key");
+    useConfig("VolumeUp = KEY:F2\n");
+    const auto moved = keysFor(Pad::InputControl::VolumeUp);
+    require(moved.size() == 1 && moved[0] == SDL_SCANCODE_F2, "a VolumeUp line replaces the built-in key");
+}
+
+void toggleMuteDefault() {
+    useConfig("Cross = KEY:F\n");
+    const auto keys = keysFor(Pad::InputControl::ToggleMute);
+    require(keys.size() == 1 && keys[0] == SDL_SCANCODE_F8, "F8 is the only default ToggleMute key");
+    useConfig("ToggleMute = KEY:F2\n");
+    const auto moved = keysFor(Pad::InputControl::ToggleMute);
+    require(moved.size() == 1 && moved[0] == SDL_SCANCODE_F2, "a ToggleMute line replaces the built-in key");
+}
+
+void hostVolumeDefaultsDoNotCollide() {
+    useConfig("MouseSensitivity = 1\n");
+    std::vector<SDL_Scancode> seen;
+    for (const auto& binding : Pad::LoadInputMapping().bindings) {
+        if (binding.key == SDL_SCANCODE_UNKNOWN) continue;
+        require(!hasKey(seen, binding.key), "no built-in key is bound twice");
+        seen.push_back(binding.key);
+    }
+    for (const auto key : {SDL_SCANCODE_F5, SDL_SCANCODE_F6, SDL_SCANCODE_F8}) require(hasKey(seen, key), "every host volume key is bound by default");
+    for (const auto control : {Pad::InputControl::VolumeUp, Pad::InputControl::VolumeDown, Pad::InputControl::ToggleMute}) {
+        for (const auto& binding : Pad::LoadInputMapping().bindings) {
+            if (binding.control != control) continue;
+            require(binding.button == Pad::PadButton::None && binding.mouseButton == Pad::MouseButton::None && binding.wheelDirection == 0, "a host volume binding is a plain keyboard key");
+        }
+    }
+}
+
+void hostVolumeSharedKeysAreKept() {
+    useConfig("VolumeUp = KEY:F10\nToggleMute = KEY:Return\n");
+    const auto configuration = Pad::LoadInputMapping();
+    bool upOnF10 = false;
+    bool overlayOnF10 = false;
+    bool muteOnReturn = false;
+    bool crossOnReturn = false;
+    for (const auto& binding : configuration.bindings) {
+        upOnF10 = upOnF10 || (binding.control == Pad::InputControl::VolumeUp && binding.key == SDL_SCANCODE_F10);
+        overlayOnF10 = overlayOnF10 || (binding.control == Pad::InputControl::TogglePerformanceOverlay && binding.key == SDL_SCANCODE_F10);
+        muteOnReturn = muteOnReturn || (binding.control == Pad::InputControl::ToggleMute && binding.key == SDL_SCANCODE_RETURN);
+        crossOnReturn = crossOnReturn || (binding.control == Pad::InputControl::Button && binding.button == Pad::PadButton::Cross && binding.key == SDL_SCANCODE_RETURN);
+    }
+    require(upOnF10 && overlayOnF10, "a key shared with another host action keeps both bindings, as for the existing actions");
+    require(muteOnReturn && crossOnReturn, "a key shared with a pad button keeps both bindings, as for the existing actions");
+}
+
+void hostVolumeActionNamesAreExact() {
+    require(rejects("VolumeMute = KEY:F2\n"), "an unknown volume action name is rejected");
+    require(rejects("Volume = KEY:F2\n"), "a bare Volume action is rejected");
+    require(rejects("Mute = KEY:F2\n"), "a bare Mute action is rejected");
+    require(rejects("VolumeUp2 = KEY:F2\n"), "a suffixed volume action name is rejected");
+    useConfig("  VOLUMEUP\t=\tKEY:F2 # louder\nvolumedown=KEY:F3;quieter\n");
+    require(!keysFor(Pad::InputControl::VolumeUp).empty() && !keysFor(Pad::InputControl::VolumeDown).empty(), "names ignore case, spacing and trailing comments");
 }
 
 void mouseLookDefault() {
@@ -332,6 +461,15 @@ int main() try {
     screenshotBinding();
     padStatusBinding();
     padStatusConflicts();
+    toggleMuteAction();
+    toggleMuteDefault();
+    hostVolumeDefaultsDoNotCollide();
+    hostVolumeSharedKeysAreKept();
+    hostVolumeActionNamesAreExact();
+    volumeDownAction();
+    volumeDownDefault();
+    volumeUpAction();
+    volumeUpDefault();
     mouseLookDefault();
     mouseLookParse();
     mouseLookReject();

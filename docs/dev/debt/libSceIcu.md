@@ -22,4 +22,5 @@
 
 ### Known export names; ABI prototypes unverified
 
-- The 96 `sceIcuUnknown_*_nid_no_patch` exports in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp) are present in the PS5 3.20 export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Their prototypes and behavior are unverified. Each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`; these declarations make no ABI or behavior claim.
+- The 96 `sceIcuUnknown_*_nid_no_patch` and named `*_nid_postfix` stubs in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp) are present in the PS5 3.20 export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Their prototypes and behavior are unverified. Each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`; these declarations make no ABI or behavior claim.
+- The 74 named stubs declared in [Identified.hpp](../../../core/libs/prx/libSceIcu/Identified.hpp) carry the ICU C API names whose `tools/nid_names.py` hash equals the inventory NID; the names were taken from the identifiers of the ICU 78.1 `common`, `i18n` and `io` sources. A name match does not show that the console function has ICU's prototype or behavior. Most of them read Unicode property, case-folding or resource data that no host library provides.

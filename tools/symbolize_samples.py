@@ -15,6 +15,7 @@ table when it has none, and names every frame module!function.
 The '# module name size timestamp' header lines the samplers write are compared with the SizeOfImage and
 TimeDateStamp of the file that is found; a module whose file does not match is left unsymbolized, since its
 addresses would name the wrong functions.
+If two loaded modules share a name, their frames stay unsymbolized because the samples cannot distinguish them.
 
 The sampler rewrites its files every 20 s with totals since start-up. --since takes an earlier copy of the same
 file and subtracts it, which keeps only the samples taken between the two copies (a steady-state window).
@@ -111,7 +112,7 @@ class PeModule:
 
     def export_symbols(self, data, rva, size):
         directory = self.offset(rva)
-        _, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", data, directory + 20)
+        functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", data, directory + 20)
         function_table = self.offset(function_rva)
         result = []
         if names:
@@ -119,6 +120,8 @@ class PeModule:
             ordinal_table = self.offset(ordinal_rva)
             for index in range(names):
                 ordinal = struct.unpack_from("<H", data, ordinal_table + index * 2)[0]
+                if ordinal >= functions:
+                    raise ValueError("PE export ordinal is outside the export address table")
                 address = struct.unpack_from("<I", data, function_table + ordinal * 4)[0]
                 if rva <= address < rva + size:
                     continue
@@ -141,7 +144,7 @@ class Symbolizer:
             for path in Path(directory).iterdir():
                 if path.is_file():
                     self.files.setdefault(path.name.lower(), {}).setdefault(path.resolve(), path)
-        self.headers = headers
+        self.headers = {name.lower(): identity for name, identity in headers.items()}
         self.modules = {}
         self.demangle = demangle and shutil.which("c++filt") is not None
         self.demangled = {}
@@ -152,7 +155,7 @@ class Symbolizer:
         paths = list(self.files.get(name.lower(), {}).values())
         if len(paths) <= 1:
             return paths[0] if paths else None
-        identity = self.headers.get(name)
+        identity = self.headers.get(name.lower())
         if identity is None and not self.unverified:
             self.warn(f"{name}: the samples have no '# module' record; multiple candidates stay unsymbolized")
             return None
@@ -177,17 +180,21 @@ class Symbolizer:
         if name in self.modules:
             return self.modules[name]
         module = None
+        if self.headers.get(name.lower()) is False:
+            self.warn(f"{name}: multiple sampled modules share this name, so their frames stay unsymbolized")
+            self.modules[name] = None
+            return None
         path = self.candidate_path(name)
         if path is not None:
             try:
                 module = PeModule(path)
             except (OSError, ValueError, struct.error) as error:
                 self.warn(f"{name}: {error}")
-            if module is not None and name not in self.headers and not self.unverified:
+            if module is not None and name.lower() not in self.headers and not self.unverified:
                 self.warn(f"{name}: the samples have no '# module' record for it, so {path} may be another build; its frames stay unsymbolized (--unverified symbolizes them anyway)")
                 module = None
-            if module is not None and name in self.headers and self.headers[name] != (module.size, module.timestamp):
-                size, timestamp = self.headers[name]
+            if module is not None and name.lower() in self.headers and self.headers[name.lower()] != (module.size, module.timestamp):
+                size, timestamp = self.headers[name.lower()]
                 self.warn(f"{name}: the sampled module had size {size:#x} and timestamp {timestamp:#x}, but {path} has {module.size:#x} and {module.timestamp:#x}; its frames stay unsymbolized")
                 module = None
         self.modules[name] = module
@@ -224,7 +231,9 @@ def read_headers(lines):
     for line in lines:
         parts = line.split()
         if len(parts) == 5 and parts[:2] == ["#", "module"]:
-            headers[parts[2]] = (int(parts[3], 16), int(parts[4], 16))
+            name = parts[2].lower()
+            identity = (int(parts[3], 16), int(parts[4], 16))
+            headers[name] = False if name in headers else identity
     return headers
 
 
@@ -308,6 +317,9 @@ def summarize(symbolizer, samples, top):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("samples", help="collapsed-stack file or address file written by a Windows sampler")
     parser.add_argument("--libs", action="append", required=True, help="directory holding the modules that ran (repeatable)")

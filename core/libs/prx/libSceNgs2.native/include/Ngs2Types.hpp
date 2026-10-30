@@ -34,6 +34,7 @@ static constexpr int SCE_NGS2_ERROR_PS4_INVALID_STATE_SIZE = static_cast<int>(0x
 static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_ACCESS = static_cast<int>(0x804A8351);
 static constexpr int SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS = static_cast<int>(0x804A8092);
 static constexpr int SCE_NGS2_ERROR_INVALID_PEAK_METER_MODE = static_cast<int>(0x804A8093);
+static constexpr int SCE_NGS2_ERROR_INVALID_VOICE_OUTPUT_INDEX = static_cast<int>(0x804A8357);
 static constexpr int SCE_NGS2_ERROR_NULL_PARAM_LIST = static_cast<int>(0x804A8360);
 static constexpr int SCE_NGS2_ERROR_INVALID_PARAM_ID = static_cast<int>(0x804A835A);
 static constexpr int SCE_NGS2_ERROR_INVALID_GEOM_LISTENER_ADDRESS = static_cast<int>(0x804A8461);

@@ -46,7 +46,7 @@ inline constexpr std::uint32_t MeshWindowSlots = 256u;
 inline constexpr std::uint32_t MeshWindowHeaderDwords = 4u + MeshWindowSlots;
 inline constexpr std::uint32_t MeshWindowSlotDwords = 65536u;
 [[nodiscard]] std::uint32_t FunctionLdsDwords(const IrProgram& program);
-[[nodiscard]] std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const IrProgram& program);
+[[nodiscard]] std::unordered_map<const IrValue*, std::uint32_t> FunctionLdsLaneAddresses(const IrProgram& program, std::uint32_t dwords);
 [[nodiscard]] std::unordered_set<const IrValue*> WaveUniformValues(const IrProgram& program);
 [[nodiscard]] bool IsWaveMaskBranch(BranchCondition condition);
 

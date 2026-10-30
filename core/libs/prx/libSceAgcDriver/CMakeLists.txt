@@ -635,6 +635,16 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(agc_adaptive_staging_tests tests/AdaptiveStaging.cpp)
+    target_include_directories(agc_adaptive_staging_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(agc_adaptive_staging_tests PRIVATE libc)
+    add_test(NAME agc_adaptive_staging COMMAND agc_adaptive_staging_tests)
+    set_tests_properties(agc_adaptive_staging PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_adaptive_staging PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(agc_capture_trace_tests tests/CaptureTrace.cpp)
     target_include_directories(agc_capture_trace_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(agc_capture_trace_tests PRIVATE libc)

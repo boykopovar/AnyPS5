@@ -369,6 +369,18 @@ Leave the variable unset to keep the explicit error. Any other value also stops 
 
 Press F12 in the game window to save the next displayed frame as a PNG at the resolution of the game's display buffer, without the window's scaling, letterbox or [performance overlay](#performance-overlay). A BT.2100 PQ display buffer is saved converted to SDR, also while it is shown through [HDR output](#hdr-output). Files are named `<title ID>-<YYYYMMDD-HHMMSS>.png` and written to an `anyps5-screenshots/` directory beside the output executable, which is created when needed; set `ANYPS5_SCREENSHOTS` to use another directory. The saved path is printed to stderr. Presses while the previous screenshot is still being written are merged into one. The key is the `Screenshot` action of the [input mapping](INPUT_MAPPING.md). A screenshot that cannot be written stops the game with the error.
 
+### Host volume and mute
+
+F5 lowers, F6 raises and F8 mutes the host's output volume for the game window; the keys can be changed with `VolumeDown`, `VolumeUp` and `ToggleMute` in [the input mapping](INPUT_MAPPING.md). This is a control of the host, like the volume of a media player: it is not a console behaviour, the title does not see it, and its own volume settings are not changed.
+
+The volume goes from 0 to 100 in steps of 5 and starts at 100, or at `ANYPS5_VOLUME` (a whole number from 0 to 100). The output amplitude is the square of the volume as a fraction of 100, so 50 is a quarter of the amplitude. Mute is separate from the volume: unmuting brings the volume back, and a volume key while muted unmutes. A change of gain moves over 10 ms instead of jumping. Each press prints one line on stderr with the resulting level or mute; there is no on-screen indicator.
+
+At volume 100 and not muted the audio is passed to the host device unchanged, with no processing at all. The volume applies to what the title plays through `libSceAudioOut` and `libSceAudioOut2`, including what `libSceAudio3d` plays through them. The controller's own sound card and haptics, and the microphone, are not affected.
+
+Set `ANYPS5_MUTE_ON_FOCUS_LOSS=1` to mute the audio while the display window has no focus and restore it when the focus returns. `0` or unset leaves the audio alone. It does not change the mute set with the key: a window you muted stays muted when it regains focus. Only focus events count, so a window minimized without losing focus stays audible, and a window that opens without focus starts muted. An invalid value of either variable, including an empty one, stops the game with an error naming it.
+
+The keys work while the display window has focus. Not measured on a real audio device or on a console.
+
 ### GPU selection
 
 The game runs on the first Vulkan 1.1 device with graphics and compute queues and swapchain presentation, preferring a discrete GPU over an integrated one. Set `ANYPS5_GPU` to a part of a device name, compared without regard to case, to run on another device; the names are printed at start-up in the `Physical device candidate` lines. When no usable device contains the text, the start fails and the error lists the device names.

@@ -317,6 +317,19 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertEqual(module.name(0x1030), "~first_func")
         self.assertEqual(module.name(0x1070), "~second_func")
 
+    def test_export_ordinals_stay_inside_the_declared_address_table(self):
+        path = self.libs / "libwinpthread-1.dll"
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 0x600 + 20, 1)
+        path.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "export ordinal"):
+            symbolize_samples.PeModule(path)
+        warnings = []
+        symbolizer = symbolize_samples.Symbolizer([self.libs], {}, unverified=True, warn=warnings.append)
+        frame = "libwinpthread-1.dll+0x1070"
+        self.assertEqual(symbolizer.frame(frame), frame)
+        self.assertTrue(any("export ordinal" in warning for warning in warnings))
+
     def test_frames_keep_unknown_modules_and_out_of_range_addresses(self):
         symbolizer = symbolize_samples.Symbolizer([self.libs], {}, warn=lambda text: None, unverified=True)
         self.assertEqual(symbolizer.frame("libSceAgcDriver.prx+0x1046"), "libSceAgcDriver.prx!AgcDriver_long_function_name")
@@ -386,6 +399,29 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertIn("no '# module' record", errors)
         lines, errors = self.run_main(samples, "--libs", self.libs, "--unverified")
         self.assertIn("libSceAgcDriver.prx!short", lines[2])
+        self.assertEqual(errors, "")
+
+    def test_multiple_sampled_modules_with_the_same_name_are_not_symbolized(self):
+        samples = self.root / "worker.txt"
+        for second_timestamp in (TIMESTAMP, TIMESTAMP + 1):
+            for unverified in (False, True):
+                with self.subTest(second_timestamp=second_timestamp, unverified=unverified):
+                    samples.write_text(
+                        f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+                        f"# module LIBSCEAGCDRIVER.PRX {SIZE_OF_IMAGE:#x} {second_timestamp:#x}\n"
+                        "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+                    options = ("--unverified",) if unverified else ()
+                    lines, errors = self.run_main(samples, "--libs", self.libs, *options)
+                    self.assertIn("libSceAgcDriver.prx+0x1011", "\n".join(lines))
+                    self.assertNotIn("libSceAgcDriver.prx!short", "\n".join(lines))
+                    self.assertIn("multiple sampled modules", errors)
+
+    def test_module_record_lookup_is_case_insensitive(self):
+        samples = self.root / "worker.txt"
+        samples.write_text(f"# module LIBSCEAGCDRIVER.PRX {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+                           "libSceAgcDriver.prx+0x1011 4\n", encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs)
+        self.assertIn("libSceAgcDriver.prx!short", "\n".join(lines))
         self.assertEqual(errors, "")
 
     def test_thread_files_keep_each_heading_and_can_select_one_thread(self):
