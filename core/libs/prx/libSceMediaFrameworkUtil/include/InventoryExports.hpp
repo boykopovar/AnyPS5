@@ -4,9 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI sceMediaFwUtilGetSystemVolume();
-int APS5_VABI sceMediaFwUtilRegisterNotifySystemVolume();
-int APS5_VABI sceMediaFwUtilUnregisterNotifySystemVolume();
 int APS5_VABI libSceMediaFrameworkUtilUnknown_3i18MZVtRPw_nid_no_patch();
 int APS5_VABI libSceMediaFrameworkUtilUnknown_IJdieD_minus_pMaQ_nid_no_patch();
 int APS5_VABI libSceMediaFrameworkUtilUnknown_jWvrCR_plus_qXww_nid_no_patch();

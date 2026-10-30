@@ -13,18 +13,6 @@ APS5_DUMMY_FUN
 
 extern "C" {
 
-int APS5_VABI sceMediaFwUtilGetSystemVolume() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceMediaFwUtilRegisterNotifySystemVolume() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceMediaFwUtilUnregisterNotifySystemVolume() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI libSceMediaFrameworkUtilUnknown_3i18MZVtRPw_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
