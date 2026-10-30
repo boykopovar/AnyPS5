@@ -1821,6 +1821,27 @@ void* EndConsoleJob(std::uint8_t* job, std::uint8_t* end, std::uint32_t instance
     return end;
 }
 
+constexpr std::uint64_t CONSOLE_RUN_FLAGS = 0x0000E00000001FFF;
+
+std::uint8_t* KeepConsoleWords(std::uint8_t* at, std::uint32_t keep, std::uint32_t low, std::uint32_t word) {
+    std::uint32_t words[2];
+    std::memcpy(words, at, sizeof(words));
+    words[0] = (words[0] & keep) | low;
+    words[1] = word;
+    std::memcpy(at, words, sizeof(words));
+    return at + sizeof(words);
+}
+
+std::uint8_t* KeepConsoleBuffer(std::uint8_t* at, ConsoleChunk kind, const void* address, std::size_t size) {
+    at = KeepConsoleWords(at, 0xFFFFFFE0u, static_cast<std::uint32_t>(kind), static_cast<std::uint32_t>(size));
+    std::memcpy(at, &address, sizeof(address));
+    return at + sizeof(address);
+}
+
+std::uint8_t* KeepConsoleFlags(std::uint8_t* at, ConsoleChunk kind, std::uint64_t flags) {
+    return KeepConsoleWords(at, 0xFC000000u, static_cast<std::uint32_t>(kind) | ((static_cast<std::uint32_t>(flags >> 32) & 0xFFFFFu) << 6), static_cast<std::uint32_t>(flags));
+}
+
 struct ConsoleJob {
     JobHeader header;
     std::vector<AjmBuffer> buffers;
@@ -2191,9 +2212,15 @@ void* APS5_VABI sceAjmBatchJobRunSplitBufferRa(void* position, uint32_t instance
 }
 
 void* APS5_VABI sceAjmBatchJobRunBufferRa(void* position, uint32_t instance, uint64_t flags, const void* data_input, size_t data_input_size, void* data_output, size_t data_output_size, void* sideband_output, size_t sideband_output_size, void* return_address) {
-    const AjmBuffer input{const_cast<void*>(data_input), data_input_size};
-    const AjmBuffer output{data_output, data_output_size};
-    return sceAjmBatchJobRunSplitBufferRa(position, instance, flags, &input, 1, &output, 1, sideband_output, sideband_output_size, return_address);
+    auto* job = static_cast<std::uint8_t*>(position);
+    auto* at = job + 2 * sizeof(std::uint32_t);
+    if (return_address) at = KeepConsoleBuffer(at, ConsoleChunk::ReturnAddress, return_address, 0);
+    at = KeepConsoleBuffer(at, ConsoleChunk::InputRunBuffer, data_input, data_input_size);
+    at = KeepConsoleFlags(at, ConsoleChunk::RunFlags, flags & CONSOLE_RUN_FLAGS);
+    at = KeepConsoleBuffer(at, ConsoleChunk::OutputRunBuffer, data_output, data_output_size);
+    at = KeepConsoleBuffer(at, ConsoleChunk::OutputControlBuffer, sideband_output, sideband_output_size);
+    KeepConsoleWords(job, 0xFC000000u, (instance & 0xFFFFFu) << 6, static_cast<std::uint32_t>(at - job) - 2 * sizeof(std::uint32_t));
+    return at;
 }
 
 void* APS5_VABI sceAjmBatchJobInlineBuffer(void* position, const void* data_input, size_t data_input_size, const void** batch_address) {

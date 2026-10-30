@@ -51,12 +51,14 @@ class Module:
         self.dynamic = None
         self.read_headers()
         self.tags = self.read_tags()
+        self.strsz = self.require_tag(DT_STRSZ, "DT_STRSZ")
         self.strtab = self.address(self.require_tag(DT_STRTAB, "DT_STRTAB"))
         self.symtab = self.address(self.require_tag(DT_SYMTAB, "DT_SYMTAB"))
-        self.strsz = self.require_tag(DT_STRSZ, "DT_STRSZ")
         if self.strtab + self.strsz > len(self.data):
             raise ModuleError("the string table of DT_STRSZ %#x extends past the end of the file" % self.strsz)
+        self.address(self.tags[DT_STRTAB], self.strsz)
         self.symbol_count = self.count_symbols()
+        self.address(self.tags[DT_SYMTAB], self.symbol_count * SYMBOL_SIZE)
         self.check_relocation_tags()
 
     def unpack(self, form, offset):
@@ -98,27 +100,39 @@ class Module:
             raise ModuleError("the dynamic section has no %s" % name)
         return self.tags[tag]
 
-    def address(self, vaddr):
+    def address(self, vaddr, length=1):
         for start, offset, size, _ in self.loads:
-            if start <= vaddr < start + size:
-                return offset + vaddr - start
-        raise ModuleError("address %#x is outside every PT_LOAD segment" % vaddr)
+            if start <= vaddr <= start + size:
+                position = offset + vaddr - start
+                if position + length > len(self.data):
+                    continue
+                covered = vaddr
+                for next_start, next_offset, next_size, _ in sorted(self.loads):
+                    if next_offset - next_start == position - vaddr and next_start <= covered:
+                        covered = max(covered, next_start + next_size)
+                if covered >= vaddr + length:
+                    return position
+        raise ModuleError("range %#x+%#x is outside file-backed PT_LOAD data" % (vaddr, length))
 
     def count_symbols(self):
         if DT_HASH in self.tags:
-            return self.unpack("<I", self.address(self.tags[DT_HASH]) + 4)[0]
+            table = self.tags[DT_HASH]
+            buckets, count = self.unpack("<II", self.address(table, 8))
+            self.address(table, (2 + buckets + count) * 4)
+            return count
         if DT_GNU_HASH in self.tags:
-            return self.count_gnu_symbols(self.address(self.tags[DT_GNU_HASH]))
+            return self.count_gnu_symbols(self.tags[DT_GNU_HASH])
         raise ModuleError("the dynamic section has neither DT_HASH nor DT_GNU_HASH, so the symbol count is unknown")
 
     def count_gnu_symbols(self, table):
-        buckets, symoffset, bloom_size, _ = self.unpack("<IIII", table)
+        buckets, symoffset, bloom_size, _ = self.unpack("<IIII", self.address(table, 16))
         buckets_at = table + 16 + bloom_size * 8
         chains_at = buckets_at + buckets * 4
-        last = max((self.unpack("<I", buckets_at + 4 * index)[0] for index in range(buckets)), default=0)
+        self.address(table, chains_at - table)
+        last = max((self.unpack("<I", self.address(buckets_at + 4 * index, 4))[0] for index in range(buckets)), default=0)
         if last < symoffset:
             return symoffset
-        while not self.unpack("<I", chains_at + 4 * (last - symoffset))[0] & 1:
+        while not self.unpack("<I", self.address(chains_at + 4 * (last - symoffset), 4))[0] & 1:
             last += 1
         return last + 1
 
@@ -157,7 +171,9 @@ class Module:
         for table, size in self.relocation_tables():
             if size % RELA_SIZE:
                 raise ModuleError("relocation table at %#x has %d bytes, not a multiple of %d" % (table, size, RELA_SIZE))
-            start = self.address(table)
+            if size == 0:
+                continue
+            start = self.address(table, size)
             for position in range(start, start + size, RELA_SIZE):
                 offset, info, _ = self.unpack("<QQq", position)
                 if (info & 0xFFFFFFFF) == R_X86_64_NONE:
@@ -173,7 +189,7 @@ class Module:
             name, shndx, value, kind = self.symbol(index)
             if shndx == 0 or not name:
                 continue
-            (thread_local if kind == STT_TLS else found).setdefault(value, name)
+            (thread_local if kind == STT_TLS else found).setdefault(value, []).append(name)
         return found, thread_local
 
     def code_segments(self):
@@ -219,7 +235,7 @@ def disassemble(code, vaddr):
     with tempfile.TemporaryDirectory() as directory:
         blob = Path(directory) / "text.bin"
         blob.write_bytes(code)
-        command = [objdump, "-D", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
+        command = [objdump, "-D", "--disassemble-zeroes", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
                    "--adjust-vma=%d" % vaddr, str(blob)]
         result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
@@ -253,7 +269,7 @@ def annotate_listing(listing, slots, exports, stubs, namer):
         head = LINE_ADDRESS.match(line)
         if head and int(head.group(1), 16) in exports:
             out.append("")
-            out.append("; ===== export " + namer.resolve(exports[int(head.group(1), 16)]))
+            out.extend("; ===== export " + namer.resolve(name) for name in exports[int(head.group(1), 16)])
         out.append(line + line_note(line, slots, stubs, namer))
     return out
 
@@ -265,8 +281,8 @@ def write_lines(path, lines):
 
 
 def export_lines(exports, thread_local, namer):
-    lines = ["%#x %s %s" % (address, exports[address], namer.resolve(exports[address])) for address in sorted(exports)]
-    lines += ["tls+%#x %s %s" % (offset, thread_local[offset], namer.resolve(thread_local[offset])) for offset in sorted(thread_local)]
+    lines = ["%#x %s %s" % (address, name, namer.resolve(name)) for address in sorted(exports) for name in exports[address]]
+    lines += ["tls+%#x %s %s" % (offset, name, namer.resolve(name)) for offset in sorted(thread_local) for name in thread_local[offset]]
     return lines
 
 
@@ -287,7 +303,9 @@ def annotate(module_path, prefix, namer):
     write_lines(prefix + ".imports.txt", ["%#x %s %s" % (slot, slots[slot], namer.resolve(slots[slot])) for slot in sorted(slots)])
     write_lines(prefix + ".exports.txt", export_lines(exports, thread_local, namer))
     write_lines(prefix + ".asm", annotate_listing(listing, slots, exports, stubs, namer))
-    return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), len(exports), len(thread_local), len(stubs), len(listing))
+    export_count = sum(len(names) for names in exports.values())
+    tls_count = sum(len(names) for names in thread_local.values())
+    return "%s: %d imports, %d exports, %d tls, %d stubs, %d lines" % (prefix, len(slots), export_count, tls_count, len(stubs), len(listing))
 
 
 def parse_arguments(argv):

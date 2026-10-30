@@ -37,10 +37,18 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
     int& guestErrno = *__error_nid_postfix();
     const int saved = guestErrno;
     if (error != nullptr) *error = 0;
+    if (const char* stop = NanSubjectEnd_nid_no_patch(text)) {
+        if (end != nullptr) *end = const_cast<char*>(stop);
+        return std::numeric_limits<TFloat>::quiet_NaN();
+    }
     guestErrno = 0;
     char* stop = nullptr;
     TFloat value = parse(text, &stop);
     if (end != nullptr) *end = stop;
+    if (pten == 0 && Hexadecimal(text)) {
+        guestErrno = saved;
+        return value;
+    }
     const bool overflowed = std::isinf(value) && guestErrno == RangeError;
     if (pten != 0 && stop != text && (std::isfinite(value) || overflowed)) {
         if (Hexadecimal(text)) NotImplemented_nid_no_patch(function);

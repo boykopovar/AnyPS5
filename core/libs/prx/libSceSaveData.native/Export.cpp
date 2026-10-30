@@ -1067,8 +1067,10 @@ int APS5_VABI sceSaveDataDebugTarget() {
 }
 
 int APS5_VABI sceSaveDataAbort() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataBindPsnAccount(void) {
@@ -1132,8 +1134,10 @@ int APS5_VABI sceSaveDataCheckSaveDataVersionLatest(void) {
 }
 
 int APS5_VABI sceSaveDataClearProgress() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataCreateUploadData(void) {
@@ -1394,6 +1398,34 @@ int APS5_VABI sceSaveDataUnregisterEventCallback() {
 int APS5_VABI sceSaveDataUpload(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceSaveDataCheckPremiumMember() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataCheckSyncStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataGetAllSizeProspero() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataGetAutoSyncInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataGetCloudInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataNotifySaveDataDownload() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataSetAutoSyncSettings() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }
