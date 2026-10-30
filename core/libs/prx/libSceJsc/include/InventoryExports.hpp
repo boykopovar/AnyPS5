@@ -369,4 +369,22 @@ int APS5_VABI libSceJscInventory_GtiYvkQcGr4_nid_no_patch();
 int APS5_VABI libSceJscInventory_RD9UWM_plus_gJiI_nid_no_patch();
 int APS5_VABI libSceJscInventory_xu3rtZhKLb0_nid_no_patch();
 
+int APS5_VABI libSceJscInventory_1shvECo12S4_nid_no_patch();
+int APS5_VABI libSceJscInventory_8LcWf8Gi0Zk_nid_no_patch();
+int APS5_VABI libSceJscInventory_8R88n7E6UpI_nid_no_patch();
+int APS5_VABI libSceJscInventory_B5h48AC6Vns_nid_no_patch();
+int APS5_VABI libSceJscInventory_N_minus_rP7qvkC1s_nid_no_patch();
+int APS5_VABI libSceJscInventory_Oc8nnt7PBhQ_nid_no_patch();
+int APS5_VABI libSceJscInventory_R36powg0yew_nid_no_patch();
+int APS5_VABI libSceJscInventory_Ri_plus_n8zTCrx4_nid_no_patch();
+int APS5_VABI libSceJscInventory_SkTqPDJdrqA_nid_no_patch();
+int APS5_VABI libSceJscInventory_SsrlB2FLx6g_nid_no_patch();
+int APS5_VABI libSceJscInventory_VL5D22H8TAk_nid_no_patch();
+int APS5_VABI libSceJscInventory_WjADfj0eVFs_nid_no_patch();
+int APS5_VABI libSceJscInventory_eVnAQP7q5j8_nid_no_patch();
+int APS5_VABI libSceJscInventory_eZM_plus_AI68IpA_nid_no_patch();
+int APS5_VABI libSceJscInventory_ecpJv6CchFE_nid_no_patch();
+int APS5_VABI libSceJscInventory_fj3HITuKDPs_nid_no_patch();
+int APS5_VABI libSceJscInventory_uF3DZ2xR1sA_nid_no_patch();
+
 }

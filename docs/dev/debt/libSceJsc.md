@@ -14,6 +14,26 @@
 
 ### Additional callable exports
 
+- [Additional shared older exports](../../../core/libs/prx/libSceJsc/Export.cpp): 17 unidentified function NIDs are present in both older JSC and WebKit images and in the later JSC image. The declarations throw; names, prototypes, runtime behavior and cross-module routing are unverified.
+
+  - `1shvECo12S4`
+  - `8LcWf8Gi0Zk`
+  - `8R88n7E6UpI`
+  - `B5h48AC6Vns`
+  - `N-rP7qvkC1s`
+  - `Oc8nnt7PBhQ`
+  - `R36powg0yew`
+  - `Ri+n8zTCrx4`
+  - `SkTqPDJdrqA`
+  - `SsrlB2FLx6g`
+  - `VL5D22H8TAk`
+  - `WjADfj0eVFs`
+  - `eVnAQP7q5j8`
+  - `eZM+AI68IpA`
+  - `ecpJv6CchFE`
+  - `fj3HITuKDPs`
+  - `uF3DZ2xR1sA`
+
 - [Additional callable exports](../../../core/libs/prx/libSceJsc/Export.cpp) - 356 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceJsc.c) and the [selected export metadata](https://gist.github.com/kyon-eth/e699987524d8485a9de9740280cfe4c1/09c89f4d64a17da12485e0eb637620ced4f6eeb2) from two version-labelled images (SHA-256 `d2a5f8a8807f23cb71170a5d3b779a57636f5a3480d92955e4255545ffe1e97e`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality. Shared WebKit exports require separate loader analysis.
 
 | Name | NID |
