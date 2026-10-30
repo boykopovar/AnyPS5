@@ -322,7 +322,7 @@ int main(int argc, char** argv) {
         server.Serve(Serve::Close, true, Leaf::Expired);
         server.Serve(Serve::Close, true, Leaf::Future);
         server.Serve(Serve::Close, true, Leaf::Future);
-        if (sockets.net) server.Serve(Serve::Exchange);
+        server.Serve(Serve::Exchange);
         for (int index = 0; index < ParallelConnections; ++index) server.Serve(Serve::Exchange);
     });
 
@@ -515,13 +515,15 @@ int main(int argc, char** argv) {
     Require(sceSslConnect(futureChecked) == ErrorNotBeforeCheck, "a not yet valid server certificate passed the enabled start check");
     Require(sceSslDeleteConnection(futureChecked) == 0 && sockets.Close(futureCheckedSocket) == 0, "release the checked future connection");
 
-    if (sockets.net) {
+    {
         const int timedSocket = sockets.Open(server.port);
         const GuestTimeval timeout{0, 200000};
         Require(sockets.Set(timedSocket, GuestReceiveTimeout, &timeout, sizeof(timeout)) == 0, "set the receive timeout");
         const int timed = sceSslCreateConnection(context, timedSocket, "localhost");
         Require(sceSslConnect(timed) == 0, "handshake over the socket with a receive timeout");
+        const auto started = std::chrono::steady_clock::now();
         Require(sceSslRead(timed, buffer.data(), buffer.size(), 0) == ErrorWantPollIn, "an expired receive timeout did not ask to poll");
+        Require(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(150), "the blocking SSL receive returned before its timeout");
         Require(sceSslWrite(timed, request, 4, 0) == 4, "write the request after a timeout");
         Require(sceSslRead(timed, buffer.data(), buffer.size(), 0) == 4 && std::memcmp(buffer.data(), "pong", 4) == 0, "read the reply after a timeout");
         Require(sceSslRead(timed, buffer.data(), buffer.size(), 0) == 0, "close notify did not end the timed stream");
