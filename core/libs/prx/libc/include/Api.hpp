@@ -7,6 +7,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "SceTypes.hpp"

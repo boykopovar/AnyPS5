@@ -179,13 +179,17 @@ void APS5_VABI funlockfile_nid_postfix(FileStream* stream) {
 
 }
 
+bool TryLockNativeStream_nid_no_patch(std::FILE* stream) {
+#ifdef _WIN32
+    return TryEnterCriticalSection(&reinterpret_cast<UcrtStream*>(stream)->lock) != 0;
+#else
+    return ::ftrylockfile(stream) == 0;
+#endif
+}
+
 int APS5_VABI ftrylockfile_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("ftrylockfile: null stream");
-#ifdef _WIN32
-    return TryEnterCriticalSection(&reinterpret_cast<UcrtStream*>(GetStreamHandle(stream))->lock) ? 0 : -1;
-#else
-    return ftrylockfile(GetStreamHandle(stream)) == 0 ? 0 : -1;
-#endif
+    return TryLockNativeStream_nid_no_patch(GetStreamHandle(stream)) ? 0 : -1;
 }
 
 std::uint64_t APS5_VABI _Stoul_nid_postfix(const char* str, char** endptr, int base) {
