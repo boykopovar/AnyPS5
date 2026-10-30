@@ -484,14 +484,13 @@ int APS5_VABI sceNgs2GetWaveformFrameInfo(const Ngs2WaveformFormat* format, uint
     if (format == nullptr || format->num_channels == 0 || format->num_channels > NGS2_MAX_CHANNELS || format->sample_rate == 0 || format->sample_rate > MAX_SAMPLE_RATE) {
         return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     }
-    if (format->waveform_type == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) {
-        *out_frame_size = format->num_channels * sizeof(std::int16_t);
+    if (format->waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
+        *out_frame_size = static_cast<std::uint32_t>(format->num_channels * Ngs2PcmSampleBytes(format->waveform_type));
         *out_num_frame_samples = 1;
         *out_units_per_frame = 1;
         *out_num_delay_samples = 0;
         return SCE_NGS2_OK;
     }
-    if (format->waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) throw std::runtime_error("NGS2: the frame info of waveform type " + Ngs2Hex(format->waveform_type) + " is not implemented");
     Atrac9CodecInfo codec{};
     if (!MatchingCodecInfo(*format, codec)) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     *out_frame_size = static_cast<std::uint32_t>(codec.superframeSize);

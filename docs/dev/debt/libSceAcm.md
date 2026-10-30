@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp) batches execute as silent no-ops, and do not execute encoded panner and FFT commands. `sceAcm_ConvReverb_SharedInput` returns success without encoding audio commands.
+- [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp) batches execute as silent no-ops, and do not execute encoded panner, FFT and reverb commands.
 
 ### Unknown function info
 
@@ -12,4 +12,4 @@
 
 - [`sceAcmBatchJobNotification`](../../../core/libs/prx/libSceAcm/Export.cpp) is a parameterless pending declaration for import resolution. Its signature and behavior are unverified; it throws through `NotImplemented_nid_no_patch`.
 
-- The shared-input reverb signature and descriptor fields are recovered from native accesses. Input history indices are mutable; block metadata representation, reverb command encoding and DSP interpretation remain unimplemented in [libSceAcm](../../../core/libs/prx/libSceAcm/Export.cpp).
+- [`sceAcm_ConvReverb_SharedInput`](../../../core/libs/prx/libSceAcm/Export.cpp) encodes the reverb jobs as `libSceAcm.sprx` does on firmware 13.40 (read from the module's code and compared with that code run on x86-64, not measured on a console). PPSA01317 calls it during boot with 512-sample blocks. Its input stage appends one `sceAcm_FFT` job of twice the block size (256 points for 128-sample blocks). The meaning of the reverb descriptor's block metadata for the DSP is unverified.

@@ -2245,12 +2245,10 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     state.pendingImports.insert(base);
 #ifdef _WIN32
     if (deferredSettles.load(std::memory_order_relaxed) && entry.alias == nullptr && state.watchPrivateImports && writable) {
-        if (base % settleBlockBytes != 0 || bytes % settleBlockBytes != 0) {
-            entry.settleOnDemand = entry.unwatched;
-        } else if (entry.unwatched) {
+        if (entry.unwatched) {
             state.pendingSettles.insert_or_assign(base, PendingSettle{});
             state.settleWanted.push_back(base);
-        } else if (settled && !GuestMemory::Watched(base, static_cast<std::size_t>(bytes))) {
+        } else if (base % settleBlockBytes == 0 && bytes % settleBlockBytes == 0 && settled && !GuestMemory::Watched(base, static_cast<std::size_t>(bytes))) {
             entry.unwatched = true;
             state.pendingSettles.insert_or_assign(base, PendingSettle{SettlePhase::Settled, 0});
             state.settleReady.push_back(base);
