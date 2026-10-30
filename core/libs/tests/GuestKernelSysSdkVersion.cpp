@@ -1,4 +1,5 @@
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -38,6 +39,18 @@ int main() {
     Require(sceKernelGetCompiledSdkVersion(output.data()) == 0, "query failed");
     Require(output[0] == 0x07008001, "version is not the 32-bit field at offset 0x10 of the process parameters");
     Require(output[1] == 0x5a5a5a5a, "the query wrote past the version");
+
+    Require(sceKernelGetProsperoCompiledSdkVersion(nullptr) == static_cast<int>(0x80020016), "null output is not EINVAL");
+    output = {-1, 0x5a5a5a5a};
+    Require(sceKernelGetProsperoCompiledSdkVersion(output.data()) == 0, "prospero query failed");
+    Require(output[0] == 0x0a008001, "prospero version is not the 32-bit field at offset 0x14 of the process parameters");
+    Require(output[1] == 0x5a5a5a5a, "the prospero query wrote past the version");
+
+    Require(sceKernelGetPs4CompiledSdkVersion(nullptr) == static_cast<int>(0x80020016), "null output is not EINVAL");
+    output = {-1, 0x5a5a5a5a};
+    Require(sceKernelGetPs4CompiledSdkVersion(output.data()) == 0, "ps4 query failed");
+    Require(output[0] == 0x07008001, "ps4 version is not the 32-bit field at offset 0x10 of the process parameters");
+    Require(output[1] == 0x5a5a5a5a, "the ps4 query wrote past the version");
 
     std::puts("KERNEL SYS SDK VERSION tests passed");
     return 0;

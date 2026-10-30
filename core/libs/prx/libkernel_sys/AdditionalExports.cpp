@@ -1,5 +1,10 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 
 extern "C" {
 
@@ -1426,16 +1431,22 @@ int APS5_VABI sceKernelGetPackageInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelGetProsperoCompiledSdkVersion() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetProsperoCompiledSdkVersion(std::int32_t* version) {
+    if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::memcpy(version, parameters + 0x14, sizeof(*version));
+    return 0;
 }
 
 int APS5_VABI sceKernelGetProsperoCompiledSdkVersionByPid() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelGetPs4CompiledSdkVersion() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelGetPs4CompiledSdkVersion(std::int32_t* version) {
+    if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
+    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::memcpy(version, parameters + 0x10, sizeof(*version));
+    return 0;
 }
 
 int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid() {
