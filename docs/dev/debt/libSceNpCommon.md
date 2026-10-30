@@ -918,4 +918,4 @@ Pending import declarations are matched to names in the local libSceNpCommon.spr
 
 ### Partial virtual tables
 
-- [Selector, buffered stream and message-pack virtual tables](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp) have the observed slot layout, but their targets remain throwing declarations. They do not implement the underlying classes or virtual calls.
+- [Selector, buffered stream and message-pack virtual tables](../../../core/libs/prx/libSceNpCommon/InventoryExports.cpp) have the observed slot layout. Four message-pack type slots return their observed values; their other targets remain throwing declarations. The tables do not implement the underlying classes.

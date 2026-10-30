@@ -3,6 +3,10 @@
 #include "SceTypes.hpp"
 
 extern "C" {
+extern std::uintptr_t _ZTVN3sce2np8msg_pack17MsgPackStringImplE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np8msg_pack17MsgPackBinaryImplE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np8msg_pack16MsgPackArrayImplE_nid_postfix[];
+extern std::uintptr_t _ZTVN3sce2np8msg_pack14MsgPackMapImplE_nid_postfix[];
 
 extern std::uintptr_t _ZTVN3sce2np8SelectorE_nid_postfix[];
 extern std::uintptr_t _ZTVN3sce2np20BufferedStreamReaderE_nid_postfix[];
@@ -431,7 +435,6 @@ int APS5_VABI _ZN3sce2np8msg_pack14MsgPackMapImplC1EP14SceNpAllocator();
 int APS5_VABI _ZN3sce2np8msg_pack14MsgPackMapImplC2EP14SceNpAllocator();
 int APS5_VABI _ZN3sce2np8msg_pack14MsgPackMapImplD0Ev();
 int APS5_VABI _ZN3sce2np8msg_pack14MsgPackMapImplD1Ev();
-int APS5_VABI _ZN3sce2np8msg_pack14MsgPackMapImplD2Ev();
 int APS5_VABI _ZN3sce2np8msg_pack15MsgPackUnpacker10InitializeEPNS0_12StreamReaderEPNS0_9StreamCtxE();
 int APS5_VABI _ZN3sce2np8msg_pack15MsgPackUnpacker10UnpackBoolEPNS0_6HandleEPb();
 int APS5_VABI _ZN3sce2np8msg_pack15MsgPackUnpacker11UnpackInt32EPNS0_6HandleEPi();
@@ -460,17 +463,14 @@ int APS5_VABI _ZN3sce2np8msg_pack16MsgPackArrayImplC1EP14SceNpAllocator();
 int APS5_VABI _ZN3sce2np8msg_pack16MsgPackArrayImplC2EP14SceNpAllocator();
 int APS5_VABI _ZN3sce2np8msg_pack16MsgPackArrayImplD0Ev();
 int APS5_VABI _ZN3sce2np8msg_pack16MsgPackArrayImplD1Ev();
-int APS5_VABI _ZN3sce2np8msg_pack16MsgPackArrayImplD2Ev();
 int APS5_VABI _ZN3sce2np8msg_pack16MsgPackValueImpl6AddRefEv();
 int APS5_VABI _ZN3sce2np8msg_pack16MsgPackValueImpl7ReleaseEv();
 int APS5_VABI _ZN3sce2np8msg_pack17MsgPackBinaryImpl8SetValueEPKvm();
 int APS5_VABI _ZN3sce2np8msg_pack17MsgPackBinaryImplD0Ev();
 int APS5_VABI _ZN3sce2np8msg_pack17MsgPackBinaryImplD1Ev();
-int APS5_VABI _ZN3sce2np8msg_pack17MsgPackBinaryImplD2Ev();
 int APS5_VABI _ZN3sce2np8msg_pack17MsgPackStringImpl8SetValueEPKc();
 int APS5_VABI _ZN3sce2np8msg_pack17MsgPackStringImplD0Ev();
 int APS5_VABI _ZN3sce2np8msg_pack17MsgPackStringImplD1Ev();
-int APS5_VABI _ZN3sce2np8msg_pack17MsgPackStringImplD2Ev();
 int APS5_VABI _ZN3sce2np9HttpTrans10SetTimeoutEPKNS1_12TimeoutParamE();
 int APS5_VABI _ZN3sce2np9HttpTrans11SendRequestEPNS0_6HandleEPKvm();
 int APS5_VABI _ZN3sce2np9HttpTrans12RecvResponseEPNS0_6HandleEPvmPm();

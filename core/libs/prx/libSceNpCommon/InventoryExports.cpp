@@ -7,6 +7,51 @@ extern "C" {
 
 static_assert(sizeof(std::uintptr_t) == 8);
 
+static int APS5_VABI NpMsgPackMapImplType(const void*) { return 0x2003; }
+std::uintptr_t _ZTVN3sce2np8msg_pack14MsgPackMapImplE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack14MsgPackMapImplD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack14MsgPackMapImplD0Ev),
+    reinterpret_cast<std::uintptr_t>(&NpMsgPackMapImplType),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack14MsgPackMapImpl6EqualsERKNS1_16MsgPackValueImplE),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack14MsgPackMapImpl18GetMessagePackSizeEv),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack14MsgPackMapImpl12ToJsonStringEPcmPmi),
+};
+
+static int APS5_VABI NpMsgPackArrayImplType(const void*) { return 0x2002; }
+std::uintptr_t _ZTVN3sce2np8msg_pack16MsgPackArrayImplE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack16MsgPackArrayImplD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack16MsgPackArrayImplD0Ev),
+    reinterpret_cast<std::uintptr_t>(&NpMsgPackArrayImplType),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack16MsgPackArrayImpl6EqualsERKNS1_16MsgPackValueImplE),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack16MsgPackArrayImpl18GetMessagePackSizeEv),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack16MsgPackArrayImpl12ToJsonStringEPcmPmi),
+};
+
+static int APS5_VABI NpMsgPackBinaryImplType(const void*) { return 0x2004; }
+std::uintptr_t _ZTVN3sce2np8msg_pack17MsgPackBinaryImplE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack17MsgPackBinaryImplD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack17MsgPackBinaryImplD0Ev),
+    reinterpret_cast<std::uintptr_t>(&NpMsgPackBinaryImplType),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack17MsgPackBinaryImpl6EqualsERKNS1_16MsgPackValueImplE),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack17MsgPackBinaryImpl18GetMessagePackSizeEv),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack17MsgPackBinaryImpl12ToJsonStringEPcmPmi),
+};
+
+static int APS5_VABI NpMsgPackStringImplType(const void*) { return 0x2001; }
+std::uintptr_t _ZTVN3sce2np8msg_pack17MsgPackStringImplE_nid_postfix[] {
+    0, 0,
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack17MsgPackStringImplD1Ev),
+    reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8msg_pack17MsgPackStringImplD0Ev),
+    reinterpret_cast<std::uintptr_t>(&NpMsgPackStringImplType),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack17MsgPackStringImpl6EqualsERKNS1_16MsgPackValueImplE),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack17MsgPackStringImpl18GetMessagePackSizeEv),
+    reinterpret_cast<std::uintptr_t>(&_ZNK3sce2np8msg_pack17MsgPackStringImpl12ToJsonStringEPcmPmi),
+};
+
+
 std::uintptr_t _ZTVN3sce2np8SelectorE_nid_postfix[] {
     0, 0,
     reinterpret_cast<std::uintptr_t>(&_ZN3sce2np8SelectorD2Ev),
@@ -1721,10 +1766,7 @@ int APS5_VABI _ZN3sce2np8msg_pack14MsgPackMapImplD0Ev() {
 int APS5_VABI _ZN3sce2np8msg_pack14MsgPackMapImplD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZN3sce2np8msg_pack14MsgPackMapImplD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+APS5_EXPORT("AdHs9XUPQOg", _ZN3sce2np8msg_pack14MsgPackMapImplD1Ev);
 
 int APS5_VABI _ZN3sce2np8msg_pack15MsgPackUnpacker10InitializeEPNS0_12StreamReaderEPNS0_9StreamCtxE() {
     NotImplemented_nid_no_patch(__func__);
@@ -1837,10 +1879,7 @@ int APS5_VABI _ZN3sce2np8msg_pack16MsgPackArrayImplD0Ev() {
 int APS5_VABI _ZN3sce2np8msg_pack16MsgPackArrayImplD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZN3sce2np8msg_pack16MsgPackArrayImplD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+APS5_EXPORT("iuilWJsw1OA", _ZN3sce2np8msg_pack16MsgPackArrayImplD1Ev);
 
 int APS5_VABI _ZN3sce2np8msg_pack16MsgPackValueImpl6AddRefEv() {
     NotImplemented_nid_no_patch(__func__);
@@ -1861,10 +1900,7 @@ int APS5_VABI _ZN3sce2np8msg_pack17MsgPackBinaryImplD0Ev() {
 int APS5_VABI _ZN3sce2np8msg_pack17MsgPackBinaryImplD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZN3sce2np8msg_pack17MsgPackBinaryImplD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+APS5_EXPORT("0cyGJtj6Mos", _ZN3sce2np8msg_pack17MsgPackBinaryImplD1Ev);
 
 int APS5_VABI _ZN3sce2np8msg_pack17MsgPackStringImpl8SetValueEPKc() {
     NotImplemented_nid_no_patch(__func__);
@@ -1877,10 +1913,7 @@ int APS5_VABI _ZN3sce2np8msg_pack17MsgPackStringImplD0Ev() {
 int APS5_VABI _ZN3sce2np8msg_pack17MsgPackStringImplD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI _ZN3sce2np8msg_pack17MsgPackStringImplD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
+APS5_EXPORT("72TLahYlJI4", _ZN3sce2np8msg_pack17MsgPackStringImplD1Ev);
 
 int APS5_VABI _ZN3sce2np9HttpTrans10SetTimeoutEPKNS1_12TimeoutParamE() {
     NotImplemented_nid_no_patch(__func__);
