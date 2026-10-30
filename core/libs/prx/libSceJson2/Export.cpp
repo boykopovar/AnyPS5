@@ -1570,17 +1570,21 @@ int InitializeResources(void* self, const void* parameter, std::int32_t format, 
     return 0;
 }
 
-const Node& Typed(const Value* self, ValueType requested) {
+const Node& Typed(const Value* self, ValueType requested, bool* usedDefault = nullptr) {
+    const auto fallback = [&]() -> const Node& {
+        if (usedDefault) *usedDefault = true;
+        return Defaults(requested);
+    };
     if (self->type == requested ||
             ((requested == TypeInteger || requested == TypeUInteger) &&
              (self->type == TypeInteger || self->type == TypeUInteger))) return *self;
     if (!ModernValues() && self->type == TypeNull) {
         const auto* auxiliary = RootOf(*self).auxiliary;
         if (auxiliary && auxiliary->nullAccess)
-            return Typed(&auxiliary->nullAccess(requested, self->parent, auxiliary->nullAccessContext), requested);
+            return Typed(&auxiliary->nullAccess(requested, self->parent, auxiliary->nullAccessContext), requested, usedDefault);
     }
     CallbackScope scope;
-    if (!scope.entered) return Defaults(requested);
+    if (!scope.entered) return fallback();
     NullAccessCallback callback = nullptr;
     void* context = nullptr;
     bool initialized;
@@ -1591,26 +1595,26 @@ const Node& Typed(const Value* self, ValueType requested) {
         callback = state.callback;
         context = state.context;
     }
-    if (!initialized) return Defaults(requested);
+    if (!initialized) return fallback();
     if (!ModernValues()) {
         const auto record = LegacyHandlerOf(RootOf(*self));
-        if (record.callback) return Typed(&record.callback(requested, self, self->parent, record.context), requested);
-        return Defaults(requested);
+        if (record.callback) return Typed(&record.callback(requested, self, self->parent, record.context), requested, usedDefault);
+        return fallback();
     }
     if (self->type == TypeNull) {
         const auto* auxiliary = RootOf(*self).auxiliary;
         if (auxiliary && auxiliary->nullAccess)
-            return Typed(&auxiliary->nullAccess(requested, self->parent, auxiliary->nullAccessContext), requested);
+            return Typed(&auxiliary->nullAccess(requested, self->parent, auxiliary->nullAccessContext), requested, usedDefault);
     }
     const auto* auxiliary = RootOf(*self).auxiliary;
     if (ModernValues() && auxiliary && auxiliary->typeMismatch && auxiliary->typeMismatch->callback)
-        return Typed(&auxiliary->typeMismatch->callback(requested, self, self->parent, auxiliary->typeMismatch->context), requested);
+        return Typed(&auxiliary->typeMismatch->callback(requested, self, self->parent, auxiliary->typeMismatch->context), requested, usedDefault);
     if (self->type == TypeNull && callback)
-        return Typed(&callback(requested, self->parent, context), requested);
+        return Typed(&callback(requested, self->parent, context), requested, usedDefault);
     const auto handlers = HandlersOf(*self);
     if (handlers.typeMismatch)
-        return Typed(&handlers.typeMismatch(requested, self, self->parent, handlers.typeMismatchContext), requested);
-    return Defaults(requested);
+        return Typed(&handlers.typeMismatch(requested, self, self->parent, handlers.typeMismatchContext), requested, usedDefault);
+    return fallback();
 }
 
 const Value& MissingElement(const Value* self, int error, const String* key, const std::size_t* index) {
@@ -2650,6 +2654,10 @@ int APS5_VABI _ZN3sce4Json11Initializer24setAllocatorInfoCallBackEPFviNS0_9Value
     return state.allocation ? 0 : JsonErrorNotInitialized;
 }
 
+extern const bool _ZN3sce4Json5Value10s_nullboolE = false;
+extern const std::int64_t _ZN3sce4Json5Value13s_nullintegerE = 0;
+extern const std::uint64_t _ZN3sce4Json5Value14s_nulluintegerE = 0;
+extern const double _ZN3sce4Json5Value10s_nullrealE = 0;
 std::size_t _ZN3sce4Json6String4nposE = static_cast<std::size_t>(-1);
 
 void APS5_VABI _ZN3sce4Json6StringC1Ev(String* self) { Construct(*self, std::string_view{}); }
@@ -3015,14 +3023,20 @@ void APS5_VABI _ZN3sce4Json5Value3setERKS1_(Value* self, const Value* other) {
 }
 
 ValueType APS5_VABI _ZNK3sce4Json5Value7getTypeEv(const Value* self) { return NodeOf(*self).type; }
-const bool* APS5_VABI _ZNK3sce4Json5Value10getBooleanEv(const Value* self) { return &Typed(self, TypeBoolean).boolean; }
+const bool* APS5_VABI _ZNK3sce4Json5Value10getBooleanEv(const Value* self) {
+    bool usedDefault = false;
+    const auto& value = Typed(self, TypeBoolean, &usedDefault);
+    return usedDefault ? &_ZN3sce4Json5Value10s_nullboolE : &value.boolean;
+}
 const std::int64_t* APS5_VABI _ZNK3sce4Json5Value10getIntegerEv(const Value* self) {
     Node& n = const_cast<Node&>(NodeOf(*self));
     if (n.type == TypeUInteger) {
         n.integer = std::bit_cast<std::int64_t>(n.uinteger);
         return &n.integer;
     }
-    return &Typed(self, TypeInteger).integer;
+    bool usedDefault = false;
+    const auto& value = Typed(self, TypeInteger, &usedDefault);
+    return usedDefault ? &_ZN3sce4Json5Value13s_nullintegerE : &value.integer;
 }
 const std::uint64_t* APS5_VABI _ZNK3sce4Json5Value11getUIntegerEv(const Value* self) {
     Node& n = const_cast<Node&>(NodeOf(*self));
@@ -3030,9 +3044,15 @@ const std::uint64_t* APS5_VABI _ZNK3sce4Json5Value11getUIntegerEv(const Value* s
         n.uinteger = static_cast<std::uint64_t>(n.integer);
         return &n.uinteger;
     }
-    return &Typed(self, TypeUInteger).uinteger;
+    bool usedDefault = false;
+    const auto& value = Typed(self, TypeUInteger, &usedDefault);
+    return usedDefault ? &_ZN3sce4Json5Value14s_nulluintegerE : &value.uinteger;
 }
-const double* APS5_VABI _ZNK3sce4Json5Value7getRealEv(const Value* self) { return &Typed(self, TypeReal).real; }
+const double* APS5_VABI _ZNK3sce4Json5Value7getRealEv(const Value* self) {
+    bool usedDefault = false;
+    const auto& value = Typed(self, TypeReal, &usedDefault);
+    return usedDefault ? &_ZN3sce4Json5Value10s_nullrealE : &value.real;
+}
 const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv(const Value* self) { return Typed(self, TypeString).string; }
 const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value* self) { return Typed(self, TypeArray).array; }
 const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value* self) { return Typed(self, TypeObject).object; }

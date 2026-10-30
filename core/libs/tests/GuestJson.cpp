@@ -1248,9 +1248,11 @@ static void ValueTypeMismatchHandler() {
     Require(_ZNK3sce4Json5Array4sizeEv(_ZNK3sce4Json5Value8getArrayEv(&root)) == 0);
     RequireMismatch(3, TypeArray, &root, &context);
     const Value* element = _ZNK3sce4Json5ValueixEm(&Member(root, "list"), 0);
-    Require(*_ZNK3sce4Json5Value7getRealEv(element) == 0.0);
+    const double* missingReal = _ZNK3sce4Json5Value7getRealEv(element);
+    Require(missingReal == &_ZN3sce4Json5Value10s_nullrealE && *missingReal == 0.0);
     RequireMismatch(4, TypeReal, element, &context);
-    Require(*_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "none")) == 42);
+    Require(_ZNK3sce4Json5Value10getIntegerEv(&Member(root, "none")) == &replacement.integer);
+    Require(replacement.integer == 42);
     Require(mismatchCalls == 5);
 
     Value later{};
@@ -1515,10 +1517,27 @@ static int NumericLocale() {
     return failures ? 1 : 0;
 }
 
+static void ScalarDefaultIdentity() {
+    Value empty{};
+    _ZN3sce4Json5ValueC1Ev(&empty);
+    Require(_ZNK3sce4Json5Value10getBooleanEv(&empty) == &_ZN3sce4Json5Value10s_nullboolE);
+    Require(_ZNK3sce4Json5Value10getIntegerEv(&empty) == &_ZN3sce4Json5Value13s_nullintegerE);
+    Require(_ZNK3sce4Json5Value11getUIntegerEv(&empty) == &_ZN3sce4Json5Value14s_nulluintegerE);
+    Require(_ZNK3sce4Json5Value7getRealEv(&empty) == &_ZN3sce4Json5Value10s_nullrealE);
+    _ZN3sce4Json5ValueD1Ev(&empty);
+
+    Value actual{};
+    _ZN3sce4Json5ValueC1Eb(&actual, true);
+    Require(_ZNK3sce4Json5Value10getBooleanEv(&actual) == &actual.boolean);
+    Require(*_ZNK3sce4Json5Value10getBooleanEv(&actual));
+    _ZN3sce4Json5ValueD1Ev(&actual);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "--numeric-locale") == 0) return NumericLocale();
     {
         ActiveModule module;
+        ScalarDefaultIdentity();
         ParseAndRoundTrip();
         NestingDepth();
         ObjectsAndArrays();
