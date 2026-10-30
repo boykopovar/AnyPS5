@@ -8,6 +8,7 @@
 #include "Personality.cpp"
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libc/include/specifics/gcc/SymbolAlias.hpp"
 
 extern "C" [[noreturn]] GCC_HIDDEN_FN void APS5_VABI LibcRuntimeAssertion(const char*, int, const char*, const char*) { std::abort(); }
@@ -79,3 +80,10 @@ void* NativeInitPrimaryException(void* object, std::type_info* type, void (*dest
 }
 }
 #endif
+
+APS5_EXPORT("8Vs1AjNm2mE", _ZTSN10__cxxabiv117__class_type_infoE);
+APS5_EXPORT("bPUMNZBqRqQ", _ZTSN10__cxxabiv117__pbase_type_infoE);
+APS5_EXPORT("UVft3+rc06o", _ZTSN10__cxxabiv119__pointer_type_infoE);
+APS5_EXPORT("4ZXlZy7iRWI", _ZTSN10__cxxabiv120__function_type_infoE);
+APS5_EXPORT("AQlqO860Ztc", _ZTSN10__cxxabiv120__si_class_type_infoE);
+APS5_EXPORT("I1Ru2fZJDoE", _ZTSN10__cxxabiv121__vmi_class_type_infoE);

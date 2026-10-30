@@ -2,6 +2,13 @@
 
 extern "C" {
 
+extern const char _ZTSN10__cxxabiv117__class_type_infoE[];
+extern const char _ZTSN10__cxxabiv117__pbase_type_infoE[];
+extern const char _ZTSN10__cxxabiv119__pointer_type_infoE[];
+extern const char _ZTSN10__cxxabiv120__function_type_infoE[];
+extern const char _ZTSN10__cxxabiv120__si_class_type_infoE[];
+extern const char _ZTSN10__cxxabiv121__vmi_class_type_infoE[];
+
 extern const char LibcGuest_ZTSSt8bad_cast_nid_no_patch[];
 extern const char LibcGuest_ZTSPKd_nid_no_patch[];
 extern const char LibcGuest_ZTSSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_no_patch[];
