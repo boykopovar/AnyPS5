@@ -2,7 +2,13 @@
 
 ### Silent stubs
 
-- [sceRemoteplayGetConnectionStatus, sceRemoteplayInitialize, sceRemoteplayTerminate](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - `sceRemoteplayGetConnectionStatus` reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID; `sceRemoteplayInitialize` and `sceRemoteplayTerminate` perform no remote play session setup or teardown
+- [sceRemoteplayGetConnectionStatus](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID: on the console the value comes from the session service, and the wrapper retries once through another internal query when that answers `0x80020003`; this tree has no session, so the value and the retry path are unmodelled
+
+### Functional
+
+- [sceRemoteplayInitialize, sceRemoteplayTerminate](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - the state machine follows the firmware 11.00 module (`libSceRemoteplay.sprx`), not checked on 13.x or on a console. `Initialize` (`0x13a0`) and `Terminate` (`0x13d0`) are thin wrappers over one singleton. An absent heap is accepted and the module allocates and aligns a 0x1800-byte heap itself, whose allocation failure is `0x80fc0002`; a present heap must be at least 0x1800 (`0x80fc0001`), and a call while the state is initialized returns `0x80fc0003`. Terminate returns `0x80fc0004` unless the module is initialized and leaves a terminated state that a later initialize accepts, so the state is not a boolean
+- [sceRemoteplayInitialize](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - the 0x1800 heap contents (the session object), the 5,000,000-unit timeout and the two virtual calls that initialize performs are unmodelled
+- [sceRemoteplayGetConnectionStatus](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - the state checks follow the 11.00 module (`0x1520`), not checked on 13.x or on a console: it returns `0x80fc0004` unless the module is initialized, checks the state before the output pointer and answers `0x80fc0001` for a null output
 
 ### Unknown function info
 

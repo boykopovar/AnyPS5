@@ -647,5 +647,33 @@ int APS5_VABI sceReal() { return 0; }
 
 
 
+class SourceLocationTests(unittest.TestCase):
+    def test_lookup_finds_named_and_explicit_aliases_without_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prx = root / "core/libs/prx"
+            file = prx / "libExample/Export.cpp"
+            file.parent.mkdir(parents=True)
+            nid = nid_names.compute_nid("sceNamed")
+            file.write_text('int APS5_VABI sceNamed_nid_postfix() { return 1; }\n'
+                            'APS5_EXPORT("3gQncidodmw", CameraImage);\n'
+                            'int APS5_VABI CameraImage() { return 1; }\n'
+                            'int APS5_VABI Helper_nid_no_patch() { return 1; }\n', encoding="utf-8")
+            output = io.StringIO()
+            with patch.object(nid_names, "ROOT", root), patch.object(nid_names, "PRX", prx), \
+                 patch.object(nid_names, "load_db", side_effect=AssertionError("unexpected database")), \
+                 contextlib.redirect_stdout(output):
+                self.assertEqual(nid_names.main(["--where", "--nid", nid, "3gQncidodmw", "--json"]), 0)
+            locations = json.loads(output.getvalue())["locations"]
+            self.assertEqual({row["name"] for row in locations}, {"sceNamed_nid_postfix", "CameraImage"})
+            self.assertTrue(all(row["path"] == "core/libs/prx/libExample/Export.cpp" for row in locations))
+
+    def test_where_requires_input_and_checks_nids(self):
+        for arguments in (["--where"], ["--where", "--nid"], ["--where", "--nid", "invalid"]):
+            with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    nid_names.main(arguments)
+
+
 if __name__ == "__main__":
     unittest.main()

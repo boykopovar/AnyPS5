@@ -151,6 +151,8 @@ def load_summary_lines(path, numbered=False):
             record = json.loads(line)
         except json.JSONDecodeError as error:
             raise ValueError(f"{path}:{number}: invalid JSON: {error.msg}") from error
+        except RecursionError as error:
+            raise ValueError(f"{path}:{number}: JSON nesting is too deep") from error
         if not isinstance(record, dict):
             raise ValueError(f"{path}:{number}: summary record must be an object")
         records.append((number, record) if numbered else record)

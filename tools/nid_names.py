@@ -145,6 +145,23 @@ def collect_real_names():
     return names
 
 
+def source_locations(nids):
+    matches = []
+    for path in source_files(PRX):
+        text = path.read_text(encoding="utf-8")
+        exports = set(source_aliases(text))
+        names = [match.group(1) for match in source_definitions(text)]
+        names.extend(source_assembly_definitions(text))
+        for name in names:
+            canonical = strip_nid_postfix(name)
+            if not canonical.endswith(("_nid_no_patch", "_nid_no_patch_cut")):
+                exports.add((compute_nid(canonical), name))
+        for nid, name in sorted(exports):
+            if nid in nids:
+                matches.append({"nid": nid, "name": name, "path": path.relative_to(ROOT).as_posix()})
+    return matches
+
+
 def option_name(argument, options):
     if not argument.startswith("-") or argument == "-":
         return None
@@ -202,6 +219,8 @@ def main(argv=None):
                         help="compute NIDs for these symbol names")
     parser.add_argument("--from-file", action="append", default=[], metavar="PATH",
                         help="append symbol names from a UTF-8 file, one nonempty line per name; repeat or use - for stdin")
+    parser.add_argument("--where", action="store_true",
+                        help="find source exports matching requested NIDs or symbol names")
     parser.add_argument("--json", action="store_true",
                         help="emit machine-readable JSON")
     options = [option for action in parser._actions for option in action.option_strings]
@@ -213,6 +232,28 @@ def main(argv=None):
         parser.error("--name/--symbol cannot be combined with --nid")
     if requested_nids and "--from-file" in requested_options:
         parser.error("--from-file cannot be combined with --nid")
+    if args.where:
+        if not requested_options & {"--nid", "--name", "--symbol", "--from-file"}:
+            parser.error("--where requires --nid, --name, or --from-file")
+        try:
+            names = [*(args.name or []), *(name for path in args.from_file for name in symbol_file(path))]
+            nids = {nid.split("#", 1)[0] for nid in args.nid or []}
+            nids.update(compute_nid(name) for name in names)
+            if not nids:
+                parser.error("--where requires at least one NID or symbol name")
+            for nid in nids:
+                if re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) is None:
+                    parser.error(f"invalid NID {nid!r}: expected 11 characters from A-Z, a-z, 0-9, + or -")
+            rows = source_locations(nids)
+        except (OSError, UnicodeError) as error:
+            parser.error(str(error))
+        if args.json:
+            print(json.dumps({"locations": rows}, indent=1))
+        else:
+            print("%-12s %-40s %s" % ("NID", "SOURCE NAME", "PATH"))
+            for row in rows:
+                print("%-12s %-40s %s" % (row["nid"], row["name"], row["path"]))
+        return 0
     if requested_options & {"--name", "--symbol", "--from-file"}:
         try:
             names = [*(args.name or []), *(name for path in args.from_file for name in symbol_file(path))]

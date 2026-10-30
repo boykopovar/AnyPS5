@@ -75,11 +75,18 @@ class PeModule:
 
     def coff_symbols(self, data, table, count):
         strings = table + count * 18
+        if strings > len(data) - 4:
+            raise ValueError("COFF string table header is outside the file")
+        size = struct.unpack_from("<I", data, strings)[0]
+        if size < 4 or size > len(data) - strings:
+            raise ValueError("COFF string table size is outside the file")
         result = []
         index = 0
         while index < count:
             entry = table + index * 18
             name, value, section, kind, storage, aux = struct.unpack_from("<8sIhHBB", data, entry)
+            if aux > count - index - 1:
+                raise ValueError("COFF auxiliary records exceed the symbol count")
             index += 1 + aux
             if storage not in (IMAGE_SYM_CLASS_EXTERNAL, IMAGE_SYM_CLASS_STATIC) or not 1 <= section <= len(self.sections):
                 continue
@@ -89,8 +96,13 @@ class PeModule:
             if storage == IMAGE_SYM_CLASS_STATIC and (kind >> 4) != 2 and value == 0:
                 continue
             if name[:4] == b"\0\0\0\0":
-                at = strings + struct.unpack_from("<I", name, 4)[0]
-                end = data.index(b"\0", at)
+                offset = struct.unpack_from("<I", name, 4)[0]
+                if not 4 <= offset < size:
+                    raise ValueError("COFF string table name offset is out of range")
+                at = strings + offset
+                end = data.find(b"\0", at, strings + size)
+                if end < 0:
+                    raise ValueError("COFF string table name is unterminated")
                 text = data[at:end]
             else:
                 text = name.rstrip(b"\0")
@@ -99,7 +111,7 @@ class PeModule:
 
     def export_symbols(self, data, rva, size):
         directory = self.offset(rva)
-        _, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", data, directory + 20)
+        functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", data, directory + 20)
         function_table = self.offset(function_rva)
         result = []
         if names:
@@ -107,6 +119,8 @@ class PeModule:
             ordinal_table = self.offset(ordinal_rva)
             for index in range(names):
                 ordinal = struct.unpack_from("<H", data, ordinal_table + index * 2)[0]
+                if ordinal >= functions:
+                    raise ValueError("PE export ordinal is outside the export address table")
                 address = struct.unpack_from("<I", data, function_table + ordinal * 4)[0]
                 if rva <= address < rva + size:
                     continue

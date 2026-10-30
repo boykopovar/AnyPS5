@@ -252,6 +252,24 @@ void fillContractTests() {
     for (std::size_t index = 0; index < partial.size(); ++index) Require(partial[index] == (index < 8u ? white[index % 4u] : std::byte{0}), "a clear fill over a partial trailing element did not zero the tail");
 }
 
+void guestFormatLookupTests() {
+    Require(FindGuestTextureFormat(VK_FORMAT_R8_UNORM, 1) == 1u, "format 1 must look up from R8_UNORM");
+    Require(FindGuestTextureFormat(VK_FORMAT_R8G8B8A8_UNORM, 4) == 56u, "format 56 must look up from R8G8B8A8_UNORM");
+    Require(FindGuestTextureFormat(VK_FORMAT_R8G8B8A8_SNORM, 4) == 57u, "format 57 must look up from R8G8B8A8_SNORM");
+    Require(FindGuestTextureFormat(VK_FORMAT_R16G16B16A16_SFLOAT, 8) == 71u, "format 71 must look up from R16G16B16A16_SFLOAT");
+    Require(!FindGuestTextureFormat(VK_FORMAT_B8G8R8A8_UNORM, 4).has_value(), "B8G8R8A8_UNORM is not a native texture format");
+    Require(!FindGuestTextureFormat(VK_FORMAT_B8G8R8A8_SNORM, 4).has_value(), "B8G8R8A8_SNORM is not a native texture format");
+    Require(!FindGuestTextureFormat(VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 8).has_value(), "block-compressed formats must not look up as texture formats");
+    Require(!FindGuestTextureFormat(VK_FORMAT_R8_UNORM, 2).has_value(), "mismatched element bytes must reject texture format lookup");
+
+    Require(FindGuestColorTargetFormat(VK_FORMAT_B8G8R8A8_UNORM, 4) == 56u, "B8G8R8A8_UNORM color target must map to guest format 56");
+    Require(FindGuestColorTargetFormat(VK_FORMAT_B8G8R8A8_SNORM, 4) == 57u, "B8G8R8A8_SNORM color target must map to guest format 57");
+    Require(FindGuestColorTargetFormat(VK_FORMAT_B8G8R8A8_SRGB, 4) == 130u, "B8G8R8A8_SRGB color target must map to guest format 130");
+    Require(FindGuestColorTargetFormat(VK_FORMAT_A2R10G10B10_UNORM_PACK32, 4) == 50u, "A2R10G10B10_UNORM color target must map to guest format 50");
+    Require(FindGuestColorTargetFormat(VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4) == 50u, "A2B10G10R10_UNORM color target must map to guest format 50");
+    Require(!FindGuestColorTargetFormat(VK_FORMAT_B8G8R8A8_SNORM, 8).has_value(), "mismatched element bytes must reject color target format lookup");
+}
+
 }
 
 void RunTextureFormatTests() {
@@ -318,4 +336,5 @@ void RunTextureFormatTests() {
     packedFloatDccClearTests();
     fillContractTests();
     gcnBufferFormatTests();
+    guestFormatLookupTests();
 }

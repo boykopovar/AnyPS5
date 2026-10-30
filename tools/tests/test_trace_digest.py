@@ -113,6 +113,18 @@ class TraceJsonNestingTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), original)
 
 class TraceDigestTests(unittest.TestCase):
+    def test_summary_jsonl_excessive_nesting_reports_line_without_traceback(self):
+        path = Path(self.directory.name) / "deep.jsonl"
+        path.write_text('{}\n\n{"extra":' + excessive_trace_json('[', ']') + '}\n', encoding="utf-8")
+        for arguments in ([str(path)], [str(self.trace), "--summary", str(path)]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, trace_digest.__file__, *arguments],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"{path}:3: JSON nesting is too deep", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_summary_jsonl_record_shapes_are_validated(self):
         path = Path(self.directory.name) / "invalid-summary.jsonl"
         for record in (None, True, False, 7, 1.5, "", "interval_start_s", [], ["interval_start_s"]):

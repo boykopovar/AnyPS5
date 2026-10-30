@@ -288,11 +288,47 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertNotIn("data_obj", module.names)
         self.assertNotIn(".text", module.names)
 
+    def test_coff_long_names_stay_inside_the_declared_string_table(self):
+        path = self.libs / "libSceAgcDriver.prx"
+        original = path.read_bytes()
+        table, count = struct.unpack_from("<II", original, 0x4C)
+        strings = table + count * 18
+        for length, offset in ((4, 4), (8, 4), (3, 4), (0x1000, 4), (32, 0), (32, 32)):
+            with self.subTest(length=length, offset=offset):
+                data = bytearray(original)
+                struct.pack_into("<I", data, strings, length)
+                struct.pack_into("<I", data, table + 3 * 18 + 4, offset)
+                path.write_bytes(data)
+                with self.assertRaisesRegex(ValueError, "COFF string table"):
+                    symbolize_samples.PeModule(path)
+
+    def test_coff_auxiliary_records_cannot_exceed_the_symbol_count(self):
+        path = self.libs / "libSceAgcDriver.prx"
+        data = bytearray(path.read_bytes())
+        table, count = struct.unpack_from("<II", data, 0x4C)
+        data[table + (count - 1) * 18 + 17] = 1
+        path.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "COFF auxiliary"):
+            symbolize_samples.PeModule(path)
+
     def test_export_table_names_a_module_without_symbols(self):
         module = symbolize_samples.PeModule(self.libs / "libwinpthread-1.dll")
         self.assertTrue(module.exported)
         self.assertEqual(module.name(0x1030), "~first_func")
         self.assertEqual(module.name(0x1070), "~second_func")
+
+    def test_export_ordinals_stay_inside_the_declared_address_table(self):
+        path = self.libs / "libwinpthread-1.dll"
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 0x600 + 20, 1)
+        path.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "export ordinal"):
+            symbolize_samples.PeModule(path)
+        warnings = []
+        symbolizer = symbolize_samples.Symbolizer([self.libs], {}, unverified=True, warn=warnings.append)
+        frame = "libwinpthread-1.dll+0x1070"
+        self.assertEqual(symbolizer.frame(frame), frame)
+        self.assertTrue(any("export ordinal" in warning for warning in warnings))
 
     def test_frames_keep_unknown_modules_and_out_of_range_addresses(self):
         symbolizer = symbolize_samples.Symbolizer([self.libs], {}, warn=lambda text: None, unverified=True)

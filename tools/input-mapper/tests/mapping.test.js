@@ -66,7 +66,7 @@ test('all exportable SDL names validate and unsafe comment names are rejected', 
 test('mouse values and action restrictions match the current INI format', () => {
     for (const action of actions) {
         for (const value of mouseValues) {
-            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot'].includes(action));
+            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus'].includes(action));
         }
     }
     assert.ok(validate([binding('Cross', 'MOUSE', 'Button1')]).errors.length);
@@ -83,20 +83,35 @@ test('wheel directions only map to pad buttons', () => {
 });
 
 test('new utility actions import and round trip without accepting unsupported sources', () => {
-    const source = 'StickModifier = MOUSE:X2\nShake = MOUSE:Left\nTogglePerformanceOverlay = KEY:F9\nScreenshot = KEY:F8\n';
+    const source = 'StickModifier = MOUSE:X2\nShake = MOUSE:Left\nTogglePerformanceOverlay = KEY:F9\nScreenshot = KEY:F8\nShowPadStatus = KEY:F4\n';
     const imported = parseIni(source);
     assert.deepEqual(imported.errors, []);
     assert.equal(serialize(imported.entries), source);
-    for (const action of ['StickModifier', 'Shake', 'TogglePerformanceOverlay', 'Screenshot']) {
+    for (const action of ['StickModifier', 'Shake', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus']) {
         assert.ok(validate([binding(action, 'WHEEL', 'Up')]).errors.length);
     }
-    for (const action of ['TogglePerformanceOverlay', 'Screenshot']) {
+    for (const action of ['TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus']) {
         assert.deepEqual(parseIni(`${action} = MOUSE:Left`).errors.map(error => error.line), [1]);
     }
 });
 
+test('ShowPadStatus is a keyboard-only action with an F9 default that conflicts like any built-in', () => {
+    assert.deepEqual(defaults.ShowPadStatus, ['KEY:F9']);
+    assert.deepEqual(typesForAction('ShowPadStatus'), ['KEY']);
+    assert.equal(serialize([binding('ShowPadStatus', 'KEY', 'F4')]), 'ShowPadStatus = KEY:F4\n');
+    assert.equal(serialize([binding(' showpadstatus ', 'key', 'f9')]), 'ShowPadStatus = KEY:F9\n');
+    for (const [type, value] of [['MOUSE', 'Left'], ['MOUSE', 'X2'], ['WHEEL', 'Up'], ['WHEEL', 'Down']]) {
+        assert.ok(validate([binding('ShowPadStatus', type, value)]).errors.length, `${type}:${value}`);
+    }
+    assert.equal(validate([binding('ShowPadStatus', 'KEY', 'F4')]).warnings.length, 0);
+    const shared = validate([binding('TogglePerformanceOverlay', 'KEY', 'F9')]);
+    assert.ok(shared.warnings.some(warning => warning.message.includes('TogglePerformanceOverlay and ShowPadStatus (built-in)')));
+    assert.equal(validate([binding('TogglePerformanceOverlay', 'KEY', 'F9'), binding('ShowPadStatus', 'KEY', 'F4')]).warnings.length, 0);
+    assert.ok(Object.values(defaults).flat().filter(source => source === 'KEY:F9').length === 1);
+});
+
 test('updated built-in inputs warn until their owning action is overridden', () => {
-    for (const [action, type, value] of [['L2', 'KEY', 'R'], ['L2', 'MOUSE', 'X1'], ['ToggleMouse', 'KEY', 'F7'], ['Shake', 'KEY', 'X'], ['Screenshot', 'KEY', 'F12'], ['TogglePerformanceOverlay', 'KEY', 'F10']]) {
+    for (const [action, type, value] of [['L2', 'KEY', 'R'], ['L2', 'MOUSE', 'X1'], ['ToggleMouse', 'KEY', 'F7'], ['Shake', 'KEY', 'X'], ['Screenshot', 'KEY', 'F12'], ['TogglePerformanceOverlay', 'KEY', 'F10'], ['ShowPadStatus', 'KEY', 'F9']]) {
         const input = binding('Cross', type, value);
         assert.ok(validate([input]).warnings.some(warning => warning.message.includes(`${action} (built-in)`)));
         assert.equal(validate([input, binding(action, 'KEY', 'J')]).warnings.length, 0);
