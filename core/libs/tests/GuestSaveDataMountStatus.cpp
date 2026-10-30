@@ -80,8 +80,12 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     char readTitle[128]{};
     Check(sceSaveDataUmount2(0, nullptr) == SaveDataErrorParameter, "umount2 null point is PARAMETER");
     Check(sceSaveDataLoadIcon(nullptr, &icon) == SaveDataErrorParameter, "loadIcon null point is PARAMETER");
+    Check(sceSaveDataLoadIcon(&unmounted, &icon) == SaveDataErrorNotMounted, "loadIcon unmounted point is NOT_MOUNTED");
+    Check(sceSaveDataLoadIcon(&unmounted, nullptr) == SaveDataErrorNotMounted, "loadIcon unmounted point with null icon is NOT_MOUNTED");
     Check(sceSaveDataLoadIcon(point, &icon) == 0, "loadIcon on mounted save succeeds");
     Check(sceSaveDataSaveIcon(nullptr, &icon) == SaveDataErrorParameter, "saveIcon null point is PARAMETER");
+    Check(sceSaveDataSaveIcon(&unmounted, &icon) == SaveDataErrorNotMounted, "saveIcon unmounted point is NOT_MOUNTED");
+    Check(sceSaveDataSaveIcon(&unmounted, nullptr) == SaveDataErrorNotMounted, "saveIcon unmounted point with null icon is NOT_MOUNTED");
     Check(sceSaveDataSaveIcon(point, &icon) == 0, "saveIcon on mounted save succeeds");
     Check(sceSaveDataSaveIconByPath(point, "icon.png") == 0, "saveIconByPath on mounted save succeeds");
     Check(sceSaveDataGetMountInfo(nullptr, &info) == SaveDataErrorParameter, "getMountInfo null point is PARAMETER");

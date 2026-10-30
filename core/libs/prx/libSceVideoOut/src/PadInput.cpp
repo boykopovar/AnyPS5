@@ -16,6 +16,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadInputTypes.hpp"
+#include "prx/libScePad/include/PadRumbleIntensity.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
@@ -24,6 +25,7 @@ PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
 }
 
 PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)) {
+    static_cast<void>(Pad::RumblePercent());
     openAvailableControllers();
 }
 
@@ -125,8 +127,11 @@ void PadInput::applyOutput() {
         const bool isPs5 = SDL_GameControllerGetType(controller) == SDL_CONTROLLER_TYPE_PS5;
         const auto large = std::max(slots[slot].outputState.vibrationLarge, slots[slot].outputState.audioVibrationLarge);
         const auto small = std::max(slots[slot].outputState.vibrationSmall, slots[slot].outputState.audioVibrationSmall);
-        const bool rumbling = large != 0 || small != 0;
-        const bool triggerRumble = slots[slot].outputState.trigger[0].fallback != 0 || slots[slot].outputState.trigger[1].fallback != 0;
+        const unsigned rumblePercent = Pad::RumblePercent();
+        const auto motors = Pad::MakeRumbleCommand(large, small, rumblePercent, 2000);
+        const auto triggers = Pad::MakeRumbleCommand(slots[slot].outputState.trigger[0].fallback, slots[slot].outputState.trigger[1].fallback, rumblePercent, 2000);
+        const bool rumbling = motors.Active();
+        const bool triggerRumble = triggers.Active();
         if (SDL_GameControllerHasLED(controller) == SDL_TRUE) {
             struct PlayerLedColor { Uint8 r, g, b; };
             static constexpr PlayerLedColor defaultColors[4] = {
@@ -147,8 +152,7 @@ void PadInput::applyOutput() {
         }
         slots[slot].outputPending = false;
         slots[slot].nextRumbleRefresh = now + std::chrono::milliseconds(700);
-        constexpr Uint32 rumbleMs = 2000;
-        SDL_GameControllerRumble(controller, static_cast<Uint16>(large * 257), static_cast<Uint16>(small * 257), rumbling ? rumbleMs : 0);
+        SDL_GameControllerRumble(controller, motors.low, motors.high, motors.durationMs);
         if (slots[slot].outputState.triggerTouched) {
             if (isPs5) {
                 TriggerEffectCache::Effect effect{};
@@ -159,7 +163,7 @@ void PadInput::applyOutput() {
                     slots[slot].triggerEffect.Result(effect, SDL_GameControllerSendEffect(controller, effect.data(), static_cast<int>(effect.size())) == 0);
                 }
             } else if (SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE) {
-                SDL_GameControllerRumbleTriggers(controller, static_cast<Uint16>(slots[slot].outputState.trigger[0].fallback * 257), static_cast<Uint16>(slots[slot].outputState.trigger[1].fallback * 257), triggerRumble ? rumbleMs : 0);
+                SDL_GameControllerRumbleTriggers(controller, triggers.low, triggers.high, triggers.durationMs);
             }
         }
     }

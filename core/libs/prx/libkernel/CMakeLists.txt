@@ -141,7 +141,7 @@ if(BUILD_TESTING)
     set_target_properties(guest_exec_host PROPERTIES PREFIX "" SUFFIX ".prx" BUILD_RPATH "$ORIGIN")
     configure_windows_unwind(guest_exec_host)
     find_package(Python3 COMPONENTS Interpreter QUIET)
-    if(Python3_FOUND)
+    if(Python3_FOUND AND ANYPS5_RELINKER_CLI)
         add_test(NAME exec_arguments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/core/relinker/relinker/tests/test_exec_arguments.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_exec_host>
@@ -258,7 +258,7 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     find_package(Python3 QUIET COMPONENTS Interpreter)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND Python3_Interpreter_FOUND)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND Python3_Interpreter_FOUND AND ANYPS5_RELINKER_CLI)
         add_test_executable(guest_runtime_lifecycle_tests ${LIBS_INCLUDE_DIR}/tests/GuestRuntimeLifecycle.cpp)
         target_include_directories(guest_runtime_lifecycle_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_runtime_lifecycle_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
@@ -2283,7 +2283,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_timed_join_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_timed_join_tests PRIVATE libkernel libc ${CMAKE_DL_LIBS})
     configure_windows_unwind(guest_timed_join_tests)
-    if(WIN32 AND Python3_Interpreter_FOUND)
+    if(WIN32 AND Python3_Interpreter_FOUND AND ANYPS5_RELINKER_CLI)
         foreach(joinProvider IN ITEMS libkernel_sys libkernel_web)
             add_test(NAME guest_timed_join_import_${joinProvider} COMMAND ${Python3_EXECUTABLE}
                 ${LIBS_INCLUDE_DIR}/tests/test_windows_timed_join_imports.py $<TARGET_FILE:relinker> ${PATCHED_DIR}

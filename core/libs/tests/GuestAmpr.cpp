@@ -468,6 +468,13 @@ void TestVersionedCommands() {
     Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPair_04_00(&pair, 11) == rejected);
     Require(sceAmprMeasureCommandSizeWaitOnAddress_04_00(&value, 0, 6, 1) == sizeof(Apr::WaitCommand));
     Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPair_04_00(&pair, 10) == sizeof(Apr::WriteAddressFromCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteAddressFromTimeCounterOnCompletion(&time) == sizeof(Apr::WriteAddressFromCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteAddressFromTimeCounterOnCompletion(nullptr) == rejected);
+    Require(sceAmprMeasureCommandSizeWriteAddressFromCounterOnCompletion(&single, 128) == sizeof(Apr::WriteAddressFromCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteAddressFromCounterOnCompletion(nullptr, 0) == rejected);
+    Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion(&pair, 10) == sizeof(Apr::WriteAddressFromCounterCommand));
+    Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion(&pair, 11) == rejected);
+    Require(sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion(nullptr, 10) == rejected);
 }
 
 void SubmitWithin10Seconds(const Recorder& recorder) {

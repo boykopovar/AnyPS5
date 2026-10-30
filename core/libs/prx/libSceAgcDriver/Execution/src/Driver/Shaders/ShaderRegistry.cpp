@@ -1537,8 +1537,8 @@ public:
 
 private:
     static std::mutex& Lifecycle() {
-        static std::mutex lifecycle;
-        return lifecycle;
+        static auto* lifecycle = new std::mutex;
+        return *lifecycle;
     }
 
     static bool& Closing() {
