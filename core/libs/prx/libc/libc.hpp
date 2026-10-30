@@ -7,3 +7,4 @@
 #include "prx/libc/include/WindowsFormatting.hpp"
 
 #include "prx/libc/include/RttiNames.hpp"
+#include "prx/libc/include/NumericLimitsData.hpp"

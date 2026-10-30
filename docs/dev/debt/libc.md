@@ -100,6 +100,8 @@
 
 ### Functional
 
+- [Numeric limits data](../../../core/libs/prx/libc/src/NumericLimitsData.cpp) exposes 128 read-only one- and four-byte objects by guest NID. Names match a public NID catalogue, and bytes and sizes match two version-labelled images whose labels are not authenticated. The underlying C++ object types, pointer identity and behavior when linked with the host C++ runtime remain unverified.
+
 - [RTTI type-name data](../../../core/libs/prx/libc/src/RttiNames.cpp) exposes 146 read-only, distinct, NUL-terminated C++ type-name strings through their guest NIDs. The names match a public NID catalogue, and their bytes and object sizes match two version-labelled images; those labels are not authenticated. Their relationship to guest type-info objects, pointer identity and cross-module RTTI behavior are unverified. These data exports do not implement the corresponding type-info objects.
 
 - [Math.cpp](../../../core/libs/prx/libc/src/Math.cpp) (libc) and [SignalList.cpp](../../../core/libs/prx/libSceLibcInternal/SignalList.cpp) (libSceLibcInternal) start with comments that keep the upstream FreeBSD, Sun Microsystems and University of California licence notices of the code they are derived from. The licences require the notices to stay with the code, so they are comments although they are not technical debt, and the conventions check cannot tell them from other comments. Closes when: the conventions check accepts licence notices without a debt entry
