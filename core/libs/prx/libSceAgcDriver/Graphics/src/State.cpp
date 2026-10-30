@@ -2120,6 +2120,7 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         case 14u: color.tileMode = ColorTileMode::GcnThin2D; break;
         default: throw std::runtime_error("AGC graphics: PS4 color target tile mode index " + std::to_string(attrib & 0x1fu) + " is not implemented");
     }
+    Require(slice == 0 || (color.tileMode != ColorTileMode::GcnDisplay2D && color.tileMode != ColorTileMode::GcnThin2D), "GCN color views of a later slice of a 2D-tiled array, whose banks rotate per slice, are not implemented");
     color.mipCount = 1;
     const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
     Require(layout.Bytes() == static_cast<std::size_t>(pitch) * color.extent.height * color.elementBytes, "PS4 color target pitch or slice is not padded the way its tile mode pads them");
