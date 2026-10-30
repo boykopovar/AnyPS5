@@ -130,6 +130,8 @@ struct AudioOut2Context {
     std::atomic<std::uint32_t> publishedQueueLevel{0};
 };
 
+AudioOut2Context* AudioOut2FindContext(AudioOut2ContextHandle ctx);
+
 // Mixes every port of the context that carries PCM data into out (stereo float, frames frames), summing
 // onto the zeroed buffer. Returns the number of ports mixed.
 std::uint32_t AudioOut2MixPorts(const AudioOut2Context& context, const AudioOut2Grain& grain, float* out, float* padOut, std::uint32_t frames);

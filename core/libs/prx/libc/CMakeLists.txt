@@ -51,6 +51,8 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AppArchive.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CreationMask.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FailureReport.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LogFilePlatform.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/LogFile.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/gcc/StackGuard.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/x86_64/CallTrace.cpp
@@ -1131,6 +1133,10 @@ if(BUILD_TESTING)
         target_include_directories(exception_personality_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(exception_personality_tests PRIVATE libc)
         add_test(NAME exception_personality COMMAND exception_personality_tests)
+        add_test_executable(exception_compact_unwind_tests ${LIBS_INCLUDE_DIR}/tests/ExceptionCompactUnwind.cpp)
+        target_include_directories(exception_compact_unwind_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(exception_compact_unwind_tests PRIVATE libc)
+        add_test(NAME exception_compact_unwind COMMAND exception_compact_unwind_tests)
         add_test_executable(guest_exit_order_tests ${LIBS_INCLUDE_DIR}/tests/GuestExitOrder.cpp)
         target_include_directories(guest_exit_order_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_exit_order_tests PRIVATE libc)
@@ -1253,6 +1259,13 @@ if(BUILD_TESTING)
     configure_windows_unwind(log_macros_tests)
     add_test(NAME log_macros COMMAND log_macros_tests)
     add_test(NAME log_macros_timestamps COMMAND log_macros_tests timestamps)
+    if(NOT WIN32)
+        add_test_executable(log_file_tests ${LIBS_INCLUDE_DIR}/tests/LogFile.cpp)
+        target_include_directories(log_file_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(log_file_tests PRIVATE libc)
+        add_test(NAME log_file COMMAND log_file_tests)
+        set_tests_properties(log_file PROPERTIES TIMEOUT 30)
+    endif()
     if(WIN32)
         set_tests_properties(log_macros log_macros_timestamps PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")

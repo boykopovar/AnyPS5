@@ -587,6 +587,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_LOG_FILE` | string | `core/libs/prx/libc/src/LogFilePlatform.cpp` |  | path of a file that also receives everything the converted executable writes to standard output and standard error, appended line by line, while the terminal output goes on; relative paths resolve against the working directory; an empty value is the same as unset; a file that cannot be opened stops the executable at load with status 1 and an error naming the variable, the path and the operating system error |
 | `APS5_CRASH_INDIRECT_MEMORY` | presence | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | adds to the Windows crash report up to 64 bytes from each pointer in the dump of the words the registers point at, as `[[reg+off]] @addr` lines; off when unset or empty |
 | `APS5_CRASH_STACK_BYTES` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` | 0 | bytes of the faulting thread's stack from rsp, decimal or 0x hexadecimal and at most 1048576, that the Windows crash report prints with the data at the stack words pointing outside the stack; 0 prints none |
 | `APS5_HANG_DUMP_SECS` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | on Windows, whole seconds after which a watchdog dumps all threads and aborts; 0 or a value that is not a decimal number is ignored |

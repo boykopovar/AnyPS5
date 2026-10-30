@@ -174,6 +174,7 @@ HostLaunch PrepareLaunch(const char* path, const char* const* arguments) {
 }
 
 void StartHostExecutable(HostLaunch& launch) {
+    LogFileRelease_nid_no_patch();
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
@@ -234,6 +235,7 @@ void StartHostExecutable(HostLaunch& launch) {
     if (const int host = HostStandardError_nid_no_patch(); host >= 0 && ::dup2(host, 2) != 2) {
         throw std::runtime_error("sceSystemServiceLoadExec: cannot give the host standard error back to descriptor 2: " + std::string(std::strerror(errno)));
     }
+    LogFileRelease_nid_no_patch();
     ::execv(launch.executable.c_str(), argv.data());
     throw std::runtime_error("sceSystemServiceLoadExec: execv failed: " + std::string(std::strerror(errno)));
 }

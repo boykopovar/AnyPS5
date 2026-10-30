@@ -481,6 +481,25 @@ Page 2 is wider, 46 characters, and has no graph. It reads its sources once a se
 
 The busy shares, the phases, the queue 0 waits and the render passes come from the totals the trace keeps per thread. Showing page 2 turns those totals on, without the event buffers of an `APS5_TRACE_FRAMES` trace: while page 2 is shown, each timed scope on the driver's threads reads the clock twice and adds its time to its thread's totals, and each render pass begun is counted there. Leaving page 2 turns the totals off again. A run with an `APS5_TRACE_*` variable keeps its trace as configured; page 2 then shows those lines only while that trace records. While the overlay is hidden or on page 1, page 2 adds a check per render pass begun (the same check each timed scope already makes), a per-thread count of the bytes each address-based build copies, a count of unimplemented-function calls and the display buffer's address per present; its sources are read only while it is shown.
 
+### Saving the log to a file
+
+Set `ANYPS5_LOG_FILE=<path>` in the environment of a converted executable to keep its log in a file you can attach to a bug report. The executable still prints everything on the terminal; the file receives a copy of what it writes to standard output and standard error: the runtime's log lines, the `[tag]` messages, what the title itself prints there, and the crash and abort reports. `APS5_LOG_TIMESTAMPS` stamps the lines in the file as it does on the terminal. The relinker, the trace files of the `APS5_TRACE_*` variables and the output of programs that do not write to those two streams are not part of it.
+
+```
+ANYPS5_LOG_FILE=run.log ./app.elf
+```
+
+- The file is opened when the executable loads, and created if it does not exist. A relative path is resolved against the working directory.
+- The file is appended to, never truncated, so a title that starts another converted executable keeps writing to the same file and a second run continues below the first. Each start writes one line `[log] ANYPS5_LOG_FILE: appending to this file, process <id>` to the file only. Delete the file first to begin a fresh log. There is no `{pid}` or date expansion in the path.
+- An empty value is the same as an unset variable. A path that cannot be opened (a missing directory, a directory, no permission) stops the executable before it runs, with status 1 and a message that names `ANYPS5_LOG_FILE`, the path and the operating system error.
+- A line produced by one `write` call is written to the file whole: a line of standard output never lands inside a line of standard error. Two threads writing lines longer than the pipe's atomic size (512 bytes on macOS, 4096 on Linux) to the same stream can still interleave, as they do on a terminal. The two streams are copied by two threads, so lines of one stream can come out a few lines before or after lines of the other that were written at nearly the same time. A last line without a newline gets one in the file when the process ends.
+- A crash or abort report, and the lines written before it, are written to the file before the process ends. A process ended from outside, by `SIGKILL` or `TerminateProcess` for example, loses what it had written in the last milliseconds.
+- The file has no size limit and grows for as long as the title logs.
+- If the file can no longer be written, for example because the disk is full, the executable prints one line saying so and goes on with the terminal output only.
+- While the variable is set the executable runs two extra threads and holds the standard streams in two pipes. A child process the title starts keeps its output in the same pipes, so output it writes after the title exits is lost, and on Linux and macOS the `SIGPIPE` of that write ends it unless it ignores the signal. When the title replaces itself with another executable through `sceSystemServiceLoadExec`, the real streams are handed over first.
+- With no console, for example a Windows executable started without one, only the file receives the log.
+- On Windows the redirection of the standard handles and the crash report path were written from the code and compiled for MinGW, but not run: an unexpected behaviour there is worth a bug report that says so.
+
 ### Windows crash diagnostics
 
 When a register points at readable memory that starts with at least four printable ASCII characters, either as UTF-16LE or as single bytes, the crash report prints that text after the register memory dump, as `[r13] u"..."` for UTF-16LE or `[rdi] "..."` for single bytes. The text ends at a NUL, at the first character that is not printable ASCII, a tab, a line feed or a carriage return, after 512 characters or at the end of readable memory. Tabs, line breaks, quotes and backslashes are escaped, and `...` after the closing quote means that no NUL ended the text within those limits.
