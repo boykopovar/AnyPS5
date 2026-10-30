@@ -225,6 +225,7 @@ if(BUILD_TESTING)
     add_test_executable(guest_libressl_object_allocation_tests
         tests/ObjectTextAllocation.cpp src/ObjectText.cpp src/ObjectTable.cpp src/Error.cpp)
     target_include_directories(guest_libressl_object_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_compile_features(guest_libressl_object_allocation_tests PRIVATE cxx_std_23)
     target_link_libraries(guest_libressl_object_allocation_tests PRIVATE libc)
     configure_windows_unwind(guest_libressl_object_allocation_tests)
     add_test(NAME guest_libressl_object_allocation COMMAND guest_libressl_object_allocation_tests)

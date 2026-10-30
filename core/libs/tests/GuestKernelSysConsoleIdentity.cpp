@@ -16,6 +16,7 @@ namespace {
 
 constexpr int GuestEperm = 1;
 constexpr int GuestEsrch = 3;
+constexpr int GuestEfault = 14;
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -47,6 +48,8 @@ void CheckAuthInfo() {
     } info;
     *__error_nid_postfix() = 0;
     Require(get_authinfo_nid_postfix(0, nullptr) == -1 && *__error_nid_postfix() == GuestEperm, "a null result must fail with EPERM");
+    Require(get_authinfo_nid_postfix(0, reinterpret_cast<KernelAuthInfo*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault,
+            "an unwritable store must fail with EFAULT");
     std::memset(&info, 0x5a, sizeof(info));
     *__error_nid_postfix() = 0;
     Require(get_authinfo_nid_postfix(getpid_nid_postfix() + 1, &info.value) == -1 && *__error_nid_postfix() == GuestEsrch,

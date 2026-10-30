@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/CompileBudget.hpp"
 #include "BdaAbi.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
@@ -30,6 +31,7 @@
 #include "prx/libSceAgcDriver/Execution/include/SwapchainImages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/KeyboardOverlay.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PadStatusOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
@@ -560,6 +562,7 @@ struct VulkanDevice::State {
     std::unique_ptr<PresentationPass> planePass;
     std::unique_ptr<PerformanceOverlay> overlay;
     std::unique_ptr<PerformanceOverlay> keyboard;
+    std::unique_ptr<PerformanceOverlay> padStatus;
     VkFormat surfaceFormat = VK_FORMAT_B8G8R8A8_UNORM;
     VkColorSpaceKHR surfaceColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     bool swapchainColorSpaces = false;
@@ -836,6 +839,7 @@ struct VulkanDevice::State {
             }
             const double gapMs = stamped ? (lastNs - firstNs) / 1e6 - busyMs : 0;
             if (auto* frame = PerformanceContext::Current()) frame->NoteRetired(0, busyMs, gapMs);
+            if (stamped && missing == 0) Graphics::Recorder::NoteFrameGpuBusy(busyMs);
             presentCounters.gpuBusyMs += busyMs;
             presentCounters.gpuGapMs += gapMs;
             presentCounters.gpuUnread += missing;
@@ -960,6 +964,7 @@ struct VulkanDevice::State {
             overlay.reset();
             planePass.reset();
             keyboard.reset();
+            padStatus.reset();
             presentation.reset();
             scaler.reset();
             hdrScaler.reset();
@@ -2384,12 +2389,34 @@ bool VulkanDevice::ReplayComputePipeline(const ShaderRecompiler::RecompileResult
         std::lock_guard pipelines(state->computePipelinesMutex);
         if (state->computePipelines.contains(key) || state->computePipelinesBuilding.contains(key)) return false;
     }
-    const auto context = graphicsContext();
-    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
-    const auto layouts = Graphics::DescribeSetLayouts(context, shaders);
-    auto objects = createComputePipeline(context, shader, layouts.layouts.main, layouts.mainKey, pushConstants ? VK_SHADER_STAGE_COMPUTE_BIT : 0u, 0);
-    std::lock_guard pipelines(state->computePipelinesMutex);
-    return state->computePipelines.try_emplace(key, std::move(objects)).second;
+    const CompileBudget::Hold hold(BackgroundCompileBudget(), shader.spirv.size() * sizeof(std::uint32_t));
+    std::promise<std::shared_ptr<ComputePipelineObjects>> building;
+    {
+        std::lock_guard pipelines(state->computePipelinesMutex);
+        if (state->computePipelines.contains(key) || state->computePipelinesBuilding.contains(key)) return false;
+        state->computePipelinesBuilding.emplace(key, building.get_future().share());
+    }
+    std::shared_ptr<ComputePipelineObjects> objects;
+    std::exception_ptr error;
+    try {
+        const auto context = graphicsContext();
+        const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+        const auto layouts = Graphics::DescribeSetLayouts(context, shaders);
+        objects = createComputePipeline(context, shader, layouts.layouts.main, layouts.mainKey, pushConstants ? VK_SHADER_STAGE_COMPUTE_BIT : 0u, 0);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    {
+        std::lock_guard pipelines(state->computePipelinesMutex);
+        if (objects != nullptr) state->computePipelines.try_emplace(key, objects);
+        state->computePipelinesBuilding.erase(key);
+    }
+    if (error != nullptr) {
+        building.set_exception(error);
+        std::rethrow_exception(error);
+    }
+    building.set_value(std::move(objects));
+    return true;
 }
 
 bool VulkanDevice::HasComputePipeline(const ShaderRecompiler::RecompileResult& shader) const {
@@ -2407,6 +2434,8 @@ void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResu
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
     const auto pushStages = Graphics::PushConstantStages(shaders);
     if (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes) return;
+    if (HasComputePipeline(shader)) return;
+    const CompileBudget::Hold hold(BackgroundCompileBudget(), shader.spirv.size() * sizeof(std::uint32_t));
     if (HasComputePipeline(shader)) return;
     const auto layouts = Graphics::DescribeSetLayouts(context, shaders);
     static_cast<void>(computePipeline(context, shader, layouts.layouts.main, layouts.mainKey, pushStages, programAddress));
@@ -3691,7 +3720,9 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     const auto planeSource = plane != nullptr ? OverlayPlaneSource(graphicsContext(), *plane) : PlaneSource{};
     const auto systemLayout = SystemOverlayLayout(state->extent);
     const bool keyboard = systemLayout.has_value();
-    const bool drawsOver = overlay || keyboard || plane != nullptr;
+    const auto padStatusLines = PadStatusOverlayLines();
+    const bool padStatusShown = PadStatusDrawn(padStatusLines.has_value(), keyboard);
+    const bool drawsOver = overlay || keyboard || padStatusShown || plane != nullptr;
     if (display != nullptr && resident == nullptr) {
         static_cast<void>(DisplayBufferSize(*display));
         state->colorTransfer->Upload(display->address, width, height, Graphics::ColorTileMode::RenderTarget, DisplayTexelBytes(display->pixelFormat));
@@ -3855,7 +3886,7 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
     }
     if (plane != nullptr) {
         bindPlane();
-        state->planePass->RecordOverlay(commands, planeSlot, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay || keyboard ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        state->planePass->RecordOverlay(commands, planeSlot, barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         if (planeSource.resident != nullptr) {
             planeBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
             planeBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -3867,11 +3898,15 @@ bool VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
         if (!state->keyboard) state->keyboard = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
         state->keyboard->RecordRects(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || plane != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, *systemLayout);
     }
+    if (padStatusShown) {
+        if (!state->padStatus) state->padStatus = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
+        state->padStatus->RecordRects(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || plane != nullptr ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, overlay ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, LayOutPadStatus(*padStatusLines, state->extent, PerformanceOverlay::Corner()));
+    }
     if (overlay) {
         if (!state->overlay) state->overlay = std::make_unique<PerformanceOverlay>(graphicsContext(), state->presentSlots.size());
         state->overlay->NotePresent(std::chrono::steady_clock::now(), clearOnly ? VkExtent2D{} : VkExtent2D{width, height}, OverlayPresentInfo{std::exchange(state->presentedAddress, 0), state->presentMode, presentCounters.acquireDrops});
-        state->overlay->Record(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || plane != nullptr || keyboard ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-    } else if (!drawn && plane == nullptr && !keyboard) {
+        state->overlay->Record(commands, static_cast<std::size_t>(&slot - state->presentSlots.data()), barrier.image, state->surfaceFormat, state->surfaceColorSpace, state->extent, drawn || plane != nullptr || keyboard || padStatusShown ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    } else if (!drawn && plane == nullptr && !keyboard && !padStatusShown) {
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = 0;
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;

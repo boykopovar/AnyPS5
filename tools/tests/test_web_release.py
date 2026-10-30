@@ -76,6 +76,10 @@ class WebReleaseTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+        patcher = patch.object(build_web, "release_web_files",
+                               side_effect=lambda rev: set(FILES) if rev == REVISION else None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.root = Path(self.directory.name)
         self.build = self.root / "build"
         self.output = self.build / "web"

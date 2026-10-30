@@ -194,6 +194,20 @@ static void CheckNamedAndHintedMappings() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(first), length) == 0);
 }
 
+static void CheckVirtualRangeNames() {
+    constexpr std::size_t length = 0x4000;
+    void* mapping = nullptr;
+    Require(sceKernelMapFlexibleMemory(&mapping, length, 3, 0) == 0);
+    Require(sceKernelSetVirtualRangeName(mapping, length, nullptr) == static_cast<int>(0x8002000eu));
+    Require(NameAt(mapping)[0] == '\0');
+    Require(sceKernelSetVirtualRangeName(mapping, length, "first") == 0);
+    Require(sceKernelSetVirtualRangeName(mapping, length, "second") == 0);
+    Require(std::strcmp(NameAt(mapping), "second") == 0);
+    Require(sceKernelClearVirtualRangeName(mapping, length) == 0);
+    Require(NameAt(mapping)[0] == '\0');
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), length) == 0);
+}
+
 static void CheckAudioCoprocessorProtection() {
     constexpr std::size_t length = 0x4000;
     void* writable = nullptr;
@@ -3860,6 +3874,7 @@ int main(int argc, char** argv) {
     CheckPageTableStats();
     CheckVirtualQueryWireLayout();
     CheckNamedAndHintedMappings();
+    CheckVirtualRangeNames();
     CheckInternalNamedFlexibleMapping();
     CheckFlexibleFixedReplacement();
     CheckMunmapScopedFlexibleRelease();

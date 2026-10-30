@@ -6302,7 +6302,15 @@ void descriptorPoolResetFailureTest() {
     const auto previous = _ZSt13set_terminatePFvvE_nid_postfix([] {
         std::_Exit(mock.descriptorResetResult == VK_SUCCESS ? 0 : 1);
     });
+#ifdef __APPLE__
+    const auto previousHost = std::set_terminate([] {
+        std::_Exit(mock.descriptorResetResult == VK_SUCCESS ? 0 : 1);
+    });
+#endif
     cache.Free(allocation);
+#ifdef __APPLE__
+    std::set_terminate(previousHost);
+#endif
     _ZSt13set_terminatePFvvE_nid_postfix(previous);
 
 }

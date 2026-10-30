@@ -1292,7 +1292,11 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (base < 0) return SceErrorFromErrno(errno);
     if (basep != nullptr) *basep = static_cast<int64_t>(base);
     std::vector<char> host(static_cast<std::size_t>(nbytes) < 4096 ? 4096 : static_cast<std::size_t>(nbytes));
+#ifdef __EMSCRIPTEN__
+    const auto read = ::getdents(fd, reinterpret_cast<struct dirent*>(host.data()), host.size());
+#else
     const auto read = ::syscall(SYS_getdents64, fd, host.data(), host.size());
+#endif
     if (read < 0) return SceErrorFromErrno(errno);
     std::size_t written = 0;
     off_t resume = base;

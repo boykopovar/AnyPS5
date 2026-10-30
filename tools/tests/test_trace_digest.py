@@ -237,6 +237,8 @@ class TraceDigestTests(unittest.TestCase):
             (dict(slice_event, dur="10"), "trace event 0: dur must be a finite number"),
             (dict(slice_event, dur=True), "trace event 0: dur must be a finite number"),
             (dict(slice_event, dur=[1]), "trace event 0: dur must be a finite number"),
+            (dict(slice_event, dur=-1), "trace event 0: dur must be non-negative"),
+            (dict(slice_event, dur=-0.001, args={"batch": 42}), "trace event 0: dur must be non-negative"),
             (dict(slice_event, ts={}), "trace event 0: ts must be a finite number"),
             (dict(slice_event, ts="0"), "trace event 0: ts must be a finite number"),
             (dict(slice_event, ts=float("nan")), "trace event 0: ts must be a finite number"),

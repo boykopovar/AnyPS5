@@ -1210,6 +1210,22 @@ static void CheckInetPtonEx() {
     }
 }
 
+static void CheckEtherNtostrErrors() {
+    const NetEtherAddr address{{0, 1, 2, 10, 11, 15}};
+    std::array<char, 18> text{};
+    text.fill('#');
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(nullptr, text.data(), text.size()), 22));
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(&address, nullptr, text.size()), 22));
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(&address, text.data(), text.size() - 1), 22));
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(&address, text.data(), 0), 22));
+    Require(std::all_of(text.begin(), text.end(), [](char character) { return character == '#'; }));
+    Require(sceNetEtherNtostr(&address, text.data(), text.size()) == 0);
+}
+
 static void CheckEtherAddress() {
     struct GuardedAddress {
         std::uint8_t before;
@@ -2184,6 +2200,7 @@ static void CheckDatagramDisconnect() {
 
 int main() {
     CheckEtherAddress();
+    CheckEtherNtostrErrors();
     const auto epoch = std::chrono::steady_clock::time_point{};
     Require(KernelSocketSelect::DeadlineAfter(epoch, 2, 250000) == epoch + std::chrono::milliseconds(2250));
     Require(KernelSocketSelect::DeadlineAfter(epoch, INT64_MAX, 0) == std::chrono::steady_clock::time_point::max());

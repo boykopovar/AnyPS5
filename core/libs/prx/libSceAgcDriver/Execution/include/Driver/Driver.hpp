@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Dispatch/IndirectDispatch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/WriteEvidence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Packets/PacketTiming.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/LabelTakes.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/WaitMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
@@ -220,6 +221,7 @@ private:
     void noteLabelStore(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue);
     void noteLabelPass(std::span<const std::uint32_t> packet, std::uint32_t queue);
     void noteLabelIssue(std::span<const std::uint32_t> packet, std::uint32_t queue);
+    void retireLabelTakes(std::uint32_t queue, std::uint64_t received);
     bool storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer = nullptr);
     static void traceLabel(std::span<const std::uint32_t> packet, std::uint32_t queue);
     static std::array<WriteRecord, 16384>& writeHistory();
@@ -461,8 +463,7 @@ private:
 
     AgcDriver::Mutex labelStoresMutex;
     std::unordered_map<std::uint64_t, std::array<LabelStore, LabelStoreHistory>> labelStores;
-    std::unordered_map<std::uint64_t, std::uint64_t> labelPasses;
-    std::unordered_map<std::uint64_t, std::uint64_t> labelTaken;
+    LabelTakes labelTakes;
 
     std::vector<std::shared_ptr<VulkanDevice>> replacedDevices;
     std::stop_token shutdownToken = LibcShutdownToken_nid_postfix();

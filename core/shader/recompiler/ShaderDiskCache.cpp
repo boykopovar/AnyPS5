@@ -106,7 +106,7 @@ static_assert(sizeof(BindingAllocationResult) == 184, "BindingAllocationResult c
 static_assert(sizeof(CompiledBindingLayout) == 88, "CompiledBindingLayout changed: update the allocation encoder");
 static_assert(sizeof(BindingLayout) == 16, "BindingLayout changed: update BuildKey");
 static_assert(sizeof(IrResourcePlan) == 728, "IrResourcePlan changed: update EncodePlan and DecodePlan");
-static_assert(sizeof(IrValue) == 136, "IrValue changed: update the plan value encoder");
+static_assert(sizeof(IrValue) == 144, "IrValue changed: update the plan value encoder");
 static_assert(sizeof(GuestRegister) == 8, "GuestRegister changed: update the plan value encoder");
 static_assert(sizeof(MemoryInfo) == 80, "MemoryInfo changed: update the plan encoder");
 static_assert(sizeof(DescriptorSource) == 192, "DescriptorSource changed: update the plan encoder");
@@ -805,6 +805,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.flatVolumeCompatible);
         out.Value(image.singleMipPlaneBiasCompatible);
         out.Value(image.volumeArraySampleCompatible);
+        out.Value(image.adjustedSample);
         out.Value(image.flatLineCompatible);
         out.Value(image.flatVolumeLineCompatible);
         out.Value(image.dimensionQueryOnly);
@@ -916,6 +917,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.flatVolumeCompatible);
         in.Value(image.singleMipPlaneBiasCompatible);
         in.Value(image.volumeArraySampleCompatible);
+        in.Value(image.adjustedSample);
         in.Value(image.flatLineCompatible);
         in.Value(image.flatVolumeLineCompatible);
         in.Value(image.dimensionQueryOnly);

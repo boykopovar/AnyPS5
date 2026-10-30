@@ -4,6 +4,39 @@
 
 - [sceNpWebApiGetHttpStatusCode, sceNpWebApiReadData](../../../core/libs/prx/libSceNpWebApi/Export.cpp) - throw through `NotImplemented_nid_no_patch`; behaviour and the PS5 prototypes are unmeasured. The only source of the parameter lists is shadPS4's PS4-derived prototypes (GPLv2, used as a reference only), with no second reference; structure pointers are `void*` because no layout is known.
 - [sceNpWebApiInitialize, sceNpWebApiTerminate, sceNpWebApiCreateHandle, sceNpWebApiDeleteHandle, sceNpWebApiCreatePushEventFilter, sceNpWebApiDeletePushEventFilter](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi, PS4) - signatures, id ranges (library contexts 1 to 0x7fff, handles and filters below 0xf0000000) and errors (`LIB_CONTEXT_NOT_FOUND`, `HANDLE_NOT_FOUND`, `PUSH_EVENT_FILTER_NOT_FOUND`, `INVALID_ARGUMENT` for a missing filter parameter) follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/np/np_web_api/np_web_api_internal.cpp); they are not checked on a console. The libHttp context and pool size are kept but not used, since no request is ever sent. Limbo (CUSA01664) creates a context, a handle and filters when its game starts.
+
+- [The firmware inventory exports listed below](../../../core/libs/prx/libSceNpWebApi/Export.cpp) have unknown signatures and behaviour. Only their names and NIDs are established by the [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscenpwebapi-30b6435a6f.jsonl). Their parameterless `int` declarations are import-resolution placeholders, not confirmed ABI signatures, and every call throws through `NotImplemented_nid_no_patch`.
+
+| Name | NID |
+| --- | --- |
+| `sceNpWebApiAbortHandle` | `WKcm4PeyJww` |
+| `sceNpWebApiAddHttpRequestHeader` | `joRjtRXTFoc` |
+| `sceNpWebApiAddMultipartPart` | `19KgfJXgM+U` |
+| `sceNpWebApiCheckTimeout` | `gVNNyxf-1Sg` |
+| `sceNpWebApiClearAllUnusedConnection` | `KQIkDGf80PQ` |
+| `sceNpWebApiClearUnusedConnection` | `f-pgaNSd1zc` |
+| `sceNpWebApiCreateMultipartRequest` | `KBxgeNpoRIQ` |
+| `sceNpWebApiGetConnectionStats` | `UJ8H+7kVQUE` |
+| `sceNpWebApiGetErrorCode` | `2qSZ0DgwTsc` |
+| `sceNpWebApiInitializeForPresence` | `FkuwsD64zoQ` |
+| `sceNpWebApiIntCreateCtxIndExtdPushEventFilter` | `c1pKoztonB8` |
+| `sceNpWebApiIntCreateRequest` | `N2Jbx4tIaQ4` |
+| `sceNpWebApiIntCreateServicePushEventFilter` | `TZSep4xB4EY` |
+| `sceNpWebApiIntInitialize` | `8Vjplhyyc44` |
+| `sceNpWebApiIntRegisterServicePushEventCallback` | `VjVukb2EWPc` |
+| `sceNpWebApiIntRegisterServicePushEventCallbackA` | `sfq23ZVHVEw` |
+| `sceNpWebApiRegisterExtdPushEventCallback` | `vrM02A5Gy1M` |
+| `sceNpWebApiRegisterNotificationCallback` | `HVgWmGIOKdk` |
+| `sceNpWebApiSendMultipartRequest` | `KCItz6QkeGs` |
+| `sceNpWebApiSendMultipartRequest2` | `DsPOTEvSe7M` |
+| `sceNpWebApiSendRequest2` | `KjNeZ-29ysQ` |
+| `sceNpWebApiSetHandleTimeout` | `6g6q-g1i4XU` |
+| `sceNpWebApiSetMaxConnection` | `gRiilVCvfAI` |
+| `sceNpWebApiSetMultipartContentType` | `i0dr6grIZyc` |
+| `sceNpWebApiSetRequestTimeout` | `qWcbJkBj1Lg` |
+| `sceNpWebApiUnregisterNotificationCallback` | `wjYEvo4xbcA` |
+| `sceNpWebApiVshInitialize` | `uRsskUhAfnM` |
+
 - [sceNpWebApiCreateServicePushEventFilter](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi, PS4) - a filter for a PSN service needs the signed-in user, and no user is signed in to PSN, so a valid call returns `SIGNED_IN_USER_NOT_FOUND` after the context and handle checks, as shadPS4 does with its network disabled. `sceNpWebApiDeleteServicePushEventFilter` therefore never finds a filter.
 - [sceNpWebApiCreateContext, sceNpWebApiDeleteContext, sceNpWebApiCreateRequest, sceNpWebApiDeleteRequest, sceNpWebApiAbortRequest, sceNpWebApiSendRequest](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi, PS4) - the online id is not looked up: as in [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/np/np_web_api/np_web_api_internal.cpp), a user context belongs to the initial user, so a library context holds at most one. With no user signed in to PSN, `sceNpWebApiSendRequest` returns `NOT_SIGNED_IN` unless the request is aborted. Id layouts and the delete, abort and not-found results match an offline PS4 Pro probe on firmware 10.71 (#9797); other checks follow shadPS4. Method 99 after DELETE gives `INVALID_ARGUMENT` (0x80552902) from a probe built at SDK 0x05050001; the 2.50 threshold is shadPS4's, not measured. `sceNpWebApiTerminate` also deletes user contexts and requests; shadPS4 stops after the first user context.
 - [sceNpWebApiRegisterPushEventCallback, sceNpWebApiUnregisterPushEventCallback, sceNpWebApiRegisterServicePushEventCallback, sceNpWebApiUnregisterServicePushEventCallback](../../../core/libs/prx/libSceNpWebApi/Export.cpp) (libSceNpWebApi, PS4) - registered callbacks are never called, since no push event arrives. A null function is rejected from SDK 1.00 and the filter must exist in the library context from SDK 2.50, as in shadPS4; this is not checked on a console. No service filter can be created, so from SDK 2.50 a service callback returns `SERVICE_PUSH_EVENT_FILTER_NOT_FOUND`. Callback ids come from the counter of handles and filters.
