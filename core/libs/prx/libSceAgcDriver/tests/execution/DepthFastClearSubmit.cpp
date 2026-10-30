@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DwordPatternFill.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -22,6 +23,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <mutex>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -93,6 +95,28 @@ constexpr std::array<std::uint32_t, 9> FillKernel{0xd7460004u, 0x04010c08u, 0x7e
 
 constexpr std::array<std::uint32_t, 12> BufferPatternFillKernel{0xd7460004u, 0x04010c08u, 0xf4280302u, 0xfa000000u, 0xbf8cc07fu, 0x7e00020cu, 0x7e02020du, 0x7e04020eu, 0x7e06020fu, 0xe01c2000u, 0x80000004u, 0xbf810000u};
 
+constexpr std::array<std::uint32_t, 12> BufferPatternFillKernelLowRegisters{0xd7460004u, 0x04010c08u, 0xf4280102u, 0xfa000000u, 0xbf8cc07fu, 0x7e000204u, 0x7e020205u, 0x7e040206u, 0x7e060207u, 0xe01c2000u, 0x80000004u, 0xbf810000u};
+
+void BufferPatternFillMatches() {
+    using AgcDriver::DriverDetail::MatchesBufferPatternFillKernel;
+    Require(MatchesBufferPatternFillKernel(BufferPatternFillKernel), "the buffer pattern fill loading its pattern into s[12:15] was not recognized");
+    Require(MatchesBufferPatternFillKernel(BufferPatternFillKernelLowRegisters), "the buffer pattern fill loading its pattern into s[4:7] was not recognized");
+    for (const auto* kernel : {&BufferPatternFillKernel, &BufferPatternFillKernelLowRegisters}) {
+        Require(!MatchesBufferPatternFillKernel(std::span(*kernel).first(kernel->size() - 1)), "a truncated buffer pattern fill matched");
+        for (std::size_t word = 0; word < kernel->size(); ++word) {
+            for (std::uint32_t bit = 0; bit < 32; ++bit) {
+                auto altered = *kernel;
+                altered[word] ^= 1u << bit;
+                Require(!MatchesBufferPatternFillKernel(altered), "a buffer pattern fill with one bit changed matched");
+            }
+        }
+    }
+    auto overStore = BufferPatternFillKernelLowRegisters;
+    overStore[2] = 0xf4280002u;
+    for (std::uint32_t word = 0; word < 4; ++word) overStore[5 + word] = 0x7e000200u | (word << 17u) | word;
+    Require(!MatchesBufferPatternFillKernel(overStore), "a buffer pattern fill loading its pattern over the store's V# in s[0:3] matched");
+}
+
 void DispatchFill(const GuestBlock& code, const GuestBlock& htile, std::uint32_t bytes, const GuestBlock* patternBuffer = nullptr) {
     const auto kernel = code.Address();
     const auto base = htile.Address();
@@ -153,18 +177,20 @@ void DispatchFillClearsDepth(AgcDriver::VulkanDevice& device, const Shaders& sha
 }
 
 void DispatchBufferPatternFillClearsDepth(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
-    const auto& htile = NewBlock();
-    auto& code = NewBlock();
-    std::memcpy(code.Data(), BufferPatternFillKernel.data(), sizeof(BufferPatternFillKernel));
-    auto& pattern = NewBlock();
-    const Surface surface{NewBlock().Address(), 0, htile.Address(), false, VK_FORMAT_D32_SFLOAT};
-    Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a new depth surface was not cleared to DB_DEPTH_CLEAR (1.0)");
-    std::memset(pattern.Data(), 0xff, 16);
-    DispatchFill(code, htile, HtileFillBytes, &pattern);
-    Require(Draw(device, shaders, surface, {}) == 0u, "a compute fill with the buffer pattern 0xffffffff (ZMask 0xf) cleared the depth");
-    std::memset(pattern.Data(), 0, 16);
-    DispatchFill(code, htile, HtileFillBytes, &pattern);
-    Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a compute fill with the buffer pattern 0 over the HTILE did not clear the depth to DB_DEPTH_CLEAR (1.0)");
+    for (const auto* kernel : {&BufferPatternFillKernel, &BufferPatternFillKernelLowRegisters}) {
+        const auto& htile = NewBlock();
+        auto& code = NewBlock();
+        std::memcpy(code.Data(), kernel->data(), sizeof(*kernel));
+        auto& pattern = NewBlock();
+        const Surface surface{NewBlock().Address(), 0, htile.Address(), false, VK_FORMAT_D32_SFLOAT};
+        Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a new depth surface was not cleared to DB_DEPTH_CLEAR (1.0)");
+        std::memset(pattern.Data(), 0xff, 16);
+        DispatchFill(code, htile, HtileFillBytes, &pattern);
+        Require(Draw(device, shaders, surface, {}) == 0u, "a compute fill with the buffer pattern 0xffffffff (ZMask 0xf) cleared the depth");
+        std::memset(pattern.Data(), 0, 16);
+        DispatchFill(code, htile, HtileFillBytes, &pattern);
+        Require(Draw(device, shaders, surface, {.depthWrite = true}) == Covered, "a compute fill with the buffer pattern 0 over the HTILE did not clear the depth to DB_DEPTH_CLEAR (1.0)");
+    }
 }
 
 void DrawAfterFastClearExpandsHtile(AgcDriver::VulkanDevice& device, const Shaders& shaders) {
@@ -287,6 +313,7 @@ void DepthOnlyFillKeepsStencil(AgcDriver::VulkanDevice& device, const Shaders& s
 
 int main() {
     try {
+        BufferPatternFillMatches();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto shaders = Compile(*device);
