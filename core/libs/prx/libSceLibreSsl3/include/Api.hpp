@@ -1,13 +1,29 @@
 #pragma once
 
+#include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libSceLibreSsl3/include/Key.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 
+struct Asn1Object_nid_no_patch {
+    const char* shortName;
+    const char* longName;
+    int nid;
+    int length;
+    const unsigned char* data;
+    int flags;
+};
+
+static_assert(sizeof(Asn1Object_nid_no_patch) == 40);
+static_assert(offsetof(Asn1Object_nid_no_patch, nid) == 16);
+static_assert(offsetof(Asn1Object_nid_no_patch, length) == 20);
+static_assert(offsetof(Asn1Object_nid_no_patch, data) == 24);
+static_assert(offsetof(Asn1Object_nid_no_patch, flags) == 32);
+
 extern "C" {
 
 int APS5_VABI ASN1_INTEGER_free_nid_postfix(void);
-int APS5_VABI ASN1_OBJECT_free_nid_postfix(void);
+void APS5_VABI ASN1_OBJECT_free_nid_postfix(Asn1Object_nid_no_patch* object);
 int APS5_VABI ASN1_STRING_get0_data_nid_postfix(void);
 int APS5_VABI BIO_up_ref_nid_postfix(void);
 int APS5_VABI BIO_vfree_nid_postfix(void);
