@@ -861,6 +861,23 @@ class IntervalDigestTests(unittest.TestCase):
     def test_window_lines_are_skipped(self):
         self.assertEqual(len(trace_digest.load_intervals(self.path)), 4)
 
+    def test_intervals_symlink_loop_is_reported_without_traceback(self):
+        loop = Path(self.directory.name) / "loop.jsonl"
+        try:
+            loop.symlink_to(loop.name)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        with self.assertRaisesRegex(ValueError, r"symbolic link loop"):
+            trace_digest.load_intervals(loop)
+        for output in ([], ["--json"]):
+            with self.subTest(output=output):
+                result = subprocess.run([sys.executable, trace_digest.__file__, str(loop), *output],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("symbolic link loop", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout, "")
+
     def test_utf8_bom_intervals_preserve_the_command_line_digest(self):
         expected = trace_digest.digest_intervals(trace_digest.load_intervals(self.path))
         self.path.write_text(self.path.read_text(encoding="utf-8"), encoding="utf-8-sig")

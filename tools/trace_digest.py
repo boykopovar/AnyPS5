@@ -372,8 +372,10 @@ def markdown(result):
 
 
 def load_intervals(path):
+    path = Path(path)
+    candidate = resolve_summary_path(path)
     lines = []
-    for number, record in load_summary_lines(path, numbered=True):
+    for number, record in load_summary_lines(candidate, numbered=True, label=path):
         if "interval_start_s" not in record:
             continue
         try:
@@ -497,6 +499,12 @@ def main(arguments=None):
     if options.thread and options.trace.endswith(".jsonl"):
         parser.error("--thread requires an event trace, not interval summaries")
     if options.trace.endswith(".jsonl"):
+        try:
+            intervals_path = resolve_summary_path(options.trace)
+        except ValueError as error:
+            parser.error(str(error))
+        if not intervals_path.is_file():
+            parser.error(f"summary file not found: {options.trace}")
         result = digest_intervals(load_intervals(options.trace))
         sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown_intervals(result))
         return 0
