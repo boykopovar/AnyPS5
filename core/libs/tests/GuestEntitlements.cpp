@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -72,6 +73,11 @@ int main(int argc, char** argv) {
     Require(sceNpEntitlementAccessGetEntitlementKey(0, nullptr, &key) == static_cast<int>(0x817D0002));
     Require(sceNpEntitlementAccessGetEntitlementKey(0, &label, nullptr) == static_cast<int>(0x817D0002));
     Require(sceNpEntitlementAccessGetEntitlementKey(0, &label, &key) == static_cast<int>(0x817D0007));
+    for (std::int64_t requestId : {std::int64_t{0}, std::int64_t{1}, std::int64_t{-7}, std::numeric_limits<std::int64_t>::max()}) {
+        Require(sceNpEntitlementAccessAbortRequest(requestId) == 0);
+        Require(sceNpEntitlementAccessDeleteRequest(requestId) == 0);
+        Require(sceNpEntitlementAccessDeleteRequest(requestId) == 0);
+    }
     std::filesystem::remove_all(root);
     std::puts("Guest entitlements passed");
     return 0;

@@ -126,15 +126,19 @@ int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* pr
     int schedPriority = self->priority.load(std::memory_order_relaxed);
     const bool other = lwpid != 0 && static_cast<std::int64_t>(lwpid) != static_cast<std::int64_t>(self->tid);
     if (other && !GetLiveGuestThreadSched_nid_no_patch(lwpid, policy, schedPriority)) return fail(GuestEsrch);
+    GuestRtPrio requested{};
+    if (function == Set && !GuestCopyIn_nid_no_patch(&requested, priority, sizeof(requested))) return fail(GuestEfault);
     const bool realTime = policy == GuestSchedFifo || policy == GuestSchedRr;
     if (function == Lookup) {
-        priority->type = realTime ? (policy == GuestSchedFifo ? Fifo : Realtime) : Normal;
-        priority->prio = realTime ? static_cast<std::uint16_t>(schedPriority) : 0;
+        GuestRtPrio current{};
+        current.type = realTime ? (policy == GuestSchedFifo ? Fifo : Realtime) : Normal;
+        current.prio = realTime ? static_cast<std::uint16_t>(schedPriority) : 0;
+        if (!GuestCopyOut_nid_no_patch(priority, &current, sizeof(current))) return fail(GuestEfault);
         return 0;
     }
     if (other) NotImplemented_nid_no_patch("rtprio_thread: a thread other than the calling one");
     if (realTime) NotImplemented_nid_no_patch("rtprio_thread: a guest thread's real-time class");
-    if (priority->type == Normal && priority->prio == 0) return 0;
+    if (requested.type == Normal && requested.prio == 0) return 0;
     NotImplemented_nid_no_patch("rtprio_thread: a real-time priority change");
 }
 
@@ -250,12 +254,13 @@ int APS5_VABI pthread_getprio_nid_postfix(Pthread thread) {
 
 int APS5_VABI pthread_getaffinity_np_nid_postfix(Pthread thread, std::size_t cpusetSize, void* cpuset) {
     if (!thread) return PosixThread::GUEST_EINVAL;
-    if (cpusetSize != GUEST_CPUSET_BYTES) return GUEST_ERANGE;
+    if (cpusetSize >= GUEST_CPUSET_BYTES) return GUEST_ERANGE;
+    if (cpusetSize != 8 && cpusetSize != 16) NotImplemented_nid_no_patch("pthread_getaffinity_np with a set other than 8, 16 or 32 bytes and more");
     if (!cpuset) return PosixThread::GUEST_EFAULT;
     KernelCpumask mask = 0;
     const int result = scePthreadGetaffinity(thread, &mask);
     if (result != 0) return PosixThread::ToErrno(result);
-    std::memset(cpuset, 0, GUEST_CPUSET_BYTES);
+    std::memset(cpuset, 0, cpusetSize);
     std::memcpy(cpuset, &mask, sizeof(mask));
     return 0;
 }

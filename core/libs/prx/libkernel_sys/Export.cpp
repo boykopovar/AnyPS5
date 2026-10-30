@@ -28,6 +28,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
@@ -424,6 +425,22 @@ int APS5_VABI sceKernelIsProspero(void) {
 
 int APS5_VABI sceKernelIsKratos(void) {
     return 0;
+}
+
+bool IsPs4Process() {
+    try {
+        const auto titleId = GetAppTitleId_nid_postfix();
+        const std::string_view id(titleId.value, strnlen(titleId.value, sizeof(titleId.value)));
+        return id.starts_with("CUSA");
+    } catch (const std::runtime_error&) {
+        return false;
+    } catch (const std::length_error&) {
+        return false;
+    }
+}
+
+int APS5_VABI sceKernelIsPs4Process(void) {
+    return IsPs4Process() ? 1 : 0;
 }
 
 int APS5_VABI get_authinfo_nid_postfix(int pid, KernelAuthInfo* info) {
@@ -986,9 +1003,8 @@ int APS5_VABI sched_rr_get_interval_nid_postfix(int pid, KernelTimespec* interva
     constexpr int GuestEsrch = 3;
     const int self = getpid_nid_postfix();
     if (pid != 0 && pid != self) return static_cast<int>(Fail(GuestEsrch));
-    if (interval == nullptr) return static_cast<int>(Fail(GuestEfault));
-    interval->tv_sec = 0;
-    interval->tv_nsec = 94000000;
+    const KernelTimespec quantum{0, 94000000};
+    if (interval == nullptr || !GuestCopyOut_nid_no_patch(interval, &quantum, sizeof(quantum))) return static_cast<int>(Fail(GuestEfault));
     return 0;
 }
 
