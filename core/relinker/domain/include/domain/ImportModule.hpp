@@ -28,6 +28,7 @@ inline std::string ImportModuleName(std::string name) {
     if (name == "libmonosgen-2.0") name = "libmonosgen";
     if (name == "libSceLibreSSl3") name = "libSceLibreSsl3";
     if (name == "libSceLibreSSL") name = "libSceLibreSsl";
+    if (name == "libSceJson2") name = "libSceJson";
     std::replace(name.begin(), name.end(), '.', '_');
     return name;
 }

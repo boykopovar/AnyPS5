@@ -52,5 +52,17 @@ int main() {
     if (!Domain::ImportModule("nid#A#B", ssl3, sslDependency).empty()) return 7;
     try { Domain::ImportModule("nid#A#B", ssl3, sslAmbiguous); return 8; }
     catch (const Domain::RelinkerException&) {}
+    const std::map<std::uint64_t, std::string> json{{1, "libSceJson"}};
+    const std::array<std::string, 1> json2Dependency{"libSceJson2.prx"};
+    const std::array<std::string, 2> bothJson{"libSceJson.prx", "libSceJson2.prx"};
+    const std::array<std::string, 1> jsonOther{"libSceJson3.prx"};
+    const std::array<std::string, 2> jsonAmbiguous{"libSceJson2.prx", "libSceJson2.sprx"};
+    if (Domain::ImportModule("nid#A#B", json, json2Dependency) != json2Dependency[0]) return 10;
+    if (Domain::ImportModule("nid#A#B", json, bothJson) != bothJson[0]) return 11;
+    if (!Domain::ImportModule("nid#A#B", json, jsonOther).empty()) return 12;
+    try { Domain::ImportModule("nid#A#B", json, jsonAmbiguous); return 13; }
+    catch (const Domain::RelinkerException&) {}
+    const auto jsonImage = Relinker::GuestImageReader().Read("json-consumer.prx", Fixture(false, "libSceJson2.prx", "libSceJson"), true);
+    if (jsonImage.Symbols.size() != 4 || jsonImage.Symbols[3].Library != "libSceJson2.prx") return 14;
     std::cout << "module mapping checks passed\n";
 }
