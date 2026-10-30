@@ -73,6 +73,13 @@ std::uint64_t Address(const void* pointer) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
 }
 
+constexpr std::array<std::uint32_t, 6> StoreProgram{
+    0x34060082,
+    0x7e0c02ff, 0x5eed0001u,
+    0xe0702000, 0x80000603,
+    0xbf810000,
+};
+
 std::array<std::uint32_t, 7> FillGds(std::uint32_t value, std::uint32_t offset = GdsOffset, std::uint32_t bytes = FillBytes) {
     return {0xc0055000u, (2u << 29u) | (1u << 20u), value, 0u, offset, 0u, bytes};
 }
@@ -83,6 +90,10 @@ std::array<std::uint32_t, 7> PatternFill(std::uint64_t destination, std::uint32_
 
 std::array<std::uint32_t, 7> CopyGdsTo(std::uint64_t destination, std::uint32_t offset = GdsOffset, std::uint32_t bytes = FillBytes) {
     return {0xc0055000u, 1u << 29u, offset, 0u, static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>(destination >> 32u), bytes};
+}
+
+std::array<std::uint32_t, 7> CopyToGds(std::uint64_t source, std::uint32_t offset, std::uint32_t bytes) {
+    return {0xc0055000u, 1u << 20u, static_cast<std::uint32_t>(source), static_cast<std::uint32_t>(source >> 32u), offset, 0u, bytes};
 }
 
 template <std::size_t Count>
@@ -136,6 +147,8 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         using namespace AgcDriver::DriverDetail;
+        const bool shared = AgcDriver::Pm4::GdsImportable();
+        check(shared == (AgcDriver::Pm4::ImportableGdsRequested() && std::getenv("APS5_NO_SHARED_GDS") == nullptr), shared ? "the GDS is in shared memory although that was not requested or is switched off" : "the GDS kept its private mapping although shared memory was requested");
         auto* readBack = GuestBlock();
         auto* filled = GuestBlock();
         auto* held = GuestBlock();
@@ -272,6 +285,8 @@ int main() {
             Submit(std::move(words));
             AgcDriverWaitIdle_nid_postfix();
             const auto drainsBefore = storesDrained.load();
+            const auto gpuStoresBefore = storesOnGpu.load() + storesBehindCompletions.load();
+            const auto gpuCopiesBefore = copiesBehindPendingSources.load();
             words.clear();
             AppendDispatch(words, code, output);
             Append(words, FillGds(3000u, CounterOffset, 16));
@@ -288,7 +303,43 @@ int main() {
             check(first[0] == 500u, "the dispatch before the fill read " + std::to_string(first[0]) + ", not the earlier fill's 500");
             check(second[0] == 3000u, "the dispatch after the fill, in the same submission, read " + std::to_string(second[0]) + ", not the fill's 3000");
             check(counters[0] == 3032u && counters[1] == 2968u && counters[2] == 3032u, "the GDS counters after a dispatch, a fill and a dispatch are " + std::to_string(counters[0]) + ", " + std::to_string(counters[1]) + " and " + std::to_string(counters[2]) + ", not 3032, 2968 and 3032: the first dispatch's atomics landed after the fill");
-            check(storesDrained.load() == drainsBefore + 1, "a fill behind a dispatch still using the GDS did not drain the device as main does");
+            if (shared) {
+                check(storesDrained.load() == drainsBefore, "a fill of the shared GDS behind a dispatch still using it drained the device");
+                check(storesOnGpu.load() + storesBehindCompletions.load() == gpuStoresBefore + 1, "a fill of the shared GDS behind a dispatch still using it was not stored on the GPU");
+                check(copiesBehindPendingSources.load() == gpuCopiesBefore + 1, "the copy out of the shared GDS behind the dispatches using it was not recorded on the GPU");
+            } else {
+                check(storesDrained.load() == drainsBefore + 1, "a fill behind a dispatch still using the GDS did not drain the device as main does");
+            }
+        }
+
+        {
+            constexpr std::uint32_t OrderOffset = 0x400;
+            constexpr std::uint32_t OrderValue = 0x5151a1a1u;
+            auto* storeCode = GuestBlock();
+            auto* orderOutput = GuestBlock();
+            auto* orderReadBack = GuestBlock();
+            std::memcpy(storeCode, StoreProgram.data(), sizeof(StoreProgram));
+            const auto drainsBefore = storesDrained.load();
+            const auto gpuStoresBefore = storesOnGpu.load() + storesBehindCompletions.load();
+            const auto gpuCopiesBefore = copiesBehindPendingSources.load();
+            words.clear();
+            AppendDispatch(words, storeCode, orderOutput);
+            Append(words, CopyToGds(Address(orderOutput), OrderOffset, 4));
+            Append(words, FillGds(OrderValue, OrderOffset, 4));
+            Append(words, CopyGdsTo(Address(orderReadBack), OrderOffset, 4));
+            Submit(std::move(words));
+            AgcDriverWaitIdle_nid_postfix();
+            std::array<std::uint32_t, 1> value{};
+            AgcDriver::GuestMemory::Read(Address(orderReadBack), std::as_writable_bytes(std::span(value)), 4);
+            std::array<std::uint32_t, 1> stored{};
+            AgcDriver::GuestMemory::Read(Address(orderOutput), std::as_writable_bytes(std::span(stored)), 4);
+            check(stored[0] == 0x5eed0001u, "the dispatch that writes the copy's source stored " + std::to_string(stored[0]) + ", not 0x5eed0001");
+            check(value[0] == OrderValue, "a GDS fill after a copy into the GDS from the output of a dispatch that does not use the GDS read back as " + std::to_string(value[0]) + ", not the fill's value: the copy landed after the fill");
+            if (shared) {
+                check(copiesBehindPendingSources.load() > gpuCopiesBefore, "the copy into the shared GDS behind the dispatch writing its source was not recorded on the GPU");
+                check(storesOnGpu.load() + storesBehindCompletions.load() > gpuStoresBefore, "the fill of the shared GDS behind the GPU copy into it was not stored on the GPU");
+                check(storesDrained.load() == drainsBefore, "a DMA_DATA into or out of the shared GDS behind a dispatch drained the device");
+            }
         }
 
         LibcRunShutdown_nid_postfix();
