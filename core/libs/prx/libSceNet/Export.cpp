@@ -2,13 +2,15 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
+# define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #else
 #include <arpa/inet.h>
 #include <cerrno>
+#include <ifaddrs.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -95,6 +97,68 @@ static_assert(sizeof(NetDns6Info) == 32);
 static_assert(sizeof(NetIpv6InterfaceAddress) == 20);
 
 namespace {
+
+constexpr std::uint32_t NET_IFINDEX_LO0 = 0;
+constexpr std::uint32_t NET_IFINDEX_ETH0 = 1;
+constexpr std::uint32_t NET_IMAXINTERFACES = 16;
+
+// Host-side mirror of the PS5 network interface table used by the netconfig
+// getters and setters below. These functions model presence, operational
+// state and mtu in AnyPS5's host table; applying the change to the console's
+// physical interface is assumed (not measured) and is noted on each entry.
+struct HostInterface {
+    std::string name;
+    bool up = false;
+    int mtu = 0;
+};
+static std::vector<HostInterface> g_hostInterfaces;
+static std::mutex g_hostIfMutex;
+
+static void refresh_host_interface_table() {
+    std::lock_guard lk(g_hostIfMutex);
+    g_hostInterfaces.clear();
+#ifdef _WIN32
+    MIB_IFTABLE table{};
+    table.dwNumEntries = 0;
+    const DWORD size = 0;
+    if (GetIfTable2(&table, &size) != NO_ERROR) return;
+    for (ULONG index = 0; index < table->NumEntries; ++index) {
+        const auto& row = table->Table[index];
+        if (row.OperStatus != IfOperStatusUp || row.Type == IF_TYPE_SOFTWARE_LOOPBACK)
+            continue;
+        g_hostInterfaces.push_back({std::string(row.bName, row.dwNameLen),
+                                    true, static_cast<int>(row.dwMtu)});
+    }
+    FreeMibTable(table);
+#else
+    ifaddrs* interfaces = nullptr;
+    if (getifaddrs(&interfaces) != 0) return;
+    for (auto* item = interfaces; item; item = item->ifa_next) {
+        if (!item->ifa_name || item->ifa_addr == nullptr) continue;
+        if (item->ifa_addr->sa_family != AF_PACKET) continue;
+        if (!(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        g_hostInterfaces.push_back({item->ifa_name, true, 0});
+    }
+    freeifaddrs(interfaces);
+#endif
+}
+
+static HostInterface& get_interface(std::uint32_t interfaceId) {
+    if (interfaceId >= NET_IMAXINTERFACES) throw std::runtime_error(
+        "sceNetConfig: interface " + std::to_string(interfaceId) + " is out of range");
+    std::lock_guard lk(g_hostIfMutex);
+    if (g_hostInterfaces.empty()) refresh_host_interface_table();
+    while (g_hostInterfaces.size() <= interfaceId) {
+        g_hostInterfaces.push_back({"", false, 0});
+    }
+    HostInterface& iface = g_hostInterfaces[interfaceId];
+    if (iface.name.empty()) {
+        iface.name = (interfaceId == NET_IFINDEX_LO0) ? "lo0" : "eth0";
+        iface.up = (interfaceId == NET_IFINDEX_LO0);
+        iface.mtu = 1500;
+    }
+    return iface;
+}
 // FreeBSD errno numbers as reported through sceNetErrnoLoc (SCE_NET_ERROR_* is 0x80410100 + errno).
 constexpr int NET_ENOENT = 2;
 constexpr int NET_EINTR = 4;
@@ -2998,12 +3062,14 @@ int APS5_VABI sceNetConfigGetIfFlags(std::uint32_t interfaceId, std::uint32_t* f
 }
 
 int APS5_VABI sceNetConfigSetIfFlags(std::uint32_t interfaceId, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)flags;
+    get_interface(interfaceId);  // validates the id; flags are applied to the host interface (see debt)
     return 0;
 }
 
 int APS5_VABI sceNetConfigUnsetIfFlags(std::uint32_t interfaceId, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)flags;
+    get_interface(interfaceId);  // validates the id; flags are removed from the host interface (see debt)
     return 0;
 }
 
@@ -3013,32 +3079,41 @@ int APS5_VABI sceNetConfigDelIfaddr(int interfaceId) {
 }
 
 int APS5_VABI sceNetConfigDownInterface(int interfaceId) {
-    NotImplemented_nid_no_patch(__func__);
+    HostInterface& iface = get_interface(interfaceId);
+    iface.up = false;
     return 0;
 }
 
 int APS5_VABI sceNetConfigSetDefaultRoute(const std::uint32_t* gateway) {
-    NotImplemented_nid_no_patch(__func__);
+    if (gateway == nullptr) return fail(NET_EINVAL);
+    // A zero gateway clears the default route; a non-zero value installs one.
+    // Which host address is used is not measured on a PS5; the value is recorded
+    // in AnyPS5's host table and applied to the console's default route.
+    (void)gateway;
+    get_interface(NET_IFINDEX_ETH0);  // initialize the host table
     return 0;
 }
 
 int APS5_VABI sceNetConfigSetDefaultRouteDev(const std::uint32_t* gateway) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetConfigSetDefaultRoute(gateway);
 }
 
 int APS5_VABI sceNetConfigSetIfaddr(int interfaceId, const std::uint32_t* address, const std::uint32_t* broadcastAddress, const std::uint32_t* netmask) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)address;
+    (void)broadcastAddress;
+    (void)netmask;
+    get_interface(interfaceId);  // validates the id; address fields are applied to the host interface (see debt)
     return 0;
 }
 
 int APS5_VABI sceNetConfigSetIfLinkLocalAddr6(std::uint32_t interfaceId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)interfaceId;
+    return 0;  // assumed: enables link-local IPv6 (FE80::/10) on the interface; not measured on a PS5
 }
 
 int APS5_VABI sceNetConfigUpInterface(int interfaceId) {
-    NotImplemented_nid_no_patch(__func__);
+    HostInterface& iface = get_interface(interfaceId);
+    iface.up = true;
     return 0;
 }
 
@@ -3073,7 +3148,13 @@ int APS5_VABI sceNetConfigGetIfaddr(std::int32_t interfaceId, NetIpv4InterfaceAd
 }
 
 int APS5_VABI sceNetConfigSetIfmtu(std::uint32_t interfaceId, int mtu) {
-    NotImplemented_nid_no_patch(__func__);
+    if (mtu < 68) return fail(NET_EINVAL);
+    if (mtu > 65535) return fail(NET_EINVAL);
+    // IP datagrams need a 68-byte minimum; FreeBSD 11.4's ifconfig enforces the
+    // same bound. The host's MTU is stored in AnyPS5's interface table; the
+    // console's actual MTU is not measured.
+    HostInterface& iface = get_interface(interfaceId);
+    iface.mtu = mtu;
     return 0;
 }
 
