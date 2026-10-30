@@ -26,6 +26,7 @@
 #include <cstring>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -153,7 +154,7 @@ AgcDriver::Graphics::ColorTarget DecodeColor(std::uint64_t address, std::uint32_
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t drawnLayers = 0, bool coverNothing = false) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, std::uint32_t drawnLayers = 0, bool coverNothing = false, std::optional<VkRect2D> scissor = std::nullopt) {
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     if (drawnLayers == 0) drawnLayers = color.layers;
@@ -189,7 +190,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     state.viewport = {0, static_cast<float>(Side), static_cast<float>(Side), -static_cast<float>(Side), 0, 1};
     state.negativeOneToOne = false;
-    state.scissor = coverNothing ? VkRect2D{{0, 0}, {0, 0}} : VkRect2D{{0, 0}, {Side, Side}};
+    state.scissor = coverNothing ? VkRect2D{{0, 0}, {0, 0}} : scissor.value_or(VkRect2D{{0, 0}, {Side, Side}});
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blends = {blend};
@@ -291,6 +292,52 @@ void RunCmaskClear(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::u
     }
 }
 
+std::vector<std::size_t> ChangedWords(const std::uint8_t* texels, std::uint32_t slice) {
+    std::vector<std::size_t> changed;
+    const auto* words = reinterpret_cast<const std::uint32_t*>(texels + slice * SliceBytes);
+    for (std::size_t word = 0; word < SliceBytes / 4u; ++word) {
+        if (words[word] != Kept) changed.push_back(word);
+    }
+    return changed;
+}
+
+void RunTileClearMatchesDraw(AgcDriver::VulkanDevice& device, std::uint8_t* texels, std::uint32_t slice, std::uint32_t tileX, std::uint32_t tileY, const std::string& what) {
+    using AgcDriver::Graphics::CmaskLayout;
+    const auto surface = AddressOf(texels);
+    const auto fill = [&] {
+        std::fill_n(reinterpret_cast<std::uint32_t*>(texels), SurfaceBytes / 4u, Kept);
+        AgcDriver::GuestMemory::CollectWrites(surface, SurfaceBytes);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+    };
+    fill();
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::GuestMemory::Write(AddressOf(Cmask.data()), std::vector<std::byte>(Cmask.size(), std::byte{0xff}));
+    }
+    Draw(device, DecodeColor(surface, Slices - 1u, slice, 1), 1, false, VkRect2D{{static_cast<std::int32_t>(tileX * 8u), static_cast<std::int32_t>(tileY * 8u)}, {8, 8}});
+    AgcDriver::Graphics::StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "tile clear against draw test");
+    device.WaitIdle();
+    const auto drawn = ChangedWords(texels, slice);
+    Require(drawn.size() == 64u, what + ": the drawn tile changed " + std::to_string(drawn.size()) + " words of its slice, expected 64");
+    for (std::uint32_t other = 0; other < Slices; ++other) Require(other == slice || ChangedWords(texels, other).empty(), what + ": the draw changed slice " + std::to_string(other));
+
+    fill();
+    const CmaskLayout cmaskLayout(Side, Side);
+    std::vector<std::byte> mask(Cmask.size(), std::byte{0xff});
+    const auto nibble = cmaskLayout.Nibble(tileX, tileY, slice);
+    mask[slice * CmaskSliceBytes + nibble / 2u] &= std::byte{static_cast<std::uint8_t>((nibble % 2u) == 0 ? 0xf0u : 0x0fu)};
+    {
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        AgcDriver::GuestMemory::Write(AddressOf(Cmask.data()), mask);
+    }
+    const auto color = DecodeColor(surface, Slices - 1u, slice, 1, true);
+    Draw(device, color, 1, true);
+    AgcDriver::Graphics::StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "tile clear against draw test");
+    device.WaitIdle();
+    const auto cleared = ChangedWords(texels, slice);
+    for (std::uint32_t other = 0; other < Slices; ++other) Require(other == slice || ChangedWords(texels, other).empty(), what + ": the clear changed slice " + std::to_string(other));
+    Require(cleared == drawn, what + ": the clear changed " + std::to_string(cleared.size()) + " words, the draw " + std::to_string(drawn.size()) + ", and they are not the same words");
+}
 }
 
 int main() {
@@ -315,6 +362,21 @@ int main() {
                 failures += std::string(error.what()) + "\n";
             }
         }
+        Require(failures.empty(), "\n" + failures);
+        std::size_t cases = 0;
+        std::size_t differing = 0;
+        for (std::uint32_t slice = 0; slice < Slices; ++slice) {
+            for (const auto& tile : std::array<std::array<std::uint32_t, 2>, 2>{{{5, 3}, {0, 0}}}) {
+                ++cases;
+                try {
+                    RunTileClearMatchesDraw(*device, array.Data(), slice, tile[0], tile[1], "a fast-cleared tile (" + std::to_string(tile[0]) + ", " + std::to_string(tile[1]) + ") of slice " + std::to_string(slice));
+                } catch (const std::exception& error) {
+                    ++differing;
+                    failures += std::string(error.what()) + "\n";
+                }
+            }
+        }
+        std::printf("tile clear against draw: %zu cases, %zu differ\n", cases, differing);
         Require(failures.empty(), "\n" + failures);
         GuestAllocations::Mutation().Remove(Cmask.data());
         std::puts("layered array color draw tests passed");
