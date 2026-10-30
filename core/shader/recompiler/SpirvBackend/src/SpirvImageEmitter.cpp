@@ -455,7 +455,7 @@ std::uint32_t QueryDimensions(SpirvValueEmitContext& ctx, const ImageEmitAccess&
         result[2] = ConstantU32(state, 1);
     }
     const auto requested = access.mem.imageDimension;
-    if ((requested == RdnaImageDimension::Dim1D || requested == RdnaImageDimension::Dim2D || requested == RdnaImageDimension::Dim2DMsaa) && dimension != RdnaImageDimension::Dim3D) {
+    if ((requested == RdnaImageDimension::Dim1D || requested == RdnaImageDimension::Dim2D || requested == RdnaImageDimension::Dim2DMsaa) && dimension != RdnaImageDimension::Dim3D && !(GcnGuestShaders() && access.image.cube)) {
         result[2] = ConstantU32(state, 0);
     }
     if (info.multisampled == 0u) {
@@ -1949,14 +1949,16 @@ void EmitImageMode(SpirvValueEmitContext& ctx, const IrValue& inst, const ImageR
         ctx.Fail(inst, "has no image address");
     }
     MemoryInfo gcnMemory = mem;
-    if (GcnGuestShaders() && irOpcode != IrOpcode::ImageQueryDimensions && mem.imageDimension != image.dimension) {
+    if (GcnGuestShaders() && irOpcode != IrOpcode::ImageQueryDimensions) {
+        const bool line = image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim1DArray;
+        const auto addressed = mem.imageDimension != RdnaImageDimension::Dim2DArray ? image.dimension : line ? RdnaImageDimension::Dim1DArray : mem.imageDimension;
         const auto& from = RdnaImageDimensionInfoFor(mem.imageDimension);
-        const auto& to = RdnaImageDimensionInfoFor(image.dimension);
+        const auto& to = RdnaImageDimensionInfoFor(addressed);
         const bool gradients = (mem.imageSampleFlags & RdnaImageSampleFlagDerivative) != 0u;
         const auto removed = from.coordinateComponents + (gradients ? 2u * from.spatialComponents : 0u);
         const auto added = to.coordinateComponents + (gradients ? 2u * to.spatialComponents : 0u);
         if (mem.imageAddressComponents < removed) ctx.Fail(inst, "has fewer GCN image address components than its coordinates");
-        gcnMemory.imageDimension = image.dimension;
+        gcnMemory.imageDimension = addressed;
         gcnMemory.imageAddressComponents = mem.imageAddressComponents - removed + added;
     }
     const ImageEmitAccess access{inst, gcnMemory, image, *address};
