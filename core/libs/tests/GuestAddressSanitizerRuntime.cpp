@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <string_view>
 
 alignas(16) static std::array<std::uint8_t, 128> buffer{};
@@ -570,6 +571,91 @@ static int DescribeHeap() {
     return 0;
 }
 
+static std::string ReadFile(const char* path) {
+    std::string content;
+    if (std::FILE* file = std::fopen(path, "rb")) {
+        char block[256];
+        std::size_t count = 0;
+        while ((count = std::fread(block, 1, sizeof(block), file)) != 0) {
+            content.append(block, count);
+        }
+        std::fclose(file);
+    }
+    return content;
+}
+
+static int ReportPath() {
+    __sanitizer_set_report_path("asan_report_path_test.log");
+    const std::string path = __sanitizer_get_report_path();
+    if (path.rfind("asan_report_path_test.log.", 0) != 0) return 1;
+    __asan_describe_address(0x1000);
+    __sanitizer_set_report_path("stderr");
+    const std::string content = ReadFile(path.c_str());
+    std::remove(path.c_str());
+    if (content.find("Address 0x000000001000 is a wild pointer") == std::string::npos) return 2;
+    __asan_describe_address(0x2000);
+    std::printf("report path ok\n");
+    return 0;
+}
+
+static int ReportStdout() {
+    __sanitizer_set_report_path("stdout");
+    __asan_describe_address(0x3000);
+    return 0;
+}
+
+static int ReportDescriptor() {
+    __sanitizer_set_report_fd(reinterpret_cast<void*>(1));
+    __asan_describe_address(0x4000);
+    return 0;
+}
+
+static int StackTraceMode() {
+    __sanitizer_print_stack_trace();
+    return 0;
+}
+
+static int Symbolize() {
+    char buffer[256] = {};
+    const std::uintptr_t pc = reinterpret_cast<std::uintptr_t>(&Symbolize) + 1;
+    __sanitizer_symbolize_pc(pc, "%M", buffer, sizeof(buffer));
+    std::printf("symbolized=%s\n", buffer);
+    __sanitizer_symbolize_pc(pc, "%%|%n|%b|%f|%F|%q|%l|%c", buffer, sizeof(buffer));
+    std::printf("literal=%s\n", buffer);
+    __sanitizer_symbolize_pc(pc, "%p", buffer, 5);
+    std::printf("short=%s\n", buffer);
+    __sanitizer_symbolize_pc(pc, "%p", buffer, 0);
+    std::memset(buffer, 'x', 4);
+    buffer[4] = 0;
+    __sanitizer_symbolize_global(reinterpret_cast<std::uintptr_t>(&buffer), "%g", buffer, sizeof(buffer));
+    std::printf("global=<%s>\n", buffer);
+    return 0;
+}
+
+static int Coverage() {
+    std::uint32_t guards[4] = {};
+    __sanitizer_cov_trace_pc_guard_init(guards, guards + 4);
+    if (guards[0] != 1 || guards[3] != 4) return 1;
+    std::uint32_t other[2] = {};
+    __sanitizer_cov_trace_pc_guard_init(other, other + 2);
+    if (other[0] != 5 || other[1] != 6) return 2;
+    __sanitizer_cov_trace_pc_guard_init(guards, guards + 4);
+    if (guards[0] != 1) return 3;
+    std::uint32_t zero = 0;
+    __sanitizer_cov_trace_pc_guard(&zero);
+    __sanitizer_cov_trace_pc_guard(&guards[1]);
+    __sanitizer_dump_trace_pc_guard_coverage();
+    __sanitizer_cov_dump();
+    const std::uintptr_t pcs[3] = {reinterpret_cast<std::uintptr_t>(&Coverage) + 4, 0, reinterpret_cast<std::uintptr_t>(&Coverage) + 2};
+    __sanitizer_dump_coverage(pcs, 3);
+    return 0;
+}
+
+static int SandboxNotify() {
+    __sanitizer_sandbox_on_notify(nullptr);
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) return 100;
     const std::string_view mode(argv[1]);
@@ -664,6 +750,18 @@ int main(int argc, char* argv[]) {
     if (mode == "fiber_double_start") {
         __sanitizer_start_switch_fiber(nullptr, buffer.data(), buffer.size());
         __sanitizer_start_switch_fiber(nullptr, buffer.data(), buffer.size());
+        return 2;
+    }
+    if (mode == "report_path") return ReportPath();
+    if (mode == "report_stdout") return ReportStdout();
+    if (mode == "report_descriptor") return ReportDescriptor();
+    if (mode == "stack_trace") return StackTraceMode();
+    if (mode == "symbolize") return Symbolize();
+    if (mode == "coverage") return Coverage();
+    if (mode == "sandbox_notify") return SandboxNotify();
+    if (mode == "symbolize_bad") {
+        char buffer[16] = {};
+        __sanitizer_symbolize_pc(0x1000, "%z", buffer, sizeof(buffer));
         return 2;
     }
     if (mode == "clean") return CleanAccess();

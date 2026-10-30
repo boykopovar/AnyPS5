@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceAddressSanitizer/src/Ubsan.hpp"
+#include "prx/libSceAddressSanitizer/src/ReportFile.hpp"
 #include "prx/libSceAddressSanitizer/src/Report.hpp"
 #include <atomic>
 #include <cstdio>
@@ -424,8 +425,7 @@ struct CurrentReport {
 CurrentReport currentReport;
 
 void Emit(const std::string& text) {
-    std::fputs(text.c_str(), stderr);
-    std::fflush(stderr);
+    ReportFile::Write_nid_no_patch(text);
 }
 
 void AppendWide(std::string& out, UIntMax value) {

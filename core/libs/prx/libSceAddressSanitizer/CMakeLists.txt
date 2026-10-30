@@ -1,4 +1,4 @@
-add_library(libSceAddressSanitizer SHARED EXCLUDE_FROM_ALL Export.cpp src/Allocator.cpp src/Describe.cpp src/FakeStack.cpp src/Globals.cpp src/StackBounds.cpp src/Ubsan.cpp)
+add_library(libSceAddressSanitizer SHARED EXCLUDE_FROM_ALL Export.cpp src/Allocator.cpp src/Coverage.cpp src/Describe.cpp src/FakeStack.cpp src/Globals.cpp src/ModuleLookup.cpp src/ReportFile.cpp src/StackBounds.cpp src/StackTrace.cpp src/Ubsan.cpp)
 if(WIN32)
     target_sources(libSceAddressSanitizer PRIVATE src/ShadowWindows.cpp)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -18,7 +18,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_addresssanitizer_runtime_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_addresssanitizer_runtime_tests PRIVATE libSceAddressSanitizer libc)
     configure_windows_unwind(guest_addresssanitizer_runtime_tests)
-    foreach(mode clean contiguous double_ended memory exp_load4 exp_store16_noabort exp_loadN report_exp_store2 report_exp_load_n memcpy_source memset_poison memmove_poison memcpy_overlap memset_negative container_params double_ended_params ubsan_arithmetic ubsan_misc ubsan_data ubsan_dedup ubsan_abort ubsan_unreachable heap heap_aligned heap_stats heap_double_free heap_bad_free heap_interior_free heap_usable_size_unowned heap_allocated_size_unowned heap_calloc_overflow heap_aligned_alloc_bad heap_posix_memalign_bad heap_memalign_bad heap_too_big heap_realloc_freed fake_stack no_return globals globals_elf fibers locate init globals_odr_indicator globals_odr_poison globals_describe describe_heap fiber_unstarted fiber_double_start)
+    foreach(mode clean contiguous double_ended memory exp_load4 exp_store16_noabort exp_loadN report_exp_store2 report_exp_load_n memcpy_source memset_poison memmove_poison memcpy_overlap memset_negative container_params double_ended_params ubsan_arithmetic ubsan_misc ubsan_data ubsan_dedup ubsan_abort ubsan_unreachable heap heap_aligned heap_stats heap_double_free heap_bad_free heap_interior_free heap_usable_size_unowned heap_allocated_size_unowned heap_calloc_overflow heap_aligned_alloc_bad heap_posix_memalign_bad heap_memalign_bad heap_too_big heap_realloc_freed fake_stack no_return globals globals_elf fibers locate init globals_odr_indicator globals_odr_poison globals_describe describe_heap fiber_unstarted fiber_double_start report_path report_stdout report_descriptor stack_trace symbolize symbolize_bad coverage sandbox_notify)
         add_test(NAME guest_addresssanitizer_runtime_${mode} COMMAND guest_addresssanitizer_runtime_tests ${mode})
         set_tests_properties(guest_addresssanitizer_runtime_${mode} PROPERTIES TIMEOUT 20)
         if(WIN32)
@@ -98,6 +98,20 @@ if(BUILD_TESTING)
         "ERROR: finishing a fiber switch that has not started")
     set_tests_properties(guest_addresssanitizer_runtime_fiber_double_start PROPERTIES PASS_REGULAR_EXPRESSION
         "ERROR: starting fiber switch while in fiber switch")
+    set_tests_properties(guest_addresssanitizer_runtime_report_path PROPERTIES PASS_REGULAR_EXPRESSION
+        "report path ok")
+    set_tests_properties(guest_addresssanitizer_runtime_report_stdout PROPERTIES PASS_REGULAR_EXPRESSION
+        "Address 0x000000003000 is a wild pointer inside of access range of size 0x000000000001")
+    set_tests_properties(guest_addresssanitizer_runtime_report_descriptor PROPERTIES PASS_REGULAR_EXPRESSION
+        "Address 0x000000004000 is a wild pointer inside of access range of size 0x000000000001")
+    set_tests_properties(guest_addresssanitizer_runtime_stack_trace PROPERTIES PASS_REGULAR_EXPRESSION
+        "    #0 0x[0-9a-f]+  [(].*guest_addresssanitizer_runtime_tests.*[+]0x[0-9a-f]+[)]")
+    set_tests_properties(guest_addresssanitizer_runtime_symbolize PROPERTIES PASS_REGULAR_EXPRESSION
+        "symbolized=[(]guest_addresssanitizer_runtime_tests[^+]*[+]0x[0-9a-f]+[)].literal=[%][|]0[|][|][<]null[>][|][|]0x0[|]0[|]0.short=0x[0-9a-f][0-9a-f].global=<>")
+    set_tests_properties(guest_addresssanitizer_runtime_symbolize_bad PROPERTIES PASS_REGULAR_EXPRESSION
+        "Unsupported specifier in stack frame format: z")
+    set_tests_properties(guest_addresssanitizer_runtime_coverage PROPERTIES PASS_REGULAR_EXPRESSION
+        "SanitizerCoverage: ./guest_addresssanitizer_runtime_tests[^ ]*[.][0-9]+[.]sancov: 2 PCs written")
     if(WIN32)
         add_test_executable(guest_addresssanitizer_mapping_tests ${LIBS_INCLUDE_DIR}/tests/GuestAddressSanitizerMapping.cpp)
         target_include_directories(guest_addresssanitizer_mapping_tests PRIVATE ${LIBS_INCLUDE_DIR})

@@ -5,6 +5,10 @@
 #include "prx/libSceAddressSanitizer/src/Report.hpp"
 #include "prx/libSceAddressSanitizer/src/Allocator.hpp"
 #include "prx/libSceAddressSanitizer/src/Container.hpp"
+#include "prx/libSceAddressSanitizer/src/Coverage.hpp"
+#include "prx/libSceAddressSanitizer/src/ModuleLookup.hpp"
+#include "prx/libSceAddressSanitizer/src/ReportFile.hpp"
+#include "prx/libSceAddressSanitizer/src/StackTrace.hpp"
 #include "prx/libSceAddressSanitizer/src/Describe.hpp"
 #include "prx/libSceAddressSanitizer/src/FakeStack.hpp"
 #include "prx/libSceAddressSanitizer/src/Globals.hpp"
@@ -124,8 +128,7 @@ extern "C" [[noreturn]] void Die_nid_no_patch() {
 
 void EmitDiagnostic_nid_no_patch(const std::string& text) {
     std::lock_guard lock(reportMutex);
-    std::fputs(text.c_str(), stderr);
-    std::fflush(stderr);
+    ReportFile::Write_nid_no_patch(text);
 }
 
 [[noreturn]] void ReportFatal_nid_no_patch(const ErrorReport& state, const std::string& text) {
@@ -135,13 +138,11 @@ void EmitDiagnostic_nid_no_patch(const std::string& text) {
     reportInProgress = true;
     std::unique_lock lock(reportMutex);
     *CurrentErrorReport_nid_no_patch() = state;
-    std::fputs(text.c_str(), stderr);
-    std::fflush(stderr);
+    ReportFile::Write_nid_no_patch(text);
     if (const auto callback = LoadErrorReportCallback_nid_no_patch()) {
         callback(text.c_str());
     }
-    std::fputs("ABORTING\n", stderr);
-    std::fflush(stderr);
+    ReportFile::Write_nid_no_patch("ABORTING\n");
     Die_nid_no_patch();
 }
 
@@ -1449,19 +1450,16 @@ const void* APS5_VABI __sanitizer_contiguous_container_find_bad_address(const vo
     return AsanRuntime::ContiguousFindBad_nid_no_patch(first, middle, last);
 }
 
-int APS5_VABI __sanitizer_cov_dump() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_cov_dump() {
+    AsanRuntime::Coverage::DumpTracePcGuard_nid_no_patch();
 }
 
-int APS5_VABI __sanitizer_cov_trace_pc_guard() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_cov_trace_pc_guard(std::uint32_t* guard) {
+    AsanRuntime::Coverage::TracePcGuard_nid_no_patch(guard, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)) - 1);
 }
 
-int APS5_VABI __sanitizer_cov_trace_pc_guard_init() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_cov_trace_pc_guard_init(std::uint32_t* start, std::uint32_t* end) {
+    AsanRuntime::Coverage::InitTracePcGuard_nid_no_patch(start, end);
 }
 
 const void* APS5_VABI __sanitizer_double_ended_contiguous_container_find_bad_address(const void* storageBeg, const void* containerBeg, const void* containerEnd, const void* storageEnd) {
@@ -1476,14 +1474,12 @@ const void* APS5_VABI __sanitizer_double_ended_contiguous_container_find_bad_add
     return AsanRuntime::DoubleEndedFindBad_nid_no_patch(storageBegin, begin, limit, storageLimit);
 }
 
-int APS5_VABI __sanitizer_dump_coverage() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_dump_coverage(const std::uintptr_t* pcs, std::uintptr_t length) {
+    AsanRuntime::Coverage::DumpCoverage_nid_no_patch(pcs, length);
 }
 
-int APS5_VABI __sanitizer_dump_trace_pc_guard_coverage() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_dump_trace_pc_guard_coverage() {
+    AsanRuntime::Coverage::DumpTracePcGuard_nid_no_patch();
 }
 
 void APS5_VABI __sanitizer_finish_switch_fiber(void* fakeStack, const void** bottomOld, std::uintptr_t* sizeOld) {
@@ -1529,9 +1525,8 @@ int APS5_VABI __sanitizer_get_ownership(const void* pointer) {
     return AsanRuntime::Heap::AllocationSize_nid_no_patch(reinterpret_cast<std::uintptr_t>(pointer)) > 0 ? 1 : 0;
 }
 
-int APS5_VABI __sanitizer_get_report_path() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+const char* APS5_VABI __sanitizer_get_report_path() {
+    return AsanRuntime::ReportFile::GetPath_nid_no_patch();
 }
 
 std::size_t APS5_VABI __sanitizer_get_unmapped_bytes() {
@@ -1541,9 +1536,10 @@ std::size_t APS5_VABI __sanitizer_get_unmapped_bytes() {
 void APS5_VABI __sanitizer_malloc_hook(void*, std::size_t) {
 }
 
-int APS5_VABI __sanitizer_print_stack_trace() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_print_stack_trace() {
+    std::uintptr_t frames[255];
+    const std::size_t count = AsanRuntime::CaptureBacktrace_nid_no_patch(frames, 255, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)), reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    AsanRuntime::EmitDiagnostic_nid_no_patch(AsanRuntime::StackTrace::Print_nid_no_patch(frames, count));
 }
 
 void APS5_VABI __sanitizer_ptr_cmp(void*, void*) {
@@ -1558,37 +1554,36 @@ void APS5_VABI __sanitizer_purge_allocator() {
     AsanRuntime::Heap::Purge_nid_no_patch();
 }
 
-int APS5_VABI __sanitizer_sandbox_on_notify() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_sandbox_on_notify(void* arguments) {
+    static_cast<void>(arguments);
 }
 
 void APS5_VABI __sanitizer_set_death_callback(void (APS5_VABI* callback)()) {
     deathCallback.store(callback, std::memory_order_release);
 }
 
-int APS5_VABI __sanitizer_set_report_fd() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_set_report_fd(void* descriptor) {
+    AsanRuntime::ReportFile::SetDescriptor_nid_no_patch(static_cast<int>(reinterpret_cast<std::uintptr_t>(descriptor)));
 }
 
-int APS5_VABI __sanitizer_set_report_path() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_set_report_path(const char* path) {
+    AsanRuntime::ReportFile::SetPath_nid_no_patch(path);
 }
 
 void APS5_VABI __sanitizer_start_switch_fiber(void** fakeStackSave, const void* bottom, std::uintptr_t size) {
     AsanRuntime::FakeStack::StartSwitchFiber_nid_no_patch(fakeStackSave, bottom, size);
 }
 
-int APS5_VABI __sanitizer_symbolize_global() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_symbolize_global(std::uintptr_t address, const char* format, char* output, std::uintptr_t outputSize) {
+    static_cast<void>(address);
+    static_cast<void>(format);
+    if (outputSize != 0) {
+        output[0] = 0;
+    }
 }
 
-int APS5_VABI __sanitizer_symbolize_pc() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI __sanitizer_symbolize_pc(std::uintptr_t pc, const char* format, char* output, std::uintptr_t outputSize) {
+    AsanRuntime::StackTrace::Symbolize_nid_no_patch(pc, format, output, outputSize);
 }
 
 std::uint16_t APS5_VABI __sanitizer_unaligned_load16(const void* ptr) {
