@@ -131,8 +131,10 @@ int ParseHex(const char* hex, std::size_t length, std::uint8_t* out, std::size_t
     if (capacity < length / 2) return NP_ERROR_BUFFER_TOO_SMALL;
     for (std::size_t i = 0; i < length; i += 2) {
         const int high = HexValue(hex[i]);
+        if (high < 0) return NP_ERROR_INVALID_ARGUMENT;
+        out[i / 2] = static_cast<std::uint8_t>(high << 4);
         const int low = HexValue(hex[i + 1]);
-        if (high < 0 || low < 0) return NP_ERROR_INVALID_ARGUMENT;
+        if (low < 0) return NP_ERROR_INVALID_ARGUMENT;
         out[i / 2] = static_cast<std::uint8_t>((high << 4) | low);
     }
     return 0;

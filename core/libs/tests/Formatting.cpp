@@ -256,7 +256,35 @@ static void CheckSecureFormat() {
     Require(threw);
 }
 
+static void CheckScanInputFailureErrno() {
+    const int previousError = *__error_nid_postfix();
+    for (const auto scan : {sscanf_nid_postfix, ScanList}) {
+        for (const int savedError : {0, 22, 97}) {
+            for (const char* input : {"", " ", "   "}) {
+                std::array<char, 8> word;
+                word.fill('!');
+                *__error_nid_postfix() = savedError;
+                Require(scan(input, "%s", word.data()) == EOF && *__error_nid_postfix() == savedError);
+                Require(std::all_of(word.begin(), word.end(), [](char value) { return value == '!'; }));
+                int number = 123;
+                *__error_nid_postfix() = savedError;
+                Require(scan(input, "%d", &number) == EOF && number == 123 && *__error_nid_postfix() == savedError);
+                float floating = 1.0f;
+                *__error_nid_postfix() = savedError;
+                Require(scan(input, "%f", &floating) == EOF && floating == 1.0f && *__error_nid_postfix() == savedError);
+                *__error_nid_postfix() = savedError;
+                Require(scan(input, "%*s") == EOF && *__error_nid_postfix() == savedError);
+            }
+        }
+        float floating = 0.0f;
+        *__error_nid_postfix() = 97;
+        Require(scan("1e99999", "%f", &floating) == 1 && std::isinf(floating) && *__error_nid_postfix() == 34);
+    }
+    *__error_nid_postfix() = previousError;
+}
+
 __attribute__((noinline)) static void APS5_VABI RunChecks() {
+    CheckScanInputFailureErrno();
     char buffer[1024];
     Require(FormatList(buffer, sizeof(buffer), "Mount requested: %d", 0) == 18);
     Require(std::strcmp(buffer, "Mount requested: 0") == 0);

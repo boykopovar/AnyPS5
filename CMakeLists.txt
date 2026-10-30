@@ -164,6 +164,25 @@ if(BUILD_TESTING)
         core/shader/recompiler/IntermediateRepresentation/include)
     add_test(NAME shader_ir_use_rewrite COMMAND shader_ir_use_rewrite_tests)
     set_tests_properties(shader_ir_use_rewrite PROPERTIES TIMEOUT 20)
+    add_test_executable(shader_ssa_pass_reads_tests
+        core/shader/recompiler/tests/SsaPassReads.cpp
+        core/shader/recompiler/Optimization/src/SsaBuilder/SsaPass.cpp
+        core/shader/recompiler/Optimization/src/SsaBuilder/SsaDefTable.cpp
+        core/shader/recompiler/Optimization/src/SsaBuilder/SsaVariable.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrProgram.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrValue.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrBlock.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrOpcode.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/IrType.cpp
+        core/shader/recompiler/IntermediateRepresentation/src/GuestRegister.cpp)
+    target_include_directories(shader_ssa_pass_reads_tests PRIVATE
+        core/shader/recompiler
+        core/shader/recompiler/IntermediateRepresentation/include
+        core/shader/recompiler/Optimization/include
+        core/shader/recompiler/RdnaDecoder/include
+        core/shader/recompiler/ControlFlow/include)
+    add_test(NAME shader_ssa_pass_reads COMMAND shader_ssa_pass_reads_tests)
+    set_tests_properties(shader_ssa_pass_reads PROPERTIES TIMEOUT 20)
     add_test_executable(pad_command_file_tests core/libs/prx/libScePad/tests/InputCommandFile.cpp)
     target_include_directories(pad_command_file_tests PRIVATE core/libs)
     add_test(NAME pad_command_file COMMAND pad_command_file_tests)
@@ -171,6 +190,8 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_mingw_host_only_test_targets.py)
+        add_test(NAME build_changed_guest_tests COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_changed_guest_tests.py)
         add_test(NAME shader_cache_native_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/tests/test_shader_cache_native_paths.py
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ShaderCacheVersion.cmake ${CMAKE_COMMAND})
