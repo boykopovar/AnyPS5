@@ -236,7 +236,7 @@ struct ShaderPixelStageInfo {
     bool iteratesSamples = false;
     PixelPositionLocation positionLocation = PixelPositionLocation::Center;
     std::array<std::uint8_t, 32> sampleLocations{};
-    TargetMerge targetMerge{};
+    std::vector<TargetMerge> targetMerges{};
     std::array<std::uint32_t, 4> sampleOrder{};
 };
 
