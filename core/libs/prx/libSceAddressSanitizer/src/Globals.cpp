@@ -172,7 +172,7 @@ void Register_nid_no_patch(Global* globals, std::uintptr_t count) {
     if (count == 0) {
         return;
     }
-    if (!Aligned_nid_no_patch(reinterpret_cast<std::uintptr_t>(globals)) || !InMemory(reinterpret_cast<std::uintptr_t>(globals), count * sizeof(Global))) {
+    if (!globals || count > std::numeric_limits<std::uintptr_t>::max() / sizeof(Global) || !Aligned_nid_no_patch(reinterpret_cast<std::uintptr_t>(globals)) || !InMemory(reinterpret_cast<std::uintptr_t>(globals), count * sizeof(Global))) {
         InvalidArgument_nid_no_patch(__func__);
     }
     Registry& registry = GetRegistry();
@@ -188,7 +188,7 @@ void Unregister_nid_no_patch(Global* globals, std::uintptr_t count) {
     if (count == 0) {
         return;
     }
-    if (!Aligned_nid_no_patch(reinterpret_cast<std::uintptr_t>(globals)) || !InMemory(reinterpret_cast<std::uintptr_t>(globals), count * sizeof(Global))) {
+    if (!globals || count > std::numeric_limits<std::uintptr_t>::max() / sizeof(Global) || !Aligned_nid_no_patch(reinterpret_cast<std::uintptr_t>(globals)) || !InMemory(reinterpret_cast<std::uintptr_t>(globals), count * sizeof(Global))) {
         InvalidArgument_nid_no_patch(__func__);
     }
     Registry& registry = GetRegistry();

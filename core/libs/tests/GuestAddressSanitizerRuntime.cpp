@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -472,6 +474,14 @@ static int FakeStack() {
     FAKE_CLASS(8)
     FAKE_CLASS(9)
     FAKE_CLASS(10)
+#if defined(__linux__) && !defined(__ANDROID__)
+    if (__asan_get_current_fake_stack() == nullptr) return 80;
+    const auto conditional = __asan_stack_malloc_0(64);
+    if (!conditional) return 81;
+    __asan_stack_free_0(conditional, 64);
+#else
+    if (__asan_get_current_fake_stack() != nullptr || __asan_stack_malloc_0(64) != 0) return 80;
+#endif
     return 0;
 }
 
@@ -480,14 +490,22 @@ static int FakeStackOption() {
     if (__asan_stack_malloc_0(64) != 0 || __asan_get_current_fake_stack() != nullptr) return 2;
     __asan_option_detect_stack_use_after_return = 1;
     const auto frame = __asan_stack_malloc_0(64);
-    if (!frame || __asan_get_current_fake_stack() == nullptr) return 3;
+    void* stack = __asan_get_current_fake_stack();
+    if (!frame || !stack) return 3;
     if (__asan_address_is_poisoned(reinterpret_cast<void*>(frame))) return 4;
     __asan_stack_free_0(frame, 64);
     if (!__asan_address_is_poisoned(reinterpret_cast<void*>(frame))) return 5;
     __asan_option_detect_stack_use_after_return = 0;
-    if (__asan_stack_malloc_0(64) != 0 || __asan_get_current_fake_stack() != nullptr) return 6;
+#if defined(__linux__) && !defined(__ANDROID__)
+    if (__asan_get_current_fake_stack() != stack) return 6;
+    const auto conditional = __asan_stack_malloc_0(64);
+    if (!conditional) return 7;
+    __asan_stack_free_0(conditional, 64);
+#else
+    if (__asan_get_current_fake_stack() != nullptr || __asan_stack_malloc_0(64) != 0) return 6;
+#endif
     const auto always = __asan_stack_malloc_always_0(64);
-    if (!always) return 7;
+    if (!always) return 8;
     __asan_stack_free_0(always, 64);
     return 0;
 }
@@ -537,6 +555,31 @@ static TestLocation globalLocation = {"test.cpp", 5, 6};
 static unsigned char odrIndicator;
 alignas(8) static TestGlobal globalTable[2];
 alignas(8) static TestGlobal secondTable[1];
+
+static int GlobalsInvalidArray() {
+    using Callback = void (APS5_VABI*)(void*, std::uintptr_t);
+    const Callback callbacks[] = {__asan_register_globals, __asan_unregister_globals};
+    for (const auto callback : callbacks) {
+        callback(nullptr, 0);
+        bool nullRejected = false;
+        try {
+            callback(nullptr, 1);
+        } catch (const std::invalid_argument&) {
+            nullRejected = true;
+        }
+        if (!nullRejected) return 1;
+        for (const auto count : {std::numeric_limits<std::uintptr_t>::max() / sizeof(TestGlobal) + 1, std::numeric_limits<std::uintptr_t>::max()}) {
+            bool overflowRejected = false;
+            try {
+                callback(reinterpret_cast<void*>(std::uintptr_t{0x1000}), count);
+            } catch (const std::invalid_argument&) {
+                overflowRejected = true;
+            }
+            if (!overflowRejected) return 2;
+        }
+    }
+    return 0;
+}
 
 static std::uintptr_t Area(const unsigned char* base, std::size_t offset = 0) {
     return reinterpret_cast<std::uintptr_t>(base) + offset;
@@ -760,6 +803,7 @@ int main(int argc, char* argv[]) {
     if (mode == "ubsan_legacy_return_repeat_abort") return UbsanLegacyReturn(true, true);
     if (mode == "fake_stack_option") return FakeStackOption();
     if (mode == "vptr_cache_data") return VptrCacheData();
+    if (mode == "globals_invalid_array") return GlobalsInvalidArray();
     if (mode == "ubsan_arithmetic") return UbsanArithmetic();
     if (mode == "ubsan_misc") return UbsanMisc();
     if (mode == "ubsan_data") return UbsanData();

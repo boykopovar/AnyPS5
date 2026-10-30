@@ -22,10 +22,14 @@ if(BUILD_TESTING)
     set_tests_properties(guest_addresssanitizer_fake_stack_option PROPERTIES TIMEOUT 20)
     add_test(NAME guest_addresssanitizer_vptr_cache_data COMMAND guest_addresssanitizer_runtime_tests vptr_cache_data)
     set_tests_properties(guest_addresssanitizer_vptr_cache_data PROPERTIES TIMEOUT 20)
+    add_test(NAME guest_addresssanitizer_globals_invalid_array COMMAND guest_addresssanitizer_runtime_tests globals_invalid_array)
+    set_tests_properties(guest_addresssanitizer_globals_invalid_array PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_addresssanitizer_fake_stack_option PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAddressSanitizer>")
         set_tests_properties(guest_addresssanitizer_vptr_cache_data PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAddressSanitizer>")
+        set_tests_properties(guest_addresssanitizer_globals_invalid_array PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAddressSanitizer>")
     endif()
     if(Python3_Interpreter_FOUND)

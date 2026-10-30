@@ -200,6 +200,15 @@ Stack* GetOrCreate() {
     return thread.fakeStack;
 }
 
+Stack* GetConditionalStack() {
+#if defined(__linux__) && !defined(__ANDROID__)
+    if (Stack* stack = Thread().fakeStack) {
+        return stack;
+    }
+#endif
+    return __asan_option_detect_stack_use_after_return ? GetOrCreate() : nullptr;
+}
+
 void CollectGarbage(Stack* stack, std::uintptr_t realStack) {
     const Bounds bounds = CurrentBounds();
     if (realStack < bounds.bottom || realStack > bounds.top) {
@@ -272,10 +281,7 @@ void* Malloc_nid_no_patch(std::size_t classId, std::size_t size, bool always, st
     if (classId >= kClasses) {
         InvalidArgument_nid_no_patch(__func__);
     }
-    if (!always && !__asan_option_detect_stack_use_after_return) {
-        return nullptr;
-    }
-    Stack* stack = GetOrCreate();
+    Stack* stack = always ? GetOrCreate() : GetConditionalStack();
     if (!stack) {
         return nullptr;
     }
@@ -298,7 +304,7 @@ void Free_nid_no_patch(std::uintptr_t pointer, std::size_t classId, std::size_t 
 }
 
 void* Current_nid_no_patch() {
-    return __asan_option_detect_stack_use_after_return ? GetOrCreate() : nullptr;
+    return GetConditionalStack();
 }
 
 void* AddrIsIn_nid_no_patch(void* fakeStack, void* address, void** begin, void** end) {
