@@ -56,6 +56,8 @@ struct MockDevice {
     VkDeviceSize limit = 0;
     VkResult pressureResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
     std::uint64_t attempts = 0;
+    bool traceAttempts = false;
+    std::vector<std::uint32_t> attemptedTypes;
     VkResult mapResult = VK_SUCCESS;
     VkResult bindResult = VK_SUCCESS;
     unsigned binds = 0;
@@ -79,6 +81,7 @@ VKAPI_ATTR void VKAPI_CALL mockGetBufferMemoryRequirements(VkDevice, VkBuffer bu
 
 VKAPI_ATTR VkResult VKAPI_CALL mockAllocateMemory(VkDevice, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks*, VkDeviceMemory* memory) {
     ++mock.attempts;
+    if (mock.traceAttempts) mock.attemptedTypes.push_back(info->memoryTypeIndex);
     auto result = VK_SUCCESS;
     if (!mock.results.empty()) {
         result = mock.results.front();
@@ -174,11 +177,15 @@ Context mockContext() {
 
 VkDeviceSize reportedBudget = 0;
 VkDeviceSize reportedUsage = 0;
+VkDeviceSize reportedHostBudget = 8000 * MiB;
+VkDeviceSize reportedHostUsage = 2000 * MiB;
 
 VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
     auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
     reported->heapBudget[0] = reportedBudget;
     reported->heapUsage[0] = reportedUsage;
+    reported->heapBudget[1] = reportedHostBudget;
+    reported->heapUsage[1] = reportedHostUsage;
 }
 
 std::uint64_t diagnosticBudgetQueries = 0;
@@ -253,6 +260,45 @@ void RefusedDevicePlacement() {
     }
     Expect(threw, "a refused device-local allocation without a host memory type did not fail");
     Expect(mock.liveBuffers.empty(), "a failed device buffer left its VkBuffer alive");
+}
+
+void BothHeapsOverBudget() {
+    mock = MockDevice{};
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    reportedBudget = 1620 * MiB;
+    reportedUsage = 1600 * MiB;
+    reportedHostUsage = reportedHostBudget - 32 * MiB;
+    {
+        auto context = budgetContext();
+        DeviceBuffer kept(context, 176 * MiB, usage);
+        Expect(mock.memoryTypes.at(MemoryOf(kept.Handle())) == 0, "with both heaps over their budgets, a device buffer was placed in a host heap without room instead of device-local memory");
+    }
+    {
+        mock = MockDevice{};
+        mock.traceAttempts = true;
+        auto context = budgetContext();
+        mock.results = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
+        DeviceBuffer refused(context, 176 * MiB, usage);
+        Expect(mock.memoryTypes.at(MemoryOf(refused.Handle())) == 1, "with both heaps over their budgets, a device buffer refused device-local memory was not placed in the host memory type");
+        Expect(mock.attemptedTypes == std::vector<std::uint32_t>{0, 1}, "with both heaps over their budgets, a device buffer did not try device-local memory before host memory");
+    }
+    {
+        mock = MockDevice{};
+        mock.traceAttempts = true;
+        auto context = budgetContext();
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = 64 * MiB;
+        allocation.memoryTypeIndex = context.DeviceMemoryType(3, allocation.allocationSize, "test image");
+        const auto kept = AllocateImageMemory(context, allocation, 3, "vkAllocateMemory test image");
+        Expect(mock.memoryTypes.at(kept) == 0 && mock.attemptedTypes == std::vector<std::uint32_t>{0}, "with both heaps over their budgets, an image was placed in host memory before the driver refused device-local memory");
+        mockFreeMemory(VK_NULL_HANDLE, kept, nullptr);
+        mock.attemptedTypes.clear();
+        mock.results = {VK_ERROR_OUT_OF_DEVICE_MEMORY};
+        const auto refused = AllocateImageMemory(context, allocation, 3, "vkAllocateMemory test image");
+        Expect(mock.memoryTypes.at(refused) == 1 && mock.attemptedTypes == std::vector<std::uint32_t>{0, 1}, "with both heaps over their budgets, a refused image did not try device-local memory before host memory");
+        mockFreeMemory(VK_NULL_HANDLE, refused, nullptr);
+    }
+    reportedHostUsage = 2000 * MiB;
 }
 
 void AttachmentReclaim() {
@@ -1233,6 +1279,7 @@ int main(int argc, char** argv) {
         ImageMemoryOverBudget();
         HostPlacement();
         RefusedDevicePlacement();
+        BothHeapsOverBudget();
         AttachmentReclaim();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
