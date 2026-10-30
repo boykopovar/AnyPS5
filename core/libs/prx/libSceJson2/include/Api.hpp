@@ -92,6 +92,9 @@ extern const bool _ZN3sce4Json5Value10s_nullboolE;
 extern const std::int64_t _ZN3sce4Json5Value13s_nullintegerE;
 extern const std::uint64_t _ZN3sce4Json5Value14s_nulluintegerE;
 extern const double _ZN3sce4Json5Value10s_nullrealE;
+extern String* _ZN3sce4Json5Value12s_nullstringE;
+extern Array* _ZN3sce4Json5Value11s_nullarrayE;
+extern Object* _ZN3sce4Json5Value12s_nullobjectE;
 
 
 int APS5_VABI _ZN3sce4Json12MemAllocatorD0Ev(void);

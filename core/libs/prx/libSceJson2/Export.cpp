@@ -1456,10 +1456,16 @@ void ResetDefaults(bool releaseMissing = false) {
     auto& defaults = SharedDefaults();
     for (unsigned type = 0; type < 8; ++type) {
         if (defaults.ready[type]) {
+            if (releaseMissing && type == TypeString) defaults.values[type].string = _ZN3sce4Json5Value12s_nullstringE;
+            if (releaseMissing && type == TypeArray) defaults.values[type].array = _ZN3sce4Json5Value11s_nullarrayE;
+            if (releaseMissing && type == TypeObject) defaults.values[type].object = _ZN3sce4Json5Value12s_nullobjectE;
             const bool missing = type >= TypeString && !defaults.values[type].payload;
             Destroy(defaults.values[type]);
             if (releaseMissing && missing) Release(nullptr);
         } else if (releaseMissing && type >= TypeString) Release(nullptr);
+        if (releaseMissing && type == TypeString) _ZN3sce4Json5Value12s_nullstringE = nullptr;
+        if (releaseMissing && type == TypeArray) _ZN3sce4Json5Value11s_nullarrayE = nullptr;
+        if (releaseMissing && type == TypeObject) _ZN3sce4Json5Value12s_nullobjectE = nullptr;
         defaults.values[type] = {};
         defaults.ready[type] = false;
     }
@@ -1538,6 +1544,9 @@ void CreateDefault(ValueType type) {
         if constexpr (std::is_same_v<T, String>) Construct(*handle, std::string_view{});
         else Construct(*handle);
     }
+    if constexpr (std::is_same_v<T, String>) _ZN3sce4Json5Value12s_nullstringE = handle;
+    else if constexpr (std::is_same_v<T, Array>) _ZN3sce4Json5Value11s_nullarrayE = handle;
+    else _ZN3sce4Json5Value12s_nullobjectE = handle;
 }
 
 int InitializeResources(void* self, const void* parameter, std::int32_t format, bool modern) {
@@ -1559,9 +1568,8 @@ int InitializeResources(void* self, const void* parameter, std::int32_t format, 
     state.fallback = static_cast<Value*>(Allocate(sizeof(Value)));
     if (state.fallback) Construct(*state.fallback);
     state.internalMutex = CreateKernelMutex();
-    const auto& defaults = SharedDefaults();
-    const bool admitted = defaults.values[TypeString].string && defaults.values[TypeArray].array &&
-        defaults.values[TypeObject].object && state.fallback && state.internalMutex;
+    const bool admitted = _ZN3sce4Json5Value12s_nullstringE && _ZN3sce4Json5Value11s_nullarrayE &&
+        _ZN3sce4Json5Value12s_nullobjectE && state.fallback && state.internalMutex;
     if (admitted) state.recoveryMutex = ModernValues() ? CreateKernelMutex() : state.internalMutex;
     if (!admitted || !state.recoveryMutex) { ReleaseInitialization(); return JsonErrorOutOfMemory; }
     state.paddedStringGrowth = CompiledSdk() > 0x044fffff;
@@ -1573,6 +1581,7 @@ int InitializeResources(void* self, const void* parameter, std::int32_t format, 
 const Node& Typed(const Value* self, ValueType requested, bool* usedDefault = nullptr) {
     const auto fallback = [&]() -> const Node& {
         if (usedDefault) *usedDefault = true;
+        if (usedDefault && requested >= TypeString) return SharedDefaults().values[requested];
         return Defaults(requested);
     };
     if (self->type == requested ||
@@ -2658,6 +2667,9 @@ extern const bool _ZN3sce4Json5Value10s_nullboolE = false;
 extern const std::int64_t _ZN3sce4Json5Value13s_nullintegerE = 0;
 extern const std::uint64_t _ZN3sce4Json5Value14s_nulluintegerE = 0;
 extern const double _ZN3sce4Json5Value10s_nullrealE = 0;
+String* _ZN3sce4Json5Value12s_nullstringE = nullptr;
+Array* _ZN3sce4Json5Value11s_nullarrayE = nullptr;
+Object* _ZN3sce4Json5Value12s_nullobjectE = nullptr;
 std::size_t _ZN3sce4Json6String4nposE = static_cast<std::size_t>(-1);
 
 void APS5_VABI _ZN3sce4Json6StringC1Ev(String* self) { Construct(*self, std::string_view{}); }
@@ -3053,9 +3065,9 @@ const double* APS5_VABI _ZNK3sce4Json5Value7getRealEv(const Value* self) {
     const auto& value = Typed(self, TypeReal, &usedDefault);
     return usedDefault ? &_ZN3sce4Json5Value10s_nullrealE : &value.real;
 }
-const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv(const Value* self) { return Typed(self, TypeString).string; }
-const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value* self) { return Typed(self, TypeArray).array; }
-const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value* self) { return Typed(self, TypeObject).object; }
+const String* APS5_VABI _ZNK3sce4Json5Value9getStringEv(const Value* self) { bool fallback = false; const auto& value = Typed(self, TypeString, &fallback); return fallback ? _ZN3sce4Json5Value12s_nullstringE : value.string; }
+const Array* APS5_VABI _ZNK3sce4Json5Value8getArrayEv(const Value* self) { bool fallback = false; const auto& value = Typed(self, TypeArray, &fallback); return fallback ? _ZN3sce4Json5Value11s_nullarrayE : value.array; }
+const Object* APS5_VABI _ZNK3sce4Json5Value9getObjectEv(const Value* self) { bool fallback = false; const auto& value = Typed(self, TypeObject, &fallback); return fallback ? _ZN3sce4Json5Value12s_nullobjectE : value.object; }
 std::size_t APS5_VABI _ZNK3sce4Json5Value5countEv(const Value* self) {
     const Node& n = NodeOf(*self);
     if (n.type == TypeArray) return n.array->items->size();
