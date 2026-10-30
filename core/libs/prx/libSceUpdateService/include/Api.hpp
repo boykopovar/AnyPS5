@@ -4,6 +4,8 @@
 
 extern "C" {
 
+int APS5_VABI sceUpsrvFlushHttpCookie();
+
 int APS5_VABI sceUpsrvGetCompletedTaskId();
 int APS5_VABI sceUpsrvGetRebootFlag();
 int APS5_VABI sceUpsrvGetSystemExUpdateTaskState();

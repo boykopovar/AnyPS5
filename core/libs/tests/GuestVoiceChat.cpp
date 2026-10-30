@@ -29,6 +29,8 @@ int main() {
     Require(sceVoiceChatUnregisterMemberEventHandler(nullptr) == 0, "unregister member event handler failed");
     Require(sceVoiceChatUnregisterPartyUserStateChangedHandler(nullptr) == 0, "unregister party user state changed handler failed");
     Require(sceVoiceChatUnregisterVoiceEventHandler(nullptr) == 0, "unregister voice event handler failed");
+    Require(sceVoiceChatUnregisterAccessibilityEventHandler(nullptr) == 0, "unregister accessibility event handler failed");
+    Require(sceVoiceChatUnregisterRangedMemberEventHandler(nullptr) == 0, "unregister ranged member event handler failed");
     Require(sceVoiceChatStartChannelEvent(nullptr) == 0, "start channel event failed");
     Require(sceVoiceChatStopChannelEvent(nullptr) == 0, "stop channel event failed");
     Require(sceVoiceChatStartDaemonEvent(nullptr) == 0, "start daemon event failed");
@@ -37,6 +39,10 @@ int main() {
     Require(sceVoiceChatStopMemberEvent(nullptr) == 0, "stop member event failed");
     Require(sceVoiceChatStartVoiceEvent(nullptr) == 0, "start voice event failed");
     Require(sceVoiceChatStopVoiceEvent(nullptr) == 0, "stop voice event failed");
+    Require(sceVoiceChatStartAccessibilityEvent(nullptr) == 0, "start accessibility event failed");
+    Require(sceVoiceChatStopAccessibilityEvent(nullptr) == 0, "stop accessibility event failed");
+    Require(sceVoiceChatStartRangedMemberEvent(nullptr) == 0, "start ranged member event failed");
+    Require(sceVoiceChatStopRangedMemberEvent(nullptr) == 0, "stop ranged member event failed");
 
     Require(sceVoiceChatGetMicState(nullptr) == kSignedOut, "get mic state did not return signed out");
     Require(sceVoiceChatGetUserVoiceVolumeGain(nullptr, nullptr) == kSignedOut, "get volume gain did not return signed out");
@@ -56,10 +62,15 @@ int main() {
     Require(sceVoiceChatRequestLeaveGameSessionVoiceChatChannel(1, nullptr, nullptr) == kSignedOut, "leave game session did not return signed out");
     Require(sceVoiceChatRequestCreatePlayerSessionVoiceChatChannel(1, nullptr, nullptr) == kSignedOut, "create player session did not return signed out");
     Require(sceVoiceChatRequestDeletePlayerSessionVoiceChatChannel(1, nullptr, nullptr) == kSignedOut, "delete player session did not return signed out");
+    Require(sceVoiceChatRequestJoinPlayerSessionVoiceChatChannel(1, nullptr, nullptr) == kSignedOut, "join player session did not return signed out");
+    Require(sceVoiceChatRequestLeavePlayerSessionVoiceChatChannel(1, nullptr, nullptr) == kSignedOut, "leave player session did not return signed out");
     Require(sceVoiceChatRequestCreateVoiceChatGroup(1, nullptr, nullptr) == kSignedOut, "create voice chat group did not return signed out");
     Require(sceVoiceChatRequestJoinVoiceChatGroup(1, nullptr, nullptr) == kSignedOut, "join voice chat group did not return signed out");
     Require(sceVoiceChatRequestLeaveVoiceChatGroup(1, nullptr, nullptr) == kSignedOut, "leave voice chat group did not return signed out");
     Require(sceVoiceChatRequestDeleteVoiceChatGroup(1, nullptr, nullptr) == kSignedOut, "delete voice chat group did not return signed out");
+    Require(sceVoiceChatRequestUpdateGameSessionVoiceChatChannelName(1, nullptr, nullptr) == kSignedOut, "update game session name did not return signed out");
+    Require(sceVoiceChatRequestUpdatePlayerSessionVoiceChatChannelName(1, nullptr, nullptr) == kSignedOut, "update player session name did not return signed out");
+    Require(sceVoiceChatRequestSetMemberVolume(1, nullptr, nullptr) == kSignedOut, "set member volume did not return signed out");
     Require(sceVoiceChatRequestAcsTts(1, nullptr, nullptr) == kSignedOut, "tts request did not return signed out");
     Require(sceVoiceChatAbortRequest(1) == 0, "abort request failed");
     Require(sceVoiceChatDeleteRequest(1) == 0, "delete request failed");

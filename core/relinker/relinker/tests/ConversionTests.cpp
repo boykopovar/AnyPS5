@@ -372,6 +372,21 @@ void runtimeDirectories() {
         require(output.Modules.size() == 1, "Module was not converted");
         require(exports(output.Modules.front().Bytes, Relinker::GuestInitializeExport) == (std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module the executable needs");
     }
+    for (const auto* directory : {"sce_module", "sce_modules", "prx", "Media/Modules"}) {
+        auto source = input();
+        const auto parent = source.ModuleRoot / directory;
+        const auto plugins = source.ModuleRoot / "Media/Plugins";
+        source.Modules.push_back({plugins / "plugin.prx", fixture("needed.prx")});
+        source.Modules.push_back({parent / "needed.prx", fixture()});
+        source.RuntimeDirectories.push_back(plugins);
+        source.RuntimeDirectories.push_back(parent);
+        const auto output = converter.Convert(std::move(source), options);
+        require(output.Modules.size() == 2, "Modules were not converted");
+        for (const auto& module : output.Modules) {
+            const bool plugin = module.SourcePath.filename() == "plugin.prx";
+            require(exports(module.Bytes, Relinker::GuestInitializeExport) == (plugin || std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module another runtime module needs");
+        }
+    }
 }
 
 void relocationValidation() {
@@ -419,6 +434,66 @@ void relocationValidation() {
 
 }
 
+void sysvHashBoundsInCodeInstructionCollector() {
+    auto baseImage = fixture();
+    const auto parseHeaders = [](const std::vector<std::uint8_t>& bytes) {
+        std::vector<Domain::ProgramHeader> headers;
+        const auto count = Io::ReadU16(bytes, 56);
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto at = 64 + i * 56;
+            Domain::ProgramHeader h{};
+            h.Type = Io::ReadU32(bytes, at);
+            h.Flags = Io::ReadU32(bytes, at + 4);
+            h.Offset = Io::ReadU64(bytes, at + 8);
+            h.MappedAddress = Io::ReadU64(bytes, at + 16);
+            h.FileSize = Io::ReadU64(bytes, at + 32);
+            h.MemorySize = Io::ReadU64(bytes, at + 40);
+            headers.push_back(h);
+        }
+        return headers;
+    };
+    const auto headers = parseHeaders(baseImage);
+    const auto checkRejection = [&](const std::vector<std::uint8_t>& img, std::string_view expected) {
+        try {
+            Relinker::CodeInstructionCollector().Collect(img, headers);
+            throw std::runtime_error("Collector accepted invalid SysV hash table");
+        } catch (const Domain::RelinkerException& error) {
+            require(std::string(error.what()).find(expected) != std::string::npos, "Wrong error message from collector");
+        }
+    };
+    {
+        auto zeroBucket = baseImage;
+        Io::WriteU32(zeroBucket, 0x2680, 0);
+        checkRejection(zeroBucket, "invalid SysV hash header");
+    }
+    {
+        auto zeroChain = baseImage;
+        Io::WriteU32(zeroChain, 0x2684, 0);
+        checkRejection(zeroChain, "invalid SysV hash header");
+    }
+    {
+        auto oobBucket = baseImage;
+        Io::WriteU32(oobBucket, 0x2688, 4);
+        checkRejection(oobBucket, "invalid SysV hash bucket index");
+    }
+    {
+        auto tableOob = baseImage;
+        Io::WriteU32(tableOob, 0x2684, 0x2000);
+        checkRejection(tableOob, "unmapped address");
+    }
+    {
+        auto lastBucket = baseImage;
+        Io::WriteU32(lastBucket, 0x2680, 2);
+        Io::WriteU32(lastBucket, 0x268c, 1);
+        checkRejection(lastBucket, "invalid SysV hash bucket index");
+    }
+    {
+        auto chainPastSegment = baseImage;
+        Io::WriteU32(chainPastSegment, 0x2680, 0x25e);
+        checkRejection(chainPastSegment, "unmapped address");
+    }
+}
+
 int main() {
     try {
         convert();
@@ -432,6 +507,7 @@ int main() {
         baseRelocations();
         runtimeDirectories();
         relocationValidation();
+        sysvHashBoundsInCodeInstructionCollector();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

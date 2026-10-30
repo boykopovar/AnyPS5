@@ -322,6 +322,7 @@ static void CalendarConversionsFollowTheHostZone() {
 }
 
 static void KernelTimezoneIsUtc() {
+    SetTimeZone("UTC0");
     Require(sceKernelGettimezone(nullptr) == static_cast<int>(0x8002000eu));
     KernelTimezone zone{-1, -1};
     Require(sceKernelGettimezone(&zone) == SCE_OK && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);

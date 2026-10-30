@@ -265,6 +265,27 @@ void CheckAddressOverflow() {
         threw = true;
     }
     Require(threw, "Text section address space overflow was not rejected");
+
+    threw = false;
+    try {
+        Relinker::FindRelativeJumpTables(text, std::numeric_limits<VirtualAddress>::max(), {});
+    } catch (const RelinkerException&) {
+        threw = true;
+    }
+    Require(threw, "Relative jump table text section address space overflow was not rejected");
+
+    threw = false;
+    try {
+        std::size_t tableEnd = 0;
+        Relinker::FindTrailingRelativeJumpTable(text, std::numeric_limits<VirtualAddress>::max(), &tableEnd);
+    } catch (const RelinkerException&) {
+        threw = true;
+    }
+    Require(threw, "Trailing relative jump table address space overflow was not rejected");
+
+    const auto lastAddress = std::numeric_limits<VirtualAddress>::max() - text.size();
+    Require(Relinker::FindRelativeJumpTables(text, lastAddress, {}).empty(), "Relative jump tables at the end of the address space were rejected");
+    Require(Relinker::FindTrailingRelativeJumpTable(text, lastAddress) == text.size(), "Trailing relative jump table at the end of the address space was rejected");
 }
 
 void CheckHighVirtualAddress() {

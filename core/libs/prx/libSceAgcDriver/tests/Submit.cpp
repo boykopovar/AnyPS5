@@ -422,6 +422,35 @@ void testLabelHeldAtSubmission() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void testLabelTakenAndResetInOneSubmission() {
+    alignas(64) static volatile std::uint32_t gate = 0, label = 0, first = 0, waiting = 0, second = 0;
+    submit(0x20, commands(waitEqual(&gate, 1), waitEqual(&label, 1), writeData(&label, 0), writeData(&first, 1), writeData(&waiting, 1), waitEqual(&label, 1), writeData(&second, 1)));
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&label, 1, "producer label never landed");
+    gate = 1;
+    waitFor(&waiting, 1, "consumer never reached its second label wait");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(first == 1 && second == 0, "a label store its own queue had taken and reset satisfied the queue's next wait, or the wait expired");
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&second, 1, "consumer did not resume after a new producer label");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testLabelTakenAndResetByEarlierSubmission() {
+    alignas(64) static volatile std::uint32_t gate = 0, label = 0, first = 0, second = 0;
+    submit(0x20, commands(waitEqual(&gate, 1), waitEqual(&label, 1), writeData(&label, 0), writeData(&first, 1)));
+    submit(0x20, commands(waitEqual(&label, 1), writeData(&label, 0), writeData(&second, 1)));
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&label, 1, "producer label never landed");
+    gate = 1;
+    waitFor(&first, 1, "consumer never passed its first label wait");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(second == 0, "a label store an earlier submission of the queue had taken and reset satisfied a later submission's wait, or the wait expired");
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&second, 1, "the later submission did not resume after a new producer label");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void testWaitFreeSubmissionAfterEarlierQueue0Work() {
     alignas(64) static volatile std::uint32_t first = 0, second = 0;
     constexpr std::uint32_t writes = 20000;
@@ -1072,6 +1101,8 @@ int main(int argc, char** argv) {
         testLabelStoredSinceSubmission();
         testEndOfPipeLabelsWithoutWork();
         testLabelHeldAtSubmission();
+        testLabelTakenAndResetInOneSubmission();
+        testLabelTakenAndResetByEarlierSubmission();
         testWideLabelStoredSinceSubmission();
         testWaitFreeSubmissionAfterEarlierQueue0Work();
         testWaitFreeSubmissionQueue0WaitsOn();
