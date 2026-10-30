@@ -1355,7 +1355,7 @@ ImportPages importPages(std::uint64_t base, std::uint64_t bytes, bool opening = 
         }
         const auto protection = info.Protect & 0xffu;
         const bool pageWritable = (info.Type == MEM_PRIVATE || info.Type == MEM_IMAGE) && writableProtection(protection);
-        const bool pageReadOnly = info.Type != MEM_MAPPED && (protection == PAGE_READONLY || protection == PAGE_EXECUTE_READ);
+        const bool pageReadOnly = (info.Type != MEM_MAPPED || (info.AllocationProtect & 0xffu) == PAGE_READONLY) && (protection == PAGE_READONLY || protection == PAGE_EXECUTE_READ);
         if (!pageReadOnly) pages.readOnly = false;
         if (info.Type != MEM_MAPPED) pages.shared = false;
         if (info.Type != MEM_MAPPED && !pageWritable && !pageReadOnly && pages.refused.BaseAddress == nullptr) pages.refused = info;
