@@ -668,6 +668,26 @@ void CheckSettimeofday() {
     Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
 
+void CheckSceKernelSettimeofday() {
+    constexpr int KernelFault = static_cast<int>(0x8002000Eu);
+    constexpr int KernelInvalid = static_cast<int>(0x80020016u);
+    KernelTimezone zone{-1, -1};
+    Require(sceKernelSettimeofday(nullptr, nullptr) == 0);
+    const KernelTimezone west{60, 1};
+    const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(1);
+    const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(1);
+    Require(sceKernelSettimeofday(unreadableTime, &west) == KernelFault);
+    Require(sceKernelSettimeofday(nullptr, unreadableZone) == KernelFault);
+    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
+        Require(sceKernelSettimeofday(&invalid, &west) == KernelInvalid);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    Require(sceKernelSettimeofday(nullptr, &west) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1);
+    const KernelTimezone zero{0, 0};
+    Require(sceKernelSettimeofday(nullptr, &zero) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+}
+
 void DirectoryRenameTests(const std::filesystem::path& parent) {
     const auto fixture = parent / "directory-identity";
     const auto original = fixture / "original";
@@ -1124,6 +1144,7 @@ int main() {
     Require(link_nid_postfix(original.c_str(), "") == -1 && Error() == 2);
     Require(std::filesystem::remove(linked) && std::filesystem::hard_link_count(original) == 1);
     CheckSettimeofday();
+    CheckSceKernelSettimeofday();
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     const int fileDescriptor = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);

@@ -12,6 +12,8 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace AgcDriver::Graphics {
 
@@ -84,6 +86,7 @@ void UpdateResidentImageUnmapObserver_nid_no_patch();
 void GuardOneFragmentFmask(const Context& context, const ColorTarget& target);
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access);
 void RequireNoMultisampleColorTarget(std::uint64_t address, std::size_t bytes, const char* access);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> HostOnlySampleRanges(std::uint64_t address, std::size_t bytes);
 
 }
 

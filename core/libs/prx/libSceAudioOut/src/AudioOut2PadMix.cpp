@@ -63,10 +63,16 @@ AudioOut2PadLayout AudioOut2PadLayoutForDriver(const char* driver) {
     return layout;
 }
 
-void AudioOut2WritePadFrames(const float* pad, const AudioOut2PadLayout& layout, float* out, std::uint32_t frames) {
+void AudioOut2WritePadFrames(const float* pad, const AudioOut2PadLayout& layout, float* out, std::uint32_t frames, unsigned vibrationPercent) {
     std::fill(out, out + static_cast<std::size_t>(frames) * layout.channels, 0.0f);
+    const bool scaled = vibrationPercent < 100;
+    const float gain = static_cast<float>(vibrationPercent) / 100.0f;
     for (std::uint32_t frame = 0; frame < frames; frame++) {
         for (std::uint32_t channel = 0; channel < AUDIO_OUT2_PAD_CHANNELS; channel++) {
+            if (scaled && (channel == AUDIO_OUT2_PAD_VIBRATION_LEFT || channel == AUDIO_OUT2_PAD_VIBRATION_RIGHT)) {
+                if (vibrationPercent != 0) out[static_cast<std::size_t>(frame) * layout.channels + layout.position[channel]] = pad[static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS + channel] * gain;
+                continue;
+            }
             out[static_cast<std::size_t>(frame) * layout.channels + layout.position[channel]] = pad[static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS + channel];
         }
     }

@@ -477,6 +477,7 @@ static bool FailPosixPositionedGuestSocket(int descriptor) {
 
 static bool IsPipeDescriptor(int descriptor) {
 #ifdef _WIN32
+    if (GuestSockets::IsOpen(descriptor)) return false;
     const auto handle = reinterpret_cast<HANDLE>(WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor); }));
     return handle != INVALID_HANDLE_VALUE && ::GetFileType(handle) == FILE_TYPE_PIPE;
 #else
@@ -501,7 +502,7 @@ static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, 
 
 static int TransferArgumentError(int descriptor, bool nullBuffer) {
     if (!nullBuffer) return 0;
-    return DescriptorIsOpen_nid_no_patch(descriptor) ? GUEST_EFAULT : GUEST_EBADF;
+    return (GuestSockets::IsOpen(descriptor) || DescriptorIsOpen_nid_no_patch(descriptor)) ? GUEST_EFAULT : GUEST_EBADF;
 }
 
 static int SceErrorFromErrno(int error) {
@@ -943,9 +944,6 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
 #endif
     const int type = operation & 8 ? 8 : operation & 2 ? 2 : operation & 1 ? 1 : 0;
     if (type == 0) return PosixFailure(GUEST_EBADF);
-#ifdef _WIN32
-    if (File::IsDirectoryDescriptor(d)) return 0;
-#endif
     if (NativeFlock(d, type | (operation & 4)) != 0) {
 #ifdef _WIN32
         const auto error = ::GetLastError();

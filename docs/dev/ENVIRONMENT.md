@@ -134,6 +134,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_DRAIN_COMPLETION_LABELS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/DeferredLabels.cpp` |  | records completion labels immediately instead of deferring them with the batch, and drains a label recorded while a copied write-back is pending instead of storing it behind the write-backs |
 | `APS5_DRAW_CACHE_BYTES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` | 268435456 | size of the draw cache in bytes, evicting least-recently-used entries past it (0 keeps the default of 256 MiB) |
 | `APS5_DRAW_CACHE_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` | 4096 | number of entries in the draw cache; 0 keeps the default 4096 |
+| `APS5_DRAW_CACHE_INDIRECT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` |  | also caches the draws an indirect packet runs on the CPU path (records read on the host, patched user words); a hit still recompiles the stages whose user words the record patches and reuses the other stages |
 | `APS5_DRAW_DRAIN` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketMemory.cpp` |  | treats draw packets as drains, waiting for them instead of recording ahead |
 | `APS5_DRAW_INPUTS_IN_PLACE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | binds draw vertex and index ranges in place from host imports also with NVIDIA's Windows driver, which copies them by default |
 | `APS5_DRAW_KEY_ALL_USER_WORDS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawRegisterKey.cpp` |  | includes all 32 user words in a draw's register key instead of the used count |
@@ -534,6 +535,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_RUMBLE` | integer | `core/libs/prx/libScePad/include/PadRumbleIntensity.hpp` | 100 | host controller vibration strength as a whole percentage from 0 to 100, read once when the pad input starts and again by the audio-out controller sound card path; 100 or unset leaves vibration exactly as the title asks, 0 turns motor rumble, impulse-trigger rumble and controller-sound-card haptics off, in between scales the motor amplitudes with rounding and the haptic samples linearly; DualSense adaptive trigger effects are not scaled; any other value (empty, signed, fractional, above 100) stops the game with an error naming the variable |
 | `APS5_PAD_INPUT_FILE` | string | `core/libs/prx/libScePad/src/PadState.cpp` |  | path of the file polled for injected pad button and stick commands |
 
 ### libScePlayGo

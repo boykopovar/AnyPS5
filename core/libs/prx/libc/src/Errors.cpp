@@ -46,9 +46,25 @@ constexpr const char* messages[] = {
 static_assert(sizeof(messages) / sizeof(messages[0]) == 97);
 bool NamedByStrerror(int error) { return error > 0 && error < 95; }
 
+constexpr struct {
+    int error;
+    const char* text;
+} extendedMessages[] = {
+    {107, "State not recoverable"}, {108, "Owner dead"}, {152, "File positioning error"},
+    {1040, "No message available"}, {1050, "No stream resources"}, {1051, "Not a stream"},
+    {1062, "Other"}, {1074, "Stream timeout"},
+};
+
+const char* ExtendedMessage(int error) {
+    for (const auto& entry : extendedMessages)
+        if (entry.error == error) return entry.text;
+    return nullptr;
+}
+
 void Describe(int error, char (&text)[128]) {
     if (error == 0) std::snprintf(text, sizeof(text), "No error");
     else if (NamedByStrerror(error)) std::snprintf(text, sizeof(text), "%s", messages[error]);
+    else if (const char* extended = ExtendedMessage(error)) std::snprintf(text, sizeof(text), "%s", extended);
     else std::snprintf(text, sizeof(text), "error_code=0x%08x", static_cast<unsigned>(error));
 }
 }

@@ -114,9 +114,9 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) result = Ngs2CheckCustomRack(rackId, options.customSubmixer.custom_rack_option, options.customSubmixer.max_inputs);
     if (result != SCE_NGS2_OK) return result;
     if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER && options.customSampler.max_waveform_blocks == 0) return static_cast<int>(0x804A8053u);
-    if (maxChannels > NGS2_MAX_CHANNELS) {
-        if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) {
-            throw std::runtime_error("NGS2: custom submixer racks with " + std::to_string(maxChannels) + " channels are not implemented");
+    if (maxChannels > NGS2_MAX_CHANNELS && rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
+        if (rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) {
+            throw std::runtime_error("NGS2: custom mastering racks with " + std::to_string(maxChannels) + " channels are not implemented");
         }
         throw std::invalid_argument("NGS2: invalid rack voice or channel count");
     }
