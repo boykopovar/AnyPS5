@@ -16,6 +16,7 @@ extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName);
 extern "C" std::uint64_t NotImplementedCalls_nid_no_patch();
 extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
 extern "C" bool StopAtPrefixLetter_nid_no_patch(const char* str, char** endptr, int base);
+extern "C" const char* NanSubjectEnd_nid_no_patch(const char* text);
 extern "C" bool RejectIntegerBase_nid_no_patch(const char* str, char** endptr, int base, bool setError);
 extern "C" int KeepHostStandardError_nid_no_patch();
 extern "C" int KeepHostStandardOutput_nid_no_patch();

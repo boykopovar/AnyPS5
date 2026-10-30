@@ -64,6 +64,11 @@ struct NpTitleIdParts {
     std::uint8_t index;
 };
 
+struct NpTitleIdObject {
+    const void* const* vtable;
+    NpTitleId titleId;
+};
+
 extern "C" {
 
 int APS5_VABI sceNpCmpOnlineId(const NpOnlineId* onlineId1, const NpOnlineId* onlineId2);
@@ -266,7 +271,6 @@ int APS5_VABI _ZN3sce2np9WorkQueueD2Ev(void);
 int APS5_VABI _ZThn16_N3sce2np9HttpTrans5WriteEPNS0_6HandleEPKvmPm(void);
 int APS5_VABI _ZN3sce2np10EventQueue4ctorEv(void);
 int APS5_VABI _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(void);
-int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKcm(void);
 int APS5_VABI _ZN3sce2np20BufferedStreamReaderD1Ev(void);
 int APS5_VABI _ZN3sce2np3ipc10IpmiClient7ConnectEPKvm(void);
 int APS5_VABI _ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(void);
@@ -361,7 +365,6 @@ int APS5_VABI _ZN3sce2np9EventFlag7DestroyEv(void);
 int APS5_VABI _ZN3sce2np9HttpTransC1EP16SceNpAllocatorEx(void);
 int APS5_VABI _ZN3sce2np6Thread4dtorEv(void);
 int APS5_VABI _ZN3sce2np4Time8AddHoursEl(void);
-int APS5_VABI _ZN3sce2np9NpTitleIdC2ERK12SceNpTitleId(void);
 int APS5_VABI _ZN3sce2np12WorkerThreadD0Ev(void);
 int APS5_VABI _ZN3sce2np13RingBufMemoryD0Ev(void);
 int APS5_VABI _ZN3sce2np9LocalFile5CloseEv(void);
@@ -372,6 +375,32 @@ int APS5_VABI _ZN3sce2np18MemoryStreamWriterD2Ev(void);
 int APS5_VABI _ZN3sce2np4Time12GetUserClockEPS1_(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient12AbortRequestEii(void);
 int APS5_VABI _ZNK3sce2np5Mutex6IsInitEv(void);
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC1Ev(NpTitleIdObject* self);
+void APS5_VABI _ZN3sce2np9NpTitleIdC2Ev(NpTitleIdObject* self);
+void APS5_VABI _ZN3sce2np9NpTitleIdC1ERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other);
+void APS5_VABI _ZN3sce2np9NpTitleIdC2ERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other);
+void APS5_VABI _ZN3sce2np9NpTitleIdC1ERK12SceNpTitleId(NpTitleIdObject* self, const NpTitleId* titleId);
+void APS5_VABI _ZN3sce2np9NpTitleIdC2ERK12SceNpTitleId(NpTitleIdObject* self, const NpTitleId* titleId);
+void APS5_VABI _ZN3sce2np9NpTitleIdD1Ev(NpTitleIdObject* self);
+void APS5_VABI _ZN3sce2np9NpTitleIdD2Ev(NpTitleIdObject* self);
+void APS5_VABI _ZN3sce2np9NpTitleIdD0Ev(NpTitleIdObject* self);
+NpTitleIdObject* APS5_VABI _ZN3sce2np9NpTitleIdaSERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other);
+void APS5_VABI _ZN3sce2np9NpTitleId5ClearEv(NpTitleIdObject* self);
+bool APS5_VABI _ZNK3sce2np9NpTitleId7IsEmptyEv(const NpTitleIdObject* self);
+bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsEPKc(const NpTitleIdObject* self, const char* titleId);
+bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsERKS1_(const NpTitleIdObject* self, const NpTitleIdObject* other);
+bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsERK12SceNpTitleId(const NpTitleIdObject* self, const NpTitleId* titleId);
+int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(NpTitleIdObject* out, const char* text);
+int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKcm(NpTitleIdObject* out, const char* text, std::size_t length);
+int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKc(NpTitleIdObject* out, const char* text);
+int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKcm(NpTitleIdObject* out, const char* text, std::size_t length);
+int APS5_VABI _ZN3sce2np9NpTitleId5BuildERKS1_Pcm(const NpTitleIdObject* titleId, char* text, std::size_t size);
+bool APS5_VABI _ZN3sce2npeqERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, const NpTitleIdObject* rhs);
+bool APS5_VABI _ZN3sce2npeqERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs);
+bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, const NpTitleIdObject* rhs);
+bool APS5_VABI _ZN3sce2npneERK12SceNpTitleIdRKNS0_9NpTitleIdE(const NpTitleId* lhs, const NpTitleIdObject* rhs);
+bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs);
 
 [[noreturn]] void APS5_VABI sceNpPanic(void);
 

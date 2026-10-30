@@ -4,6 +4,10 @@
 
 extern "C" {
 
+int APS5_VABI sceDbgKeyboardGetHandle() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceKeyboardInit(void) {
     return Keyboard::Initialize();
 }

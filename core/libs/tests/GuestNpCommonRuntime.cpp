@@ -31,6 +31,8 @@ constexpr int NpOutOfRange = static_cast<int>(0x8055800E);
 constexpr int NpInvalidArgument = static_cast<int>(0x80558009);
 constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
+constexpr int NpTitleIdInvalid = static_cast<int>(0x80559E11);
+constexpr int NpTitleIdBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int KernelNotPermitted = static_cast<int>(0x80020001);
 constexpr int KernelNoSuchObject = static_cast<int>(0x80020003);
 constexpr std::uint32_t EventFlagWaitAnd = 1;
@@ -240,6 +242,60 @@ void TestObjectsThroughStoredAllocator() {
     record.fail = true;
     Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
         "a failed array allocation returns null");
+}
+
+void TestTitleIdObjects() {
+    NpTitleIdObject parsed {};
+    std::memset(&parsed, 0x77, sizeof(parsed));
+    Require(_ZN3sce2np9NpTitleId5ParseEPS1_PKc(&parsed, "WXYZ54321_07") == 0 && std::memcmp(parsed.titleId.data, "WXYZ54321_00\0\0\0", 16) == 0,
+        "parsing keeps the nine character code and resets the suffix to _00");
+    Require(_ZN3sce2np9NpTitleId5ParseEPS1_PKcm(&parsed, "WXYZ54321", 9) == NpTitleIdInvalid, "parsing needs the twelve character form");
+    Require(_ZN3sce2np9NpTitleId5ParseEPS1_PKc(&parsed, "WXYZ5432a_07") == NpTitleIdInvalid
+        && _ZN3sce2np9NpTitleId5ParseEPS1_PKc(&parsed, "WXY154321_07") == NpTitleIdInvalid
+        && _ZN3sce2np9NpTitleId5ParseEPS1_PKc(&parsed, "WXYZ54321-07") == NpTitleIdInvalid,
+        "parsing needs four letters, five digits, an underscore and two digits");
+    Require(std::memcmp(parsed.titleId.data, "WXYZ54321_00", 13) == 0, "a rejected title id leaves the object as it was");
+
+    NpTitleIdObject built {};
+    _ZN3sce2np9NpTitleIdC1Ev(&built);
+    Require(_ZNK3sce2np9NpTitleId7IsEmptyEv(&built) && built.vtable != nullptr, "a default title id is empty");
+    Require(_ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKcm(&built, "wxyz54321", 9) == 0
+        && _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(&built, "WXYZ54321_00") == NpTitleIdInvalid,
+        "constructing takes only the nine character code");
+    Require(_ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(&built, "WXYZ54321") == 0 && !_ZNK3sce2np9NpTitleId7IsEmptyEv(&built),
+        "a constructed title id is not empty");
+
+    char text[16];
+    std::memset(text, 'x', sizeof(text));
+    Require(_ZN3sce2np9NpTitleId5BuildERKS1_Pcm(&built, text, 12) == NpTitleIdBufferTooSmall && text[0] == 'x', "building needs 13 bytes");
+    Require(_ZN3sce2np9NpTitleId5BuildERKS1_Pcm(&built, text, 14) == 0 && std::strcmp(text, "WXYZ54321_00") == 0 && text[13] == '\0' && text[14] == 'x',
+        "building writes the title id and clears the rest of the buffer");
+
+    NpTitleIdObject copy {};
+    _ZN3sce2np9NpTitleIdC1ERKS1_(&copy, &parsed);
+    NpTitleId plain = parsed.titleId;
+    plain.data[11] = '9';
+    Require(_ZNK3sce2np9NpTitleId6EqualsERKS1_(&copy, &built) && _ZN3sce2npeqERKNS0_9NpTitleIdES3_(&copy, &built)
+        && _ZNK3sce2np9NpTitleId6EqualsEPKc(&copy, "WXYZ54321_00"), "equal title ids compare equal");
+    Require(_ZN3sce2npneERKNS0_9NpTitleIdERK12SceNpTitleId(&copy, &plain) && _ZN3sce2npneERK12SceNpTitleIdRKNS0_9NpTitleIdE(&plain, &copy),
+        "the suffix takes part in the comparison");
+    plain.data[12] = 'q';
+    plain.data[11] = '0';
+    Require(_ZNK3sce2np9NpTitleId6EqualsERK12SceNpTitleId(&copy, &plain), "only the first twelve characters are compared");
+
+    _ZN3sce2np9NpTitleIdC1ERK12SceNpTitleId(&copy, &plain);
+    _ZN3sce2np9NpTitleIdaSERKS1_(&built, &copy);
+    Require(built.titleId.data[12] == 'q', "assignment copies all sixteen bytes");
+    _ZN3sce2np9NpTitleId5ClearEv(&built);
+    Require(_ZNK3sce2np9NpTitleId7IsEmptyEv(&built) && built.titleId.data[12] == '\0', "clearing empties the title id");
+
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    auto* owned = static_cast<NpTitleIdObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpTitleIdObject), &allocator));
+    _ZN3sce2np9NpTitleIdC1Ev(owned);
+    using Destructor = void APS5_VABI (*)(NpTitleIdObject*);
+    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
 struct CalloutRecord {
@@ -528,6 +584,7 @@ int main() {
     TestHeaps();
     TestObjects();
     TestObjectsThroughStoredAllocator();
+    TestTitleIdObjects();
     TestBase64();
     TestNumbers();
     TestHexAndCopies();

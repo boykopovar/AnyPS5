@@ -94,6 +94,40 @@ bool IsOnlineIdText(const char* text) {
 }
 
 constexpr int NP_ERROR_BUFFER_TOO_SMALL = static_cast<int>(0x80558008);
+
+constexpr int NP_ERROR_TITLE_ID_INVALID = static_cast<int>(0x80559E11);
+constexpr int NP_ERROR_TITLE_ID_BUFFER_TOO_SMALL = static_cast<int>(0x80559E0D);
+constexpr std::size_t NP_TITLE_ID_CODE_LENGTH = 9;
+constexpr std::size_t NP_TITLE_ID_LENGTH = 12;
+
+void* const NpTitleIdVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np9NpTitleIdD1Ev), reinterpret_cast<void*>(&_ZN3sce2np9NpTitleIdD0Ev),
+};
+
+bool SameTitleId(const char* lhs, const char* rhs) {
+    return std::strncmp(lhs, rhs, NP_TITLE_ID_LENGTH) == 0;
+}
+
+bool IsTitleIdLetter(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+bool IsTitleIdDigit(char c) {
+    return c >= '0' && c <= '9';
+}
+
+int StoreTitleId(NpTitleIdObject* out, const char* text, std::size_t length, std::size_t expected) {
+    if (length != expected) return NP_ERROR_TITLE_ID_INVALID;
+    if (!std::all_of(text, text + 4, IsTitleIdLetter) || !std::all_of(text + 4, text + NP_TITLE_ID_CODE_LENGTH, IsTitleIdDigit))
+        return NP_ERROR_TITLE_ID_INVALID;
+    if (expected == NP_TITLE_ID_LENGTH && (text[9] != '_' || !IsTitleIdDigit(text[10]) || !IsTitleIdDigit(text[11])))
+        return NP_ERROR_TITLE_ID_INVALID;
+    out->titleId = {};
+    std::memcpy(out->titleId.data, text, NP_TITLE_ID_CODE_LENGTH);
+    std::memcpy(out->titleId.data + NP_TITLE_ID_CODE_LENGTH, "_00", 3);
+    return 0;
+}
 constexpr std::size_t NP_SDK_VERSION_SIZE = 8;
 constexpr std::size_t NP_RFC3339_BUFFER_MIN = 0x80;
 constexpr std::size_t NP_USER_ID_LIST_SIZE = 20;
@@ -826,6 +860,110 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
         std::putchar('\n');
     }
     std::putchar('\n');
+}
+
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC1Ev(NpTitleIdObject* self) {
+    self->vtable = &NpTitleIdVtable[2];
+    self->titleId = {};
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC2Ev(NpTitleIdObject* self) {
+    _ZN3sce2np9NpTitleIdC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC1ERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other) {
+    self->vtable = &NpTitleIdVtable[2];
+    self->titleId = other->titleId;
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC2ERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other) {
+    _ZN3sce2np9NpTitleIdC1ERKS1_(self, other);
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC1ERK12SceNpTitleId(NpTitleIdObject* self, const NpTitleId* titleId) {
+    self->vtable = &NpTitleIdVtable[2];
+    self->titleId = *titleId;
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdC2ERK12SceNpTitleId(NpTitleIdObject* self, const NpTitleId* titleId) {
+    _ZN3sce2np9NpTitleIdC1ERK12SceNpTitleId(self, titleId);
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdD1Ev(NpTitleIdObject*) {}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdD2Ev(NpTitleIdObject*) {}
+
+void APS5_VABI _ZN3sce2np9NpTitleIdD0Ev(NpTitleIdObject* self) {
+    _ZN3sce2np6ObjectdlEPv(self);
+}
+
+NpTitleIdObject* APS5_VABI _ZN3sce2np9NpTitleIdaSERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other) {
+    self->titleId = other->titleId;
+    return self;
+}
+
+void APS5_VABI _ZN3sce2np9NpTitleId5ClearEv(NpTitleIdObject* self) {
+    self->titleId = {};
+}
+
+bool APS5_VABI _ZNK3sce2np9NpTitleId7IsEmptyEv(const NpTitleIdObject* self) {
+    return self->titleId.data[0] == '\0';
+}
+
+bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsEPKc(const NpTitleIdObject* self, const char* titleId) {
+    return SameTitleId(self->titleId.data, titleId);
+}
+
+bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsERKS1_(const NpTitleIdObject* self, const NpTitleIdObject* other) {
+    return SameTitleId(self->titleId.data, other->titleId.data);
+}
+
+bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsERK12SceNpTitleId(const NpTitleIdObject* self, const NpTitleId* titleId) {
+    return SameTitleId(self->titleId.data, titleId->data);
+}
+
+int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(NpTitleIdObject* out, const char* text) {
+    return StoreTitleId(out, text, std::strlen(text), NP_TITLE_ID_CODE_LENGTH);
+}
+
+int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKcm(NpTitleIdObject* out, const char* text, std::size_t length) {
+    return StoreTitleId(out, text, length, NP_TITLE_ID_CODE_LENGTH);
+}
+
+int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKc(NpTitleIdObject* out, const char* text) {
+    return StoreTitleId(out, text, std::strlen(text), NP_TITLE_ID_LENGTH);
+}
+
+int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKcm(NpTitleIdObject* out, const char* text, std::size_t length) {
+    return StoreTitleId(out, text, length, NP_TITLE_ID_LENGTH);
+}
+
+int APS5_VABI _ZN3sce2np9NpTitleId5BuildERKS1_Pcm(const NpTitleIdObject* titleId, char* text, std::size_t size) {
+    if (size <= NP_TITLE_ID_LENGTH) return NP_ERROR_TITLE_ID_BUFFER_TOO_SMALL;
+    std::memset(text, 0, size);
+    std::memcpy(text, titleId->titleId.data, NP_TITLE_ID_LENGTH + 1);
+    return 0;
+}
+
+bool APS5_VABI _ZN3sce2npeqERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, const NpTitleIdObject* rhs) {
+    return SameTitleId(lhs->titleId.data, rhs->titleId.data);
+}
+
+bool APS5_VABI _ZN3sce2npeqERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs) {
+    return SameTitleId(lhs->titleId.data, rhs->data);
+}
+
+bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, const NpTitleIdObject* rhs) {
+    return !SameTitleId(lhs->titleId.data, rhs->titleId.data);
+}
+
+bool APS5_VABI _ZN3sce2npneERK12SceNpTitleIdRKNS0_9NpTitleIdE(const NpTitleId* lhs, const NpTitleIdObject* rhs) {
+    return !SameTitleId(lhs->data, rhs->titleId.data);
+}
+
+bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs) {
+    return !SameTitleId(lhs->titleId.data, rhs->data);
 }
 
 }
