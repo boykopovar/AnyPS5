@@ -602,7 +602,7 @@ def conditional_stubs(library):
     for source in library.rglob("*.cpp"):
         if "tests" in source.relative_to(library).parts:
             continue
-        text = progress.code(source.read_text(errors="ignore"))
+        text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
         calls = always_stub_calls(text)
         for match in progress.DEFINITION.finditer(text):
             body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]

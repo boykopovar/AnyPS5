@@ -2,6 +2,22 @@
 
 ### Unknown function info
 
+- [Additional libSceLibcInternal exports](../../../core/libs/prx/libSceLibcInternal/Export.cpp) - the name/NID pairs below are defined exports in the [firmware 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscelibcinternal-f9a6d6abff.jsonl). Their ABIs and behaviour are unknown. Parameterless `int` declarations are import-resolution placeholders, not established signatures; every call throws `NotImplemented_nid_no_patch`.
+
+| Name | NID |
+| --- | --- |
+| `sceLibcMspaceSetMallocCallback` | `+CbwGRMnlfU` |
+| `sceLibcPafMspaceReportMemoryBlocks` | `0FnzR6qum90` |
+| `sceLibcHeapSetAddressRangeCallback` | `4iOzclpv1M0` |
+| `sceLibcPafMspaceTrim` | `AUYdq63RG3U` |
+| `sceLibcHeapMutexCalloc` | `HFtbbWvBO+U` |
+| `sceLibcInternalSetMallocCallback` | `LXqt47GvaRA` |
+| `sceLibcHeapSetTraceMarker` | `M6qiY0nhk54` |
+| `sceLibcPafMspaceCheckMemoryBounds` | `Pcq7UoYAcFE` |
+| `sceLibcHeapUnsetTraceMarker` | `RlhJVAYLSqU` |
+| `sceLibcHeapGetAddressRanges` | `Sj3fKG7MwMk` |
+| `sceLibcHeapMutexFree` | `jJKMkpqQr7I` |
+
 - [_sceLibcInternalThreadAtexit, _sceLibcInternalThreadDtors](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - FreeBSD `__cxa_thread_atexit` semantics assumed; a null or non-image destructor and an allocation failure throw
 - [_sceLibcInternalForceTlsDestructor](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - behaviour follows `sceLibcForceTlsDestructor(int)` in a title's `libc.prx` (disassembly): the calling thread's destructors whose dso belongs to the module run newest first, only if the dso's module is loaded and the dso points to itself, in up to 4 passes. The return type is unknown (that function returns nothing), 0 is returned. The module of each dso is looked up when the destructors are forced, not when they are registered as `libc.prx` does
 
