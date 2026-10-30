@@ -831,8 +831,10 @@ float APS5_VABI wcstof_nid_postfix(const char16_t* str, char16_t** endptr) {
 }
 
 long double APS5_VABI wcstold_nid_postfix(const char16_t* str, char16_t** endptr) {
+#ifndef __EMSCRIPTEN__
     static_assert(sizeof(long double) == 16);
     static_assert(std::numeric_limits<long double>::digits == 64);
+#endif
     return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return ParseFloat<long double>(text, end, std::strtold); });
 }
 

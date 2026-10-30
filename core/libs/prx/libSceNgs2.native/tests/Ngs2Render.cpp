@@ -104,7 +104,7 @@ static void TestPcmBlockEnd() {
     const auto system = CreateSystem();
     const auto master = Mastering(system, 1);
     std::vector<std::int16_t> pcm;
-    for (int i = 0; i < 12; i++) pcm.push_back(static_cast<std::int16_t>(i * 1000 - 4000));
+    for (int i = 0; i < static_cast<int>(Grain) + 4; i++) pcm.push_back(static_cast<std::int16_t>(i * 1000 - 4000));
     const auto sampler = Sampler(system, pcm, 0);
     Patch(sampler, master);
     Ngs2VoicePortInfo portInfo{};
@@ -381,20 +381,15 @@ static void TestPitchAndRepeat() {
     Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
 
     callbackFlags.clear();
-    const std::int16_t first[Grain] = {0, 0, 0, 0, 0, -30, 0, 470};
+    const std::int16_t expected[] = {0, 0, 0, 0, 0, -30, 0, 470,
+        1000, 1500, 2000, 2621, 3000, 1500, 0, 379,
+        1000, 1500, 2000, 2621, 3000, 1530, 0, -91};
     auto out = RenderI16(system);
-    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i] == first[i]);
-    Require(callbackFlags.size() == 1 && callbackFlags[0] == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_REPEAT);
-
-    const std::int16_t second[Grain] = {1000, 1500, 2000, 2621, 3000, 1500, 0, 379};
+    for (std::uint32_t i = 0; i < Grain; ++i) Require(out[i] == (i < std::size(expected) ? expected[i] : 0));
+    Require(callbackFlags == (std::vector<std::uint32_t>{SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_REPEAT, SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END}));
     out = RenderI16(system);
-    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i] == second[i]);
-    Require(callbackFlags.size() == 2 && callbackFlags[1] == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END);
-    out = RenderI16(system);
-    const std::int16_t tail[Grain] = {1000, 1500, 2000, 2621, 3000, 1530, 0, -91};
-    for (std::uint32_t i = 0; i < Grain; ++i) Require(out[i] == tail[i]);
-    Require(callbackFlags.size() == 2 && callbackFlags[1] == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END);
-    Require(Flags(sampler) == 0);
+    for (const auto sample : out) Require(sample == 0);
+    Require(callbackFlags.size() == 2 && Flags(sampler) == 0);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -1130,9 +1125,11 @@ static void TestSampleRate() {
     const auto sampler = Sampler(system, pcm, 2);
     Patch(sampler, master);
     Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
-    const std::int16_t expected[Grain] = {0, 0, 0, 0, 0, -30, 0, 470};
+    const std::int16_t expected[] = {0, 0, 0, 0, 0, -30, 0, 470,
+        1000, 1500, 2000, 2621, 3000, 1500, 0, 379,
+        1000, 1500, 2000, 2621, 3000, 1530, 0, -91};
     const auto out = RenderI16(system);
-    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i] == expected[i]);
+    for (std::uint32_t i = 0; i < Grain; i++) Require(out[i] == (i < std::size(expected) ? expected[i] : 0));
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -1163,7 +1160,7 @@ static void TestSystemOptionFlags() {
     Patch(sampler, master);
     Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
     const auto out = RenderI16(system);
-    for (std::uint32_t i = 0; i < Grain; ++i) Require(out[i] == (i < 3 ? 0 : pcm[(i - 3) % pcm.size()]));
+    for (std::uint32_t i = 0; i < Grain; ++i) Require(out[i] == (i < 3 || i - 3 >= pcm.size() * 2 ? 0 : pcm[(i - 3) % pcm.size()]));
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 
     for (const std::uint32_t flags : {0x1u, 0x3u, 0x4u, 0x80000000u, 0x80000002u}) {

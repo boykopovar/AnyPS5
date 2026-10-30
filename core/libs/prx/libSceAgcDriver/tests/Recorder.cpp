@@ -7389,6 +7389,62 @@ void singlePassTests(const Device& device, Recorder& recorder, bool watched) {
     std::cout << "single-pass storage moves" << (watched ? " (watched)" : "") << ": ok (" << tested << " surfaces)\n";
 }
 
+class CommandBufferProbe {
+public:
+    explicit CommandBufferProbe(Context& context) : context(context), resolver(context.deviceProc) {
+        Require(active == nullptr, "nested command buffer probe");
+        active = this;
+        context.deviceProc = resolve;
+    }
+    ~CommandBufferProbe() {
+        context.deviceProc = resolver;
+        active = nullptr;
+    }
+    CommandBufferProbe(const CommandBufferProbe&) = delete;
+    CommandBufferProbe& operator=(const CommandBufferProbe&) = delete;
+    std::uint32_t Allocated() const { return allocated; }
+    std::uint32_t Freed() const { return freed; }
+
+private:
+    static VKAPI_ATTR VkResult VKAPI_CALL allocateBuffers(VkDevice device, const VkCommandBufferAllocateInfo* info, VkCommandBuffer* buffers) {
+        const auto result = reinterpret_cast<PFN_vkAllocateCommandBuffers>(active->resolver(device, "vkAllocateCommandBuffers"))(device, info, buffers);
+        if (result == VK_SUCCESS) active->allocated += info->commandBufferCount;
+        return result;
+    }
+    static VKAPI_ATTR void VKAPI_CALL freeBuffers(VkDevice device, VkCommandPool pool, std::uint32_t count, const VkCommandBuffer* buffers) {
+        active->freed += count;
+        reinterpret_cast<PFN_vkFreeCommandBuffers>(active->resolver(device, "vkFreeCommandBuffers"))(device, pool, count, buffers);
+    }
+    static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
+        if (std::strcmp(name, "vkAllocateCommandBuffers") == 0) return reinterpret_cast<PFN_vkVoidFunction>(allocateBuffers);
+        if (std::strcmp(name, "vkFreeCommandBuffers") == 0) return reinterpret_cast<PFN_vkVoidFunction>(freeBuffers);
+        return active->resolver(device, name);
+    }
+    Context& context;
+    PFN_vkGetDeviceProcAddr resolver;
+    std::uint32_t allocated = 0;
+    std::uint32_t freed = 0;
+    static inline CommandBufferProbe* active = nullptr;
+};
+
+void commandBufferReleaseTests(const Device& device, Recorder& previous) {
+    auto context = device.GetContext();
+    previous.Sync();
+    CommandBufferProbe probe(context);
+    {
+        Recorder recorder(context);
+        recorder.Activate();
+        for (std::uint32_t batch = 1; batch <= 3; ++batch) {
+            Require(recorder.Commands() != VK_NULL_HANDLE, "command buffer release: no batch opened");
+            recorder.Submit();
+            recorder.Sync();
+            Require(recorder.Idle() && probe.Allocated() == batch && probe.Freed() == batch, "command buffer release: after " + std::to_string(batch) + " completed batches " + std::to_string(probe.Allocated()) + " command buffers were allocated and " + std::to_string(probe.Freed()) + " freed (a completed batch kept its command buffer)");
+        }
+    }
+    previous.Activate();
+    std::cout << "Command buffer release tests passed\n";
+}
+
 class StorageUploadProbe {
 public:
     StorageUploadProbe(Context& context, bool failView) : context(context), resolver(context.deviceProc), failView(failView) {
@@ -12412,6 +12468,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--settled-baseline-only") {
             settledBaselineTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--command-buffer-release-only") {
+            commandBufferReleaseTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--completion-labels-only") {

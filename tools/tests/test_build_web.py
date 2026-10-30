@@ -373,7 +373,7 @@ class WebReleaseLayoutTests(unittest.TestCase):
             archive.writestr("web-release.json", json.dumps(metadata or {"tag": self.TAG, "revision": self.REVISION}))
         return buffer.getvalue()
 
-    def publish(self, data):
+    def publish(self, data, expected=None):
         url = "https://example.invalid/web.zip"
         release = {"tag_name": self.TAG, "html_url": "https://example.invalid/v1",
                    "assets": [{"name": f"web-{self.TAG}.zip", "size": len(data), "browser_download_url": url,
@@ -382,10 +382,12 @@ class WebReleaseLayoutTests(unittest.TestCase):
 
         def libraries(staging, _release):
             (staging / "release.json").write_text(json.dumps({"tag": self.TAG}), encoding="utf-8")
+        expected_files = expected if expected is not None else set(build_web.WEB_FILES)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "web"
             with patch.object(build_web, "request", side_effect=lambda address: io.BytesIO(responses[address])), \
                     patch.object(build_web, "library_assets"), patch.object(build_web, "publish_libraries", side_effect=libraries), \
+                    patch.object(build_web, "release_web_files", return_value=expected_files), \
                     contextlib.redirect_stdout(io.StringIO()):
                 try:
                     build_web.publish_release(output)
@@ -398,7 +400,7 @@ class WebReleaseLayoutTests(unittest.TestCase):
 
     def test_release_lacking_a_newer_web_file_is_published_as_shipped(self):
         older = [name for name in build_web.WEB_FILES if name != "failure-report.mjs"]
-        self.publish(self.release(older))
+        self.publish(self.release(older), expected=set(older))
         self.assertNotIn("failure-report.mjs", self.published)
         self.assertIn("app.mjs", self.published)
         self.assertIn("release.json", self.published)
@@ -467,6 +469,189 @@ class LocalNativeArtifactTests(unittest.TestCase):
                 self.assertEqual(build_web.main(["--build", str(build)]), 0)
             self.assertEqual(marker.read_bytes(), (build_web.ROOT / "demo/web/app.mjs").read_bytes())
             self.assertTrue((build / "web/.nojekyll").exists())
+
+
+class WebReleaseValidationTests(unittest.TestCase):
+    HISTORICAL_FILES = (
+        "index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs",
+        "output-directory.mjs", "worker.mjs", "native/relinker_wasm.mjs", "native/relinker_wasm.wasm",
+    )
+    HISTORICAL_REVISION = "3fd1cc393b8512c2e989860053f30dee5a8cd1aa"
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.build = self.root / "build"
+        self.output = self.build / "web"
+        self.output.mkdir(parents=True)
+        self.prx = library_zip([("libs/libc.prx", b"libc")])
+
+    def publish(self, web_archive, tag="v0.1.3"):
+        responses = {
+            f"https://example.invalid/web-{tag}.zip": web_archive,
+            f"https://example.invalid/windows-{tag}.zip": self.prx,
+            f"https://example.invalid/linux-{tag}.zip": self.prx,
+        }
+        release = {
+            "tag_name": tag,
+            "html_url": f"https://example.invalid/{tag}",
+            "assets": [
+                {"name": f"web-{tag}.zip", "size": len(web_archive),
+                 "digest": "sha256:" + hashlib.sha256(web_archive).hexdigest(),
+                 "browser_download_url": f"https://example.invalid/web-{tag}.zip"},
+                {"name": f"prx-windows-{tag}.zip", "size": len(self.prx),
+                 "digest": "sha256:" + hashlib.sha256(self.prx).hexdigest(),
+                 "browser_download_url": f"https://example.invalid/windows-{tag}.zip"},
+                {"name": f"prx-linux-{tag}.zip", "size": len(self.prx),
+                 "digest": "sha256:" + hashlib.sha256(self.prx).hexdigest(),
+                 "browser_download_url": f"https://example.invalid/linux-{tag}.zip"},
+            ],
+        }
+        responses["https://api.github.com/repos/boykopovar/AnyPS5/releases/latest"] = json.dumps(release).encode()
+        with patch.object(build_web, "request", side_effect=lambda url: io.BytesIO(responses[url])), \
+                contextlib.redirect_stdout(io.StringIO()):
+            build_web.publish_release(self.output)
+
+    def test_historical_release_missing_later_files_is_accepted(self):
+        entries = [(name, f"content of {name}".encode()) for name in self.HISTORICAL_FILES]
+        entries.append(("web-release.json", json.dumps({"tag": "v0.1.3", "revision": self.HISTORICAL_REVISION}).encode()))
+        archive = library_zip(entries)
+        with patch.object(build_web, "release_web_files", return_value=set(self.HISTORICAL_FILES)):
+            self.publish(archive, tag="v0.1.3")
+        self.assertTrue((self.output / "index.html").is_file())
+        self.assertFalse((self.output / "failure-report.mjs").exists())
+        manifest = json.loads((self.output / "release.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["revision"], self.HISTORICAL_REVISION)
+
+    def test_current_release_with_expected_files_is_accepted(self):
+        revision = subprocess.run(["git", "-C", str(build_web.ROOT), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True, check=True).stdout.strip()
+        entries = [(name, f"content of {name}".encode()) for name in build_web.WEB_FILES]
+        entries.append(("web-release.json", json.dumps({"tag": "v1.0.0", "revision": revision}).encode()))
+        archive = library_zip(entries)
+        self.publish(archive, tag="v1.0.0")
+        for name in build_web.WEB_FILES:
+            self.assertTrue((self.output / name).is_file())
+
+    def test_invalid_archive_entries_are_rejected(self):
+        valid = [(name, b"valid") for name in self.HISTORICAL_FILES]
+        metadata = json.dumps({"tag": "v0.1.3", "revision": self.HISTORICAL_REVISION}).encode()
+        unexpected = library_zip([*valid, ("unexpected.txt", b"extra"), ("web-release.json", metadata)])
+        missing = library_zip([*valid[1:], ("web-release.json", metadata)])
+        duplicate = library_zip([*valid, valid[0], ("web-release.json", metadata)])
+        for name, archive in (("unexpected", unexpected), ("missing", missing), ("duplicate", duplicate)):
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(ValueError, "Invalid web release archive layout"):
+                    self.publish(archive, tag="v0.1.3")
+
+    def test_unavailable_historical_revision_fails_cleanly_without_traceback_or_site_mutation(self):
+        marker = self.output / "previous.txt"
+        marker.write_bytes(b"preserved site")
+        entries = [(name, b"content") for name in self.HISTORICAL_FILES]
+        entries.append(("web-release.json", json.dumps({"tag": "v0.1.3", "revision": "0" * 40}).encode()))
+        archive = library_zip(entries)
+        responses = {
+            "https://example.invalid/web-v0.1.3.zip": archive,
+            "https://example.invalid/windows-v0.1.3.zip": self.prx,
+            "https://example.invalid/linux-v0.1.3.zip": self.prx,
+        }
+        release = {
+            "tag_name": "v0.1.3",
+            "html_url": "https://example.invalid/v0.1.3",
+            "assets": [
+                {"name": "web-v0.1.3.zip", "size": len(archive),
+                 "digest": "sha256:" + hashlib.sha256(archive).hexdigest(),
+                 "browser_download_url": "https://example.invalid/web-v0.1.3.zip"},
+                {"name": "prx-windows-v0.1.3.zip", "size": len(self.prx),
+                 "digest": "sha256:" + hashlib.sha256(self.prx).hexdigest(),
+                 "browser_download_url": "https://example.invalid/windows-v0.1.3.zip"},
+                {"name": "prx-linux-v0.1.3.zip", "size": len(self.prx),
+                 "digest": "sha256:" + hashlib.sha256(self.prx).hexdigest(),
+                 "browser_download_url": "https://example.invalid/linux-v0.1.3.zip"},
+            ],
+        }
+        responses["https://api.github.com/repos/boykopovar/AnyPS5/releases/latest"] = json.dumps(release).encode()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(build_web, "request", side_effect=lambda url: io.BytesIO(responses[url])), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), \
+                self.assertRaises(SystemExit) as exit_error:
+            build_web.main(["--build", str(self.build), "--release"])
+        self.assertEqual(exit_error.exception.code, 2)
+        self.assertIn("error: Cannot resolve release revision: 0000000000000000000000000000000000000000", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+        self.assertEqual(marker.read_bytes(), b"preserved site")
+
+    def test_invalid_web_files_definition_fails_cleanly_without_traceback_or_site_mutation(self):
+        marker = self.output / "previous.txt"
+        marker.write_bytes(b"preserved site")
+        entries = [(name, b"content") for name in self.HISTORICAL_FILES]
+        entries.append(("web-release.json", json.dumps({"tag": "v0.1.3", "revision": "1" * 40}).encode()))
+        archive = library_zip(entries)
+        responses = {
+            "https://example.invalid/web-v0.1.3.zip": archive,
+            "https://example.invalid/windows-v0.1.3.zip": self.prx,
+            "https://example.invalid/linux-v0.1.3.zip": self.prx,
+        }
+        release = {
+            "tag_name": "v0.1.3",
+            "html_url": "https://example.invalid/v0.1.3",
+            "assets": [
+                {"name": "web-v0.1.3.zip", "size": len(archive),
+                 "digest": "sha256:" + hashlib.sha256(archive).hexdigest(),
+                 "browser_download_url": "https://example.invalid/web-v0.1.3.zip"},
+                {"name": "prx-windows-v0.1.3.zip", "size": len(self.prx),
+                 "digest": "sha256:" + hashlib.sha256(self.prx).hexdigest(),
+                 "browser_download_url": "https://example.invalid/windows-v0.1.3.zip"},
+                {"name": "prx-linux-v0.1.3.zip", "size": len(self.prx),
+                 "digest": "sha256:" + hashlib.sha256(self.prx).hexdigest(),
+                 "browser_download_url": "https://example.invalid/linux-v0.1.3.zip"},
+            ],
+        }
+        responses["https://api.github.com/repos/boykopovar/AnyPS5/releases/latest"] = json.dumps(release).encode()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "WEB_FILES = None", "")), \
+                patch.object(build_web, "request", side_effect=lambda url: io.BytesIO(responses[url])), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), \
+                self.assertRaises(SystemExit) as exit_error:
+            build_web.main(["--build", str(self.build), "--release"])
+        self.assertEqual(exit_error.exception.code, 2)
+        self.assertIn("error: Invalid web release definition in revision: 1111111111111111111111111111111111111111", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+        self.assertEqual(marker.read_bytes(), b"preserved site")
+
+    def test_invalid_metadata_fails_cleanly(self):
+        valid = [(name, b"valid") for name in self.HISTORICAL_FILES]
+        bad_json = library_zip([*valid, ("web-release.json", b"{invalid json")])
+        bad_tag = library_zip([*valid, ("web-release.json", json.dumps({"tag": "v9.9.9", "revision": self.HISTORICAL_REVISION}).encode())])
+        for name, archive, err in (("bad_json", bad_json, "Invalid web release metadata"),
+                                   ("bad_tag", bad_tag, "Web converter does not match the selected release")):
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(ValueError, err):
+                    self.publish(archive, tag="v0.1.3")
+
+    def test_historical_web_files_parser_rejects_invalid_or_duplicate_entries(self):
+        definitions = (
+            'WEB_FILES = ("index.html", "index.html")',
+            'WEB_FILES = ("../escape",)',
+            'WEB_FILES = ("",)',
+            'WEB_FILES = ("/absolute",)',
+            r'WEB_FILES = ("nested\\backslash",)',
+            'WEB_FILES = ("nested/./current",)',
+            'WEB_FILES = [1, 2]',
+            'WEB_FILES = ([1],)',
+            'WEB_FILES = None',
+        )
+        for code in definitions:
+            with self.subTest(code=code):
+                with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, code, "")):
+                    with self.assertRaisesRegex(ValueError, "Invalid web release definition in revision"):
+                        build_web.release_web_files("0" * 40)
+
+    def test_historical_web_files_parser_rejects_missing_revision(self):
+        with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 128, "", "fatal: bad object")):
+            with self.assertRaisesRegex(ValueError, "Cannot resolve release revision: 0000000000000000000000000000000000000000"):
+                build_web.release_web_files("0" * 40)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,20 @@
 
 extern "C" {
 
+int APS5_VABI sceEsvmEngineAddDecoder2();
+int APS5_VABI sceEsvmEngineAppAudioSyncFlush();
+int APS5_VABI sceEsvmEngineGetMetrics();
+int APS5_VABI sceEsvmEngineGetVideoPlaybackQuality();
+int APS5_VABI sceEsvmEngineInitializeCdm();
+int APS5_VABI sceEsvmEngineMediaKeySessionDecryptAudioData();
+int APS5_VABI sceEsvmEngineMediaKeysDecryptAudioData();
+int APS5_VABI sceEsvmEngineMediaKeysSetAppParameter();
+int APS5_VABI sceEsvmEngineProcessAckResponse();
+int APS5_VABI sceEsvmEngineReleaseVideoFrame();
+int APS5_VABI sceEsvmEngineSetAudiblePlaybackRate();
+int APS5_VABI sceEsvmEngineSetMediaKeys();
+int APS5_VABI sceEsvmEngineSyncVideo();
+
 int APS5_VABI sceEsvmEngineDestroyMediaKeySystemAccess();
 int APS5_VABI sceEsvmEngineMediaKeySessionClose();
 int APS5_VABI sceEsvmEngineMediaKeySessionGenerateRequest();
