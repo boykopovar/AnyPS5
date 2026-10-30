@@ -1,4 +1,4 @@
-add_library(libSceNpCommon SHARED EXCLUDE_FROM_ALL PendingExports.cpp PendingExportsRound7.cpp InventoryExports.cpp)
+add_library(libSceNpCommon SHARED EXCLUDE_FROM_ALL PendingExports.cpp PendingExportsRound7.cpp)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp")
     target_sources(libSceNpCommon PRIVATE Export.cpp)
 endif()
@@ -18,3 +18,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
     endif()
 endif()
+
+target_sources(libSceNpCommon PRIVATE InventoryExports.cpp)
