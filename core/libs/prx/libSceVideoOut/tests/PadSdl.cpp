@@ -6,8 +6,14 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <thread>
 #include <vector>
 #undef main
 
@@ -84,6 +90,66 @@ void HandOff(PadInput& padInput, const DisplayWindow& window, int device) {
     Require((Pad::ReadState(0).buttons & Cross) != 0);
     button(SDL_CONTROLLER_BUTTON_A, false);
     trigger(false);
+
+    ModalDialogSetPresenter_nid_postfix(true);
+    ModalDialogRequest request;
+    request.message = u"Continue?";
+    request.buttons = {u"Yes", u"No"};
+    request.cancel = 1;
+    Require(ModalDialogOpen_nid_postfix(request));
+    padInput.Update(window);
+    Require((Pad::ReadState(0).buttons & Intercepted) != 0);
+    button(SDL_CONTROLLER_BUTTON_A, true);
+    const PadData answering = Pad::ReadState(0);
+    Require(answering.buttons == Intercepted && answering.left_stick_x == 128 && answering.left_stick_y == 128);
+    std::size_t chosen = 9;
+    Require(ModalDialogPoll_nid_postfix(chosen) == ModalDialogState::Answered && chosen == 0);
+    padInput.Update(window);
+    Require((Pad::ReadState(0).buttons & (Cross | Intercepted)) == 0);
+    button(SDL_CONTROLLER_BUTTON_A, false);
+    button(SDL_CONTROLLER_BUTTON_A, true);
+    Require((Pad::ReadState(0).buttons & Cross) != 0);
+    button(SDL_CONTROLLER_BUTTON_A, false);
+
+    Require(ModalDialogOpen_nid_postfix(request));
+    Require(ModalDialogCapturesInput_nid_postfix());
+    ModalDialogClose_nid_postfix();
+    ModalDialogReset_nid_postfix();
+    ModalDialogSetPresenter_nid_postfix(false);
+}
+
+void InjectedAnswer(PadInput& padInput, const DisplayWindow& window, const std::filesystem::path& commandPath) {
+    constexpr std::uint32_t Cross = 0x4000;
+    constexpr std::uint32_t Intercepted = 0x80000000;
+    ModalDialogSetPresenter_nid_postfix(true);
+    ModalDialogRequest request;
+    request.message = u"Create new data?";
+    request.buttons = {u"OK"};
+    Require(ModalDialogOpen_nid_postfix(request));
+    padInput.Update(window);
+    Require(Pad::ReadState(0).buttons == Intercepted);
+    std::ofstream(commandPath) << "1 16384 400\n";
+    std::size_t chosen = 9;
+    ModalDialogState state = ModalDialogState::Showing;
+    for (int frame = 0; frame < 200 && state == ModalDialogState::Showing; ++frame) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        padInput.Update(window);
+        Require(Pad::ReadState(0).buttons == Intercepted);
+        state = ModalDialogPoll_nid_postfix(chosen);
+    }
+    Require(state == ModalDialogState::Answered && chosen == 0);
+    padInput.Update(window);
+    Require((Pad::ReadState(0).buttons & Intercepted) == 0);
+    std::ofstream(commandPath) << "2 16384 400\n";
+    bool reached = false;
+    for (int frame = 0; frame < 200 && !reached; ++frame) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        padInput.Update(window);
+        reached = Pad::ReadState(0).buttons == Cross;
+    }
+    Require(reached);
+    ModalDialogReset_nid_postfix();
+    ModalDialogSetPresenter_nid_postfix(false);
 }
 
 }
@@ -94,6 +160,17 @@ int main() {
 #else
     std::fputs("pad_sdl: SDL is built without HIDAPI, so a DualSense gets no light bar, touchpad or trigger effects\n", stderr);
     return 1;
+#endif
+
+    const auto commandPath = std::filesystem::temp_directory_path() / ("anyps5-pad-sdl-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::error_code error; std::filesystem::remove(path, error); }
+    } cleanup{commandPath};
+#ifdef _WIN32
+    Require(_wputenv_s(L"APS5_PAD_INPUT_FILE", commandPath.c_str()) == 0);
+#else
+    Require(setenv("APS5_PAD_INPUT_FILE", commandPath.string().c_str(), 1) == 0);
 #endif
 
     Require(SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) == 0);
@@ -172,6 +249,7 @@ int main() {
     padInput.HandleEvent(rem0, window);
     Require(!padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    InjectedAnswer(padInput, window, commandPath);
 
     Require(SDL_JoystickDetachVirtual(dev1) == 0);
     Require(SDL_JoystickDetachVirtual(dev0) == 0);

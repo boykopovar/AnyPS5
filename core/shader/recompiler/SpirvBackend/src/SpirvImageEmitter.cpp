@@ -837,7 +837,7 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
             raw = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzle(state, mem.resource, source), ConstantU32(state, component + 4u)), candidate, raw);
         }
         values[component] = integer ? raw : mem.dataBits == 16u ? EmitF16BitsToF32(state, raw) : Unary(state, spv::OpBitcast, TypeF32(state), raw);
-        if (float16 && component < storageFormat.componentCount) {
+        if (float16 && component < storageFormat.componentCount && mem.dataBits != 16u) {
             values[component] = EmitFormatStoreComponent(state, storageFormat, component, values[component]);
         }
         if (component < sint.componentCount) {

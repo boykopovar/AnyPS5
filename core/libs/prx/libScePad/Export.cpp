@@ -532,8 +532,12 @@ int APS5_VABI scePadSetUserColor(std::int32_t handle, std::uint32_t color) {
 }
 
 int APS5_VABI scePadDisableVibration(std::int32_t handle, bool disabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (SpecialHandle(handle)) return PAD_OK;
+    if (disabled) {
+        Pad::SetVibration(PortOf(handle), 0, 0);
+    }
+    return PAD_OK;
 }
 
 int APS5_VABI scePadSetVibrationStrength(std::int32_t handle, std::uint32_t strength) {
@@ -542,8 +546,9 @@ int APS5_VABI scePadSetVibrationStrength(std::int32_t handle, std::uint32_t stre
 }
 
 int APS5_VABI scePadSetLightBarBaseBrightness(std::int32_t handle, std::uint32_t brightness) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)brightness;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadSetLightBarBlinking(std::int32_t handle, const PadLightBarBlinkingParameter* parameter) {
@@ -655,8 +660,9 @@ int APS5_VABI scePadSetForceIntercepted(bool enabled) {
 }
 
 int APS5_VABI scePadIsLightBarBaseBrightnessControllable(std::int32_t handle) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    if (SpecialHandle(handle)) return 0;
+    return 1;
 }
 
 int APS5_VABI scePadSwitchConnection(std::int32_t handle, std::uint32_t flags) {
@@ -665,8 +671,9 @@ int APS5_VABI scePadSwitchConnection(std::int32_t handle, std::uint32_t flags) {
 }
 
 int APS5_VABI scePadDisableTriggerEffect(std::int32_t handle, bool disabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)disabled;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadSetTriggerEffectStrength(std::int32_t handle, std::uint32_t strength) {

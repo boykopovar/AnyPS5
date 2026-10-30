@@ -1,5 +1,4 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
-#include <atomic>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
@@ -25,12 +24,20 @@ struct Deferred {
 struct Registry {
     std::mutex mutex;
     std::unordered_map<VkDevice, Deferred> devices;
-    std::atomic<PFN_vkGetDeviceProcAddr> resolver{nullptr};
+    std::unordered_map<VkDevice, PFN_vkGetDeviceProcAddr> resolvers;
+    PFN_vkGetDeviceProcAddr latest = nullptr;
 };
 
 Registry& registry() {
     static auto& state = *new Registry();
     return state;
+}
+
+PFN_vkGetDeviceProcAddr resolverFor(VkDevice device) {
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    const auto found = state.resolvers.find(device);
+    return found == state.resolvers.end() ? state.latest : found->second;
 }
 
 void destroyAll(VkDevice device, const Deferred& deferred) noexcept {
@@ -56,18 +63,18 @@ bool defer(VkDevice device, THandle handle, std::vector<THandle> Deferred::*list
 
 VKAPI_ATTR void VKAPI_CALL deferredDestroyBuffer(VkDevice device, VkBuffer buffer, const VkAllocationCallbacks* allocator) {
     if (buffer == VK_NULL_HANDLE || defer(device, buffer, &Deferred::buffers)) return;
-    reinterpret_cast<PFN_vkDestroyBuffer>(registry().resolver.load(std::memory_order_acquire)(device, "vkDestroyBuffer"))(device, buffer, allocator);
+    reinterpret_cast<PFN_vkDestroyBuffer>(resolverFor(device)(device, "vkDestroyBuffer"))(device, buffer, allocator);
 }
 
 VKAPI_ATTR void VKAPI_CALL deferredFreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks* allocator) {
     if (memory == VK_NULL_HANDLE || defer(device, memory, &Deferred::memory)) return;
-    reinterpret_cast<PFN_vkFreeMemory>(registry().resolver.load(std::memory_order_acquire)(device, "vkFreeMemory"))(device, memory, allocator);
+    reinterpret_cast<PFN_vkFreeMemory>(resolverFor(device)(device, "vkFreeMemory"))(device, memory, allocator);
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL deferringDeviceProc(VkDevice device, const char* name) {
     if (std::strcmp(name, "vkDestroyBuffer") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&deferredDestroyBuffer);
     if (std::strcmp(name, "vkFreeMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&deferredFreeMemory);
-    return registry().resolver.load(std::memory_order_acquire)(device, name);
+    return resolverFor(device)(device, name);
 }
 
 }
@@ -80,10 +87,10 @@ PFN_vkGetDeviceProcAddr DeferDestructionToIdle(VkDevice device, PFN_vkGetDeviceP
     if (deferred.destroyBuffer == nullptr || deferred.freeMemory == nullptr) throw std::runtime_error("AGC graphics: missing Vulkan function: vkDestroyBuffer or vkFreeMemory");
     auto& state = registry();
     std::lock_guard lock(state.mutex);
-    const auto current = state.resolver.load(std::memory_order_acquire);
-    if (current != nullptr && current != resolver) throw std::runtime_error("AGC graphics: deferred destruction found two different device resolvers");
+    if (!state.devices.empty() && state.latest != resolver) throw std::runtime_error("AGC graphics: deferred destruction found two different device resolvers");
     if (!state.devices.emplace(device, std::move(deferred)).second) throw std::runtime_error("AGC graphics: deferred destruction was set up twice for one device");
-    state.resolver.store(resolver, std::memory_order_release);
+    state.resolvers.insert_or_assign(device, resolver);
+    state.latest = resolver;
     return &deferringDeviceProc;
 }
 

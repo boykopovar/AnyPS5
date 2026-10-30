@@ -8,7 +8,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 CPP = (".cpp", ".cc", ".cxx", ".c")
 DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only", "-save-temps", "--save-temps",
@@ -17,6 +17,14 @@ DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
 PREPROCESSING = ("-E", "--preprocess", "-M", "--dependencies", "-MM", "--user-dependencies",
                  "-MG", "--print-missing-file-dependencies", "-P", "--no-line-commands",
                  "-C", "-CC", "-dM", "-dD", "-dI")
+DRIVER_QUERIES = ("--version", "--help", "-help", "--help-hidden", "--target-help", "-###", "-fdriver-only",
+                  "-dumpversion", "-dumpfullversion", "-dumpmachine", "-dumpspecs", "-ccc-print-phases", "-ccc-print-bindings",
+                  "-print-file-name", "-print-prog-name", "-print-search-dirs", "-print-libgcc-file-name", "-print-multiarch",
+                  "-print-multi-directory", "-print-multi-lib", "-print-multi-os-directory", "-print-sysroot",
+                  "-print-sysroot-headers-suffix", "-print-cxx-stdlib", "-print-cxx-stdlib-include-dirs",
+                  "-print-diagnostic-categories", "-print-diagnostic-options", "-print-effective-triple", "-print-enabled-extensions",
+                  "-print-library-module-manifest-path", "-print-multi-flags-experimental", "-print-resource-dir",
+                  "-print-rocm-search-dirs", "-print-runtime-dir", "-print-supported-cpus", "-print-supported-extensions", "-print-target-triple", "-print-targets")
 WITH_VALUE = ("-I", "-L", "-F", "-B", "-D", "-U", "-x", "-include", "--include", "-imacros", "--imacros",
               "--define-macro", "--undefine-macro", "-iquote", "-isystem", "-idirafter", "-iprefix",
               "-iwithprefix", "-iwithprefixbefore", "-isysroot", "--sysroot", "-target", "--target",
@@ -30,6 +38,10 @@ MAX_RESPONSE_FILE_DEPTH = 20
 def capture(command, cwd=None, encoding="utf-8"):
     return subprocess.run(command, capture_output=True, text=True, encoding=encoding,
                           errors="replace", cwd=cwd)
+
+
+def real(path):
+    return Path(os.path.realpath(path))
 
 
 def ninja_encoding(ninja):
@@ -102,13 +114,13 @@ def entries(build):
 
 
 def entry_key(entry, root):
-    directory = Path(entry["directory"]).resolve()
+    directory = real(entry["directory"])
     source = Path(entry["file"])
     if not source.is_absolute():
         source = directory / source
-    source = source.resolve()
+    source = real(source)
     try:
-        return source.relative_to(Path(root).resolve()).as_posix()
+        return source.relative_to(real(root)).as_posix()
     except ValueError:
         return source.as_posix()
 
@@ -198,7 +210,7 @@ def expand_response_files(arguments, directory, seen=frozenset()):
             response = Path(argument[1:])
             if not response.is_absolute():
                 response = directory / response
-            resolved = response.resolve()
+            resolved = real(response)
             if resolved in seen:
                 raise ValueError(f"response file cycle at {resolved}")
             if len(seen) >= MAX_RESPONSE_FILE_DEPTH:
@@ -236,8 +248,37 @@ def preprocessor_arguments(argument):
     return "-Wp," + ",".join(kept) if kept else None
 
 
+def launcher_prefix(arguments):
+    if len(arguments) < 3 or PureWindowsPath(arguments[0]).stem.lower() != "cmake" or arguments[1:3] != ["-E", "env"]:
+        return []
+    index = 3
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            index += 1
+            break
+        if argument == "--modify":
+            if index + 1 == len(arguments):
+                raise ValueError("missing operand for cmake -E env --modify")
+            index += 2
+            continue
+        if argument.startswith("--unset="):
+            index += 1
+            continue
+        if argument.startswith("-"):
+            raise ValueError(f"unsupported cmake -E env option {argument}")
+        if "=" not in argument:
+            break
+        index += 1
+    if index == len(arguments):
+        raise ValueError("cmake -E env launcher has no command")
+    return arguments[:index]
+
+
 def syntax_arguments(arguments, directory, source):
     validate_arguments(arguments)
+    if prefix := launcher_prefix(arguments):
+        return [*prefix, *syntax_arguments(arguments[len(prefix):], directory, source)]
     if any(argument.startswith("@") for argument in arguments[1:]):
         compiler = Path(arguments[0]).stem.lower()
         if compiler in ("cl", "clang-cl") or any(argument in ("--driver-mode=cl", "--rsp-quoting=windows") for argument in arguments):
@@ -272,18 +313,25 @@ def syntax_arguments(arguments, directory, source):
                 trimmed.append(forwarded)
             index += 1
             continue
+        if not positional and argument.startswith(("-save-temps=", "--save-temps=")) and argument not in DROP:
+            raise ValueError(f"unsupported saved-temporary mode in {argument}")
         if not positional and (argument in (*DROP, *PREPROCESSING) or argument.startswith(("-MT", "-MF", "-MQ", "-MJ"))):
             index += 1
             continue
+        query, _, value = argument.partition("=")
+        if query.startswith("--print-"):
+            query = query[1:]
+        if not positional and (query in DRIVER_QUERIES or (query in ("-mcpu", "-mtune") and value == "help")):
+            raise ValueError(f"compiler option {argument} bypasses compilation")
         if positional or not argument.startswith("-"):
             candidate = Path(argument)
             if not candidate.is_absolute():
                 candidate = directory / candidate
-            if candidate.resolve() == wanted:
+            if real(candidate) == wanted:
                 index += 1
                 continue
             if positional:
-                trimmed.append(str(candidate.resolve()))
+                trimmed.append(str(real(candidate)))
                 index += 1
                 continue
         elif (argument not in WITHOUT_VALUE and not argument.startswith(JOINED_OPTIONS) and "=" not in argument and index + 1 < len(arguments)
@@ -320,9 +368,13 @@ def check(root, build, files, jobs=1):
     commands = index(build, root)
     tasks = []
     for file in files:
-        source = file.resolve()
         try:
-            name = source.relative_to(root.resolve()).as_posix()
+            file.stat()
+        except FileNotFoundError:
+            pass
+        source = real(file)
+        try:
+            name = source.relative_to(real(root)).as_posix()
         except ValueError:
             name = source.as_posix()
         tasks.append((source, name, build, commands.get(name)))

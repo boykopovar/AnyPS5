@@ -6,6 +6,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
@@ -36,6 +37,8 @@
 #include <map>
 #include <cstdio>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 extern "C" std::uint64_t GuestImageSegmentBytes_nid_no_patch();
 
@@ -52,6 +55,10 @@ size_t _configuredFlexibleSize() {
         return static_cast<size_t>(bytes);
     }();
     return size;
+}
+
+bool UndefinedProtection(int prot) {
+    return (prot & ~0x3F7) != 0;
 }
 
 constexpr int PRT_APERTURE_COUNT = 3;
@@ -172,8 +179,7 @@ void _releaseFlexible(uintptr_t start, size_t len) {
 std::mutex g_lockedRangesLock;
 std::map<uintptr_t, size_t> g_lockedRanges;
 
-void RecordLockedRange(uintptr_t start, uintptr_t end) {
-    std::lock_guard lock(g_lockedRangesLock);
+void RecordLockedRangeLocked(uintptr_t start, uintptr_t end) {
     auto it = g_lockedRanges.begin();
     while (it != g_lockedRanges.end()) {
         if (it->first <= end && it->first + it->second >= start) {
@@ -187,8 +193,12 @@ void RecordLockedRange(uintptr_t start, uintptr_t end) {
     g_lockedRanges[start] = end - start;
 }
 
-void ForgetLockedRange(uintptr_t start, uintptr_t end) {
+void RecordLockedRange(uintptr_t start, uintptr_t end) {
     std::lock_guard lock(g_lockedRangesLock);
+    RecordLockedRangeLocked(start, end);
+}
+
+void ForgetLockedRangeLocked(uintptr_t start, uintptr_t end) {
     auto it = g_lockedRanges.upper_bound(start);
     if (it != g_lockedRanges.begin()) --it;
     while (it != g_lockedRanges.end() && it->first < end) {
@@ -199,6 +209,11 @@ void ForgetLockedRange(uintptr_t start, uintptr_t end) {
         if (rangeStart < start) g_lockedRanges[rangeStart] = start - rangeStart;
         if (rangeEnd > end) g_lockedRanges[end] = rangeEnd - end;
     }
+}
+
+void ForgetLockedRange(uintptr_t start, uintptr_t end) {
+    std::lock_guard lock(g_lockedRangesLock);
+    ForgetLockedRangeLocked(start, end);
 }
 
 }
@@ -262,6 +277,7 @@ int APS5_VABI sceKernelEnableDmemAliasing(void) {
 }
 
 int APS5_VABI sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
+ if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
  (void)alignment;
  const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
  if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
@@ -269,6 +285,7 @@ int APS5_VABI sceKernelMapDirectMemory(void** addr, size_t len, int prot, int fl
 }
 
 int APS5_VABI sceKernelMapDirectMemory2(void** addr, size_t len, int type, int prot, int flags, int64_t direct_memory_start, size_t alignment) {
+ if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
  (void)type;
  const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
  if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
@@ -276,11 +293,13 @@ int APS5_VABI sceKernelMapDirectMemory2(void** addr, size_t len, int type, int p
 }
 
 int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags) {
+ if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
  constexpr int IgnoredHeapFlag = 0x8000;
  return _mapFlexible(addr_in_out, len, prot, flags & ~IgnoredHeapFlag);
 }
 
 int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment, const char* name) {
+ if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
  const int result = DoMapDirect(addr, len, prot, flags, direct_memory_start, alignment);
  if (result == 0) _releaseFlexible(reinterpret_cast<uintptr_t>(*addr), len);
  if (result == 0 && name) sceKernelSetVirtualRangeName(*addr, len, name);
@@ -288,6 +307,7 @@ int APS5_VABI sceKernelMapNamedDirectMemory(void** addr, size_t len, int prot, i
 }
 
 int32_t APS5_VABI sceKernelMapNamedFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags, const char* name) {
+ if (UndefinedProtection(prot)) return SCE_KERNEL_ERROR_EINVAL;
  const int result = _mapFlexible(addr_in_out, len, prot, flags);
  if (result == 0 && name) sceKernelSetVirtualRangeName(*addr_in_out, len, name);
  return result;
@@ -389,6 +409,29 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
  info->end = info->start + host.RegionSize;
  const bool writable = (host.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)) != 0;
  const bool executable = (host.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+ #elif defined(__APPLE__)
+ mach_vm_address_t region = address;
+ mach_vm_size_t regionSize = 0;
+ vm_region_basic_info_data_64_t host{};
+ mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+ mach_port_t object = MACH_PORT_NULL;
+ if (mach_vm_region(mach_task_self(), &region, &regionSize, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&host), &count, &object) != KERN_SUCCESS || region > address || (host.protection & VM_PROT_READ) == 0) return SCE_KERNEL_ERROR_EACCES;
+ info->start = region;
+ info->end = region + regionSize;
+ int watched = -1;
+ for (std::uintptr_t cursor = info->start; cursor < info->end;) {
+  std::uintptr_t runEnd = info->end;
+  const int protection = GuestWriteWatch::GuestWriteWatchProtection_nid_postfix(cursor, info->end, &runEnd);
+  if (address < runEnd) {
+   info->start = cursor;
+   info->end = runEnd;
+   watched = protection;
+   break;
+  }
+  cursor = runEnd;
+ }
+ const bool writable = watched >= 0 ? (watched & PROT_WRITE) != 0 : (host.protection & VM_PROT_WRITE) != 0;
+ const bool executable = (host.protection & VM_PROT_EXECUTE) != 0;
  #else
  std::ifstream maps("/proc/self/maps");
  std::string line;
@@ -691,9 +734,58 @@ int UnlockHostPages(std::uintptr_t start, std::uintptr_t end) {
     return 0;
 }
 #else
+#ifdef __APPLE__
+void AddUnwiredHostPages(std::uintptr_t start, std::uintptr_t end, std::vector<std::pair<std::uintptr_t, std::uintptr_t>>& unwired) {
+    for (auto cursor = start; cursor < end;) {
+        mach_vm_address_t region = cursor;
+        mach_vm_size_t size = 0;
+        vm_region_basic_info_data_64_t info{};
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object = MACH_PORT_NULL;
+        if (mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) != KERN_SUCCESS || region >= end) {
+            unwired.emplace_back(cursor, end);
+            return;
+        }
+        if (region > cursor) unwired.emplace_back(cursor, region);
+        const auto last = std::min<std::uintptr_t>(end, region + size);
+        if (info.user_wired_count == 0) unwired.emplace_back(std::max<std::uintptr_t>(cursor, region), last);
+        cursor = last;
+    }
+}
+
+int WireHostPages(std::uintptr_t start, std::uintptr_t end) {
+    std::lock_guard lock(g_lockedRangesLock);
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> unwired;
+    auto cursor = start;
+    auto it = g_lockedRanges.upper_bound(start);
+    if (it != g_lockedRanges.begin()) --it;
+    for (; it != g_lockedRanges.end() && it->first < end; ++it) {
+        const auto lockedEnd = it->first + it->second;
+        if (lockedEnd <= cursor) continue;
+        if (it->first > cursor) unwired.emplace_back(cursor, it->first);
+        AddUnwiredHostPages(std::max(cursor, it->first), std::min(end, lockedEnd), unwired);
+        cursor = std::max(cursor, lockedEnd);
+    }
+    if (cursor < end) unwired.emplace_back(cursor, end);
+    for (std::size_t index = 0; index < unwired.size(); ++index) {
+        if (::mlock(reinterpret_cast<void*>(unwired[index].first), unwired[index].second - unwired[index].first) != 0) {
+            const int error = errno;
+            for (std::size_t wired = 0; wired < index; ++wired) ::munlock(reinterpret_cast<void*>(unwired[wired].first), unwired[wired].second - unwired[wired].first);
+            return error;
+        }
+    }
+    RecordLockedRangeLocked(start, end);
+    return 0;
+}
+#else
+int WireHostPages(std::uintptr_t start, std::uintptr_t end) {
+    if (::mlock(reinterpret_cast<void*>(start), end - start) != 0) return errno;
+    RecordLockedRange(start, end);
+    return 0;
+}
+#endif
+
 int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
-    auto* const address = reinterpret_cast<void*>(start);
-    const std::size_t bytes = end - start;
 #ifdef __APPLE__
     for (mach_vm_address_t cursor = start; cursor < end;) {
         mach_vm_address_t region = cursor;
@@ -708,20 +800,14 @@ int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
         cursor = region + size;
     }
 #endif
-    if (::mlock(address, bytes) == 0) {
-        RecordLockedRange(start, end);
-        return 0;
-    }
-    int error = errno;
+    int error = WireHostPages(start, end);
+    if (error == 0) return 0;
     rlimit limit{};
     if ((error == ENOMEM || error == EPERM || error == EAGAIN) && getrlimit(RLIMIT_MEMLOCK, &limit) == 0 && limit.rlim_cur < limit.rlim_max) {
         limit.rlim_cur = limit.rlim_max;
         if (setrlimit(RLIMIT_MEMLOCK, &limit) == 0) {
-            if (::mlock(address, bytes) == 0) {
-                RecordLockedRange(start, end);
-                return 0;
-            }
-            error = errno;
+            error = WireHostPages(start, end);
+            if (error == 0) return 0;
         }
     }
     switch (error) {
@@ -734,10 +820,18 @@ int LockHostPages(std::uintptr_t start, std::uintptr_t end) {
 
 int UnlockHostPages(std::uintptr_t start, std::uintptr_t end) {
     if (!GuestRangeMapped(start, end)) return SCE_KERNEL_ERROR_ENOMEM;
+#ifdef __APPLE__
+    std::lock_guard lock(g_lockedRangesLock);
+    if (::munlock(reinterpret_cast<void*>(start), end - start) == 0) {
+        ForgetLockedRangeLocked(start, end);
+        return 0;
+    }
+#else
     if (::munlock(reinterpret_cast<void*>(start), end - start) == 0) {
         ForgetLockedRange(start, end);
         return 0;
     }
+#endif
     const int error = errno;
     if (error == ENOMEM) return SCE_KERNEL_ERROR_ENOMEM;
     throw std::system_error(error, std::generic_category(), "munlock failed");
@@ -765,13 +859,18 @@ int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length) 
 }
 
 int APS5_VABI sceKernelMunlockall_nid_postfix() {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
     ::munlockall();
 #endif
     std::map<uintptr_t, size_t> ranges;
     {
         std::lock_guard lock(g_lockedRangesLock);
         ranges.swap(g_lockedRanges);
+#ifdef __APPLE__
+        const int saved = errno;
+        for (const auto& [start, len] : ranges) ::munlock(reinterpret_cast<void*>(start), len);
+        errno = saved;
+#endif
     }
 #ifdef _WIN32
     for (const auto& [start, len] : ranges) {

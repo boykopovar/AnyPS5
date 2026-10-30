@@ -260,6 +260,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
     translateOptions.floatMode = request.context.floatMode;
     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
+    translateOptions.float32FlushDeclared = supports(spv::CapabilityDenormFlushToZero);
     translateOptions.inputInfo = inputInfo;
     translateOptions.float32DenormPreserve = request.target.float32DenormPreserve;
 
@@ -329,7 +330,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         }
     };
     simplify();
-    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel)) {
+    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled) program.Metadata().barycentricBuiltinsUnnormalized = request.target.fragmentBarycentricBuiltins;
+    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel, request.target.fragmentBarycentricBuiltins)) {
         translateOptions.fragmentShaderBarycentricEnabled = true;
         program = translator.Translate(decoded, cfg, translateOptions);
         program.Metadata().barycentricEmulation = true;
@@ -534,6 +536,7 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
                     ResourceProgram resource(request, preparation, reclaim);
                     source->plan = std::move(resource.plan);
                     if (!hasPreparedArtifact && std::ranges::none_of(source->variants, [&](const auto& variant) { return sameLayout(variant->layout, request.layout); })) {
+                        resource.program->ReleaseUseArena();
                         source->program = std::move(resource.program);
                     }
                 } catch (...) {
@@ -674,6 +677,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
     targetOptions.waveLdsMemoryBarriers = request.target.waveLdsMemoryBarriers;
     targetOptions.deviceScopeLdsMemoryBarriers = request.target.deviceScopeLdsMemoryBarriers;
+    targetOptions.ldsLockFences = request.target.ldsLockFences;
+    targetOptions.meshWindowBuffer = request.target.meshWindowBuffer;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
@@ -713,6 +718,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.hostSubgroupSize = HostSubgroupSize(request);
     result.fullSubgroups = emitted.fullSubgroups;
     result.functionLdsBuffer = emitted.functionLdsBuffer;
+    result.meshWindowBuffer = emitted.meshWindowBuffer;
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
     result.instanceOffsetSgpr = program.Info().instanceOffsetSgpr;
     result.vertexOffsetShared = program.Info().vertexOffsetShared;
@@ -890,7 +896,7 @@ SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, 
         const auto count = materialized[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(materialized[cursor] & 0xffffu);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationBinding) bindingNumbers.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
-        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet) functionLdsBuffer.insert(materialized[cursor + 1u]);
+        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && (materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet || materialized[cursor + 3u] == MeshWindowDescriptorSet)) functionLdsBuffer.insert(materialized[cursor + 1u]);
         if (op == spv::OpVariable && count >= 4u && !functionLdsBuffer.contains(materialized[cursor + 2u])) {
             if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end()) module->bindings.push_back(found->second);
             module->pushData |= materialized[cursor + 3u] == spv::StorageClassPushConstant;
@@ -1061,16 +1067,20 @@ SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::s
 
 const ResourceSnapshot& mergeTargetImage(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults, ResourceSnapshot& merged) {
     const auto& images = variant.info.info.images;
-    const auto image = std::ranges::find_if(images, [](const ImageResource& candidate) { return candidate.targetMerge; });
+    const auto mergeImage = [](const ImageResource& candidate) { return candidate.targetMerge; };
+    const auto image = std::ranges::find_if(images, mergeImage);
     if (image == images.end() || registrationDefaults) return snapshot;
-    if (!request.context.pixel || request.context.pixel->targetMerge.mask == 0u) throw std::runtime_error("ShaderRecompiler: a color target merge variant was materialized without the merged target");
-    if (image + 1 != images.end() || snapshot.images.size() + 1u != images.size()) throw std::runtime_error("ShaderRecompiler: the captured images do not precede the color target merge image");
+    if (!request.context.pixel || request.context.pixel->targetMerges.empty()) throw std::runtime_error("ShaderRecompiler: a color target merge variant was materialized without the merged target");
+    const auto& merges = request.context.pixel->targetMerges;
+    if (static_cast<std::size_t>(image - images.begin()) != snapshot.images.size() || snapshot.images.size() + merges.size() != images.size() || !std::all_of(image, images.end(), mergeImage)) throw std::runtime_error("ShaderRecompiler: the captured images do not precede the color target merge images");
     merged = snapshot;
-    DescriptorValue descriptor;
-    std::ranges::copy(request.context.pixel->targetMerge.descriptor, descriptor.dwords.begin());
-    descriptor.dwordCount = 8u;
-    descriptor.availableDwordMask = 0xffu;
-    merged.images.push_back(descriptor);
+    for (const auto& merge : merges) {
+        DescriptorValue descriptor;
+        std::ranges::copy(merge.descriptor, descriptor.dwords.begin());
+        descriptor.dwordCount = 8u;
+        descriptor.availableDwordMask = 0xffu;
+        merged.images.push_back(descriptor);
+    }
     return merged;
 }
 
@@ -1121,6 +1131,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .hostSubgroupSize = artifact.hostSubgroupSize,
         .fullSubgroups = artifact.fullSubgroups,
         .functionLdsBuffer = artifact.functionLdsBuffer,
+        .meshWindowBuffer = artifact.meshWindowBuffer,
         .parameterExports = artifact.parameterExports,
         .fragmentParameters = artifact.fragmentParameters,
         .barycentricEmulation = artifact.barycentricEmulation,
@@ -1150,10 +1161,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         if (variant.info.info.rasterPrimitive) moduleKey.push_back(static_cast<std::uint32_t>(request.context.pixel->rasterPrimitive));
         if (variant.info.info.layerExported) moduleKey.push_back(request.context.pixel->layerExported ? 1u : 0u);
     }
-    const bool depthRemap = request.target.depthRangeRemap && request.shader.stage == ShaderStage::Vertex && request.context.vertex.has_value();
+    const bool depthRemap = request.target.depthRangeRemap && (request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::TessellationEvaluation) && request.context.vertex.has_value();
     if (depthRemap) {
         if (request.context.vertex->depthRemapMode != 0u && request.layout.pushConstantOffsetBytes % (RuntimeAbi::PushConstantDwords * 4u) + request.layout.pushConstantSizeBytes > DepthRemapPushOffsetBytes) {
-            throw std::runtime_error("a remapped vertex shader's push data must end before the depth remap words");
+            throw std::runtime_error("a remapped raster shader's push data must end before the depth remap words");
         }
         moduleKey.push_back(request.context.vertex->depthRemapMode);
     }
@@ -1747,11 +1758,23 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(request.context.pixel->reversedBlend);
         mix(static_cast<std::uint64_t>(request.context.pixel->rasterPrimitive));
         mix(request.context.pixel->layerExported);
-        const auto& merge = request.context.pixel->targetMerge;
-        mix(merge.target);
-        mix(merge.mask);
-        mix(merge.samples);
-        for (const auto word : merge.descriptor) mix(word);
+        mix(request.context.pixel->targetMerges.size());
+        for (const auto& merge : request.context.pixel->targetMerges) {
+            mix(merge.target);
+            mix(merge.mask);
+            mix(merge.samples);
+            for (const auto word : merge.descriptor) mix(word);
+            if (!merge.blend.enabled) continue;
+            mix(merge.blend.snorm);
+            mix(merge.blend.colorSource);
+            mix(merge.blend.colorDestination);
+            mix(merge.blend.colorOperation);
+            mix(merge.blend.alphaSource);
+            mix(merge.blend.alphaDestination);
+            mix(merge.blend.alphaOperation);
+            mix(merge.blend.writeMask);
+            for (const auto word : merge.blend.constants) mix(word);
+        }
     }
     if (request.context.vertex) {
         const auto& vertex = *request.context.vertex;

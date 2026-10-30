@@ -74,7 +74,7 @@ int main() {
         *__error_nid_postfix() = 0;
         Require(sceKernelGetSocSensorTemperature(invalid, nullptr) == SCE_KERNEL_ERROR_EINVAL && *__error_nid_postfix() == 22);
     }
-    for (const int unmapped : {3, 15, 32, 64}) {
+    for (const int unmapped : {3, 15, 32}) {
         *__error_nid_postfix() = 0;
         Require(sceKernelGetSocSensorTemperature(unmapped, nullptr) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
     }
@@ -82,6 +82,10 @@ int main() {
     int probe = -12345;
     const int result = sceKernelGetSocSensorTemperature(0, &probe);
     Require(result == 0 ? (probe >= 0 && probe <= 130) : (result == SCE_KERNEL_ERROR_EINVAL && probe == -12345));
+    *__error_nid_postfix() = 0;
+    Require(sceKernelGetSocSensorTemperature(64, nullptr) == SCE_KERNEL_ERROR_EFAULT && *__error_nid_postfix() == 14);
+    int channel64 = -12345;
+    Require(sceKernelGetSocSensorTemperature(64, &channel64) == 0 && channel64 == -49);
     int cpuProbe = -12345;
     const int cpuResult = sceKernelGetCpuTemperature(&cpuProbe);
     Require(cpuResult == 0 ? (cpuProbe >= 0 && cpuProbe <= 130) : (cpuResult == SCE_KERNEL_ERROR_EINVAL && cpuProbe == -12345));

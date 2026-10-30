@@ -75,11 +75,18 @@ class PeModule:
 
     def coff_symbols(self, data, table, count):
         strings = table + count * 18
+        if strings > len(data) - 4:
+            raise ValueError("COFF string table header is outside the file")
+        size = struct.unpack_from("<I", data, strings)[0]
+        if size < 4 or size > len(data) - strings:
+            raise ValueError("COFF string table size is outside the file")
         result = []
         index = 0
         while index < count:
             entry = table + index * 18
             name, value, section, kind, storage, aux = struct.unpack_from("<8sIhHBB", data, entry)
+            if aux > count - index - 1:
+                raise ValueError("COFF auxiliary records exceed the symbol count")
             index += 1 + aux
             if storage not in (IMAGE_SYM_CLASS_EXTERNAL, IMAGE_SYM_CLASS_STATIC) or not 1 <= section <= len(self.sections):
                 continue
@@ -89,8 +96,13 @@ class PeModule:
             if storage == IMAGE_SYM_CLASS_STATIC and (kind >> 4) != 2 and value == 0:
                 continue
             if name[:4] == b"\0\0\0\0":
-                at = strings + struct.unpack_from("<I", name, 4)[0]
-                end = data.index(b"\0", at)
+                offset = struct.unpack_from("<I", name, 4)[0]
+                if not 4 <= offset < size:
+                    raise ValueError("COFF string table name offset is out of range")
+                at = strings + offset
+                end = data.find(b"\0", at, strings + size)
+                if end < 0:
+                    raise ValueError("COFF string table name is unterminated")
                 text = data[at:end]
             else:
                 text = name.rstrip(b"\0")
@@ -128,7 +140,7 @@ class Symbolizer:
         for directory in libs:
             for path in Path(directory).iterdir():
                 if path.is_file():
-                    self.files.setdefault(path.name.lower(), path)
+                    self.files.setdefault(path.name.lower(), {}).setdefault(path.resolve(), path)
         self.headers = headers
         self.modules = {}
         self.demangle = demangle and shutil.which("c++filt") is not None
@@ -136,11 +148,36 @@ class Symbolizer:
         self.warn = warn
         self.unverified = unverified
 
+    def candidate_path(self, name):
+        paths = list(self.files.get(name.lower(), {}).values())
+        if len(paths) <= 1:
+            return paths[0] if paths else None
+        identity = self.headers.get(name)
+        if identity is None and not self.unverified:
+            self.warn(f"{name}: the samples have no '# module' record; multiple candidates stay unsymbolized")
+            return None
+        matches = []
+        for path in paths:
+            try:
+                candidate = PeModule(path)
+            except (OSError, ValueError, struct.error) as error:
+                self.warn(f"{name}: {path}: {error}")
+                continue
+            if identity is None or identity == (candidate.size, candidate.timestamp):
+                matches.append(path)
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            self.warn(f"{name}: ambiguous module candidates; matching size and timestamp do not identify one file, so frames stay unsymbolized")
+        else:
+            self.warn(f"{name}: no module candidate matches the sampled size and timestamp; frames stay unsymbolized")
+        return None
+
     def module(self, name):
         if name in self.modules:
             return self.modules[name]
         module = None
-        path = self.files.get(name.lower())
+        path = self.candidate_path(name)
         if path is not None:
             try:
                 module = PeModule(path)
@@ -281,6 +318,13 @@ def main(argv=None):
     parser.add_argument("--thread", help="keep only this thread of an APS5_SAMPLE_THREADS file")
     parser.add_argument("--unverified", action="store_true", help="also symbolize modules the samples have no '# module' record for")
     args = parser.parse_args(argv)
+    try:
+        return symbolize(parser, args)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+
+
+def symbolize(parser, args):
     if args.out:
         output = Path(args.out)
         for source in (args.samples, args.since):
@@ -291,6 +335,31 @@ def main(argv=None):
     samples = load(args.samples, args.thread)
     if args.since:
         samples = window(samples, load(args.since, args.thread))
+    if args.out and samples.stacks:
+        referenced_modules = {name.lower() for name, _ in samples.self_counts}
+        referenced_modules.update(name.lower() for name, _ in samples.inclusive)
+        for frames in samples.stacks:
+            for frame in frames.split(";"):
+                name, separator, _ = frame.partition("+0x")
+                if separator:
+                    referenced_modules.add(name.lower())
+        module_output_alias = False
+        for directory in args.libs:
+            for source in Path(directory).iterdir():
+                if not source.is_file() or not (source.resolve() == output.resolve() or
+                                                (source.exists() and output.exists() and source.samefile(output))):
+                    continue
+                if source.name.lower() in referenced_modules or source.suffix.lower() in (".prx", ".dll", ".exe"):
+                    module_output_alias = True
+                    continue
+                try:
+                    with source.open("rb") as module:
+                        if module.read(2) == b"MZ":
+                            module_output_alias = True
+                except OSError:
+                    module_output_alias = True
+        if module_output_alias:
+            parser.error("symbolized output must be separate from module inputs")
     symbolizer = Symbolizer(args.libs, samples.headers, args.demangle, warn=lambda text: print("warning: " + text, file=sys.stderr), unverified=args.unverified)
     for line in summarize(symbolizer, samples, args.top):
         print(line)

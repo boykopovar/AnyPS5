@@ -22,6 +22,7 @@
 #endif
 #include <windows.h>
 #else
+#include <dlfcn.h>
 #include <sys/mman.h>
 #endif
 #include <array>
@@ -264,6 +265,26 @@ void ExpectConstantStore(const Block& block, const char* what) {
 std::array<std::uint32_t, 2> AddressWords(const Block& block) {
     const auto address = block.Address();
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
+}
+
+void KeepVulkanDriversLoaded() {
+#if defined(__GLIBC__)
+    static const VkInstance instance = [] {
+        VkInstance created = VK_NULL_HANDLE;
+        void* loader = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+        if (loader == nullptr) return created;
+        const auto instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(loader, "vkGetInstanceProcAddr"));
+        const auto create = instanceProc != nullptr ? reinterpret_cast<PFN_vkCreateInstance>(instanceProc(VK_NULL_HANDLE, "vkCreateInstance")) : nullptr;
+        if (create == nullptr) return created;
+        VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+        application.apiVersion = VK_API_VERSION_1_1;
+        VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+        info.pApplicationInfo = &application;
+        if (create(&info, nullptr, &created) != VK_SUCCESS) created = VK_NULL_HANDLE;
+        return created;
+    }();
+    static_cast<void>(instance);
+#endif
 }
 
 void SetEnvironment(const char* name, const std::string& value) {
@@ -712,6 +733,7 @@ int main(int argc, char** argv) {
                 std::filesystem::remove_all(directory, error);
             }
         } cleanup{directory};
+        KeepVulkanDriversLoaded();
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;

@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include <array>
 #include <cstdint>
@@ -13,6 +14,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 namespace {
 
@@ -107,12 +109,19 @@ void LoadState(Context& context) {
     }
 }
 
-void SaveState(const Context& context) {
+void SaveState(const Context& context, const std::set<int>& unlocked) {
     std::filesystem::create_directories(context.state.parent_path());
     const auto temporary = context.state.string() + ".tmp";
     {
         std::ofstream file(temporary, std::ios::trunc);
-        for (const auto id : context.unlocked) file << id << '\n';
+        for (const auto id : unlocked) file << id << '\n';
+        file.flush();
+        if (!file) {
+            file.close();
+            std::error_code removeError;
+            std::filesystem::remove(temporary, removeError);
+            throw std::runtime_error("sceNpTrophy: cannot write the unlock state " + temporary);
+        }
     }
     std::filesystem::rename(temporary, context.state);
 }
@@ -157,6 +166,8 @@ int CopyIcon(const Context& context, const std::string& name, void* buffer, std:
     if (*size < entry->second.size) return NP_TROPHY_ERROR_INSUFFICIENT_BUFFER;
     std::ifstream file(context.package, std::ios::binary);
     file.seekg(static_cast<std::streamoff>(entry->second.offset));
+    const GuestArena::HostWrite destination(buffer, entry->second.size);
+    if (!destination.Open()) throw std::runtime_error("sceNpTrophy: the icon buffer is not writable");
     if (!file.read(static_cast<char*>(buffer), static_cast<std::streamsize>(entry->second.size))) return NP_TROPHY_ERROR_INVALID_TRP_FILE_FORMAT;
     *size = entry->second.size;
     return 0;
@@ -251,8 +262,10 @@ int APS5_VABI sceNpTrophyUnlockTrophy(int contextId, int handle, int trophyId, i
     if (!context->registered) return NP_TROPHY_ERROR_NOT_REGISTERED;
     if (trophyId < 0 || trophyId >= context->trophies) return NP_TROPHY_ERROR_INVALID_TROPHY_ID;
     if (context->unlocked.contains(trophyId)) return NP_TROPHY_ERROR_TROPHY_ALREADY_UNLOCKED;
-    context->unlocked.insert(trophyId);
-    SaveState(*context);
+    auto updated = context->unlocked;
+    updated.insert(trophyId);
+    SaveState(*context, updated);
+    context->unlocked = std::move(updated);
     *platinumId = NP_TROPHY_INVALID_ID;
     return 0;
 }
@@ -545,8 +558,7 @@ int APS5_VABI sceNpTrophySystemCreateHandle(void) {
 }
 
 int APS5_VABI sceNpTrophySystemDbgCtl(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemDebugLockTrophy(void) {
@@ -575,13 +587,11 @@ int APS5_VABI sceNpTrophySystemDestroyTrophyConfig(void) {
 }
 
 int APS5_VABI sceNpTrophySystemGetDbgParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemGetDbgParamInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemGetGroupIcon(void) {
@@ -705,13 +715,11 @@ int APS5_VABI sceNpTrophySystemRemoveUserData(void) {
 }
 
 int APS5_VABI sceNpTrophySystemSetDbgParam(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemSetDbgParamInt(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80551692);
 }
 
 int APS5_VABI sceNpTrophySystemUnregisterTitleSyncedCallback(void) {
@@ -772,6 +780,34 @@ int APS5_VABI sceNpTrophySystemWrapRemoveTitleData(void) {
 int APS5_VABI sceNpTrophySystemWrapRemoveUserData(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetGroupDetailsArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTitleData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyData() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDataArray() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDetails() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

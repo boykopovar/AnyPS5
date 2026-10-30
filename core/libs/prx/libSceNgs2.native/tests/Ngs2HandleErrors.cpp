@@ -2,6 +2,7 @@
 #include "prx/libSceNgs2.native/include/Api.hpp"
 
 #include <cstdint>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -101,6 +102,122 @@ static void CheckOption(const Ngs2SystemOption& option, int expected, const std:
         Status(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "system destroy of a valid option failed");
     }
     Require(allocations == 0);
+}
+
+static void CheckSchedulerOptions() {
+    for (std::size_t slot = 0; slot < 4; ++slot) {
+        Ngs2JobSchedulerOption scheduler{};
+        auto option = Option();
+        option.job_scheduler_options[slot] = reinterpret_cast<std::uintptr_t>(&scheduler);
+        for (auto capacity : {0u, 1u, 16385u, UINT32_MAX}) {
+            scheduler.max_jobs = capacity;
+            CheckOption(option, static_cast<int>(0x804A8421u), "invalid scheduler capacity");
+        }
+        for (auto capacity : {2u, 16u, 16384u}) {
+            scheduler.max_jobs = capacity;
+            CheckOption(option, SCE_NGS2_OK, "inactive scheduler");
+        }
+    }
+}
+
+struct SchedulerLife {
+    struct Handle { SchedulerLife* life; std::uint32_t slot; };
+    std::array<Handle, 4> handles{};
+    std::vector<int> events;
+    int failInit = -1;
+    int failQuery = -1;
+};
+
+static int APS5_VABI QueryScheduler(const Ngs2JobSchedulerOption* option, std::uint32_t slot, Ngs2ContextBufferInfo* buffer) {
+    auto& life = *reinterpret_cast<SchedulerLife*>(option->user_data);
+    life.events.push_back(10 + slot);
+    if (life.failQuery == static_cast<int>(slot)) return -71;
+    *buffer = {};
+    buffer->host_buffer_size = 64;
+    return SCE_NGS2_OK;
+}
+
+static int APS5_VABI InitScheduler(const Ngs2JobSchedulerOption* option, std::uint32_t slot, Ngs2ContextBufferInfo* buffer, std::uintptr_t* handle) {
+    auto& life = *reinterpret_cast<SchedulerLife*>(option->user_data);
+    Require(buffer->host_buffer != nullptr && buffer->host_buffer_size == 64);
+    life.events.push_back(20 + slot);
+    if (life.failInit == static_cast<int>(slot)) return -72;
+    life.handles[slot] = {&life, slot};
+    *handle = reinterpret_cast<std::uintptr_t>(&life.handles[slot]);
+    return SCE_NGS2_OK;
+}
+
+static int APS5_VABI DestroyScheduler(std::uintptr_t handle) {
+    const auto& manager = *reinterpret_cast<SchedulerLife::Handle*>(handle);
+    manager.life->events.push_back(30 + manager.slot);
+    return SCE_NGS2_OK;
+}
+
+static void CheckResetScheduler() {
+    Require(sceNgs2JobSchedulerResetOption(nullptr) == static_cast<int>(0x804A8012u));
+    Ngs2JobSchedulerOption option{};
+    Require(sceNgs2JobSchedulerResetOption(&option) == SCE_NGS2_OK);
+    Require(option.size == 112 && option.user_data == 0 && option.num_workers == 4 && option.max_jobs == 1024);
+    Require(option.reserved[0] == 32 && option.reserved[1] == 0x20000 && option.reserved[2] == 700 && option.reserved[3] == 0 && option.reserved_tail == 0);
+    Require(option.query_handler != nullptr && option.init_handler != nullptr && option.destroy_handler != nullptr && option.submit_handler != nullptr && option.flush_handler != nullptr && option.join_handler != nullptr);
+    for (auto count : {0u, 1u, 29u, UINT32_MAX}) {
+        option.num_workers = count;
+        Ngs2ContextBufferInfo query{};
+        Require(option.query_handler(&option, 0, &query) == static_cast<int>(0x804A8422u));
+    }
+    option.max_jobs = 1;
+    Ngs2ContextBufferInfo query{};
+    Require(option.query_handler(&option, 0, &query) == static_cast<int>(0x804A8421u));
+}
+
+static void CheckJobLifecycle() {
+    for (bool allocated : {false, true}) {
+        for (int failure = -1; failure < 4; ++failure) {
+            SchedulerLife life;
+            life.failInit = failure;
+            std::array<Ngs2JobSchedulerOption, 4> schedulers{};
+            auto option = Option();
+            for (std::size_t i = 0; i < schedulers.size(); ++i) {
+                auto& scheduler = schedulers[i];
+                scheduler.user_data = reinterpret_cast<std::uintptr_t>(&life);
+                scheduler.query_handler = QueryScheduler;
+                scheduler.init_handler = InitScheduler;
+                scheduler.destroy_handler = DestroyScheduler;
+                scheduler.max_jobs = 16;
+                option.job_scheduler_options[i] = reinterpret_cast<std::uintptr_t>(&scheduler);
+            }
+            Ngs2ContextBufferInfo query{};
+            Require(sceNgs2SystemQueryBufferSize(&option, &query) == SCE_NGS2_OK);
+            Require((life.events == std::vector<int>{10, 11, 12, 13}));
+            life.events.clear();
+            std::vector<std::uint64_t> storage(query.host_buffer_size / sizeof(std::uint64_t) + 1);
+            Ngs2ContextBufferInfo buffer{};
+            buffer.host_buffer = storage.data();
+            buffer.host_buffer_size = query.host_buffer_size;
+            const Ngs2BufferAllocator allocator{CountedAllocate, CountedRelease, 0};
+            std::uintptr_t system = 0x5a5a;
+            const int result = allocated ? sceNgs2SystemCreateWithAllocator(&option, &allocator, &system)
+                                         : sceNgs2SystemCreate(&option, &buffer, &system);
+            Require(result == (failure < 0 ? SCE_NGS2_OK : -72));
+            std::vector<int> expected;
+            if (allocated) expected = {10, 11, 12, 13};
+            for (int i = 0; i < (failure < 0 ? 4 : failure + 1); ++i) { expected.push_back(10 + i); expected.push_back(20 + i); }
+            if (failure >= 0) {
+                for (int i = failure; i-- > 0;) expected.push_back(30 + i);
+                Require(system == 0x5a5a && allocations == 0);
+            } else {
+                Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+                expected.insert(expected.end(), {30, 31, 32, 33});
+                Require(allocations == 0);
+            }
+            Require(life.events == expected);
+            life.events.clear();
+            life.failQuery = 2;
+            query = {};
+            Require(sceNgs2SystemQueryBufferSize(&option, &query) == -71 && query.host_buffer_size == 0);
+            Require((life.events == std::vector<int>{10, 11, 12}));
+        }
+    }
 }
 
 static void CheckQueryBuffer(const Ngs2SystemOption* option, int expected, const char* label) {
@@ -232,8 +349,7 @@ static void CheckSystemOption() {
 
     auto scheduled = Option();
     for (auto& character : scheduled.name) character = 'n';
-    for (auto& pointer : scheduled.job_scheduler_options) pointer = 0x1000;
-    CheckOption(scheduled, SCE_NGS2_OK, "a name and job scheduler options");
+    CheckOption(scheduled, SCE_NGS2_OK, "a non-terminated name");
 
     const auto invalidRate = Option(512, 256, 7000);
     Status(sceNgs2SystemQueryBufferSize(&invalidRate, nullptr), outputError, "invalid option took precedence over the null output");
@@ -258,7 +374,7 @@ static void CheckSetGrainSamples() {
         Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
         Require(info.num_grain_samples == grain);
     }
-    for (const std::uint32_t grain : {0u, 513u, 576u, 2048u, 0xffffffffu}) {
+    for (const std::uint32_t grain : {0u, 1u, 8u, 63u, 65u, 511u, 513u, 576u, 2048u, 0xffffffffu}) {
         Status(sceNgs2SystemSetGrainSamples(system, grain), grainError, "an invalid grain was accepted");
         Status(sceNgs2SystemGetInfo(system, &info, sizeof(info)), SCE_NGS2_OK, "system info failed");
         Require(info.num_grain_samples == 512);
@@ -320,6 +436,9 @@ int main() {
         CheckCreateArguments();
         CheckResetOption();
         CheckSystemOption();
+        CheckSchedulerOptions();
+        CheckJobLifecycle();
+        CheckResetScheduler();
         CheckSetGrainSamples();
         CheckSetSampleRate();
         CheckExportLinked();

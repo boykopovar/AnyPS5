@@ -1,11 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -36,6 +38,18 @@ static_assert(sizeof(Packet) == 16);
 static_assert(offsetof(Packet, addr) == 0);
 static_assert(offsetof(Packet, dw_num) == 8);
 static_assert(offsetof(Packet, flags) == 12);
+
+namespace AgcDriver::DriverDetail {
+
+struct DriverTestAccess {
+    static std::uint64_t LabelTaken(std::uint32_t queue, const volatile std::uint32_t* address) {
+        auto& driver = Driver::Get();
+        std::lock_guard lock(driver.labelStoresMutex);
+        return driver.labelTakes.Taken(queue, reinterpret_cast<std::uintptr_t>(address));
+    }
+};
+
+}
 
 namespace {
 
@@ -87,7 +101,9 @@ void testValidation() {
     expectFailure([] { sceAgcDriverAgrSubmitDcb(nullptr); });
     expectFailure([] { sceAgcDriverSubmitAcb(0x20, nullptr); });
     expectFailure([&] { sceAgcDriverSubmitAcb(0, &packet); });
-    expectFailure([&] { sceAgcDriverSubmitAcb(0x58, &packet); });
+    check(sceAgcDriverSubmitAcb(0x58, &packet) == 0, "queue 0x58 submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    expectFailure([&] { sceAgcDriverSubmitAcb(0x59, &packet); });
     packet.dw_num = 2;
     expectFailure([&] { sceAgcDriverSubmitDcb(&packet); });
     packet.dw_num = 3;
@@ -112,6 +128,14 @@ void testValidation() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void testThreadDimensionGroups() {
+    using AgcDriver::DriverDetail::ThreadDimensionGroups;
+    check(ThreadDimensionGroups(0, 64) == 0, "no threads need no groups");
+    check(ThreadDimensionGroups(64, 64) == 1 && ThreadDimensionGroups(65, 64) == 2, "a partial group still counts");
+    check(ThreadDimensionGroups(0xffffffffu, 1) == 0xffffffffu, "one thread per group keeps the thread count");
+    check(ThreadDimensionGroups(0xffffffffu, 64) == 0x4000000u, "a thread count near 2^32 wrapped before the division");
+}
+
 void testReadOnlyResummarize() {
     std::vector<std::uint32_t> commands;
     for (const auto [offset, value] : {std::pair{0x000u, 0x10u}, {0x200u, 0x007007f3u}, {0x010u, 0xa0000183u}, {0x011u, 0x20000180u}, {0x8eu, 0xffffffffu}, {0x8fu, 0u}, {0x1c4u, 0u}, {0x203u, 0u}}) {
@@ -128,12 +152,13 @@ void testClearState() {
     const auto shader = graphics.shader;
     const auto userConfig = graphics.userConfig;
     graphics.ClearContext();
-    check(graphics.context == AgcDriver::InitialContextRegisters(), "CLEAR_STATE retained context registers");
+    check(graphics.context == AgcDriver::ClearStateContextRegisters(), "CLEAR_STATE retained context registers");
     check(graphics.shader == shader && graphics.userConfig == userConfig, "CLEAR_STATE reset unrelated registers");
     check(graphics.context.count(0x1b3) == 1 && graphics.context.at(0x1b3) == 0 && graphics.context.count(0x1b4) == 1 && graphics.context.at(0x1b4) == 0, "CLEAR_STATE left SPI_PS_INPUT_ENA/ADDR unset");
+    check(graphics.context.at(0x1b6) == 2u, "CLEAR_STATE did not leave SPI_PS_IN_CONTROL at its clear-state NUM_INTERP of 2");
     graphics.context.emplace(0x10, 31);
     graphics.ClearContext();
-    check(graphics.context == AgcDriver::InitialContextRegisters(), "repeated CLEAR_STATE retained context registers");
+    check(graphics.context == AgcDriver::ClearStateContextRegisters(), "repeated CLEAR_STATE retained context registers");
 
     std::array<std::uint32_t, 3> words{0xc0001200, 0, 0};
     Packet packet{words.data(), 2, 0, {}};
@@ -208,6 +233,7 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip-only queue submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(output->ready.load() == 1, "flip-only queue flip was not handed to its output");
+    check(AgcDriver::Graphics::HostImportFramesEnded() == 1, "the first flip did not end a host import frame");
     check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == 1 && sceAgcDriverGetEqEventType(events.data()) == 0, "flip on a queue that never requested a release interrupt did not raise its event");
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip-only queue event was not cleared");
     std::array<std::uint32_t, 8> words{0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0};
@@ -229,6 +255,7 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip after a release interrupt submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(output->ready.load() == 2, "flip after a release interrupt was not handed to its output");
+    check(AgcDriver::Graphics::HostImportFramesEnded() == 2, "a flip packet executed on the queue did not end a host import frame");
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip on a queue that already raised its own release interrupt raised a second event");
     words[2] = 1u << 24u;
     check(sceAgcDriverSubmitDcb(&packet) == 0, "release before sustained flips submit failed");
@@ -259,6 +286,13 @@ void testEndOfPipeInterrupts() {
         check(output->ready.load() == static_cast<int>(4 + sustainedFlips + index), "flip paired with a release interrupt was not handed to its output");
         check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a flip raised an event within two flips of the queue's own release interrupt");
     }
+    const auto framesBefore = AgcDriver::Graphics::HostImportFramesEnded();
+    const auto readyBefore = output->ready.load();
+    std::thread([] { AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{7, -1, 1, 0}); }).join();
+    AgcDriverWaitIdle_nid_postfix();
+    static_cast<void>(owner->GetTriggeredEvents(events.data(), 2));
+    check(output->ready.load() == readyBefore + 1, "flip from a thread that never submitted queue 0 was not handed to its output");
+    check(AgcDriver::Graphics::HostImportFramesEnded() == framesBefore + 1, "a CPU flip from a thread that never submitted queue 0 did not end a host import frame");
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
     alignas(8) static volatile std::uint64_t label = 0;
     const auto labelAddress = reinterpret_cast<std::uintptr_t>(&label);
@@ -400,6 +434,85 @@ void testLabelHeldAtSubmission() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void testLabelTakenAndResetInOneSubmission() {
+    alignas(64) static volatile std::uint32_t gate = 0, label = 0, first = 0, waiting = 0, second = 0;
+    submit(0x20, commands(waitEqual(&gate, 1), waitEqual(&label, 1), writeData(&label, 0), writeData(&first, 1), writeData(&waiting, 1), waitEqual(&label, 1), writeData(&second, 1)));
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&label, 1, "producer label never landed");
+    gate = 1;
+    waitFor(&waiting, 1, "consumer never reached its second label wait");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(first == 1 && second == 0, "a label store its own queue had taken and reset satisfied the queue's next wait, or the wait expired");
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&second, 1, "consumer did not resume after a new producer label");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testLabelTakenAndResetByEarlierSubmission() {
+    alignas(64) static volatile std::uint32_t gate = 0, label = 0, first = 0, second = 0;
+    submit(0x20, commands(waitEqual(&gate, 1), waitEqual(&label, 1), writeData(&label, 0), writeData(&first, 1)));
+    submit(0x20, commands(waitEqual(&label, 1), writeData(&label, 0), writeData(&second, 1)));
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&label, 1, "producer label never landed");
+    gate = 1;
+    waitFor(&first, 1, "consumer never passed its first label wait");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(second == 0, "a label store an earlier submission of the queue had taken and reset satisfied a later submission's wait, or the wait expired");
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&second, 1, "the later submission did not resume after a new producer label");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testLabelTakesRetire() {
+    using AgcDriver::DriverDetail::LabelTakes;
+    auto takes = std::make_unique<LabelTakes>();
+    constexpr std::uint64_t label = 0x1000, other = 0x2000;
+    takes->Pass(0x20, label, 10);
+    check(takes->MayHavePass(0x20, label) && takes->Taken(0x20, label) == 0, "a passed wait was not kept for the store that takes it");
+    takes->Take(0x20, label);
+    check(takes->Taken(0x20, label) == 10 && !takes->MayHavePass(0x20, label), "the queue's own store did not turn its pass into a take");
+    takes->Retire(0x20, 9);
+    check(takes->Taken(0x20, label) == 10, "a take was dropped while a submission of the queue entered before it could still wait");
+    takes->Retire(0x28, 20);
+    check(takes->Taken(0x20, label) == 10, "another queue's submission retired a take");
+    takes->Retire(0x20, 10);
+    check(takes->Taken(0x20, label) == 0 && takes->Empty(), "a take was kept after every submission of the queue that could wait entered after it");
+    takes->Pass(0x20, label, 30);
+    takes->Pass(0x20, label, 40);
+    takes->Retire(0x20, 30);
+    check(takes->MayHavePass(0x20, label), "an older pass on the dword retired its newer pass");
+    takes->Take(0x20, label);
+    takes->Retire(0x20, 39);
+    check(takes->Taken(0x20, label) == 40, "a take was retired by a submission entered before it");
+    takes->Pass(0x20, other, 50);
+    takes->Pass(0x28, label, 50);
+    takes->Retire(0x20, 50);
+    check(takes->Taken(0x20, label) == 0 && !takes->MayHavePass(0x20, other), "a submission of the queue entered after its passes and take did not retire them");
+    check(takes->MayHavePass(0x28, label) && !takes->Empty(), "a submission of one queue retired another queue's pass");
+    takes->Retire(0x28, 50);
+    check(takes->Empty(), "a pass was kept after every submission of its queue entered after it");
+}
+
+void testLabelTakeRetiredByLaterSubmission() {
+    using AgcDriver::DriverDetail::DriverTestAccess;
+    alignas(64) static volatile std::uint32_t gate = 0, label = 0, first = 0, second = 0, third = 0;
+    submit(0x20, commands(waitEqual(&gate, 1), waitEqual(&label, 1), writeData(&label, 0), writeData(&first, 1)));
+    submit(0x20, commands(waitEqual(&label, 1), writeData(&second, 1)));
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&label, 1, "producer label never landed");
+    gate = 1;
+    waitFor(&first, 1, "consumer never passed its first label wait");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(second == 0, "a label store an earlier submission of the queue had taken and reset satisfied a later submission's wait, or the wait expired");
+    check(DriverTestAccess::LabelTaken(0x20, &label) != 0, "a take was dropped while a submission of the queue entered before it was waiting");
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&second, 1, "the later submission did not resume after a new producer label");
+    submit(0x20, commands(writeData(&third, 1)));
+    waitFor(&third, 1, "a submission entered after the take never ran");
+    check(DriverTestAccess::LabelTaken(0x20, &label) == 0, "a take was kept after a submission of the queue entered after it started");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void testWaitFreeSubmissionAfterEarlierQueue0Work() {
     alignas(64) static volatile std::uint32_t first = 0, second = 0;
     constexpr std::uint32_t writes = 20000;
@@ -430,6 +543,31 @@ void testWaitFreeSubmissionBehindHeldOne() {
     submit(0x20, commands(writeData(&label, 1)));
     check(waitFor(&done, 1, "queue 0 never passed the wait a later submission of the held queue satisfies") < std::chrono::milliseconds(500), "queue 0's wait on a label stored behind a held submission was not released at once");
     check(other == 1, "the held submission did not run before the one behind it");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testQueue0SubmissionAfterEarlierWaitFreeWork() {
+    alignas(64) static volatile std::uint32_t first = 0, second = 0;
+    constexpr std::uint32_t writes = 20000;
+    std::vector<std::uint32_t> words;
+    for (std::uint32_t i = 1; i <= writes; ++i) {
+        const auto write = writeData(&first, i);
+        words.insert(words.end(), write.begin(), write.end());
+    }
+    submit(0x20, words);
+    submit(0, commands(writeData(&second, 1)));
+    waitFor(&second, 1, "queue 0's submission never ran");
+    check(first == writes, "queue 0 ran a submission before another queue's earlier wait-free submission finished");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testQueue0SubmissionBehindWaitingQueue() {
+    alignas(64) static volatile std::uint32_t label = 0, other = 0, done = 0;
+    submit(0x20, commands(waitEqual(&label, 1)));
+    submit(0x20, commands(writeData(&other, 1)));
+    submit(0, commands(writeData(&label, 1), writeData(&done, 1)));
+    check(waitFor(&done, 1, "queue 0 never ran while another queue waited on it") < std::chrono::milliseconds(500), "queue 0 waited for a wait-free submission queued behind another queue's wait on queue 0");
+    waitFor(&other, 1, "the wait-free submission behind the satisfied wait never ran");
     AgcDriverWaitIdle_nid_postfix();
 }
 
@@ -1018,18 +1156,25 @@ int main(int argc, char** argv) {
         testRegisteredFastLaunchWorkgroupVertex();
         testEvents();
         testValidation();
+        testThreadDimensionGroups();
         testClearState();
         testSubmissions();
         testEndOfPipeInterrupts();
         testLabelStoredSinceSubmission();
         testEndOfPipeLabelsWithoutWork();
         testLabelHeldAtSubmission();
+        testLabelTakenAndResetInOneSubmission();
+        testLabelTakenAndResetByEarlierSubmission();
+        testLabelTakesRetire();
+        testLabelTakeRetiredByLaterSubmission();
         testWideLabelStoredSinceSubmission();
         testWaitFreeSubmissionAfterEarlierQueue0Work();
         testWaitFreeSubmissionQueue0WaitsOn();
         testMultiAcbs();
         testWaitFreeSubmissionBehindHeldOne();
         testWaitFreeSubmissionTheCpuWaitsFor();
+        testQueue0SubmissionAfterEarlierWaitFreeWork();
+        testQueue0SubmissionBehindWaitingQueue();
         testMultiSubmissions();
         testShaderHeaderAlignment();
         testHeaderWithoutProgramAddress();

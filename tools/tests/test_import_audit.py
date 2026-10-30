@@ -242,6 +242,18 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
 
 
+    def test_deeply_nested_registries_are_audit_errors(self):
+        registry = self.work.root / "game.registry.json"
+        registry.write_text("[" * 200000, encoding="utf-8")
+        code, out, err = self.work.run(registry)
+        self.assertEqual(code, 2, err)
+        self.assertIn("cannot read registry", err)
+        registry.write_text("[]", encoding="utf-8")
+        registry.with_name("game.needed.json").write_text("[" * 200000, encoding="utf-8")
+        code, out, err = self.work.run(registry)
+        self.assertEqual(code, 2, err)
+        self.assertIn("cannot read needed libraries", err)
+
     def test_windows_guest_dependencies_use_host_prx_suffixes(self):
         work = self.work
         (work.libs / "libSceA.prx").write_bytes(build_pe(["AAAAAAAAAAA"]))
@@ -780,6 +792,31 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(data["missing_libraries"], {})
         record = next(record for record in data["imports"] if record["library"] == "shipping.debug_prx")
         self.assertEqual(record["class"], "module")
+
+    def test_module_suffix_aliases_require_suffixes_on_both_filenames(self):
+        work = self.work
+        registry, report = work.root / "game.registry.json", work.root / "audit.json"
+        cases = (("shipping.prx", "shipping"), ("shipping", "shipping.prx"),
+                 ("shipping.data", "shipping.data.prx"), (".prx", ".sprx"))
+        for windows in (False, True):
+            (work.libs / "libc.prx").write_bytes(build_pe([]) if windows else exporting())
+            for filename, alias in cases:
+                module = work.modules / filename
+                module.write_bytes(exporting("AAAAAAAAAAA"))
+                try:
+                    for needed in (filename, alias):
+                        with self.subTest(windows=windows, filename=filename, needed=needed):
+                            write_registry(registry, [("AAAAAAAAAAA", needed)])
+                            import_audit.needed_registry_path(registry).write_text(json.dumps([needed]), encoding="utf-8")
+                            code, _, err = work.run(registry, "--json", str(report))
+                            exact = needed == filename
+                            self.assertEqual((code, err), (0 if exact else 1, ""))
+                            data = json.loads(report.read_text(encoding="utf-8"))
+                            self.assertEqual(data["missing_libraries"], {} if exact else {needed: 1})
+                            self.assertEqual(data["imports"][0]["class"], "module" if exact else "absent")
+                            self.assertEqual(data["references"], 1)
+                finally:
+                    module.unlink()
 
     def test_module_names_ignore_case_for_windows_output_only(self):
         imports = [("AAAAAAAAAAA", "SDK-Shipping.debug_prx", False)]
@@ -1620,6 +1657,64 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(partial, {(library, nid_names.compute_nid(name)) for library in ("libGuard.prx", "libShared.prx")
                                    for name, kind in kinds.items() if kind == "partial"})
 
+    def test_many_host_branches_only_fail_when_every_combination_must_be_read(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(9))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     "void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI sceStub(int value) { NotImplemented_nid_no_patch(__func__); return 0; }\n"
+                     f"int APS5_VABI sceHosts(int value) {{\n{blocks}    return value;\n}}\n"
+                     f"int APS5_VABI sceLastHost(int value) {{\n{blocks}#ifdef HOST_LAST\n    Fail();\n#endif\n    return value;\n}}\n"
+                     f"int APS5_VABI sceNestedHosts(int value) {{\n#ifdef HOST_OUTER\n{blocks}#else\n    Fail();\n#endif\n    return value;\n}}\n")
+        stubs, partial = import_audit.source_stub_classes(source)
+        stub, hosts, last, nested = (("libHosts.prx", nid_names.compute_nid(name))
+                                     for name in ("sceStub", "sceHosts", "sceLastHost", "sceNestedHosts"))
+        self.assertEqual(set(stubs), {stub, last, nested})
+        self.assertEqual(partial, {last, nested})
+        for every in (f"{blocks}    Fail();\n", f"#ifdef HOST_OUTER\n{blocks}#endif\n    Fail();\n"):
+            with self.subTest(every=every):
+                write_source(source, "libHosts",
+                             "void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
+                             f"int APS5_VABI sceEveryHost(int value) {{\n{every}    return value;\n}}\n")
+                with self.assertRaisesRegex(import_audit.AuditError, "more than 256 preprocessor branch combinations"):
+                    import_audit.source_stub_classes(source)
+
+    def test_unrelated_helper_host_branches_do_not_abort_source_classification(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(10))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     f"int PollDescriptors(int value) {{\n{blocks}    return value;\n}}\n"
+                     "int PollAgain(int value) { return PollDescriptors(value); }\n"
+                     "void FirstFail() { LastFail(); }\n"
+                     "void LastFail() { NotImplemented_nid_no_patch(__func__); }\n"
+                     "int APS5_VABI scePoll(int value) { return PollAgain(value); }\n"
+                     "int APS5_VABI sceStub(int value) { FirstFail(); return value; }\n"
+                     "int APS5_VABI scePartial(int value) { if (value) FirstFail(); return value; }\n")
+        stubs, partial = import_audit.source_stub_classes(source)
+        stub = ("libHosts.prx", nid_names.compute_nid("sceStub"))
+        guarded = ("libHosts.prx", nid_names.compute_nid("scePartial"))
+        self.assertEqual(set(stubs), {stub, guarded})
+        self.assertEqual(partial, {guarded})
+
+    def test_relevant_helper_at_the_variant_limit_remains_a_stub(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(8))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     f"void Fail(int value) {{\n{blocks}    NotImplemented_nid_no_patch(__func__);\n}}\n"
+                     "int APS5_VABI sceStub(int value) { Fail(value); return value; }\n")
+        stub = ("libHosts.prx", nid_names.compute_nid("sceStub"))
+        self.assertEqual(import_audit.source_stub_classes(source), ({stub: "sceStub"}, set()))
+
+    def test_relevant_helper_host_branches_keep_the_variant_limit(self):
+        blocks = "".join(f"#ifdef HOST_{index}\n    value += {index};\n#endif\n" for index in range(9))
+        source = self.work.source
+        write_source(source, "libHosts",
+                     f"void LastFail(int value) {{\n{blocks}    NotImplemented_nid_no_patch(__func__);\n}}\n"
+                     "void FirstFail(int value) { LastFail(value); }\n"
+                     "int APS5_VABI sceStub(int value) { FirstFail(value); return value; }\n")
+        with self.assertRaisesRegex(import_audit.AuditError, "more than 256 preprocessor branch combinations"):
+            import_audit.source_stub_classes(source)
+
     def test_partial_import_is_its_own_class(self):
         direct, guarded = nid_names.compute_nid("sceDirect"), nid_names.compute_nid("sceGuarded")
         stubs = {("libA.prx", direct): "sceDirect", ("libA.prx", guarded): "sceGuarded", ("libB.prx", guarded): "sceGuarded"}
@@ -1968,6 +2063,19 @@ class ImportAuditTests(unittest.TestCase):
         self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("padded.prx"), image),
                          ({"alpha": False}, set(), {"libc.prx"}))
 
+    def test_sectionless_dynamic_segment_size_is_bounded_by_dt_null_not_by_16(self):
+        original = build_sectionless_elf([("alpha", 0, GLOBAL_FUNCTION)], ["libc.prx"])
+        _, size_field = elf_dynamic_range_fields(original)
+        size = struct.unpack_from("<Q", original, size_field)[0]
+        extended = bytearray(original + bytes(8))
+        struct.pack_into("<QQ", extended, size_field, size + 8, size + 8)
+        self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("extended.prx"), extended),
+                         ({"alpha": False}, set(), {"libc.prx"}))
+        cut = bytearray(original)
+        struct.pack_into("<QQ", cut, size_field, size - 8, size - 8)
+        with self.assertRaisesRegex(import_audit.AuditError, "not terminated by DT_NULL"):
+            import_audit.elf_program_dynamic_symbols(Path("cut.prx"), cut)
+
     def test_module_dependencies_stop_at_dynamic_terminator(self):
         work = self.work
         (work.libs / "libc.prx").write_bytes(exporting())
@@ -2289,6 +2397,23 @@ class ImportAuditTests(unittest.TestCase):
         self.assertIn("input", err)
         self.assertEqual(registry.read_bytes(), before)
 
+    def test_symbolic_link_loops_are_reported_as_failures(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        registry = work.root / "game.json"
+        write_registry(registry, [("AAAAAAAAAAA", "libSceA.prx")])
+        loop = work.root / "loop.json"
+        try:
+            loop.symlink_to(loop.name)
+        except (OSError, NotImplementedError):
+            self.skipTest("symbolic links are unavailable")
+        for arguments in ((registry, "--json", str(loop)), (loop, "--json", str(work.root / "audit.json"))):
+            with self.subTest(arguments=arguments):
+                code, out, err = work.run(*arguments)
+                self.assertEqual((code, out), (2, ""))
+                self.assertTrue(err.startswith("FAIL: "), err)
+                self.assertFalse((work.root / "audit.json").exists())
+
     def test_json_output_preserves_shared_source_cmake_inputs(self):
         work = self.work
         name = "scePending"
@@ -2472,6 +2597,23 @@ class ImportAuditTests(unittest.TestCase):
                      + STUB_SOURCE.format(name="sceUnreferencedPending"))
         self.assertEqual(self.work.run(registry, "--strict-stubs")[0], 0)
 
+    def test_conditional_stubs_reads_utf8_source_with_explicit_encoding(self):
+        original_read_text = Path.read_text
+        recorded_calls = []
+
+        def recording_read_text(path_self, *args, **kwargs):
+            recorded_calls.append((path_self, kwargs))
+            return original_read_text(path_self, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            lib_dir = Path(directory)
+            cpp_file = lib_dir / "Export.cpp"
+            cpp_file.write_bytes(f"// Non-ASCII \u2014 em-dash\n{DONE_SOURCE.format(name='sceCustomStub')}".encode("utf-8"))
+            with patch.object(Path, "read_text", side_effect=recording_read_text, autospec=True):
+                stubs = import_audit.conditional_stubs(lib_dir)
+            self.assertEqual(stubs, {"sceCustomStub"})
+            self.assertTrue(recorded_calls)
+            self.assertEqual(recorded_calls[0][1].get("encoding"), "utf-8")
 
 
 class StrictProviderTests(unittest.TestCase):

@@ -121,9 +121,9 @@ def main(argv=None):
     dump = Path(args.dump)
     if not (dump / "eboot.bin").is_file():
         parser.error(f"{dump}: no eboot.bin")
-    relinker = Path(args.relinker).resolve()
-    if not relinker.is_file():
+    if not Path(args.relinker).is_file():
         parser.error(f"{args.relinker}: no such relinker")
+    relinker = Path(args.relinker).resolve()
     dump_path = comparison_path(dump)
     if args.json:
         report = Path(args.json)
@@ -137,7 +137,10 @@ def main(argv=None):
         work = Path(args.work) if args.work else Path(temporary)
         source, output = work / "source", work / "output"
         for generated in (source, output):
-            generated_path = comparison_path(generated)
+            try:
+                generated_path = comparison_path(generated)
+            except (OSError, RuntimeError) as error:
+                parser.error(f"{generated}: cannot check work directory against the input dump: {error}")
             if dump_path.is_relative_to(generated_path) or generated_path.is_relative_to(dump_path):
                 parser.error(f"{generated}: work directory overlaps the input dump")
         for generated in (source, output):
@@ -158,7 +161,11 @@ def main(argv=None):
         except (unwrap_self.Refused, OSError) as error:
             print(f"FAIL: unwrapping {dump}: {error}", file=sys.stderr)
             return 2
-        result = convert(relinker, source, output / ("app.exe" if args.windows else "app.elf"), extra, args.windows)
+        try:
+            result = convert(relinker, source, output / ("app.exe" if args.windows else "app.elf"), extra, args.windows)
+        except OSError as error:
+            print(f"FAIL: cannot run relinker {relinker}: {error}", file=sys.stderr)
+            return 2
         if result.returncode != 0:
             print(f"FAIL: relinker exited with {result.returncode}", file=sys.stderr)
             print((result.stderr or result.stdout).strip(), file=sys.stderr)

@@ -224,7 +224,14 @@ def main(argv=None):
         if len(args.dispatch) != 5 or args.target or args.assemble or args.wave64:
             parser.error("give --target, --assemble SOURCE OUTPUT TARGET, or CODE THREADS IN OUT OUT_DWORDS")
         code, threads, inputs, output, out_dwords = args.dispatch
-        threads, out_dwords = int(threads), int(out_dwords)
+        try:
+            threads = int(threads)
+        except ValueError:
+            parser.error("THREADS must be an integer")
+        try:
+            out_dwords = int(out_dwords)
+        except ValueError:
+            parser.error("OUT_DWORDS must be an integer")
         if threads not in range(1, 1025) or out_dwords not in range(1, 17):
             parser.error("THREADS must be 1 to 1024 and OUT_DWORDS 1 to 16")
         code, inputs, output = Path(code), Path(inputs), Path(output)

@@ -15,6 +15,7 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -25,6 +26,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -34,6 +38,9 @@
 #include <psapi.h>
 #else
 #include <sys/resource.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 #endif
 
 namespace AgcDriver {
@@ -616,6 +623,11 @@ std::optional<std::uint64_t> ReadProcessPrivateBytes() {
     counters.cb = sizeof(counters);
     if (K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) == 0) return std::nullopt;
     return static_cast<std::uint64_t>(counters.PrivateUsage);
+#elif defined(__APPLE__)
+    task_vm_info_data_t info{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS || info.phys_footprint == 0) return std::nullopt;
+    return static_cast<std::uint64_t>(info.phys_footprint);
 #else
     std::FILE* status = std::fopen("/proc/self/status", "r");
     if (status == nullptr) return std::nullopt;
@@ -675,6 +687,20 @@ std::optional<std::uint64_t> ReadPageFaults() {
     rusage usage{};
     if (getrusage(RUSAGE_SELF, &usage) != 0) return std::nullopt;
     return static_cast<std::uint64_t>(usage.ru_minflt) + static_cast<std::uint64_t>(usage.ru_majflt);
+#endif
+}
+
+std::optional<std::uint64_t> ReadPhysicalMemoryBytes() {
+#ifdef _WIN32
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (::GlobalMemoryStatusEx(&status) == 0) return std::nullopt;
+    return static_cast<std::uint64_t>(status.ullTotalPhys);
+#else
+    const auto pages = ::sysconf(_SC_PHYS_PAGES);
+    const auto pageSize = ::sysconf(_SC_PAGESIZE);
+    if (pages <= 0 || pageSize <= 0) return std::nullopt;
+    return static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize);
 #endif
 }
 

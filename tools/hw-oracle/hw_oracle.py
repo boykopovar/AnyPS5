@@ -111,13 +111,13 @@ def assemble(body, work, wave64, *, ieee, denorm32, denorm16, dx10_clamp, round3
             raise ValueError(f"{name} must be an integer from 0 to {limit - 1}")
     if not isinstance(lds, int) or lds not in range(MAX_LDS + 1):
         raise ValueError(f"lds must be an integer from 0 to {MAX_LDS}")
-    text = (HERE / "template.s").read_text()
+    text = (HERE / "template.s").read_text(encoding="utf-8")
     for key, value in (("@TARGET@", target()), ("@WAVE32@", "0" if wave64 else "1"), ("@WAVESIZE@", "64" if wave64 else "32"),
                        ("@DENORM@", str(int(denorm32))), ("@DENORM16@", str(int(denorm16))), ("@IEEE@", str(int(ieee))),
                        ("@DX10_CLAMP@", str(int(dx10_clamp))), ("@ROUND32@", str(int(round32))), ("@ROUND16@", str(int(round16))),
                        ("@FP16_OVERFLOW@", str(int(fp16_overflow))), ("@LDS@", str(lds)), ("@BODY@", body)):
         text = text.replace(key, value)
-    (work / "k.s").write_text(text)
+    (work / "k.s").write_text(text, encoding="utf-8")
     if runtime() == "hip":
         (work / "k.co").write_bytes(hip_runtime().assemble(text.encode("utf-8"), target(), wave64))
         return work / "k.co"

@@ -125,6 +125,9 @@ void excludeSceModuleConsumesNextTokenVerbatim() {
 
 void excludeSceModuleWithoutValue() {
     expectThrows({"--exclude-sce-module"}, "--exclude-sce-module requires a file name");
+    expectThrows({"--exclude-sce-module", "", "input.elf", "output.elf"}, "--exclude-sce-module requires a file name");
+    const auto args = parse({"--exclude-sce-module", "module with spaces.prx", "input.elf", "output.elf"});
+    require(args.excludedSceModules.count("module with spaces.prx") == 1, "a nonempty excluded file name was changed");
 }
 
 void excludeConflictsWithSkip() {
@@ -274,6 +277,12 @@ void moduleDirectories() {
     require(args.moduleDirectories == std::vector<std::string>{"Media/Plugins", "extra"}, "--module-dir directories were not recorded in order");
     require(args.inputPath == "input.elf" && args.outputPath == "output.elf", "--module-dir consumed a positional path");
     expectThrows({"--module-dir"}, "--module-dir requires a directory");
+    expectThrows({"--module-dir", "", "input.elf", "output.elf"}, "--module-dir requires a directory");
+    const auto literal = parse({"--module-dir", "--windows", "input.elf", "output.elf"});
+    require(literal.moduleDirectories == std::vector<std::string>{"--windows"} && !literal.toWindows,
+        "--module-dir must keep consuming the next token verbatim");
+    const auto spaced = parse({"--module-dir", "module with spaces", "input.elf", "output.elf"});
+    require(spaced.moduleDirectories == std::vector<std::string>{"module with spaces"}, "a nonempty module directory was changed");
     expectThrows({"--skip-sce-module", "--module-dir", "Media/Plugins", "input.elf", "output.elf"}, "--module-dir conflicts with --skip-sce-module");
     expectThrows({"--module-dir", "Media/Plugins", "--skip-sce-module", "input.elf", "output.elf"}, "--module-dir conflicts with --skip-sce-module");
 }

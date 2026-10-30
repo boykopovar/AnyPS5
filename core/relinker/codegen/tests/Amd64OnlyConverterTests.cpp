@@ -475,6 +475,54 @@ void stubRelocations() {
     requireFailure([&] { Codegen::ApplyStubRelocations(body, narrow, 0x1000, 0x2000, 0); }, "Stub relocation narrower than a displacement was accepted");
 }
 
+void eipRelativeStubRelocations() {
+    const Bytes lea = {0x67, 0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x80};
+    const Bytes sha = {0x65, 0x67, 0x0F, 0x38, 0xCC, 0x15, 0x00, 0x00, 0x00, 0x80};
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    auto loweredSha = matcher->Match(sha.data(), sha.size());
+    require(loweredSha && loweredSha->Relocations.size() == 1, "EIP-relative SHA operand has no relocation");
+    Codegen::StubBodyBuilder moved;
+    moved.Move(lea, 4);
+    auto movedBody = moved.Finish();
+    Codegen::StubBodyBuilder rewritten;
+    rewritten.RipRelative(lea, 4, static_cast<std::int64_t>(lea.size()) - 0x80000000ll);
+    auto rewrittenBody = rewritten.Finish();
+    const auto check = [](Bytes body, const std::vector<Codegen::StubRelocation>& relocations, const std::size_t originalLength) {
+        for (const std::uint64_t site : {0x1000ull, 0x100000000ull, 0x7FFF00000000ull}) {
+            for (const std::uint64_t distance : {0x100ull, 0x90000000ull}) {
+                const auto stub = site + distance;
+                Codegen::ApplyStubRelocations(body, relocations, site, stub, 0);
+                const auto& relocation = relocations.front();
+                const auto actual = static_cast<std::uint32_t>(stub + relocation.InstructionEnd + read<std::int32_t>(body, relocation.DisplacementOffset));
+                const auto expected = static_cast<std::uint32_t>(site + originalLength - 0x80000000ull);
+                require(actual == expected, "EIP-relative relocation changed the effective address");
+            }
+        }
+    };
+    check(loweredSha->StubBody, loweredSha->Relocations, sha.size());
+    check(movedBody.Bytes, movedBody.Relocations, lea.size());
+    check(rewrittenBody.Bytes, rewrittenBody.Relocations, lea.size());
+    const Bytes ripLea = {0x48, 0x8D, 0x05, 0x67, 0x00, 0x00, 0x80};
+    Codegen::StubBodyBuilder rip;
+    rip.Move(ripLea, 3);
+    auto ripBody = rip.Finish();
+    requireFailure([&] { Codegen::ApplyStubRelocations(ripBody.Bytes, ripBody.Relocations, 0x100000000ull, 0x100000100ull, 0); }, "A displacement byte was mistaken for an address-size prefix");
+    Codegen::StubBodyBuilder ripRewritten;
+    ripRewritten.RipRelative(ripLea, 3, static_cast<std::int64_t>(ripLea.size()) - 0x80000000ll);
+    auto ripRewrittenBody = ripRewritten.Finish();
+    requireFailure([&] { Codegen::ApplyStubRelocations(ripRewrittenBody.Bytes, ripRewrittenBody.Relocations, 0x100000000ull, 0x100000100ull, 0); }, "A rewritten RIP-relative operand wrapped at 32 bits");
+    const Bytes ripSha = {0x65, 0x0F, 0x38, 0xCC, 0x15, 0x00, 0x00, 0x00, 0x80};
+    auto loweredRipSha = matcher->Match(ripSha.data(), ripSha.size());
+    require(loweredRipSha && loweredRipSha->Relocations.size() == 1, "RIP-relative SHA operand has no relocation");
+    requireFailure([&] { Codegen::ApplyStubRelocations(loweredRipSha->StubBody, loweredRipSha->Relocations, 0x100000000ull, 0x100000100ull, 0); }, "A reloaded RIP-relative SHA operand wrapped at 32 bits");
+    const Bytes branch = {0x67, 0xE9, 0x00, 0x00, 0x00, 0x80};
+    const Codegen::X64InstructionDecoder decoder;
+    Codegen::StubBodyBuilder jumped;
+    jumped.MoveControlFlow(branch, decoder.DecodeInstruction(branch.data(), branch.size()));
+    auto jumpBody = jumped.Finish();
+    requireFailure([&] { Codegen::ApplyStubRelocations(jumpBody.Bytes, jumpBody.Relocations, 0x100000000ull, 0x100000100ull, 0); }, "Address-size prefix incorrectly allowed a direct branch to wrap at 32 bits");
+}
+
 Bytes segmentFixture() {
     Bytes file(0x300, 0xCC);
     const Bytes text = {
@@ -534,6 +582,20 @@ void converterSegment() {
     require(shortSite.Offset == 0x20F && shortSite.Length == 5 && shortSite.OriginalBytes == shortOriginal, "Short EXTRQ site did not absorb the following instruction");
     require(shortSite.Body[shortSite.ReturnBranchOffset - 1] == 0x90 && shortSite.Body[shortSite.ReturnBranchOffset] == 0xE9, "Absorbed instruction does not run before the return jump");
     requireFailure([&] { (void)converter->Convert(file, {segmentHeader(0x200)}); }, "Segment exceeding the file was accepted");
+}
+
+void converterSegmentMappedAtInt64Max() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter();
+    const auto file = segmentFixture();
+    const Domain::ProgramHeader mappedAtInt64Max{1, 5, 0x200, 0x8000000000000000, 0, 20, 20, 16};
+    const auto converted = converter->Convert(file, {mappedAtInt64Max});
+    require(converted.ReplacedCount == 1 && converted.Trampolines.size() == 1, "Converter misclassified a segment mapped at 2^63");
+    auto branchInto = file;
+    branchInto[0x207] = 0x02;
+    requireFailure([&] { (void)converter->Convert(branchInto, {mappedAtInt64Max}); }, "A branch into an AMD-only instruction was accepted in a segment mapped at 2^63");
+    branchInto[0x207] = 0x80;
+    const auto backward = converter->Convert(branchInto, {mappedAtInt64Max});
+    require(backward.ReplacedCount == 1 && backward.Trampolines.size() == 1, "A backward branch from a segment mapped at 2^63 changed the conversion");
 }
 
 void converterRipRelativeFollower() {
@@ -994,6 +1056,39 @@ void converterWideStoreWindows() {
         tail.insert(tail.end(), {0xFF, 0xD0});
     tail.insert(tail.end(), {0x90, 0x90});
     requireFailure([&] { (void)convert(withStore(far, tail)); }, "A 256-bit store whose movable neighbours are all beyond a short jump was kept");
+}
+
+void converterIslandIndirectEntries() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes prologue = {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0xC3};
+    for (const auto& padding : {Bytes{0xCC, 0xCC}, Bytes{0x66, 0x90}, Bytes{0x0F, 0x1F, 0x00}, Bytes{}}) {
+        Bytes text = {0xE8, 0x40, 0x00, 0x00, 0x00, 0xC5, 0xFC, 0x11, 0x07, 0xC3, 0xEB, 0xFD};
+        text.insert(text.end(), padding.begin(), padding.end());
+        const auto entry = static_cast<Domain::FileByteOffset>(0x200 + text.size());
+        text.insert(text.end(), prologue.begin(), prologue.end());
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        const auto result = converter->Convert(file, {segmentHeader(text.size())});
+        require(result.Trampolines.size() == 2 && result.KeptCount == 0, "A 256-bit store before a function that only a pointer reaches was not lowered through an island");
+        for (const auto& site : result.Trampolines)
+            require(site.Offset >= entry || site.Offset + site.Length <= entry, "An island covered the entry of a function that follows a jump and its padding");
+        require(result.Trampolines[0].Offset == entry, "An island next to a function that follows a jump and its padding did not start at its entry");
+    }
+}
+
+void converterIslandInTrapPadding() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    Bytes text = {0xE8, 0x40, 0x00, 0x00, 0x00, 0xC5, 0xFC, 0x11, 0x07, 0xC3, 0xEB, 0xFD};
+    const Bytes padding(15, 0xCC);
+    text.insert(text.end(), padding.begin(), padding.end());
+    const auto entry = static_cast<Domain::FileByteOffset>(0x200 + text.size());
+    text.insert(text.end(), {0xE9, 0x00, 0x01, 0x00, 0x00});
+    Bytes file(0x300 + text.size(), 0xCC);
+    std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    const auto result = converter->Convert(file, {segmentHeader(text.size())});
+    require(result.Trampolines.size() == 2 && result.KeptCount == 0, "A 256-bit store before int3 padding and a function that cannot move was not lowered through an island");
+    for (const auto& site : result.Trampolines)
+        require(site.Offset + site.Length <= entry, "An island in the int3 padding after a jump ran into the next function");
 }
 
 void converterClaimedFollower() {
@@ -2317,6 +2412,7 @@ int main() {
         goldenBodies();
         ripRelativeBodies();
         stubRelocations();
+        eipRelativeStubRelocations();
         registerFormExecution();
         immediateFormExecution();
         sha256Execution();
@@ -2327,6 +2423,7 @@ int main() {
         rdpruExecution();
         mcommitExecution();
         converterSegment();
+        converterSegmentMappedAtInt64Max();
         converterRipRelativeFollower();
         converterSha256();
         converterSha1();
@@ -2349,6 +2446,8 @@ int main() {
         wideStoreSplit();
         converterWideStoreWindows();
         converterWideStoreIslandAcrossInt64Max();
+        converterIslandIndirectEntries();
+        converterIslandInTrapPadding();
         converterClaimedFollower();
         converterJumpTableTargets();
         converterReciprocal();

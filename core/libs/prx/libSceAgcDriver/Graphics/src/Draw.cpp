@@ -71,6 +71,33 @@ std::unordered_map<VkDevice, PixelFunctionLdsPool>& PixelLdsPools() {
     return pools;
 }
 
+struct MeshWindowPool {
+    Context context{};
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+};
+
+std::mutex& MeshWindowMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::unordered_map<VkDevice, MeshWindowPool>& MeshWindowPools() {
+    static std::unordered_map<VkDevice, MeshWindowPool> pools;
+    return pools;
+}
+
+void DestroyMeshWindow(MeshWindowPool& pool) {
+    if (pool.descriptorPool != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(pool.context.device, pool.descriptorPool, nullptr);
+    if (pool.buffer != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(pool.context.device, pool.buffer, nullptr);
+    if (pool.memory != VK_NULL_HANDLE) pool.context.Function<PFN_vkFreeMemory>("vkFreeMemory")(pool.context.device, pool.memory, nullptr);
+    if (pool.layout != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(pool.context.device, pool.layout, nullptr);
+    pool = MeshWindowPool{};
+}
+
 void DestroyPixelFunctionLds(PixelFunctionLdsPool& pool) {
     if (pool.header != nullptr) pool.context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")(pool.context.device, pool.memory);
     if (pool.descriptorPool != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(pool.context.device, pool.descriptorPool, nullptr);
@@ -189,6 +216,97 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
     context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, pool.buffer, 0, 4, 0u);
     const VkMemoryBarrier afterFill{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
     context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &afterFill, 0, nullptr, 0, nullptr);
+}
+
+bool UsesMeshWindow(std::span<const CompiledShader> shaders) {
+    return std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->meshWindowBuffer; });
+}
+
+VkDescriptorSetLayout MeshWindowSetLayout(const Context& context) {
+    std::lock_guard lock(MeshWindowMutex());
+    auto& pool = MeshWindowPools()[context.device];
+    if (pool.layout == VK_NULL_HANDLE) {
+        pool.context = context;
+        const VkDescriptorSetLayoutBinding binding{0u, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1u, VK_SHADER_STAGE_MESH_BIT_EXT, nullptr};
+        VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        info.bindingCount = 1u;
+        info.pBindings = &binding;
+        Check(context.Function<PFN_vkCreateDescriptorSetLayout>("vkCreateDescriptorSetLayout")(context.device, &info, nullptr, &pool.layout), "vkCreateDescriptorSetLayout mesh window");
+    }
+    return pool.layout;
+}
+
+void PrepareMeshWindow(const Context& context) {
+    std::lock_guard lock(MeshWindowMutex());
+    auto& pool = MeshWindowPools()[context.device];
+    Require(pool.layout != VK_NULL_HANDLE, "mesh window descriptor set layout was not created");
+    if (pool.set != VK_NULL_HANDLE) return;
+    try {
+        const auto bytes = (static_cast<std::uint64_t>(ShaderRecompiler::MeshWindowHeaderDwords) + static_cast<std::uint64_t>(ShaderRecompiler::MeshWindowSlots) * ShaderRecompiler::MeshWindowSlotDwords) * 4ull;
+        Require(bytes <= context.limits.maxStorageBufferRange, "mesh window pool does not fit in the device storage buffer range");
+        VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bufferInfo.size = bytes;
+        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &bufferInfo, nullptr, &pool.buffer), "vkCreateBuffer mesh window");
+        VkMemoryRequirements requirements{};
+        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, pool.buffer, &requirements);
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        allocation.allocationSize = requirements.size;
+        allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &pool.memory), "vkAllocateMemory mesh window");
+        Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, pool.buffer, pool.memory, 0), "vkBindBufferMemory mesh window");
+        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1u};
+        VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        poolInfo.maxSets = 1u;
+        poolInfo.poolSizeCount = 1u;
+        poolInfo.pPoolSizes = &size;
+        Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &poolInfo, nullptr, &pool.descriptorPool), "vkCreateDescriptorPool mesh window");
+        VkDescriptorSetAllocateInfo sets{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        sets.descriptorPool = pool.descriptorPool;
+        sets.descriptorSetCount = 1u;
+        sets.pSetLayouts = &pool.layout;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &sets, &set), "vkAllocateDescriptorSets mesh window");
+        const VkDescriptorBufferInfo buffer{pool.buffer, 0, bytes};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.dstBinding = 0u;
+        write.descriptorCount = 1u;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = &buffer;
+        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1u, &write, 0u, nullptr);
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, pool.buffer, 0, ShaderRecompiler::MeshWindowHeaderDwords * 4u, 0u);
+        const VkMemoryBarrier afterFill{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &afterFill, 0, nullptr, 0, nullptr);
+        batch.SubmitAndWait();
+        pool.set = set;
+        std::fprintf(stderr, "[gpu] mesh window pool: %u workgroup slots, %llu MiB\n", ShaderRecompiler::MeshWindowSlots, static_cast<unsigned long long>(bytes >> 20u));
+    } catch (...) {
+        const auto layout = pool.layout;
+        pool.layout = VK_NULL_HANDLE;
+        DestroyMeshWindow(pool);
+        pool.context = context;
+        pool.layout = layout;
+        throw;
+    }
+}
+
+void BindMeshWindow(const Context& context, VkCommandBuffer commands, VkPipelineLayout layout) {
+    std::lock_guard lock(MeshWindowMutex());
+    const auto& pool = MeshWindowPools().at(context.device);
+    Require(pool.set != VK_NULL_HANDLE, "mesh window buffer was not prepared");
+    context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, ShaderRecompiler::MeshWindowDescriptorSet, 1, &pool.set, 0, nullptr);
+}
+
+void ReleaseMeshWindow(VkDevice device) {
+    std::lock_guard lock(MeshWindowMutex());
+    const auto found = MeshWindowPools().find(device);
+    if (found == MeshWindowPools().end()) return;
+    DestroyMeshWindow(found->second);
+    MeshWindowPools().erase(found);
 }
 
 std::uint32_t PixelFunctionLdsSubgroup(std::span<const CompiledShader> shaders) {
@@ -567,6 +685,7 @@ struct DrawOutcome {
     // A recorded draw began a render pass of its own, or continued the previous draw's.
     bool passBegun = false;
     bool passContinued = false;
+    PassBreak passBreak = PassBreak::Continued;
     bool keyStoresFlushed = false;
     bool storesFlushed = false;
     bool addressDraw = false;
@@ -643,6 +762,8 @@ struct DrawProfile {
     std::uint64_t passesBegun = 0;
     std::uint64_t passesContinued = 0;
     std::array<DrawPassCounts, 2> passTotals{};
+    std::array<std::uint64_t, PassBreakCount> passBreaks{};
+    std::array<std::uint64_t, PassBreakCount> reportedPassBreaks{};
     std::array<std::uint64_t, SyncCount> reasons{};
     // The CPU inside Graphics::Draw, split by outcome: a synchronous draw costs ten times a recorded
     // one, so one average would only show the synchronous population.
@@ -713,6 +834,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     if (outcome.recorded) ++(outcome.waited ? profile.waited : profile.recorded);
     if (outcome.completion) ++profile.completion;
     if (outcome.passBegun) ++profile.passesBegun;
+    if (outcome.passBegun) ++profile.passBreaks[static_cast<std::size_t>(outcome.passBreak)];
     if (outcome.passContinued) ++profile.passesContinued;
     if (outcome.recorded) {
         auto& totals = profile.passTotals[outcome.addressDraw ? 1 : 0];
@@ -742,8 +864,16 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     const auto synchronous = profile.draws - profile.recorded - profile.waited;
     const auto average = [](double total, std::uint64_t count) { return count != 0 ? total / static_cast<double>(count) : 0.0; };
     char line[2048];
-    int n = std::snprintf(line, sizeof(line), "[draws] %llu draws over 10 s (%llu recorded avg %.0f us, of them %llu with completion; %llu recorded then waited avg %.0f us; %llu synchronous avg %.0f us; render passes %llu begun, %llu draws continued one; waited or synchronous because:", static_cast<unsigned long long>(profile.draws), static_cast<unsigned long long>(profile.recorded), average(profile.recordedUs, profile.recorded), static_cast<unsigned long long>(profile.completion), static_cast<unsigned long long>(profile.waited), average(profile.waitedUs, profile.waited), static_cast<unsigned long long>(synchronous), average(profile.synchronousUs, synchronous), static_cast<unsigned long long>(profile.passesBegun), static_cast<unsigned long long>(profile.passesContinued));
+    int n = std::snprintf(line, sizeof(line), "[draws] %llu draws over 10 s (%llu recorded avg %.0f us, of them %llu with completion; %llu recorded then waited avg %.0f us; %llu synchronous avg %.0f us; render passes %llu begun", static_cast<unsigned long long>(profile.draws), static_cast<unsigned long long>(profile.recorded), average(profile.recordedUs, profile.recorded), static_cast<unsigned long long>(profile.completion), static_cast<unsigned long long>(profile.waited), average(profile.waitedUs, profile.waited), static_cast<unsigned long long>(synchronous), average(profile.synchronousUs, synchronous), static_cast<unsigned long long>(profile.passesBegun));
     const auto room = [&] { return n > 0 && static_cast<std::size_t>(n) < sizeof(line); };
+    bool listed = false;
+    for (std::size_t i = 1; i < PassBreakCount && room(); ++i) {
+        const auto count = profile.passBreaks[i] - profile.reportedPassBreaks[i];
+        if (count == 0) continue;
+        n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "%s%s %llu", listed ? ", " : " (", PassBreakNames[i], static_cast<unsigned long long>(count));
+        listed = true;
+    }
+    if (room()) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), "%s, %llu draws continued one; waited or synchronous because:", listed ? ")" : "", static_cast<unsigned long long>(profile.passesContinued));
     for (std::size_t i = SyncNone + 1; i < SyncCount && room(); ++i) {
         if (profile.reasons[i] != 0) n += std::snprintf(line + n, sizeof(line) - static_cast<std::size_t>(n), " %s %llu", SyncReasonNames[i], static_cast<unsigned long long>(profile.reasons[i]));
     }
@@ -792,6 +922,7 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     profile.addressBuilds = 0;
     profile.draws = profile.recorded = profile.waited = profile.completion = 0;
     profile.passesBegun = profile.passesContinued = 0;
+    profile.reportedPassBreaks = profile.passBreaks;
     profile.reasons.fill(0);
     profile.recordedUs = profile.waitedUs = profile.synchronousUs = 0;
     profile.targetLookups = profile.slowLookups = 0;
@@ -1125,6 +1256,12 @@ std::array<DrawPassCounts, 2> DrawPassTotals() {
     return stats.passTotals;
 }
 
+std::array<std::uint64_t, PassBreakCount> DrawPassBreaks() {
+    auto& stats = Profile();
+    std::lock_guard lock(stats.mutex);
+    return stats.passBreaks;
+}
+
 void CountDrawSkip(DrawSkip kind, double us) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     if (!profile) return;
@@ -1279,6 +1416,8 @@ struct DrawInputs {
     VkBuffer indexHandle = VK_NULL_HANDLE;
     VkDeviceSize indexOffset = 0;
     std::uint32_t maxIndex = 0;
+    std::optional<std::uint32_t> indexCount;
+    std::uint32_t listRestartPrimitive = 0;
     VertexInputLayout vertexInput;
     std::shared_ptr<const VertexInputLayout> retainedVertexInput;
     std::vector<std::shared_ptr<Buffer>> vertexBuffers;
@@ -1387,12 +1526,14 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     inputs.maxIndex = draw.indexed ? 0u : draw.firstVertex + draw.indexCount - 1u;
     if (state.quadList || StripPatches(state, shaders)) {
         Require(!draw.indirect, state.quadList ? "indirect quad-list draw is unsupported" : "an indirect triangle strip through emulated barycentric patches is unsupported");
+        Require(state.quadList || !draw.indexed || !state.primitiveRestart, "an indexed triangle strip with primitive restart through emulated barycentric patches is unsupported");
         const std::uint32_t primitives = state.quadList ? draw.indexCount / 4u : draw.indexCount >= 3u ? draw.indexCount - 2u : 0u;
         if (primitives == 0u || draw.instanceCount == 0u) {
             inputs.nothing = true;
             return inputs;
         }
         const std::uint32_t corners = state.quadList ? 6u : 3u;
+        Require(primitives <= std::numeric_limits<std::uint32_t>::max() / corners, "expanded index count overflow");
         const std::uint32_t outputIndexCount = primitives * corners;
         const std::size_t expandedIndexBytes = static_cast<std::size_t>(outputIndexCount) * sizeof(std::uint32_t);
         auto indexCopy = std::make_shared<Buffer>(context, expandedIndexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
@@ -1464,6 +1605,37 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.indexOffset = 0;
         inputs.expandedIndexCount = outputIndexCount;
         inputs.indices = std::move(indexCopy);
+    } else if (draw.indexed && state.primitiveRestart && !context.primitiveListRestart && (state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)) {
+        Require(!state.stages.mesh, "AGC graphics: primitive restart in a mesh list draw needs VK_EXT_primitive_topology_list_restart");
+        if (indexBytes == 0) {
+            inputs.nothing = true;
+            return inputs;
+        }
+        GuestMemory::FlushGpuWrites(draw.indexAddress, static_cast<std::size_t>(indexBytes));
+        auto compacted = std::make_shared<Buffer>(context, static_cast<std::size_t>(indexBytes), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        const auto bytes = compacted->Bytes().first(static_cast<std::size_t>(indexBytes));
+        GuestMemory::Read(draw.indexAddress, bytes, draw.indexSize);
+        const auto primitiveSize = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST ? 1u : state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST ? 2u : 3u;
+        const auto count = draw.indirect ? draw.indexCount : CompactListRestart(bytes, draw.indexSize, primitiveSize);
+        const auto kept = bytes.first(static_cast<std::size_t>(count) * draw.indexSize);
+        const bool restartLeft = draw.indirect.has_value();
+        auto highest = HighestDrawIndex(kept, draw.indexSize, restartLeft);
+        constexpr std::uint32_t ZeroFetchSlack = 0x10000u;
+        if (const auto zeroFrom = highest ? ZeroFetchVertex(shaders.front().program->vertexAttributes) : std::nullopt) {
+            const auto limit = *zeroFrom > draw.firstVertex ? *zeroFrom - draw.firstVertex : 0u;
+            if (*highest >= limit && *highest - limit >= ZeroFetchSlack) highest = ClampDrawIndices(kept, draw.indexSize, restartLeft, limit);
+        }
+        if (!highest) {
+            inputs.nothing = true;
+            return inputs;
+        }
+        Require(*highest <= context.limits.maxDrawIndexedIndexValue, "index exceeds the device's indexed draw limit");
+        inputs.maxIndex = *highest;
+        inputs.indexCount = count;
+        inputs.listRestartPrimitive = primitiveSize;
+        inputs.indices = std::move(compacted);
+        inputs.indexHandle = inputs.indices->Handle();
+        inputs.indexOffset = 0;
     } else if (draw.indexed) {
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         const bool fanGeometry = state.stages.mesh && state.stages.mesh->inputPrimitive == 5;
@@ -1735,9 +1907,38 @@ struct IndirectRecord {
     double readMs = 0;
 };
 
+void CompactIndirectListRestart(const Context& context, const Pm4::DrawParameters& draw, DrawInputs& inputs, std::vector<Pm4::DrawArguments>& records) {
+    const auto bound = inputs.indexCount.value_or(draw.indexCount);
+    const auto raw = inputs.indices->Bytes();
+    std::uint64_t total = 0;
+    for (const auto& record : records) {
+        if (record.count != 0 && record.instances != 0 && record.firstVertexOrIndex < bound) total += std::min(record.count, bound - record.firstVertexOrIndex);
+    }
+    Require(total <= std::numeric_limits<std::uint32_t>::max(), "indirect list restart index count overflow");
+    auto compacted = std::make_shared<Buffer>(context, static_cast<std::size_t>(std::max<std::uint64_t>(total, 1u) * draw.indexSize), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    const auto out = compacted->Bytes();
+    std::uint32_t cursor = 0;
+    for (auto& record : records) {
+        if (record.count == 0 || record.instances == 0 || record.firstVertexOrIndex >= bound) {
+            record.count = 0;
+            continue;
+        }
+        const auto count = std::min(record.count, bound - record.firstVertexOrIndex);
+        const auto at = out.subspan(static_cast<std::size_t>(cursor) * draw.indexSize, static_cast<std::size_t>(count) * draw.indexSize);
+        std::memcpy(at.data(), raw.data() + static_cast<std::size_t>(record.firstVertexOrIndex) * draw.indexSize, at.size());
+        record.count = CompactListRestart(at, draw.indexSize, inputs.listRestartPrimitive);
+        record.firstVertexOrIndex = cursor;
+        cursor += record.count;
+    }
+    inputs.indexCount = cursor;
+    inputs.indices = std::move(compacted);
+    inputs.indexHandle = inputs.indices->Handle();
+    inputs.indexOffset = 0;
+}
+
 // The draw commands of one draw: the vertex and index buffer binds, then the direct draw, the
 // GPU-side indirect draw from `argumentBuffer` or the CPU-read records with the driver's rules.
-void recordDrawCommands(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, const IndirectRecord* indirect, VkBuffer argumentBuffer, VkDeviceSize argumentOffset, const DrawTraceContext* trace, std::uint32_t& subdraw, std::uint32_t firstIndex = 0) {
+void recordDrawCommands(const Context& context, VkCommandBuffer commands, const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs, const IndirectRecord* indirect, VkBuffer argumentBuffer, VkDeviceSize argumentOffset, const DrawTraceContext* trace, std::uint32_t& subdraw, std::optional<std::uint32_t> pieceFirstIndex = std::nullopt) {
     if (context.recorder != nullptr) context.recorder->NoteSampledDraw(commands);
     const auto recorded = [&](std::uint32_t index) {
         if (trace != nullptr && context.recorder != nullptr) {
@@ -1766,7 +1967,7 @@ void recordDrawCommands(const Context& context, VkCommandBuffer commands, const 
     if (draw.indexed) context.Resolved(&DeviceFunctions::cmdBindIndexBuffer, "vkCmdBindIndexBuffer")(commands, inputs.indexHandle, inputs.indexOffset, draw.indexSize == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
     if (args == nullptr) {
         if (draw.indexed) {
-            context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, draw.indexCount, draw.instanceCount, firstIndex, static_cast<std::int32_t>(draw.firstVertex), draw.firstInstance);
+            context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, pieceFirstIndex ? draw.indexCount : inputs.indexCount.value_or(draw.indexCount), draw.instanceCount, pieceFirstIndex.value_or(0u), static_cast<std::int32_t>(draw.firstVertex), draw.firstInstance);
             recorded(subdraw++);
         } else {
             context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, draw.indexCount, draw.instanceCount, draw.firstVertex, draw.firstInstance);
@@ -1795,9 +1996,10 @@ void recordDrawCommands(const Context& context, VkCommandBuffer commands, const 
             const auto firstInstance = args->instanceRule == Rule::InPlace ? record.firstInstance : args->instanceConstant;
             if (draw.indexed) {
                 // The CP clamps the index range to INDEX_BUFFER_SIZE (the bound copy).
-                if (record.firstVertexOrIndex >= draw.indexCount) continue;
+                const auto boundCount = inputs.indexCount.value_or(draw.indexCount);
+                if (record.firstVertexOrIndex >= boundCount) continue;
                 const auto vertexOffset = args->vertexRule == Rule::InPlace ? record.vertexOffset : args->vertexConstant;
-                context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, std::min(record.count, draw.indexCount - record.firstVertexOrIndex), record.instances, record.firstVertexOrIndex, static_cast<std::int32_t>(vertexOffset), firstInstance);
+                context.Resolved(&DeviceFunctions::cmdDrawIndexed, "vkCmdDrawIndexed")(commands, std::min(record.count, boundCount - record.firstVertexOrIndex), record.instances, record.firstVertexOrIndex, static_cast<std::int32_t>(vertexOffset), firstInstance);
             } else {
                 const auto firstVertex = args->vertexRule == Rule::InPlace ? record.firstVertexOrIndex : args->vertexConstant;
                 context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, record.count, record.instances, firstVertex, firstInstance);
@@ -2028,7 +2230,7 @@ void recordStencilReplay(const Context& context, VkCommandBuffer commands, const
     Require(fragment != shaders.end(), "stencil replay fragment stage is missing");
     const auto referenceOffset = fragment->pushConstantOffset + fragment->program->stencilReferenceDword * sizeof(std::uint32_t);
     Require(referenceOffset <= block.size() - sizeof(std::uint32_t), "stencil replay reference exceeds the push block");
-    const auto run = [&](const Pm4::DrawParameters& piece, std::uint32_t firstIndex) {
+    const auto run = [&](const Pm4::DrawParameters& piece, std::optional<std::uint32_t> firstIndex) {
         std::uint32_t unusedSubdraw = 0;
         for (const auto& [reference, pipeline] : replay) {
             selected.stencilReplayReference = reference;
@@ -2041,11 +2243,12 @@ void recordStencilReplay(const Context& context, VkCommandBuffer commands, const
         }
     };
     if (replay.size() == 1u) {
-        run(draw, 0u);
+        run(draw, std::nullopt);
         return;
     }
+    const auto indexCount = draw.indexed ? inputs.indexCount.value_or(draw.indexCount) : draw.indexCount;
     for (std::uint32_t instance = 0; instance < draw.instanceCount; ++instance) {
-        for (std::uint32_t first = 0; first < draw.indexCount - draw.indexCount % 3u; first += 3u) {
+        for (std::uint32_t first = 0; first < indexCount - indexCount % 3u; first += 3u) {
             auto piece = draw;
             piece.instanceCount = 1u;
             piece.firstInstance = draw.firstInstance + instance;
@@ -2264,11 +2467,13 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     const PassAccess passAccess{passReads, passWrites, passImages, passAttachments, unknownMemory, unknownWrites, passWriteOnly};
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
+    if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
     outcome.passContinued = continued;
     outcome.passBegun = !continued;
+    outcome.passBreak = start.reason;
     const auto commands = start.commands;
     if (!continued) {
         recorder->PrepareSampleSlot();
@@ -2347,6 +2552,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout());
     }
     if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
+    if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty());
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
@@ -2495,6 +2701,7 @@ struct PreparedDraw {
     PreparedDraw& operator=(const PreparedDraw&) = delete;
     std::shared_ptr<const DrawRecipe>* recipeOut = nullptr;
     const DrawTraceContext* trace = nullptr;
+    std::uint64_t shape = 0;
     std::vector<std::uint32_t> stencilReferences;
     std::optional<PerformanceTimer> timing;
     DrawTimer timer;
@@ -2526,6 +2733,137 @@ struct PreparedDraw {
     SampleOrderPass reorderPass;
     std::optional<DepthSampleLocations> depthLocations;
 };
+
+bool ShapeMemoEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_SHAPE_MEMO") == nullptr;
+    return enabled;
+}
+
+bool VerifyShapeMemo() {
+    static const bool verify = std::getenv("APS5_VERIFY_SHAPE_MEMO") != nullptr;
+    return verify;
+}
+
+void noteShapeMemoVerified(bool pipeline) {
+    static std::atomic<std::uint64_t> targets{0};
+    static std::atomic<std::uint64_t> pipelines{0};
+    static std::atomic<std::int64_t> last{0};
+    (pipeline ? pipelines : targets).fetch_add(1, std::memory_order_relaxed);
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto previous = last.load(std::memory_order_relaxed);
+    if (now - previous < 10 || !last.compare_exchange_strong(previous, now)) return;
+    std::fprintf(stderr, "[shape-memo] verified %llu targets and %llu pipelines\n", static_cast<unsigned long long>(targets.load()), static_cast<unsigned long long>(pipelines.load()));
+}
+
+struct ShapeChoice {
+    VkImageLayout attachmentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    std::uint32_t fragmentOutputs = 0;
+    std::vector<std::uint64_t> stages;
+    std::vector<VkVertexInputBindingDescription> bindings;
+    std::vector<VkVertexInputAttributeDescription> attributes;
+    std::vector<std::uint32_t> mainKey;
+    std::vector<std::uint32_t> fragmentKey;
+    std::uint64_t hash = 0;
+    std::weak_ptr<Pipeline> pipeline;
+};
+
+struct ShapeEntry {
+    VkDevice device = VK_NULL_HANDLE;
+    std::vector<std::weak_ptr<StorageTexture>> targets;
+    std::vector<ShapeChoice> choices;
+};
+
+struct ShapeMemoStorage {};
+constexpr std::size_t ShapeMemoEntries = 4096;
+constexpr std::size_t ShapeMemoChoices = 4;
+
+std::unordered_map<std::uint64_t, ShapeEntry>& shapeMemo() {
+    return HostThreadLocal<std::unordered_map<std::uint64_t, ShapeEntry>, ShapeMemoStorage>();
+}
+
+const ShapeEntry* findShape(const Context& context, std::uint64_t shape) {
+    if (shape == 0 || !ShapeMemoEnabled()) return nullptr;
+    const auto& entries = shapeMemo();
+    const auto found = entries.find(shape);
+    return found == entries.end() || found->second.device != context.device ? nullptr : &found->second;
+}
+
+std::shared_ptr<StorageTexture> shapeTarget(const Context& context, std::uint64_t shape, std::size_t index) {
+    const auto* entry = findShape(context, shape);
+    return entry == nullptr || index >= entry->targets.size() ? nullptr : entry->targets[index].lock();
+}
+
+bool sameStages(std::span<const std::uint64_t> kept, std::span<const CompiledShader> shaders) {
+    if (kept.size() != shaders.size() * 4u + 1u) return false;
+    std::size_t at = 0;
+    for (const auto& shader : shaders) {
+        const auto identity = shader.program->Identity();
+        if (identity.Empty() || kept[at] != static_cast<std::uint64_t>(shader.stage) || kept[at + 1] != identity.low || kept[at + 2] != identity.high || kept[at + 3] != shader.pushConstantOffset) return false;
+        at += 4;
+    }
+    return kept[at] == PushConstantStages(shaders);
+}
+
+bool sameChoice(const ShapeChoice& choice, const VertexInputLayout& input, const PipelineSetLayouts& layouts, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint32_t fragmentOutputs) {
+    const auto sameBinding = [](const VkVertexInputBindingDescription& a, const VkVertexInputBindingDescription& b) { return a.binding == b.binding && a.stride == b.stride && a.inputRate == b.inputRate; };
+    const auto sameAttribute = [](const VkVertexInputAttributeDescription& a, const VkVertexInputAttributeDescription& b) { return a.location == b.location && a.binding == b.binding && a.format == b.format && a.offset == b.offset; };
+    return choice.attachmentLayout == attachmentLayout && choice.fragmentOutputs == fragmentOutputs && std::ranges::equal(choice.bindings, input.bindings, sameBinding) && std::ranges::equal(choice.attributes, input.attributes, sameAttribute) && std::ranges::equal(choice.mainKey, layouts.mainKey) && std::ranges::equal(choice.fragmentKey, layouts.fragmentKey) && sameStages(choice.stages, shaders);
+}
+
+std::shared_ptr<Pipeline> shapePipeline(const Context& context, std::uint64_t shape, const VertexInputLayout& input, const PipelineSetLayouts& layouts, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint32_t fragmentOutputs) {
+    const auto* entry = findShape(context, shape);
+    if (entry == nullptr) return nullptr;
+    for (const auto& choice : entry->choices) {
+        if (!sameChoice(choice, input, layouts, shaders, attachmentLayout, fragmentOutputs)) continue;
+        const auto hash = choice.hash;
+        const auto expected = choice.pipeline;
+        return TouchCachedPipeline(context, hash, expected);
+    }
+    return nullptr;
+}
+
+void rememberShape(const Context& context, std::uint64_t shape, std::span<const TargetBinding> targets, const std::shared_ptr<Pipeline>* pipeline, std::uint64_t hash, const VertexInputLayout& input, const PipelineSetLayouts& layouts, std::span<const CompiledShader> shaders, VkImageLayout attachmentLayout, std::uint32_t fragmentOutputs) {
+    if (shape == 0 || !ShapeMemoEnabled()) return;
+    auto& entries = shapeMemo();
+    if (entries.size() >= ShapeMemoEntries && !entries.contains(shape)) entries.clear();
+    auto& entry = entries[shape];
+    if (entry.device != context.device) {
+        entry = {};
+        entry.device = context.device;
+    }
+    entry.targets.resize(targets.size());
+    for (std::size_t index = 0; index < targets.size(); ++index) {
+        const auto& resident = targets[index].resident;
+        if (resident == nullptr || targets[index].color.arrayLastSlice != 0) entry.targets[index].reset();
+        else if (entry.targets[index].owner_before(resident) || resident.owner_before(entry.targets[index])) entry.targets[index] = resident;
+    }
+    if (pipeline == nullptr || hash == 0) return;
+    auto& choices = entry.choices;
+    const auto kept = std::ranges::find_if(choices, [&](const ShapeChoice& choice) { return sameChoice(choice, input, layouts, shaders, attachmentLayout, fragmentOutputs); });
+    if (kept != choices.end()) {
+        kept->hash = hash;
+        kept->pipeline = *pipeline;
+        std::rotate(choices.begin(), kept, std::next(kept));
+        return;
+    }
+    ShapeChoice choice;
+    choice.attachmentLayout = attachmentLayout;
+    choice.fragmentOutputs = fragmentOutputs;
+    for (const auto& shader : shaders) {
+        const auto identity = shader.program->Identity();
+        if (identity.Empty()) return;
+        choice.stages.insert(choice.stages.end(), {static_cast<std::uint64_t>(shader.stage), identity.low, identity.high, shader.pushConstantOffset});
+    }
+    choice.stages.push_back(PushConstantStages(shaders));
+    choice.bindings = input.bindings;
+    choice.attributes = input.attributes;
+    choice.mainKey.assign(layouts.mainKey.begin(), layouts.mainKey.end());
+    choice.fragmentKey.assign(layouts.fragmentKey.begin(), layouts.fragmentKey.end());
+    choice.hash = hash;
+    choice.pipeline = *pipeline;
+    if (choices.size() >= ShapeMemoChoices) choices.pop_back();
+    choices.insert(choices.begin(), std::move(choice));
+}
 
 bool prepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, PreparedDraw& prepared) {
     auto*& recipeOut = prepared.recipeOut;
@@ -2603,6 +2941,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         const ColorTargetLayout colorLayout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
         static_cast<void>(FlushDepthPlanes(color.address, colorLayout.Bytes(), DepthPlaneScope::Whole));
         RetireDepthSurfaces(context.device, color.address, colorLayout.Bytes());
+        ClaimMultisampleTargetMemory(color.address, colorLayout.Bytes());
         if (color.fmaskAddress != 0) GuardOneFragmentFmask(context, color);
         constexpr VkBufferUsageFlags copies = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         timer.phase(PhaseSetup);
@@ -2630,7 +2969,13 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                     Require(resident->Attachable(), "storage format cannot be a color attachment");
                     return resident;
                 }
-                auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
+                const auto surface = SurfaceForTarget(color);
+                auto resident = RepeatStorageSurface(context, surface, shapeTarget(context, prepared.shape, index));
+                if (resident != nullptr && VerifyShapeMemo()) {
+                    Require(CachedStorageSurface(context, surface) == resident, "APS5_VERIFY_SHAPE_MEMO: the shape memo's resident target differs from the storage cache's");
+                    noteShapeMemoVerified(false);
+                }
+                if (resident == nullptr) resident = CachedStorageSurface(context, surface);
                 Require(resident->Attachable(), "storage format cannot be a color attachment");
                 Require(color.mipCount > 1 || color.depth > 1 || resident->GuestBytes() == colorLayout.Bytes(), "resident image layout differs from the color layout");
                 return resident;
@@ -2771,6 +3116,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         }
         Require(rangeBytes <= std::numeric_limits<std::size_t>::max(), "indirect draw record range overflow");
         if (!gpuIndirectDraws) indirect.path = IndirectDrawPath::Disabled;
+        else if (inputs.listRestartPrimitive != 0) indirect.path = IndirectDrawPath::FeatureGap;
         else indirect.path = decide(args->arguments, static_cast<std::size_t>(rangeBytes), indirect.argumentImport);
         if (indirect.path == IndirectDrawPath::Gpu && args->countIndirect) {
             Require(context.drawIndirectCount, "indirect draw count without VK_KHR_draw_indirect_count must be resolved by the driver");
@@ -2784,6 +3130,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             records.reserve(count);
             for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(*args, record));
             indirect.readMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count();
+            if (inputs.listRestartPrimitive != 0) CompactIndirectListRestart(context, draw, inputs, records);
             indirect.records = records;
             if (std::none_of(records.begin(), records.end(), [](const Pm4::DrawArguments& record) { return record.count != 0 && record.instances != 0; })) {
                 CountIndirectDraw(indirect.path, indirect.readMs);
@@ -2890,7 +3237,22 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         stencilReplay.emplace_back(reference, std::move(selectedPipeline));
     }
     auto& pipeline = prepared.pipeline;
-    pipeline = stencilReplay.empty() ? CachedPipeline(context, pipelineState, inputs.VertexLayout(), *resources, shaders, lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) : stencilReplay.front().second;
+    const auto attachmentLayout = lean ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    if (!stencilReplay.empty()) {
+        pipeline = stencilReplay.front().second;
+    } else {
+        const bool memoized = stencilReferences.empty() && std::none_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.proxied || binding.multisampled; });
+        const auto layouts = resources->SetLayouts();
+        std::uint64_t storeHash = 0;
+        if (memoized) pipeline = shapePipeline(context, prepared.shape, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
+        if (pipeline != nullptr && VerifyShapeMemo()) {
+            Require(CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout) == pipeline, "APS5_VERIFY_SHAPE_MEMO: the shape memo's pipeline differs from the pipeline store's");
+            noteShapeMemoVerified(true);
+        }
+        const bool repeated = pipeline != nullptr;
+        if (!repeated) pipeline = CachedPipeline(context, pipelineState, inputs.VertexLayout(), layouts, shaders, attachmentLayout, nullptr, &storeHash);
+        if (memoized) rememberShape(context, prepared.shape, targets, repeated ? nullptr : &pipeline, storeHash, inputs.VertexLayout(), layouts, shaders, attachmentLayout, inputs.fragmentOutputs);
+    }
     // Resident targets' views are stable while their storage image lives, so the framebuffer is
     // reused with the pipeline; a per-draw RenderTarget gets a framebuffer of its own.
     auto& owners = prepared.owners;
@@ -3021,6 +3383,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         return (begin < args->arguments + args->RangeBytes() && args->arguments < end) || (args->countIndirect && begin < args->countAddress + 4 && args->countAddress < end);
     };
     static_cast<void>(StorageTexture::StoreDrawnLinearTouching("draw access", [&](std::uint64_t begin, std::uint64_t end) { return touches(begin, end) || std::any_of(inputs.inPlaceReads.begin(), inputs.inPlaceReads.end(), [&](const auto& read) { return read.first < end && begin < read.second; }); }, resources->HoldsLease() || resources->UsesAddressTable() || resources->HasCopiedWrites()));
+    if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
     APS5_LOG_CHARS_OUT_DEBUG("Creating CommandBatch");
     std::optional<CommandBatch> batch;
     if (!recorded) {
@@ -3126,6 +3489,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
     resources->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->Layout());
     if (pixelLdsSubgroup != 0u) BindPixelFunctionLds(context, commands, pipeline->Layout());
+    if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty());
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
@@ -3354,7 +3718,7 @@ void drawTessellationGeometry(const Context& context, const State& state, const 
     Draw(context, meshed, captured, second, snapshots, nullptr, trace);
 }
 
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace) {
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
     if (state.stages.tessellationGeometry) {
         drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
@@ -3364,6 +3728,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     PreparedDraw prepared(profile);
     prepared.recipeOut = recipeOut;
     prepared.trace = trace;
+    prepared.shape = shape;
     if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
 }
 

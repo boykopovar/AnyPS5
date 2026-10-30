@@ -1,8 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "VulkanTestDevice.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -150,6 +152,101 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
         device.WaitIdle();
         Require(Output == baseline, "vector or mixed buffer read changed with reserved bit 30 set");
     }
+    request.shader.code = scalarCode;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(scalarCode.data());
+    struct BoundsCase {
+        std::uint32_t stride;
+        std::uint32_t records;
+        bool inBounds;
+    };
+    constexpr std::array<BoundsCase, 8> bounds{{
+        {0u, 0u, false}, {0u, 7u, false}, {0u, 8u, true}, {1u, 7u, false},
+        {2u, 3u, false}, {2u, 4u, true}, {4u, 0x40000000u, true}, {0x3fffu, 0xffffffffu, true},
+    }};
+    GuestAllocations::Mutation().Add(Input.data(), Input.size(), true, false, true);
+    for (const auto& test : bounds) {
+        auto input = BufferDescriptor(Input.data(), test.records);
+        input[1] |= test.stride << 16u;
+        std::copy(input.begin(), input.end(), userData.begin());
+        Output.fill(Fill);
+        const auto result = ShaderRecompiler::Recompile(request);
+        device.Dispatch(result, 1, 1, 1);
+        device.WaitIdle();
+        const auto value = test.inBounds ? expected : 0u;
+        Require(std::all_of(Output.begin(), Output.end(), [value](std::uint32_t word) { return word == value; }), "scalar buffer bounds differ for stride " + std::to_string(test.stride) + " records " + std::to_string(test.records));
+    }
+    GuestAllocations::Mutation().Remove(Input.data());
+}
+
+void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint32_t Value = 0x12345678u;
+    alignas(256) static constexpr std::array<std::uint32_t, 5> formattedStore{0x7e0202ffu, Value, 0xe0102000u, 0x80000100u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 6> rawStore{0x34020082u, 0x7e0402ffu, Value, 0xe0701000u, 0x80000201u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 7> formattedLoad{0x34020082u, 0xe0002000u, 0x80000200u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 4> atomicAdd{0x34020082u, 0xe0c81000u, 0x80000201u, 0xbf810000u};
+    std::array<std::uint32_t, 8> userData{};
+    auto request = Request(userData, device.ComputeTarget(Lanes), {});
+    request.useCache = false;
+    const auto output = BufferDescriptor(Output.data(), sizeof(Output));
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const auto dispatch = [&](std::span<const std::uint32_t> code, const std::array<std::uint32_t, 4>& descriptor) {
+        request.shader.code = code;
+        request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+        std::copy(descriptor.begin(), descriptor.end(), userData.begin());
+        Output.fill(Fill);
+        const auto result = ShaderRecompiler::Recompile(request);
+        device.Dispatch(result, 1, 1, 1);
+        device.WaitIdle();
+    };
+    const auto all = [](std::uint32_t expected) { return std::all_of(Output.begin(), Output.end(), [expected](std::uint32_t value) { return value == expected; }); };
+    const auto raw = [](const void* data, std::uint32_t bytes, std::uint32_t word3) {
+        auto descriptor = BufferDescriptor(data, bytes);
+        descriptor[3] = word3;
+        return descriptor;
+    };
+    const auto strided = [](const void* data, std::uint32_t word3) {
+        auto descriptor = BufferDescriptor(data, Lanes);
+        descriptor[1] |= 4u << 16u;
+        descriptor[3] = word3;
+        return descriptor;
+    };
+    std::array<std::uint32_t, Lanes> input{};
+    std::memcpy(input.data(), Input.data(), sizeof(input));
+    dispatch(Code, raw(Input.data(), InputBytes, 0x31016facu));
+    Require(Output == input, "raw load through a TYPE 0 32_FLOAT V# did not read the buffer");
+    dispatch(formattedLoad, strided(Input.data(), 0x31014facu));
+    Require(Output == input, "formatted load through a TYPE 0 32_UINT V# did not read the buffer");
+    dispatch(rawStore, raw(Output.data(), sizeof(Output), 0x31016facu));
+    Require(all(Value), "raw store through a TYPE 0 32_FLOAT V# did not write every lane");
+    dispatch(formattedStore, strided(Output.data(), 0x31016facu));
+    Require(all(Value), "formatted store through a TYPE 0 32_FLOAT V# did not write every lane");
+    dispatch(Code, raw(Input.data(), InputBytes, 0x31000facu));
+    Require(all(0u), "raw load through a TYPE 0 FORMAT 0 V# did not return 0");
+    dispatch(formattedLoad, strided(Input.data(), 0x31000facu));
+    Require(all(0u), "formatted load through a TYPE 0 FORMAT 0 V# did not return 0");
+    for (const auto word3 : {0x31000facu, 0x91000facu, 0x91016facu, 0x91b00facu, 0xd1000facu, 0xd1016facu}) {
+        dispatch(rawStore, raw(Output.data(), sizeof(Output), word3));
+        Require(all(Fill), "raw store through V# word 3 " + Hex(word3) + " wrote memory");
+        dispatch(formattedStore, strided(Output.data(), word3));
+        Require(all(Fill), "formatted store through V# word 3 " + Hex(word3) + " wrote memory");
+    }
+    dispatch(formattedStore, {0x02100b00u, 0xc3c00000u, 0x010dc1dfu, 0x91b00facu});
+    Require(all(Fill), "store through an image T# read as a V# wrote memory");
+    const auto rejects = [&](std::span<const std::uint32_t> code, std::uint32_t word3, const char* access) {
+        bool rejected = false;
+        try {
+            dispatch(code, raw(Output.data(), sizeof(Output), word3));
+        } catch (const std::runtime_error& error) {
+            Require(std::string(error.what()).find("buffer descriptor uses an unsupported type") != std::string::npos, std::string(access) + " through V# word 3 " + Hex(word3) + " failed for another reason: " + error.what());
+            rejected = true;
+        }
+        Require(rejected, std::string(access) + " accepted V# word 3 " + Hex(word3));
+    };
+    for (const auto word3 : {0x71000facu, 0x71016facu, 0xb107ffacu, 0xf107ffacu}) {
+        rejects(Code, word3, "a raw load");
+        rejects(rawStore, word3, "a raw store");
+        rejects(formattedStore, word3, "a formatted store");
+    }
 }
 
 }
@@ -162,6 +259,7 @@ int main() {
         Run(*device, false);
         Run(*device, true);
         ScalarReads(*device);
+        DisabledDescriptors(*device);
         std::puts("buffer descriptor runtime tests passed");
         return 0;
     } catch (const std::exception& error) {

@@ -10,8 +10,10 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+import package_headers
+
 ROOT = Path(__file__).resolve().parent.parent
-WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "output-directory.mjs", "worker.mjs",
+WEB_FILES = ("index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs", "failure-report.mjs", "output-directory.mjs", "worker.mjs",
              "native/relinker_wasm.mjs", "native/relinker_wasm.wasm")
 
 
@@ -66,12 +68,33 @@ def package(platform, build, output, version):
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
         files.extend(build / "core/libs/libs" / name for name in ("mimalloc.dll", "mimalloc-redirect.dll"))
     files.extend(tracy_runtime(platform, build))
+    unpatched = [(build / "core/libs/libs/unpatched" / name, "libs/" + name) for name in sorted(expected)]
+    unpatched.extend((file, "libs/" + file.name) for file in files if file.suffix != ".prx")
+    if platform == "windows":
+        manifest = build / "core/libs/release-implibs.txt"
+        imports = {}
+        directory = (build / "core/libs/libs/implib").resolve()
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            name, separator, value = line.partition("=")
+            if not separator or not value or name in imports:
+                raise RuntimeError(f"Invalid import library manifest: {manifest}")
+            path = Path(value)
+            if not path.is_absolute() or path.resolve().parent != directory or path.suffix != ".a":
+                raise RuntimeError(f"Invalid import library path: {value}")
+            imports[name] = path
+        if set(imports) != {Path(name).stem for name in expected} or len({path.name for path in imports.values()}) != len(imports):
+            raise RuntimeError("Import library manifest does not match release libraries")
+        unpatched.extend((imports[name], "libs/implib/" + imports[name].name) for name in sorted(imports))
     binary = build / "core/relinker" / executable
-    for file in [*files, binary, *(source for source, _ in licenses)]:
+    for file in [*files, binary, *(source for source, _ in licenses), *(source for source, _ in unpatched)]:
         if not file.is_file() or file.stat().st_size == 0:
             raise RuntimeError(f"Missing or empty release file: {file}")
     asset = f"relinker-{version}.exe" if platform == "windows" else f"relinker-{version}"
-    names = (f"prx-{platform}-{version}.zip", f"prx-{platform}-{version}.tar.gz", asset)
+    archives = {
+        f"prx-{platform}-{version}": [(file, "libs/" + file.name) for file in files],
+        f"prx-{platform}-unpatched-{version}": unpatched,
+    }
+    names = [stem + suffix for stem in archives for suffix in (".zip", ".tar.gz")] + [asset]
     for name in names:
         destination = output / name
         if destination.exists() and not destination.is_file():
@@ -85,16 +108,13 @@ def package(platform, build, output, version):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".release-", dir=output) as temporary:
         staging = Path(temporary)
-        with zipfile.ZipFile(staging / f"prx-{platform}-{version}.zip", "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-            for file in files:
-                archive.write(file, arcname=f"libs/{file.name}")
-            for source, destination in licenses:
-                archive.write(source, arcname=destination)
-        with tarfile.open(staging / f"prx-{platform}-{version}.tar.gz", "w:gz", compresslevel=9, dereference=True) as archive:
-            for file in files:
-                archive.add(file, arcname=f"libs/{file.name}")
-            for source, destination in licenses:
-                archive.add(source, arcname=destination)
+        for stem, entries in archives.items():
+            with zipfile.ZipFile(staging / (stem + ".zip"), "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
+                for source, destination in entries + licenses:
+                    archive.write(source, arcname=destination)
+            with tarfile.open(staging / (stem + ".tar.gz"), "w:gz", compresslevel=9, dereference=True) as archive:
+                for source, destination in entries + licenses:
+                    archive.add(source, arcname=destination)
         shutil.copy2(binary, staging / asset)
         for file in sorted(staging.iterdir()):
             file.replace(output / file.name)
@@ -137,7 +157,7 @@ def package_web(build, output, version, revision):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".release-", dir=output) as temporary:
         asset = Path(temporary) / name
-        with zipfile.ZipFile(asset, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        with zipfile.ZipFile(asset, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
             for file in WEB_FILES:
                 archive.write(source / file, arcname=file)
             archive.writestr("web-release.json", json.dumps({"tag": version, "revision": revision}) + "\n")
@@ -150,7 +170,7 @@ def main(argv=None):
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--platform", choices=("linux", "windows", "web"))
+    parser.add_argument("--platform", choices=("linux", "windows", "web", "headers"))
     parser.add_argument("--build", type=Path)
     parser.add_argument("--version")
     parser.add_argument("--revision")
@@ -162,6 +182,10 @@ def main(argv=None):
             if args.platform is not None or args.build is not None or args.version is not None or args.revision is not None:
                 parser.error("--docs cannot be combined with --platform, --build, --version or --revision")
             collect_docs(args.docs, args.output)
+        elif args.platform == "headers":
+            if args.version is None or args.build is not None or args.revision is not None:
+                parser.error("--platform headers requires --version and does not accept --build or --revision")
+            package_headers.package(ROOT, args.output, args.version)
         else:
             if args.platform is None or args.build is None or args.version is None:
                 parser.error("--platform, --build and --version are required when --docs is not specified")

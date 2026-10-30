@@ -97,6 +97,12 @@ bool descriptorIsCube(const DescriptorValue& descriptor) {
     return rawImageType(descriptor) == ImageType::Cube;
 }
 
+bool descriptorIsShortCube(const DescriptorValue& descriptor) {
+    const auto depth = descriptor.dwords[4] & 0x1fffu;
+    const auto baseArray = (descriptor.dwords[4] >> 16u) & 0x1fffu;
+    return descriptorIsCube(descriptor) && descriptor.dwordCount == 8u && baseArray < depth && depth - baseArray < 5u;
+}
+
 RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaImageDimension requested) {
     const bool wantArray = requested == RdnaImageDimension::Dim1DArray || requested == RdnaImageDimension::Dim2DArray || requested == RdnaImageDimension::Dim2DMsaaArray;
     switch (rawImageType(descriptor)) {
@@ -235,6 +241,9 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool storage = base.resourceClass == ImageResourceClass::Storage;
     const bool table = base.table != NoTable;
+    if (decoded.cube && (storage || !base.sampledOnly) && descriptorIsShortCube(descriptor)) {
+        return rejectImage(PoisonReason::Dimension, "a cube descriptor with fewer than six slices is implemented only for sampling; loads, stores and dimension queries through it stop at its last slice");
+    }
     decoded.fmask = IsFmaskTextureFormat(format);
     if (decoded.fmask && !base.fmaskCompatible) return rejectImage(PoisonReason::Fmask, "FMASK requires a direct 32-bit image load");
     if (decoded.fmask && (storage || base.depthCompare || table)) {
@@ -691,11 +700,18 @@ public:
     void Run() {
         tables = ImageTableSnapshot{};
         std::uint32_t count = 0;
+        bool hasIndirect = false;
         for (const auto& image : plan.info.images) {
-            if (image.table != NoTable) count = std::max(count, image.table + 1u);
+            if (image.table != NoTable) {
+                count = std::max(count, image.table + 1u);
+                if (image.source < plan.descriptorSources.size() && plan.descriptorSources[image.source].tableColumn.has_value() && plan.descriptorSources[image.source].tableColumn->indirect) hasIndirect = true;
+            }
         }
         for (const auto& sampler : plan.info.samplers) {
-            if (sampler.table != NoTable) count = std::max(count, sampler.table + 1u);
+            if (sampler.table != NoTable) {
+                count = std::max(count, sampler.table + 1u);
+                if (sampler.source < plan.descriptorSources.size() && plan.descriptorSources[sampler.source].tableColumn.has_value() && plan.descriptorSources[sampler.source].tableColumn->indirect) hasIndirect = true;
+            }
         }
         if (count == 0u) {
             return;
@@ -704,14 +720,31 @@ public:
             throw std::runtime_error("image table snapshot requires runtime memory access");
         }
         const auto started = std::chrono::steady_clock::now();
-        tables.shader = plan.shaderHash;
-        tables.tables.resize(count);
-        for (const auto& image : plan.info.images) {
-            if (image.table != NoTable) Snapshot(image.source, image.table);
+        const bool checkEpoch = (count > 1u || hasIndirect) && runtime.descriptorScope != nullptr;
+        bool completed = false;
+        for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            if (attempt != 0u) {
+                columns.clear();
+                pages.clear();
+                wholePages.clear();
+                tables = {};
+            }
+            tables.shader = plan.shaderHash;
+            tables.tables.resize(count);
+            const SrtForceSyncScope forceSync(runtime, checkEpoch && attempt == 2u);
+            const auto invalidationsBefore = checkEpoch ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            for (const auto& image : plan.info.images) {
+                if (image.table != NoTable) Snapshot(image.source, image.table);
+            }
+            for (const auto& sampler : plan.info.samplers) {
+                if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
+            }
+            if (!checkEpoch || runtime.descriptorScope(runtime.userContext, 0u) == invalidationsBefore) {
+                completed = true;
+                break;
+            }
         }
-        for (const auto& sampler : plan.info.samplers) {
-            if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
-        }
+        if (!completed) throw std::runtime_error("image table: multi-table snapshot did not stabilize");
         auto& counters = tableCounters();
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
         counters.tables.fetch_add(count, std::memory_order_relaxed);
@@ -730,12 +763,17 @@ public:
 
 private:
     static constexpr std::uint64_t PageBytes = 4096u;
+    mutable std::uint32_t indirectDwords = 0;
+    mutable std::uint32_t indirectDword = 0;
+    mutable std::uint32_t accessibleChecks = 0;
 
     bool Accessible(std::uint64_t address, std::uint64_t bytes) const {
         return runtime.accessible == nullptr || runtime.accessible(runtime.userContext, address, bytes);
     }
 
     bool PageAccessible(std::uint64_t address, std::uint64_t begin, std::uint64_t end) {
+        indirectDword = 0u;
+        accessibleChecks = 0u;
         const auto page = address & ~(PageBytes - 1u);
         if (const auto found = pages.find(page); found != pages.end()) return found->second;
         const auto first = std::max(page, begin);
@@ -749,12 +787,29 @@ private:
         const auto page = address & ~(PageBytes - 1u);
         const auto [found, inserted] = wholePages.try_emplace(page, false);
         if (inserted) found->second = Accessible(page, PageBytes);
-        return found->second || Accessible(address, sizeof(std::uint32_t));
+        const bool accessible = found->second || Accessible(address, sizeof(std::uint32_t));
+        if (accessible) {
+            ++accessibleChecks;
+        } else {
+            indirectDword = 0u;
+            accessibleChecks = 0u;
+        }
+        return accessible;
     }
 
     std::uint32_t Read(std::uint64_t address) const {
+        const bool scoped = runtime.descriptorScope != nullptr && indirectDwords > 1u && accessibleChecks == 1u;
+        if (scoped) {
+            static_cast<void>(runtime.descriptorScope(runtime.userContext, static_cast<std::size_t>(indirectDwords - indirectDword) * sizeof(std::uint32_t)));
+            indirectDword = (indirectDword + 1u) % indirectDwords;
+        } else {
+            indirectDword = 0u;
+        }
+        accessibleChecks = 0u;
         std::uint32_t word = 0;
-        if (!runtime.readMemory(runtime.userContext, address, &word)) {
+        const bool ok = runtime.readMemory(runtime.userContext, address, &word);
+        if (scoped) static_cast<void>(runtime.descriptorScope(runtime.userContext, 0u));
+        if (!ok) {
             throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
         }
         return word;
@@ -872,25 +927,41 @@ private:
             return;
         }
         DescriptorValue value;
-        value.dwordCount = 8u;
         std::uint64_t low = std::numeric_limits<std::uint64_t>::max();
         std::uint64_t high = 0;
-        for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
-            const auto position = ImageTableAbi::ScalarBufferDword(offset, column.offset + dword * 4u, size);
-            if (!position.has_value()) {
+        bool completed = false;
+        for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            value = {};
+            value.dwordCount = 8u;
+            low = std::numeric_limits<std::uint64_t>::max();
+            high = 0;
+            const SrtForceSyncScope forceSync(runtime, attempt == 2u);
+            const auto invalidationsBefore = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            for (std::uint32_t dword = 0; dword < column.dwordCount; dword++) {
+                const auto position = ImageTableAbi::ScalarBufferDword(offset, column.offset + dword * 4u, size);
+                if (!position.has_value()) {
+                    value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
+                    continue;
+                }
+                const auto address = base + *position;
+                if (!PageAccessible(address, base, base + size)) {
+                    records.states.front() = RecordState::Unmapped;
+                    return;
+                }
+                if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, static_cast<std::size_t>(column.dwordCount - dword) * sizeof(std::uint32_t)));
+                value.dwords[dword] = Read(address);
+                if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, 0u));
                 value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
-                continue;
+                low = std::min(low, address);
+                high = std::max(high, address + sizeof(std::uint32_t));
+                if (runtime.descriptorScope != nullptr && runtime.descriptorScope(runtime.userContext, 0u) != invalidationsBefore) break;
             }
-            const auto address = base + *position;
-            if (!PageAccessible(address, base, base + size)) {
-                records.states.front() = RecordState::Unmapped;
-                return;
+            if (runtime.descriptorScope == nullptr || runtime.descriptorScope(runtime.userContext, 0u) == invalidationsBefore) {
+                completed = true;
+                break;
             }
-            value.dwords[dword] = Read(address);
-            value.availableDwordMask |= static_cast<std::uint8_t>(1u << dword);
-            low = std::min(low, address);
-            high = std::max(high, address + sizeof(std::uint32_t));
         }
+        if (!completed) throw std::runtime_error("image table: selected descriptor snapshot did not stabilize");
         records.words.front() = WordsIndex(records, value);
         if (low < high) tables.ranges.emplace_back(low, high - low);
     }
@@ -938,7 +1009,15 @@ private:
             return found->second;
         }
         auto& records = columns[source];
-        ReadColumn(*plan.descriptorSources.at(source).tableColumn, source, records);
+        const auto& column = *plan.descriptorSources.at(source).tableColumn;
+        const auto previousIndirectDwords = indirectDwords;
+        indirectDwords = column.indirect ? column.dwordCount : 0u;
+        indirectDword = 0u;
+        accessibleChecks = 0u;
+        ReadColumn(column, source, records);
+        indirectDwords = previousIndirectDwords;
+        indirectDword = 0u;
+        accessibleChecks = 0u;
         if (!records.sealed) Seal(records);
         return records;
     }
@@ -1111,7 +1190,7 @@ private:
             read = std::move(comparedWords);
         } else {
             read.resize(total);
-            ReadRuns(runs, read);
+            ReadRuns(runs, read, column.dwordCount);
         }
         auto next = split.begin();
         for (std::uint32_t record = 0; record < records.keys; record++) {
@@ -1148,16 +1227,39 @@ private:
         if (memoized) Remember(key, records, std::move(runs), std::move(read), column.address && low < high ? low : 0u, column.address && low < high ? high : 0u);
     }
 
-    void ReadRuns(const std::vector<std::pair<std::uint64_t, std::uint32_t>>& runs, std::vector<std::uint32_t>& read) const {
-        std::size_t at = 0;
-        for (const auto& [address, count] : runs) {
-            if (runtime.readWords != nullptr) {
-                if (!runtime.readWords(runtime.userContext, address, read.data() + at, count)) throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
-            } else {
-                for (std::uint32_t word = 0; word < count; word++) read[at + word] = Read(address + word * 4u);
+    void ReadRuns(const std::vector<std::pair<std::uint64_t, std::uint32_t>>& runs, std::vector<std::uint32_t>& read, std::uint32_t descriptorDwords) const {
+        const auto scopeBytes = descriptorDwords > 1u ? static_cast<std::size_t>(descriptorDwords) * sizeof(std::uint32_t) : 0u;
+        bool completed = false;
+        for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            const SrtForceSyncScope forceSync(runtime, attempt == 2u);
+            const auto invalidationsBefore = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            std::size_t at = 0;
+            for (const auto& [address, count] : runs) {
+                if (runtime.readWords != nullptr) {
+                    if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, scopeBytes));
+                    const bool ok = runtime.readWords(runtime.userContext, address, read.data() + at, count);
+                    if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, 0u));
+                    if (!ok) throw std::runtime_error("image table: failed to read guest memory at 0x" + hexText(address));
+                } else {
+                    for (std::uint32_t word = 0; word < count; word++) {
+                        if (runtime.descriptorScope != nullptr && descriptorDwords > 1u) {
+                            const auto remaining = std::min<std::uint32_t>(descriptorDwords - (word % descriptorDwords), count - word);
+                            static_cast<void>(runtime.descriptorScope(runtime.userContext, static_cast<std::size_t>(remaining) * sizeof(std::uint32_t)));
+                        }
+                        read[at + word] = Read(address + word * 4u);
+                        if (runtime.descriptorScope != nullptr) static_cast<void>(runtime.descriptorScope(runtime.userContext, 0u));
+                        if (runtime.descriptorScope != nullptr && runtime.descriptorScope(runtime.userContext, 0u) != invalidationsBefore) break;
+                    }
+                }
+                if (runtime.descriptorScope != nullptr && runtime.descriptorScope(runtime.userContext, 0u) != invalidationsBefore) break;
+                at += count;
             }
-            at += count;
+            if (runtime.descriptorScope == nullptr || runtime.descriptorScope(runtime.userContext, 0u) == invalidationsBefore) {
+                completed = true;
+                break;
+            }
         }
+        if (!completed) throw std::runtime_error("image table: descriptor snapshot did not stabilize");
         tableReuseTotals().wordsRead.fetch_add(read.size(), std::memory_order_relaxed);
     }
 
@@ -1184,7 +1286,7 @@ private:
             }
         }
         std::vector<std::uint32_t> read(memo.read->words.size());
-        ReadRuns(memo.read->runs, read);
+        ReadRuns(memo.read->runs, read, column.dwordCount);
         if (read != memo.read->words) {
             comparedRuns = memo.read->runs;
             comparedWords = std::move(read);
@@ -1511,9 +1613,34 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
     return *samplerState | (reference << EmulatedCompare::ReferenceShift) | (singleLevel ? EmulatedCompare::SingleLevel : 0u);
 }
 
+bool disabledBufferDescriptor(const BufferResource& buffer, const DescriptorValue& descriptor) {
+    const auto decoded = decodeBufferDescriptor(descriptor);
+    const auto format = decoded.RawFormat();
+    if (decoded.Type() == 0u) return format == 0u;
+    return (decoded.Type() == 2u || decoded.Type() == 3u) && format <= static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) && !buffer.read;
+}
+
+bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, const DescriptorValue& descriptor) {
+    const auto& buffer = plan.info.buffers[index];
+    if (GcnGuestShaders() || buffer.atomic || buffer.scalar || buffer.imageAlias != BufferResource::NoImageAlias || !disabledBufferDescriptor(buffer, descriptor)) return false;
+    const bool measuredOnly = decodeBufferDescriptor(descriptor).Type() != 0u;
+    bool accessed = false;
+    for (const auto& memory : plan.memoryInfo) {
+        if (memory.kind != ResourceKind::Buffer || memory.resource != index) continue;
+        if (memory.typed || memory.gpuDescriptor) return false;
+        if (measuredOnly && (memory.dataDwords != 1u || memory.componentCount != 1u)) return false;
+        accessed = true;
+    }
+    return accessed;
+}
+
 void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     for (std::uint32_t i = 0u; i < plan.info.buffers.size(); ++i) {
         const auto& buffer = plan.info.buffers[i];
+        if (disabledBufferAccesses(plan, i, snapshot.buffers.at(i))) {
+            auto& words = snapshot.buffers.at(i).dwords;
+            std::fill(words.begin(), words.begin() + 4, 0u);
+        }
         const bool scalarOnly = buffer.scalar && !buffer.written && !buffer.atomic && !buffer.formatted && buffer.imageAlias == BufferResource::NoImageAlias
             && std::none_of(plan.memoryInfo.begin(), plan.memoryInfo.end(), [i](const MemoryInfo& memory) { return memory.kind == ResourceKind::Buffer && memory.resource == i; });
         if (scalarOnly) {
@@ -1916,7 +2043,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible && conversion != FmaskExpansion;
         const bool volumeStore = image.dimension == RdnaImageDimension::Dim2DArray && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
         const bool volumePlaneBias = image.dimension == RdnaImageDimension::Dim2D && image.singleMipPlaneBiasCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
-        const bool volumeArraySample = image.dimension == RdnaImageDimension::Dim2DArray && image.volumeArraySampleCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
+        const bool volumeArraySample = image.dimension == RdnaImageDimension::Dim2DArray && image.volumeArraySampleCompatible && !image.adjustedSample && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
         if ((volumeLoad || volumeStore || volumePlaneBias || volumeArraySample) && !depth && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
             auto volume = mode;
             volume.dimension = RdnaImageDimension::Dim3D;
@@ -1951,7 +2078,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             modes.push_back(line);
         }
         const bool cubeFaceStorage = image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
-        if (image.dimension == RdnaImageDimension::Dim2D && image.cubeFaceCompatible && (!storage || cubeFaceStorage) && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
+        if (image.dimension == RdnaImageDimension::Dim2D && image.cubeFaceCompatible && !image.adjustedSample && (!storage || cubeFaceStorage) && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
             auto face = mode;
             face.dimension = RdnaImageDimension::Dim2DArray;
             face.cube = true;
@@ -2510,8 +2637,21 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
     auto& activeSources = HostThreadLocal<std::vector<std::uint8_t>, ActiveSourcesStorage>();
     activeSources.clear();
     try {
-        materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
-        TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
+        bool completed = false;
+        for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            const SrtForceSyncScope forceSync(runtime, attempt == 2u);
+            const auto beforeSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            activeSources.clear();
+            materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
+            const auto afterSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
+            const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            if (runtime.descriptorScope == nullptr || (afterTables == afterSnapshot && (plan.uniformFill.fill.kind == UniformFillKind::None || afterSnapshot == beforeSnapshot))) {
+                completed = true;
+                break;
+            }
+        }
+        if (!completed) throw std::runtime_error("runtime resource snapshot did not stabilize");
     } catch (...) {
         reportTables();
         throw;

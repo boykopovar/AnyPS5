@@ -138,6 +138,10 @@ void TestRequests() {
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content without a type");
     Require(sceNpWebApiCreateRequest(0, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content is checked before the user context");
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPatch, nullptr, &request) == InvalidArgument, "PATCH with SDK 2.50 or later");
+    SetSdkVersion(0x05050001);
+    request = 0;
+    Require(sceNpWebApiCreateRequest(user, "userProfile", "/v1/users/me/profile", 99, nullptr, &request) == InvalidArgument && request == 0, "method 99 at SDK 0x05050001");
+    SetSdkVersion(0x04508001);
     Require(sceNpWebApiCreateRequest(user + 1, "group", "/path", MethodGet, nullptr, &request) == UserContextNotFound, "request of an unknown user context");
     Require(sceNpWebApiCreateRequest(0, "group", "/path", MethodGet, nullptr, &request) == LibContextNotFound, "request of user context 0");
     Require(sceNpWebApiCreateRequest(-1, "group", "/path", MethodGet, nullptr, &request) == LibContextNotFound, "request of user context -1");
