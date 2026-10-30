@@ -1,4 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "SceTypes.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -16,18 +21,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI mkstemp_nid_postfix(char*);
-int APS5_VABI isatty_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI socket_nid_postfix(int, int, int);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::size_t);
-std::int64_t APS5_VABI write_nid_postfix(int, const void*, std::size_t);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-}
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
@@ -134,6 +127,82 @@ int main() {
     Require(isatty_nid_postfix(slave) == 1 && *__error_nid_postfix() == 123);
     Require(::close(slave) == 0 && ::close(terminal) == 0);
 #endif
+    Require(setenv_nid_postfix("WEBKIT_WRAP_SET", "set", 1) == 0);
+    char* const variable = getenv_nid_postfix("WEBKIT_WRAP_SET");
+    Require(variable != nullptr && std::strcmp(variable, "set") == 0 && __wrap_getenv("WEBKIT_WRAP_SET") == variable);
+    Require(getenv_nid_postfix("WEBKIT_WRAP_UNSET") == nullptr && __wrap_getenv("WEBKIT_WRAP_UNSET") == nullptr);
+    Require(access_nid_postfix(pattern.c_str(), 0) == 0 && __wrap_access(pattern.c_str(), 0) == 0);
+    Require(access_nid_postfix("/anyps5-posix-test/absent", 0) == -1);
+    const int accessError = *__error_nid_postfix();
+    *__error_nid_postfix() = 0;
+    Require(__wrap_access("/anyps5-posix-test/absent", 0) == -1 && *__error_nid_postfix() == accessError && accessError == 2);
+    std::array<char, 1024> expectedDirectory{};
+    std::array<char, 1024> wrappedDirectory{};
+    Require(getcwd_nid_postfix(expectedDirectory.data(), expectedDirectory.size()) == expectedDirectory.data());
+    Require(__wrap_getcwd(wrappedDirectory.data(), wrappedDirectory.size()) == wrappedDirectory.data());
+    Require(std::strcmp(expectedDirectory.data(), wrappedDirectory.data()) == 0);
+    Require(getcwd_nid_postfix(wrappedDirectory.data(), 1) == nullptr);
+    const int directoryError = *__error_nid_postfix();
+    *__error_nid_postfix() = 0;
+    Require(__wrap_getcwd(wrappedDirectory.data(), 1) == nullptr && *__error_nid_postfix() == directoryError && directoryError == 34);
+    FileStat expectedStatus{};
+    FileStat wrappedStatus{};
+    Require(lstat_nid_postfix(pattern.c_str(), &expectedStatus) == 0 && __wrap_lstat(pattern.c_str(), &wrappedStatus) == 0);
+    Require((wrappedStatus.st_mode & 0170000) == 0100000 && wrappedStatus.st_size == static_cast<std::int64_t>(sizeof(payload)));
+    Require(std::memcmp(&expectedStatus, &wrappedStatus, sizeof(FileStat)) == 0);
+    const auto notAfter = [](const KernelTimespec& earlier, const KernelTimespec& later) {
+        return earlier.tv_sec < later.tv_sec || (earlier.tv_sec == later.tv_sec && earlier.tv_nsec <= later.tv_nsec);
+    };
+    KernelTimespec before{};
+    KernelTimespec during{};
+    KernelTimespec after{};
+    Require(clock_gettime_nid_postfix(4, &before) == 0 && __wrap_clock_gettime(4, &during) == 0 && clock_gettime_nid_postfix(4, &after) == 0);
+    Require(notAfter(before, during) && notAfter(during, after));
+    Require(clock_gettime_nid_postfix(4, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(__wrap_clock_gettime(4, nullptr) == -1 && *__error_nid_postfix() == 14);
+    constexpr std::size_t page = 0x4000;
+    void* const failed = reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
+    void* const mapped = __wrap_mmap(nullptr, page, 3, 0x1002, -1, 0);
+    Require(mapped != failed);
+    auto* const bytes = static_cast<volatile unsigned char*>(mapped);
+    bytes[0] = 0x5a;
+    bytes[page - 1] = 0xa5;
+    Require(bytes[0] == 0x5a && bytes[page - 1] == 0xa5);
+    Require(munmap_nid_postfix(mapped, page) == 0);
+    Require(mmap_nid_postfix(nullptr, page, 8, 0x1002, -1, 0) == failed && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(__wrap_mmap(nullptr, page, 8, 0x1002, -1, 0) == failed && *__error_nid_postfix() == 22);
+    Require(opendir_nid_disambig1_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 14);
+    Require(opendir_nid_disambig1_nid_postfix("") == nullptr && *__error_nid_postfix() == 2);
+    Require(opendir_nid_disambig1_nid_postfix("/anyps5-posix-test/missing-directory") == nullptr && *__error_nid_postfix() == 2);
+    void* const testDirectory = opendir_nid_disambig1_nid_postfix("/anyps5-posix-test");
+    Require(testDirectory != nullptr);
+    bool foundDot = false;
+    bool foundDotDot = false;
+    bool foundFixed = false;
+    while (auto* const entry = readdir_nid_disambig1_nid_postfix(testDirectory)) {
+        Require(entry->nameLength == std::strlen(entry->name));
+        Require(entry->recordLength >= 8 + entry->nameLength);
+        Require(entry->fileNumber != 0);
+        if (std::strcmp(entry->name, ".") == 0) foundDot = true;
+        if (std::strcmp(entry->name, "..") == 0) foundDotDot = true;
+        if (std::strcmp(entry->name, "fixed") == 0) foundFixed = true;
+    }
+    Require(foundDot && foundDotDot && foundFixed);
+    Require(readdir_nid_disambig1_nid_postfix(testDirectory) == nullptr);
+    Require(readdir_nid_disambig1_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 9);
+    Require(closedir_nid_disambig1_nid_postfix(testDirectory) == 0);
+    Require(closedir_nid_disambig1_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 9);
+    void* const readdirDirectory = opendir_nid_disambig1_nid_postfix("/anyps5-posix-test");
+    Require(readdirDirectory != nullptr);
+    GuestDirectoryEntry readdirEntry{};
+    GuestDirectoryEntry* readdirResult = nullptr;
+    Require(readdir_r_nid_disambig1_nid_postfix(readdirDirectory, &readdirEntry, &readdirResult) == 0);
+    Require(readdirResult == &readdirEntry);
+    Require(readdirEntry.nameLength == std::strlen(readdirEntry.name));
+    Require(closedir_nid_disambig1_nid_postfix(readdirDirectory) == 0);
+    Require(readdir_r_nid_disambig1_nid_postfix(nullptr, &readdirEntry, &readdirResult) == 9);
     RemovePathAlias_nid_no_patch("/anyps5-posix-test");
     Require(std::filesystem::remove_all(root) > 0);
 }

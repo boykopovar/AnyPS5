@@ -1,3 +1,6 @@
+#include "prx/libSceAgc/Patch/include/WaitRegMem.hpp"
+#include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
+#include "prx/libSceAgc/Acb/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <algorithm>
@@ -6,17 +9,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" {
-std::uint32_t* APS5_VABI sceAgcDcbWriteData(CommandBuffer*, std::uint8_t, std::uint8_t, std::uint64_t, const void*, std::uint32_t, std::uint8_t, std::uint8_t);
-std::uint32_t* APS5_VABI sceAgcAcbWriteData(CommandBuffer*, std::uint8_t, std::uint8_t, std::uint64_t, const void*, std::uint32_t, std::uint8_t, std::uint8_t);
-int APS5_VABI sceAgcWriteDataPatchSetAddressOrOffset(std::uint32_t*, std::uint64_t);
-int APS5_VABI sceAgcAsyncWriteDataPatchSetAddressOrOffset(std::uint32_t*, std::uint64_t);
-int APS5_VABI sceAgcWriteDataPatchSetDst(std::uint32_t*, std::uint8_t);
-int APS5_VABI sceAgcAsyncWriteDataPatchSetDst(std::uint32_t*, std::uint8_t);
-int APS5_VABI sceAgcWriteDataPatchSetCachePolicy(std::uint32_t*, std::uint8_t);
-int APS5_VABI sceAgcAsyncWriteDataPatchSetCachePolicy(std::uint32_t*, std::uint8_t);
-}
 
 namespace {
 

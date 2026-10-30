@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
@@ -10,19 +12,6 @@
 #include <thread>
 #include <vector>
 #include <windows.h>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread*, const PthreadAttr*, PthreadEntry, void*, const char*);
-int APS5_VABI scePthreadJoin(Pthread, void**);
-int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr*);
-int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr*, int);
-int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr*);
-int APS5_VABI scePthreadMutexInit(PthreadMutex*, const PthreadMutexattr*, const char*);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex*);
-int APS5_VABI scePthreadMutexLock(PthreadMutex*);
-int APS5_VABI scePthreadMutexTimedlock(PthreadMutex*, KernelUseconds);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex*);
-}
 
 namespace {
 

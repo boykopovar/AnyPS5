@@ -1,3 +1,4 @@
+#include "prx/libSceMouse/include/Api.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -77,6 +78,21 @@ int APS5_VABI sceMouseSetPointerSpeed() {
 }
 
 int APS5_VABI sceMouseSetProcessPrivilege() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceMouseReadAbsolutePosition() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceMouseSetAbsoluteHighPrecisionMode() {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceMouseSetAbsoluteVirtualScreenSize() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

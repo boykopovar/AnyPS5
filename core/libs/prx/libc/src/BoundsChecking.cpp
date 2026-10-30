@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -8,13 +9,7 @@
 #include "prx/libc/include/SonyCrt.hpp"
 
 extern "C" {
-std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state);
-std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
-int APS5_VABI wctomb_nid_postfix(char* destination, std::uint16_t value);
-int APS5_VABI ___mb_cur_max_nid_postfix();
-int APS5_VABI getchar_nid_postfix();
-int APS5_VABI fputs_nid_postfix(const char* str, FileStream* stream);
-int APS5_VABI fputc_nid_postfix(int value, FileStream* stream);
+
 extern FileStream* __stderrp_nid_postfix;
 [[noreturn]] void abort_nid_postfix(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t);
 }
@@ -28,8 +23,6 @@ constexpr int guestEof = -1;
 constexpr std::size_t failed = static_cast<std::size_t>(-1);
 constexpr std::size_t rsizeMax = (std::size_t{1} << 61) - 1;
 constexpr std::size_t guestStateSize = 128;
-
-using GuestContextCompare = int (APS5_VABI*)(const void*, const void*, void*);
 
 bool usableSize(std::size_t size) {
     return size != 0 && size <= rsizeMax;
@@ -51,6 +44,7 @@ extern "C" {
 void APS5_VABI abort_handler_s_nid_postfix(const char* message, void*, int) {
     fputs_nid_postfix(message, __stderrp_nid_postfix);
     fputc_nid_postfix('\n', __stderrp_nid_postfix);
+
     abort_nid_postfix(0, 0, 0, 0, 0, 0);
 }
 
@@ -127,7 +121,7 @@ std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t* str, std::size_t* r
 int APS5_VABI wctomb_s_nid_postfix(int* status, char* destination, std::size_t capacity, std::uint16_t wide) {
     if (!status || (!destination && capacity) || (destination && capacity > rsizeMax))
         return violation("wctomb_s: bad argument", guestEinval);
-    if (destination && static_cast<std::size_t>(___mb_cur_max_nid_postfix()) > capacity) {
+    if (destination && static_cast<std::size_t>(_Getmbcurmax_nid_postfix()) > capacity) {
         char bytes[MB_LEN_MAX];
         const int length = wctomb_nid_postfix(bytes, wide);
         if (length > 0 && static_cast<std::size_t>(length) > capacity) return violation("wctomb_s: buffer too small", guestErange);
@@ -154,7 +148,7 @@ int APS5_VABI wcrtomb_s_nid_postfix(std::size_t* result, char* destination, std:
     std::size_t length = 0;
     if (!destination) {
         length = wcrtomb_nid_postfix(bytes, 0, state);
-    } else if (static_cast<std::size_t>(___mb_cur_max_nid_postfix()) > capacity) {
+    } else if (static_cast<std::size_t>(_Getmbcurmax_nid_postfix()) > capacity) {
         length = wcrtomb_nid_postfix(bytes, wide, state);
         if (length != failed && length > capacity) {
             *result = failed;

@@ -1,3 +1,4 @@
+#include "prx/libSceSdma/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -6,6 +7,12 @@
 extern "C" {
 
 APS5_DUMMY_FUN
+
+int APS5_VABI sceSdmaPending_001_nid_no_patch(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+APS5_EXPORT("vPP6vKHY8Tg", sceSdmaPending_001_nid_no_patch);
 int APS5_VABI sceSdmaBeginQueueMode(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -92,7 +99,6 @@ int APS5_VABI sceSdmaFenceNonBlocking(void) {
 }
 
 int APS5_VABI sceSdmaFinalize(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -102,12 +108,10 @@ int APS5_VABI sceSdmaFlushAll(void) {
 }
 
 int APS5_VABI sceSdmaFlushAllWithEvent(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x809900c9);
 }
 
 int APS5_VABI sceSdmaInitialize(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -122,8 +126,7 @@ int APS5_VABI sceSdmaOpen(void) {
 }
 
 int APS5_VABI sceSdmaQueryWorkingBufferSize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return 0x8000;
 }
 
 int APS5_VABI sceSdmaTryFlush(void) {
@@ -132,8 +135,7 @@ int APS5_VABI sceSdmaTryFlush(void) {
 }
 
 int APS5_VABI sceSdmaWaitForEvent(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x809900c9);
 }
 
 }

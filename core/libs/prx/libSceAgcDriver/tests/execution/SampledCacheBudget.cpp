@@ -1,10 +1,12 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
@@ -123,6 +125,8 @@ public:
     explicit Device(bool enableStorageImageMultisample = true) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -134,6 +138,12 @@ public:
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &application;
+#ifdef __APPLE__
+            const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            info.enabledExtensionCount = 1;
+            info.ppEnabledExtensionNames = &portability;
+#endif
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
@@ -281,38 +291,38 @@ private:
 
 class WatchedSurface {
 public:
-    explicit WatchedSurface(const Context& context) : context(context) {
+    explicit WatchedSurface(const Context& context, std::size_t bytes = SurfaceBytes) : context(context), span(bytes) {
 #ifdef _WIN32
-        memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(SurfaceBytes, 65536));
-        if (memory != nullptr) GuestArena::GuestArenaCommit_nid_postfix(memory, SurfaceBytes, PAGE_READWRITE, SurfaceBytes);
+        memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+        if (memory != nullptr) GuestArena::GuestArenaCommit_nid_postfix(memory, bytes, PAGE_READWRITE, bytes);
 #else
         constexpr std::uintptr_t alignment = 65536;
-        void* mapped = mmap(nullptr, SurfaceBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, bytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped != MAP_FAILED) {
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
             const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
             if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + SurfaceBytes != begin + SurfaceBytes + alignment) munmap(reinterpret_cast<void*>(aligned + SurfaceBytes), begin + alignment - aligned);
+            if (aligned + bytes != begin + bytes + alignment) munmap(reinterpret_cast<void*>(aligned + bytes), begin + alignment - aligned);
             memory = reinterpret_cast<std::uint8_t*>(aligned);
-            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, SurfaceBytes);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory, bytes);
         }
 #endif
         Require(memory != nullptr, "cannot allocate the watched surface");
-        Require(AgcDriver::GuestMemory::Watched(Address(), SurfaceBytes), "the watched surface is not write-watched");
-        std::memset(memory, 0x5a, SurfaceBytes);
-        GuestAllocations::Mutation().Add(memory, SurfaceBytes, true, true, true);
-        AgcDriver::GuestMemory::CollectWritesUncached(Address(), SurfaceBytes);
+        Require(AgcDriver::GuestMemory::Watched(Address(), bytes), "the watched surface is not write-watched");
+        std::memset(memory, 0x5a, bytes);
+        GuestAllocations::Mutation().Add(memory, bytes, true, true, true);
+        AgcDriver::GuestMemory::CollectWritesUncached(Address(), bytes);
     }
 
     ~WatchedSurface() {
         ClearCachedTextures(context.device);
         GuestAllocations::Mutation().Remove(memory);
 #ifdef _WIN32
-        GuestArena::GuestArenaReset_nid_postfix(memory, SurfaceBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(memory, SurfaceBytes);
+        GuestArena::GuestArenaReset_nid_postfix(memory, span);
+        GuestArena::GuestArenaRelease_nid_postfix(memory, span);
 #else
-        munmap(memory, SurfaceBytes);
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, SurfaceBytes);
+        munmap(memory, span);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, span);
 #endif
     }
 
@@ -323,13 +333,56 @@ public:
 
 private:
     const Context& context;
+    std::size_t span = 0;
     std::uint8_t* memory = nullptr;
 };
 
-std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side) {
+class PartialSurface {
+public:
+    explicit PartialSurface(const Context& context, std::size_t bytes = SurfaceBytes) : context(context), span(bytes) {
+        memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
+        Require(memory != nullptr, "cannot reserve the partial surface");
+        GuestAllocations::Mutation().Add(memory, bytes, true, true, true);
+    }
+
+    ~PartialSurface() {
+        ClearCachedTextures(context.device);
+        GuestAllocations::Mutation().Remove(memory);
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(memory, span);
+#else
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(memory, span);
+        munmap(memory, span);
+#endif
+        GuestArena::GuestArenaRelease_nid_postfix(memory, span);
+    }
+
+    PartialSurface(const PartialSurface&) = delete;
+    PartialSurface& operator=(const PartialSurface&) = delete;
+
+    void Commit(std::size_t offset, std::size_t bytes, std::uint8_t fill) {
+#ifdef _WIN32
+        GuestArena::GuestArenaCommit_nid_postfix(memory + offset, bytes, PAGE_READWRITE, bytes);
+#else
+        Require(mmap(memory + offset, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != MAP_FAILED, "cannot commit a page of the partial surface");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(memory + offset, bytes);
+#endif
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(memory + offset), bytes);
+        std::memset(memory + offset, fill, bytes);
+    }
+
+    std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(memory); }
+
+private:
+    const Context& context;
+    std::size_t span = 0;
+    std::uint8_t* memory = nullptr;
+};
+
+std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((side - 1u) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((side - 1u) & 3u) << 30u),
         ((side - 1u) >> 2u) | ((side - 1u) << 14u),
         0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
         0u,
@@ -339,13 +392,13 @@ std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t sid
     };
 }
 
-std::shared_ptr<Texture> Sampled(const Context& context, std::uint64_t address, std::uint32_t side = Side) {
-    const auto words = Descriptor(address, side);
+std::shared_ptr<Texture> Sampled(const Context& context, std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
+    const auto words = Descriptor(address, side, format);
     return CachedSampledTexture(context, words);
 }
 
-GuestTextureResource Resource(std::uint64_t address, std::uint32_t side = Side) {
-    const auto words = Descriptor(address, side);
+GuestTextureResource Resource(std::uint64_t address, std::uint32_t side = Side, std::uint32_t format = Format32UInt) {
+    const auto words = Descriptor(address, side, format);
     return DecodeTextureResource(words);
 }
 
@@ -672,6 +725,55 @@ void snapshotTests(const Context& context) {
     Require(TextureCacheUsage().sampledBytes == tiny->AllocationBytes(), "a snapshot whose " + std::to_string(tiny->AllocationBytes()) + "-byte image is smaller than its " + std::to_string(guestBytes) + " guest bytes counted " + std::to_string(TextureCacheUsage().sampledBytes) + " bytes, not its allocation");
 }
 
+void recycleTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    const auto address = block.Surface(0);
+    std::memset(reinterpret_cast<void*>(address), 0xa1, SurfaceBytes);
+    const auto first = Sampled(context, address);
+    Require(Sampled(context, address) == first, "an unchanged surface did not serve its snapshot");
+    std::memset(reinterpret_cast<void*>(address), 0xb2, SurfaceBytes);
+    const auto second = Sampled(context, address);
+    Require(second != first, "a changed surface did not replace its snapshot");
+    std::memset(reinterpret_cast<void*>(address), 0xa1, SurfaceBytes);
+    const auto third = Sampled(context, address);
+    Require(third != second, "the replaced snapshot's size-equal buffer was not reread from guest memory");
+    Require(Sampled(context, address) == third, "an unchanged surface did not serve its remade snapshot");
+    constexpr std::uint32_t BigSide = Side * 2;
+    constexpr std::size_t BigBytes = std::size_t{BigSide} * BigSide * 4u;
+    const WatchedSurface watchedFirst(context, BigBytes);
+    const WatchedSurface watchedSecond(context, BigBytes);
+    const auto bigFirst = Sampled(context, watchedFirst.Address(), BigSide);
+    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the first big snapshot did not park its dropped " + std::to_string(BigBytes) + "-byte buffer in the spare pool");
+    const auto bigSecond = Sampled(context, watchedSecond.Address(), BigSide);
+    Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big snapshot did not take the parked spare of its size");
+}
+
+void spareAgeTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    constexpr std::uint32_t BigSide = Side * 2;
+    constexpr std::size_t BigBytes = std::size_t{BigSide} * BigSide * 4u;
+    {
+        const WatchedSurface watched(context, BigBytes);
+        const auto first = Sampled(context, watched.Address(), BigSide);
+        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the big snapshot did not park its dropped buffer in the spare pool");
+        for (std::uint64_t present = 0; present <= SpareSnapshotPresents; ++present) Recorder::CountPresent();
+        const auto small = Sampled(context, block.Surface(0));
+        Require(TextureCacheUsage().spareEntries == 0 && TextureCacheUsage().spareBytes == 0, "a spare idle for " + std::to_string(SpareSnapshotPresents + 1u) + " presents was not released");
+    }
+    ClearCachedTextures(context.device);
+    {
+        const WatchedSurface watchedFirst(context, BigBytes);
+        const WatchedSurface watchedSecond(context, BigBytes);
+        const auto second = Sampled(context, watchedFirst.Address(), BigSide);
+        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "the second big snapshot did not park its dropped buffer in the spare pool");
+        for (std::uint64_t present = 0; present < SpareSnapshotPresents; ++present) Recorder::CountPresent();
+        const auto third = Sampled(context, watchedSecond.Address(), BigSide);
+        Require(TextureCacheUsage().spareEntries == 1 && TextureCacheUsage().spareBytes == BigBytes, "a spare taken within " + std::to_string(SpareSnapshotPresents) + " presents was released instead of reused");
+    }
+}
+
 void heldTests(const Context& context) {
     Block block(context);
     auto held = Sampled(context, block.Surface(0));
@@ -952,7 +1054,7 @@ std::uint64_t ExpectedBudget(const Context& context) {
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &reported};
     ReportBudget(context.physical, &properties);
-    return SampledTextureBudget(context.memory, &reported, SampledTextureMemory() + TextureCacheUsage().storageBytes);
+    return SampledTextureBudget(context.memory, &reported, SampledTextureMemory() + TextureCacheUsage().storageBytes, TextureCacheUsage().storageBytes);
 }
 
 std::uint64_t ReadBudget(const Context& context) {
@@ -997,8 +1099,11 @@ void storageMemoryTests(Context context) {
     context.memoryProperties2 = &ReportBudget;
     Block block(context);
     auto held = Sampled(context, block.Surface(0));
-    const auto quarter = std::min<std::uint64_t>(StorageTextureBudget(context.memory, nullptr, 0, 0), ReportedBudget / 4u);
-    Require(ReadStorageBudget(context) == quarter, "52 GiB free of a 64 GiB budget does not leave the storage image cache its quarter");
+    const auto heap = LargestDeviceLocalHeap(context.memory);
+    Require(heap.has_value(), "the device has no device-local heap");
+    context.memory.memoryHeaps[*heap].size = std::max<VkDeviceSize>(context.memory.memoryHeaps[*heap].size, ReportedBudget);
+    const auto half = std::min<std::uint64_t>(context.memory.memoryHeaps[*heap].size / 2u, ReportedBudget / 2u);
+    Require(ReadStorageBudget(context) == half, "52 GiB free of a 64 GiB budget does not leave the storage image cache half of the heap or of the budget");
     context.memoryProperties2 = &ReportPressure;
     const auto pressed = ReadStorageBudget(context);
     const auto expected = GiB + TextureCacheUsage().storageBytes;
@@ -1006,23 +1111,218 @@ void storageMemoryTests(Context context) {
     std::printf("reported heap budget %llu MiB with %llu MiB in use: storage image cache budget %llu MiB\n", static_cast<unsigned long long>(ReportedBudget >> 20u), static_cast<unsigned long long>(PressedUsage >> 20u), static_cast<unsigned long long>(pressed >> 20u));
 }
 
+struct RecoveryProbe {
+    PFN_vkGetDeviceProcAddr deviceProc = nullptr;
+    std::uint64_t released = 0;
+    unsigned requests = 0;
+    unsigned failures = 0;
+    bool pressure = false;
+};
+
+RecoveryProbe recovery;
+
+VkDeviceSize ReclaimForTest(VkDeviceSize bytes, bool newImage) {
+    Require(newImage, "an image allocation did not identify itself to the recovery callback");
+    ++recovery.requests;
+    Require(ReleaseTextureCaches(bytes, false) == 0, "a buffer allocation was allowed to reclaim the cache held by image creation");
+    const auto released = ReleaseTextureCaches(bytes, newImage);
+    recovery.released += released;
+    return released;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL AllocateForTest(VkDevice device, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* allocator, VkDeviceMemory* memory) {
+    if (recovery.pressure && recovery.released == 0) {
+        ++recovery.failures;
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    return reinterpret_cast<PFN_vkAllocateMemory>(recovery.deviceProc(device, "vkAllocateMemory"))(device, info, allocator, memory);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL RecoveryProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkAllocateMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(AllocateForTest);
+    return recovery.deviceProc(device, name);
+}
+
+void recoveryTests(Context context, const std::string& mode) {
+    recovery = RecoveryProbe{};
+    recovery.deviceProc = context.deviceProc;
+    context.deviceProc = RecoveryProc;
+    context.cacheReclaim = ReclaimForTest;
+    context.bufferPool.reset();
+    Block block(context);
+    const bool storage = mode == "recover-storage";
+    if (storage) {
+        auto oldest = CachedStorageSurface(context, Resource(block.Surface(0)));
+        const auto allocated = oldest->AllocationBytes();
+        std::weak_ptr<StorageTexture> released = oldest;
+        oldest.reset();
+        auto pending = CachedStorageSurface(context, Resource(block.Surface(1)));
+        pending->MarkDirty();
+        recovery.pressure = true;
+        auto made = CachedStorageSurface(context, Resource(block.Surface(2)));
+        recovery.pressure = false;
+        Require(made != nullptr && released.expired(), "storage allocation recovery did not release its own oldest clean image");
+        Require(pending->Dirty() && StorageImageCached(context, pending.get()), "storage allocation recovery changed an image with pending results");
+        Require(recovery.released == allocated, "storage allocation recovery counted memory still held by its caller");
+        pending->Flush();
+        Require(!pending->Dirty(), "pending storage results could not be stored after memory recovery");
+    } else if (mode == "recover-sampled") {
+        auto oldest = Sampled(context, block.Surface(0));
+        Require(!oldest->ViewsStorageImage(), "the sampled recovery fixture needs a snapshot allocation");
+        const auto allocated = oldest->AllocationBytes();
+        std::weak_ptr<Texture> released = oldest;
+        oldest.reset();
+        auto held = Sampled(context, block.Surface(1));
+        recovery.pressure = true;
+        auto made = Sampled(context, block.Surface(2));
+        recovery.pressure = false;
+        Require(made != nullptr && released.expired(), "sampled allocation recovery did not release its own oldest unused texture");
+        Require(Sampled(context, block.Surface(1)) == held, "sampled allocation recovery removed a texture still held by its caller");
+        Require(recovery.released == allocated, "sampled allocation recovery counted memory still held by its caller");
+    } else {
+        const bool srgb = mode == "recover-srgb";
+        if (srgb) {
+            context.srgbDecodeFormats = SrgbDecodeFormats(context.formatProperties, context.physical);
+            context.srgbCopyFormats = SrgbCopyFormats(context.formatProperties, context.physical, context.srgbDecodeFormats);
+            Require(SrgbExpandsToRgba8(context, 128u), "the device cannot serve the sRGB expansion copy fixture");
+        }
+        auto oldest = Sampled(context, block.Surface(0));
+        Require(!oldest->ViewsStorageImage(), "the sampled recovery fixture needs a snapshot allocation");
+        const auto allocated = oldest->AllocationBytes();
+        std::weak_ptr<Texture> released = oldest;
+        oldest.reset();
+        auto held = Sampled(context, block.Surface(1));
+        const auto side = srgb ? 1024u : 512u;
+        const auto format = srgb ? 128u : 43u;
+        const auto sourceWords = Descriptor(block.Surface(4), side, format);
+        const auto sourceResource = DecodeTextureResource(sourceWords);
+        auto source = CachedStorageSurface(context, sourceResource);
+        source->MarkDirty();
+        if (srgb) {
+            Require(Texture::CanSrgbExpandFrom(context, *source, sourceResource), "the storage surface cannot serve an sRGB expansion copy");
+        } else {
+            Require(Texture::CanRepackCopyFrom(*source, sourceResource), "the storage surface cannot serve a repacked copy");
+        }
+        recovery.pressure = true;
+        auto made = CachedSampledTexture(context, sourceWords);
+        recovery.pressure = false;
+        Require(made != nullptr && made->SharedStorageSource() == source, "sampled copy allocation recovery did not serve the pending storage image");
+        Require(released.expired(), "sampled copy allocation recovery did not release its own oldest unused texture");
+        Require(source->Dirty() && StorageImageCached(context, source.get()), "sampled copy allocation recovery changed or evicted an image with pending results");
+        Require(!held->Released() && held.use_count() == 2, "sampled copy allocation recovery removed a texture still held by its caller");
+        const auto refreshed = Sampled(context, block.Surface(1));
+        Require(refreshed != nullptr && (refreshed == held || refreshed->ViewsStorageImage()), "sampled copy cache refresh did not serve the surface");
+        Require(recovery.released == allocated, "sampled copy allocation recovery counted memory still held by its caller");
+        source->Flush();
+        Require(!source->Dirty(), "pending storage results could not be stored after memory recovery");
+    }
+    Require(recovery.requests == 1 && recovery.failures >= 1 && recovery.failures <= 2, "image allocation recovery was skipped or retried without a bound");
+    const char* label = storage ? "storage" : mode == "recover-srgb" ? "sRGB" : mode == "recover-repack" ? "repacked" : "sampled";
+    std::printf("%s image allocation recovered after %u injected failures: %llu bytes released\n", label, recovery.failures, static_cast<unsigned long long>(recovery.released));
+}
+
+}
+
+ShaderRecompiler::RecompileResult StorageProgram(std::uint64_t address) {
+    ShaderRecompiler::DescriptorBinding binding{};
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    binding.descriptorSet = 0;
+    binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
+    binding.count = 1;
+    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    binding.imageWritten.assign(1, false);
+    binding.imageSamplers.assign(1, 0u);
+    const auto words = Descriptor(address);
+    binding.guestDescriptor.assign(words.begin(), words.end());
+    ShaderRecompiler::RecompileResult program;
+    program.bindings.push_back(std::move(binding));
+    return program;
+}
+
+void collectRefusalTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    constexpr std::size_t PageBytes = 4096;
+    constexpr auto collect = static_cast<std::size_t>(ShaderResources::FastFail::Collect);
+    PartialSurface surface(context);
+    surface.Commit(0, SurfaceBytes - PageBytes, 0x5a);
+    ClearCachedTextures(context.device);
+    const auto program = SampledProgram(surface.Address());
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto sampled = std::make_shared<ShaderResources>(context, shader);
+    Require(sampled->Reusable() && sampled->SampledTextures().size() == 1, "the template over the partial surface is not reusable");
+    ShaderResources::ProofReport report{};
+    Require(sampled->Revalidate(shader, &report), "a template over a surface with an uncommitted page did not prove current");
+    Require(report.path == ShaderResources::ProofPath::Full, "a template over a surface with an uncommitted page took the fast proof");
+    const auto before = ShaderResources::CollectRefusalCounts();
+    const auto walksBefore = ShaderResources::FullWalkNanoseconds();
+    Require(sampled->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full, "the second proof over the uncommitted page did not take the full walk");
+    Require(sampled->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Full, "the third proof over the uncommitted page did not take the full walk");
+    const auto after = ShaderResources::CollectRefusalCounts();
+    const auto walksAfter = ShaderResources::FullWalkNanoseconds();
+    Require(after.sampled - before.sampled == 2, "two collect refusals of a sampled surface were not counted");
+    Require(after.uncommitted - before.uncommitted == 2, "collect refusals over an uncommitted page were not counted as uncommitted");
+    Require(after.storage == before.storage && after.unwatched == before.unwatched && after.other == before.other, "a sampled surface's collect refusal was counted under another kind or cause");
+    Require(after.surfaces == 1 && after.bytes == SurfaceBytes, "two refusals of one surface were not counted as one surface of its bytes");
+    Require(walksAfter[collect] > walksBefore[collect], "the full walks after a collect refusal were not timed");
+    const auto storageProgram = StorageProgram(surface.Address());
+    const CompiledShader storageShader{ShaderRecompiler::ShaderStage::Compute, &storageProgram, 0};
+    auto storage = std::make_shared<ShaderResources>(context, storageShader);
+    Require(storage->Reusable() && storage->StorageImages().size() == 1, "the storage template over the partial surface is not reusable");
+    Require(storage->Revalidate(storageShader, &report) && report.path == ShaderResources::ProofPath::Full, "a storage template over a surface with an uncommitted page did not take the full walk");
+    const auto withStorage = ShaderResources::CollectRefusalCounts();
+    Require(withStorage.storage - after.storage == 1 && withStorage.sampled == after.sampled, "a storage image's collect refusal was not counted as a storage one");
+    Require(withStorage.uncommitted - after.uncommitted == 1, "a storage image's collect refusal over an uncommitted page was not counted as uncommitted");
+    Require(withStorage.surfaces == 1 && withStorage.bytes == SurfaceBytes, "a storage refusal of the same surface was counted as another surface");
+    Block block(context);
+    const auto hostProgram = SampledProgram(block.Surface(0));
+    const CompiledShader hostShader{ShaderRecompiler::ShaderStage::Compute, &hostProgram, 0};
+    auto hosted = std::make_shared<ShaderResources>(context, hostShader);
+    Require(hosted->Reusable() && hosted->SampledTextures().size() == 1, "the template over the host-allocated surface is not reusable");
+    Require(hosted->Revalidate(hostShader, &report) && report.path == ShaderResources::ProofPath::Full, "a template over a host-allocated surface did not take the full walk");
+    const auto outside = ShaderResources::CollectRefusalCounts();
+    Require(outside.sampled - withStorage.sampled == 1 && outside.unwatched - withStorage.unwatched == 1, "a host-allocated surface's collect refusal was not counted as unwatched");
+    Require(outside.uncommitted == withStorage.uncommitted && outside.other == withStorage.other, "a host-allocated surface's collect refusal was counted under another cause");
+    Require(outside.surfaces == 2 && outside.bytes == 2 * SurfaceBytes, "the host-allocated surface was not counted as a second surface");
+    hosted.reset();
+    surface.Commit(SurfaceBytes - PageBytes, PageBytes, 0);
+    const auto committed = ShaderResources::CollectRefusalCounts();
+    Require(sampled->Revalidate(shader, &report), "the template did not prove current once the page was committed");
+    Require(storage->Revalidate(storageShader, &report), "the storage template did not prove current once the page was committed");
+    const auto final = ShaderResources::CollectRefusalCounts();
+    Require(final.sampled == committed.sampled && final.storage == committed.storage, "a proof over a committed surface counted a collect refusal");
+    sampled.reset();
+    storage.reset();
+    ClearCachedTextures(context.device);
+    std::puts("collect refusal counters passed");
 }
 
 int main(int argc, char** argv) {
     try {
         const bool memory = argc > 1 && std::string(argv[1]) == "memory";
         const std::string mode = argc > 1 ? argv[1] : "";
+        if (mode == "collect-refusals") {
+#ifdef _WIN32
+            _putenv_s("APS5_PROFILE_DRAW", "1");
+#else
+            setenv("APS5_PROFILE_DRAW", "1", 1);
+#endif
+        }
         if (mode == "device-selection-cpu") {
             deviceSelectionTests();
             return 0;
         }
         const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
         const bool disableStorageImageMultisample = mode == "without-storage-image-multisample";
+        const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack";
 #ifdef _WIN32
-        if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", "1");
+        if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1");
         if (std::getenv("APS5_TEMPLATE_AUDIT_MS") == nullptr) _putenv_s("APS5_TEMPLATE_AUDIT_MS", "250");
 #else
-        if (!memory) setenv("APS5_TEXTURE_CACHE_MIB", "1", 1);
+        if (!memory) setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
         setenv("APS5_TEMPLATE_AUDIT_MS", "250", 0);
 #endif
         std::unique_ptr<Device> device;
@@ -1074,6 +1374,12 @@ int main(int argc, char** argv) {
             std::puts("resource cache lookup-changed tests passed");
             return 0;
         }
+        if (mode == "collect-refusals") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            collectRefusalTests(context);
+            std::puts("resource cache collect refusal tests passed");
+            return 0;
+        }
         if (memory) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             memoryTests(context);
@@ -1082,10 +1388,16 @@ int main(int argc, char** argv) {
             std::puts("sampled texture memory budget tests passed");
             return 0;
         }
+        if (recover) {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            recoveryTests(context, mode);
+            return 0;
+        }
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             reportedBudgetTests(context);
             snapshotTests(context);
+            recycleTests(context);
             heldTests(context);
             releasedTests(context);
             rescanTests(context);
@@ -1097,6 +1409,7 @@ int main(int argc, char** argv) {
             secondUseTests(context);
             earlyMissTests(context);
             collidingKeyTests(context);
+            spareAgeTests(context);
             ClearCachedTextures(context.device);
         }
         std::puts("sampled texture cache budget tests passed");

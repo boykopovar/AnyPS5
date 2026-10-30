@@ -11,11 +11,13 @@ namespace Cli {
 
 struct Args {
     bool showHelp = false;
+    bool showVersion = false;
     bool skipSyscallCheck = false;
     bool trapSdkSyscallStubs = false;
     bool skipSceModule = false;
     bool toIntel = false;
     bool toRosetta = false;
+    bool frameRedZone = false;
     bool writeRegistry = false;
     bool toWindows = false;
     bool toMacos = false;

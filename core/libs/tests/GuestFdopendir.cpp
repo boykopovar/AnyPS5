@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -9,16 +12,7 @@
 #include <fstream>
 #include <map>
 #include <string>
-extern "C" {
-void* APS5_VABI fdopendir_nid_postfix(int);
-GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void*);
-int APS5_VABI closedir_nid_postfix(void*);
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-int* APS5_VABI __error_nid_postfix();
-}
+
 static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     const auto root = std::filesystem::path("anyps5-fdopendir-test-" +

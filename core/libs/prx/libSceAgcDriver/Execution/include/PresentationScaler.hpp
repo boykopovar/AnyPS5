@@ -36,6 +36,8 @@ public:
     static std::vector<AspectFitRect> LetterboxBands(std::uint32_t width, std::uint32_t height, std::uint32_t destinationWidth, std::uint32_t destinationHeight);
     std::uint32_t SourceWidth() const { return sourceWidth; }
     std::uint32_t SourceHeight() const { return sourceHeight; }
+    VkImage SourceImage() const { return sourceImage; }
+    VkFormat SourceFormat() const { return sourceFormat; }
 
 private:
     void release() noexcept;
@@ -46,6 +48,8 @@ private:
     std::uint32_t sourceHeight = 0;
     VkImage sourceImage = VK_NULL_HANDLE;
     VkDeviceMemory sourceMemory = VK_NULL_HANDLE;
+    VkDeviceSize sourceBytes = 0;
+    std::uint32_t sourceMemoryType = 0;
     VkImage blackImage = VK_NULL_HANDLE;
     VkDeviceMemory blackMemory = VK_NULL_HANDLE;
 };

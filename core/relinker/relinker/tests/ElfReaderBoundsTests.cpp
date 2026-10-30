@@ -233,6 +233,41 @@ int main() {
             bytes.resize(128 + 3 * 64 - 1);
             RejectSections(std::move(bytes));
         }},
+        {"section file range past end of file", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 216, 0x2f0);
+            RejectSections(std::move(bytes));
+        }},
+        {"section file range offset overflow", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 216, std::numeric_limits<std::uint64_t>::max() - 15);
+            RejectSections(std::move(bytes));
+        }},
+        {"section ending at end of file", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 216, 0x2e0);
+            Write<std::uint64_t>(bytes, 224, 32);
+            const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+            Require(sections.size() == 3 && sections[1].Offset + sections[1].SectionSize == 0x300);
+        }},
+        {"unbacked SHT_NOBITS section with range past end of file", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 196, 8);
+            Write<std::uint64_t>(bytes, 216, 0x2f0);
+            Write<std::uint64_t>(bytes, 224, 0x1000);
+            const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+            Require(sections.size() == 3 && sections[1].Type == 8);
+        }},
+        {"empty section beyond end of file", [] {
+            constexpr std::uint64_t offsets[] = {0x300, 0x301, std::numeric_limits<std::uint64_t>::max()};
+            for (const std::uint64_t offset : offsets) {
+                auto bytes = Fixture();
+                Write<std::uint64_t>(bytes, 216, offset);
+                Write<std::uint64_t>(bytes, 224, 0);
+                const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+                Require(sections.size() == 3 && sections[1].Offset == offset && sections[1].SectionSize == 0);
+            }
+        }},
         {"translation program header stride", [] {
             for (const std::uint16_t stride : {0, 48, 64}) {
                 auto bytes = Fixture();

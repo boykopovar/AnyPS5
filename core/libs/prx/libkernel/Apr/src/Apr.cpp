@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <optional>
 #include <deque>
@@ -10,6 +12,7 @@
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
+#include "prx/libkernel/Apr/include/AmmPool.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -34,8 +37,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -281,21 +282,14 @@ constexpr std::uint64_t AmmRangeAlignment = 64ull << 30;
 constexpr int GuestMapFixed = 0x10;
 constexpr int GuestMapNoOverwrite = 0x80;
 
-struct AmmPage {
-    std::uint64_t physical;
-    std::int32_t type;
-    std::int32_t protection;
-    bool pooled;
-};
+static_assert(AmmPool::PageBytes == PS5_PAGE_SIZE);
 
-struct AmmState {
+using AmmPage = AmmPool::Page;
+
+struct AmmState : AmmPool::Records {
     std::mutex lock;
     std::uintptr_t base = 0;
-    std::map<std::uint64_t, std::uint64_t> pool;
-    std::map<std::uintptr_t, AmmPage> pages;
-    std::map<std::uint64_t, std::uint32_t> pooledUses;
     std::set<std::uintptr_t> prt;
-    std::atomic<std::uint32_t> lastSubmit{0};
 };
 
 AmmState& _amm() {
@@ -332,36 +326,15 @@ int _ammHostProtection(std::int32_t protection) {
 }
 
 void _returnPoolPages(AmmState& state, std::uint64_t offset, std::uint64_t bytes) {
-    auto next = state.pool.lower_bound(offset);
-    if (next != state.pool.end() && next->first == offset + bytes) {
-        bytes += next->second;
-        next = state.pool.erase(next);
-    }
-    if (next != state.pool.begin()) {
-        const auto previous = std::prev(next);
-        if (previous->first + previous->second == offset) {
-            previous->second += bytes;
-            return;
-        }
-    }
-    state.pool.emplace(offset, bytes);
+    AmmPool::ReturnPages(state, offset, bytes);
 }
 
-std::uint64_t _takePoolPages(AmmState& state, std::uint64_t bytes) {
-    for (auto it = state.pool.begin(); it != state.pool.end(); ++it) {
-        if (it->second < bytes) continue;
-        const auto offset = it->first;
-        const auto remaining = it->second - bytes;
-        state.pool.erase(it);
-        if (remaining != 0) state.pool.emplace(offset + bytes, remaining);
-        return offset;
-    }
-    throw std::runtime_error("AMM: no free run of " + std::to_string(bytes) + " bytes in the direct memory given to the mapper");
+bool _tryTakePoolPages(AmmState& state, std::uint64_t bytes, std::uint64_t& offset) {
+    return AmmPool::TryTakeRun(state, bytes, offset);
 }
 
 void _addPage(AmmState& state, std::uint64_t address, const AmmPage& page) {
-    state.pages[address] = page;
-    if (page.pooled) ++state.pooledUses[page.physical];
+    AmmPool::AddPage(state, address, page);
 }
 
 void _releasePage(AmmState& state, const AmmPage& page) {
@@ -492,14 +465,12 @@ void _ammAllocatePrt(const Apr::AmmProtectCommand& command) {
             }
             if (DoMprotect(reinterpret_cast<void*>(address), bytes, _ammHostProtection(command.protection)) != 0) throw std::runtime_error("AMM: protection change failed");
         } else {
-            std::vector<AmmPage> pages;
             try {
-                for (std::uint64_t page = 0; page < bytes; page += PS5_PAGE_SIZE) pages.push_back({_takePoolPages(state, PS5_PAGE_SIZE), command.type, command.protection, true});
+                AmmPool::MapScattered(state, address, bytes, command.type, command.protection, [&](std::uint64_t at, std::uint64_t physical, std::uint64_t size) { _mapRun(at, physical, size, command.protection); });
             } catch (...) {
-                for (const auto& page : pages) _returnPoolPages(state, page.physical, PS5_PAGE_SIZE);
+                _zeroPrt(address, bytes);
                 throw;
             }
-            _mapPages(state, address, pages);
         }
         offset = end;
     }
@@ -512,7 +483,16 @@ void _ammMap(const Apr::AmmMapCommand& command, bool direct) {
     _reserve(command.address, command.size);
     _forgetPages(state, command.address, command.size);
     _clearPrt(state, command.address, command.size);
-    const auto physical = direct ? command.directOffset : _takePoolPages(state, command.size);
+    std::uint64_t physical = direct ? command.directOffset : 0;
+    if (!direct && !_tryTakePoolPages(state, command.size, physical)) {
+        try {
+            AmmPool::MapScattered(state, command.address, command.size, command.type, command.protection, [&](std::uint64_t address, std::uint64_t physicalRun, std::uint64_t size) { _mapRun(address, physicalRun, size, command.protection); });
+        } catch (...) {
+            _reserve(command.address, command.size);
+            throw;
+        }
+        return;
+    }
     try {
         _mapRun(command.address, physical, command.size, command.protection);
     } catch (...) {
@@ -590,10 +570,19 @@ struct Deferred {
 std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::uint32_t start = 0, ReadCursor read = {}, bool defer = false) {
     std::uint32_t cursor = start;
     while (cursor < buffer.offset) {
+        if (buffer.offset - cursor < Apr::NopHeaderBytes) throw std::runtime_error("APR: truncated command buffer");
+        std::uint32_t first;
+        std::memcpy(&first, buffer.base + cursor, sizeof(first));
+        if (Apr::IsNopHeader(first)) {
+            const std::uint32_t bytes = Apr::NopDwords(first) * Apr::NopHeaderBytes;
+            if (bytes > buffer.offset - cursor) throw std::runtime_error("APR: malformed command");
+            cursor += bytes;
+            continue;
+        }
         if (cursor + sizeof(Apr::CommandHeader) > buffer.offset) throw std::runtime_error("APR: truncated command buffer");
         Apr::CommandHeader header;
         std::memcpy(&header, buffer.base + cursor, sizeof(header));
-        if ((static_cast<std::uint32_t>(header.opcode) & 0xffu) == static_cast<std::uint32_t>(Apr::Opcode::CompactReadFileGather)) {
+        if ((first & 0xffu) == static_cast<std::uint32_t>(Apr::Opcode::CompactReadFileGather)) {
             if (sizeof(Apr::CompactReadFileGatherCommand) > buffer.offset - cursor) throw std::runtime_error("APR: truncated compact gather command");
             Apr::CompactReadFileGatherCommand command;
             std::memcpy(&command, buffer.base + cursor, sizeof(command));
@@ -605,7 +594,6 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         }
         if (header.bytes < sizeof(header) || header.bytes > buffer.offset - cursor) throw std::runtime_error("APR: malformed command");
         switch (header.opcode) {
-        case Apr::Opcode::Nop:
         case Apr::Opcode::PushMarker:
         case Apr::Opcode::PopMarker:
         case Apr::Opcode::SetMarker:
@@ -674,6 +662,7 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
         case Apr::Opcode::WriteKernelEventQueue: {
             const auto command = _read<Apr::WriteKernelEventQueueCommand>(buffer, cursor);
             EqueueTriggerEvent_nid_postfix(static_cast<KernelEqueue>(command.equeue), static_cast<uintptr_t>(command.ident), EVFILT_AMPR, reinterpret_cast<void*>(command.data));
+
             break;
         }
         case Apr::Opcode::WriteAddressFromTimeCounter: {
@@ -700,8 +689,6 @@ std::optional<Deferred> _execute(const Apr::CommandBufferObject& buffer, std::ui
 }
 
 extern "C" {
-
-int APS5_VABI sceKernelAllocateDirectMemory(int64_t searchStart, int64_t searchEnd, size_t length, size_t alignment, int memoryType, int64_t* offset);
 
 int AmmGiveDirectMemory_nid_no_patch(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset) {
     if (!offset || (usage != 0 && usage != 1)) return SCE_KERNEL_ERROR_EINVAL;
@@ -815,17 +802,19 @@ void _waitSubmitted(std::uint32_t id, bool amm) {
 }
 
 std::uint32_t AmmSubmit_nid_no_patch(void* base, std::uint32_t bytes) {
-    const auto id = _submit(static_cast<const std::uint8_t*>(base), bytes, true);
-    _amm().lastSubmit.store(id);
-    return id;
+    return _submit(static_cast<const std::uint8_t*>(base), bytes, true);
 }
 
 bool AmmSubmitted_nid_no_patch(std::uint32_t id) {
-    if (id == 0 || id > _amm().lastSubmit.load()) return false;
+    if (id == 0) return false;
+    {
+        auto& queue = _queue(true);
+        std::lock_guard lock(queue.mutex);
+        if (id > queue.submitted) return false;
+    }
     _waitSubmitted(id, true);
     return true;
 }
-
 
 int APS5_VABI sceKernelAprResolveFilepathsToIds(const char** paths, uint32_t count, uint32_t* ids, uint32_t* error_index) {
     if (!paths || !ids) return _fail(GUEST_EINVAL);

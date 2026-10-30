@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <cstddef>
@@ -8,28 +10,6 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
-
-extern "C" {
-KernelCpumask APS5_VABI sceKernelGetAvailableCpumask(void);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask);
-int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask);
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask);
-int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask);
-int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t id, std::size_t size, void* mask);
-int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t id, std::size_t size, const void* mask);
-int APS5_VABI getpid_nid_postfix(void);
-int* APS5_VABI __error_nid_postfix();
-Pthread APS5_VABI pthread_self_nid_postfix(void);
-int APS5_VABI pthread_getaffinity_np_nid_postfix(Pthread thread, std::size_t cpusetSize, void* cpuset);
-int APS5_VABI pthread_setaffinity_np_nid_postfix(Pthread thread, std::size_t cpusetSize, const void* cpuset);
-int APS5_VABI scePthreadGetthreadid(void);
-int APS5_VABI sceKernelGetCurrentCpu(void);
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr int PS5_LOGICAL_CPUS = 16;
@@ -54,13 +34,16 @@ static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_ERANGE = 34;
 
 static KernelCpumask ReadCpuset(Pthread thread) {
-    std::uint8_t cpuset[GUEST_CPUSET_BYTES + 8];
+    constexpr std::size_t widest = 16;
+    std::uint8_t cpuset[widest + 8];
     std::memset(cpuset, 0xAB, sizeof(cpuset));
-    Require(pthread_getaffinity_np_nid_postfix(thread, GUEST_CPUSET_BYTES, cpuset) == 0);
-    for (std::size_t i = sizeof(KernelCpumask); i < GUEST_CPUSET_BYTES; ++i) Require(cpuset[i] == 0);
-    for (std::size_t i = GUEST_CPUSET_BYTES; i < sizeof(cpuset); ++i) Require(cpuset[i] == 0xAB);
+    Require(pthread_getaffinity_np_nid_postfix(thread, widest, cpuset) == 0);
+    for (std::size_t i = sizeof(KernelCpumask); i < widest; ++i) Require(cpuset[i] == 0);
+    for (std::size_t i = widest; i < sizeof(cpuset); ++i) Require(cpuset[i] == 0xAB);
     KernelCpumask mask = 0;
     std::memcpy(&mask, cpuset, sizeof(mask));
+    KernelCpumask narrow = ~KernelCpumask{0};
+    Require(pthread_getaffinity_np_nid_postfix(thread, sizeof(narrow), &narrow) == 0 && narrow == mask);
     return mask;
 }
 
@@ -120,6 +103,7 @@ static void* APS5_VABI SetCpuset(void* arg) {
     std::uint64_t set[4] = {cpu | (1ull << 40), 0, 0, 0};
     result->results[0] = cpuset_setaffinity_nid_postfix(3, 1, -1, 8, set);
     scePthreadGetaffinity(scePthreadSelf(), &result->affinity[0]);
+
     set[1] = 1;
     result->results[1] = cpuset_setaffinity_nid_postfix(3, 1, -1, 16, set) == -1 && *__error_nid_postfix() == 22;
     set[1] = 0;
@@ -130,9 +114,11 @@ static void* APS5_VABI SetCpuset(void* arg) {
     const std::uint64_t unavailable[1] = {1ull << 40};
     result->results[6] = cpuset_setaffinity_nid_postfix(3, 1, -1, 8, unavailable) == -1 && *__error_nid_postfix() == 11;
     scePthreadGetaffinity(scePthreadSelf(), &result->affinity[1]);
+
     const std::uint64_t process[1] = {cpu};
     result->results[7] = cpuset_setaffinity_nid_postfix(3, 2, getpid_nid_postfix(), 8, process);
     scePthreadGetaffinity(scePthreadSelf(), &result->affinity[2]);
+
     return nullptr;
 }
 
@@ -294,11 +280,11 @@ int main() {
 
     Require(ReadCpuset(pthread_self_nid_postfix()) == available);
     std::uint8_t rawSet[GUEST_CPUSET_BYTES]{};
-    for (const std::size_t size : {std::size_t{0}, std::size_t{8}, std::size_t{31}, std::size_t{33}, std::size_t{64}})
+    for (const std::size_t size : {std::size_t{32}, std::size_t{33}, std::size_t{64}})
         Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), size, rawSet) == GUEST_ERANGE);
     Require(pthread_getaffinity_np_nid_postfix(nullptr, GUEST_CPUSET_BYTES, rawSet) == GUEST_EINVAL);
     Require(pthread_getaffinity_np_nid_postfix(nullptr, 0, rawSet) == GUEST_EINVAL);
-    Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), GUEST_CPUSET_BYTES, nullptr) == GUEST_EFAULT);
+    Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), 16, nullptr) == GUEST_EFAULT);
     Require(cpuset_getaffinity_nid_postfix(3, 1, scePthreadGetthreadid(), 8, processSet) == 0 && processSet[0] == available);
     Require(cpuset_getaffinity_nid_postfix(3, 1, 999999, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_ESRCH);
     Require(cpuset_getaffinity_nid_postfix(3, 2, 999999, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_ESRCH);

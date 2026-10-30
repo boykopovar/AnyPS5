@@ -8,10 +8,10 @@ import tempfile
 
 from guest_import_fixtures import executable
 from test_guest_intel_trampolines import main_fixture, pe_sections
-from test_guest_module_args import ARGP, ARGS, GETTER, RETURNED, SETTER, macho_binds
+from test_guest_module_args import ARGP, ARGS, GETTER, RETURNED, SETTER, load_and_record, macho_binds
 from test_guest_module_directories import needed_libraries
 from test_guest_module_dir import pe_export_names
-from test_guest_symbol_names import dynamic_tags, imported_symbols
+from test_guest_symbol_names import dynamic_tags, file_offset, imported_symbols, module_symbols
 
 PREINIT_SLOT = 0x2900
 SHARED = 0x100
@@ -85,6 +85,46 @@ def convert(relinker, work, preinit, options, base=0):
     return output, work / 'app0' / 'sce_module' / (name + '.guest.prx')
 
 
+def check_deferred_linux(relinker, work, host, preinit, has_init, native):
+    (work / 'sce_module').mkdir(parents=True)
+    plugins = work / 'plugins'
+    plugins.mkdir()
+    source = work / 'input.elf'
+    source.write_bytes(main_fixture())
+    image = zero_init_module(preinit)
+    if not has_init:
+        for position in range(0x2000, 0x2300, 16):
+            if struct.unpack_from('<q', image, position)[0] == 12:
+                struct.pack_into('<q', image, position, 21)
+                break
+        else:
+            raise AssertionError('Fixture has no DT_INIT tag to remove')
+    (plugins / 'zero.prx').write_bytes(image)
+    libraries = work / 'libs'
+    libraries.mkdir()
+    provider = libraries / 'libc.prx'
+    shutil.copyfile(host, provider)
+    shutil.copyfile(host, libraries / 'libkernel.prx')
+    result = subprocess.run([str(relinker), '--skip-syscall-check', '--module-dir', 'plugins',
+                             '--rpath', '$ORIGIN/libs', str(source), str(work / 'output.elf')],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, (preinit, has_init, result.stdout, result.stderr)
+    converted = work / 'app0/plugins/zero.prx.guest.prx'
+    image = converted.read_bytes()
+    assert ('libkernel.prx' in needed_libraries(image)) == has_init, 'Deferred initializer dependency does not match DT_INIT presence'
+    tags = dynamic_tags(image)
+    assert tags.get(12, 0) == 0 and tags.get(25, 0) == 0, 'Deferred Linux module has an eager initializer'
+    index = module_symbols(image).index('__aps5_guest_lifecycle_nid_no_patch') + 1
+    table, = struct.unpack_from('<Q', image, file_offset(image, tags[6]) + index * 24 + 8)
+    relocations = [struct.unpack_from('<QQq', image, file_offset(image, tags[7]) + offset)
+                   for offset in range(0, tags[8], tags[9])]
+    init_relocations = [entry for entry in relocations if entry[0] == table + 16]
+    expected = [(table + 16, 8, 0)] if has_init else []
+    assert init_relocations == expected, (preinit, has_init, init_relocations, expected)
+    if native and has_init:
+        load_and_record(work, provider, converted)
+
+
 def main():
     if sys.argv[1] == '--load':
         import ctypes
@@ -138,6 +178,9 @@ def main():
                 assert run.returncode == 0, (preinit, run.returncode, run.stdout, run.stderr)
                 recorded = events.read_text()
                 assert f'args={ARGS:016x} argp={ARGP:016x}\nresult={RETURNED}\n' == recorded, (preinit, recorded)
+        for preinit, has_init in ((False, True), (True, True), (False, False)):
+            check_deferred_linux(relinker, work / f'linux-runtime-{preinit}-{has_init}',
+                                 host, preinit, has_init, linux)
         for index, options in enumerate(([], ['--macos'], ['--windows'])):
             convert(relinker, work / f'outside-{index}', False, options, 0x1000)
     print('Guest zero initializer tests passed' if linux else 'Guest zero initializer tests passed: native execution skipped')

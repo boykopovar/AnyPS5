@@ -1,17 +1,20 @@
 #ifndef CORE_LIBS_PRX_LIBSCENGS2_TESTS_NGS2TEST_HPP
 #define CORE_LIBS_PRX_LIBSCENGS2_TESTS_NGS2TEST_HPP
 
+#include "prx/libSceNgs2.native/include/Api.hpp"
 #include "prx/libSceNgs2.native/include/Ngs2Types.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <vector>
 
 extern "C" {
 int APS5_VABI sceNgs2ParseWaveformData(const void*, size_t, Ngs2WaveformInfo*);
 int APS5_VABI sceNgs2ParseWaveformFile(const char*, uint32_t, Ngs2WaveformInfo*);
 int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat*, uint32_t, uint32_t, Ngs2WaveformBlock*);
+int APS5_VABI sceNgs2GetWaveformFrameInfo(const Ngs2WaveformFormat*, uint32_t*, uint32_t*, uint32_t*, uint32_t*);
 int APS5_VABI sceNgs2SystemResetOption(Ngs2SystemOption*);
 int APS5_VABI sceNgs2SystemQueryBufferSize(const Ngs2SystemOption*, Ngs2ContextBufferInfo*);
 int APS5_VABI sceNgs2SystemCreate(const Ngs2SystemOption*, const Ngs2ContextBufferInfo*, uintptr_t*);
@@ -42,6 +45,8 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t, const Ngs2VoiceCommand*, size_t
 int APS5_VABI sceNgs2VoiceGetState(uintptr_t, Ngs2VoiceState*, size_t);
 int APS5_VABI sceNgs2VoiceGetStateFlags(uintptr_t, uint32_t*);
 int APS5_VABI sceNgs2VoiceGetOwner(uintptr_t, uintptr_t*, uint32_t*);
+int APS5_VABI sceNgs2VoiceGetMatrixInfo(uintptr_t, uint32_t, Ngs2VoiceMatrixInfo*, size_t);
+int APS5_VABI sceNgs2CustomRackGetModuleInfo(uintptr_t, uint32_t, Ngs2CustomModuleInfo*, size_t);
 int APS5_VABI sceNgs2VoiceGetPortInfo(uintptr_t, uint32_t, Ngs2VoicePortInfo*, size_t);
 int APS5_VABI sceNgs2VoiceQueryInfo(uintptr_t, uint32_t, void*, size_t);
 int APS5_VABI sceNgs2GeomResetListenerParam(Ngs2GeomListenerParam*);
@@ -60,10 +65,64 @@ inline void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
+inline bool FrameInfoThrows(const Ngs2WaveformFormat& format) {
+    std::uint32_t values[4] = {0xa1, 0xa2, 0xa3, 0xa4};
+    bool threw = false;
+    try {
+        sceNgs2GetWaveformFrameInfo(&format, &values[0], &values[1], &values[2], &values[3]);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(values[0] == 0xa1 && values[1] == 0xa2 && values[2] == 0xa3 && values[3] == 0xa4);
+    return threw;
+}
+
+#if defined(NGS2_TEST_GRAIN)
+inline constexpr std::uint32_t Grain = NGS2_TEST_GRAIN;
+#else
 inline constexpr std::uint32_t Grain = 8;
+#endif
+
+template <typename TSignal>
+inline float SamplerReference(std::uint32_t frame, float pitch, TSignal signal) {
+    const float position = frame * pitch;
+    const auto index = static_cast<std::uint32_t>(position);
+    const auto source = [&](std::uint32_t offset) { return offset < 4 ? 0.0f : signal(offset - 4); };
+    if (position == index) return source(index + 1);
+    Require(position - index == 0.5f);
+    return (source(index) * -0.0303300861f + source(index + 1) * 0.530330062f) +
+           (source(index + 2) * 0.530330062f + source(index + 3) * -0.0303300861f);
+}
 
 inline std::vector<std::vector<std::uint64_t>> buffers;
 inline std::size_t usedBuffers = 0;
+
+struct TestRackBuffer {
+    std::uintptr_t rack;
+    void* buffer;
+};
+inline std::vector<TestRackBuffer> testRackBuffers;
+
+inline int TestRackCreate(std::uintptr_t system, std::uint32_t id, const Ngs2RackOption* option,
+                          const Ngs2ContextBufferInfo* buffer, std::uintptr_t* rack) {
+    const int result = sceNgs2RackCreate(system, id, option, buffer, rack);
+    if (result == SCE_NGS2_OK) testRackBuffers.push_back({*rack, buffer->host_buffer});
+    return result;
+}
+
+inline void ResetBuffers(std::size_t first) {
+    for (auto it = testRackBuffers.begin(); it != testRackBuffers.end();) {
+        bool owned = false;
+        for (std::size_t i = first; i < usedBuffers; ++i) if (buffers[i].data() == it->buffer) owned = true;
+        if (!owned) { ++it; continue; }
+        const auto rack = it->rack;
+        testRackBuffers.erase(it);
+        const int result = sceNgs2RackDestroy(rack, nullptr);
+        Require(result == SCE_NGS2_OK || result == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
+        it = testRackBuffers.begin();
+    }
+    usedBuffers = first;
+}
 
 inline Ngs2ContextBufferInfo Buffer(const Ngs2ContextBufferInfo& query) {
     if (usedBuffers == buffers.size()) buffers.emplace_back();
@@ -90,7 +149,7 @@ inline uintptr_t CreateRack(uintptr_t system, std::uint32_t rackId) {
     Require(sceNgs2RackQueryBufferSize(rackId, nullptr, &query) == SCE_NGS2_OK);
     const auto info = Buffer(query);
     uintptr_t rack = 0;
-    Require(sceNgs2RackCreate(system, rackId, nullptr, &info, &rack) == SCE_NGS2_OK && rack != 0);
+    Require(TestRackCreate(system, rackId, nullptr, &info, &rack) == SCE_NGS2_OK && rack != 0);
     return rack;
 }
 

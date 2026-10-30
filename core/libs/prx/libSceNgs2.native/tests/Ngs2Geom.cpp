@@ -1,3 +1,4 @@
+#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include "Ngs2Test.hpp"
 
 #include <cstdint>
@@ -105,6 +106,7 @@ static void RejectListener(const Ngs2GeomListenerParam* param, std::uint32_t fla
     bool rejected = false;
     try {
         sceNgs2GeomCalcListener(param, &work, flags);
+
     } catch (const std::exception&) {
         rejected = true;
     }

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "VulkanTestDevice.hpp"
+#include "FixtureDeviceSelection.hpp"
 #include "../AllocationFailure.hpp"
 #include "../SlabReturn.hpp"
 #include <SDL_loadso.h>
@@ -143,6 +144,8 @@ public:
     Device() {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -154,6 +157,12 @@ public:
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &application;
+#ifdef __APPLE__
+            const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            info.enabledExtensionCount = 1;
+            info.ppEnabledExtensionNames = &portability;
+#endif
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
@@ -162,22 +171,11 @@ public:
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
             const auto properties = function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties");
-            const auto* requested = std::getenv("ANYPS5_GPU");
-            const bool named = requested != nullptr && *requested != '\0';
-            context.physical = devices.front();
-            for (const auto candidate : devices) {
-                VkPhysicalDeviceProperties described{};
-                properties(candidate, &described);
-                if (named ? std::strstr(described.deviceName, requested) != nullptr : described.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-                    context.physical = candidate;
-                    break;
-                }
-            }
+            context.physical = SelectFixturePhysicalDevice(devices, properties);
             VkPhysicalDeviceProperties selected{};
             properties(context.physical, &selected);
             context.limits = selected.limits;
             std::printf("device %s vendor=0x%x device=0x%x driver=0x%x\n", selected.deviceName, selected.vendorID, selected.deviceID, selected.driverVersion);
-            Require(requested == nullptr || std::strstr(selected.deviceName, requested) != nullptr, "selected device does not match ANYPS5_GPU");
             VkPhysicalDeviceFeatures supported{};
             function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &supported);
             Require(supported.robustBufferAccess == VK_TRUE, "the device lacks robustBufferAccess");
@@ -485,7 +483,7 @@ std::uint32_t ReadPastEnd(const Context& context, AgcDriver::Graphics::Buffer& s
 
 void RobustReadPastEnd(const Context& context) {
     constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    const auto classBytes = BufferPool::Capacity(RequestedBytes, HostMemory);
+    const auto classBytes = BufferPool::Capacity(RequestedBytes);
     Require(classBytes > (PastEnd + 1) * sizeof(std::uint32_t), "the requested buffer's size class does not reach the word read past its end");
     {
         AgcDriver::Graphics::Buffer earlier(context, classBytes, usage);
@@ -515,10 +513,10 @@ void ExpectCreated(std::initializer_list<VkDeviceSize> sizes, const std::string&
 
 void ExactSizes(const Context& context) {
     constexpr VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    const auto hostClass = BufferPool::Capacity(100, HostMemory);
-    const auto deviceClass = BufferPool::Capacity(3000, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Require(BufferPool::Capacity(80, HostMemory) == hostClass && hostClass != 80, "80 and 100 bytes are not one host size class");
-    Require(BufferPool::Capacity(2500, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == deviceClass && deviceClass != 2500, "2500 and 3000 bytes are not one device size class");
+    const auto hostClass = BufferPool::Capacity(100);
+    const auto deviceClass = BufferPool::Capacity(3000);
+    Require(BufferPool::Capacity(80) == hostClass && hostClass != 80, "80 and 100 bytes are not one host size class");
+    Require(BufferPool::Capacity(2500) == deviceClass && deviceClass != 2500, "2500 and 3000 bytes are not one device size class");
     CreatedSizes().clear();
     {
         AgcDriver::Graphics::Buffer fresh(context, 100, usage);

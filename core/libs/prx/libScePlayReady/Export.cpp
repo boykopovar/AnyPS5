@@ -1,3 +1,4 @@
+#include "prx/libScePlayReady/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -216,8 +217,7 @@ int APS5_VABI scePlayReadyMemFree() {
 }
 
 int APS5_VABI scePlayReadyMemGetStats() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80004001);
 }
 
 int APS5_VABI scePlayReadyMemRealloc() {
