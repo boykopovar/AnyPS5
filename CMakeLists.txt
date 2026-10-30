@@ -573,6 +573,7 @@ set_target_properties(usb-1.0 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 include(cmake/ZArchive.cmake)
 include(cmake/Opus.cmake)
+include(cmake/Icu.cmake)
 if(WIN32 OR APPLE)
     set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
     set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)

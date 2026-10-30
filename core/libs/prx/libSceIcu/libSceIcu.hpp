@@ -6,3 +6,5 @@
 #include "CString.hpp"
 #include "Space.hpp"
 #include "Unescape.hpp"
+#include "Properties.hpp"
+#include "CaseMapping.hpp"
