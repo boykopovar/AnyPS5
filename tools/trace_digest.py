@@ -86,6 +86,8 @@ class Trace:
                     raise ValueError(f"trace event {index}: name must be a string")
                 ts = _event_number(event, "ts", index)
                 dur = _event_number(event, "dur", index)
+                if dur < 0:
+                    raise ValueError(f"trace event {index}: dur must be non-negative")
                 self.slices[tid].append([ts, dur, name, 0, False])
                 args = _event_args(event, index)
                 if "batch" in args:
@@ -151,6 +153,8 @@ def load_summary_lines(path, numbered=False):
             record = json.loads(line)
         except json.JSONDecodeError as error:
             raise ValueError(f"{path}:{number}: invalid JSON: {error.msg}") from error
+        except RecursionError as error:
+            raise ValueError(f"{path}:{number}: JSON nesting is too deep") from error
         if not isinstance(record, dict):
             raise ValueError(f"{path}:{number}: summary record must be an object")
         records.append((number, record) if numbered else record)

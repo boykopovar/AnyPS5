@@ -135,6 +135,18 @@ int main() {
     Require(sceFontCloseFont(nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
 
     for (FontHandle font : {plain, typo, versionOne, os2Only}) Require(sceFontCloseFont(font) == SCE_FONT_OK);
+
+    FontHandle reopened = Open(library, plainData);
+    const auto typoCopy = typoData;
+    FontHandle copied = Open(library, typoCopy);
+    RequireMetrics(reopened, 2, {1, 80.0f, -20.0f, 0.0f, 50.0f, 0.0f, 0.0f});
+    RequireMetrics(copied, 2, {2, 70.0f, -30.0f, 10.0f, 50.0f, 0.0f, 0.0f});
+    for (FontHandle font : {reopened, copied}) Require(sceFontCloseFont(font) == SCE_FONT_OK);
+
+    std::vector<FontHandle> shared;
+    for (int i = 0; i < 5; ++i) shared.push_back(Open(library, plainData));
+    for (FontHandle font : shared) RequireMetrics(font, 2, {1, 80.0f, -20.0f, 0.0f, 50.0f, 0.0f, 0.0f});
+    for (FontHandle font : shared) Require(sceFontCloseFont(font) == SCE_FONT_OK);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(sceFontMemoryTerm(&memory) == SCE_FONT_OK);
     std::puts("Font metrics tests passed");

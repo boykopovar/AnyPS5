@@ -557,6 +557,9 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     for (std::uint32_t bit = 0; bit < log2Pipes; ++bit) geometry.equation[pipeInterleaveBits + bit] = pipe[bit];
     for (std::uint32_t bit = 0; bit < bankBits; ++bit) geometry.equation[pipeInterleaveBits + log2Pipes + bit] = bank[bit];
     for (auto bit = pipeInterleaveBits; bit < innerBits; ++bit) geometry.equation[bit + log2Pipes + bankBits] = inner[bit];
+    geometry.layerBankStep = prt ? 0u : mode.banks / 2u - 1u;
+    geometry.bankMask = mode.banks - 1u;
+    geometry.bankShift = pipeInterleaveBits + log2Pipes;
     return geometry;
 }
 

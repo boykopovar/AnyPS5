@@ -247,6 +247,13 @@ class ForwardingExportTests(unittest.TestCase):
 class ExecutableImportTests(unittest.TestCase):
     names = ["foo", "foo_nid_postfix", "z", "sceExample", "helper_nid_no_patch", "plain_nid_no_patch_cut", "SDL_Init", "scePreserved", "hostFunctionLongName", "alias_nid_disambig12_nid_postfix"]
 
+    def expected_names(self, only_sce=False):
+        names = ["foo", nid("foo"), nid("z"), nid("sceExample"), "helper_nid_no_patch", "plain",
+                 "SDL_Init", "scePreserved", nid("hostFunctionLongName"), nid("alias")]
+        if only_sce:
+            names[2], names[5], names[8] = "z", "plain_nid_no_patch_cut", "hostFunctionLongName"
+        return names
+
     def pe(self, bits=64):
         image = bytearray(2048)
         image[:2] = b"MZ"
@@ -270,6 +277,17 @@ class ExecutableImportTests(unittest.TestCase):
             for table in (576, 704):
                 struct.pack_into("<Q" if bits == 64 else "<I", image, table + index * (bits // 8), offset - 512 + 0x1000)
             offset += len(entry) + 2
+        return image
+
+    def with_optional_header_size(self, image, size, declared=2):
+        directory = 112 if struct.unpack_from("<H", image, 0x58)[0] == 0x20b else 96
+        section_table = 0x58 + struct.unpack_from("<H", image, 0x54)[0]
+        section = image[section_table:section_table + 40]
+        image[section_table:section_table + 40] = bytes(40)
+        struct.pack_into("<H", image, 0x54, size)
+        if size >= directory + 4:
+            struct.pack_into("<I", image, 0x58 + directory - 4, declared)
+        image[0x58 + size:0x58 + size + 40] = section
         return image
 
     def elf(self):
@@ -303,7 +321,7 @@ class ExecutableImportTests(unittest.TestCase):
             from test_macho_nids import chained_imports
             return [name[1:] for name, _ in chained_imports(image)]
         bits = 64 if kind == "pe64" else 32
-        optional_size = 240 if bits == 64 else 224
+        optional_size = struct.unpack_from("<H", image, 0x54)[0]
         count = struct.unpack_from("<H", image, 0x46)[0]
         sections = [struct.unpack_from("<8sIIIIIIHHI", image, 0x58 + optional_size + index * 40) for index in range(count)]
         result = []
@@ -329,12 +347,7 @@ class ExecutableImportTests(unittest.TestCase):
                         args.append("--only-sce")
                     result = subprocess.run([*args, str(path)], capture_output=True, text=True, timeout=20)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    expected = ["foo", nid("foo"), nid("z"), nid("sceExample"), "helper_nid_no_patch", "plain", "SDL_Init", "scePreserved", nid("hostFunctionLongName"), nid("alias")]
-                    if only_sce:
-                        expected[2] = "z"
-                        expected[5] = "plain_nid_no_patch_cut"
-                        expected[8] = "hostFunctionLongName"
-                    self.assertCountEqual(self.read_names(path.read_bytes(), kind), expected)
+                    self.assertCountEqual(self.read_names(path.read_bytes(), kind), self.expected_names(only_sce))
                     if kind == "macho":
                         self.assertEqual(exports_of(path.read_bytes()), exports_of(image))
                     if kind == "elf":
@@ -414,6 +427,53 @@ class ExecutableImportTests(unittest.TestCase):
             result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(path.read_bytes()[0x700:0x760], image[0x700:0x760])
+
+    def test_exec_accepts_a_minimal_optional_header_declaring_two_directories(self):
+        for bits, size, declared in ((64, 128, 2), (32, 112, 2), (64, 128, 16), (32, 112, 16)):
+            with self.subTest(bits=bits, declared=declared), tempfile.TemporaryDirectory() as directory:
+                image = self.with_optional_header_size(bytearray(self.pe(bits)), size, declared)
+                path = Path(directory) / "program"
+                path.write_bytes(image)
+                excluded = Path(directory) / "preserved.txt"
+                excluded.write_bytes(b"scePreserved\n")
+                result = subprocess.run([str(PATCHER), "--exec", "--preserve-export-list", str(excluded), str(path)],
+                                        capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                after = path.read_bytes()
+                self.assertNotEqual(after, image)
+                self.assertCountEqual(self.read_names(after, f"pe{bits}"), self.expected_names())
+
+    def test_exec_ignores_directories_the_optional_header_does_not_declare(self):
+        image = bytearray(self.pe())
+        struct.pack_into("<I", image, 0x58 + 108, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "program"
+            path.write_bytes(image)
+            result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(path.read_bytes(), image)
+
+    def test_exec_rejects_an_optional_header_shorter_than_its_fixed_fields(self):
+        for bits, size in ((64, 96), (32, 80)):
+            with self.subTest(bits=bits), tempfile.TemporaryDirectory() as directory:
+                image = self.with_optional_header_size(bytearray(self.pe(bits)), size)
+                path = Path(directory) / "program"
+                path.write_bytes(image)
+                result = subprocess.run([str(PATCHER), "--exec", str(path)], capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("truncated optional header", result.stderr)
+                self.assertEqual(path.read_bytes(), image)
+
+    def test_library_without_a_declared_export_directory_is_rejected(self):
+        for bits, size in ((64, 112), (32, 96)):
+            with self.subTest(bits=bits), tempfile.TemporaryDirectory() as directory:
+                image = self.with_optional_header_size(bytearray(self.pe(bits)), size)
+                path = Path(directory) / "program"
+                path.write_bytes(image)
+                result = subprocess.run([str(PATCHER), "libtest", str(path)], capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("no export directory", result.stderr)
+                self.assertEqual(path.read_bytes(), image)
 
     def test_unsupported_exec_layouts_fail_without_writing(self):
         signed = bytearray(build_dylib([], [("_sceExample", 1)], signed=True))

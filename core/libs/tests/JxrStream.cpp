@@ -44,6 +44,16 @@ void Require(bool result, const char* message) {
     std::abort();
 }
 
+template<typename TAction>
+void RequireInvalidArgument(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    Require(false, message);
+}
+
 std::int64_t APS5_VABI Read(Jxr::Stream* stream, void* buffer, std::size_t size) {
     calls.push_back('r');
     lastStream = stream;
@@ -167,12 +177,76 @@ void CallbackMutation(Jxr::Stream& stream) {
     mutation = {};
 }
 
-#ifdef _WIN32
-std::int64_t APS5_VABI ObserveRead(Jxr::Stream*, void*, std::size_t) {
+std::int64_t APS5_VABI ObserveRead(Jxr::Stream*, void* buffer, std::size_t size) {
     calls.push_back('r');
+    lastBuffer = buffer;
+    lastSize = size;
     return 0;
 }
-#endif
+
+std::int64_t APS5_VABI ObserveWrite(Jxr::Stream*, const void* buffer, std::size_t size) {
+    calls.push_back('w');
+    lastBuffer = const_cast<void*>(buffer);
+    lastSize = size;
+    return writeResult;
+}
+
+void NullState(Jxr::Stream& stream) {
+    RequireInvalidArgument([] { readIS_nid_postfix(nullptr, nullptr); }, "read accepted a null bit state");
+    RequireInvalidArgument([] { writeIS_nid_postfix(nullptr, nullptr); }, "write accepted a null bit state");
+
+    auto* packet = ring.data() + PacketSize;
+    Jxr::Stream partial = stream;
+    for (auto* selected : {static_cast<Jxr::Stream*>(nullptr), &partial}) {
+        partial.setPosition = nullptr;
+        Jxr::BitIo io{7, 19, 13, ~8192, ring.data(), packet, selected, 91};
+        const auto initial = io;
+        calls.clear();
+        RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &io); }, "read accepted a null stream or seek callback");
+        Require(calls.empty() && std::memcmp(&io, &initial, sizeof(io)) == 0, "rejected read seek performed I/O or mutated state");
+        partial.write = nullptr;
+        RequireInvalidArgument([&] { writeIS_nid_postfix(nullptr, &io); }, "write accepted a null stream or write callback");
+        Require(calls.empty() && std::memcmp(&io, &initial, sizeof(io)) == 0, "rejected write performed I/O or mutated state");
+        partial = stream;
+    }
+
+    partial.read = nullptr;
+    seekResult = 0;
+    Jxr::BitIo io{7, 19, 13, ~8192, ring.data(), packet, &partial, 91};
+    auto initial = io;
+    calls.clear();
+    RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &io); }, "read accepted a null read callback");
+    Require(calls == std::vector<char>({'s'}) && lastPosition == 91, "null read callback was not reached after the seek");
+    Require(std::memcmp(&io, &initial, sizeof(io)) == 0, "null read callback mutated state");
+
+    Jxr::Stream observed = stream;
+    observed.read = ObserveRead;
+    observed.write = ObserveWrite;
+    io = {7, 19, 13, ~8192, nullptr, reinterpret_cast<std::uint8_t*>(PacketSize), &observed, 91};
+    initial = io;
+    calls.clear();
+    lastBuffer = ring.data();
+    RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &io); }, "read accepted a null packet");
+    Require(calls == std::vector<char>({'s', 'r'}) && lastBuffer == nullptr && lastSize == PacketSize, "null packet did not reach the read callback first");
+    Require(io.referenceOffset == 91 + PacketSize && io.start == nullptr && io.shadow == initial.shadow, "null packet read did not stop at the shadow copy");
+
+    for (std::int64_t result : {std::int64_t{-73}, std::numeric_limits<std::int64_t>::min()}) {
+        io = initial;
+        writeResult = result;
+        calls.clear();
+        lastBuffer = ring.data();
+        Require(writeIS_nid_postfix(nullptr, &io) == result, "failed write of a null packet did not return the callback result");
+        Require(calls == std::vector<char>({'w'}) && lastBuffer == nullptr && lastSize == PacketSize, "null packet did not reach the write callback");
+        Require(std::memcmp(&io, &initial, sizeof(io)) == 0, "failed write of a null packet mutated state");
+    }
+    for (std::int64_t result : {std::int64_t{0}, std::int64_t{0x100000001}}) {
+        io = initial;
+        writeResult = result;
+        calls.clear();
+        RequireInvalidArgument([&] { writeIS_nid_postfix(nullptr, &io); }, "successful write advanced a null packet");
+        Require(calls == std::vector<char>({'w'}) && std::memcmp(&io, &initial, sizeof(io)) == 0, "successful write of a null packet mutated state");
+    }
+}
 
 void GuestMapping(Jxr::Stream& stream) {
     constexpr std::size_t mappingSize = 0x4000;
@@ -206,13 +280,8 @@ void GuestMapping(Jxr::Stream& stream) {
     std::array<std::uint8_t, mappingSize> before;
     std::copy_n(bytes, mappingSize, before.begin());
     calls.clear();
-    bool rejected = false;
-    try {
-        readIS_nid_postfix(nullptr, &io);
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-    Require(rejected && calls == std::vector<char>({'s'}), "rejected guest packet write invoked the read callback");
+    RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &io); }, "read-only guest packet backing was not rejected");
+    Require(calls == std::vector<char>({'s'}), "rejected guest packet write invoked the read callback");
     Require(std::memcmp(&io, &initial, sizeof(io)) == 0 && std::equal(before.begin(), before.end(), bytes), "rejected guest packet write mutated state or backing");
     Require(sceKernelMprotect(mapping, mappingSize, 3) == 0, "restore writable guest packet backing");
 #endif
@@ -231,6 +300,7 @@ int main() {
     Writes(stream);
     Buffered();
     CallbackMutation(stream);
+    NullState(stream);
     GuestMapping(stream);
     return 0;
 }

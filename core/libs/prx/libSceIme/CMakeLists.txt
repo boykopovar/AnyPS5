@@ -1,4 +1,4 @@
-add_library(libSceIme SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+add_library(libSceIme SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ModalDialog.cpp)
 target_include_directories(libSceIme PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceIme)
 
@@ -40,6 +40,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_ime_filter_text COMMAND guest_ime_filter_text_tests)
     if(WIN32)
         set_tests_properties(guest_ime_filter_text PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
+    endif()
+
+    add_test_executable(guest_ime_modal_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeModalDialog.cpp)
+    target_include_directories(guest_ime_modal_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ime_modal_dialog_tests PRIVATE libSceIme libc)
+    configure_windows_unwind(guest_ime_modal_dialog_tests)
+    add_test(NAME guest_ime_modal_dialog COMMAND guest_ime_modal_dialog_tests)
+    if(WIN32)
+        set_tests_properties(guest_ime_modal_dialog PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
     endif()
 

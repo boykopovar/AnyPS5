@@ -357,6 +357,16 @@ int main() {
     Require(shortWait >= std::chrono::milliseconds(20) && shortWait < std::chrono::milliseconds(200));
     Require(poll_nid_postfix(nullptr, 1, 0) == -1 && *__error_nid_postfix() == 14);
     Require(poll_nid_postfix(&single, 1, -2) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(reinterpret_cast<GuestPollDescriptor*>(std::uintptr_t{0x10}), 1, 0) == -1 && *__error_nid_postfix() == 14);
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<GuestPollDescriptor*>(page);
+    *readOnly = {-1, In, 7};
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(readOnly, 1, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(readOnly->descriptor == -1 && readOnly->revents == 7);
     TestPipes(listener);
     PollsFilesAndDirectories(listener);
     Require(close_nid_postfix(server) == 0);
