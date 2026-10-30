@@ -184,6 +184,19 @@ int main() {
         const auto whole = Build(Spec{});
         Rejects("truncated", std::vector<std::byte>(whole.begin(), whole.end() - 100), "truncated");
         Rejects("truncated header", std::vector<std::byte>(whole.begin(), whole.begin() + 30), "truncated");
+
+        for (const auto& [text, expected] : std::initializer_list<std::pair<const char*, std::uint32_t>>{{"0", 0u}, {"1", 1u}, {"16", 16u}, {"1024", 1024u}, {"007", 7u}, {"4294967295", 0xffffffffu}}) {
+            Require(ParseOracleCount(text, "threads") == expected, std::string("count \"") + text + "\" was not accepted as " + std::to_string(expected));
+        }
+        for (const auto& [text, field] : std::initializer_list<std::pair<const char*, const char*>>{{"-18446744073709551615", "threads"}, {"-18446744073709551600", "out_dwords"}, {"-1", "threads"}, {"-0", "out_dwords"}, {"+1", "threads"}, {"", "out_dwords"}, {" 1", "threads"}, {"1 ", "out_dwords"}, {"1a", "threads"}, {"0x10", "out_dwords"}, {"4294967296", "threads"}, {"18446744073709551616", "out_dwords"}, {"99999999999999999999999", "threads"}}) {
+            try {
+                ParseOracleCount(text, field);
+            } catch (const std::runtime_error& error) {
+                Require(std::string(error.what()).find(field) != std::string::npos, std::string("count \"") + text + "\": message \"" + error.what() + "\" does not name " + field);
+                continue;
+            }
+            throw std::runtime_error(std::string("count \"") + text + "\" was accepted for " + field);
+        }
         std::printf("oracle code object tests passed\n");
         return 0;
     } catch (const std::exception& error) {

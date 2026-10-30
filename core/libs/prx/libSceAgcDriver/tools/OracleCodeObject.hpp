@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <vector>
 
 struct OracleKernel {
@@ -19,5 +20,7 @@ struct OracleKernel {
 };
 
 OracleKernel ParseOracleCodeObject(std::span<const std::byte> bytes);
+
+std::uint32_t ParseOracleCount(std::string_view text, const char* what);
 
 #endif

@@ -1,5 +1,4 @@
 #include "OracleDispatch.hpp"
-#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -22,13 +21,6 @@ std::vector<std::byte> ReadFile(const char* path) {
     return bytes;
 }
 
-std::uint32_t ParseCount(const char* text, const char* what) {
-    char* end = nullptr;
-    const auto value = std::strtoul(text, &end, 10);
-    if (end == text || *end != '\0' || value > 0xffffffffUL) throw std::runtime_error(std::string(what) + " is not a number: " + text);
-    return static_cast<std::uint32_t>(value);
-}
-
 }
 
 int main(int argc, char** argv) {
@@ -45,8 +37,8 @@ int main(int argc, char** argv) {
         return 2;
     }
     try {
-        const auto threads = ParseCount(argv[2], "threads");
-        const auto outDwords = ParseCount(argv[5], "out_dwords");
+        const auto threads = ParseOracleCount(argv[2], "threads");
+        const auto outDwords = ParseOracleCount(argv[5], "out_dwords");
         if (outDwords != 16) throw std::runtime_error("out_dwords must be 16, the template stores 16 dwords per lane");
         const auto kernel = ParseOracleCodeObject(ReadFile(argv[1]));
         const auto input = ReadFile(argv[3]);
