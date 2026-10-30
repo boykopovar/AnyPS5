@@ -37,13 +37,7 @@ void Require(bool value, const char* name, const char* what) {
     ++failures;
 }
 
-struct ContextParameterA {
-    std::int32_t userId;
-    std::uint32_t serviceLabel;
-    std::uint64_t size;
-};
-
-using CreateContextAFn = int (APS5_VABI*)(const ContextParameterA*, std::uint16_t*);
+using CreateContextAFn = decltype(&sceNpMatching2CreateContextA);
 using RegisterLobbyCallbackFn = int (APS5_VABI*)(std::uint16_t, void*, void*);
 
 template <typename Function>
@@ -78,7 +72,7 @@ int main() {
     NpMatching2InitializeParameter init{};
     NpMatching2CreateContextParameter create{};
     create.size = 0x28;
-    ContextParameterA createA{1, 0, 0x10};
+    NpMatching2CreateContextParameterA createA{1, 0, 0x10};
     unsigned char requestOpt[24] = {};
     std::uint16_t context = 77;
 
