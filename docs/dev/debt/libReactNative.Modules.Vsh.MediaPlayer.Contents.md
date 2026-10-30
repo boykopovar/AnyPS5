@@ -11,3 +11,12 @@
 | `GetUsbThumbnailEntryListLib` | `1d7jXAh8SH8` |
 | `InitializeLib` | `SPVkdqBsosQ` |
 | `TerminateLib` | `QMHNcV-DHGE` |
+
+### Additional unidentified exports
+
+- Two [callable exports](../../../core/libs/prx/libReactNative.Modules.Vsh.MediaPlayer.Contents/Export.cpp) are throwing placeholders. Names, signatures and behavior are unverified. Matching module and library identities occur in two version-labelled images; those labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `+9Jlq11BFrI` |
+| `Unknown` | `hRs5qGt0+5Q` |
