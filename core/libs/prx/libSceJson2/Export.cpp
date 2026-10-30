@@ -2663,6 +2663,7 @@ int APS5_VABI _ZN3sce4Json11Initializer24setAllocatorInfoCallBackEPFviNS0_9Value
     return state.allocation ? 0 : JsonErrorNotInitialized;
 }
 
+namespace SceJson2 {
 extern const bool _ZN3sce4Json5Value10s_nullboolE = false;
 extern const std::int64_t _ZN3sce4Json5Value13s_nullintegerE = 0;
 extern const std::uint64_t _ZN3sce4Json5Value14s_nulluintegerE = 0;
@@ -2670,6 +2671,7 @@ extern const double _ZN3sce4Json5Value10s_nullrealE = 0;
 String* _ZN3sce4Json5Value12s_nullstringE = nullptr;
 Array* _ZN3sce4Json5Value11s_nullarrayE = nullptr;
 Object* _ZN3sce4Json5Value12s_nullobjectE = nullptr;
+}
 std::size_t _ZN3sce4Json6String4nposE = static_cast<std::size_t>(-1);
 
 void APS5_VABI _ZN3sce4Json6StringC1Ev(String* self) { Construct(*self, std::string_view{}); }
