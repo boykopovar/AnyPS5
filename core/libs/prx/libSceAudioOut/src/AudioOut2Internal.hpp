@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <stop_token>
 #include <utility>
 #include <vector>
@@ -129,6 +130,7 @@ struct AudioOut2Context {
     std::chrono::steady_clock::time_point summaryStart;
     bool deviceBacked = false;
     std::atomic<std::uint32_t> publishedQueueLevel{0};
+    std::optional<std::chrono::steady_clock::time_point> clockForTest;
 };
 
 AudioOut2Context* AudioOut2FindContext(AudioOut2ContextHandle ctx);

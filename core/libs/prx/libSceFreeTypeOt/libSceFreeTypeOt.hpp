@@ -4,3 +4,4 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeTypeOt/include/AdditionalExports.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
+#include "prx/libSceFreeTypeOt/include/Memory.hpp"

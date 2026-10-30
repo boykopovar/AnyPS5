@@ -35,6 +35,7 @@ struct PthreadMutexattrPrivate {
     int protocol = 0;
     int ceiling = 0;
     int pshared = 0;
+    int generation = 0;
 };
 
 constexpr int ADAPTIVE_MUTEX_SPINS = 2000;

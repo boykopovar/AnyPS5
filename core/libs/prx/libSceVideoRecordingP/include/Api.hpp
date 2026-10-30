@@ -65,4 +65,8 @@ int APS5_VABI sceVideoRecordingStop(void);
 int APS5_VABI sceVideoRecordingTerm(void);
 int APS5_VABI videoRecordingUnknown_iQS6DUtLybE(void);
 
+int APS5_VABI sceVideoRecordingGetCopyrightImageMemory();
+int APS5_VABI sceVideoRecordingCloseWithTruncationByHandle();
+
+
 }

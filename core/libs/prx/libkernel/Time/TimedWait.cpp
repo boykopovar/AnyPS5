@@ -22,7 +22,7 @@ namespace TimedWait {
 namespace {
 
 constexpr std::uint64_t YIELD_BELOW_NANOS = 50000ULL;
-constexpr std::uint64_t LEAD_NANOS = 500000ULL;
+constexpr std::uint64_t LEAD_NANOS = 20000ULL;
 
 std::mutex& ChangeSleepersMutex() {
     static std::mutex mutex;

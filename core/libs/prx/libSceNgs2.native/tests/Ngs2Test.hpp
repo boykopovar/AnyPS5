@@ -80,7 +80,7 @@ inline bool FrameInfoThrows(const Ngs2WaveformFormat& format) {
 #if defined(NGS2_TEST_GRAIN)
 inline constexpr std::uint32_t Grain = NGS2_TEST_GRAIN;
 #else
-inline constexpr std::uint32_t Grain = 8;
+inline constexpr std::uint32_t Grain = 64;
 #endif
 
 template <typename TSignal>
