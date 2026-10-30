@@ -165,6 +165,21 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/OcspBasicResponse.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl_ocsp_basic_response_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslOcspBasicResponse.cpp)
+    target_include_directories(guest_libressl_ocsp_basic_response_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_ocsp_basic_response_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_ocsp_basic_response_tests)
+    add_test(NAME guest_libressl_ocsp_basic_response COMMAND guest_libressl_ocsp_basic_response_tests)
+    set_tests_properties(guest_libressl_ocsp_basic_response PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_ocsp_basic_response PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Alert.cpp)
 
 if(BUILD_TESTING)
