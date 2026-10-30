@@ -71,6 +71,12 @@ int main() {
                     break;
                 }
                 case 9: bytes[3] = 0x1C; Io::WriteU64(bytes, 16, 0x8000000000000000ULL); break;
+                case 11: {
+                    bytes[3] = 0x42;
+                    Io::WriteU16(bytes, 96, 0xFFFF);
+                    Io::WriteU16(bytes, 98, 0xFFFF);
+                    break;
+                }
                 case 10: {
                     segment.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
                     eh.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
