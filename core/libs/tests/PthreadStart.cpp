@@ -8,11 +8,31 @@
 #include <windows.h>
 #endif
 
+static std::atomic<std::uint32_t> workerMxcsrInDtor{0};
+static std::atomic<std::uint32_t> workerMxcsrAfterReturn{0};
+
+struct WorkerTlsHook {
+    bool active = false;
+    ~WorkerTlsHook() {
+        if (!active) return;
+        std::uint32_t mxcsr = 0;
+        asm volatile("stmxcsr %0" : "=m"(mxcsr));
+        workerMxcsrAfterReturn.store(mxcsr, std::memory_order_relaxed);
+    }
+};
+static thread_local WorkerTlsHook workerTlsHook;
+
+static void APS5_VABI WorkerThreadDtor() {
+    std::uint32_t mxcsr = 0;
+    asm volatile("stmxcsr %0" : "=m"(mxcsr));
+    workerMxcsrInDtor.store(mxcsr, std::memory_order_relaxed);
+}
 struct ThreadContext {
     Pthread thread = nullptr;
     std::promise<void> checked;
     std::size_t stackSize = 0;
     bool exitExplicitly = false;
+    std::uint32_t incomingHostMxcsr = 0;
 };
 
 static void CheckLargeFrame() {
@@ -26,6 +46,11 @@ static void CheckLargeFrame() {
 static void* APS5_VABI CheckThread(void* arg) {
     auto& context = *static_cast<ThreadContext*>(arg);
     if (!context.thread) throw std::runtime_error("Thread handle was not published");
+    std::uint32_t threadMxcsr = 0;
+    asm volatile("stmxcsr %0" : "=m"(threadMxcsr));
+    if ((threadMxcsr & 0x9fc0) != 0x9fc0) throw std::runtime_error("Guest thread MXCSR does not have FTZ and DAZ bits set");
+    workerTlsHook.active = true;
+    context.incomingHostMxcsr = context.thread->hostMxcsr;
 #ifdef _WIN32
     if (scePthreadSelf() != context.thread)
         throw std::runtime_error("Current guest thread handle is incorrect");
@@ -62,6 +87,9 @@ static void* APS5_VABI CheckThread(void* arg) {
 }
 
 int main() {
+    std::uint32_t hostMxcsrBefore = 0;
+    asm volatile("stmxcsr %0" : "=m"(hostMxcsrBefore));
+    sceKernelSetThreadDtors(WorkerThreadDtor);
     for (int iteration = 0; iteration < 10000; ++iteration) {
         ThreadContext context;
         context.stackSize = (iteration % 2 + 1) * (1u << 20);
@@ -76,6 +104,10 @@ int main() {
         void* result = nullptr;
         if (scePthreadJoin(context.thread, &result) != 0) throw std::runtime_error("Thread join failed");
         if (result != &context) throw std::runtime_error("Thread return value was lost");
+        if ((workerMxcsrInDtor.load() & 0x9fc0) != 0x9fc0)
+            throw std::runtime_error("Guest thread MXCSR was not active during thread cleanup");
+        if (workerMxcsrAfterReturn.load() != hostMxcsrBefore)
+            throw std::runtime_error("Worker thread host MXCSR was not restored upon guest return");
     }
 #ifdef _WIN32
     for (int iteration = 0; iteration < 100; ++iteration) {
@@ -91,5 +123,59 @@ int main() {
         context.checked.get_future().get();
     }
 #endif
-    std::cout << "PASS: 10000 thread starts, committed stacks, large frames, explicit exits and joins; 100 detach checks\n";
+    {
+        const std::uint32_t guestMxcsr = 0x9fc0;
+        asm volatile("ldmxcsr %0" : : "m"(guestMxcsr));
+        ThreadContext context;
+        context.stackSize = 1u << 20;
+        if (scePthreadCreate(&context.thread, nullptr, CheckThread, &context, nullptr) != 0)
+            throw std::runtime_error("Thread creation from a guest-MXCSR creator failed");
+        context.checked.get_future().get();
+        void* result = nullptr;
+        if (scePthreadJoin(context.thread, &result) != 0) throw std::runtime_error("Thread join failed");
+        asm volatile("ldmxcsr %0" : : "m"(hostMxcsrBefore));
+#ifndef _WIN32
+        if (context.incomingHostMxcsr != guestMxcsr)
+            throw std::runtime_error("Worker incoming MXCSR did not match creator MXCSR on POSIX");
+#endif
+        if (workerMxcsrAfterReturn.load() != context.incomingHostMxcsr)
+            throw std::runtime_error("Worker host MXCSR was not preserved from captured incoming state");
+    }
+    {
+        const std::uint32_t guestMxcsr = 0x9fc0;
+        asm volatile("ldmxcsr %0" : : "m"(guestMxcsr));
+        ThreadContext context;
+        context.stackSize = 1u << 20;
+        context.exitExplicitly = true;
+        if (scePthreadCreate(&context.thread, nullptr, CheckThread, &context, nullptr) != 0)
+            throw std::runtime_error("Thread creation from a guest-MXCSR creator failed");
+        context.checked.get_future().get();
+        void* result = nullptr;
+        if (scePthreadJoin(context.thread, &result) != 0) throw std::runtime_error("Thread join failed");
+        asm volatile("ldmxcsr %0" : : "m"(hostMxcsrBefore));
+#ifndef _WIN32
+        if (context.incomingHostMxcsr != guestMxcsr)
+            throw std::runtime_error("Worker incoming MXCSR did not match creator MXCSR on POSIX");
+#endif
+        if (workerMxcsrAfterReturn.load() != context.incomingHostMxcsr)
+            throw std::runtime_error("Worker host MXCSR was not preserved from captured incoming state upon explicit exit");
+    }
+    std::uint32_t hostMxcsrAfter = 0;
+    asm volatile("stmxcsr %0" : "=m"(hostMxcsrAfter));
+    if (hostMxcsrAfter != hostMxcsrBefore)
+        throw std::runtime_error("Host MXCSR was modified by guest execution");
+    std::atomic<bool> adoptedCompleted{false};
+    std::thread nativeWorker([&] {
+        workerTlsHook.active = true;
+        Pthread adoptedSelf = scePthreadSelf();
+        if (!adoptedSelf) throw std::runtime_error("Thread adoption failed");
+        adoptedCompleted.store(true);
+        scePthreadExit(nullptr);
+    });
+    nativeWorker.join();
+    if (!adoptedCompleted.load())
+        throw std::runtime_error("Adopted thread failed to execute");
+    if (workerMxcsrAfterReturn.load() != hostMxcsrBefore)
+        throw std::runtime_error("Adopted thread host MXCSR was corrupted upon scePthreadExit");
+    std::cout << "PASS: 10000 thread starts, committed stacks, large frames, explicit exits and joins; 100 detach checks; adopted thread exit\n";
 }

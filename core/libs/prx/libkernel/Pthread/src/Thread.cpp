@@ -775,11 +775,15 @@ asm(".text\n"
     push $0
     .cfi_adjust_cfa_offset 8
     mov %rsp, %rbp
+    sub $16, %rsp
+    .cfi_adjust_cfa_offset 16
+    movl $0x9fc0, (%rsp)
+    ldmxcsr (%rsp)
     mov %rdi, %rax
     mov %rsi, %rdi
     call *%rax
-    add $16, %rsp
-    .cfi_adjust_cfa_offset -16
+    add $32, %rsp
+    .cfi_adjust_cfa_offset -32
     pop %rbp
     .cfi_adjust_cfa_offset -8
     .cfi_restore %rbp
@@ -807,6 +811,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     pthread_sigmask(SIG_SETMASK, &signalMask, nullptr);
 #endif
     finishThread(self, Aps5CallGuestEntry_nid_no_patch(entry, arg));
+    asm volatile("ldmxcsr %0" : : "m"(self->hostMxcsr));
     CurrentGuestState().current = nullptr;
 }
 
@@ -884,8 +889,11 @@ struct NativeThreadArgs {
 
 #ifdef _WIN32
 static unsigned __stdcall StartNativeThread(void* opaque) {
+    std::uint32_t incomingMxcsr = 0;
+    asm volatile("stmxcsr %0" : "=m"(incomingMxcsr));
     std::unique_ptr<NativeThreadArgs> args(static_cast<NativeThreadArgs*>(opaque));
     auto* self = args->guest->self;
+    self->hostMxcsr = incomingMxcsr;
     try {
         ULONG_PTR low = 0;
         ULONG_PTR high = 0;
@@ -913,13 +921,17 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
     args.reset();
     RunThread(std::move(guest));
     CurrentGuestState().current = nullptr;
+    asm volatile("ldmxcsr %0" : : "m"(self->hostMxcsr));
     ReleaseThread(self);
     return 0;
 }
 #else
 static void* StartNativeThread(void* opaque) {
+    std::uint32_t incomingMxcsr = 0;
+    asm volatile("stmxcsr %0" : "=m"(incomingMxcsr));
     std::unique_ptr<NativeThreadArgs> args(static_cast<NativeThreadArgs*>(opaque));
     auto* self = args->guest->self;
+    self->hostMxcsr = incomingMxcsr;
     try {
         std::uintptr_t low = 0;
         std::uintptr_t high = 0;
@@ -954,6 +966,7 @@ static void* StartNativeThread(void* opaque) {
         RunThread(std::unique_ptr<ThreadArgs>(guest));
     }
     threadExitJump = nullptr;
+    asm volatile("ldmxcsr %0" : : "m"(self->hostMxcsr));
     return nullptr;
 }
 #endif
@@ -1160,6 +1173,7 @@ void APS5_VABI scePthreadExit(void* retval) {
     while (CurrentGuestState().cleanupHandlers) __pthread_cleanup_pop_imp_nid_postfix(1);
     finishThread(self, retval);
     CurrentGuestState().current = nullptr;
+    asm volatile("ldmxcsr %0" : : "m"(self->hostMxcsr));
 #ifdef _WIN32
     ReleaseThread(self);
     _endthreadex(0);
@@ -1175,6 +1189,9 @@ Pthread APS5_VABI scePthreadSelf() {
 #ifdef _WIN32
     if (!CurrentGuestState().current) {
         auto adopted = std::make_unique<PthreadPrivate>();
+        std::uint32_t currentMxcsr = 0x1f80;
+        asm volatile("stmxcsr %0" : "=m"(currentMxcsr));
+        adopted->hostMxcsr = currentMxcsr;
         HANDLE handle = nullptr;
         if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &handle, 0, FALSE, DUPLICATE_SAME_ACCESS))
             throw std::system_error(GetLastError(), std::system_category(), "Adopting guest thread");
@@ -1189,6 +1206,9 @@ Pthread APS5_VABI scePthreadSelf() {
 #else
     if (!CurrentGuestState().current) {
         adoptedThread = std::make_unique<PthreadPrivate>();
+        std::uint32_t currentMxcsr = 0x1f80;
+        asm volatile("stmxcsr %0" : "=m"(currentMxcsr));
+        adoptedThread->hostMxcsr = currentMxcsr;
         adoptedThread->_detached = true;
         adoptedThread->_adopted = true;
         BindHostCpuClock(adoptedThread.get());
