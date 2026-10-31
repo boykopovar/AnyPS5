@@ -226,7 +226,7 @@ int APS5_VABI Aps5GetcontextFinish_nid_no_patch(UserUcontext* context, const Reg
     machine.fpformat = FpFormatXmm;
     machine.ownedfp = FpOwnedFpu;
     std::memcpy(machine.fpstate, frame->fxsave, sizeof(frame->fxsave));
-    std::memcpy(context, &captured, offsetof(UserUcontext, link));
+    if (!GuestCopyOut_nid_no_patch(context, &captured, offsetof(UserUcontext, link))) return Fail(GuestEfault);
     return 0;
 }
 
@@ -280,28 +280,32 @@ extern "C" {
 
 int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
     if (context == nullptr) return Fail(GuestEinval);
-    const auto& machine = context->mcontext;
+    UserUcontext local{};
+    if (!GuestCopyIn_nid_no_patch(&local, context, sizeof(local))) return Fail(GuestEfault);
+    const auto& machine = local.mcontext;
     if (machine.len != sizeof(UserMcontext) || (machine.flags & ~McontextFlagMask) != 0) return Fail(GuestEinval);
-    RestoreContext(context, FpuSource::Context);
+    RestoreContext(&local, FpuSource::Context);
 }
 
 int SigreturnContext_nid_no_patch(const UserUcontext* context) {
     if (context == nullptr) return Fail(GuestEfault);
-    const auto& machine = context->mcontext;
+    UserUcontext local{};
+    if (!GuestCopyIn_nid_no_patch(&local, context, sizeof(local))) return Fail(GuestEfault);
+    const auto& machine = local.mcontext;
     if ((machine.flags & ~McontextFlagMask) != 0) return Fail(GuestEinval);
     if (((machine.rflags ^ __builtin_ia32_readeflags_u64()) & ~UserChangeableFlags) != 0) return Fail(GuestEinval);
     if ((machine.cs & 3) != UserPrivilegeLevel) NotImplemented_nid_no_patch("sigreturn: a %cs that is not a user selector, for which FreeBSD raises SIGBUS");
     if ((machine.flags & McontextHasFpxstate) != 0) NotImplemented_nid_no_patch("sigreturn: an extended FPU state (_MC_HASFPXSTATE)");
-    if (machine.fpformat == FpFormatNodev) RestoreContext(context, FpuSource::Current);
+    if (machine.fpformat == FpFormatNodev) RestoreContext(&local, FpuSource::Current);
     if (machine.fpformat != FpFormatXmm) return Fail(GuestEinval);
-    if (machine.ownedfp == FpOwnedNone) RestoreContext(context, FpuSource::Initial);
+    if (machine.ownedfp == FpOwnedNone) RestoreContext(&local, FpuSource::Initial);
     if (machine.ownedfp != FpOwnedFpu && machine.ownedfp != FpOwnedPcb) return Fail(GuestEinval);
-    RestoreContext(context, FpuSource::Context);
+    RestoreContext(&local, FpuSource::Context);
 }
 
 int APS5_VABI Aps5SwapcontextFinish_nid_no_patch(UserUcontext* saved, const UserUcontext* next, const RegisterFrame* frame) {
     if (saved == nullptr || next == nullptr) return Fail(GuestEinval);
-    Aps5GetcontextFinish_nid_no_patch(saved, frame);
+    if (const int error = Aps5GetcontextFinish_nid_no_patch(saved, frame)) return error;
     return setcontext_nid_postfix(next);
 }
 
