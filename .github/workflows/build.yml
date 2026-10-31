@@ -139,7 +139,7 @@ jobs:
                 ),
                 registerContext: edits('register-context') ||
                   touches('core/libs/tests/register_context/', 'core/libs/tests/RegisterContext.cpp', libc),
-                writeWatch: edits('write-watch') || touches('core/libs/tests/write_watch/', 'core/libs/tests/WriteWatch.cpp', libc),
+                writeWatch: edits('write-watch') || touches('core/libs/tests/write_watch/', 'core/libs/tests/WriteWatch.cpp', 'core/libs/tests/WriteWatchBacking.cpp', libc),
                 edgeWatch: edits('edge-watch') || touches('core/libs/tests/edge_watch/', 'core/libs/tests/EdgeWatch.cpp',
                   'core/libs/prx/libkernel/Equeue/src/EdgeWatch.cpp', 'core/libs/prx/libkernel/Equeue/include/EdgeWatch.hpp', libc),
                 mingwHostTests: edits('eligibility') || edits('windows') || touches(
