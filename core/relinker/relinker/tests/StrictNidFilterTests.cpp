@@ -115,6 +115,124 @@ void addressSizeOverrideImport() {
     require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0x100002000ull}, "RIP-relative import lost its full 64-bit address");
 }
 
+std::vector<std::uint8_t> elfFixture(const StrictReachabilityInput& input);
+
+void ripDisplacementOverflowUnderflowBounds() {
+    constexpr auto maxVaddr = std::numeric_limits<std::uint64_t>::max();
+
+    auto input = fixture();
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(-0x2000));
+    emit(input, 6, {0xC3});
+    const auto callUnderflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {callUnderflow};
+    const std::vector<Relinker::NidReference> callUnderflowRefs = {{"live", {}, 7, 0x300, callUnderflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{callUnderflow}, "Call RIP-relative displacement underflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(callUnderflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed call RIP-relative displacement underflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxVaddr - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(0x1000));
+    emit(input, 6, {0xC3});
+    const auto callOverflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(0x1000)));
+    input.ImportSlots = {callOverflow};
+    const std::vector<Relinker::NidReference> callOverflowRefs = {{"live", {}, 7, 0x300, callOverflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{callOverflow}, "Call RIP-relative displacement overflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(callOverflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed call RIP-relative displacement overflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x25});
+    write(input.Text, 2, static_cast<std::int32_t>(-0x2000));
+    emit(input, 6, {0xC3});
+    const auto jmpUnderflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {jmpUnderflow};
+    const std::vector<Relinker::NidReference> jmpUnderflowRefs = {{"live", {}, 7, 0x300, jmpUnderflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{jmpUnderflow}, "Jump RIP-relative displacement underflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(jmpUnderflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed jump RIP-relative displacement underflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxVaddr - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x25});
+    write(input.Text, 2, static_cast<std::int32_t>(0x1000));
+    emit(input, 6, {0xC3});
+    const auto jmpOverflow = static_cast<std::uint64_t>(input.TextVaddr + 6 + static_cast<std::uint64_t>(static_cast<std::int64_t>(0x1000)));
+    input.ImportSlots = {jmpOverflow};
+    const std::vector<Relinker::NidReference> jmpOverflowRefs = {{"live", {}, 7, 0x300, jmpOverflow, 0}};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{jmpOverflow}, "Jump RIP-relative displacement overflow did not retain its import");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(jmpOverflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed jump RIP-relative displacement overflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0x48, 0x8D, 0x05});
+    write(input.Text, 3, static_cast<std::int32_t>(-0x2000));
+    emit(input, 7, {0xC3});
+    const auto leaUnderflow = static_cast<std::uint64_t>(input.TextVaddr + 7 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {leaUnderflow};
+    const std::vector<Relinker::NidReference> leaUnderflowRefs = {{"live", {}, 7, 0x300, leaUnderflow, 0}};
+    const auto leaUnderflowResult = AnalyzeStrictReachability(input);
+    require(leaUnderflowResult.ImportSlots == std::set<std::uint64_t>{leaUnderflow}, "LEA RIP-relative displacement underflow did not retain its import");
+    require(leaUnderflowResult.AddressTakenRoots == 1, "LEA RIP-relative displacement underflow did not add an address-taken root");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(leaUnderflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed LEA RIP-relative displacement underflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxVaddr - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0x48, 0x8D, 0x05});
+    write(input.Text, 3, static_cast<std::int32_t>(0x1000));
+    emit(input, 7, {0xC3});
+    const auto leaOverflow = static_cast<std::uint64_t>(input.TextVaddr + 7 + static_cast<std::uint64_t>(static_cast<std::int64_t>(0x1000)));
+    input.ImportSlots = {leaOverflow};
+    const std::vector<Relinker::NidReference> leaOverflowRefs = {{"live", {}, 7, 0x300, leaOverflow, 0}};
+    const auto leaOverflowResult = AnalyzeStrictReachability(input);
+    require(leaOverflowResult.ImportSlots == std::set<std::uint64_t>{leaOverflow}, "LEA RIP-relative displacement overflow did not retain its import");
+    require(leaOverflowResult.AddressTakenRoots == 1, "LEA RIP-relative displacement overflow did not add an address-taken root");
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(leaOverflowRefs, elfFixture(input), input.Text, input.TextVaddr).size() == 1,
+            "Strict filter removed LEA RIP-relative displacement overflow import");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(-0x1006));
+    emit(input, 6, {0xC3});
+    input.ImportSlots = {0};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{0}, "RIP-relative displacement to address 0 was not resolved");
+
+    constexpr auto maxTarget = std::numeric_limits<std::uint64_t>::max();
+    input.Text.assign(32, 0);
+    input.TextVaddr = maxTarget - 32;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0xFF, 0x15});
+    write(input.Text, 2, static_cast<std::int32_t>(26));
+    emit(input, 6, {0xC3});
+    input.ImportSlots = {maxTarget};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{maxTarget}, "RIP-relative displacement to maximum address was not resolved");
+
+    input.Text.assign(32, 0);
+    input.TextVaddr = 0x1000;
+    input.Entries = {input.TextVaddr};
+    emit(input, 0, {0x67, 0xFF, 0x15});
+    write(input.Text, 3, static_cast<std::int32_t>(-0x2000));
+    emit(input, 7, {0xC3});
+    const auto eipWrappedTarget = static_cast<std::uint32_t>(input.TextVaddr + 7 + static_cast<std::uint64_t>(static_cast<std::int64_t>(-0x2000)));
+    input.ImportSlots = {eipWrappedTarget};
+    require(AnalyzeStrictReachability(input).ImportSlots == std::set<std::uint64_t>{eipWrappedTarget}, "EIP-relative displacement underflow did not wrap modulo 2^32");
+}
+
 void callbackAndRelocationRoots() {
     auto input = fixture();
     ripOperand(input, 0, {0x48, 0x8D, 0x3D}, 0x1020);
@@ -922,6 +1040,7 @@ int main() {
         conditionalTailCall();
         fallthroughAfterZeroPadding();
         addressSizeOverrideImport();
+        ripDisplacementOverflowUnderflowBounds();
         callbackAndRelocationRoots();
         registerImportCall();
         mergedJumpTable();

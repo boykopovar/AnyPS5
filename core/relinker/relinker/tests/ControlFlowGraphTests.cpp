@@ -198,6 +198,66 @@ void CheckAddressSizeOverride() {
     RequireOffsets(*BuildAddressTakenControlFlowGraph(lea, TextAddress, TextAddress, {}, missing, {}), {0, 8});
 }
 
+void CheckRipDisplacementBounds() {
+    constexpr auto low = VirtualAddress{0x10};
+    constexpr auto high = std::numeric_limits<VirtualAddress>::max() - 16;
+    const auto build = [](Bytes prefix, std::int32_t displacement, VirtualAddress base, VirtualAddress slot) {
+        Bytes text(16, 0xc3);
+        std::copy(prefix.begin(), prefix.end(), text.begin());
+        std::memcpy(text.data() + prefix.size(), &displacement, sizeof(displacement));
+        Pointers pointers;
+        pointers.Slots = {{slot, base + 12}};
+        return BuildControlFlowGraph(text, base, base, {}, pointers);
+    };
+
+    const auto next = low + 6;
+    const auto underflowCall = build({0xff, 0x15}, -0x20, low, next - 0x20);
+    std::unordered_set<VirtualAddress> expectedUnderflow{low, low + 6, low + 12};
+    Require(underflowCall->ReachableVaddrs() == expectedUnderflow, "Unexpected reachable instruction set for underflowing call target");
+
+    const auto underflowJump = build({0xff, 0x25}, -0x20, low, next - 0x20);
+    std::unordered_set<VirtualAddress> expectedUnderflowJump{low, low + 12};
+    Require(underflowJump->ReachableVaddrs() == expectedUnderflowJump, "Unexpected reachable instruction set for underflowing jump target");
+
+    Bytes underflowLeaText(16, 0xc3);
+    const Bytes leaPrefix = {0x48, 0x8d, 0x05};
+    std::copy(leaPrefix.begin(), leaPrefix.end(), underflowLeaText.begin());
+    const std::int32_t underflowDisp = -0x20;
+    std::memcpy(underflowLeaText.data() + leaPrefix.size(), &underflowDisp, sizeof(underflowDisp));
+    Pointers emptyPointers;
+    const auto underflowLea = BuildControlFlowGraph(underflowLeaText, low, low, {}, emptyPointers);
+    std::unordered_set<VirtualAddress> expectedUnderflowLea{low, low + 7};
+    Require(underflowLea->ReachableVaddrs() == expectedUnderflowLea, "Unexpected reachable instruction set for underflowing LEA target");
+
+    const auto overflowCall = build({0xff, 0x15}, 0x20, high, high + 6 + 0x20);
+    std::unordered_set<VirtualAddress> expectedOverflow{high, high + 6, high + 12};
+    Require(overflowCall->ReachableVaddrs() == expectedOverflow, "Unexpected reachable instruction set for overflowing call target");
+
+    const auto overflowJump = build({0xff, 0x25}, 0x20, high, high + 6 + 0x20);
+    std::unordered_set<VirtualAddress> expectedOverflowJump{high, high + 12};
+    Require(overflowJump->ReachableVaddrs() == expectedOverflowJump, "Unexpected reachable instruction set for overflowing jump target");
+
+    Bytes overflowLeaText(16, 0xc3);
+    std::copy(leaPrefix.begin(), leaPrefix.end(), overflowLeaText.begin());
+    const std::int32_t overflowDisp = 0x20;
+    std::memcpy(overflowLeaText.data() + leaPrefix.size(), &overflowDisp, sizeof(overflowDisp));
+    const auto overflowLea = BuildControlFlowGraph(overflowLeaText, high, high, {}, emptyPointers);
+    std::unordered_set<VirtualAddress> expectedOverflowLea{high, high + 7};
+    Require(overflowLea->ReachableVaddrs() == expectedOverflowLea, "Unexpected reachable instruction set for overflowing LEA target");
+
+    const auto validZero = build({0xff, 0x15}, -static_cast<std::int32_t>(next), low, 0);
+    std::unordered_set<VirtualAddress> expectedZero{low, low + 6, low + 12};
+    Require(validZero->ReachableVaddrs() == expectedZero, "Unexpected reachable instruction set for target 0");
+
+    const auto validMax = build({0xff, 0x15}, 10, high, high + 16);
+    std::unordered_set<VirtualAddress> expectedMax{high, high + 6, high + 12};
+    Require(validMax->ReachableVaddrs() == expectedMax, "Unexpected reachable instruction set for target max");
+
+    const auto validEip = build({0x67, 0xff, 0x15}, -0x20, low, static_cast<std::uint32_t>(low + 7 - 0x20));
+    std::unordered_set<VirtualAddress> expectedEip{low, low + 7, low + 12};
+    Require(validEip->ReachableVaddrs() == expectedEip, "Unexpected reachable instruction set for 0x67 wrap");
+}
+
 void CheckCodeAddresses() {
     Bytes text(17, 0x90);
     text[0] = 0x48;
@@ -690,6 +750,7 @@ int main() {
         CheckRelocatedTransfers();
         CheckSegmentRelativeTransfers();
         CheckAddressSizeOverride();
+        CheckRipDisplacementBounds();
         CheckCodeAddresses();
         CheckSpeculativeRoots();
         CheckTrailingZeroRoots();
