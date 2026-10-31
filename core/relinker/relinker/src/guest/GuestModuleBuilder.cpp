@@ -110,13 +110,20 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     const auto neededNames = ReadNeededNames(dynamic);
     std::set<std::string> missingNeeded;
     std::map<std::string, std::filesystem::path> neededAliases;
+    std::map<std::string, std::filesystem::path> ambiguousAliases;
     for (const auto& name : neededNames) {
         if (excludedModules.contains(name)) continue;
         if (std::any_of(paths.begin(), paths.end(), [&](const auto& path) { return Io::Utf8Path(path.filename()) == name || (windows && FoldFilename(Io::Utf8Path(path.filename())) == FoldFilename(name)); })) continue;
         const auto stem = ModuleStem(name, windows);
-        const auto alias = stem.empty() ? paths.end() : std::find_if(paths.begin(), paths.end(), [&](const auto& path) { return ModuleStem(Io::Utf8Path(path.filename()), windows) == stem; });
-        if (alias != paths.end()) neededAliases.emplace(name, *alias);
-        else missingNeeded.insert(name);
+        const auto matchesStem = [&](const auto& path) { return ModuleStem(Io::Utf8Path(path.filename()), windows) == stem; };
+        const auto alias = stem.empty() ? paths.end() : std::find_if(paths.begin(), paths.end(), matchesStem);
+        if (alias == paths.end()) {
+            missingNeeded.insert(name);
+            continue;
+        }
+        neededAliases.emplace(name, *alias);
+        const auto other = std::find_if(std::next(alias), paths.end(), matchesStem);
+        if (other != paths.end()) ambiguousAliases.emplace(name, *other);
     }
     const auto matchesIdentity = [](const std::string& name, const std::vector<std::string>& identities) {
         const auto stem = std::string_view(name).substr(0, name.size() - Domain::ModuleSuffix(name).size());
@@ -169,6 +176,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     }
     for (const auto& [name, path] : neededAliases) {
         if (guestNames.contains(name)) continue;
+        if (const auto other = ambiguousAliases.find(name); other != ambiguousAliases.end())
+            throw Domain::RelinkerException("Ambiguous needed module: " + name + " (" + Io::Utf8Path(path) + " and " + Io::Utf8Path(other->second) + ")");
         const auto image = std::find_if(images.begin(), images.end(), [&](const auto& candidate) { return candidate.SourcePath == path; });
         if (image == images.end()) throw Domain::RelinkerException("Needed module alias has no guest image: " + name);
         const auto index = static_cast<std::size_t>(image - images.begin());
