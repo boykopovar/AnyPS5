@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -874,8 +875,9 @@ private:
         if (error) throw std::filesystem::filesystem_error("cannot resolve the pipeline journal directory", directory, error);
         directory = native;
 #endif
-        path = directory / "pipelines.journal";
-        lockPath = directory / "pipelines.journal.lock";
+        const std::string name = GpuHeapEnabled() ? "pipelines-heap.journal" : "pipelines.journal";
+        path = directory / name;
+        lockPath = directory / (name + ".lock");
         maxBytes = configured("APS5_PIPELINE_JOURNAL_MAX_MIB", 1024u) << 20u;
         std::thread([this] { run(); }).detach();
     }

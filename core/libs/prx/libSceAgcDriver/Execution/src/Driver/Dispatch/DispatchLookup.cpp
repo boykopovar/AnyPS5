@@ -113,6 +113,7 @@ void Driver::lookupDispatch(std::uint64_t address, const Submission& submission,
                 case EntryOutcome::PublishMoved: ++counters.publishMoved; break;
                 case EntryOutcome::PendingMoved: ++counters.pendingMoved; break;
                 case EntryOutcome::ForgetMoved: ++counters.forgetMoved; break;
+                case EntryOutcome::DeviceImageFallback: ++counters.deviceImageFallbacks; break;
             }
             if (current) {
                 ++counters.variantHitsByRank[rank];

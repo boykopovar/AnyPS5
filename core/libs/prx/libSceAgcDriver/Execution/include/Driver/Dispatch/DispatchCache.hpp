@@ -52,6 +52,10 @@ struct DispatchVariant {
     std::vector<std::pair<std::uint32_t, std::uint32_t>> shaderDataPatches;
     std::uint64_t userDataMask = ~std::uint64_t{0};
     std::shared_ptr<const ShaderRecompiler::ShaderVertexStageInfo> vertexInfo;
+    bool ring = false;
+    std::shared_ptr<const std::vector<ShaderRecompiler::VertexAttribute>> ringAttributes;
+    std::shared_ptr<const std::vector<std::uint32_t>> ringFlat;
+    std::shared_ptr<const std::vector<std::vector<std::uint32_t>>> ringBindings;
 
     std::shared_ptr<ShaderMemory> memory;
     std::vector<ShaderRecompiler::MemoryRegion> captured;
@@ -68,7 +72,7 @@ struct DispatchEntry {
 };
 
 struct EntryCounters {
-    std::uint64_t lookups = 0, absent = 0, equal = 0, differing = 0, inaccessible = 0, queuedLabel = 0, flushingImage = 0, publishMoved = 0, pendingMoved = 0, forgetMoved = 0, imagesFlushed = 0, runsSynced = 0, forgetSinceInsert = 0, replaced = 0, inserts = 0, unstable = 0, touches = 0;
+    std::uint64_t lookups = 0, absent = 0, equal = 0, differing = 0, inaccessible = 0, queuedLabel = 0, flushingImage = 0, publishMoved = 0, pendingMoved = 0, forgetMoved = 0, deviceImageFallbacks = 0, imagesFlushed = 0, runsSynced = 0, forgetSinceInsert = 0, replaced = 0, inserts = 0, unstable = 0, touches = 0;
 
     std::uint64_t runsValidated = 0, runsInserted = 0, retriesEqual = 0, retriesMoved = 0;
     double validateUs = 0;
@@ -92,7 +96,7 @@ struct DataMask {
     std::vector<std::pair<std::uint32_t, std::uint32_t>>* live;
 };
 
-enum class EntryOutcome { Equal, EqualData, Differing, Inaccessible, QueuedLabel, FlushingImage, PublishMoved, PendingMoved, ForgetMoved };
+enum class EntryOutcome { Equal, EqualData, Differing, Inaccessible, QueuedLabel, FlushingImage, PublishMoved, PendingMoved, ForgetMoved, DeviceImageFallback };
 
 bool CacheableResult(const ShaderRecompiler::RecompileResult& compiled);
 

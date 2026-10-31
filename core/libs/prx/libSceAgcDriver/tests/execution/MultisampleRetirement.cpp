@@ -299,8 +299,8 @@ public:
         realCreateImage = context.Function<PFN_vkCreateImage>("vkCreateImage");
         realDestroyImage = context.Function<PFN_vkDestroyImage>("vkDestroyImage");
         realBindImageMemory = context.Function<PFN_vkBindImageMemory>("vkBindImageMemory");
-        realCreateImageView = context.Function<PFN_vkCreateImageView>("vkCreateImageView");
-        realDestroyImageView = context.Function<PFN_vkDestroyImageView>("vkDestroyImageView");
+        realCreateImageView = reinterpret_cast<PFN_vkCreateImageView>(realProc(context.device, "vkCreateImageView"));
+        realDestroyImageView = reinterpret_cast<PFN_vkDestroyImageView>(realProc(context.device, "vkDestroyImageView"));
         realClearColorImage = context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage");
         realCopyImage = context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage");
         context.deviceProc = CountingDeviceProc;

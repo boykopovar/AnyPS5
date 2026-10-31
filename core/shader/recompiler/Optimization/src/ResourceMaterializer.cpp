@@ -8,6 +8,7 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "ThreadOwned.hpp"
+#include "DeviceImageTableAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
@@ -716,6 +717,10 @@ public:
         if (count == 0u) {
             return;
         }
+        const bool snapshotted = std::ranges::any_of(plan.info.images, [](const ImageResource& image) { return image.table != NoTable && !image.deviceTable; }) || std::ranges::any_of(plan.info.samplers, [](const SamplerResource& sampler) { return sampler.table != NoTable; });
+        tables.shader = plan.shaderHash;
+        tables.tables.resize(count);
+        if (!snapshotted) return;
         if (runtime.readMemory == nullptr) {
             throw std::runtime_error("image table snapshot requires runtime memory access");
         }
@@ -734,7 +739,7 @@ public:
             const SrtForceSyncScope forceSync(runtime, checkEpoch && attempt == 2u);
             const auto invalidationsBefore = checkEpoch ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
             for (const auto& image : plan.info.images) {
-                if (image.table != NoTable) Snapshot(image.source, image.table);
+                if (image.table != NoTable && !image.deviceTable) Snapshot(image.source, image.table);
             }
             for (const auto& sampler : plan.info.samplers) {
                 if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
@@ -1964,7 +1969,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         }
     };
     for (std::uint32_t resource = 0; resource < info.images.size(); resource++) {
-        if (info.images[resource].table != NoTable) fill(resource, info.images[resource].table, false);
+        if (info.images[resource].table != NoTable && !info.images[resource].deviceTable) fill(resource, info.images[resource].table, false);
     }
     for (std::uint32_t resource = 0; resource < info.samplers.size(); resource++) {
         if (info.samplers[resource].table != NoTable) fill(resource, info.samplers[resource].table, true);
@@ -2347,7 +2352,7 @@ void ResourceMaterializer::ApplyStaticInterface(IrProgram& program, bool nativeS
         tables = true;
         const auto modes = RuntimeImageModes(image);
         const bool storage = image.resourceClass == ImageResourceClass::Storage;
-        if (modes.empty() || modes.size() > ImageTableAbi::MaxModes || (storage && image.mipMode == ImageMipMode::DynamicStorage)) image.tableOperation = TableOperation::Unsupported;
+        if (modes.empty() || (!image.deviceTable && modes.size() > ImageTableAbi::MaxModes) || (storage && image.mipMode == ImageMipMode::DynamicStorage)) image.tableOperation = TableOperation::Unsupported;
     }
     for (const auto& pair : resources.info.sampledPairs) {
         if (pair.image >= images.size() || pair.sampler >= resources.info.samplers.size()) throw std::runtime_error("static sampled pair is out of range");
@@ -2597,10 +2602,10 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
         if (image.source >= plan.descriptorSources.size()) {
             throw std::runtime_error("ResourceMaterializer::ExtractPlan image references an unknown descriptor source");
         }
-        if (image.table != NoTable) {
-            plan.requiresSpecializationMemory = true;
-        } else {
+        if (image.table == NoTable) {
             addSource(image.source);
+        } else if (!image.deviceTable) {
+            plan.requiresSpecializationMemory = true;
         }
     }
     for (const auto& sampler : plan.info.samplers) {
@@ -2681,6 +2686,228 @@ std::uint64_t ResourceMaterializer::EvaluateNanoseconds() {
 
 std::uint64_t ResourceMaterializer::MaterializeNanoseconds() {
     return materializeNanoseconds.load(std::memory_order_relaxed);
+}
+
+namespace {
+
+ImageResource deviceInterfaceImage(const ImageResource& image) {
+    auto normalized = image;
+    normalized.source = 0u;
+    normalized.firstUsePc = 0u;
+    if (normalized.table != NoTable) normalized.table = 0u;
+    return normalized;
+}
+
+std::uint64_t mixImageInterface(std::uint64_t hash, const ImageResource& image) {
+    const auto mix = [&](std::uint64_t value) {
+        hash ^= value;
+        hash *= 0x100000001b3ull;
+    };
+    mix(static_cast<std::uint64_t>(image.resourceClass));
+    mix(static_cast<std::uint64_t>(image.numericClass));
+    mix(static_cast<std::uint64_t>(image.dimension));
+    mix(static_cast<std::uint64_t>(image.mipMode));
+    mix(image.mipCount);
+    mix(static_cast<std::uint64_t>(image.conversionFormat));
+    mix(image.shaderSwizzle);
+    mix((image.read ? 1u : 0u) | (image.written ? 2u : 0u) | (image.atomic ? 4u : 0u) | (image.atomic64 ? 8u : 0u) | (image.depthCompare ? 16u : 0u) | (image.cube ? 32u : 0u) | (image.r128 ? 64u : 0u) | (image.srgbDecode ? 128u : 0u));
+    mix((image.srgbDecodeCompatible ? 1u : 0u) | (image.depthBits ? 2u : 0u) | (image.depthUnorm16 ? 4u : 0u) | (image.packed ? 8u : 0u) | (image.fmaskCompatible ? 16u : 0u) | (image.depthBitsCompatible ? 32u : 0u) | (image.constantSwizzle ? 64u : 0u) | (image.constantSwizzleCompatible ? 128u : 0u));
+    mix((image.flatVolumeCompatible ? 1u : 0u) | (image.flatLineCompatible ? 2u : 0u) | (image.foldTexelOffsetsOnly ? 4u : 0u) | (image.table != NoTable ? 8u : 0u) | (image.deviceTable ? 16u : 0u) | (image.singleMipPlaneBiasCompatible ? 32u : 0u) | (image.flatVolumeLineCompatible ? 64u : 0u) | (image.cubeFaceCompatible ? 128u : 0u));
+    mix((image.volumeArraySampleCompatible ? 1u : 0u) | (image.convertedSamples ? 2u : 0u) | (image.remappedDepth1D ? 4u : 0u));
+    mix(image.srgbDecodeFormats);
+    mix(image.byElements);
+    mix(image.byComponents);
+    mix(static_cast<std::uint64_t>(image.packedFormat));
+    mix(image.emulatedCompare);
+    mix(static_cast<std::uint64_t>(image.tableOperation));
+    return hash;
+}
+
+struct DeviceImageInterfaceRegistry {
+    std::mutex mutex;
+    std::unordered_map<std::uint64_t, std::shared_ptr<const DeviceImageInterface>> interfaces;
+};
+
+DeviceImageInterfaceRegistry& deviceImageInterfaces() {
+    static auto& registry = *new DeviceImageInterfaceRegistry();
+    return registry;
+}
+
+}
+
+std::uint64_t ResourceMaterializer::DeviceImageInterfaceId(const ImageResource& image, std::span<const ImageResource> modes) {
+    auto hash = mixImageInterface(0xcbf29ce484222325ull, deviceInterfaceImage(image));
+    hash = (hash ^ modes.size()) * 0x100000001b3ull;
+    for (const auto& mode : modes) hash = mixImageInterface(hash, deviceInterfaceImage(mode));
+    return hash;
+}
+
+std::uint64_t ResourceMaterializer::RegisterDeviceImageInterface(const ImageResource& image, std::span<const ImageResource> modes) {
+    const auto id = DeviceImageInterfaceId(image, modes);
+    const auto same = [&](const DeviceImageInterface& entry) {
+        if (entry.image != deviceInterfaceImage(image) || entry.modes.size() != modes.size()) return false;
+        for (std::size_t index = 0; index < modes.size(); ++index) {
+            if (entry.modes[index] != deviceInterfaceImage(modes[index])) return false;
+        }
+        return true;
+    };
+    auto& registry = deviceImageInterfaces();
+    std::lock_guard lock(registry.mutex);
+    if (const auto found = registry.interfaces.find(id); found != registry.interfaces.end()) {
+        if (!same(*found->second)) throw std::runtime_error("device image interface: two image interfaces share the id 0x" + hexText(id));
+        return id;
+    }
+    auto entry = std::make_shared<DeviceImageInterface>();
+    entry->id = id;
+    entry->image = deviceInterfaceImage(image);
+    for (const auto& mode : modes) entry->modes.push_back(deviceInterfaceImage(mode));
+    registry.interfaces.emplace(id, std::move(entry));
+    return id;
+}
+
+void ResourceMaterializer::RegisterDeviceImageInterfaces(const ShaderInfo& info) {
+    for (std::uint32_t resource = 0; resource < info.images.size(); ++resource) {
+        if (!info.images[resource].deviceTable) continue;
+        if (resource >= info.runtimeImageModes.size()) throw std::runtime_error("device image interface: the runtime image modes are missing");
+        static_cast<void>(RegisterDeviceImageInterface(info.images[resource], info.runtimeImageModes[resource]));
+    }
+}
+
+std::shared_ptr<const DeviceImageInterface> ResourceMaterializer::FindDeviceImageInterface(std::uint64_t id) {
+    auto& registry = deviceImageInterfaces();
+    std::lock_guard lock(registry.mutex);
+    const auto found = registry.interfaces.find(id);
+    return found != registry.interfaces.end() ? found->second : nullptr;
+}
+
+std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDeviceImages(const IrResourcePlan& plan, const SrtRuntime& runtime, bool& complete) {
+    namespace Abi = DeviceImageTableAbi;
+    std::vector<Abi::Expectation> expected;
+    complete = true;
+    if (plan.info.deviceImageUses.empty()) return expected;
+    Detail::Evaluator evaluator(plan, runtime);
+    std::vector<std::uint8_t> active(plan.info.images.size(), 1u);
+    std::vector<std::vector<std::uint32_t>> taken(plan.controlFlow.size());
+    std::vector<std::uint8_t> visited(plan.controlFlow.size());
+    if (!plan.controlFlow.empty()) {
+        for (const auto& block : plan.controlFlow) {
+            for (const auto image : block.images) active.at(image) = 0u;
+        }
+        std::vector<std::uint32_t> pending{0};
+        while (!pending.empty()) {
+            const auto index = pending.back();
+            pending.pop_back();
+            if (visited.at(index) != 0u) continue;
+            visited[index] = 1u;
+            const auto& block = plan.controlFlow[index];
+            for (const auto image : block.images) active[image] = 1u;
+            std::uint32_t condition = 0;
+            if (block.condition != nullptr && block.successors.size() == 2u && evaluator.Evaluate(Detail::IrNode(block.condition), condition)) {
+                taken[index] = {block.successors[condition != 0u ? 0u : 1u]};
+            } else {
+                taken[index] = block.successors;
+            }
+            pending.insert(pending.end(), taken[index].begin(), taken[index].end());
+        }
+    }
+    using Words = std::vector<IrValue*>;
+    using Values = std::vector<std::uint32_t>;
+    const auto unwrapped = [](IrValue* word) {
+        IrValue* value = word->Resolve();
+        while (value->Opcode() == IrOpcode::ReadFirstLane) value = value->Argument(0)->Resolve();
+        return value;
+    };
+    const auto joining = [](const IrValue* value) { return value->IsPhi() || (value->Opcode() == IrOpcode::SelectU32 && !value->Argument(0)->Resolve()->HasImmediate()); };
+    const auto incoming = [&](const Words& words) {
+        Words start;
+        for (auto* word : words) start.push_back(unwrapped(word));
+        std::vector<Words> sets{start};
+        for (std::uint32_t round = 0; round < 4u && sets.size() <= MaxDeviceImageCandidates; ++round) {
+            std::vector<Words> next;
+            bool expanded = false;
+            for (const auto& set : sets) {
+                const auto found = std::ranges::find_if(set, joining);
+                if (found == set.end()) {
+                    next.push_back(set);
+                    continue;
+                }
+                expanded = true;
+                const IrValue* join = *found;
+                if (!join->IsPhi()) {
+                    const IrValue* condition = join->Argument(0)->Resolve();
+                    for (const std::size_t operand : {1u, 2u}) {
+                        auto candidate = set;
+                        for (auto*& word : candidate) {
+                            if (word->Opcode() == IrOpcode::SelectU32 && word->Argument(0)->Resolve() == condition) word = unwrapped(word->Argument(operand));
+                        }
+                        next.push_back(candidate);
+                    }
+                    continue;
+                }
+                for (std::size_t edge = 0; edge < join->ArgumentCount(); ++edge) {
+                    auto candidate = set;
+                    for (auto*& word : candidate) {
+                        if (!word->IsPhi() || word->ArgumentCount() != join->ArgumentCount()) continue;
+                        bool joined = true;
+                        for (std::size_t index = 0; joined && index < join->ArgumentCount(); ++index) joined = word->PhiBlock(index) == join->PhiBlock(index);
+                        if (joined) word = unwrapped(word->Argument(edge));
+                    }
+                    next.push_back(candidate);
+                }
+            }
+            sets = std::move(next);
+            if (!expanded) break;
+        }
+        return sets;
+    };
+    const auto evaluated = [&](const Words& words, Values& values) {
+        values.assign(words.size(), 0u);
+        for (std::size_t word = 0; word < words.size(); ++word) {
+            if (!evaluator.Evaluate(Detail::IrNode(words[word]), values[word])) return false;
+        }
+        return true;
+    };
+    const auto valuesOf = [&](const Words& words, bool& joined) {
+        std::vector<Values> values(1);
+        joined = false;
+        if (evaluated(words, values.front())) return values;
+        values.clear();
+        joined = true;
+        const auto sets = incoming(words);
+        if (sets.size() > MaxDeviceImageCandidates) return values;
+        for (const auto& candidate : sets) {
+            Values value;
+            if (!evaluated(candidate, value)) return std::vector<Values>{};
+            if (std::ranges::find(values, value) == values.end()) values.push_back(std::move(value));
+        }
+        return values;
+    };
+    expected.reserve(plan.info.deviceImageUses.size());
+    for (const auto& use : plan.info.deviceImageUses) {
+        if (active.at(use.image) == 0u) continue;
+        const auto& descriptor = plan.descriptorSources.at(use.descriptor);
+        if (descriptor.dwordCount != Abi::DescriptorWords || std::any_of(descriptor.dwords.begin(), descriptor.dwords.begin() + Abi::DescriptorWords, [](const IrValue* word) { return word == nullptr; })) {
+            complete = false;
+            continue;
+        }
+        const Words words(descriptor.dwords.begin(), descriptor.dwords.begin() + Abi::DescriptorWords);
+        bool joined = false;
+        const auto images = valuesOf(words, joined);
+        if (images.empty()) complete = false;
+        for (const auto& value : images) {
+            Abi::Expectation expectation;
+            expectation.pc = use.firstUsePc;
+            expectation.image = use.image;
+            expectation.sampler = use.sampler;
+            expectation.candidate = joined;
+            std::copy_n(value.begin(), Abi::DescriptorWords, expectation.key.begin());
+            if (Abi::NullDescriptor(expectation.key[0], expectation.key[1])) continue;
+            const auto same = std::ranges::find_if(expected, [&](const Abi::Expectation& held) { return held.key == expectation.key && held.pc == expectation.pc && held.image == expectation.image && held.sampler == expectation.sampler; });
+            if (same == expected.end()) expected.push_back(expectation);
+            else same->candidate = same->candidate && expectation.candidate;
+        }
+    }
+    return expected;
 }
 
 }

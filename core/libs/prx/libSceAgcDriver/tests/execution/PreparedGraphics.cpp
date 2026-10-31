@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
 #include "SceShaders.hpp"
@@ -22,6 +23,12 @@
 #include <string_view>
 
 namespace {
+
+std::vector<AgcDriver::DriverDetail::PreparedGraphicsStage> PreparePerDrawStages(const AgcDriver::DriverDetail::DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target) {
+    auto stages = AgcDriver::DriverDetail::PrepareGraphicsStages(decoded, target);
+    std::erase_if(stages, [](const AgcDriver::DriverDetail::PreparedGraphicsStage& stage) { return stage.heapVariant; });
+    return stages;
+}
 
 void Require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -134,7 +141,7 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
         target.mesh = MeshTargetLimits{{128, 1, 1}, 128, 32768, 256, 256, 128, 32768, 1, 1};
         target.spirvVersion = 0x00010400u;
     }
-    const auto stages = PrepareGraphicsStages(prepared, target);
+    const auto stages = PreparePerDrawStages(prepared, target);
     Require(stages.size() == (tessellation ? 4u : 2u), "graphics preparation compiled the wrong stages");
     if (!mesh && !tessellation && target.registrationModules) {
         const auto prebuild = [&](const std::vector<PreparedGraphicsStage>& group, std::initializer_list<std::size_t> picked) {
@@ -155,7 +162,7 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
         Require(pixelOnly.second == 1u, "registration modules: the pixel stage alone did not build its fragment library");
         const auto pair = prebuild(stages, {0u, 1u});
         Require(pair.first == 0u && pair.second == 0u, "registration modules: the pair of stages did not find the libraries prebuilt one stage at a time");
-        const auto again = PrepareGraphicsStages(prepared, target);
+        const auto again = PreparePerDrawStages(prepared, target);
         Require(again.front().registration != stages.front().registration, "registration modules: the second preparation reused the first result object");
         const auto repeated = prebuild(again, {0u, 1u});
         Require(repeated.first == 0u && repeated.second == 0u, "registration modules: another materialization of the same stages did not find the prebuilt libraries");
@@ -194,7 +201,7 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
         auto changed = prepared;
         changed.state.stages.vertexWaveSize = 64;
         changed.pixel.interpolatorSettings[0] = 0x404u;
-        const auto newStages = PrepareGraphicsStages(changed, target);
+        const auto newStages = PreparePerDrawStages(changed, target);
         front.snapshot->prepared->entries.push_back(newStages.front().entry);
         ResolvePreparedGraphics(*front.snapshot, {}, 7, target);
         const auto newVertexId = GetPreparedArtifact(*newStages.front().entry.handle).variantId;
@@ -216,7 +223,7 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
         Require(front.snapshot->prepared->rectangleProgress.size() == 1 && !front.snapshot->prepared->rectangleProgress.front().fragment.expired(), "expired rectangle progress was not removed");
         auto drawOnly = prepared;
         drawOnly.pixel.interpolatorSettings[0] = 0x405u;
-        const auto drawStages = PrepareGraphicsStages(drawOnly, target);
+        const auto drawStages = PreparePerDrawStages(drawOnly, target);
         auto unlinked = std::make_shared<ShaderSnapshot>();
         unlinked->type = 1;
         unlinked->prepared->entries.push_back(drawStages.back().entry);
@@ -238,10 +245,10 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     }
     auto incomplete = prepared;
     incomplete.roles.pop_back();
-    Reject([&] { static_cast<void>(PrepareGraphicsStages(incomplete, target)); }, "program roles are incomplete");
+    Reject([&] { static_cast<void>(PreparePerDrawStages(incomplete, target)); }, "program roles are incomplete");
     auto wrongEntry = prepared;
     wrongEntry.programs.front().binary.codeAddress += 4;
-    Reject([&] { static_cast<void>(PrepareGraphicsStages(wrongEntry, target)); }, "entry point differs");
+    Reject([&] { static_cast<void>(PreparePerDrawStages(wrongEntry, target)); }, "entry point differs");
     std::vector<LinkedProgram> linked;
     std::vector<MemoryRegion> memory;
     for (std::size_t index = 0; index < draw.programs.size(); ++index) {
@@ -285,7 +292,7 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
         resolved.pixel = prepared.pixel;
         DecodeGraphicsPrograms(resolved, unbound, registry, true, true);
         Require(resolved.programs.size() == 3u && resolved.roles.front() == ProgramRole::Hull, "an unbound local program was not left to the draw");
-        Require(PrepareGraphicsStages(resolved, target).size() == 3u, "graphics preparation without the local program compiled the wrong stages");
+        Require(PreparePerDrawStages(resolved, target).size() == 3u, "graphics preparation without the local program compiled the wrong stages");
         auto bound = queue;
         late.Bind(bound, 0x148u, 0x10bu);
         DrawDecode lateDraw{};
@@ -347,7 +354,7 @@ void PrebuildPolicyReadback(AgcDriver::VulkanDevice& device, bool disabled) {
     append(ShaderStage::Vertex, vertexCode, {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) | (16u << 16u), 3u, 0x01016facu});
     append(ShaderStage::Fragment, pixelCode, {});
     const auto target = device.Target();
-    const auto stages = PrepareGraphicsStages(decoded, target);
+    const auto stages = PreparePerDrawStages(decoded, target);
     Require(stages.size() == 2u, "prebuild policy lost a required graphics stage");
     for (const auto& stage : stages) {
         Require(stage.entry.handle != nullptr && stage.snapshot != nullptr, "prebuild policy lost a required source handle");
@@ -449,7 +456,7 @@ void RetainedPixelMatchesNullProgram(AgcDriver::VulkanDevice& device) {
             Require(AgcDriver::Graphics::DrawKeyCovers(read), "a pixel substitution dependency is absent from the draw key");
             Require(read.bank != AgcDriver::Graphics::RegisterBank::Shader || read.offset < 0x00bu || read.offset > 0x02bu, "the substituted program read fragment resources or userdata");
         }
-        const auto stages = PrepareGraphicsStages(draw, device.Target());
+        const auto stages = PreparePerDrawStages(draw, device.Target());
         Require(stages.size() == 2 && stages.back().entry.handle != nullptr, "a retained-format null program was not prepared");
         std::vector<ShaderRecompiler::LinkedProgram> linked;
         std::vector<ShaderRecompiler::MemoryRegion> memory;
@@ -558,7 +565,23 @@ void CheckMergedHull(AgcDriver::VulkanDevice& device) {
     DecodeGraphicsPrograms(stale, unmapped, registry, false, true);
     Require(stale.programs[1].userData[0] == 0x10u && stale.programs[1].userData[1] == 0u, "a merged hull draw did not pass a user-data address it does not need unchecked");
     const auto stages = PrepareGraphicsStages(prepared, device.Target());
-    Require(stages.size() == 4u && stages[0].entry.handle != stages[1].entry.handle, "a merged hull program was not prepared as separate local and hull stages");
+    for (const bool heapVariant : {false, true}) {
+        std::vector<const AgcDriver::DriverDetail::PreparedGraphicsStage*> set;
+        for (const auto& stage : stages) {
+            if (stage.heapVariant == heapVariant) set.push_back(&stage);
+        }
+        if (heapVariant && set.empty()) {
+            Require(!HeapFragmentsEnabled(), "the heap prepared no heap variants of the merged hull draw");
+            continue;
+        }
+        const auto handleOf = [&](ShaderRecompiler::ShaderStage wanted) {
+            const auto found = std::find_if(set.begin(), set.end(), [&](const auto* stage) { return stage->stage == wanted; });
+            return found == set.end() ? nullptr : (*found)->entry.handle.get();
+        };
+        const auto* local = handleOf(ShaderRecompiler::ShaderStage::Local);
+        const auto* hull = handleOf(ShaderRecompiler::ShaderStage::TessellationControl);
+        Require((heapVariant || set.size() == 4u) && local != nullptr && hull != nullptr && local != hull, "a merged hull program was not prepared as separate local and hull stages");
+    }
     for (const auto& stage : stages) stage.snapshot->prepared->entries.push_back(stage.entry);
     std::vector<LinkedProgram> linked;
     std::vector<MemoryRegion> memory;
@@ -706,7 +729,7 @@ void NullPixelMatchesRegistration(AgcDriver::VulkanDevice& device) {
     DecodeGraphicsPrograms(draw, queue, registry, false, true);
     const auto& fragment = draw.programs.back();
     Require(fragment.snapshot == null && fragment.userData.empty(), "a null pixel draw took the last pixel shader's user SGPRs");
-    const auto stages = PrepareGraphicsStages(draw, device.Target());
+    const auto stages = PreparePerDrawStages(draw, device.Target());
     const auto& handle = stages.back().entry.handle;
     Require(std::ranges::any_of(registered, [&](const auto& entry) { return entry.handle == handle; }), "a null pixel draw did not match the variant prepared at registration");
 }

@@ -7,7 +7,7 @@
 
 namespace ShaderRecompiler::ImageTableAbi {
 
-inline constexpr std::uint32_t Version = 2;
+inline constexpr std::uint32_t Version = 3;
 
 inline constexpr std::uint32_t HeaderVersion = 0;
 inline constexpr std::uint32_t HeaderElementBase = 1;
@@ -28,6 +28,12 @@ inline constexpr std::uint32_t TableBaseHigh = 5;
 inline constexpr std::uint32_t TableOutsideCode = 6;
 inline constexpr std::uint32_t TableFault = 7;
 inline constexpr std::uint32_t TableWords = 8;
+
+inline constexpr std::uint32_t TrailerBucketsLow = 0;
+inline constexpr std::uint32_t TrailerBucketsHigh = 1;
+inline constexpr std::uint32_t TrailerRingLow = 2;
+inline constexpr std::uint32_t TrailerRingHigh = 3;
+inline constexpr std::uint32_t TrailerWords = 4;
 
 inline constexpr std::uint32_t ImageRecordFlags = 0;
 inline constexpr std::uint32_t ImageRecordDword3 = 1;
@@ -114,6 +120,36 @@ constexpr std::uint32_t PoisonCode(std::uint32_t poison) {
 
 constexpr std::uint32_t TableHeader(std::uint32_t table) {
     return HeaderWords + TableWords * table;
+}
+
+constexpr std::uint32_t TrailerWord(std::uint32_t elementBase, std::uint32_t field) {
+    return elementBase - TrailerWords + field;
+}
+
+struct Trailer {
+    std::uint64_t buckets = 0;
+    std::uint64_t ring = 0;
+    bool operator==(const Trailer&) const = default;
+};
+
+template <typename Map>
+std::uint32_t AppendTrailer(Map& map, const Trailer& trailer) {
+    map.push_back(static_cast<std::uint32_t>(trailer.buckets));
+    map.push_back(static_cast<std::uint32_t>(trailer.buckets >> 32u));
+    map.push_back(static_cast<std::uint32_t>(trailer.ring));
+    map.push_back(static_cast<std::uint32_t>(trailer.ring >> 32u));
+    const auto base = static_cast<std::uint32_t>(map.size());
+    map[HeaderElementBase] = base;
+    return base;
+}
+
+template <typename Map>
+std::optional<Trailer> ReadTrailer(const Map& map) {
+    if (map.size() <= HeaderElementBase) return std::nullopt;
+    const auto base = map[HeaderElementBase];
+    if (base < HeaderWords + TrailerWords || base > map.size()) return std::nullopt;
+    const auto word = [&](std::uint32_t field) { return static_cast<std::uint64_t>(map[TrailerWord(base, field)]); };
+    return Trailer{word(TrailerBucketsLow) | word(TrailerBucketsHigh) << 32u, word(TrailerRingLow) | word(TrailerRingHigh) << 32u};
 }
 
 constexpr std::optional<std::uint32_t> ScalarBufferDword(std::uint32_t offset, std::uint32_t immediate, std::uint64_t size) {
