@@ -56,6 +56,8 @@ void Counting() {
     Require(ksem_post_nid_postfix(id) == 0 && Value(id) == 1);
     Require(ksem_getvalue_nid_postfix(id, nullptr) == -1 && Error() == Efault);
     Require(ksem_getvalue_nid_postfix(id, reinterpret_cast<int*>(0x10)) == -1 && Error() == Efault);
+    Require(Value(id) == 1);
+    Require(ksem_trywait_nid_postfix(id) == 0 && Value(id) == 0);
     Require(ksem_destroy_nid_postfix(id) == 0);
     Require(ksem_post_nid_postfix(id) == -1 && Error() == Einval);
     Require(ksem_init_nid_postfix(&id, 0x7fffffffu) == 0);
