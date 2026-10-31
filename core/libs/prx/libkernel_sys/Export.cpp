@@ -823,7 +823,7 @@ int APS5_VABI kldsym_nid_postfix(int fileid, int cmd, void* data) {
     throw std::runtime_error("kldsym: looking up the symbol " + name + " in every kernel module is not supported");
 }
 
-int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
+static int CreateSymlinkAt(const char* target, int dirfd, const char* created) {
     std::string targetCopy, createdCopy;
     if (const int error = CopyPath(target, targetCopy)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(created, createdCopy)) return static_cast<int>(Fail(error));
@@ -839,7 +839,15 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
         }
     }
     std::filesystem::path native;
-    if (const int error = ResolvePathError_nid_no_patch(created, native)) return static_cast<int>(Fail(error));
+    if (std::strlen(created) >= GuestPathMax || HasLongComponent(created)) return static_cast<int>(Fail(GuestEnametoolong));
+    if (dirfd == GuestAtFdcwd || *created == '/') {
+        if (const int error = ResolvePathError_nid_no_patch(created, native)) return static_cast<int>(Fail(error));
+    } else {
+        int error = 0;
+        const char* base = GetDirectoryDescriptorPath_nid_no_patch(dirfd, &error);
+        if (!base) return static_cast<int>(Fail(error));
+        native = std::filesystem::path(base) / std::filesystem::path(reinterpret_cast<const char8_t*>(created));
+    }
     std::error_code error;
 #ifdef _WIN32
     if (GetFileAttributesW(native.wstring().c_str()) != INVALID_FILE_ATTRIBUTES) return static_cast<int>(Fail(GuestEexist));
@@ -867,6 +875,14 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
 #endif
     RecordWrittenPath_nid_no_patch(native);
     return 0;
+}
+
+int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
+    return CreateSymlinkAt(target, GuestAtFdcwd, created);
+}
+
+int APS5_VABI symlinkat_nid_postfix(const char* target, int directory, const char* created) {
+    return CreateSymlinkAt(target, directory, created);
 }
 
 int APS5_VABI openat_nid_postfix(int fd, const char* path, int flags, ...) {

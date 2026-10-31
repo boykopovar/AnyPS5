@@ -37,6 +37,39 @@ OTHER = [
 
 
 class CheckSkipsTests(unittest.TestCase):
+    def test_windows_symlink_creation_privilege_skip_is_narrow(self):
+        reason = "SKIP: Windows symbolic-link privileges unavailable"
+        names = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched")
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for name in names:
+                for channel in ("system-out", "system-err"):
+                    with self.subTest(name=name, channel=channel):
+                        junit.write_text(f'<testsuite><testcase name="{name}"><skipped message="SKIP_RETURN_CODE=77"/>'
+                                         f'<{channel}>startup log\n{reason}\n</{channel}></testcase></testsuite>', encoding="utf-8")
+                        result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "windows"], capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            invalid = (
+                ("guest_kernel_sys_paths_symlinkat_errors", reason, "windows", ""),
+                ("guest_kernel_sys_paths_symlinkat_refused_unpatched", reason, "windows", ""),
+                ("guest_probe", reason, "windows", ""),
+                (names[0], reason, "linux", ""),
+                (names[0], "", "windows", ""),
+                (names[0], reason + " extra", "windows", ""),
+                (names[0], "SKIP: unrelated failure", "windows", ""),
+                (names[0], reason + "\nSKIP: flaky", "windows", ""),
+                (names[0], reason + "\nskipped, flaky", "windows", ""),
+                (names[0], reason + "\nfixture: skipped, flaky", "windows", ""),
+                (names[0], reason + "\nfixture: SKIP: flaky", "windows", ""),
+                (names[0], reason, "windows", "flaky"),
+            )
+            for name, output, job, skipped_text in invalid:
+                with self.subTest(name=name, output=output, job=job, skipped_text=skipped_text):
+                    junit.write_text(f'<testsuite><testcase name="{name}"><skipped message="SKIP_RETURN_CODE=77">{skipped_text}</skipped>'
+                                     f'<system-out>{output}</system-out></testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
     def test_ctest_status_and_prefixed_device_reasons_are_expected(self):
         reports = (
             ('<skipped message="SKIP_RETURN_CODE=77"/><system-out>skipped, the device lacks geometryShader</system-out>', "linux"),
