@@ -34,4 +34,8 @@ int main() {
     Require(scePadSetVibrationMode(special, 1) == PAD_OK);
     Require(scePadSetVibrationMode(special, 4) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(special) == PAD_OK);
+    Require(scePadSetVibrationMode(special, 1) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadClose_nid_postfix(-1) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadClose_nid_postfix(0) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadClose_nid_postfix(12345) == PAD_ERROR_INVALID_HANDLE);
 }
