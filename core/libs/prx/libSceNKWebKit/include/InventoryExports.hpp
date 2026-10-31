@@ -1772,8 +1772,6 @@ int APS5_VABI _ZN3WTF15isWordTextBreakEP14UBreakIterator();
 int APS5_VABI _ZN3WTF15memoryFootprintEv();
 int APS5_VABI _ZN3WTF16addSignalHandlerENS_6SignalEONS_8FunctionIFNS_12SignalActionES0_RNS_7SigInfoERNS_17PlatformRegistersEEEE();
 int APS5_VABI _ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE();
-int APS5_VABI _ZN3WTF16codePointCompareENS_10StringViewES0_();
-int APS5_VABI _ZN3WTF16codePointCompareERKNS_6StringES2_();
 int APS5_VABI _ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE();
 int APS5_VABI _ZN3WTF17GregorianDateTimeC2EdNS_15LocalTimeOffsetE();
 int APS5_VABI _ZN3WTF17PrivateSymbolImpl6createERNS_10StringImplE();
