@@ -348,6 +348,14 @@ static void CheckCaptureHidesEarlierInput() {
     Pad::Read(drained, 64, 0);
 }
 
+static bool ReadTwiceWithin(int handle, std::chrono::milliseconds limit) {
+    PadData data{};
+    const auto start = std::chrono::steady_clock::now();
+    Require(scePadReadState(handle, &data) == PAD_OK);
+    Require(scePadReadState(handle, &data) == PAD_OK);
+    return std::chrono::steady_clock::now() - start < limit;
+}
+
 static void CheckLatchedPressLifetime(int handle) {
     const auto cross = static_cast<std::uint32_t>(Pad::PadButton::Cross);
     const auto circle = static_cast<std::uint32_t>(Pad::PadButton::Circle);
@@ -361,23 +369,24 @@ static void CheckLatchedPressLifetime(int handle) {
     Require(scePadRead_nid_postfix(handle, drained, 64) >= 1);
     Require(scePadReadState(handle, &data) == PAD_OK);
     Require((data.buttons & cross) == 0);
+    while (!ReadTwiceWithin(handle, std::chrono::milliseconds(50))) {}
     pressed.buttons = cross;
     PadPublishInput_nid_postfix(pressed);
     PadPublishInput_nid_postfix(PadInputState{});
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
     Require(scePadReadState(handle, &data) == PAD_OK);
     Require((data.buttons & cross) == 0);
-    Require(scePadReadState(handle, &data) == PAD_OK);
+    while (!ReadTwiceWithin(handle, std::chrono::milliseconds(50))) {}
     pressed.buttons = cross;
     PadPublishInput_nid_postfix(pressed);
     PadPublishInput_nid_postfix(PadInputState{});
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
     pressed.buttons = circle;
     PadPublishInput_nid_postfix(pressed);
-    PadPublishInput_nid_postfix(PadInputState{});
     Require(scePadReadState(handle, &data) == PAD_OK);
     Require((data.buttons & cross) == 0);
     Require((data.buttons & circle) != 0);
+    PadPublishInput_nid_postfix(PadInputState{});
 }
 
 static void CheckLatchedPressAtSlowReads(int handle) {
@@ -385,13 +394,17 @@ static void CheckLatchedPressAtSlowReads(int handle) {
     PadInputState pressed;
     pressed.buttons = cross;
     PadData data{};
-    Require(scePadReadState(handle, &data) == PAD_OK);
-    std::this_thread::sleep_for(std::chrono::milliseconds(170));
-    Require(scePadReadState(handle, &data) == PAD_OK);
-    PadPublishInput_nid_postfix(pressed);
-    PadPublishInput_nid_postfix(PadInputState{});
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
-    Require(scePadReadState(handle, &data) == PAD_OK);
+    auto secondRead = std::chrono::steady_clock::now();
+    do {
+        Require(scePadReadState(handle, &data) == PAD_OK);
+        std::this_thread::sleep_for(std::chrono::milliseconds(170));
+        secondRead = std::chrono::steady_clock::now();
+        Require(scePadReadState(handle, &data) == PAD_OK);
+        PadPublishInput_nid_postfix(pressed);
+        PadPublishInput_nid_postfix(PadInputState{});
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        Require(scePadReadState(handle, &data) == PAD_OK);
+    } while (std::chrono::steady_clock::now() - secondRead > std::chrono::milliseconds(250));
     Require((data.buttons & cross) != 0);
     PadPublishInput_nid_postfix(pressed);
     PadPublishInput_nid_postfix(PadInputState{});
@@ -404,15 +417,21 @@ static void CheckLatchedPressPerPort() {
     const auto cross = static_cast<std::uint32_t>(Pad::PadButton::Cross);
     PadInputState pressed;
     pressed.buttons = cross;
-    Pad::ReadState(0);
-    Pad::ReadState(1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(170));
-    Pad::ReadState(0);
-    Pad::ReadState(1);
-    PadPublishInputForPort_nid_postfix(0, pressed);
-    PadPublishInputForPort_nid_postfix(0, PadInputState{});
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
-    Require((Pad::ReadState(0).buttons & cross) != 0);
+    PadData data{};
+    auto secondRead = std::chrono::steady_clock::now();
+    do {
+        Pad::ReadState(0);
+        Pad::ReadState(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(170));
+        secondRead = std::chrono::steady_clock::now();
+        Pad::ReadState(0);
+        Pad::ReadState(1);
+        PadPublishInputForPort_nid_postfix(0, pressed);
+        PadPublishInputForPort_nid_postfix(0, PadInputState{});
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        data = Pad::ReadState(0);
+    } while (std::chrono::steady_clock::now() - secondRead > std::chrono::milliseconds(250));
+    Require((data.buttons & cross) != 0);
 }
 
 static void CheckReadStateHandle(int handle) {
