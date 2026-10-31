@@ -85,7 +85,8 @@ def unique_json_object(pairs):
 
 
 def load_summary(path, trace=None):
-    records = []
+    selected = None
+    count = 0
     with Path(path).open(encoding="utf-8-sig") as source:
         for line_number, line in enumerate(source, 1):
             if not line.strip():
@@ -97,13 +98,15 @@ def load_summary(path, trace=None):
             except (ValueError, RecursionError) as error:
                 raise ValueError(f"{path}:{line_number}: {error}") from error
             if trace is None or record.get("trace") == trace:
-                records.append((line_number, record))
-    if len(records) != 1:
+                count += 1
+                if count == 1:
+                    selected = (line_number, record)
+    if count != 1:
         selection = f" matching trace {trace!r}" if trace is not None else ""
-        raise ValueError(f"{path}: expected one summary{selection}, found {len(records)}; "
+        raise ValueError(f"{path}: expected one summary{selection}, found {count}; "
                          "select a unique trace with --baseline-trace/--candidate-trace "
                          "or provide a file containing one summary line")
-    line_number, record = records[0]
+    line_number, record = selected
     try:
         return validate(record)
     except ValueError as error:
