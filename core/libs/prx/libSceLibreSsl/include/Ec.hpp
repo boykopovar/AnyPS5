@@ -1,6 +1,8 @@
 #pragma once
 
-#include <memory>
+#include <cstddef>
+#include <cstdint>
+#include <type_traits>
 #include "mbedtls/ecp.h"
 
 struct NamedCurve {
@@ -20,5 +22,24 @@ struct EcGroup {
 };
 
 struct EcKey {
-    std::unique_ptr<EcGroup> group;
+    EcKey() = default;
+    ~EcKey();
+
+    EcKey(const EcKey&) = delete;
+    EcKey& operator=(const EcKey&) = delete;
+
+    const void* method = nullptr;
+    std::int32_t version = 0;
+    EcGroup* group = nullptr;
+    void* publicKey = nullptr;
+    void* privateKey = nullptr;
+    std::uint32_t encodingFlags = 0;
+    std::int32_t conversionForm = 0;
+    std::int32_t references = 1;
+    std::int32_t flags = 0;
+    void* extraData = nullptr;
 };
+
+static_assert(std::is_standard_layout_v<EcKey>);
+static_assert(sizeof(EcKey) == 64);
+static_assert(offsetof(EcKey, references) == 48);

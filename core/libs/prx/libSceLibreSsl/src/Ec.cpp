@@ -1,8 +1,9 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libc/include/General.hpp"
 #include "mbedtls/bignum.h"
@@ -18,6 +19,10 @@ EcGroup::EcGroup(const NamedCurve& named) : curve(named) {
 
 EcGroup::~EcGroup() {
     mbedtls_ecp_group_free(&group);
+}
+
+EcKey::~EcKey() {
+    delete group;
 }
 
 namespace {
@@ -82,22 +87,28 @@ EcKey* APS5_VABI EC_KEY_new_nid_postfix(void) {
 EcKey* APS5_VABI EC_KEY_new_by_curve_name_nid_postfix(int nid) {
     std::unique_ptr<EcGroup> group = NewGroup(nid);
     if (!group) return nullptr;
-    return new EcKey{std::move(group)};
+    EcKey* key = new EcKey;
+    key->group = group.release();
+    return key;
 }
 
 void APS5_VABI EC_KEY_free_nid_postfix(EcKey* key) {
+    static_assert(std::atomic_ref<std::int32_t>::required_alignment <= alignof(std::int32_t));
+    if (!key || std::atomic_ref<std::int32_t>(key->references).fetch_sub(1) > 1) return;
     delete key;
 }
 
 const EcGroup* APS5_VABI EC_KEY_get0_group_nid_postfix(const EcKey* key) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
-    return key->group.get();
+    return key->group;
 }
 
 int APS5_VABI EC_KEY_set_group_nid_postfix(EcKey* key, const EcGroup* group) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
-    key->group = group ? std::make_unique<EcGroup>(group->curve) : nullptr;
-    return key->group ? 1 : 0;
+    EcGroup* copy = group ? new EcGroup(group->curve) : nullptr;
+    delete key->group;
+    key->group = copy;
+    return copy ? 1 : 0;
 }
 
 int APS5_VABI ECDSA_size_nid_postfix(const EcKey* key) {
