@@ -441,8 +441,7 @@ int APS5_VABI sceSystemServiceLaunchApp(const char* titleId, const char* const* 
  (void)titleId;
  (void)arguments;
  (void)param;
- NotImplemented_nid_no_patch("sceSystemServiceLaunchApp: launching another application");
- return 0;
+ throw std::runtime_error("sceSystemServiceLaunchApp: launching another application");
 }
 
 int APS5_VABI sceSystemServiceDisableMusicPlayer(void) {
@@ -463,13 +462,11 @@ int APS5_VABI sceSystemServiceOpenTournamentOccurrence(const SystemServiceTourna
 }
 
 int APS5_VABI sceSystemServiceAddLocalProcessForPsmKit(const char*, const char* const*, const void*) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ throw std::runtime_error("sceSystemServiceAddLocalProcessForPsmKit: starting another process");
 }
 
 int APS5_VABI sceSystemServiceKillLocalProcessForPsmKit(int) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ throw std::runtime_error("sceSystemServiceKillLocalProcessForPsmKit: stopping another process");
 }
 
 int APS5_VABI sceSystemServiceReenableMusicPlayer(void) {
