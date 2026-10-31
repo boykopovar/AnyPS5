@@ -1,0 +1,21 @@
+target_sources(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR}/prx/libSceFreeType/src/MemoryRecord.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_memory_record_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeMemoryRecord.cpp)
+    target_include_directories(guest_freetype_memory_record_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_memory_record_tests PRIVATE ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(guest_freetype_memory_record_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_freetype_memory_record_tests)
+    add_dependencies(guest_freetype_memory_record_tests libs)
+    add_test(NAME guest_freetype_memory_record COMMAND guest_freetype_memory_record_tests $<TARGET_FILE:libSceFreeType> unpatched)
+    add_test(NAME guest_freetype_memory_record_nid COMMAND guest_freetype_memory_record_tests ${PATCHED_DIR}/libSceFreeType.prx patched)
+    set_tests_properties(guest_freetype_memory_record guest_freetype_memory_record_nid PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_memory_record PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+        set_tests_properties(guest_freetype_memory_record_nid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${PATCHED_DIR}")
+    endif()
+endif()
