@@ -241,6 +241,77 @@ std::size_t APS5_VABI CodecvtLength(GuestLocale::Facet*, std::uint64_t*, const c
 
 const GuestLocale::CodecvtVtable g_codecvtVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, CodecvtAlwaysNoconv, CodecvtConstantOne, CodecvtConstantOne, CodecvtNoConversion, CodecvtNoConversion, CodecvtUnshift, CodecvtLength};
 
+constexpr std::size_t GuestMbstateSize = 16;
+
+bool APS5_VABI WideCodecvtAlwaysNoconv(const GuestLocale::Facet*) {
+    return false;
+}
+
+int APS5_VABI WideCodecvtMaxLength(const GuestLocale::Facet*) {
+    return 6;
+}
+
+int APS5_VABI WideCodecvtEncoding(const GuestLocale::Facet*) {
+    return 0;
+}
+
+int APS5_VABI WideCodecvtIn(GuestLocale::Facet*, std::uint64_t* state, const char* first1, const char* last1, const char** next1, char* first3, char* last3, char** next3) {
+    *next1 = first1;
+    *next3 = first3;
+    while (first1 != last1) {
+        if (first3 == last3) return 1;
+        const auto result = mbrtowc_nid_postfix(reinterpret_cast<std::uint16_t*>(first3), first1, static_cast<std::size_t>(last1 - first1), state);
+        if (result == static_cast<std::size_t>(-1)) return 2;
+        if (result == static_cast<std::size_t>(-2)) {
+            *next1 = last1;
+            return 1;
+        }
+        first1 += result == 0 ? 1 : result;
+        first3 += sizeof(std::uint16_t);
+        *next1 = first1;
+        *next3 = first3;
+    }
+    return 0;
+}
+
+int APS5_VABI WideCodecvtOut(GuestLocale::Facet*, std::uint64_t* state, const char* first1, const char* last1, const char** next1, char* first3, char* last3, char** next3) {
+    *next1 = first1;
+    *next3 = first3;
+    while (first1 != last1) {
+        char converted[8];
+        const auto length = wcrtomb_nid_postfix(converted, *reinterpret_cast<const std::uint16_t*>(first1), state);
+        if (length == static_cast<std::size_t>(-1)) return 2;
+        if (length > static_cast<std::size_t>(last3 - first3)) return 1;
+        std::memcpy(first3, converted, length);
+        first1 += sizeof(std::uint16_t);
+        first3 += length;
+        *next1 = first1;
+        *next3 = first3;
+    }
+    return 0;
+}
+
+int APS5_VABI WideCodecvtUnshift(GuestLocale::Facet*, std::uint64_t* state, char* first3, char*, char** next3) {
+    *next3 = first3;
+    std::memset(state, 0, GuestMbstateSize);
+    return 0;
+}
+
+std::size_t APS5_VABI WideCodecvtLength(GuestLocale::Facet*, std::uint64_t* state, const char* first1, const char* last1, std::size_t count) {
+    std::uint64_t localState[GuestMbstateSize / sizeof(std::uint64_t)];
+    std::memcpy(localState, state, GuestMbstateSize);
+    std::size_t length = 0;
+    while (count != 0 && first1 != last1) {
+        std::uint16_t converted = 0;
+        const auto result = mbrtowc_nid_postfix(&converted, first1, static_cast<std::size_t>(last1 - first1), localState);
+        if (result == static_cast<std::size_t>(-1) || result == static_cast<std::size_t>(-2)) break;
+        first1 += result == 0 ? 1 : result;
+        ++length;
+        --count;
+    }
+    return length;
+}
+
 GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
     if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
     const std::size_t length = std::strlen(source);
@@ -625,7 +696,21 @@ std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
 };
 std::uint64_t _ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[16] {};
-std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13] {};
+std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&DestroyCollate),
+    reinterpret_cast<std::uintptr_t>(&DeleteCollate),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&WideCodecvtAlwaysNoconv),
+    reinterpret_cast<std::uintptr_t>(&WideCodecvtMaxLength),
+    reinterpret_cast<std::uintptr_t>(&WideCodecvtEncoding),
+    reinterpret_cast<std::uintptr_t>(&WideCodecvtIn),
+    reinterpret_cast<std::uintptr_t>(&WideCodecvtOut),
+    reinterpret_cast<std::uintptr_t>(&WideCodecvtUnshift),
+    reinterpret_cast<std::uintptr_t>(&WideCodecvtLength),
+};
 std::uint64_t _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots] {};
 std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
@@ -801,18 +886,16 @@ void APS5_VABI _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(GuestLoca
 
 int APS5_VABI _Mbtowcx_nid_postfix(std::uint16_t* dst, const char* src, std::size_t count, mbstate_t* st) {
     if (dst == nullptr || src == nullptr || st == nullptr || count == 0) throw std::invalid_argument("_Mbtowcx: invalid conversion arguments");
-    wchar_t converted{};
-    const auto result = std::mbrtowc(&converted, src, count, st);
+    const auto result = mbrtowc_nid_postfix(dst, src, count, st);
     if (result == static_cast<std::size_t>(-1)) throw std::runtime_error("_Mbtowcx: invalid multibyte character");
     if (result == static_cast<std::size_t>(-2)) throw std::runtime_error("_Mbtowcx: incomplete multibyte character");
-    if (result > static_cast<std::size_t>(std::numeric_limits<int>::max()) || static_cast<std::uint32_t>(converted) > 0xffff) throw std::runtime_error("_Mbtowcx: conversion exceeds guest character limits");
-    *dst = static_cast<std::uint16_t>(converted);
+    if (result > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::runtime_error("_Mbtowcx: conversion size exceeds guest limits");
     return static_cast<int>(result);
 }
 
 int APS5_VABI _Wctombx_nid_postfix(char* dst, std::uint16_t src, mbstate_t* st) {
     if (dst == nullptr || st == nullptr) throw std::invalid_argument("_Wctombx: invalid conversion arguments");
-    const auto result = std::wcrtomb(dst, static_cast<wchar_t>(src), st);
+    const auto result = wcrtomb_nid_postfix(dst, src, st);
     if (result == static_cast<std::size_t>(-1)) throw std::runtime_error("_Wctombx: invalid wide character");
     if (result > static_cast<std::size_t>(std::numeric_limits<int>::max())) throw std::runtime_error("_Wctombx: conversion size exceeds guest limits");
     return static_cast<int>(result);
@@ -831,13 +914,13 @@ const short* APS5_VABI _Getptoupper_nid_postfix() {
 }
 
 mbstate_t* APS5_VABI _Getpmbstate_nid_postfix() {
-    thread_local mbstate_t state {};
-    return &state;
+    alignas(mbstate_t) thread_local unsigned char state[GuestMbstateSize] {};
+    return reinterpret_cast<mbstate_t*>(state);
 }
 
 mbstate_t* APS5_VABI _Getpwcstate_nid_postfix() {
-    thread_local mbstate_t state {};
-    return &state;
+    alignas(mbstate_t) thread_local unsigned char state[GuestMbstateSize] {};
+    return reinterpret_cast<mbstate_t*>(state);
 }
 
 std::uint32_t APS5_VABI _Towctrans_nid_postfix(std::uint32_t c, std::uint64_t desc) {

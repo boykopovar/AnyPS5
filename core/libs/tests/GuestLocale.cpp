@@ -71,12 +71,61 @@ static void CheckInputFacetObjects() {
 }
 
 static void CheckCodecvtWideVtableObject() {
-    for (std::uintptr_t& slot : _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix) {
-        Require(slot == 0);
-        slot = 0x1111;
-        Require(slot == 0x1111);
-        slot = 0;
-    }
+    Require(_ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[0] == 0 && _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[1] == 0);
+    for (std::size_t index = 2; index < std::size(_ZTVSt7codecvtIwc9_MbstatetE_nid_postfix); ++index) Require(_ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[index] != 0);
+    const auto* vtable = reinterpret_cast<const GuestLocale::CodecvtVtable*>(&_ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[2]);
+    GuestLocale::Facet facet{};
+    facet.references = 0;
+    vtable->facet.retain(&facet);
+    Require(facet.references == 1);
+    Require(vtable->facet.release(&facet) == &facet && facet.references == 0);
+    Require(!vtable->alwaysNoconv(&facet) && vtable->maxLength(&facet) == 6 && vtable->encoding(&facet) == 0);
+
+    std::uint64_t state[2]{};
+    const char source[] = "A\xc3\xa9\xe2\x82\xac";
+    std::uint16_t wide[4]{};
+    const char* nextSource = nullptr;
+    char* nextWide = nullptr;
+    Require(vtable->in(&facet, state, source, source + 6, &nextSource, reinterpret_cast<char*>(wide), reinterpret_cast<char*>(wide + 4), &nextWide) == 0);
+    Require(nextSource == source + 6 && nextWide == reinterpret_cast<char*>(wide + 3));
+    Require(wide[0] == 'A' && wide[1] == 0xe9 && wide[2] == 0x20ac);
+    Require(vtable->length(&facet, state, source, source + 6, 2) == 2);
+    Require(vtable->length(&facet, state, source, source + 6, 4) == 3);
+
+    std::uint64_t outputState[2]{};
+    char bytes[8]{};
+    const std::uint16_t wideSource[] = {'A', 0xe9, 0x20ac};
+    const char* nextWideSource = nullptr;
+    char* nextByte = nullptr;
+    Require(vtable->out(&facet, outputState, reinterpret_cast<const char*>(wideSource), reinterpret_cast<const char*>(wideSource + 3), &nextWideSource, bytes, bytes + 8, &nextByte) == 0);
+    Require(nextWideSource == reinterpret_cast<const char*>(wideSource + 3) && nextByte == bytes + 6);
+    Require(std::memcmp(bytes, "A\xc3\xa9\xe2\x82\xac", 6) == 0);
+
+    char tiny[2]{};
+    Require(vtable->out(&facet, outputState, reinterpret_cast<const char*>(wideSource + 2), reinterpret_cast<const char*>(wideSource + 3), &nextWideSource, tiny, tiny + 2, &nextByte) == 1);
+    Require(nextWideSource == reinterpret_cast<const char*>(wideSource + 2) && nextByte == tiny);
+
+    const char invalid[] = "\xf0\x9f\x98\x80";
+    Require(vtable->in(&facet, state, invalid, invalid + 4, &nextSource, reinterpret_cast<char*>(wide), reinterpret_cast<char*>(wide + 4), &nextWide) == 2);
+    Require(nextSource == invalid && nextWide == reinterpret_cast<char*>(wide));
+
+    std::uint64_t partialState[2]{};
+    const char partial[] = "\xe2";
+    const char continuation[] = "\x82\xac";
+    std::uint16_t partialWide[1]{};
+    Require(vtable->in(&facet, partialState, partial, partial + 1, &nextSource, reinterpret_cast<char*>(partialWide), reinterpret_cast<char*>(partialWide + 1), &nextWide) == 1);
+    Require(nextSource == partial + 1 && nextWide == reinterpret_cast<char*>(partialWide));
+    Require(vtable->in(&facet, partialState, continuation, continuation + 2, &nextSource, reinterpret_cast<char*>(partialWide), reinterpret_cast<char*>(partialWide + 1), &nextWide) == 0);
+    Require(nextSource == continuation + 2 && nextWide == reinterpret_cast<char*>(partialWide + 1) && partialWide[0] == 0x20ac);
+
+    std::uint64_t fullState[2]{};
+    std::uint16_t one[1]{};
+    Require(vtable->in(&facet, fullState, source, source + 6, &nextSource, reinterpret_cast<char*>(one), reinterpret_cast<char*>(one + 1), &nextWide) == 1);
+    Require(nextSource == source + 1 && nextWide == reinterpret_cast<char*>(one + 1) && one[0] == 'A');
+
+    std::memset(state, 0xff, sizeof(state));
+    Require(vtable->unshift(&facet, state, bytes, bytes + 8, &nextByte) == 0 && nextByte == bytes);
+    Require(state[0] == 0 && state[1] == 0);
 }
 
 static void CheckCollateVtableObject() {
@@ -170,24 +219,44 @@ static void CheckCharacterConversions() {
     for (std::uint16_t value = 0; value < 128; ++value) {
         std::array<char, MB_LEN_MAX + 1> bytes{};
         bytes.fill('!');
-        std::mbstate_t encodeState{};
-        Require(_Wctombx_nid_postfix(bytes.data(), value, &encodeState) == 1);
+        alignas(mbstate_t) unsigned char encodeState[16]{};
+        Require(_Wctombx_nid_postfix(bytes.data(), value, reinterpret_cast<mbstate_t*>(encodeState)) == 1);
         Require(bytes[0] == static_cast<char>(value) && bytes[1] == '!');
         std::array<std::uint16_t, 2> wide{0xffff, 0x1234};
-        std::mbstate_t decodeState{};
-        Require(_Mbtowcx_nid_postfix(wide.data(), bytes.data(), 2, &decodeState) == (value == 0 ? 0 : 1));
+        alignas(mbstate_t) unsigned char decodeState[16]{};
+        Require(_Mbtowcx_nid_postfix(wide.data(), bytes.data(), 2, reinterpret_cast<mbstate_t*>(decodeState)) == (value == 0 ? 0 : 1));
         Require(wide[0] == value && wide[1] == 0x1234);
         const bool alnum = (value >= '0' && value <= '9') || (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z');
         Require(((classification[static_cast<unsigned char>(bytes[0])] & 0x232) != 0) == alnum);
     }
-    std::mbstate_t state{};
+    alignas(mbstate_t) unsigned char state[16]{};
+    char bytes[8]{};
+    std::uint16_t wide = 0;
+    Require(_Wctombx_nid_postfix(bytes, 0xe9, reinterpret_cast<mbstate_t*>(state)) == 2 && std::memcmp(bytes, "\xc3\xa9", 2) == 0);
+    Require(_Wctombx_nid_postfix(bytes, 0x20ac, reinterpret_cast<mbstate_t*>(state)) == 3 && std::memcmp(bytes, "\xe2\x82\xac", 3) == 0);
+    Require(_Wctombx_nid_postfix(bytes, 0xd800, reinterpret_cast<mbstate_t*>(state)) == 3 && std::memcmp(bytes, "\xed\xa0\x80", 3) == 0);
+    Require(_Wctombx_nid_postfix(bytes, 0xffff, reinterpret_cast<mbstate_t*>(state)) == 3 && std::memcmp(bytes, "\xef\xbf\xbf", 3) == 0);
+    std::memset(state, 0, sizeof(state));
+    Require(_Mbtowcx_nid_postfix(&wide, "\xc3\xa9", 2, reinterpret_cast<mbstate_t*>(state)) == 2 && wide == 0xe9);
+    std::memset(state, 0, sizeof(state));
+    Require(_Mbtowcx_nid_postfix(&wide, "\xe2\x82\xac", 3, reinterpret_cast<mbstate_t*>(state)) == 3 && wide == 0x20ac);
+    std::memset(state, 0, sizeof(state));
+    RequireException([&] { _Mbtowcx_nid_postfix(&wide, "\xe2", 1, reinterpret_cast<mbstate_t*>(state)); });
+    Require(_Mbtowcx_nid_postfix(&wide, "\x82\xac", 2, reinterpret_cast<mbstate_t*>(state)) == 2 && wide == 0x20ac);
+    auto* threadState = reinterpret_cast<unsigned char*>(_Getpmbstate_nid_postfix());
+    std::memset(threadState, 0, 16);
+    RequireException([&] { _Mbtowcx_nid_postfix(&wide, "\xe2", 1, reinterpret_cast<mbstate_t*>(threadState)); });
+    Require(_Mbtowcx_nid_postfix(&wide, "\x82\xac", 2, reinterpret_cast<mbstate_t*>(threadState)) == 2 && wide == 0x20ac);
+    std::memset(state, 0, sizeof(state));
+    RequireException([&] { _Mbtowcx_nid_postfix(&wide, "\xf0\x9f\x98\x80", 4, reinterpret_cast<mbstate_t*>(state)); });
+    std::memset(state, 0, sizeof(state));
+    RequireException([&] { _Mbtowcx_nid_postfix(&wide, "\xc3\x28", 2, reinterpret_cast<mbstate_t*>(state)); });
     char byte{};
-    std::uint16_t wide{};
-    RequireException([&] { _Mbtowcx_nid_postfix(&wide, "]", 0, &state); });
-    RequireException([&] { _Mbtowcx_nid_postfix(nullptr, "]", 1, &state); });
-    RequireException([&] { _Mbtowcx_nid_postfix(&wide, nullptr, 1, &state); });
+    RequireException([&] { _Mbtowcx_nid_postfix(&wide, "]", 0, reinterpret_cast<mbstate_t*>(state)); });
+    RequireException([&] { _Mbtowcx_nid_postfix(nullptr, "]", 1, reinterpret_cast<mbstate_t*>(state)); });
+    RequireException([&] { _Mbtowcx_nid_postfix(&wide, nullptr, 1, reinterpret_cast<mbstate_t*>(state)); });
     RequireException([&] { _Mbtowcx_nid_postfix(&wide, "]", 1, nullptr); });
-    RequireException([&] { _Wctombx_nid_postfix(nullptr, ']', &state); });
+    RequireException([&] { _Wctombx_nid_postfix(nullptr, ']', reinterpret_cast<mbstate_t*>(state)); });
     RequireException([&] { _Wctombx_nid_postfix(&byte, ']', nullptr); });
 }
 
