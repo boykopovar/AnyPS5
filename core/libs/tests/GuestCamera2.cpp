@@ -1,9 +1,13 @@
 #include "prx/libSceCamera/libSceCamera.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <string>
 
 namespace {
 
@@ -28,6 +32,17 @@ Function As(Export function) {
 }
 
 int main() {
+    const auto original = std::filesystem::current_path();
+    const auto directory = original / ("camera2-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(directory), "the test directory could not be created");
+    std::filesystem::current_path(directory);
+    std::filesystem::create_directories("app0/sce_sys");
+    {
+        std::ofstream param("app0/sce_sys/param.json", std::ios::binary);
+        param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})";
+        Require(static_cast<bool>(param), "param.json could not be written");
+    }
+
     const auto initialize = As<NoArgumentFn>(&sceCamera2Initialize);
     const auto finalize = As<NoArgumentFn>(&sceCamera2Finalize);
     const auto open = As<OpenFn>(&sceCamera2Open);
@@ -62,6 +77,8 @@ int main() {
     Require(sceCameraClose(camera) == 0, "sceCameraClose failed");
     Require(finalize() == 0, "sceCamera2Finalize failed after the camera closed");
 
+    std::filesystem::current_path(original);
+    std::filesystem::remove_all(directory);
     std::puts("Camera2 tests passed");
     return 0;
 }
