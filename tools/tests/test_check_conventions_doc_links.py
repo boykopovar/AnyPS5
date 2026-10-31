@@ -74,6 +74,30 @@ class DocLinkTests(unittest.TestCase):
         text = f"a\n{FENCE}\n[](int a)\n{FENCE}\nb\n"
         self.assertEqual(check_conventions.fenced_lines(text), {2, 3, 4})
 
+    def test_untouched_doc_linking_to_a_deleted_file_is_reported(self):
+        texts = {"docs/README.md": "see [gone](gone.md) and [kept](kept.md)\n", "docs/kept.md": "kept\n"}
+        check = check_conventions.Check.__new__(check_conventions.Check)
+        check.tree = {"docs/README.md", "docs/kept.md"}
+        check.dirs = {"docs"}
+        check.status = {"docs/gone.md": "D"}
+        check.files = lambda predicate: []
+        check.show = lambda path: texts[path]
+        check.findings = []
+        check.docs()
+        self.assertEqual(check.findings, [("doc-link", "docs/README.md", 1, "gone.md")])
+
+    def test_changed_doc_linking_to_a_deleted_file_is_reported_once(self):
+        text = "see [gone](gone.md)\n"
+        check = check_conventions.Check.__new__(check_conventions.Check)
+        check.tree = {"docs/README.md"}
+        check.dirs = {"docs"}
+        check.status = {"docs/gone.md": "D", "docs/README.md": "M"}
+        check.files = lambda predicate: [("docs/README.md", [(1, text.rstrip("\n"))])]
+        check.show = lambda path: text
+        check.findings = []
+        check.docs()
+        self.assertEqual(check.findings, [("doc-link", "docs/README.md", 1, "gone.md")])
+
 
 if __name__ == "__main__":
     unittest.main()
