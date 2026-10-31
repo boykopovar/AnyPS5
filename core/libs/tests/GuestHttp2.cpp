@@ -48,10 +48,11 @@ int main() {
         Require(Throws([&] { sceHttp2SetMinSslVersion(id, 99); }));
         Require(Throws([&] { sceHttp2SslEnableOption(id, 0x80000000); }));
     }
-    for (const int id : {context, box}) {
-        Require(Throws([&] { sceHttp2SslEnableOption(id, 0x3d); }));
-        Require(Throws([&] { sceHttp2SslDisableOption(id, 0x20); }));
-    }
+    Require(sceHttp2SslEnableOption(context, 0x3d) == 0);
+    Require(sceHttp2SslDisableOption(context, 0x20) == 0);
+    Require(Throws([&] { sceHttp2SslEnableOption(context, 0x80000000); }));
+    Require(Throws([&] { sceHttp2SslEnableOption(box, 0x3d); }));
+    Require(Throws([&] { sceHttp2SslDisableOption(box, 0x20); }));
     Http2MemoryPoolStats stats{1, 2, 3, 4};
     Require(sceHttp2GetMemoryPoolStats(context, &stats) == 0);
     Require(stats.pool_size == 0x10000 && stats.max_inuse_size == 0 && stats.current_inuse_size == 0 && stats.reserved == 0);
@@ -83,6 +84,7 @@ int main() {
     Require(sceHttp2DeleteRequest(child) == InvalidId);
     Require(sceHttp2DeleteTemplate(sibling) == InvalidId);
     Require(sceHttp2SetMinSslVersion(context, 0) == InvalidId);
+    Require(sceHttp2SslEnableOption(context, 0x3d) == InvalidId);
     Require(sceHttp2DeleteCookieBox(box) == 0);
     Require(sceHttp2DeleteCookieBox(box) == InvalidId);
     Require(sceHttp2Term(context) == InvalidId);
