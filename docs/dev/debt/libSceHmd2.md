@@ -46,6 +46,7 @@
 - [sceHmd2InternalSetVibrationMode](../../../core/libs/prx/libSceHmd2/Export.cpp) (libSceHmd2) - unknown signature
 - [sceHmd2InternalGetVr2dData](../../../core/libs/prx/libSceHmd2/Export.cpp) (libSceHmd2) - unknown signature
 - [sceHmd2InternalImageCloseBySlot](../../../core/libs/prx/libSceHmd2/Export.cpp) (libSceHmd2) - unknown signature
+- [sceHmd2Unknown_CBkVZi9WhVo_nid_no_patch](../../../core/libs/prx/libSceHmd2/Export.cpp) (libSceHmd2) - NID `CBkVZi9WhVo` of the `libSceHmd2ReprojectionMotionVector` sub-library, listed as a function export in the [13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/990ca8e56aa1d294857af66ade24d552d18d5945/data/firmware-13.60/libscehmd2reprojectionmotionvector-a3712ce199.jsonl) with no name or signature. It throws through `NotImplemented_nid_no_patch` and exists only so a title that imports it, such as [My First Gran Turismo](https://github.com/boykopovar/AnyPS5/discussions/13466), can load. Before `sceHmd2Initialize` the console [answered](https://github.com/boykopovar/AnyPS5/pull/7798#issuecomment-6262489180) 0 with every argument null but `0x8a720009` with every argument pointing at zeroed memory, so its checks are not known
 
 ### Functional
 

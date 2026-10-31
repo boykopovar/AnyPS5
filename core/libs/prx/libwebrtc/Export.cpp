@@ -1,6 +1,9 @@
 #include "prx/libwebrtc/include/Api.hpp"
+#include <charconv>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -40,9 +43,19 @@ int APS5_VABI libwebrtcUnknown03(void) {
     return 0;
 }
 
-int APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(int value, char* buffer) {
+    if (!buffer)
+        throw std::invalid_argument("FastIntToBuffer requires a buffer");
+    std::uint32_t magnitude = static_cast<std::uint32_t>(value);
+    if (value < 0) {
+        *buffer++ = '-';
+        magnitude = 0u - magnitude;
+    }
+    if (magnitude >= 10u && magnitude < 100000000u)
+        std::memset(buffer, 0, 8);
+    buffer = std::to_chars(buffer, buffer + 10, magnitude).ptr;
+    *buffer = '\0';
+    return buffer;
 }
 
 int APS5_VABI _ZN3rtc18webrtc_checks_impl8FatalLogEPKciS2_PKNS0_12CheckArgTypeEz_nid_postfix(void) {
@@ -1091,16 +1104,6 @@ int APS5_VABI _ZNK3rtc24RecursiveCriticalSection5EnterEv_nid_postfix(void) {
 }
 
 int APS5_VABI _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc9ExpFilter5ResetEf_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

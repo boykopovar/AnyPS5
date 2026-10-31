@@ -1,12 +1,13 @@
 import argparse
 import json
 from pathlib import Path
-import re
 import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_mingw_host_only_tests as host_only
+from select_tests import chunks
 
 BROAD_CHANGES = {
     "CMakeLists.txt",
@@ -98,26 +99,28 @@ def ctest_resolutions(build_dir, targets_by_name):
         capture_output=True, text=True, check=True)
     document = json.loads(result.stdout)
     resolutions = {}
-    for test in document.get("tests", []):
+    for index, test in enumerate(document.get("tests", []), 1):
         command = [str(part) for part in test.get("command", [])]
         owner = test_owner(command, targets_by_name)
         if owner is not None:
-            resolutions[test["name"]] = owner
+            resolutions[test["name"]] = (owner, index)
     return resolutions
 
 
 def run(build_dir, selected, targets_by_name):
     subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
     if selected:
-        subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *selected], check=True)
+        for batch in chunks(selected):
+            subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", *batch], check=True)
         resolutions = ctest_resolutions(build_dir, targets_by_name)
-        missing = sorted(name for name in selected if name not in resolutions.values())
+        missing = sorted(set(selected) - {owner for owner, _ in resolutions.values()})
         if missing:
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
-        names = sorted(resolutions, key=str.casefold)
-        pattern = "^(" + "|".join(re.escape(name) for name in names) + ")$"
-        subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
-                        "--parallel", "4", "--no-tests=error", "-R", pattern], check=True)
+        with tempfile.TemporaryDirectory(prefix="anyps5-guest-ctest-") as directory:
+            selection = Path(directory) / "selected-tests.txt"
+            selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()), encoding="ascii")
+            subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
+                            "--parallel", "4", "--no-tests=error", "-I", str(selection)], check=True)
     else:
         print("No guest core/libs test sources changed; the libs build still ran")
 

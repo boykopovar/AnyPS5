@@ -301,7 +301,7 @@ void TestTitleIdObjects() {
     auto* owned = static_cast<NpTitleIdObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpTitleIdObject), &allocator));
     _ZN3sce2np9NpTitleIdC1Ev(owned);
     using Destructor = void APS5_VABI (*)(NpTitleIdObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
@@ -815,7 +815,7 @@ void TestMemoryStreams() {
     Require(reader.data == text && reader.size == 8 && reader.position == 0, "a reader starts at the beginning of its buffer");
     std::array<char, 8> out {};
     std::size_t count = 99;
-    Require(reinterpret_cast<Read>(reader.vtable[2])(&reader, nullptr, out.data(), 5, &count) == 0 && count == 5 &&
+    Require(reinterpret_cast<Read>(const_cast<void*>(reader.vtable[2]))(&reader, nullptr, out.data(), 5, &count) == 0 && count == 5 &&
                 std::memcmp(out.data(), "abcde", 5) == 0 && reader.position == 5,
         "a read through the vtable copies the requested bytes");
     out.fill(0);
@@ -833,7 +833,7 @@ void TestMemoryStreams() {
     std::array<char, 6> buffer {};
     NpMemoryStreamWriter writer;
     _ZN3sce2np18MemoryStreamWriterC2EPvm(&writer, buffer.data(), 6);
-    Require(reinterpret_cast<Write>(writer.vtable[2])(&writer, nullptr, "abcd", 4, &count) == 0 && count == 4 && writer.position == 4,
+    Require(reinterpret_cast<Write>(const_cast<void*>(writer.vtable[2]))(&writer, nullptr, "abcd", 4, &count) == 0 && count == 4 && writer.position == 4,
         "a write through the vtable stores the bytes");
     count = 99;
     Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "xyz", 3, &count) == NpStreamBufferTooSmall &&
@@ -852,10 +852,10 @@ void TestMemoryStreams() {
                 _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "ab", 2, &count) == 0 && writer.position == 8,
         "a writer without a buffer only counts");
 
-    reinterpret_cast<Destroy>(reader.vtable[0])(&reader);
+    reinterpret_cast<Destroy>(const_cast<void*>(reader.vtable[0]))(&reader);
     _ZN3sce2np18MemoryStreamReaderD2Ev(&reader);
     Require(reader.data == text && reader.size == 8 && reader.position == 12, "the reader destructors leave the object untouched");
-    reinterpret_cast<Destroy>(writer.vtable[0])(&writer);
+    reinterpret_cast<Destroy>(const_cast<void*>(writer.vtable[0]))(&writer);
     _ZN3sce2np18MemoryStreamWriterD2Ev(&writer);
     Require(writer.data == nullptr && writer.size == 2 && writer.position == 8, "the writer destructors leave the object untouched");
 }
@@ -1055,7 +1055,7 @@ void TestCommIdObjects() {
     auto* owned = static_cast<NpCommIdObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpCommIdObject), &allocator));
     _ZN3sce2np8NpCommIdC1Ev(owned);
     using Destructor = void APS5_VABI (*)(NpCommIdObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 

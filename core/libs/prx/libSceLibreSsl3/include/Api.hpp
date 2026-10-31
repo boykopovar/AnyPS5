@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceLibreSsl3/include/Key.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl3/include/Cipher.hpp"
 
 extern "C" {
 
@@ -99,9 +100,9 @@ int APS5_VABI BIO_set_flags_nid_postfix();
 int APS5_VABI BN_clear_free_nid_postfix();
 int APS5_VABI BN_dup_nid_postfix();
 int APS5_VABI ERR_func_error_string_nid_postfix();
-int APS5_VABI EVP_CIPHER_iv_length_nid_postfix();
-int APS5_VABI EVP_CIPHER_key_length_nid_postfix();
-int APS5_VABI EVP_MD_CTX_md_nid_postfix();
+int APS5_VABI EVP_CIPHER_iv_length_nid_postfix(const LibreSsl3EvpCipher* cipher);
+int APS5_VABI EVP_CIPHER_key_length_nid_postfix(const LibreSsl3EvpCipher* cipher);
+const void* APS5_VABI EVP_MD_CTX_md_nid_postfix(const void* context);
 int APS5_VABI EVP_PKEY_CTX_free_nid_postfix();
 int APS5_VABI EVP_PKEY_assign_nid_postfix();
 int APS5_VABI EVP_PKEY_bits_nid_postfix();
@@ -132,7 +133,7 @@ int APS5_VABI TLS_server_method_nid_postfix();
 int APS5_VABI X509_EXTENSION_free_nid_postfix();
 int APS5_VABI X509_STORE_CTX_get0_param_nid_postfix();
 int APS5_VABI X509_STORE_load_locations_nid_postfix();
-int APS5_VABI X509_VERIFY_PARAM_set_flags_nid_postfix();
+int APS5_VABI X509_VERIFY_PARAM_set_flags_nid_postfix(LibreSslX509VerifyParam* param, std::uint64_t flags);
 int APS5_VABI X509_get0_pubkey_nid_postfix();
 int APS5_VABI d2i_SSL_SESSION_nid_postfix();
 int APS5_VABI d2i_X509_CRL_nid_postfix();
