@@ -97,14 +97,20 @@ int APS5_VABI ktimer_create_nid_postfix(int clock, const GuestSigevent* event, i
         if (event->notify != SigevNone && (event->signo <= 0 || event->signo > SignalMax))
             return static_cast<int>(Fail(GuestEinval));
     }
-    std::lock_guard lock(g_ktimerLock);
     int id = FirstTimer;
-    while (id < TimerMax && g_ktimers[id].live) ++id;
-    if (id == TimerMax) return static_cast<int>(Fail(GuestEagain));
-    if (timerid == nullptr) return static_cast<int>(Fail(GuestEfault));
-    if (event == nullptr || event->notify != SigevNone) NotImplemented_nid_no_patch("ktimer_create delivering a signal");
-    g_ktimers[id] = {true, clock, 0, 0};
-    *timerid = id;
+    {
+        std::lock_guard lock(g_ktimerLock);
+        while (id < TimerMax && g_ktimers[id].live) ++id;
+        if (id == TimerMax) return static_cast<int>(Fail(GuestEagain));
+        if (timerid == nullptr) return static_cast<int>(Fail(GuestEfault));
+        if (event == nullptr || event->notify != SigevNone) NotImplemented_nid_no_patch("ktimer_create delivering a signal");
+        g_ktimers[id] = {true, clock, 0, 0};
+    }
+    if (!GuestCopyOut_nid_no_patch(timerid, &id, sizeof(id))) {
+        std::lock_guard lock(g_ktimerLock);
+        g_ktimers[id] = {};
+        return static_cast<int>(Fail(GuestEfault));
+    }
     return 0;
 }
 
@@ -134,11 +140,15 @@ int APS5_VABI ktimer_settime_nid_postfix(int id, int flags, const GuestItimerspe
 }
 
 int APS5_VABI ktimer_gettime_nid_postfix(int id, GuestItimerspec* value) {
-    std::lock_guard lock(g_ktimerLock);
-    Ktimer* timer = FindTimer(id);
-    if (timer == nullptr) return static_cast<int>(Fail(GuestEinval));
-    if (value == nullptr) return static_cast<int>(Fail(GuestEfault));
-    *value = Remaining(*timer);
+    GuestItimerspec remaining{};
+    {
+        std::lock_guard lock(g_ktimerLock);
+        Ktimer* timer = FindTimer(id);
+        if (timer == nullptr) return static_cast<int>(Fail(GuestEinval));
+        if (value == nullptr) return static_cast<int>(Fail(GuestEfault));
+        remaining = Remaining(*timer);
+    }
+    if (!GuestCopyOut_nid_no_patch(value, &remaining, sizeof(remaining))) return static_cast<int>(Fail(GuestEfault));
     return 0;
 }
 
