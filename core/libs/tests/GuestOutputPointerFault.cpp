@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 #include <cstdint>
@@ -69,6 +70,12 @@ static void RequireFaultKeepsErrno() {
         Require(*__error_nid_postfix() == 12345);
         *__error_nid_postfix() = 12345;
         Require(!GuestCopyIn_nid_no_patch(&value, bad, sizeof(value)));
+        Require(*__error_nid_postfix() == 12345);
+        *__error_nid_postfix() = 12345;
+        Require(!GuestSocketReadGuest_nid_no_patch(&value, bad, sizeof(value)));
+        Require(*__error_nid_postfix() == 12345);
+        *__error_nid_postfix() = 12345;
+        Require(sceKernelReadv(0, static_cast<const KernelIovec*>(bad), 1) == KernelEfault);
         Require(*__error_nid_postfix() == 12345);
     }
 }
