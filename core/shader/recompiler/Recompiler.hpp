@@ -64,6 +64,8 @@ struct ShaderComputeStageInfo {
     std::uint32_t threadIdComponentCount;
     std::array<std::uint32_t, 3> partialThreads;
     std::uint32_t scratchDwords = 0;
+    std::uint32_t granulatedVgprCount = 0;
+    std::uint32_t sharedVgprBlocks = 0;
 
     [[nodiscard]] bool PartialGroups() const {
         return partialThreads != std::array<std::uint32_t, 3>{};
@@ -293,6 +295,13 @@ struct GuestContext {
     std::span<const std::uint32_t> linkedCallFallbacks;
     bool convertedSamples = false;
 };
+
+struct SharedVectorRegisters {
+    std::uint32_t base = 0;
+    std::uint32_t count = 0;
+};
+
+[[nodiscard]] SharedVectorRegisters GuestSharedVectorRegisters(const GuestContext& context);
 
 struct MeshTargetLimits {
     std::array<std::uint32_t, 3> maxWorkgroupSize;

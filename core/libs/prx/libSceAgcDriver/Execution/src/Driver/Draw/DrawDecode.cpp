@@ -124,6 +124,11 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             codeOffset
         };
         result.resourceRegister = rsrc2;
+        if (!nullPixel) {
+            Graphics::NoteRegisterRead(Graphics::RegisterBank::Shader, rsrc2);
+            const auto resources = queue.shader.find(rsrc2);
+            require(resources == queue.shader.end() || (resources->second >> 28u) == 0u, "wave-shared VGPRs of a graphics stage (SPI_SHADER_PGM_RSRC2.SHARED_VGPR_CNT) are not modeled");
+        }
         result.nullPixel = nullPixel;
         ReadUserWords(queue, result, staticAbi);
         return result;

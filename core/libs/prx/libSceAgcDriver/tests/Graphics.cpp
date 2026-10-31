@@ -1572,6 +1572,36 @@ void ComputeScratchTests() {
     Require(back.request.context.compute->scratchDwords == 24u, "the compute scratch size did not survive serialization");
 }
 
+void ComputeSharedVgprTests() {
+    auto queue = makeState();
+    auto& shader = queue.shader;
+    shader[0x207] = 128u;
+    shader[0x208] = 1u;
+    shader[0x209] = 1u;
+    shader[0x213] = 0u;
+    shader.erase(0x212);
+    shader.erase(0x228);
+    const auto withoutShared = AgcDriver::Graphics::DecodeComputeStageInfo(shader, {});
+    Require(withoutShared.sharedVgprBlocks == 0u && withoutShared.granulatedVgprCount == 0u, "a dispatch without COMPUTE_PGM_RSRC3 got wave-shared VGPRs");
+    shader[0x228] = 0x2u;
+    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeComputeStageInfo(shader, {})); }, "missing register at DWORD 0x212");
+    shader[0x212] = 0x402c000du;
+    const auto compute = AgcDriver::Graphics::DecodeComputeStageInfo(shader, {});
+    Require(compute.sharedVgprBlocks == 2u && compute.granulatedVgprCount == 13u, "COMPUTE_PGM_RSRC3.SHARED_VGPR_CNT and COMPUTE_PGM_RSRC1.VGPRS were not decoded");
+    ShaderRecompiler::RecompileRequest request{};
+    const std::array<std::uint32_t, 1> code{0xbf810000u};
+    request.shader = {ShaderRecompiler::ShaderStage::Compute, 0x30000u, code, 0, {}};
+    request.context.waveSize = 64;
+    request.context.compute = compute;
+    const ShaderRecompiler::RequestSerializer serializer;
+    const auto back = serializer.Deserialize(serializer.Serialize(request));
+    Require(back.request.context.compute->sharedVgprBlocks == 2u && back.request.context.compute->granulatedVgprCount == 13u, "the wave-shared VGPR allocation did not survive serialization");
+    const auto shared = ShaderRecompiler::GuestSharedVectorRegisters(request.context);
+    Require(shared.base == 56u && shared.count == 16u, "a wave64 program with 56 private VGPRs did not place 16 wave-shared VGPRs at v56");
+    request.context.waveSize = 32;
+    expectFailure([&] { static_cast<void>(ShaderRecompiler::GuestSharedVectorRegisters(request.context)); }, "wave32 program");
+}
+
 void shaderUserDataTailPaddingTests() {
     constexpr std::size_t userDataOffset = 288;
     constexpr auto userDataBytes = offsetof(ShaderUserData, sharp_resource_count) + sizeof(ShaderUserData{}.sharp_resource_count);
@@ -13014,6 +13044,7 @@ int main(int argc, char** argv) {
         HeaderlessVertexStageTests();
         HiddenUserWordVertexTablesTests();
         ComputeScratchTests();
+        ComputeSharedVgprTests();
         shaderUserDataTailPaddingTests();
         InitialContextTests();
         AlphaToCoverageTests();

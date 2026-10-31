@@ -577,7 +577,7 @@ private:
                     }
                 }
                 if (ImageOpcodeInfoOf(opcode).needsSampler && explicitLodSample(use.user)) { pending.push_back(use.user); continue; }
-                if (ImageOpcodeInfoOf(opcode).needsSampler || opcode == IrOpcode::Ballot || opcode == IrOpcode::WqmU64 || opcode == IrOpcode::ReadLane || opcode == IrOpcode::ReadFirstLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::SwizzleU32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::WriteLane || SharedAccessOf(opcode) != SharedAccess::None) return true;
+                if (ImageOpcodeInfoOf(opcode).needsSampler || opcode == IrOpcode::Ballot || opcode == IrOpcode::WqmU64 || opcode == IrOpcode::ReadLane || opcode == IrOpcode::ReadFirstLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::SwizzleU32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::HalfSwapU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::WriteLane || SharedAccessOf(opcode) != SharedAccess::None) return true;
                 if (opcode == IrOpcode::SetAttribute || opcode == IrOpcode::Reference || opcode == IrOpcode::ReferenceU32) continue;
                 pending.push_back(use.user);
             }
@@ -864,7 +864,7 @@ bool StencilReplaySafe(const IrProgram& program) {
             const auto opcode = instruction->Opcode();
             if (opcode == IrOpcode::Loop || opcode == IrOpcode::LoopMerge || opcode == IrOpcode::ImageBvhIntersectRay || BufferAccessOf(opcode) == BufferAccess::Atomic || AddressOpcodeInfoOf(opcode).access == AddressAccess::Write || AddressOpcodeInfoOf(opcode).access == AddressAccess::Atomic || SharedAccessOf(opcode) != SharedAccess::None || ImageOpcodeInfoOf(opcode).access == ImageAccess::Write || ImageOpcodeInfoOf(opcode).access == ImageAccess::Atomic) return false;
             if (opcode == IrOpcode::UndefU1 || opcode == IrOpcode::UndefU8 || opcode == IrOpcode::UndefU16 || opcode == IrOpcode::UndefU32 || opcode == IrOpcode::UndefU64) return false;
-            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock || opcode == IrOpcode::ReadFirstLane || opcode == IrOpcode::ReadLane || opcode == IrOpcode::WriteLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::SwizzleU32) return false;
+            if (opcode == IrOpcode::ShaderClock || opcode == IrOpcode::RealtimeClock || opcode == IrOpcode::ReadFirstLane || opcode == IrOpcode::ReadLane || opcode == IrOpcode::WriteLane || opcode == IrOpcode::DppMoveU32 || opcode == IrOpcode::DppUpdateU32 || opcode == IrOpcode::Permlane16U32 || opcode == IrOpcode::PermuteU32 || opcode == IrOpcode::BpermuteU32 || opcode == IrOpcode::HalfSwapU32 || opcode == IrOpcode::SwizzleU32) return false;
             masks = masks || opcode == IrOpcode::Ballot || opcode == IrOpcode::LaneId || opcode == IrOpcode::WqmU64;
             if (!instruction->MayHaveSideEffects()) continue;
             switch (opcode) {

@@ -1516,6 +1516,14 @@ std::uint32_t EmitPermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     return result;
 }
 
+std::uint32_t EmitHalfSwapU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    if (state.program.WaveSize() != 64u) ctx.Fail(inst, "a half-wave exchange outside a wave64 program");
+    if (ctx.otherHalf != nullptr) return ctx.HalfArg(inst, 0, ctx.half ^ 1u);
+    if (!state.spannedWave && (HostSubgroupSingleLane(state) || state.hostSubgroupSize < 64u)) ctx.Fail(inst, "a half-wave exchange without a 64-lane host subgroup");
+    return ctx.Shuffle(inst, 0, Binary(state, spv::OpBitwiseXor, TypeU32(state), EmitLaneId(state), ConstantU32(state, 32u)));
+}
+
 std::uint32_t EmitSwizzleU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     state.module.AddFunction(spv::OpStore, ctx.scratchU32Variable, ctx.Arg(inst, 0));

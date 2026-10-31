@@ -284,6 +284,7 @@ enum class IrOpcode : std::uint16_t {
     Permlane16U32,
     BpermuteU32,
     PermuteU32,
+    HalfSwapU32,
     GetSrtResource,
     GetBufferResource,
     GetAddressResource,

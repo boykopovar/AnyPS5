@@ -474,7 +474,9 @@ IrU32 TranslationContext::readRawU32(const RdnaOperand& operand) {
         case RdnaOperandKind::Null:
         case RdnaOperandKind::PopsExitingWaveId: return IrU32(ir.Constant(0u));
         case RdnaOperandKind::ScalarRegister: return IrU32(ir.GetScalarReg(static_cast<ScalarReg>(operand.reg)));
-        case RdnaOperandKind::VectorRegister: return IrU32(ir.GetVectorReg(static_cast<VectorReg>(operand.reg)));
+        case RdnaOperandKind::VectorRegister:
+            vectorsRead.set(operand.reg & 0xffu);
+            return IrU32(ir.GetVectorReg(static_cast<VectorReg>(operand.reg)));
         case RdnaOperandKind::VccLo: return IrU32(ir.GetVccLo());
         case RdnaOperandKind::VccHi: return IrU32(ir.GetVccHi());
         case RdnaOperandKind::M0: return IrU32(ir.GetM0());
@@ -499,7 +501,77 @@ IrU32 TranslationContext::readRawU32(const RdnaOperand& operand) {
     }
 }
 
+IrU32 TranslationContext::shareVectorWrite(const RdnaOperand& operand, IrU32 merged, IrU32 written, bool readByInstruction) {
+    const auto at = " at pc " + std::to_string(currentProgramCounter);
+    const auto name = "wave-shared VGPR v" + std::to_string(operand.reg);
+    if (currentInstruction == nullptr) throw std::runtime_error("a write to " + name + " outside an instruction is not modeled");
+    switch (currentInstruction->family) {
+        case RdnaInstructionFamily::VOP1:
+        case RdnaInstructionFamily::VOP2:
+        case RdnaInstructionFamily::VOP3:
+        case RdnaInstructionFamily::VOP3P:
+            if (readByInstruction || relativeVectorRead) throw std::runtime_error("a VALU instruction that reads and writes " + name + at + " is not modeled");
+            break;
+        default:
+            if (!execLowInactive && !execHighInactive) throw std::runtime_error("a non-VALU write to " + name + at + " while both halves of EXEC may be active is not modeled");
+            break;
+    }
+    IrValue& partnerValue = ir.Emit(IrOpcode::HalfSwapU32, IrType::U32, {&merged.Value()});
+    IrValue& partnerWritten = ir.Emit(IrOpcode::HalfSwapU32, IrType::U32, {&written.Value()});
+    IrValue& low = ir.ULessThan(ir.Emit(IrOpcode::LaneId, IrType::U32, {}), ir.Constant(32u));
+    IrValue& ownWritten = ir.INotEqual(written.Value(), ir.Constant(0u));
+    IrValue& partnerWrote = ir.INotEqual(partnerWritten, ir.Constant(0u));
+    IrValue& takePartner = ir.LogicalAnd(partnerWrote, ir.LogicalOr(low, ir.LogicalNot(ownWritten)));
+    return IrU32(ir.Select(takePartner, partnerValue, merged.Value()));
+}
+
+void TranslationContext::trackInactiveExecHalves(const RdnaInstruction& inst) {
+    const auto keep = [&] {
+        switch (inst.family) {
+            case RdnaInstructionFamily::VOP1:
+            case RdnaInstructionFamily::VOP2:
+            case RdnaInstructionFamily::VOP3:
+            case RdnaInstructionFamily::VOP3P:
+                return inst.destination.kind == RdnaOperandKind::VectorRegister;
+            case RdnaInstructionFamily::DS:
+            case RdnaInstructionFamily::MUBUF:
+            case RdnaInstructionFamily::MTBUF:
+            case RdnaInstructionFamily::FLAT:
+            case RdnaInstructionFamily::SMEM:
+                return true;
+            case RdnaInstructionFamily::SOPP:
+                return inst.op == RdnaOpcode::SWaitcnt || inst.op == RdnaOpcode::SNop || inst.op == RdnaOpcode::SClause || inst.op == RdnaOpcode::SWaitcntDepctr;
+            default:
+                return false;
+        }
+    };
+    if (keep()) return;
+    const bool execLow = inst.destination.kind == RdnaOperandKind::ExecLo;
+    const bool execHigh = inst.destination.kind == RdnaOperandKind::ExecHi;
+    const auto integer = [](const RdnaOperand& operand) { return operand.kind == RdnaOperandKind::IntegerInlineConstant || operand.kind == RdnaOperandKind::LiteralConstant; };
+    if (inst.op == RdnaOpcode::SMovB32 && (execLow || execHigh) && integer(inst.source0)) {
+        (execLow ? execLowInactive : execHighInactive) = inst.source0.value == 0u;
+        return;
+    }
+    if (inst.op == RdnaOpcode::SMovB64 && execLow && inst.source0.kind == RdnaOperandKind::IntegerInlineConstant) {
+        execLowInactive = inst.source0.value == 0u;
+        execHighInactive = static_cast<std::int32_t>(inst.source0.value) >= 0;
+        return;
+    }
+    if (inst.op == RdnaOpcode::SBfmB64 && execLow && integer(inst.source0) && integer(inst.source1)) {
+        const std::uint32_t size = inst.source0.value & 0x3fu;
+        const std::uint32_t start = inst.source1.value & 0x3fu;
+        const std::uint64_t mask = (size == 0u ? 0ull : (~0ull >> (64u - size))) << start;
+        execLowInactive = static_cast<std::uint32_t>(mask) == 0u;
+        execHighInactive = static_cast<std::uint32_t>(mask >> 32u) == 0u;
+        return;
+    }
+    execLowInactive = false;
+    execHighInactive = false;
+}
+
 void TranslationContext::writeRawU32(const RdnaOperand& operand, IrU32 value) {
+    const bool readByInstruction = operand.kind == RdnaOperandKind::VectorRegister && vectorsRead.test(operand.reg & 0xffu);
     if (operand.kind == RdnaOperandKind::Null) {
         return;
     }
@@ -547,12 +619,17 @@ void TranslationContext::writeRawU32(const RdnaOperand& operand, IrU32 value) {
         case RdnaOperandKind::VectorRegister: {
             const VectorReg reg = static_cast<VectorReg>(operand.reg);
             IrValue& old = ir.GetVectorReg(reg);
+            const bool shared = sharedVectorRegister(operand.reg);
+            IrU32 written(ir.Constant(0u));
             if (operand.dpp) {
                 const auto flags = dppFlags(operand);
                 value = IrU32(ir.Emit(IrOpcode::DppUpdateU32, IrType::U32, {&value.Value(), &old, &ir.GetExec()}, flags));
+                if (shared) written = IrU32(ir.Emit(IrOpcode::DppUpdateU32, IrType::U32, {&ir.Constant(1u), &ir.Constant(0u), &ir.GetExec()}, flags));
             } else {
                 value = IrU32(ir.Select(ir.GetExec(), value.Value(), old));
+                if (shared) written = IrU32(ir.Select(ir.GetExec(), ir.Constant(1u), ir.Constant(0u)));
             }
+            if (shared) value = shareVectorWrite(operand, value, written, readByInstruction);
             ir.SetVectorReg(reg, value.Value());
             break;
         }
