@@ -15,6 +15,14 @@
 #include <string>
 #include <vector>
 
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static bool ImageViewMinLod(const VulkanDevice& device) { return device.graphicsContext().imageViewMinLod; }
+};
+
+}
+
 namespace {
 
 using AgcDriver::Graphics::Require;
@@ -229,8 +237,12 @@ int main() {
         Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 0u, AllLevels, -192, 0u, "LOD_BIAS -0.75"});
         Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipNone, 0u, AllLevels, 0, 0u, "MIP_FILTER none"});
         Run(*device, {Format8888UInt, ClampEdge, ClampWrap, FilterBilinear, MipPoint, 0u, AllLevels, 0, 0u, "8_8_8_8 UINT with a bilinear sampler"});
-        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 0u, AllLevels, 0, 640u, "T# MIN_LOD 2.5"});
-        Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipNone, 0u, AllLevels, 0, 640u, "MIP_FILTER none, T# MIN_LOD 2.5"});
+        if (AgcDriver::VulkanDeviceTestAccess::ImageViewMinLod(*device)) {
+            Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipPoint, 0u, AllLevels, 0, 640u, "T# MIN_LOD 2.5"});
+            Run(*device, {Format8888UNorm, ClampEdge, ClampEdge, FilterPoint, MipNone, 0u, AllLevels, 0, 640u, "MIP_FILTER none, T# MIN_LOD 2.5"});
+        } else {
+            std::puts("T# MIN_LOD cases skipped, the device has no VK_EXT_image_view_min_lod");
+        }
         Run(*device, {Format8888UNorm, ClampBorder, ClampHalfBorder, FilterPoint, MipPoint, 0u, AllLevels, 0, 0u, "border modes 6 and 4: base-level gather"});
         std::puts("image 2D explicit-LOD gather tests passed");
         return 0;
