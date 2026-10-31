@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libwebrtc/include/AudioDeviceGeneric.hpp"
 #include "prx/libwebrtc/include/AudioEncoder.hpp"
 #include "prx/libwebrtc/include/AudioFrame.hpp"
 #include "prx/libwebrtc/include/ExpFilter.hpp"
@@ -331,13 +332,13 @@ void APS5_VABI WebRtcVad_Free_nid_postfix(WebRtcVadInstance* handle);
 int APS5_VABI WebRtcVad_Init_nid_postfix(WebRtcVadInstance* handle);
 int APS5_VABI WebRtcVad_set_mode_nid_postfix(WebRtcVadInstance* handle, int mode);
 int APS5_VABI WebRtcVad_Process_nid_postfix(WebRtcVadInstance* handle, int sampleRate, const std::int16_t* audio, std::size_t length);
-int APS5_VABI _ZNK6webrtc18AudioDeviceGeneric21BuiltInAECIsAvailableEv_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc18AudioDeviceGeneric21BuiltInAGCIsAvailableEv_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc18AudioDeviceGeneric20BuiltInNSIsAvailableEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc18AudioDeviceGeneric16EnableBuiltInAECEb_nid_postfix(void);
-int APS5_VABI _ZN6webrtc18AudioDeviceGeneric16EnableBuiltInAGCEb_nid_postfix(void);
-int APS5_VABI _ZN6webrtc18AudioDeviceGeneric15EnableBuiltInNSEb_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc18AudioDeviceGeneric23GetPlayoutUnderrunCountEv_nid_postfix(void);
+bool APS5_VABI _ZNK6webrtc18AudioDeviceGeneric21BuiltInAECIsAvailableEv_nid_postfix(const WebRtcAudioDeviceGeneric* device);
+bool APS5_VABI _ZNK6webrtc18AudioDeviceGeneric21BuiltInAGCIsAvailableEv_nid_postfix(const WebRtcAudioDeviceGeneric* device);
+bool APS5_VABI _ZNK6webrtc18AudioDeviceGeneric20BuiltInNSIsAvailableEv_nid_postfix(const WebRtcAudioDeviceGeneric* device);
+std::int32_t APS5_VABI _ZN6webrtc18AudioDeviceGeneric16EnableBuiltInAECEb_nid_postfix(WebRtcAudioDeviceGeneric* device, bool enable);
+std::int32_t APS5_VABI _ZN6webrtc18AudioDeviceGeneric16EnableBuiltInAGCEb_nid_postfix(WebRtcAudioDeviceGeneric* device, bool enable);
+std::int32_t APS5_VABI _ZN6webrtc18AudioDeviceGeneric15EnableBuiltInNSEb_nid_postfix(WebRtcAudioDeviceGeneric* device, bool enable);
+std::int32_t APS5_VABI _ZNK6webrtc18AudioDeviceGeneric23GetPlayoutUnderrunCountEv_nid_postfix(const WebRtcAudioDeviceGeneric* device);
 int APS5_VABI _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(void);
 int APS5_VABI _ZN6webrtc17PushSincResampler8ResampleEPKfmPfm_nid_postfix(void);
 int APS5_VABI _ZN6webrtc13PushResamplerIsEC1Ev_nid_postfix(void);
