@@ -837,6 +837,17 @@ class ProgressTests(unittest.TestCase):
             self.assertNotIn("<td>0</td>", html)
 
 
+    def test_library_table_shows_each_state_and_both_percentages(self):
+        groups = [{"name": "libA", "label": "A", "done": 1, "todo": 1, "unobserved": 2},
+                  {"name": "libB", "label": "B", "done": 0, "todo": 0, "unobserved": 3},
+                  {"name": "libC", "label": "C", "done": 0, "todo": 0}]
+        html = progress.table("System libraries", "Library", progress.summarize(groups), states=True)
+        self.assertIn("<th>Implemented</th><th>Observed stubs</th><th>Unobserved stubs</th><th>%</th><th>Declared %</th>", html)
+        self.assertIn("<tr><td>libA</td><td>1</td><td>1</td><td>2</td><td>50%</td><td>25%</td></tr>", html)
+        self.assertIn("<tr><td>libB</td><td>0</td><td>0</td><td>3</td><td>n/a</td><td>0%</td></tr>", html)
+        self.assertIn('<tr><td>libC</td><td colspan="5">No exports</td></tr>', html)
+        self.assertIn("<tr><th>Total</th><th>1</th><th>1</th><th>5</th><th>50.0%</th><th>14.29%</th></tr>", html)
+
     def test_qualified_calls_match_only_the_global_wrapper(self):
         wrapper = "static void Fail() { NotImplemented_nid_no_patch(__func__); }\n"
         cases = {"obj->Fail();": "done", "obj.Fail();": "done", "X::Fail();": "done",
