@@ -151,6 +151,17 @@ class AbSplitTests(unittest.TestCase):
         self.assertEqual(row["classes"], {"staging-in": 8.0, "present-blit": 4.0})
         self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
 
+    def test_draw_variants_are_not_summed_into_program_keys(self):
+        row = ab_split.parse_report("gputime", gputime(400.0, 40.0, 8.0).replace("0x2000 x4 5ms", "0x2000 x4 5ms draw 0x3000 x3 30ms"))
+        self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
+        row = ab_split.parse_report("gputime", gputime(400.0, 40.0, 8.0).replace("0x2000 x4 5ms", "draw 0x2000 x3 30ms 0x2000 x4 5ms"))
+        self.assertEqual(row["programs"], {"0x1000": 40.0, "0x2000": 5.0})
+
+    def test_program_metrics_leave_out_draw_variant_time(self):
+        lines = [line.replace("0x2000 x4 5ms", "0x2000 x4 5ms draw 0x1000 x9 90ms") for line in log()]
+        result = ab_split.split(lines, ["0x1000"])
+        self.assertAlmostEqual(result["phases"][0]["metrics"]["0x1000 ms/present"], 1.0)
+
     def test_dropped_presents_count_as_frames(self):
         row = ab_split.parse_report("present", present(90.0, 10.0, presents=30, dropped=10))
         self.assertEqual(row, {"frames": 40, "busy": 90.0, "gaps": 10.0})
