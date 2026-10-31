@@ -299,6 +299,11 @@ long double ClearLowMantissaWord(long double value) {
     return value;
 }
 
+long double SumAtCallerPrecision(long double high, long double low) {
+    volatile long double sum = high;
+    return sum + low;
+}
+
 constexpr long double AsinNumeratorCoefficients[] = {
     1.66666666666666666631e-01L, -4.16313987993683104320e-01L, 3.69068046323246813704e-01L, -1.36213932016738603108e-01L,
     1.78324189708471965733e-02L, -2.19216428382605211588e-04L, -7.10526623669075243183e-06L,
@@ -310,6 +315,7 @@ constexpr long double AsinDenominatorCoefficients[] = {
 constexpr long double HalfPiHigh = 1.57079632679489661926e+00L;
 constexpr long double HalfPiLow = -2.50827880633416601173e-20L;
 constexpr long double QuarterPiHigh = 7.85398163397448309628e-01L;
+const volatile long double Pi = 3.14159265358979323846264338327950280e+00L;
 
 long double AsinNumerator(long double t) {
     const auto& p = AsinNumeratorCoefficients;
@@ -681,7 +687,46 @@ float APS5_VABI fmaxf_nid_postfix(float x, float y) { return GuestFmax(x, y); }
 long double APS5_VABI fmaxl_nid_postfix(long double x, long double y) { return GuestFmax(x, y); }
 double APS5_VABI fdim_nid_postfix(double x, double y) { return std::fdim(x, y); }
 float APS5_VABI fdimf_nid_postfix(float x, float y) { return std::fdim(x, y); }
-long double APS5_VABI acosl_nid_postfix(long double x) { return std::acos(x); }
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_acosl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_acosl.c */
+long double APS5_VABI acosl_nid_postfix(long double x) {
+    const ExtendedParts parts = SplitExtended(x);
+    const int exponent = parts.signExponent & 0x7fff;
+    const bool negative = (parts.signExponent & 0x8000) != 0;
+    if (exponent >= 0x3fff) {
+        if (exponent == 0x3fff && (parts.mantissa & 0x7fffffffffffffffull) == 0) return negative ? SumAtCallerPrecision(Pi, 2.0L * HalfPiLow) : 0.0L;
+        std::feraiseexcept(FE_INVALID);
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
+    if (exponent < 0x3ffe) {
+        if (exponent < 0x3fff - 65) return SumAtCallerPrecision(HalfPiHigh, HalfPiLow);
+        const long double z = x * x;
+        const long double r = AsinNumerator(z) / AsinDenominator(z);
+        return HalfPiHigh - (x - (HalfPiLow - x * r));
+    }
+    if (negative) {
+        const long double z = (1.0L + x) * 0.5L;
+        const long double s = std::sqrt(z);
+        const long double r = AsinNumerator(z) / AsinDenominator(z);
+        return Pi - 2.0L * (s + (r * s - HalfPiLow));
+    }
+    const long double z = (1.0L - x) * 0.5L;
+    const long double s = std::sqrt(z);
+    const long double high = ClearLowMantissaWord(s);
+    const long double correction = (z - high * high) / (s + high);
+    const long double r = AsinNumerator(z) / AsinDenominator(z);
+    return 2.0L * (high + (r * s + correction));
+}
 long double APS5_VABI acoshl_nid_postfix(long double x) { return std::acosh(x); }
 long double APS5_VABI asinhl_nid_postfix(long double x) { return std::asinh(x); }
 long double APS5_VABI atanhl_nid_postfix(long double x) { return std::atanh(x); }
@@ -1956,7 +2001,89 @@ double APS5_VABI tanh_nid_postfix(double x) {
     return jx >= 0 ? z : -z;
 }
 float APS5_VABI tanhf_nid_postfix(float x) { return std::tanh(x); }
-long double APS5_VABI atanl_nid_postfix(long double x) { return std::atan(x); }
+/*-
+ * Copyright (c) 2008 David Schultz <das@FreeBSD.ORG>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/invtrig.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/invtrig.c */
+constexpr long double AtanCoefficients[] = {
+    0xaaaaaaaaaaaaaa9fp-65L, -0xcccccccccccc62bcp-66L, 0x9249249248b81e3fp-66L, -0xe38e38e3316f3de5p-67L, 0xba2e8b8dc280726ap-67L,
+    -0x9d89d5b4c6847ec4p-67L, 0x8888461d3099c677p-67L, -0xf0e8ee0f5328dc29p-68L, 0xd73ea84d24bae54ap-68L, -0xc08fa381dcd9213ap-68L,
+    0xa54a26f4095f2a3ap-68L, -0xeea2d8d059ef3ad6p-69L, 0xcc82292ab894b051p-70L,
+};
+constexpr long double AtanHigh[] = {0xed63382b0dda7b45p-65L, 0xc90fdaa22168c235p-64L, 0xfb985e940fb4d900p-64L, 0xc90fdaa22168c235p-63L};
+constexpr long double AtanLow[] = {0xdfc88bd978751a07p-130L, -0xece675d1fc8f8cbbp-130L, 0xf10f5e197793c283p-129L, -0xece675d1fc8f8cbbp-129L};
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_atanl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_atanl.c */
+long double APS5_VABI atanl_nid_postfix(long double x) {
+    const ExtendedParts parts = SplitExtended(x);
+    const int exponent = parts.signExponent & 0x7fff;
+    const bool negative = (parts.signExponent & 0x8000) != 0;
+    if (exponent >= 0x3fff + 65) {
+        if (exponent == 0x7fff && (parts.mantissa & 0x7fffffffffffffffull) != 0) return x + x;
+        return negative ? SumAtCallerPrecision(-AtanHigh[3], -AtanLow[3]) : SumAtCallerPrecision(AtanHigh[3], AtanLow[3]);
+    }
+    const int head = (exponent << 8) | static_cast<int>((parts.mantissa >> 55) & 0xff);
+    int index = -1;
+    if (head < ((0x3fff - 2) << 8) + 0xc0) {
+        if (1.0e300 + x > 1.0L && exponent < 0x3fff - 32) return x;
+    } else {
+        x = std::fabs(x);
+        if (head < (0x3fff << 8) + 0x30) {
+            if (head < ((0x3fff - 1) << 8) + 0x60) {
+                index = 0;
+                x = (2.0L * x - 1.0L) / (2.0L + x);
+            } else {
+                index = 1;
+                x = (x - 1.0L) / (x + 1.0L);
+            }
+        } else if (head < ((0x3fff + 1) << 8) + 0x38) {
+            index = 2;
+            x = (x - 1.5L) / (1.0L + 1.5L * x);
+        } else {
+            index = 3;
+            x = -1.0L / x;
+        }
+    }
+    const auto& a = AtanCoefficients;
+    const long double z = x * x;
+    const long double w = z * z;
+    const long double even = z * (a[0] + w * (a[2] + w * (a[4] + w * (a[6] + w * (a[8] + w * (a[10] + w * a[12]))))));
+    const long double odd = w * (a[1] + w * (a[3] + w * (a[5] + w * (a[7] + w * (a[9] + w * a[11])))));
+    if (index < 0) return x - x * (even + odd);
+    const long double result = AtanHigh[index] - ((x * (even + odd) - AtanLow[index]) - x);
+    return negative ? -result : result;
+}
 long double APS5_VABI sinl_nid_postfix(long double x) { return std::sin(x); }
 long double APS5_VABI cosl_nid_postfix(long double x) { return std::cos(x); }
 long double APS5_VABI tanl_nid_postfix(long double x) { return std::tan(x); }
@@ -1964,7 +2091,125 @@ long double APS5_VABI sinhl_nid_postfix(long double x) { return std::sinh(x); }
 long double APS5_VABI coshl_nid_postfix(long double x) { return std::cosh(x); }
 long double APS5_VABI tanhl_nid_postfix(long double x) { return std::tanh(x); }
 long double APS5_VABI expl_nid_postfix(long double x) { return std::exp(x); }
-long double APS5_VABI exp2l_nid_postfix(long double x) { return std::exp2(x); }
+/*-
+ * Copyright (c) 2005-2008 David Schultz <das@FreeBSD.ORG>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/s_exp2l.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/s_exp2l.c */
+constexpr double Exp2Table[] = {
+    0x1.6a09e667f3bcdp-1, -0x1.bdd3413b26480p-55, 0x1.6c012750bdabfp-1, -0x1.2895667ff0c00p-57,
+    0x1.6dfb23c651a2fp-1, -0x1.bbe3a683c8800p-58, 0x1.6ff7df9519484p-1, -0x1.83c0f25860f00p-56,
+    0x1.71f75e8ec5f74p-1, -0x1.16e4786887b00p-56, 0x1.73f9a48a58174p-1, -0x1.0a8d96c65d500p-55,
+    0x1.75feb564267c9p-1, -0x1.0245957316e00p-55, 0x1.780694fde5d3fp-1, 0x1.866b80a021600p-55,
+    0x1.7a11473eb0187p-1, -0x1.41577ee049900p-56, 0x1.7c1ed0130c132p-1, 0x1.f124cd1164e00p-55,
+    0x1.7e2f336cf4e62p-1, 0x1.05d02ba157a00p-57, 0x1.80427543e1a12p-1, -0x1.27c86626d9700p-55,
+    0x1.82589994cce13p-1, -0x1.d4c1dd4153300p-55, 0x1.8471a4623c7adp-1, -0x1.8d684a341ce00p-56,
+    0x1.868d99b4492edp-1, -0x1.fc6f89bd4f680p-55, 0x1.88ac7d98a6699p-1, 0x1.994c2f37cb500p-55,
+    0x1.8ace5422aa0dbp-1, 0x1.6e9f156864b00p-55, 0x1.8cf3216b5448cp-1, -0x1.0d55e32e9e400p-57,
+    0x1.8f1ae99157736p-1, 0x1.5cc13a2e39700p-56, 0x1.9145b0b91ffc6p-1, -0x1.dd6792e582500p-55,
+    0x1.93737b0cdc5e5p-1, -0x1.75fc781b58000p-58, 0x1.95a44cbc8520fp-1, -0x1.64b7c96a5f000p-57,
+    0x1.97d829fde4e50p-1, -0x1.d185b7c1b8600p-55, 0x1.9a0f170ca07bap-1, -0x1.173bd91cee600p-55,
+    0x1.9c49182a3f090p-1, 0x1.c7c46b071f200p-57, 0x1.9e86319e32323p-1, 0x1.824ca78e64c00p-57,
+    0x1.a0c667b5de565p-1, -0x1.359495d1cd500p-55, 0x1.a309bec4a2d33p-1, 0x1.6305c7ddc3680p-55,
+    0x1.a5503b23e255dp-1, -0x1.d2f6edb8d4200p-55, 0x1.a799e1330b358p-1, 0x1.bcb7ecac56400p-55,
+    0x1.a9e6b5579fdbfp-1, 0x1.0fac90ef7fd00p-55, 0x1.ac36bbfd3f37ap-1, -0x1.f9234cae76d00p-56,
+    0x1.ae89f995ad3adp-1, 0x1.7a1cd345dcc80p-55, 0x1.b0e07298db666p-1, -0x1.bdef54c80e400p-55,
+    0x1.b33a2b84f15fbp-1, -0x1.2805e3084d800p-58, 0x1.b59728de5593ap-1, -0x1.c71dfbbba6e00p-55,
+    0x1.b7f76f2fb5e47p-1, -0x1.5584f7e54ac00p-57, 0x1.ba5b030a1064ap-1, -0x1.efcd30e542900p-55,
+    0x1.bcc1e904bc1d2p-1, 0x1.23dd07a2d9f00p-56, 0x1.bf2c25bd71e09p-1, -0x1.efdca3f6b9c80p-55,
+    0x1.c199bdd85529cp-1, 0x1.1106589504900p-56, 0x1.c40ab5fffd07ap-1, 0x1.b4537e083c600p-55,
+    0x1.c67f12e57d14bp-1, 0x1.2884dff483c80p-55, 0x1.c8f6d9406e7b5p-1, 0x1.1acbc48805c00p-57,
+    0x1.cb720dcef9069p-1, 0x1.503cbd1e94a00p-57, 0x1.cdf0b555dc3fap-1, -0x1.dd83b53829d00p-56,
+    0x1.d072d4a07897cp-1, -0x1.cbc3743797a80p-55, 0x1.d2f87080d89f2p-1, -0x1.d487b719d8580p-55,
+    0x1.d5818dcfba487p-1, 0x1.2ed02d75b3700p-56, 0x1.d80e316c98398p-1, -0x1.11ec18bede000p-55,
+    0x1.da9e603db3285p-1, 0x1.c2300696db500p-55, 0x1.dd321f301b460p-1, 0x1.2da5778f01900p-55,
+    0x1.dfc97337b9b5fp-1, -0x1.1a5cd4f184b80p-55, 0x1.e264614f5a129p-1, -0x1.7b627817a1480p-55,
+    0x1.e502ee78b3ff6p-1, 0x1.39e8980a9cd00p-56, 0x1.e7a51fbc74c83p-1, 0x1.2d522ca0c8e00p-55,
+    0x1.ea4afa2a490dap-1, -0x1.e9c23179c2880p-55, 0x1.ecf482d8e67f1p-1, -0x1.c93f3b411ad80p-55,
+    0x1.efa1bee615a27p-1, 0x1.dc7f486a4b680p-55, 0x1.f252b376bba97p-1, 0x1.3a1a5bf0d8e80p-55,
+    0x1.f50765b6e4540p-1, 0x1.9d3e12dd8a180p-55, 0x1.f7bfdad9cbe14p-1, -0x1.dbb12d0063500p-55,
+    0x1.fa7c1819e90d8p-1, 0x1.74853f3a59300p-56, 0x1.fd3c22b8f71f1p-1, 0x1.2eb7496657800p-58,
+    0x1.0000000000000p+0, 0.0, 0x1.0163da9fb3335p+0, 0x1.b61299ab8cd80p-54,
+    0x1.02c9a3e778061p+0, -0x1.19083535b0800p-56, 0x1.04315e86e7f85p+0, -0x1.0a31c1977c980p-54,
+    0x1.059b0d3158574p+0, 0x1.d73e2a475b400p-55, 0x1.0706b29ddf6dep+0, -0x1.c91dfe2b13c00p-55,
+    0x1.0874518759bc8p+0, 0x1.186be4bb28400p-57, 0x1.09e3ecac6f383p+0, 0x1.1487818316100p-54,
+    0x1.0b5586cf9890fp+0, 0x1.8a62e4adc6100p-54, 0x1.0cc922b7247f7p+0, 0x1.01edc16e24f80p-54,
+    0x1.0e3ec32d3d1a2p+0, 0x1.03a1727c58000p-59, 0x1.0fb66affed31bp+0, -0x1.b9bedc44ebc00p-57,
+    0x1.11301d0125b51p+0, -0x1.6c51039449b00p-54, 0x1.12abdc06c31ccp+0, -0x1.1b514b36ca800p-58,
+    0x1.1429aaea92de0p+0, -0x1.32fbf9af13680p-54, 0x1.15a98c8a58e51p+0, 0x1.2406ab9eeab00p-55,
+    0x1.172b83c7d517bp+0, -0x1.19041b9d78a00p-55, 0x1.18af9388c8deap+0, -0x1.11023d1970f80p-54,
+    0x1.1a35beb6fcb75p+0, 0x1.e5b4c7b496900p-55, 0x1.1bbe084045cd4p+0, -0x1.95386352ef600p-54,
+    0x1.1d4873168b9aap+0, 0x1.e016e00a26400p-54, 0x1.1ed5022fcd91dp+0, -0x1.1df98027bb780p-54,
+    0x1.2063b88628cd6p+0, 0x1.dc775814a8500p-55, 0x1.21f49917ddc96p+0, 0x1.2a97e9494a600p-55,
+    0x1.2387a6e756238p+0, 0x1.9b07eb6c70580p-54, 0x1.251ce4fb2a63fp+0, 0x1.ac155bef4f500p-55,
+    0x1.26b4565e27cddp+0, 0x1.2bd339940ea00p-55, 0x1.284dfe1f56381p+0, -0x1.a4c3a8c3f0d80p-54,
+    0x1.29e9df51fdee1p+0, 0x1.612e8afad1200p-55, 0x1.2b87fd0dad990p+0, -0x1.10adcd6382000p-59,
+    0x1.2d285a6e4030bp+0, 0x1.0024754db4200p-54, 0x1.2ecafa93e2f56p+0, 0x1.1ca0f45d52400p-56,
+    0x1.306fe0a31b715p+0, 0x1.6f46ad2318300p-55, 0x1.32170fc4cd831p+0, 0x1.a9ce78e180400p-55,
+    0x1.33c08b26416ffp+0, 0x1.3272184365980p-54, 0x1.356c55f929ff1p+0, -0x1.b5cee5c4e4600p-55,
+    0x1.371a7373aa9cbp+0, -0x1.63aeabf42eb00p-54, 0x1.38cae6d05d866p+0, -0x1.e958d3c990480p-54,
+    0x1.3a7db34e59ff7p+0, -0x1.5e436d661f600p-56, 0x1.3c32dc313a8e5p+0, -0x1.efff8375d2a00p-54,
+    0x1.3dea64c123422p+0, 0x1.ada0911f09f00p-55, 0x1.3fa4504ac801cp+0, -0x1.7d023f956fa00p-54,
+    0x1.4160a21f72e2ap+0, -0x1.ef3691c309000p-58, 0x1.431f5d950a897p+0, -0x1.1c7dde35f7a00p-55,
+    0x1.44e086061892dp+0, 0x1.89b7a04ef8000p-59, 0x1.46a41ed1d0057p+0, 0x1.c944bd1648a80p-54,
+    0x1.486a2b5c13cd0p+0, 0x1.3c1a3b6906200p-56, 0x1.4a32af0d7d3dep+0, 0x1.9cb62f3d1be80p-54,
+    0x1.4bfdad5362a27p+0, 0x1.d4397afec4200p-56, 0x1.4dcb299fddd0dp+0, 0x1.8ecdbbc6a7800p-54,
+    0x1.4f9b2769d2ca7p+0, -0x1.4b309d2595800p-54, 0x1.516daa2cf6642p+0, -0x1.f768569bd9400p-55,
+    0x1.5342b569d4f82p+0, -0x1.07abe1db13d00p-55, 0x1.551a4ca5d920fp+0, -0x1.d689cefede600p-55,
+    0x1.56f4736b527dap+0, 0x1.9bb2c011d9380p-54, 0x1.58d12d497c7fdp+0, 0x1.295e15b9a1e00p-55,
+    0x1.5ab07dd485429p+0, 0x1.6324c05464780p-54, 0x1.5c9268a5946b7p+0, 0x1.c4b1b81698000p-60,
+    0x1.5e76f15ad2148p+0, 0x1.ba6f93080e680p-54, 0x1.605e1b976dc09p+0, -0x1.3e2429b56de80p-54,
+    0x1.6247eb03a5585p+0, -0x1.383c17e40b480p-54, 0x1.6434634ccc320p+0, -0x1.c483c759d8900p-55,
+    0x1.6623882552225p+0, -0x1.bb60987591c00p-54, 0x1.68155d44ca973p+0, 0x1.038ae44f74000p-57,
+};
+long double APS5_VABI exp2l_nid_postfix(long double x) {
+    static volatile long double twoToMinus10000 = 0x1p-10000L;
+    const ExtendedParts parts = SplitExtended(x);
+    const int exponent = parts.signExponent & 0x7fff;
+    if (exponent >= 0x3fff + 14) {
+        if (exponent == 0x7fff) return (parts.signExponent & 0x8000) != 0 && parts.mantissa == 0x8000000000000000ull ? 0.0L : x + x;
+        if (x >= 16384) return std::numeric_limits<long double>::infinity();
+        if (x <= -16446) return twoToMinus10000 * twoToMinus10000;
+    } else if (exponent <= 0x3fff - 66) {
+        return 1.0L + x;
+    }
+    constexpr double redux = 0x1.8p63 / 128;
+    const long double shifted = x + redux;
+    const std::uint32_t bits = static_cast<std::uint32_t>(SplitExtended(shifted).mantissa) + 64;
+    const int scale = static_cast<int>(bits) >> 7;
+    const std::uint32_t index = (bits & 127) << 1;
+    const long double z = x - (shifted - redux);
+    const long double high = Exp2Table[index];
+    const long double low = Exp2Table[index + 1];
+    const long double r = low + (high + low) * z * (0x1.62e42fefa39efp-1 + z * (0x1.ebfbdff82c58fp-3 + z * (0x1.c6b08d7049fap-5 +
+        z * (0x1.3b2ab6fba4da5p-7 + z * (0x1.5d8804780a736p-10 + z * 0x1.430918835e33dp-13))))) + high;
+    if (scale >= -16381) {
+        if (scale == 16384) return r * 2.0 * 0x1p16383L;
+        return r * std::ldexp(1.0L, scale);
+    }
+    return r * std::ldexp(1.0L, scale + 10000) * twoToMinus10000;
+}
 long double APS5_VABI logl_nid_postfix(long double x) { return std::log(x); }
 long double APS5_VABI log10l_nid_postfix(long double x) { return std::log10(x); }
 long double APS5_VABI powl_nid_postfix(long double base, long double exp) { return std::pow(base, exp); }
