@@ -89,6 +89,15 @@ void TestRunningBigApp() {
     TestBigAppList(sceSystemServiceGetAppIdListOfBigApp);
 }
 
+void TestLncUtilCpuBudget() {
+    Require(sceLncUtilAcquireCpuBudgetOfExtraAudioDevices() == 0);
+    Require(sceLncUtilReleaseCpuBudgetOfExtraAudioDevices() == 0);
+    Require(sceLncUtilAcquireCpuBudgetOfImeForBigApp() == 0);
+    Require(sceLncUtilReleaseCpuBudgetOfImeForBigApp() == 0);
+    Require(sceLncUtilAcquireCpuBudgetOfInGameStore() == 0);
+    Require(sceLncUtilReleaseCpuBudgetOfInGameStore() == 0);
+}
+
 void TestPlayerDialogParam() {
     alignas(8) unsigned char buffer[0x100];
     std::memset(buffer, 0xab, sizeof(buffer));
@@ -207,5 +216,6 @@ int main() {
     TestRunningBigApp();
     TestRunningAppUser();
     TestRunningAppState();
+    TestLncUtilCpuBudget();
     TestPlayerDialogParam();
 }

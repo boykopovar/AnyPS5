@@ -160,17 +160,14 @@ int APS5_VABI sceAppMessagingTryReceiveMsg(AppMessagingMessage* message) {
 }
 
 int APS5_VABI sceLncUtilAcquireCpuBudgetOfExtraAudioDevices() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceLncUtilAcquireCpuBudgetOfImeForBigApp() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceLncUtilAcquireCpuBudgetOfInGameStore() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -432,17 +429,14 @@ int APS5_VABI sceLncUtilRegisterShellUI() {
 }
 
 int APS5_VABI sceLncUtilReleaseCpuBudgetOfExtraAudioDevices() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceLncUtilReleaseCpuBudgetOfImeForBigApp() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceLncUtilReleaseCpuBudgetOfInGameStore() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
