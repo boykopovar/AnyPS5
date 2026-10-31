@@ -32,7 +32,7 @@ VkBuffer BindExactBuffer(const Context& context, std::size_t size, VkBufferUsage
     info.usage = usage;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer buffer = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer pooled");
+    Check(context.CreateBuffer(&info, nullptr, &buffer), "vkCreateBuffer pooled");
     try {
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
@@ -85,7 +85,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         info.size = size;
         info.usage = this->usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer");
+        Check(context.CreateBuffer(&info, nullptr, &buffer), "vkCreateBuffer");
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
@@ -188,7 +188,7 @@ DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsa
         info.size = size;
         info.usage = this->usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer), "vkCreateBuffer device");
+        Check(context.CreateBuffer(&info, nullptr, &buffer), "vkCreateBuffer device");
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
@@ -233,7 +233,20 @@ void CopyBuffer(const Context& context, VkCommandBuffer commands, VkBuffer sourc
     context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, source, destination, 1, &region);
 }
 
+void FilterCommandBarrier(const Context& context, VkCommandBuffer commands, VkPipelineStageFlags& sourceStage, VkPipelineStageFlags& destinationStage, VkAccessFlags& sourceAccess, VkAccessFlags& destinationAccess) {
+    if (!context.asyncCommands || !context.asyncCommands->Contains(commands)) return;
+    constexpr VkPipelineStageFlags stages = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT | VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT | VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    constexpr VkAccessFlags access = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT | VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    sourceStage &= stages;
+    destinationStage &= stages;
+    if (sourceStage == 0) sourceStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    if (destinationStage == 0) destinationStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    sourceAccess &= access;
+    destinationAccess &= access;
+}
+
 void RecordMemoryBarrier(const Context& context, VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) {
+    FilterCommandBarrier(context, commands, sourceStage, destinationStage, sourceAccess, destinationAccess);
     const VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, sourceAccess, destinationAccess};
     context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, sourceStage, destinationStage, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 }

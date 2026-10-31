@@ -64,6 +64,62 @@ public:
     // destination access mask.
     void MarkCovered(VkAccessFlags access);
     void MarkShaderReadsCovered() { MarkCovered(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT); }
+    static std::uint32_t AsyncLaneRing();
+    static int LaneOfQueue(std::uint32_t queue);
+    struct LaneScope {
+        int previous;
+        explicit LaneScope(int lane);
+        ~LaneScope();
+        LaneScope(const LaneScope&) = delete;
+        LaneScope& operator=(const LaneScope&) = delete;
+    };
+    static void NoteConsumedLabel(std::uint64_t address, std::size_t bytes);
+    struct LaneSwitch {
+        Recorder* recorder;
+        int from;
+        int to;
+        LaneSwitch(Recorder* recorder, int lane);
+        ~LaneSwitch() noexcept(false);
+        LaneSwitch(const LaneSwitch&) = delete;
+        LaneSwitch& operator=(const LaneSwitch&) = delete;
+    };
+    static int ThreadLane();
+    bool AsyncLaneActive() const { return asyncTimeline != VK_NULL_HANDLE; }
+    class CommandBorrow {
+    public:
+        CommandBorrow(Recorder* recorder, VkCommandBuffer commands);
+        ~CommandBorrow();
+        CommandBorrow(const CommandBorrow&) = delete;
+        CommandBorrow& operator=(const CommandBorrow&) = delete;
+        void Release();
+    private:
+        Recorder* recorder;
+        VkCommandBuffer commands;
+    };
+    void PrepareWait(std::uint64_t serial);
+    void SubmitAllLanes();
+    static bool DispatchOverlapEnabled();
+    static void SetDispatchOrder(std::uint32_t queueKey, bool unordered);
+    static std::uint32_t TakeDispatchOrder(bool& unordered);
+    static constexpr std::uint64_t RunAccessWritten = 1, RunAccessImage = 2;
+    using RunAccess = std::array<std::uint64_t, 3>;
+    static std::uint32_t PeekUnorderedDispatch();
+    VkCommandBuffer OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped);
+    void DeferDispatchBarrier(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses);
+    VkCommandBuffer RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess);
+    void OpenBatch() { ensureOpen(); }
+    bool RunOpen() const { return open != nullptr && open->deferredDispatchQueue != 0; }
+    void AfterRun(std::function<void(Recorder&)> work);
+    bool CloseRunOwing(const void* owner);
+    struct OverlapStatistics {
+        std::uint64_t deferred, overlapped, flushed, preludeDispatches;
+    };
+    static bool BatchedStagingEnabled();
+    VkCommandBuffer SplitForRun();
+    VkCommandBuffer PreludeCommands();
+    bool AfterRunMerging() const { return open != nullptr && open->afterRunMerging; }
+    bool AfterRunWrite(std::uint64_t begin, std::uint64_t end);
+    static OverlapStatistics OverlapCounts();
     struct DrawPassStart {
         VkCommandBuffer commands = VK_NULL_HANDLE;
         bool continued = false;
@@ -88,9 +144,10 @@ public:
     void FlushKeyStores();
     void FlushKeyStoresOverlapping(std::uint64_t address, std::size_t bytes) { if (HasQueuedKeyStores() && QueuedKeyStoreOverlaps(address, bytes)) FlushKeyStores(); }
     bool Recording() const { return open != nullptr; }
-    bool Idle() const { return open == nullptr && inFlight.empty(); }
+    bool Idle() const { return lanes[0] == nullptr && lanes[1] == nullptr && inFlight.empty(); }
     std::uint64_t OpenSerial() const { return submissions + 1; }
-    std::uint64_t CompletedThrough() const { return inFlight.empty() ? submissions : inFlight.front()->serial - 1; }
+    std::uint64_t CompletedThrough() const;
+    void OrderAfterLane(int from);
     // Whether recorded work still has completion actions (write-backs the CPU must see) to run.
     bool HasCompletions() const;
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
@@ -217,6 +274,7 @@ public:
     // Under the mutex: finishes (completions, release) the in-flight batches up to `serial`, from the
     // front only; tolerates batches another thread finished meanwhile. Later batches stay in flight.
     void FinishUpTo(std::uint64_t serial);
+    void FinishThroughOpened(std::uint64_t serial);
     // Submits and waits for every batch, running completions in order.
     void Sync();
     void CountSamples();
@@ -588,6 +646,11 @@ private:
         std::vector<ReadListNote> readLists;
         // Submission number (1-based): identifies a batch after its allocation may have been reused.
         std::uint64_t serial = 0;
+        std::uint64_t openedAt = 0;
+        int lane = 0;
+        std::uint64_t waitOther = 0;
+        bool handedOut = false;
+        std::uint64_t edgeOwed = 0;
         std::uint64_t traceId = 0;
         bool submitted = false;
         // The GpuMutex queue tag of the thread that opened the batch, and when it was submitted
@@ -656,6 +719,16 @@ private:
         } run;
         // See Commands(): the accesses the last recorded command's trailing barrier covers.
         VkAccessFlags coveredAccess = 0;
+        std::uint32_t deferredDispatchQueue = 0;
+        std::vector<const void*> deferredRun;
+        std::vector<RunAccess> runAccess;
+        std::vector<std::function<void(Recorder&)>> afterRun;
+        std::vector<VkCommandBuffer> chunks;
+        bool preludeArmed = false;
+        VkCommandBuffer prelude = VK_NULL_HANDLE;
+        bool afterRunMerging = false;
+        bool afterRunWrote = false;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> afterRunWritten;
         // The hazard tracker's accesses since its last simulated barrier (see NoteAccess).
         struct Tracker {
             struct Range {
@@ -778,6 +851,14 @@ private:
     void recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) const;
     // Opens a batch when none is open, without closing a store run (Commands() does both).
     void ensureOpen();
+    void flushDeferredDispatch();
+    bool runConflict(std::span<const RunAccess> accesses) const;
+    VkCommandBuffer beginChunk();
+    void sealPrelude();
+    std::array<std::vector<VkCommandBuffer>, 2> spareChunks;
+    VkCommandPool asyncPool = VK_NULL_HANDLE;
+    VkCommandPool lanePool(int lane) const { return lane == 1 ? asyncPool : context.pool; }
+    bool joinsRun(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses) const;
     void dropStaleHoldKept();
     // Records the run's pending store (vkCmdUpdateBuffer), if any.
     void flushPendingStore();
@@ -829,12 +910,22 @@ private:
     // not in flight any more): what makes a wait for it a real GPU wait (ThreadHookWaits).
     bool unsignaled(std::uint64_t serial) const;
 
+    struct BorrowedCommand {
+        const Batch* batch;
+        std::size_t count;
+    };
+    std::map<VkCommandBuffer, BorrowedCommand> borrowed;
+    void requireUnborrowed(const Batch* batch = nullptr) const;
+    void requireHandleUnborrowed(VkCommandBuffer commands) const;
+    void prepareWaits(std::array<std::uint64_t, 2> targets);
+    std::array<std::uint64_t, 2> waitTargets(std::uint64_t serial) const;
     Context context;
     VkSemaphore timeline = VK_NULL_HANDLE;
-    VkSemaphore submitHold = VK_NULL_HANDLE;
-    std::uint64_t submitHoldValue = 0;
+    std::array<VkSemaphore, 2> submitHold{};
+    std::array<std::uint64_t, 2> submitHoldValue{};
     struct ProgressWatcher;
     std::unique_ptr<ProgressWatcher> progressWatcher;
+    std::unique_ptr<ProgressWatcher> asyncProgressWatcher;
     // Identity for a thread that released the mutex around a wait (syncThroughUnlocked): the
     // recorder may have been torn down meanwhile, so it is looked up by this id, not by pointer.
     std::uint64_t id = 0;
@@ -851,7 +942,47 @@ private:
     // labels.size(), readable without the table mutex: a noted write skips the mutex while the
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
-    std::unique_ptr<Batch> open;
+    std::array<std::unique_ptr<Batch>, 2> lanes;
+    int currentLane() const;
+    struct OpenSlot {
+        Recorder* owner;
+        std::unique_ptr<Batch>& slot() const { return owner->lanes[static_cast<std::size_t>(owner->currentLane())]; }
+        Batch* get() const { return slot().get(); }
+        Batch* operator->() const { return get(); }
+        Batch& operator*() const { return *get(); }
+        explicit operator bool() const { return get() != nullptr; }
+        bool operator==(std::nullptr_t) const { return get() == nullptr; }
+        bool operator!=(std::nullptr_t) const { return get() != nullptr; }
+    };
+    OpenSlot open{this};
+    template<typename TFunction>
+    bool anyOpen(TFunction&& function) const {
+        for (const auto& batch : lanes) {
+            if (batch != nullptr && function(*batch)) return true;
+        }
+        return false;
+    }
+    template<typename TFunction>
+    void forEachOpen(TFunction&& function) const {
+        for (const auto& batch : lanes) {
+            if (batch != nullptr) function(*batch);
+        }
+    }
+    VkSemaphore asyncTimeline = VK_NULL_HANDLE;
+    std::array<std::uint64_t, 2> laneSubmitted{};
+    std::array<std::uint64_t, 2> laneOwed{};
+    void switchEdge(int from, int to, bool retroactive = false);
+    void addEdge(int lane, std::uint64_t serial, bool retroactive = false);
+    void takeOwedEdge();
+    void prepareCompletionEdge();
+    void submitLane(int lane);
+    void applyConsumedLabels();
+    bool hasConsumedLabels() const;
+    Batch* newestInFlight(int lane) const;
+    void finishLaneThrough(int lane, std::uint64_t target, bool wait, int source);
+    std::uint64_t laneTargetAtOrBefore(int lane, std::uint64_t serial) const;
+    mutable std::mutex laneLogMutex;
+    std::deque<std::pair<std::uint64_t, int>> laneLog;
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;
     std::deque<std::unique_ptr<Batch>> inFlight;

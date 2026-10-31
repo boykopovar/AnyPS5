@@ -5959,6 +5959,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     } else {
         recorder.NotePendingReads(guestMemory.InPlaceReads(), kind);
     }
+    const auto inRun = std::exchange(afterRunSelf, nullptr);
     if (SkipWriteBack()) return;
     for (std::size_t index = 0; index < storageTextures.size(); ++index) {
         if (!storageWritten[index] || storageTextures[index] == nullptr) continue;
@@ -5968,7 +5969,12 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
     // Written sub-ranges of buffers the GPU copied out of a host import go back into it by the GPU,
     // recorded here after the work: those regions then need no CPU write-back (HasCopiedWrites),
     // and the note and mark below cover them like direct writes.
-    guestMemory.RecordCopyBacks(recorder);
+    if (inRun != nullptr && recorder.RunOpen() && guestMemory.HasGpuCopies()) {
+        recorder.AfterRun([inRun](Recorder& after) { inRun->guestMemory.RecordCopyBacks(after); });
+        guestMemory.MarkStagedWrites();
+    } else {
+        guestMemory.RecordCopyBacks(recorder);
+    }
     // Only the written elements' ranges (AddWritable): a read-only element is neither noted here
     // nor marked as a direct write, so CPU reads of its memory never wait for this work.
     recorder.NotePendingWrites(guestMemory.Writes());
@@ -6006,6 +6012,16 @@ void ShaderResources::WriteBackBuffers() {
 bool ShaderResources::ReadsOverlap(std::uint64_t address, std::size_t bytes) const {
     const auto reads = guestMemory.InPlaceReads();
     return std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return address < range.second && range.first < address + bytes; });
+}
+
+void ShaderResources::RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const {
+    out.clear();
+    guestMemory.RunAccesses(out);
+    if (usesBda) out.push_back({0, std::numeric_limits<std::uint64_t>::max(), Recorder::RunAccessWritten});
+    for (const auto& [image, written] : StorageImages()) {
+        const auto handle = reinterpret_cast<std::uint64_t>(image);
+        out.push_back({handle, handle + 1, Recorder::RunAccessImage | (written ? Recorder::RunAccessWritten : 0u)});
+    }
 }
 
 std::vector<std::pair<VkImage, bool>> ShaderResources::StorageImages() const {

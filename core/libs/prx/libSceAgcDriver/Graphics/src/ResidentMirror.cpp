@@ -54,6 +54,7 @@ void recordTransfer(const Context& context, Work&& work) {
     std::vector<std::shared_ptr<void>> kept;
     if (auto* recorder = Recorder::Active(); recorder != nullptr) {
         const auto commands = recorder->Commands();
+        Recorder::CommandBorrow commandBorrow56(recorder, commands);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
         work(commands, kept);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, TransferredAccess);
@@ -100,7 +101,7 @@ public:
         info.size = ZeroBytes;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         VkBuffer buffer = VK_NULL_HANDLE;
-        if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) fail("vkCreateBuffer of the heap mirrors' zero fill", result);
+        if (const auto result = context.CreateBuffer(&info, nullptr, &buffer); result != VK_SUCCESS) fail("vkCreateBuffer of the heap mirrors' zero fill", result);
         auto transient = std::make_shared<TransientBuffer>(context, buffer);
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
@@ -375,7 +376,7 @@ ResidentBuffer::ResidentBuffer(const Context& context, std::uint64_t base, std::
             info.queueFamilyIndexCount = static_cast<std::uint32_t>(families.size());
             info.pQueueFamilyIndices = families.data();
         }
-        if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) fail("vkCreateBuffer of a resident heap mirror", result);
+        if (const auto result = context.CreateBuffer(&info, nullptr, &buffer); result != VK_SUCCESS) fail("vkCreateBuffer of a resident heap mirror", result);
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
         if (requirements.alignment == 0 || requirements.alignment > BlockSize || BlockSize % requirements.alignment != 0) {
