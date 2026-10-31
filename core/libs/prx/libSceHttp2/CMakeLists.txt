@@ -73,6 +73,12 @@ if(BUILD_TESTING)
         set_tests_properties(guest_http2 guest_http2_cookies guest_http2_options guest_http2_transport guest_http2_early_response guest_http2_dns_first guest_http2_system_roots PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
     endif()
+    add_test(NAME guest_http2_redirects COMMAND guest_http2_transport_tests --redirects)
+    set_tests_properties(guest_http2_redirects PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_http2_redirects PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp2>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
