@@ -36,7 +36,11 @@ class StubOriginTests(unittest.TestCase):
         first = self.commit(STUB.format(name="Old"), "2026-01-02")
         second = self.commit(STUB.format(name="Old") + STUB.format(name="New"), "2026-03-04")
         found = stub_origins.origins(self.root, self.library, {"Old", "New"})
-        self.assertEqual(found, {"Old": {"commit": first, "date": "2026-01-02"}, "New": {"commit": second, "date": "2026-03-04"}})
+        short = {name: {key: origin[key] for key in ("commit", "date")} for name, origin in found.items()}
+        self.assertEqual(short, {"Old": {"commit": first, "date": "2026-01-02"}, "New": {"commit": second, "date": "2026-03-04"}})
+        self.assertEqual({name: origin["author"] for name, origin in found.items()}, {"Old": "Origin Test", "New": "Origin Test"})
+        self.assertEqual({name: origin["time"] for name, origin in found.items()}, {"Old": "12:00 UTC", "New": "12:00 UTC"})
+        self.assertEqual({name: origin["pr"] for name, origin in found.items()}, {"Old": None, "New": None})
 
     def test_only_the_requested_names_are_attributed(self):
         self.git("init", "-q")
@@ -65,6 +69,22 @@ class StubOriginTests(unittest.TestCase):
         (self.library / "Export.cpp").write_text("int APS5_VABI\nsceSplit(\n    int a) {\n    return 0;\n}\n", encoding="utf-8")
         found = stub_origins.declarations(self.library)
         self.assertEqual(found["sceSplit"][1], 2)
+
+
+    def test_a_commit_brought_in_by_a_pull_request_merge_is_attributed_to_that_pull_request(self):
+        self.git("init", "-q")
+        self.commit(STUB.format(name="Old"), "2026-01-02")
+        main = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-qb", "feature")
+        (self.library / "Other.cpp").write_text(STUB.format(name="New"), encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "feat: add New")
+        feature = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "-")
+        self.git("merge", "-q", "--no-ff", "feature", "-m", "Merge pull request #77 from owner/feature")
+        numbers = stub_origins.pull_requests(self.root)
+        self.assertEqual(numbers.get(feature), 77)
+        self.assertNotIn(main, numbers)
 
 
 if __name__ == "__main__":
