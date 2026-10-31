@@ -1,8 +1,10 @@
+import os
 import runpy
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -28,6 +30,12 @@ class ErrorReportTests(unittest.TestCase):
         error = subprocess.CalledProcessError(1, ["gh", "api"], output="", stderr="")
         self.assertEqual(pr_overlap.describe_failure(error), "pr_overlap: gh api failed with exit code 1: no error output")
 
+    def test_invalid_pagination_reports_a_concise_error(self):
+        with patch.object(pr_overlap, "open_prs", side_effect=ValueError("gh api returned an invalid next page link")):
+            with self.assertRaises(SystemExit) as raised:
+                pr_overlap.main(["--repo", "owner/project", "--branch", "HEAD"])
+        self.assertEqual(str(raised.exception.code), "pr_overlap: gh api returned an invalid next page link")
+
     def test_unknown_base_branch_exits_with_the_git_message_instead_of_a_traceback(self):
         argv = ["pr_overlap.py", "--repo", "owner/project", "--base", "upstream/main", "--branch", "HEAD"]
         with patch.object(subprocess, "run", side_effect=fake_run), patch.object(sys, "argv", argv):
@@ -49,6 +57,27 @@ class ErrorReportTests(unittest.TestCase):
                 pr_overlap.merge("--merge-base=refs/pr/base", "a", "b")
             with self.assertRaisesRegex(RuntimeError, r"failed: error: unknown option$"):
                 pr_overlap.merge("refs/pr/base", "a")
+
+    def test_parent_pathspec_symlink_loop_exits_without_traceback(self):
+        with TemporaryDirectory() as directory:
+            repo = Path(directory)
+            nested = repo / "nested"
+            nested.mkdir()
+            loop = repo / "loop"
+            try:
+                loop.symlink_to(loop)
+            except OSError as error:
+                self.skipTest(f"symlinks unavailable: {error}")
+            old = os.getcwd()
+            os.chdir(nested)
+            try:
+                with patch.dict(pr_overlap._REPO_ROOTS, {Path.cwd(): str(repo)}, clear=False):
+                    with self.assertRaises(ValueError) as raised:
+                        pr_overlap.git("diff", "--", "../loop")
+            finally:
+                os.chdir(old)
+            self.assertIn("cannot resolve path '../loop'", str(raised.exception))
+            self.assertRegex(str(raised.exception), r"Too many levels of symbolic links|Symlink loop|cannot be resolved by the system")
 
     def test_main_reconfigures_streams(self):
         class Stream:
