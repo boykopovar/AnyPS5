@@ -1245,7 +1245,6 @@ int DoMapFileBacked_nid_no_patch(void** addr, size_t len, int prot, int flags, i
     if (offset + len >= fileEnd + PS5_PAGE_SIZE) throw std::system_error(ENOTSUP, std::generic_category(), "map file: a shared mapping of a whole page past the end of the file is not implemented on Windows");
     const int access = WindowsDescriptorAccess_nid_no_patch(file, descriptor, "mmap");
     if (access == 1) throw std::system_error(ENOTSUP, std::generic_category(), "map file: a shared mapping of a write-only descriptor is not implemented on Windows");
-    if (access == 0 && (prot & PROT_WRITE) != 0) throw std::system_error(EACCES, std::generic_category(), "map file: a writable shared mapping of a read-only descriptor");
     const bool execute = (prot & PROT_EXEC) != 0;
     const DWORD viewProtection = execute ? (access == 2 ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ) : (access == 2 ? PAGE_READWRITE : PAGE_READONLY);
     const HANDLE source = execute ? ReOpenFile(file, GENERIC_READ | GENERIC_EXECUTE | (access == 2 ? GENERIC_WRITE : 0), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0) : file;
