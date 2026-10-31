@@ -3,4 +3,4 @@ target_include_directories(${LIB_NAME} PRIVATE ${LIBS_INCLUDE_DIR})
 target_sources(${LIB_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/AdditionalExports.cpp)
 configure_windows_unwind(${LIB_NAME})
 
-target_sources(${LIB_NAME} PRIVATE Uuid.cpp)
+target_sources(${LIB_NAME} PRIVATE Wait.cpp Uuid.cpp)

@@ -315,7 +315,7 @@ extern "C" void RegisterChildProcess_nid_no_patch(std::int32_t processId, std::i
     childProcesses.push_back({processId, processHandle});
 }
 
-extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status) {
+extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status, bool requireUsage) {
     const bool noWait = (options & 1u) != 0;
     const auto matches = [&](const ChildProcess& child) { return processId <= 0 || child.processId == processId; };
     {
@@ -337,6 +337,7 @@ extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, un
                     *__error_nid_postfix() = 14;
                     return -1;
                 }
+                if (requireUsage) NotImplemented_nid_no_patch("wait4: child resource accounting on Windows");
                 encoded = ChildProcessWaitStatus(code);
                 CloseHandle(handle);
                 reaped = child.processId;
