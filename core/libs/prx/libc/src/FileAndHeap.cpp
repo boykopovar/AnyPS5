@@ -327,6 +327,20 @@ FileStream* APS5_VABI fdopen_nid_postfix(int descriptor, const char* mode) {
     } catch (const std::bad_alloc&) { errno = 12; return nullptr; }
 }
 
+static bool IsRandomDevicePath(std::string_view path) {
+    return path == "/dev/random" || path == "/dev/urandom";
+}
+
+#ifdef _WIN32
+static const std::filesystem::path NullDevicePath = "NUL";
+#else
+static const std::filesystem::path NullDevicePath = "/dev/null";
+#endif
+
+static std::FILE* OpenNullDevice(const std::filesystem::path& = {}, const std::string& = {}) {
+    return std::fopen(NullDevicePath.string().c_str(), "rb");
+}
+
 static int OpenFailure(const std::filesystem::path& path, bool writes, int hostError) {
     const int error = GuestErrnoFromHost_nid_no_patch(hostError);
     std::error_code status;
@@ -386,6 +400,17 @@ FileStream* APS5_VABI freopen_nid_postfix(const char* filename, const char* mode
     const auto parsed = ParseFileMode(mode);
     if (!parsed) { errno = 22; return nullptr; }
     try {
+        if (IsRandomDevicePath(filename)) {
+            if (parsed->writes) throw std::runtime_error(std::string(__func__) + ": writing to " + filename + " is not implemented");
+            if (!stream->Reopen(NullDevicePath, "rb", OpenNullDevice)) {
+                const int error = errno;
+                if (stream->IsDynamic()) delete stream;
+                errno = error;
+                return nullptr;
+            }
+            stream->MarkRandomDevice();
+            return stream;
+        }
         std::filesystem::path path;
         if (const int error = *filename ? ResolvePathError_nid_no_patch(filename, path) : 2) {
             if (stream->IsHostStandard()) stream->Detach();
@@ -437,13 +462,9 @@ FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode) 
         errno = EINVAL;
         return nullptr;
     }
-    if (const std::string_view path(filename); path == "/dev/random" || path == "/dev/urandom") {
+    if (IsRandomDevicePath(filename)) {
         if (parsed->writes) throw std::runtime_error(std::string(__func__) + ": writing to " + filename + " is not implemented");
-#ifdef _WIN32
-        std::unique_ptr<std::FILE, int (*)(std::FILE*)> device(std::fopen("NUL", "rb"), std::fclose);
-#else
-        std::unique_ptr<std::FILE, int (*)(std::FILE*)> device(std::fopen("/dev/null", "rb"), std::fclose);
-#endif
+        std::unique_ptr<std::FILE, int (*)(std::FILE*)> device(OpenNullDevice(), std::fclose);
         if (!device) return nullptr;
         auto stream = std::make_unique<FileStream>(device.get(), true);
         device.release();

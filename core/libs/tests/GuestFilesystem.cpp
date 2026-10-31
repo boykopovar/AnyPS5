@@ -1676,6 +1676,17 @@ int main() {
             }
             Require(rejected);
         }
+        auto* reopened = fopen_nid_postfix(presentName.c_str(), "rb");
+        Require(reopened != nullptr && freopen_nid_postfix(device, "r", reopened) == reopened);
+        std::memset(first, 0, sizeof(first));
+        std::memset(second, 0, sizeof(second));
+        Require(fread_nid_postfix(first, 1, sizeof(first), reopened) == sizeof(first));
+        Require(fread_nid_postfix(second, 1, sizeof(second), reopened) == sizeof(second));
+        Require(std::memcmp(first, second, sizeof(first)) != 0);
+        Require(feof_nid_postfix(reopened) == 0 && ferror_nid_postfix(reopened) == 0);
+        Require(freopen_nid_postfix(presentName.c_str(), "rb", reopened) == reopened);
+        Require(fread_nid_postfix(first, 1, sizeof(first), reopened) == std::filesystem::file_size(present) && fgetc_nid_postfix(reopened) == -1);
+        Require(freopen_nid_postfix(device, "rb", reopened) == reopened && fclose_nid_postfix(reopened) == 0);
     }
     Require(unlink_nid_postfix(presentName.c_str()) == 0 && !std::filesystem::exists(present));
     const auto empty = root / "empty";
