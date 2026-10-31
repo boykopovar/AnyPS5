@@ -2757,6 +2757,18 @@ std::size_t Recorder::UnsignaledBatches() const {
     return static_cast<std::size_t>(std::count_if(inFlight.begin(), inFlight.end(), [&](const auto& batch) { return !signaled(*batch); }));
 }
 
+std::shared_ptr<DeviceBuffer> Recorder::UploadScratchBuffer(UploadScratch kind, std::size_t bytes) {
+    Require(kind < UploadScratch::Count && bytes != 0, "invalid texture upload scratch request");
+    ensureOpen();
+    auto& scratch = open->uploadScratch[static_cast<std::size_t>(kind)];
+    if (scratch == nullptr || scratch->Size() < bytes) {
+        const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | (kind == UploadScratch::Tiled ? VK_BUFFER_USAGE_TRANSFER_DST_BIT : VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        scratch = std::make_shared<DeviceBuffer>(context, bytes, usage);
+        Keep(scratch, bytes);
+    }
+    return scratch;
+}
+
 void Recorder::Keep(std::shared_ptr<void> object, std::size_t bytes) {
     ensureOpen();
     open->kept.push_back(std::move(object));

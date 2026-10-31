@@ -28,6 +28,7 @@
 namespace AgcDriver::Graphics {
 
 class Buffer;
+class DeviceBuffer;
 
 // Accumulates GPU work across guest commands so the CPU does not wait for each one. Dispatches and the
 // copies that feed them record into one open batch; Submit sends it to the queue without waiting and
@@ -96,6 +97,9 @@ public:
     void Keep(std::shared_ptr<void> object, std::size_t bytes = 0);
     void KeepThroughHold(std::shared_ptr<void> object);
     void KeepBytes(const void* owner, std::size_t bytes);
+    enum class UploadScratch : std::uint8_t { Tiled = 0, Linear, Count };
+    std::shared_ptr<DeviceBuffer> UploadScratchBuffer(UploadScratch kind, std::size_t bytes);
+    static constexpr VkPipelineStageFlags UploadScratchReuseStages = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     std::size_t OpenKeptBytes() const { return open != nullptr ? open->keptBytes : 0; }
     void FlushDeferredReleases();
     static constexpr std::size_t KeptBytesBudget = std::size_t{512} << 20u;
@@ -568,6 +572,7 @@ private:
         std::vector<std::shared_ptr<void>> kept;
         std::size_t keptBytes = 0;
         std::unordered_set<const void*> keptOwners;
+        std::array<std::shared_ptr<DeviceBuffer>, static_cast<std::size_t>(UploadScratch::Count)> uploadScratch;
         std::vector<std::function<void()>> completions;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;

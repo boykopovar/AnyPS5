@@ -419,10 +419,10 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
                 // Entries may also be extents ("3840x2160"), since heap addresses change between runs.
                 dumpWanted = dumpList.find(address) != std::string::npos || dumpList.find(extent) != std::string::npos;
             }
+            static const bool syncUploads = std::getenv("APS5_SYNC_TEXTURE_UPLOAD") != nullptr;
+            auto* recorder = dumpWanted || syncUploads ? nullptr : Recorder::Active();
             auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             std::memcpy(staging->Bytes().data(), snapshot.data(), snapshot.size());
-            auto tiled = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-            auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             if (profile) Profile().allocate += timer.lap();
             if (profile) Profile().read += timer.lap();
 
@@ -433,23 +433,25 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
             // the batch (the cache may drop the texture before it completes). The dump aid needs the
             // linear bytes on the CPU, so it keeps the waiting batch, as does a build without a
             // recorder (tests). APS5_SYNC_TEXTURE_UPLOAD=1 restores the waiting batch for every upload.
-            static const bool syncUploads = std::getenv("APS5_SYNC_TEXTURE_UPLOAD") != nullptr;
-            auto* recorder = dumpWanted || syncUploads ? nullptr : Recorder::Active();
             std::unique_ptr<CommandBatch> batch;
             VkCommandBuffer commands = VK_NULL_HANDLE;
+            std::shared_ptr<DeviceBuffer> tiled;
+            std::shared_ptr<DeviceBuffer> linear;
             if (recorder != nullptr) {
                 commands = recorder->Commands();
+                tiled = recorder->UploadScratchBuffer(Recorder::UploadScratch::Tiled, static_cast<std::size_t>(guestBytes));
+                linear = recorder->UploadScratchBuffer(Recorder::UploadScratch::Linear, static_cast<std::size_t>(linearBytes));
                 recorder->Keep(staging, static_cast<std::size_t>(guestBytes));
-                recorder->Keep(tiled, static_cast<std::size_t>(guestBytes));
-                recorder->Keep(linear, static_cast<std::size_t>(linearBytes));
                 recorder->Keep(owned);
                 if (uploadOwned != nullptr) recorder->Keep(uploadOwned);
             } else {
                 batch = std::make_unique<CommandBatch>(context);
                 commands = batch->Handle();
+                tiled = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(linearBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             }
 
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT | Recorder::UploadScratchReuseStages, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
             CopyBuffer(context, commands, staging->Handle(), 0, tiled->Handle(), 0, guestBytes);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
