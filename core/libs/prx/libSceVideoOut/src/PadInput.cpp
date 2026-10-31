@@ -34,6 +34,7 @@ static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status 
 
 PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)), statusProvider{[this] { return statusSnapshot(); }} {
     static_cast<void>(Pad::RumblePercent());
+    identifyMode = Pad::IdentifyModeFromEnvironment();
     openAvailableControllers();
 }
 
@@ -86,6 +87,7 @@ void PadInput::openController(int deviceIndex) {
     slots[slot].nextRumbleRefresh = {};
     slots[slot].lightBar.Reset();
     slots[slot].triggerEffect.Reset();
+    slots[slot].identify = Pad::IdentifyScheduler{};
     const char* name = SDL_GameControllerName(gc);
     slots[slot].kind = PadKindFromSdl(SDL_GameControllerGetType(gc));
     slots[slot].name = name != nullptr ? name : "";
@@ -93,6 +95,13 @@ void PadInput::openController(int deviceIndex) {
         slot, name != nullptr ? name : "unknown", static_cast<int>(SDL_GameControllerGetType(gc)),
         SDL_GameControllerHasSensor(gc, SDL_SENSOR_ACCEL) == SDL_TRUE, SDL_GameControllerHasSensor(gc, SDL_SENSOR_GYRO) == SDL_TRUE,
         SDL_GameControllerGetNumTouchpads(gc), SDL_GameControllerHasLED(gc) == SDL_TRUE, SDL_GameControllerHasRumbleTriggers(gc) == SDL_TRUE);
+    if (identifyMode != Pad::IdentifyMode::Off) {
+        if (SDL_GameControllerHasRumble(gc) == SDL_TRUE) {
+            slots[slot].identify.Bind(std::chrono::steady_clock::now(), static_cast<unsigned>(slot) + 1, identifyMode);
+        } else {
+            APS5_LOG_OUT("Pad: identify pulse skipped for slot %d: the controller has no rumble support", slot);
+        }
+    }
     enableSensors(slot);
     PadSetPortConnected_nid_postfix(slot, true);
     UserServiceSetUserConnected_nid_postfix(slot, true);
@@ -176,6 +185,10 @@ void PadInput::applyOutput() {
                 : LightBarPacer::Color{def.r, def.g, def.b};
             if (slots[slot].lightBar.Due(color, now)) slots[slot].lightBar.Result(color, now, SDL_GameControllerSetLED(controller, color[0], color[1], color[2]) == 0);
         }
+        const bool titleActive = slots[slot].outputPending || rumbling || triggerRumble;
+        if (slots[slot].identify.Tick(now, titleActive, rumblePercent, [controller](std::uint16_t low, std::uint16_t high, std::uint32_t durationMs) {
+                SDL_GameControllerRumble(controller, low, high, durationMs);
+            })) continue;
         if (!slots[slot].outputPending) {
             if ((rumbling || (triggerRumble && !isPs5)) && now >= slots[slot].nextRumbleRefresh) slots[slot].outputPending = true;
             else continue;
