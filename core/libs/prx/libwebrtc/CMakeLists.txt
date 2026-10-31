@@ -6,6 +6,7 @@ target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ExpFilter.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RtcpCommonHeader.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Opus.cpp)
 target_link_libraries(libwebrtc PRIVATE opus)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/TaskQueueBase.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_webrtc_fast_int_to_buffer_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/FastIntToBuffer.cpp)
