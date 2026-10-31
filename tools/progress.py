@@ -832,7 +832,7 @@ def write_site(output, libraries, shaders):
     output.mkdir(parents=True, exist_ok=True)
     require_distinct_reports(output)
     (output / "progress.json").write_text(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2), encoding="utf-8")
-    (output / "badge-libraries.svg").write_text(badge("libraries*", libraries), encoding="utf-8")
+    (output / "badge-libraries.svg").write_text(badge("libraries (headline)*", libraries), encoding="utf-8")
     (output / "badge-shaders.svg").write_text(badge("shaders", shaders), encoding="utf-8")
     (output / "progress.svg").write_text(render(libraries, shaders), encoding="utf-8")
     if traced(libraries):
