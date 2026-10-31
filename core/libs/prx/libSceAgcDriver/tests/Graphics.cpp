@@ -6223,6 +6223,42 @@ void oversizedDescriptorTests() {
     ::operator delete(block, std::align_val_t{blockBytes});
 }
 
+void viewAtRangeLimitTests() {
+    constexpr std::size_t blockBytes = 65536;
+    void* block = ::operator new(blockBytes, std::align_val_t{blockBytes});
+    std::memset(block, 0x5a, blockBytes);
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, blockBytes, true, true, true);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.limits.minStorageBufferOffsetAlignment = 16;
+        const auto* view = static_cast<const std::byte*>(block) + 12;
+        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(block, 64)));
+        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 1, 1, vsharp(view, static_cast<std::uint32_t>(context.limits.maxStorageBufferRange))));
+        vertex.bindings.push_back(makeBinding(Role::ShaderData, 5, 1, ShaderDataWords({})));
+        vertex.shaderDataDwords = ShaderRecompiler::RuntimeAbi::ShaderDataDwords;
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+            const auto& write = findWrite(1);
+            Require(write.buffers.size() == 1 && write.buffers[0].range == context.limits.maxStorageBufferRange, "a V# of exactly the range limit at an unaligned address was not bound within the limit");
+        }
+        Require(mock.live == 0, "a V# of exactly the range limit leaked Vulkan objects");
+    }
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    ::operator delete(block, std::align_val_t{blockBytes});
+}
+
 void guestBufferViewBytesTests() {
     using AgcDriver::Graphics::GuestBufferMemory;
     for (const std::uint64_t bytes : {2ull, 3ull, 4ull, 6ull, 7ull, 16ull, 4096ull, 4098ull}) {
@@ -13021,6 +13057,7 @@ int main(int argc, char** argv) {
         pushConstantTests();
         resourceTests();
         oversizedDescriptorTests();
+        viewAtRangeLimitTests();
         guestBufferViewBytesTests();
         descriptorSnapshotTests();
         dispatchMoveTests();
