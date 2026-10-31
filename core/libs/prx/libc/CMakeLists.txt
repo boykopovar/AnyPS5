@@ -64,6 +64,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/BoundsChecking.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Multibyte.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuneLocale.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/CLocaleHelpers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StringExtensions.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
@@ -1480,5 +1481,17 @@ if(MINGW)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;APS5_CRASH_STACK_BYTES=unset:"
             PASS_REGULAR_EXPRESSION "FATAL: unhandled exception 0xc0000005"
             FAIL_REGULAR_EXPRESSION "stack words from rsp;data at stack words")
+    endif()
+endif()
+
+add_test_executable(guest_c_locale_helpers_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestCLocaleHelpers.cpp)
+target_include_directories(guest_c_locale_helpers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_c_locale_helpers_tests PRIVATE libc)
+configure_windows_unwind(guest_c_locale_helpers_tests)
+if(BUILD_TESTING)
+    set_target_properties(guest_c_locale_helpers_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    add_test(NAME guest_c_locale_helpers COMMAND guest_c_locale_helpers_tests)
+    if(WIN32)
+        set_tests_properties(guest_c_locale_helpers PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
