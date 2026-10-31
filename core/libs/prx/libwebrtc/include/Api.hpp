@@ -1,6 +1,8 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libwebrtc/include/ExpFilter.hpp"
+#include "prx/libwebrtc/include/RtcpCommonHeader.hpp"
 
 extern "C" {
 
@@ -10,7 +12,7 @@ int APS5_VABI _ZN6webrtc11EnableMediaERNS_33PeerConnectionFactoryDependenciesE_n
 int APS5_VABI libwebrtcUnknown02(void);
 int APS5_VABI _ZN6webrtc10CallConfigD1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown03(void);
-int APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(void);
+char* APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(int value, char* buffer);
 int APS5_VABI _ZN3rtc18webrtc_checks_impl8FatalLogEPKciS2_PKNS0_12CheckArgTypeEz_nid_postfix(void);
 int APS5_VABI _ZN6webrtc18callback_list_impl21CallbackListReceiversC1Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc19webrtc_logging_impl3LogEPKNS0_10LogArgTypeEz_nid_postfix(void);
@@ -215,13 +217,13 @@ int APS5_VABI _ZN3rtc6Thread30IsProcessingMessagesForTestingEv_nid_postfix(void)
 int APS5_VABI _ZN3rtc6ThreadC1EPNS_12SocketServerE_nid_postfix(void);
 int APS5_VABI _ZNK3rtc24RecursiveCriticalSection5EnterEv_nid_postfix(void);
 int APS5_VABI _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(void);
-int APS5_VABI _ZN3rtc9ExpFilter5ResetEf_nid_postfix(void);
-int APS5_VABI _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(void);
+void APS5_VABI _ZN3rtc9ExpFilter5ResetEf_nid_postfix(WebRtcExpFilter* filter, float alpha);
+float APS5_VABI _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(WebRtcExpFilter* filter, float exponent, float sample);
 int APS5_VABI _ZNK6webrtc4rtcp10RtcpPacket5BuildEv_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(void);
-int APS5_VABI _ZN6webrtc4rtcp12CommonHeader5ParseEPKhm_nid_postfix(void);
+bool APS5_VABI _ZN6webrtc4rtcp12CommonHeader5ParseEPKhm_nid_postfix(WebRtcRtcpCommonHeader* header, const std::uint8_t* buffer, std::size_t size);
 int APS5_VABI libwebrtcUnknown34(void);
 int APS5_VABI _ZN6webrtc4rtcp14CompoundPacketC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc4rtcp14CompoundPacketD1Ev_nid_postfix(void);
