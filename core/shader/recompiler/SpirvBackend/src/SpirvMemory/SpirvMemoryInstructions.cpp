@@ -1396,7 +1396,10 @@ std::uint32_t LockedLdsUpdate(SpirvEmitterState& state, std::uint32_t type, std:
     EmitLabel(state, critical);
     if (state.ldsLockFences) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireMask | LdsMemorySemantics(state)));
     state.insideLdsLock = true;
-    const auto old = update();
+    const auto old = [&] {
+        PerLaneConstruct construct(state, "the LDS lock loop");
+        return update();
+    }();
     state.insideLdsLock = false;
     if (state.ldsLockFences) state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsReleaseMask | LdsMemorySemantics(state)));
     const auto released = state.module.AllocateId();

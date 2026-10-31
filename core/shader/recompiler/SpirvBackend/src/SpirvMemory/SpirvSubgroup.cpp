@@ -41,6 +41,7 @@ namespace ShaderRecompiler
         }
 
         void SpannedBarrier(SpirvEmitterState& state) {
+            if (state.spannedExchangeGuard && !state.perLaneConstructs.empty()) throw SpannedWaveUnsupported(std::string("a spanned wave exchanges lanes inside ") + state.perLaneConstructs.back() + ", which not every invocation of the workgroup reaches");
             state.module.AddFunction(spv::OpControlBarrier, ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask));
         }
 

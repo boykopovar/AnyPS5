@@ -24,6 +24,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DrawInputsInPlace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubgroupBarrier.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SpannedWaves.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TessellationPipelineCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubgroupClock.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderDeviceProfile.hpp"
@@ -512,6 +513,7 @@ struct VulkanDevice::State {
     std::uint32_t maxComputeSubgroupSize = 0;
     bool computeFullSubgroups = false;
     bool spannedWaves = false;
+    bool spanTableWaves = false;
     // Indirect draw features enabled (see Graphics::Context).
     bool drawIndirectFirstInstance = false;
     bool multiDrawIndirect = false;
@@ -2040,6 +2042,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->timelineSemaphores = timelineFeatures.timelineSemaphore == VK_TRUE;
     }
     VkPhysicalDeviceSubgroupSizeControlFeaturesEXT subgroupSizeFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES_EXT};
+    std::uint32_t minComputeSubgroupSize = 0;
     if (hasExtension(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME) && state->subgroup.subgroupSize >= 32u) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &subgroupSizeFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
@@ -2051,6 +2054,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->meshWave32 = state->meshShader && subgroupSizeFeatures.subgroupSizeControl == VK_TRUE && subgroupSize.minSubgroupSize <= 32u && subgroupSize.maxSubgroupSize >= 32u &&
             (subgroupSize.requiredSubgroupSizeStages & VK_SHADER_STAGE_MESH_BIT_EXT) != 0;
         state->maxComputeSubgroupSize = subgroupSize.maxSubgroupSize;
+        minComputeSubgroupSize = subgroupSize.minSubgroupSize;
         state->computeFullSubgroups = state->computeWave32 && subgroupSizeFeatures.computeFullSubgroups == VK_TRUE;
     }
     if (state->computeWave32 || state->meshWave32) {
@@ -2064,10 +2068,16 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         byteFeatures.pNext = &subgroupSizeFeatures;
         APS5_LOG_OUT("Wave32 programs run on subgroups of %u: compute %d, mesh %d", 32u, state->computeWave32, state->meshWave32);
     }
-    if (std::getenv("APS5_SPANNED_WAVE") != nullptr) {
-        state->spannedWaves = state->computeFullSubgroups;
-        APS5_LOG_OUT("APS5_SPANNED_WAVE: single-wave wave64 compute spans two full 32-lane subgroups: %d", state->spannedWaves);
-    }
+    const char* spannedWave = std::getenv("APS5_SPANNED_WAVE");
+    const auto spannedWaveMode = ParseSpannedWaveMode(spannedWave);
+    if (!spannedWaveMode) throw std::runtime_error(std::string("APS5_SPANNED_WAVE is \"") + spannedWave + "\"; it takes 0 (never span), 1 (span every single-wave wave64 compute program) or tables (span those that read an image or sampler table), or stays unset");
+    const auto fusedThreads = FusedThreadHandleSharing(driverId, state->driverInfo, minComputeSubgroupSize, state->computeFullSubgroups);
+    if (fusedThreads.versionUnknown) APS5_LOG_OUT("No Mesa version in the driver info \"%s\": taking the driver to share texture and sampler handles across fused EU threads", state->driverInfo.c_str());
+    APS5_LOG_OUT("Fused EU threads share texture and sampler handles: %d (driver %d, minimum compute subgroup %u, full compute subgroups %d)", fusedThreads.shared, static_cast<int>(driverId), minComputeSubgroupSize, state->computeFullSubgroups);
+    const auto spannedTargets = SpannedWaveTargetsFor(*spannedWaveMode, state->computeFullSubgroups, fusedThreads.shared);
+    state->spannedWaves = spannedTargets.all;
+    state->spanTableWaves = spannedTargets.tables;
+    APS5_LOG_OUT("APS5_SPANNED_WAVE=%s: single-wave wave64 compute spans two full 32-lane subgroups: every program %d, programs that read an image or sampler table %d", spannedWave != nullptr ? spannedWave : "(unset)", state->spannedWaves, state->spanTableWaves);
     timelineFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR};
     timelineFeatures.timelineSemaphore = VK_TRUE;
     if (state->timelineSemaphores) {
@@ -4136,6 +4146,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.float64DenormPreserve = state->float64DenormPreserve;
     target.float16DenormPreserve = state->float16DenormPreserve;
     target.spannedWaves = state->spannedWaves;
+    target.spanTableWaves = state->spanTableWaves;
     target.depthRangeRemap = !state->depthRangeUnrestricted;
     target.fixedPushSlots = state->graphicsPipelineLibrary;
     target.registrationModules = state->graphicsPipelineLibrary;

@@ -635,6 +635,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.fragmentDescriptorSet = request.target.registrationModules;
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
     targetOptions.spannedWaves = request.target.spannedWaves;
+    targetOptions.spanTableWaves = request.target.spanTableWaves;
     targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;
     targetOptions.exactRobustLoads = request.target.exactRobustLoads;
     targetOptions.float32FlushToZero = HardwareFloat32Flush(request);
@@ -687,8 +688,10 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     try {
         result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
     } catch (const SpannedWaveUnsupported& error) {
-        std::fprintf(stderr, "[spanned-wave] 0x%llx falls back to two lanes per invocation: %s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what());
+        const bool tables = !targetOptions.spannedWaves;
+        std::fprintf(stderr, "[spanned-wave] 0x%llx falls back to two lanes per invocation: %s%s\n", static_cast<unsigned long long>(request.shader.codeAddress), error.what(), tables ? "; the fused-thread texture and sampler handle hazard remains for this program" : "");
         targetOptions.spannedWaves = false;
+        targetOptions.spanTableWaves = false;
         result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
     }
     if (registration && result.spirv.size() > request.target.registrationWordLimit) {
@@ -1733,18 +1736,24 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     mix(snapshot.uniformFill.value);
     const auto& tables = snapshot.tables;
     mix(tables.shader);
-    mix(tables.tables.size());
-    for (const auto& table : tables.tables) {
+    const auto mixTable = [&](const ImageTableColumnSnapshot& table) {
         mix(table.base);
         mix(table.size);
         mix(table.records);
         mix(table.keys);
         mix(table.fault);
         mix(table.outside ? 1u : 0u);
+        mix(table.nested ? 1u : 0u);
+        mix(table.pointerKeyed ? 1u : 0u);
+        mix(table.pointers.Hash());
         mix(table.codes.Hash());
         mix(table.words.Hash());
         mix(table.readRanges.Hash());
-    }
+    };
+    mix(tables.tables.size());
+    for (const auto& table : tables.tables) mixTable(table);
+    mix(tables.nested.size());
+    for (const auto& table : tables.nested) mixTable(table);
     mix(tables.ranges.size());
     for (const auto& [base, size] : tables.ranges) {
         mix(base);

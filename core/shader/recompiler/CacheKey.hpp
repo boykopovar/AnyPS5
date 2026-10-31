@@ -356,6 +356,7 @@ private:
         append(key, value.largePixelFunctionLdsBuffer);
         append(key, value.pixelFunctionStorageDwords);
         append(key, value.deviceScopeLdsMemoryBarriers);
+        append(key, value.spanTableWaves);
         append(key, value.ldsLockFences);
         append(key, value.meshWindowBuffer);
     }
