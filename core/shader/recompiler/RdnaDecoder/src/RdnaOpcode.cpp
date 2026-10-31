@@ -904,6 +904,32 @@ bool IsExportOpcode(RdnaOpcode opcode) {
     }
 }
 
+bool IsSigned64BitIntegerOpcode(RdnaOpcode opcode) {
+    requireClassifiableOpcode(opcode);
+    switch (opcode) {
+        case RdnaOpcode::VCmpLtI64:
+        case RdnaOpcode::VCmpEqI64:
+        case RdnaOpcode::VCmpLeI64:
+        case RdnaOpcode::VCmpGtI64:
+        case RdnaOpcode::VCmpNeI64:
+        case RdnaOpcode::VCmpGeI64:
+        case RdnaOpcode::VCmpxLtI64:
+        case RdnaOpcode::VCmpxEqI64:
+        case RdnaOpcode::VCmpxLeI64:
+        case RdnaOpcode::VCmpxGtI64:
+        case RdnaOpcode::VCmpxNeI64:
+        case RdnaOpcode::VCmpxGeI64:
+        case RdnaOpcode::VAshrrevI64:
+        case RdnaOpcode::VMadI64I32:
+        case RdnaOpcode::SAshrI64:
+        case RdnaOpcode::SBfeI64:
+        case RdnaOpcode::SFlbitI32I64:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool IsConditionalBranchOpcode(RdnaOpcode opcode) {
     requireClassifiableOpcode(opcode);
     switch (opcode) {
