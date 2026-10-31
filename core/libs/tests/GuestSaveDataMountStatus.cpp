@@ -266,6 +266,11 @@ void CheckInvalidNamesAreRejected() {
 void CheckMountCapacityAndLifecycle() {
     Check(sceSaveDataAbort() == 0, "abort after init succeeds");
     Check(sceSaveDataClearProgress() == 0, "clearProgress after init succeeds");
+    Check(sceSaveDataPrepareForTransferring(nullptr, nullptr) == 0, "prepareForTransferring after init succeeds");
+    SaveDataMountPoint point{};
+    SaveDataPrepareParam param{};
+    Check(sceSaveDataPrepareForTransferring(&point, &param) == 0, "prepareForTransferring with stack params succeeds");
+    Check(sceSaveDataPrepareForTransferring(&point, nullptr) == 0, "prepareForTransferring with null prepare param succeeds");
 
     SceSaveDataDirName dirA{};
     std::memcpy(dirA.data, "count-a", sizeof("count-a"));
