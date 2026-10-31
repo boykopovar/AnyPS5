@@ -340,6 +340,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     const auto spinStart = std::chrono::steady_clock::now();
     bool spinning = pauseSpin;
     std::uint32_t polls = 0;
+    std::uint32_t yields = 0;
     StallWatch stall(queue);
     while (!Pm4::WaitSatisfiedUnchecked(packet)) {
         if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
@@ -352,7 +353,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             _mm_pause();
             if ((polls & 63u) != 0) continue;
             if (std::chrono::steady_clock::now() - spinStart > spinLimit) spinning = false;
-        } else if (pauseSpin || polls >= 4000) {
+        } else if (yields++ >= 4000) {
             PollSleep();
         } else {
             std::this_thread::yield();
