@@ -1023,7 +1023,10 @@ int APS5_VABI sysarch(int operation, void* parameters) {
     }
     std::uint64_t base = 0;
     if (operation == setGsBase) {
-        std::memcpy(&base, parameters, sizeof(base));
+        if (!GuestCopyIn_nid_no_patch(&base, parameters, sizeof(base))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
         if (base >= userAddressEnd) {
             *__error_nid_postfix() = guestInvalid;
             return -1;
@@ -1036,10 +1039,16 @@ int APS5_VABI sysarch(int operation, void* parameters) {
         throw std::system_error(errno, std::generic_category(), "sysarch: reading a segment base");
     if (i386) {
         const auto low = static_cast<std::uint32_t>(base);
-        std::memcpy(parameters, &low, sizeof(low));
+        if (!GuestCopyOut_nid_no_patch(parameters, &low, sizeof(low))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
         return 0;
     }
-    std::memcpy(parameters, &base, sizeof(base));
+    if (!GuestCopyOut_nid_no_patch(parameters, &base, sizeof(base))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
     return 0;
 #else
     static_cast<void>(parameters);
