@@ -8,6 +8,7 @@
 #include <iterator>
 #include <mutex>
 #include <random>
+#include <stdexcept>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -253,6 +254,26 @@ NpAllocator MemoryHeapAllocator(NpMemoryHeap* heap) {
 }
 
 constexpr std::size_t NP_OBJECT_HEADER_SIZE = 16;
+
+constexpr int NP_ERROR_OBJECT_ALREADY_INITIALIZED = static_cast<int>(0x80559E03);
+
+void* const NpMutexVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np5MutexD1Ev), reinterpret_cast<void*>(&_ZN3sce2np5MutexD0Ev),
+};
+
+void* const NpCondVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np4CondD1Ev), reinterpret_cast<void*>(&_ZN3sce2np4CondD0Ev),
+};
+
+void RequireMutexInit(const NpMutexObject* self, const char* function) {
+    if (!self->isInit) throw std::invalid_argument(std::string(function) + ": the mutex is not initialized");
+}
+
+void RequireMutexResult(int result, const char* function) {
+    if (result != 0) throw std::runtime_error(std::string(function) + ": the kernel mutex call failed");
+}
 
 constexpr int NP_ERROR_STREAM_BUFFER_TOO_SMALL = static_cast<int>(0x80559E0D);
 constexpr std::size_t NP_MEMORY_STREAM_SIZE = 0x20;
@@ -1011,6 +1032,137 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
     std::putchar('\n');
 }
 
+void APS5_VABI _ZN3sce2np5MutexC1Ev(NpMutexObject* self) {
+    self->vtable = &NpMutexVtable[2];
+    self->mutex = nullptr;
+    self->isInit = false;
+}
+
+void APS5_VABI _ZN3sce2np5MutexC2Ev(NpMutexObject* self) {
+    _ZN3sce2np5MutexC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np5Mutex4dtorEv(NpMutexObject* self) {
+    if (self->isInit) scePthreadMutexDestroy(&self->mutex);
+}
+
+void APS5_VABI _ZN3sce2np5MutexD1Ev(NpMutexObject* self) {
+    self->vtable = &NpMutexVtable[2];
+    _ZN3sce2np5Mutex4dtorEv(self);
+}
+
+void APS5_VABI _ZN3sce2np5MutexD2Ev(NpMutexObject* self) {
+    _ZN3sce2np5MutexD1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np5MutexD0Ev(NpMutexObject* self) {
+    self->vtable = &NpMutexVtable[2];
+    if (self->isInit) sceNpMutexDestroy(&self->mutex);
+    _ZN3sce2np6ObjectdlEPv(self);
+}
+
+void APS5_VABI _ZN3sce2np5Mutex4ctorEv(NpMutexObject* self) {
+    self->isInit = false;
+}
+
+int APS5_VABI _ZN3sce2np5Mutex4InitEPKcj(NpMutexObject* self, const char* name, std::uint32_t flags) {
+    if (self->isInit) return NP_ERROR_OBJECT_ALREADY_INITIALIZED;
+    const int result = sceNpMutexInit(&self->mutex, name, flags & 1);
+    if (result < 0) return result;
+    self->isInit = true;
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2np5Mutex7DestroyEv(NpMutexObject* self) {
+    if (self->isInit) sceNpMutexDestroy(&self->mutex);
+    self->isInit = false;
+}
+
+bool APS5_VABI _ZN3sce2np5Mutex7TryLockEv(NpMutexObject* self) {
+    RequireMutexInit(self, "sce::np::Mutex::TryLock");
+    const int result = sceNpMutexTryLock(&self->mutex);
+    if (result == NP_ERROR_MUTEX_BUSY) return false;
+    RequireMutexResult(result, "sce::np::Mutex::TryLock");
+    return true;
+}
+
+void APS5_VABI _ZN3sce2np5Mutex4LockEv(NpMutexObject* self) {
+    RequireMutexInit(self, "sce::np::Mutex::Lock");
+    RequireMutexResult(sceNpMutexLock(&self->mutex), "sce::np::Mutex::Lock");
+}
+
+void APS5_VABI _ZN3sce2np5Mutex6UnlockEv(NpMutexObject* self) {
+    RequireMutexInit(self, "sce::np::Mutex::Unlock");
+    RequireMutexResult(sceNpMutexUnlock(&self->mutex), "sce::np::Mutex::Unlock");
+}
+
+void APS5_VABI _ZN3sce2np4CondC1Ev(NpCondObject* self) {
+    self->vtable = &NpCondVtable[2];
+    self->cond = nullptr;
+    self->mutex = nullptr;
+}
+
+void APS5_VABI _ZN3sce2np4CondC2Ev(NpCondObject* self) {
+    _ZN3sce2np4CondC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np4Cond4dtorEv(NpCondObject* self) {
+    if (self->mutex != nullptr) scePthreadCondDestroy(&self->cond);
+}
+
+void APS5_VABI _ZN3sce2np4CondD1Ev(NpCondObject* self) {
+    self->vtable = &NpCondVtable[2];
+    _ZN3sce2np4Cond4dtorEv(self);
+}
+
+void APS5_VABI _ZN3sce2np4CondD2Ev(NpCondObject* self) {
+    _ZN3sce2np4CondD1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np4CondD0Ev(NpCondObject* self) {
+    self->vtable = &NpCondVtable[2];
+    if (self->mutex != nullptr) sceNpCondDestroy(&self->cond);
+    _ZN3sce2np6ObjectdlEPv(self);
+}
+
+void APS5_VABI _ZN3sce2np4Cond4ctorEv(NpCondObject* self) {
+    self->cond = nullptr;
+    self->mutex = nullptr;
+}
+
+bool APS5_VABI _ZNK3sce2np4Cond6IsInitEv(const NpCondObject* self) {
+    return self->mutex != nullptr;
+}
+
+int APS5_VABI _ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(NpCondObject* self, const char* name, NpMutexObject* mutex) {
+    if (self->mutex != nullptr) return NP_ERROR_OBJECT_ALREADY_INITIALIZED;
+    const int result = sceNpCondInit(&self->cond, name, 0);
+    if (result < 0) return result;
+    self->mutex = reinterpret_cast<PthreadMutex*>(reinterpret_cast<std::uintptr_t>(mutex) + offsetof(NpMutexObject, mutex));
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2np4Cond7DestroyEv(NpCondObject* self) {
+    if (self->mutex != nullptr) sceNpCondDestroy(&self->cond);
+    self->cond = nullptr;
+    self->mutex = nullptr;
+}
+
+int APS5_VABI _ZN3sce2np4Cond4WaitEj(NpCondObject* self, std::uint32_t usec) {
+    return std::min(sceNpCondTimedwait(&self->cond, self->mutex, usec), 0);
+}
+
+int APS5_VABI _ZN3sce2np4Cond6SignalEv(NpCondObject* self) {
+    return std::min(sceNpCondSignal(&self->cond), 0);
+}
+
+int APS5_VABI _ZN3sce2np4Cond9SignalAllEv(NpCondObject* self) {
+    return std::min(sceNpCondSignalAll(&self->cond), 0);
+}
+
+int APS5_VABI _ZN3sce2np4Cond8SignalToEP7pthread(NpCondObject* self, Pthread thread) {
+    return std::min(sceNpCondSignalTo(&self->cond, thread), 0);
+}
 void APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size) {
     self->vtable = &NpMemoryStreamReaderVtable[2];
     self->data = data;

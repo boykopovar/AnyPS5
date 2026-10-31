@@ -85,6 +85,18 @@ struct NpTitleIdParts {
     std::uint8_t index;
 };
 
+struct NpMutexObject {
+    const void* const* vtable;
+    PthreadMutex mutex;
+    bool isInit;
+};
+
+struct NpCondObject {
+    const void* const* vtable;
+    PthreadCond cond;
+    PthreadMutex* mutex;
+};
+
 struct NpMemoryStreamReader {
     const void* const* vtable;
     const void* data;
@@ -304,7 +316,6 @@ int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char*
 
 int APS5_VABI _ZN3sce2np10CancelableC2Ev(void);
 int APS5_VABI sceNpUtilXmlEscape(void);
-int APS5_VABI _ZN3sce2np4CondD0Ev(void);
 int APS5_VABI _sceNpAllocatorExRealloc(void);
 int APS5_VABI _ZN3sce2np8WorkItem6CancelEi(void);
 int APS5_VABI _ZN3sce2np9WorkQueue11GetItemByIdEi(void);
@@ -313,7 +324,6 @@ int APS5_VABI _ZN3sce2np7RingBuf4dtorEv(void);
 int APS5_VABI _ZThn16_N3sce2np9HttpTransD0Ev(void);
 int APS5_VABI _ZN3sce2np10MemoryFileD0Ev(void);
 int APS5_VABI _ZN3sce2np10EventQueueC2EP16SceNpAllocatorEx(void);
-int APS5_VABI _ZN3sce2np4Cond4ctorEv(void);
 int APS5_VABI _ZN3sce2np16StreamReadBufferD1Ev(void);
 int APS5_VABI _ZNK3sce2np9EventFlag6IsInitEv(void);
 int APS5_VABI _ZN3sce2np10CancelLockC2Ev(void);
@@ -340,7 +350,6 @@ int APS5_VABI _ZThn16_N3sce2np9HttpTrans5WriteEPNS0_6HandleEPKvmPm(void);
 int APS5_VABI _ZN3sce2np10EventQueue4ctorEv(void);
 int APS5_VABI _ZN3sce2np20BufferedStreamReaderD1Ev(void);
 int APS5_VABI _ZN3sce2np3ipc10IpmiClient7ConnectEPKvm(void);
-int APS5_VABI _ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient10DisconnectEv(void);
 int APS5_VABI _ZN3sce2np3ipc10IpmiClient11IsConnectedEv(void);
 int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTypePKcPcS5_iPPhPmPiPvESA_(void);
@@ -393,7 +402,6 @@ int APS5_VABI _ZN3sce2np10MemoryFileD1Ev(void);
 int APS5_VABI _ZN3sce2np9HttpTrans21GetResponseStatusCodeEPNS0_6HandleEPi(void);
 int APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(void);
 int APS5_VABI _ZN3sce2np14CalloutContextD1Ev(void);
-int APS5_VABI _ZN3sce2np5Mutex7DestroyEv(void);
 int APS5_VABI _ZN3sce2np14JsonDocBuilderC1ERKNS0_9JsonValueE(void);
 int APS5_VABI _ZN3sce2np9HttpTransD2Ev(void);
 int APS5_VABI _ZN3sce2np12HttpTemplateC2Ev(void);
@@ -417,7 +425,6 @@ int APS5_VABI _ZN3sce2np13RingBufMemory7DestroyEv(void);
 int APS5_VABI _ZN3sce2np9LocalFileC1Ev(void);
 int APS5_VABI _ZN3sce2np7RingBufD2Ev(void);
 int APS5_VABI _ZN3sce2np4PathD2Ev(void);
-int APS5_VABI _ZN3sce2np4CondD1Ev(void);
 int APS5_VABI _ZN3sce2np9EventFlag7DestroyEv(void);
 int APS5_VABI _ZN3sce2np9HttpTransC1EP16SceNpAllocatorEx(void);
 int APS5_VABI _ZN3sce2np6Thread4dtorEv(void);
@@ -432,6 +439,32 @@ int APS5_VABI _ZN3sce2np4Time12GetUserClockEPS1_(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient12AbortRequestEii(void);
 int APS5_VABI _ZNK3sce2np5Mutex6IsInitEv(void);
 
+void APS5_VABI _ZN3sce2np5MutexC1Ev(NpMutexObject* self);
+void APS5_VABI _ZN3sce2np5MutexC2Ev(NpMutexObject* self);
+void APS5_VABI _ZN3sce2np5MutexD1Ev(NpMutexObject* self);
+void APS5_VABI _ZN3sce2np5MutexD2Ev(NpMutexObject* self);
+void APS5_VABI _ZN3sce2np5MutexD0Ev(NpMutexObject* self);
+void APS5_VABI _ZN3sce2np5Mutex4ctorEv(NpMutexObject* self);
+void APS5_VABI _ZN3sce2np5Mutex4dtorEv(NpMutexObject* self);
+int APS5_VABI _ZN3sce2np5Mutex4InitEPKcj(NpMutexObject* self, const char* name, std::uint32_t flags);
+void APS5_VABI _ZN3sce2np5Mutex7DestroyEv(NpMutexObject* self);
+bool APS5_VABI _ZN3sce2np5Mutex7TryLockEv(NpMutexObject* self);
+void APS5_VABI _ZN3sce2np5Mutex4LockEv(NpMutexObject* self);
+void APS5_VABI _ZN3sce2np5Mutex6UnlockEv(NpMutexObject* self);
+void APS5_VABI _ZN3sce2np4CondC1Ev(NpCondObject* self);
+void APS5_VABI _ZN3sce2np4CondC2Ev(NpCondObject* self);
+void APS5_VABI _ZN3sce2np4CondD1Ev(NpCondObject* self);
+void APS5_VABI _ZN3sce2np4CondD2Ev(NpCondObject* self);
+void APS5_VABI _ZN3sce2np4CondD0Ev(NpCondObject* self);
+void APS5_VABI _ZN3sce2np4Cond4ctorEv(NpCondObject* self);
+void APS5_VABI _ZN3sce2np4Cond4dtorEv(NpCondObject* self);
+bool APS5_VABI _ZNK3sce2np4Cond6IsInitEv(const NpCondObject* self);
+int APS5_VABI _ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(NpCondObject* self, const char* name, NpMutexObject* mutex);
+void APS5_VABI _ZN3sce2np4Cond7DestroyEv(NpCondObject* self);
+int APS5_VABI _ZN3sce2np4Cond4WaitEj(NpCondObject* self, std::uint32_t usec);
+int APS5_VABI _ZN3sce2np4Cond6SignalEv(NpCondObject* self);
+int APS5_VABI _ZN3sce2np4Cond9SignalAllEv(NpCondObject* self);
+int APS5_VABI _ZN3sce2np4Cond8SignalToEP7pthread(NpCondObject* self, Pthread thread);
 void APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size);
 void APS5_VABI _ZN3sce2np18MemoryStreamReaderC2EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size);
 void APS5_VABI _ZN3sce2np18MemoryStreamReaderD1Ev(NpMemoryStreamReader* self);

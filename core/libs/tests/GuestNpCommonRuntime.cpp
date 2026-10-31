@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -33,6 +34,8 @@ constexpr int NpOutOfRange = static_cast<int>(0x8055800E);
 constexpr int NpInvalidArgument = static_cast<int>(0x80558009);
 constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
+constexpr int NpObjectAlreadyInitialized = static_cast<int>(0x80559E03);
+constexpr int NpCondTimedOut = static_cast<int>(0x8055800B);
 constexpr int NpStreamBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpTitleIdInvalid = static_cast<int>(0x80559E11);
 constexpr int NpUtilParseOutOfRange = static_cast<int>(0x8055060A);
@@ -249,6 +252,101 @@ void TestObjectsThroughStoredAllocator() {
     record.fail = true;
     Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
         "a failed array allocation returns null");
+}
+
+struct CondWaiter {
+    NpMutexObject* mutex;
+    NpCondObject* cond;
+    std::atomic<int> stage {0};
+    int result = -1;
+};
+
+void* APS5_VABI WaitOnCond(void* arg) {
+    auto* waiter = static_cast<CondWaiter*>(arg);
+    _ZN3sce2np5Mutex4LockEv(waiter->mutex);
+    waiter->stage = 1;
+    while (waiter->stage == 1) waiter->result = _ZN3sce2np4Cond4WaitEj(waiter->cond, 5000000);
+    _ZN3sce2np5Mutex6UnlockEv(waiter->mutex);
+    return nullptr;
+}
+
+bool WakeWaiter(NpMutexObject* mutex, NpCondObject* cond, bool targeted) {
+    CondWaiter waiter {mutex, cond};
+    Pthread thread {};
+    if (sceNpCreateThread(&thread, WaitOnCond, &waiter, 0, 0x10000, 0, "NpCondWaiter") != 0) return false;
+    while (waiter.stage != 1) std::this_thread::yield();
+    _ZN3sce2np5Mutex4LockEv(mutex);
+    waiter.stage = 2;
+    const int signalled = targeted ? _ZN3sce2np4Cond8SignalToEP7pthread(cond, thread) : _ZN3sce2np4Cond6SignalEv(cond);
+    _ZN3sce2np5Mutex6UnlockEv(mutex);
+    void* value = nullptr;
+    return signalled == 0 && sceNpJoinThread(thread, &value) == 0 && waiter.result == 0;
+}
+
+template <typename Call>
+bool RefusedBeforeInit(Call call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
+}
+
+void TestMutexAndCondObjects() {
+    NpMutexObject mutex {};
+    _ZN3sce2np5MutexC1Ev(&mutex);
+    Require(mutex.vtable != nullptr && !mutex.isInit, "a constructed mutex is not initialized");
+    Require(RefusedBeforeInit([&] { _ZN3sce2np5Mutex4LockEv(&mutex); }) && RefusedBeforeInit([&] { _ZN3sce2np5Mutex7TryLockEv(&mutex); })
+        && RefusedBeforeInit([&] { _ZN3sce2np5Mutex6UnlockEv(&mutex); }), "locking asserts that the mutex is initialized");
+    Require(_ZN3sce2np5Mutex4InitEPKcj(&mutex, "NpMutexObject", 0) == 0 && mutex.isInit, "a mutex is initialized");
+    Require(_ZN3sce2np5Mutex4InitEPKcj(&mutex, "NpMutexObject", 0) == NpObjectAlreadyInitialized, "a second Init is refused");
+    Require(_ZN3sce2np5Mutex7TryLockEv(&mutex) && !_ZN3sce2np5Mutex7TryLockEv(&mutex), "a held plain mutex cannot be taken again");
+    _ZN3sce2np5Mutex6UnlockEv(&mutex);
+
+    NpMutexObject recursive {};
+    _ZN3sce2np5MutexC1Ev(&recursive);
+    Require(_ZN3sce2np5Mutex4InitEPKcj(&recursive, "NpMutexRecursive", 3) == 0, "a recursive mutex is initialized");
+    Require(_ZN3sce2np5Mutex7TryLockEv(&recursive) && _ZN3sce2np5Mutex7TryLockEv(&recursive), "bit 0 of the flags makes the mutex recursive");
+    _ZN3sce2np5Mutex6UnlockEv(&recursive);
+    _ZN3sce2np5Mutex6UnlockEv(&recursive);
+    _ZN3sce2np5Mutex7DestroyEv(&recursive);
+    _ZN3sce2np5Mutex7DestroyEv(&recursive);
+    Require(!recursive.isInit, "Destroy leaves the mutex uninitialized and may be repeated");
+
+    NpCondObject cond {};
+    _ZN3sce2np4CondC1Ev(&cond);
+    Require(cond.vtable != nullptr && !_ZNK3sce2np4Cond6IsInitEv(&cond), "a constructed condition is not initialized");
+    Require(_ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(&cond, "NpCondObject", &mutex) == 0 && _ZNK3sce2np4Cond6IsInitEv(&cond) && cond.mutex == &mutex.mutex,
+        "a condition keeps the kernel mutex of its sce::np::Mutex");
+    Require(_ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(&cond, "NpCondObject", &mutex) == NpObjectAlreadyInitialized, "a second Init is refused");
+    _ZN3sce2np5Mutex4LockEv(&mutex);
+    Require(_ZN3sce2np4Cond4WaitEj(&cond, 2000) == NpCondTimedOut, "a timed wait reports the timeout");
+    _ZN3sce2np5Mutex6UnlockEv(&mutex);
+    Require(_ZN3sce2np4Cond6SignalEv(&cond) == 0 && _ZN3sce2np4Cond9SignalAllEv(&cond) == 0, "signalling without waiters succeeds");
+    Require(WakeWaiter(&mutex, &cond, false), "Signal wakes a waiter");
+    Require(WakeWaiter(&mutex, &cond, true), "SignalTo wakes the given waiter");
+    _ZN3sce2np4Cond7DestroyEv(&cond);
+    Require(!_ZNK3sce2np4Cond6IsInitEv(&cond) && cond.cond == nullptr, "Destroy clears the condition");
+    Require(_ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(&cond, "NpCondNullMutex", nullptr) == 0 && _ZNK3sce2np4Cond6IsInitEv(&cond),
+        "Init with a null mutex stores its member address and counts as initialized");
+    _ZN3sce2np4Cond7DestroyEv(&cond);
+    _ZN3sce2np5Mutex7DestroyEv(&mutex);
+
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    using MutexDestructor = void APS5_VABI (*)(NpMutexObject*);
+    using CondDestructor = void APS5_VABI (*)(NpCondObject*);
+    auto* ownedMutex = static_cast<NpMutexObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpMutexObject), &allocator));
+    _ZN3sce2np5MutexC1Ev(ownedMutex);
+    Require(_ZN3sce2np5Mutex4InitEPKcj(ownedMutex, "NpMutexOwned", 0) == 0, "an allocated mutex is initialized");
+    reinterpret_cast<MutexDestructor>(ownedMutex->vtable[1])(ownedMutex);
+    Require(record.released == record.block.data(), "the mutex deleting destructor frees through the stored allocator");
+    record.released = nullptr;
+    auto* ownedCond = static_cast<NpCondObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpCondObject), &allocator));
+    _ZN3sce2np4CondC1Ev(ownedCond);
+    reinterpret_cast<CondDestructor>(ownedCond->vtable[1])(ownedCond);
+    Require(record.released == record.block.data(), "the condition deleting destructor frees through the stored allocator");
 }
 
 void TestTitleIdObjects() {
@@ -1067,6 +1165,7 @@ int main() {
     TestHeaps();
     TestObjects();
     TestObjectsThroughStoredAllocator();
+    TestMutexAndCondObjects();
     TestMemoryStreams();
     TestTitleIdObjects();
     TestStreamHelpers();
