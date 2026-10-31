@@ -226,7 +226,7 @@ def main(arguments=None):
     parser.add_argument("--class", dest="classes", action="append", default=[], help="also report this [gputime] command class per present (repeatable)")
     parser.add_argument("--json", action="store_true", help="print the phases and metrics as JSON")
     options = parser.parse_args(arguments)
-    with Path(options.log).open(encoding="utf-8", errors="replace") as source:
+    with Path(options.log).open(encoding="utf-8-sig", errors="replace") as source:
         result = split(source, options.program, options.classes)
     sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else text_report(result))
     return 0

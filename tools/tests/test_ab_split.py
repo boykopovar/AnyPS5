@@ -164,6 +164,24 @@ class AbSplitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no \\[ab\\] phase lines"):
             ab_split.split([present(1.0, 1.0) + "\n"])
 
+    def test_command_line_accepts_utf8_bom(self):
+        lines = log()[1:]
+        first_phase = next(index for index, line in enumerate(lines) if line.startswith("[ab] phase"))
+        with tempfile.TemporaryDirectory() as directory:
+            plain = Path(directory) / "plain.log"
+            bom = Path(directory) / "bom.log"
+            for source in (lines, lines[first_phase:]):
+                plain.write_text("".join(source), encoding="utf-8")
+                bom.write_text("".join(source), encoding="utf-8-sig")
+                for flags in ([], ["--json"]):
+                    with self.subTest(configuration=source is lines, flags=flags):
+                        runs = [subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(path), *flags],
+                                               capture_output=True, text=True, encoding="utf-8", timeout=10)
+                                for path in (plain, bom)]
+                        for run in runs:
+                            self.assertEqual(run.returncode, 0, run.stderr)
+                        self.assertEqual(runs[1].stdout, runs[0].stdout)
+
     def test_command_line(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run.err.log"
