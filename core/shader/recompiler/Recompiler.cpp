@@ -679,6 +679,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.deviceScopeLdsMemoryBarriers = request.target.deviceScopeLdsMemoryBarriers;
     targetOptions.ldsLockFences = request.target.ldsLockFences;
     targetOptions.meshWindowBuffer = request.target.meshWindowBuffer;
+    targetOptions.coherentBufferAtomicLoads = request.target.coherentBufferAtomicLoads;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;

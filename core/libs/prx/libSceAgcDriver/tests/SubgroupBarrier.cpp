@@ -150,12 +150,19 @@ void verifyLdsLockFenceDrivers() {
     }
 }
 
+void verifyCoherentBufferAtomicLoadDrivers() {
+    for (const auto& item : Cases) {
+        require(AgcDriver::CoherentBufferAtomicLoadsRequired(item.driver) == (item.driver == VK_DRIVER_ID_MOLTENVK), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected atomic coherent buffer loads only on MoltenVK");
+    }
+}
+
 }
 
 int main() {
     try {
         verifyDriverQuirk();
         verifyLdsLockFenceDrivers();
+        verifyCoherentBufferAtomicLoadDrivers();
         verifyEmittedBarriers();
         verifyLdsMemoryBarrierScope();
         std::puts("subgroup barrier tests passed");
