@@ -725,7 +725,9 @@ def compare(title, column, unit, base, head):
     inert = implemented & names(head, "inert", owners)
     unseen = implemented & names(head, "done_unobserved", owners)
     origins = origin_map(head, owners)
-    if not (implemented or declared or regressed or removed or shared):
+    observed_total = lambda data: data.get("total", 0) - data.get("done", 0)
+    split_changed = column == "Library" and (observed_total(base) != observed_total(head) or base.get("unobserved", 0) != head.get("unobserved", 0))
+    if not (implemented or declared or regressed or removed or shared or split_changed or base.get("percent") != head.get("percent")):
         return []
     delta = round(head["percent"] - base["percent"], 2)
     exact = exact_delta(base, head) if delta == 0 else None
@@ -735,7 +737,8 @@ def compare(title, column, unit, base, head):
     counts = [f"{n:+} {label}{suffix}" for n, label, suffix in ((len(implemented), "implemented", f" {unit}"), (len(declared_observed), stubs[0], ""),
                                                               (len(declared_unobserved), stubs[1], ""), (-len(regressed), "reverted", f" {unit}"),
                                                               (-len(removed), "removed", f" {unit}")) if n]
-    if base.get("unobserved", 0) != head.get("unobserved", 0) or declared_unobserved:
+    if split_changed:
+        counts.append(f'{observed_total(head)} observed stubs in total, {head.get("unobserved", 0)} unobserved stubs in total')
         counts.append(f'declared {base.get("declared_percent", base["percent"])}% \u2192 {head.get("declared_percent", head["percent"])}%')
     changes = f', {", ".join(counts)}' if counts else ""
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
@@ -794,6 +797,8 @@ def library_report(base, head):
     if not rows:
         return []
     lines = ["#### Changed libraries (implemented exports)", "",
+             "Before and After are implemented over implemented plus observed stubs. A library with no observed stub shows 100%: "
+             "unobserved is the default for a stub with no measured use, so nothing is counted as pending there.", "",
              "| Library | Before | After | Change |", "| - | - | - | - |"] + rows[:REPORT_ROWS]
     if len(rows) > REPORT_ROWS:
         lines.append(f"| ... | {len(rows) - REPORT_ROWS} more libraries | | |")
