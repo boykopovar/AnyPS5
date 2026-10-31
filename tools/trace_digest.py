@@ -384,8 +384,9 @@ def validate_interval(record):
     frames = record.get("frame_ms")
     if not isinstance(frames, dict):
         raise ValueError("frame_ms must be an object")
-    for field in ("p50", "p90", "p99", "max"):
-        interval_number(frames.get(field), f"frame_ms.{field}")
+    values = [interval_number(frames.get(field), f"frame_ms.{field}") for field in ("p50", "p90", "p99", "max")]
+    if values != sorted(values):
+        raise ValueError("frame_ms must satisfy p50 <= p90 <= p99 <= max")
     interval_number(record.get("gpu_busy_ms_per_present"), "gpu_busy_ms_per_present")
     for field in ("worker_busy_pct", "top_phases_ms_per_frame"):
         values = record.get(field, {})

@@ -229,6 +229,19 @@ class PerformanceCompareTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, r"before.jsonl:2:"):
                     performance_compare.load_summary(self.before)
 
+    def test_invalid_worker_busy_percentages_are_rejected_with_location(self):
+        for workers in (None, [], {"worker": "busy"}, {"worker": True},
+                        {"worker": -1}, {"worker": float("inf")}):
+            with self.subTest(workers=workers):
+                self.baseline["worker_busy_pct"] = workers
+                self.write(self.before, self.baseline)
+                with self.assertRaisesRegex(ValueError, r"before.jsonl:2: worker_busy_pct"):
+                    performance_compare.load_summary(self.before)
+
+    def test_worker_busy_share_above_one_hundred_remains_valid(self):
+        self.baseline["worker_busy_pct"] = {"queue worker 0x0": 125.0}
+        self.assertIs(performance_compare.validate(self.baseline), self.baseline)
+
     def test_bad_json_and_missing_file_produce_only_a_cli_error(self):
         self.write(self.after, self.candidate)
         for content in ("{bad json", "[]", "{}", '{"frame_ms": Infinity}'):

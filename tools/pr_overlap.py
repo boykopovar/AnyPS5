@@ -38,7 +38,18 @@ def git(*args):
         for index in range(separator + 1, len(args)):
             pathspec = args[index]
             if pathspec.startswith(("../", "..\\")):
-                absolute = (cwd / pathspec).resolve()
+                absolute = cwd / pathspec
+                try:
+                    absolute = absolute.resolve()
+                except RuntimeError as error:
+                    raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
+                except OSError as error:
+                    raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
+                if absolute.is_symlink():
+                    try:
+                        absolute.stat()
+                    except OSError as error:
+                        raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
                 try:
                     args[index] = absolute.relative_to(Path(root)).as_posix()
                 except ValueError:

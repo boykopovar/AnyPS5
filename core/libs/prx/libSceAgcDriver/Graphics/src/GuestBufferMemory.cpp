@@ -5493,7 +5493,7 @@ void GuestBufferMemory::completeSpaceWrites() const {
     }
 }
 
-void GuestBufferMemory::UploadFinish(bool addressable) {
+void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) {
     Require(prepared && !uploaded, "guest memory upload was not prepared");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = std::chrono::steady_clock::now();
@@ -5501,7 +5501,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
     if (space != nullptr) completeSpaceWrites();
     uploaded = true;
     for (const auto& region : regions) static_cast<void>(FlushDepthPlanes(region.begin, static_cast<std::size_t>(region.end - region.begin)));
-    for (const auto& [begin, end] : writes) RequireNoResidentDepthRead_nid_no_patch(begin, static_cast<std::size_t>(end - begin));
+    for (const auto& [begin, end] : writes) RequireNoResidentDepthRead_nid_no_patch(begin, static_cast<std::size_t>(end - begin), htileClear);
     for (const auto& [begin, end] : writes) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");
     if (context.hostImportAlignment != 0) {
         auto& state = Imports();

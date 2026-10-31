@@ -12,6 +12,12 @@
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
 
+#ifdef APS5_NGS2_PS4_LIBRARY
+static constexpr bool PS4_LIBRARY = true;
+#else
+static constexpr bool PS4_LIBRARY = false;
+#endif
+
 
 static void ReadPcm(const Ngs2Voice& voice, const std::uint8_t* frame, float* out) {
     Ngs2ReadPcmFrame(voice.waveformType, voice.channels, frame, out);
@@ -181,6 +187,12 @@ static constexpr Ngs2DefaultRow SURROUND_RIGHT{0.5f, {0, 0.5f}, {0, 0, 0, 0, 0, 
 static constexpr Ngs2DefaultRow BACK_CENTER{QUARTER_POWER, {QUARTER_POWER, QUARTER_POWER}, {0, 0, 0, 0, HALF_POWER, HALF_POWER}, {0, 0, 0, 0, 0, 0, HALF_POWER, HALF_POWER}};
 static constexpr Ngs2DefaultRow BACK_LEFT{0.5f, {0.5f, 0}, {0, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 0, 0, 1, 0}};
 static constexpr Ngs2DefaultRow BACK_RIGHT{0.5f, {0, 0.5f}, {0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}};
+static constexpr Ngs2DefaultRow SURROUND_LEFT_51{0.5f, {HALF_POWER, 0}, {0, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 1, 0, 0, 0}};
+static constexpr Ngs2DefaultRow SURROUND_RIGHT_51{0.5f, {0, HALF_POWER}, {0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 1, 0, 0}};
+static constexpr Ngs2DefaultRow SURROUND_LEFT_71{HALF_POWER, {HALF_POWER, 0}, {0, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 1, 0, 0, 0}};
+static constexpr Ngs2DefaultRow SURROUND_RIGHT_71{HALF_POWER, {0, HALF_POWER}, {0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 1, 0, 0}};
+static constexpr Ngs2DefaultRow BACK_LEFT_71{HALF_POWER, {HALF_POWER, 0}, {0, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 0, 0, 1, 0}};
+static constexpr Ngs2DefaultRow BACK_RIGHT_71{HALF_POWER, {0, HALF_POWER}, {0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}};
 
 static constexpr Ngs2DefaultRow DEFAULT_MAP[NGS2_MAX_CHANNELS][NGS2_MAX_CHANNELS] = {
     {MONO_CENTER},
@@ -188,17 +200,15 @@ static constexpr Ngs2DefaultRow DEFAULT_MAP[NGS2_MAX_CHANNELS][NGS2_MAX_CHANNELS
     {FRONT_LEFT, FRONT_RIGHT, LFE},
     {FRONT_LEFT, FRONT_RIGHT, QUAD_LEFT, QUAD_RIGHT},
     {FRONT_LEFT, FRONT_RIGHT, MONO_CENTER, FIVE_SURROUND_LEFT, FIVE_SURROUND_RIGHT},
-    {FRONT_LEFT, FRONT_RIGHT, MONO_CENTER, LFE, SURROUND_LEFT, SURROUND_RIGHT},
+    {FRONT_LEFT, FRONT_RIGHT, MONO_CENTER, LFE, PS4_LIBRARY ? SURROUND_LEFT : SURROUND_LEFT_51, PS4_LIBRARY ? SURROUND_RIGHT : SURROUND_RIGHT_51},
     {FRONT_LEFT, FRONT_RIGHT, MONO_CENTER, LFE, SURROUND_LEFT, SURROUND_RIGHT, BACK_CENTER},
-    {FRONT_LEFT, FRONT_RIGHT, MONO_CENTER, LFE, SURROUND_LEFT, SURROUND_RIGHT, BACK_LEFT, BACK_RIGHT},
+    {FRONT_LEFT, FRONT_RIGHT, MONO_CENTER, LFE, PS4_LIBRARY ? SURROUND_LEFT : SURROUND_LEFT_71, PS4_LIBRARY ? SURROUND_RIGHT : SURROUND_RIGHT_71, PS4_LIBRARY ? BACK_LEFT : BACK_LEFT_71, PS4_LIBRARY ? BACK_RIGHT : BACK_RIGHT_71},
 };
 
-float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest) {
-    if (sourceChannels > NGS2_MAX_CHANNELS || destChannels > NGS2_MAX_CHANNELS) {
-        throw std::runtime_error("NGS2: the default channel map from " + std::to_string(sourceChannels) +
-                                 " into " + std::to_string(destChannels) + " channels is not implemented");
-    }
-    const auto& row = DEFAULT_MAP[sourceChannels - 1][source];
+static constexpr Ngs2DefaultRow FIXED_DOWNMIX_51[6] = {FRONT_LEFT, FRONT_RIGHT, MONO_CENTER, LFE, SURROUND_LEFT, SURROUND_RIGHT};
+static constexpr Ngs2DefaultRow FIXED_DOWNMIX_71[8] = {FRONT_LEFT, FRONT_RIGHT, MONO_CENTER, LFE, SURROUND_LEFT, SURROUND_RIGHT, BACK_LEFT, BACK_RIGHT};
+
+static float RowLevel(const Ngs2DefaultRow& row, std::uint32_t destChannels, std::uint32_t dest) {
     switch (destChannels) {
         case 1: return row.mono;
         case 2: return row.stereo[dest];
@@ -206,6 +216,24 @@ float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::
         case 8: return row.surround71[dest];
         default: throw std::runtime_error("NGS2: the default channel map into " + std::to_string(destChannels) + " channels is not implemented");
     }
+}
+
+static void RequireMappedChannels(std::uint32_t sourceChannels, std::uint32_t destChannels) {
+    if (sourceChannels > NGS2_MAX_CHANNELS || destChannels > NGS2_MAX_CHANNELS) {
+        throw std::runtime_error("NGS2: the default channel map from " + std::to_string(sourceChannels) +
+                                 " into " + std::to_string(destChannels) + " channels is not implemented");
+    }
+}
+
+float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest) {
+    RequireMappedChannels(sourceChannels, destChannels);
+    return RowLevel(DEFAULT_MAP[sourceChannels - 1][source], destChannels, dest);
+}
+
+float Ngs2FixedDownmixLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest) {
+    RequireMappedChannels(sourceChannels, destChannels);
+    const auto* rows = sourceChannels == 6 ? FIXED_DOWNMIX_51 : sourceChannels == 8 ? FIXED_DOWNMIX_71 : DEFAULT_MAP[sourceChannels - 1];
+    return RowLevel(rows[source], destChannels, dest);
 }
 
 void Ngs2PrepareControlMix(Ngs2Voice& voice) {
@@ -458,8 +486,16 @@ static std::size_t SampleBytes(std::uint32_t waveformType) {
     throw std::runtime_error("NGS2: render waveform type " + Ngs2Hex(waveformType) + " is not implemented");
 }
 
-static bool IsStereoIntoSurround(const Ngs2Voice& voice, const Ngs2RenderBufferInfo& output) {
-    return voice.channels == 2 && (output.num_channels == 6 || output.num_channels == 8);
+static bool HasMasteringMap(std::uint32_t channels, std::uint32_t outputChannels) {
+    if (PS4_LIBRARY) return channels == 2 && (outputChannels == 6 || outputChannels == 8);
+    const auto mapped = [](std::uint32_t count) { return count == 1 || count == 2 || count == 6 || count == 8; };
+    return mapped(channels) && mapped(outputChannels);
+}
+
+static float MasteringOutputLevel(std::uint32_t channels, std::uint32_t channel, std::uint32_t outputChannels, std::uint32_t dest) {
+    if (channels == outputChannels) return channel == dest ? 1.0f : 0.0f;
+    if (channels == 1) return dest == 0 ? 1.0f : 0.0f;
+    return Ngs2DefaultLevel(channels, channel, outputChannels, dest);
 }
 
 static std::vector<float>& OutputMix(std::vector<std::vector<float>>& mixes, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo,
@@ -467,7 +503,7 @@ static std::vector<float>& OutputMix(std::vector<std::vector<float>>& mixes, con
     if (voice.outputId >= numBufferInfo) throw std::invalid_argument("NGS2: mastering output " + std::to_string(voice.outputId) + " has no render buffer");
     const auto& output = bufferInfo[voice.outputId];
     const auto sampleBytes = SampleBytes(output.waveform_type);
-    if (output.num_channels != voice.channels && !IsStereoIntoSurround(voice, output)) throw std::runtime_error("NGS2: mixing " + std::to_string(voice.channels) + " mastering channels into " + std::to_string(output.num_channels) + " is not implemented");
+    if (output.num_channels != voice.channels && !HasMasteringMap(voice.channels, output.num_channels)) throw std::runtime_error("NGS2: mixing " + std::to_string(voice.channels) + " mastering channels into " + std::to_string(output.num_channels) + " is not implemented");
     if (output.buffer == nullptr || output.buffer_size < static_cast<std::size_t>(grain) * output.num_channels * sampleBytes) {
         throw std::invalid_argument("NGS2: render buffer " + std::to_string(voice.outputId) + " is missing or too small");
     }
@@ -483,8 +519,8 @@ static void WriteOutput(const Ngs2RenderBufferInfo& output, const std::vector<fl
     }
     auto* pcm = static_cast<std::int16_t*>(output.buffer);
     for (std::size_t i = 0; i < mix.size(); i++) {
-        if (!std::isfinite(mix[i])) throw std::runtime_error("NGS2: integer rendering of nonfinite samples is not implemented");
-        pcm[i] = static_cast<std::int16_t>(std::min(std::lrint(std::clamp(mix[i], -1.0f, 1.0f) * 32768.0f), 32767L));
+        const float scaled = mix[i] * 32767.0f;
+        pcm[i] = std::isnan(scaled) ? 0 : static_cast<std::int16_t>(std::clamp(scaled, -32767.0f, 32767.0f));
     }
 }
 
@@ -540,7 +576,11 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
             for (std::uint32_t channel = 0; channel < voice->channels; channel++) {
                 const bool lfe = channel == 3 && (voice->channels == 6 || voice->channels == 8);
                 const float level = lfe ? voice->lfeLevel : voice->fbwLevel;
-                for (std::uint32_t i = 0; i < grain; i++) mix[i * outputChannels + channel] += voice->samples[channel * grain + i] * level;
+                for (std::uint32_t dest = 0; dest < outputChannels; dest++) {
+                    const float map = MasteringOutputLevel(voice->channels, channel, outputChannels, dest);
+                    if (map == 0.0f) continue;
+                    for (std::uint32_t i = 0; i < grain; i++) mix[i * outputChannels + dest] += voice->samples[channel * grain + i] * level * map;
+                }
             }
         }
         for (std::uint32_t i = 0; i < numBufferInfo; i++) {

@@ -67,6 +67,11 @@ def validate(summary):
     if values != sorted(values):
         raise ValueError("frame_ms must satisfy p50 <= p90 <= p99 <= max")
     number(summary.get("gpu_busy_ms_per_present"), "gpu_busy_ms_per_present")
+    workers = summary.get("worker_busy_pct")
+    if not isinstance(workers, dict):
+        raise ValueError("worker_busy_pct must be an object")
+    for name, value in workers.items():
+        number(value, f"worker_busy_pct.{name}")
     phases = summary.get("top_phases_ms_per_frame")
     if not isinstance(phases, dict):
         raise ValueError("top_phases_ms_per_frame must be an object")

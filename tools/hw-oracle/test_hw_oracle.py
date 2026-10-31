@@ -757,6 +757,33 @@ class HipOracleTests(unittest.TestCase):
             read.assert_not_called()
             dispatch.assert_not_called()
 
+    def test_cli_rejects_short_dispatch_input_before_oracle_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            code, inputs, output = (root / name for name in ("code.co", "input.bin", "output.bin"))
+            code.write_bytes(b"code")
+            for threads, size in ((1, 0), (1, 15), (2, 31)):
+                with self.subTest(threads=threads, size=size):
+                    inputs.write_bytes(bytes(size))
+                    output.unlink(missing_ok=True)
+                    with patch.object(self.oracle_hip, "dispatch", side_effect=AssertionError("dispatch called")) as dispatch, \
+                            contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as exited:
+                        self.oracle_hip.main([str(code), str(threads), str(inputs), str(output), "1"])
+                    self.assertEqual(exited.exception.code, 2)
+                    self.assertIn(f"input file must contain at least {threads * 16} bytes", errors.getvalue())
+                    self.assertFalse(output.exists())
+                    dispatch.assert_not_called()
+
+            for size in (32, 35):
+                with self.subTest(threads=2, accepted_size=size):
+                    payload = bytes(range(size))
+                    inputs.write_bytes(payload)
+                    output.unlink(missing_ok=True)
+                    with patch.object(self.oracle_hip, "dispatch", return_value=bytes(8)) as dispatch:
+                        self.assertEqual(self.oracle_hip.main([str(code), "2", str(inputs), str(output), "1"]), 0)
+                    dispatch.assert_called_once_with(b"code", 2, payload, 1, False)
+                    self.assertEqual(output.read_bytes(), bytes(8))
+
     def test_cli_rejects_output_aliases_before_oracle_work(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

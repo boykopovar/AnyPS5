@@ -93,7 +93,7 @@ def build_module(tags=DEFAULT_TAGS, values=None, symbols=DEFAULT_SYMBOLS, reloca
 
 
 def instruction(listing, mnemonic):
-    pattern = re.compile(r"^\s*[0-9a-f]+:\s+(?:\w+\s+)*%s\b" % mnemonic)
+    pattern = re.compile(r"^\s*[0-9a-f]+:\s+(?:\w+\s+)*%sq?\b" % mnemonic)
     return next(line for line in listing if pattern.search(line))
 
 
@@ -386,7 +386,7 @@ class AnnotateModuleTests(unittest.TestCase):
         listing = self.read(".asm").splitlines()
         first, second = listing.index("; ===== segment 0x1000"), listing.index("; ===== segment 0x3000")
         self.assertLess(first, second)
-        self.assertTrue(any(re.match(r"^\s*3000:\s+ret\b", line) for line in listing[second:]))
+        self.assertTrue(any(re.match(r"^\s*3000:\s+retq?\b", line) for line in listing[second:]))
 
     def test_empty_executable_segments_do_not_abort_other_disassembly(self):
         for memory_size in (0, 0x1000):

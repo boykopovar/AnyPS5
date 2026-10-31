@@ -337,7 +337,7 @@ public:
     // and the recorder's pending-write note stays closed.
     void Upload(bool addressable);
     void UploadPrepare(bool addressable);
-    void UploadFinish(bool addressable);
+    void UploadFinish(bool addressable, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt);
     VkDescriptorBufferInfo Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const;
     static std::uint64_t ViewBytes(std::uint64_t bytes, std::uint32_t adjustment);
     std::vector<ShaderRecompiler::BdaAbi::Range> AddressRanges() const;

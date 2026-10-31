@@ -446,6 +446,7 @@ int main() {
     Require(sceKernelWriteThrottlingStatus(throttling) == 0);
     Require(throttling[0] == 0xffffffffu && throttling[1] == 0 && throttling[2] == 0 && throttling[3] == 0);
     Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelWriteThrottlingStatus(reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<int>(0x8002000eu));
     Require(sceKernelDebugOutText(0, nullptr) == static_cast<int>(0x8002000eu));
     auto* captured = TemporaryFile::Open();
     Require(captured != nullptr);
