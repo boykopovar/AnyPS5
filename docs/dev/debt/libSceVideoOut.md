@@ -47,6 +47,8 @@
 
 - The following pending declarations have unverified signatures and behavior; they are parameterless import-resolution declarations and throw through `NotImplemented_nid_no_patch`: [`sceDbgVideoOutAddOutputModeVr60Privilege`](../../../core/libs/prx/libSceVideoOut/Unimplemented.cpp).
 
+- [ANYPS5_PAD_PORT0_STATE](../../../core/libs/prx/libSceVideoOut/include/Port0Presence.hpp) (libSceVideoOut) - the 500 ms hold before a controller's removal or return changes port 0, and the rule that keyboard and mouse input reaches port 0 only while a controller is bound there, are AnyPS5 choices that keep a flapping cable from flapping the title. The console's own reaction (how long it takes to report a removed pad, whether it pauses on connected false, and whether it logs the initial user out) is not measured.
+
 ### Additional callable exports
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/ea0a096e6231dbe7b98b5a308e2ac91e/00f8422a1ae71e32816d72ae579c2f2d097f63a0) records module, logical library, symbol type and NIDs for [InventoryExports.cpp](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp); it is a metadata summary rather than independent verification. Some NIDs belong to multiple logical libraries within the module.
@@ -237,3 +239,7 @@
 | `Unknown` | `yGMBA0AKcgQ` |
 | `Unknown` | `yoK0AjkkBkI` |
 | `Unknown` | `ys239q8VgXY` |
+
+- [sceVideoOutSetConfigurationMode](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): the name hashes to NID `N1+j0RymMUQ`, a function export in both older and later version-labelled images. Its signature and behavior are unverified; this import-resolution declaration throws.
+
+- [Older callable NIDs](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary library qualifier and one uses the nosubmission qualifier; qualified guest import resolution is unverified.
