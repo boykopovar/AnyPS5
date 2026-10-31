@@ -742,6 +742,9 @@ def compare(title, column, unit, base, head):
         counts.append(f'declared {base.get("declared_percent", base["percent"])}% \u2192 {head.get("declared_percent", head["percent"])}%')
     changes = f', {", ".join(counts)}' if counts else ""
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
+    if unseen and column == "Library":
+        noun = "function" if len(unseen) == 1 else "functions"
+        lines += [f"⚠️ {len(unseen)} newly implemented {noun} with no measured use: add each one to docs/dev/observed with its reason in this PR, or name the observed function that needs it.", ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
     lines += details("🔍", "implemented but not observed anywhere", column, unseen)

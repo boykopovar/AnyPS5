@@ -593,6 +593,18 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("| libScePad | `Unseen` |", text)
         self.assertNotIn("`Imported`", text.split("implemented but not observed")[1].split("</details>")[0])
 
+    def test_report_warns_about_implementations_without_a_measured_use(self):
+        base = self.report_snapshot(self.report_library("libScePad", ["Ready"], []))
+        head_group = dict(self.report_library("libScePad", ["Ready", "Fresh", "Also"], []),
+                          done_unobserved_names=["Fresh", "Also"])
+        text = "\n".join(progress.compare("System libraries", "Library", "functions", base["libraries"],
+                                          self.report_snapshot(head_group)["libraries"]))
+        self.assertIn("⚠️ 2 newly implemented functions with no measured use: add each one to docs/dev/observed", text)
+        observed = dict(self.report_library("libScePad", ["Ready", "Fresh"], []), done_unobserved_names=[])
+        quiet = "\n".join(progress.compare("System libraries", "Library", "functions", base["libraries"],
+                                           self.report_snapshot(observed)["libraries"]))
+        self.assertNotIn("with no measured use", quiet)
+
     def headline(self, head_group):
         base = self.report_snapshot(dict(self.report_library("libScePad", ["Ready"], ["Seen"]), unobserved=1, unobserved_names=["Old"]))
         text = progress.compare("System libraries", "Library", "functions", base["libraries"], self.report_snapshot(head_group)["libraries"])
