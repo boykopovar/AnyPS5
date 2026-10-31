@@ -560,6 +560,40 @@ void CountsOverflow(AgcDriver::VulkanDevice& device) {
     recorder->Sync();
 }
 
+void SettlesUnexpectedBatches(AgcDriver::VulkanDevice& device) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    const auto context = device.graphicsContext();
+    DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
+    table.NoteProgram(Program, ProgramAddress);
+    const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{Program};
+    const auto keys = FormatKeys();
+    table.Prepare(context, *recorder, programs);
+    Require(table.UnexpectedSerial(*recorder) == 0u, "a batch whose device images were all expected gives a present nothing to wait for");
+    recorder->Sync();
+    table.Prepare(context, *recorder, programs);
+    table.NoteUnexpectedBatch(*recorder);
+    table.NoteUnexpectedBatch(*recorder);
+    WriteRecords(table.RingChunk(*recorder), keys, static_cast<std::uint32_t>(keys.size()));
+    const auto serial = table.UnexpectedSerial(*recorder);
+    Require(serial != 0u && serial == recorder->Submissions(), "a present waits for the submitted batch that holds a program with unexpected keys (serial " + std::to_string(serial) + ", submitted " + std::to_string(recorder->Submissions()) + ")");
+    if (recorder->HasTimeline()) {
+        recorder->WaitSerial(serial);
+        recorder->FinishUpTo(serial);
+    } else {
+        recorder->Sync();
+    }
+    auto counts = table.Totals();
+    Require(counts.drained == keys.size() && counts.inserted == 0u, "the waited batch's misses are drained but not yet resolved (drained " + std::to_string(counts.drained) + ", inserted " + std::to_string(counts.inserted) + ")");
+    table.Settle(context, *recorder);
+    counts = table.Totals();
+    Require(counts.inserted == keys.size() && counts.unexpectedBatches == 1u && counts.settles == 1u, "settling resolves every missed key before the next batch (inserted " + std::to_string(counts.inserted) + ", unexpected batches " + std::to_string(counts.unexpectedBatches) + ", settles " + std::to_string(counts.settles) + ")");
+    for (const auto& key : keys) Require(table.Find(key).has_value(), "a key missed by a program with unexpected keys is in the table after the present settled it");
+    Require(table.UnexpectedSerial(*recorder) == 0u, "a settled batch gives the next present nothing to wait for");
+    recorder->Sync();
+    std::printf("a present settles the batch of a program with unexpected keys: %zu keys in the table before the next batch\n", keys.size());
+}
+
 void OverflowFallsBack(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
@@ -817,6 +851,7 @@ int main(int argc, char** argv) {
         MarginRefuses(*device);
         RejectsAndFaults(*device);
         CountsOverflow(*device);
+        SettlesUnexpectedBatches(*device);
         RefreshesWrittenEntries(*device);
         RefreshesOnOwnStores(*device);
         KeepsUnwatchedEntries(*device);

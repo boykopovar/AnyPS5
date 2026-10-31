@@ -98,11 +98,15 @@ public:
     static DeviceImageTable& Create(const Context& context, InterfaceLookup lookup);
     static DeviceImageTable* Existing(const Context& context);
     static bool ExpectsKeys();
+    static bool KeepsUnexpectedPrograms();
     static void Release(VkDevice device);
 
     void Prepare(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::PipelineIdentity> programs = {});
     std::optional<std::string> Expect(const Context& build, Recorder& recorder, std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images);
     void FallBackProgram(const ShaderRecompiler::PipelineIdentity& identity, std::uint64_t codeAddress, const std::string& reason);
+    void NoteUnexpectedBatch(Recorder& recorder);
+    std::uint64_t UnexpectedSerial(Recorder& recorder);
+    void Settle(const Context& build, Recorder& recorder);
     void SetInterfaceLookup(InterfaceLookup lookup);
     void NoteProgram(const ShaderRecompiler::PipelineIdentity& identity, std::uint64_t codeAddress);
     bool ServesProgram(std::uint64_t codeAddress) const;
@@ -139,6 +143,8 @@ public:
         std::uint64_t fallbacks = 0;
         std::uint64_t expected = 0;
         std::uint64_t expectedInserted = 0;
+        std::uint64_t unexpectedBatches = 0;
+        std::uint64_t settles = 0;
         std::uint32_t entries = 0;
         std::uint32_t buckets = 0;
         std::array<std::uint32_t, ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding> peakTextures{};
@@ -182,6 +188,7 @@ private:
         std::uint64_t generation = 0;
         bool busy = false;
         std::set<ShaderRecompiler::PipelineIdentity> programs;
+        bool unexpected = false;
     };
     using Programs = std::shared_ptr<const std::set<ShaderRecompiler::PipelineIdentity>>;
     struct PendingMiss {

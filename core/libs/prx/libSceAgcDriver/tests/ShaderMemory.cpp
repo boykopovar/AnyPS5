@@ -4811,6 +4811,134 @@ void verifyDeviceImageTables() {
     }
 }
 
+void verifyDevicePointerColumns() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Palette = 0x40;
+    constexpr std::uint32_t Entries = 256;
+    static TableTexture textures[2];
+    const auto address = [](const void* pointer) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer)); };
+    const auto gpuMode = [](RecompileRequest request, bool deviceTables) {
+        request.target.gpuResolvedImages = true;
+        request.target.descriptorMemory = true;
+        request.target.deviceImageTables = deviceTables;
+        return request;
+    };
+    const auto need = [](bool condition, const std::string& message) { require(condition, message.c_str()); };
+    const auto check = [&](const RecompileRequest& request, const char* what, const void* records, std::size_t recordBytes, bool indirect) {
+        const auto plan = GetResourcePlan(gpuMode(request, true));
+        need(plan->info.images.size() == 1u && plan->info.images[0].table != NoTable && plan->info.images[0].deviceTable, std::string("device pointer columns: the ") + what + " column of a GPU-mode stage is not read through the device image table");
+        const auto& column = *plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+        need(indirect ? (column.indirect && !column.address) : (column.address && !column.indirect), std::string("device pointer columns: the ") + what + " column has the wrong kind");
+        std::uint32_t loaded = 0;
+        const auto first = indirect ? column.indirectImmediate : column.offset;
+        for (const auto& memory : plan->memoryInfo) {
+            if (memory.kind == ResourceKind::ScalarAddress && memory.offset >= first && memory.offset < first + 32u && !memory.planningOnly) ++loaded;
+        }
+        need(loaded >= 8u, std::string("device pointer columns: the ") + what + " column's T# is not loaded by the program at run time");
+        need(plan->info.deviceImageUses.size() == 1u && plan->info.deviceImageUses[0].image == 0u && !plan->requiresSpecializationMemory, std::string("device pointer columns: the ") + what + " column's use is not a device image use");
+        const auto compiled = CompileTable(gpuMode(request, true));
+        need(!TableTouched(compiled.regions, records, recordBytes), std::string("device pointer columns: the capture read the ") + what + " column's records");
+        const auto& result = *compiled.result;
+        need(result.deviceImageTables && result.gpuResolvedImages && result.dataAddressPush && ScanDeviceTableSpirv(result.spirv.Words()).lookup, std::string("device pointer columns: the ") + what + " column's module does not call the device image lookup");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        static_cast<void>(ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion));
+#endif
+        const auto offPlan = GetResourcePlan(gpuMode(request, false));
+        need(offPlan->info.images.size() == 1u && offPlan->info.images[0].table != NoTable && !offPlan->info.images[0].deviceTable, std::string("device pointer columns: the ") + what + " column left the CPU map with the option off");
+    };
+
+    alignas(4096) static std::array<std::uint32_t, 0x1000> root{};
+    static std::array<std::uint32_t, 8> keys{};
+    static std::array<std::uint32_t, 4> output{};
+    const auto keysV = TableV(keys.data(), 0u, static_cast<std::uint32_t>(sizeof(keys)));
+    const auto outputV = TableV(output.data(), 0u, static_cast<std::uint32_t>(sizeof(output)));
+    std::copy(keysV.begin(), keysV.end(), root.begin());
+    std::copy(outputV.begin(), outputV.end(), root.begin() + 4);
+    const auto pointer = address(root.data()) + Palette + 0x100u;
+    root[12] = static_cast<std::uint32_t>(pointer);
+    root[13] = static_cast<std::uint32_t>(pointer >> 32u);
+    for (std::uint32_t index = 0; index < Entries; ++index) {
+        const auto words = TableT(textures[index % 2u].bytes.data(), TableFormat8888UNorm, TableType2D);
+        std::copy(words.begin(), words.end(), root.begin() + (Palette + index * 32u) / 4u);
+    }
+    const std::array<std::uint32_t, 2> pointerData{static_cast<std::uint32_t>(address(root.data())), static_cast<std::uint32_t>(address(root.data()) >> 32u)};
+    const std::vector<std::uint32_t> pointerCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e200500u, 0x8f108210u,
+        0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    auto pointerRequest = TableRequest(pointerCode, pointerData);
+    pointerRequest.shader.codeAddress = 0x3a000u;
+    check(pointerRequest, "pointer", root.data() + Palette / 4u, Entries * 32u, false);
+
+    alignas(4096) static std::array<std::uint32_t, 16> chainRoot{};
+    alignas(4096) static std::array<std::uint32_t, Entries * 4u> records{};
+    alignas(4096) static std::array<std::array<std::uint32_t, 8>, 3> links{};
+    alignas(4096) static std::array<std::array<std::uint32_t, 16>, 3> descriptors{};
+    const auto recordsV = TableV(records.data(), 0u, static_cast<std::uint32_t>(sizeof(records)));
+    std::copy(keysV.begin(), keysV.end(), chainRoot.begin());
+    std::copy(outputV.begin(), outputV.end(), chainRoot.begin() + 4);
+    std::copy(recordsV.begin(), recordsV.end(), chainRoot.begin() + 12);
+    const auto store = [](std::uint32_t* at, std::uint64_t value) {
+        at[0] = static_cast<std::uint32_t>(value);
+        at[1] = static_cast<std::uint32_t>(value >> 32u);
+    };
+    for (std::uint32_t record = 0; record < 3u; ++record) {
+        const auto words = TableT(textures[record % 2u].bytes.data(), TableFormat8888UNorm, TableType2D);
+        std::copy(words.begin(), words.end(), descriptors[record].begin() + 8);
+        store(records.data() + record * 4u + 2u, address(links[record].data()));
+        store(links[record].data() + 4u, address(descriptors[record].data()));
+    }
+    const std::array<std::uint32_t, 2> chainData{static_cast<std::uint32_t>(address(chainRoot.data())), static_cast<std::uint32_t>(address(chainRoot.data()) >> 32u)};
+    const std::vector<std::uint32_t> chainCode{0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0xf4080100u, 0xfa000030u, 0x7e200500u,
+        0x8f108210u, 0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128411u, 0xf4240b02u, 0x24000008u, 0xf4040b96u, 0xfa000010u, 0xf40c0917u,
+        0xfa000020u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    auto chainRequest = TableRequest(chainCode, chainData);
+    chainRequest.shader.codeAddress = 0x3b000u;
+    check(chainRequest, "indirect", records.data(), sizeof(records), true);
+}
+
+void verifyDeviceRuntimeAddressColumns() {
+    using namespace ShaderRecompiler;
+    static TableTexture texture;
+    alignas(256) static std::array<std::uint32_t, 0x3000> root{};
+    static std::array<std::uint32_t, 4> output{};
+    const auto outputV = TableV(output.data(), 0u, static_cast<std::uint32_t>(sizeof(output)));
+    std::copy(outputV.begin(), outputV.end(), root.begin() + 4);
+    const auto descriptor = TableT(texture.bytes.data(), TableFormat8888UNorm, TableType2D);
+    std::copy(descriptor.begin(), descriptor.end(), root.begin() + 0x40u / 4u);
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(root.data()));
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>(base >> 32u)};
+    const auto code = [](std::uint32_t addend) {
+        return std::vector<std::uint32_t>{0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7da80086u, 0x7e220500u, 0xd7460001u, 0x00010b00u | (addend << 18u), 0x7e260501u, 0x8f128511u,
+            0xf4080900u, 0x24000040u, 0xf4080a00u, 0x26000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+    };
+    const auto mode = [](RecompileRequest request, bool gpuMode, bool deviceTables) {
+        request.target.gpuResolvedImages = gpuMode;
+        request.target.descriptorMemory = gpuMode;
+        request.target.deviceImageTables = deviceTables;
+        return request;
+    };
+    for (const std::uint32_t addend : {0xa0u, 0x88u}) {
+        const auto split = code(addend);
+        auto request = TableRequest(split, userData);
+        request.shader.codeAddress = 0x3c000u + addend * 0x100u;
+        const auto device = mode(request, true, true);
+        const auto plan = GetResourcePlan(device);
+        require(plan->info.images.size() == 1u && plan->info.images[0].table != NoTable && plan->info.images[0].deviceTable, "device runtime-address columns: a GPU-mode stage does not read a T# behind a run-time address through the device image table");
+        require(plan->info.deviceImageUses.size() == 1u && plan->info.deviceImageUses[0].image == 0u && !plan->requiresSpecializationMemory, "device runtime-address columns: the T# behind a run-time address is not a device image use");
+        SrtRuntime runtime;
+        runtime.userData = userData;
+        runtime.shaderBase = device.shader.codeAddress;
+        bool complete = true;
+        static_cast<void>(ResourceMaterializer::ExpectedDeviceImages(*plan, runtime, complete));
+        require(!complete, "device runtime-address columns: the pre-pass called a T# behind a lane's address complete");
+        const auto compiled = CompileTable(device);
+        const auto& result = *compiled.result;
+        require(result.deviceImageTables && result.gpuResolvedImages && ScanDeviceTableSpirv(result.spirv.Words()).lookup, "device runtime-address columns: the module does not call the device image lookup");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+        static_cast<void>(ValidateAndOptimizeSpirv(result.spirv, device.target.vulkanVersion, device.target.spirvVersion));
+#endif
+    }
+}
+
 void verifyTableTrailer() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -10567,6 +10695,16 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--device-image-tables") {
             verifyDeviceImageTables();
             std::cout << "GPU-mode stages read V# table columns through the device image table, whose addresses they take from the map trailer\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--device-pointer-columns") {
+            verifyDevicePointerColumns();
+            std::cout << "GPU-mode stages read pointer and indirect image table columns through the device image table\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--device-runtime-address-columns") {
+            verifyDeviceRuntimeAddressColumns();
+            std::cout << "GPU-mode stages read a T# whose address is known only at run time through the device image table\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-trailer") {

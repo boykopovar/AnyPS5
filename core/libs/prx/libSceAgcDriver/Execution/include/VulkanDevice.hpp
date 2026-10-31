@@ -94,7 +94,8 @@ public:
     bool DeviceImagePath() const;
     bool DeviceImagesServe(std::uint64_t codeAddress) const;
     void NoteDeviceImageProgram(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress) const;
-    std::optional<std::string> ExpectDeviceImages(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images) const;
+    std::optional<std::string> ExpectDeviceImages(std::span<const ShaderRecompiler::DeviceImageTableAbi::Expectation> images, bool unexpected = false) const;
+    void SettleDeviceImageMisses() const;
     void FallBackDeviceImages(const ShaderRecompiler::RecompileResult& result, std::uint64_t codeAddress, const std::string& reason) const;
     bool ComputeFullSubgroups() const;
     // Distinguishes this device from every earlier one in the process (a memo keyed by the device

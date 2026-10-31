@@ -139,6 +139,11 @@ bool DeviceImageTable::ExpectsKeys() {
     return expects;
 }
 
+bool DeviceImageTable::KeepsUnexpectedPrograms() {
+    static const bool keeps = std::getenv("APS5_KEEP_UNEXPECTED_DEVICE_IMAGES") != nullptr;
+    return keeps;
+}
+
 DeviceImageTable* DeviceImageTable::Existing(const Context& context) {
     auto& registry = tables();
     std::lock_guard lock(registry.mutex);
@@ -204,6 +209,32 @@ void DeviceImageTable::FallBackProgram(const ShaderRecompiler::PipelineIdentity&
         return;
     }
     fallBack({identity}, reason);
+}
+
+void DeviceImageTable::NoteUnexpectedBatch(Recorder& recorder) {
+    std::lock_guard lock(mutex);
+    auto& chunk = chunks[chunkFor(recorder, true)];
+    if (chunk.unexpected) return;
+    chunk.unexpected = true;
+    ++totals.unexpectedBatches;
+}
+
+std::uint64_t DeviceImageTable::UnexpectedSerial(Recorder& recorder) {
+    std::lock_guard lock(mutex);
+    std::uint64_t serial = 0;
+    for (const auto& chunk : chunks) {
+        if (chunk.busy && chunk.unexpected) serial = std::max(serial, chunk.serial);
+    }
+    if (serial != 0u && serial == recorder.OpenSerial()) recorder.Submit();
+    return serial;
+}
+
+void DeviceImageTable::Settle(const Context& build, Recorder& recorder) {
+    std::lock_guard lock(mutex);
+    ++totals.settles;
+    retainSlots(recorder);
+    resolve(build, recorder);
+    upload(recorder);
 }
 
 void DeviceImageTable::SetInterfaceLookup(InterfaceLookup interfaces) {

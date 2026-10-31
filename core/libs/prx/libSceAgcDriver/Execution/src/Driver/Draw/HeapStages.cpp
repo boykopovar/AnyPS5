@@ -793,6 +793,7 @@ struct ExpectationMemo {
     std::vector<ShaderRecompiler::DeviceImageTableAbi::Expectation> images;
     ExpectedWords words;
     ExpectationState state;
+    bool complete = true;
 };
 
 constexpr std::size_t ExpectationMemoEntries = 16384;
@@ -859,11 +860,13 @@ bool ExpectDeviceImages(const VulkanDevice& device, std::span<const std::uint32_
     const auto state = expectationState();
     std::vector<Abi::Expectation> images;
     bool memoHit = false;
+    bool unexpected = false;
     if (const auto found = memos.find(key); found != memos.end() && found->second.plan == result.deviceImagePlan && found->second.codeAddress == codeAddress && std::ranges::equal(found->second.userData, userData)) {
         auto& memo = found->second;
         if ((state.epoch != 0u && memo.state == state && !pipelineWritesExpectedWords(memo.words)) || expectedWordsUnchanged(memo.words)) {
             memo.state = state;
             images = memo.images;
+            unexpected = !memo.complete;
             memoHit = true;
         }
     }
@@ -876,14 +879,15 @@ bool ExpectDeviceImages(const VulkanDevice& device, std::span<const std::uint32_
         runtime.userContext = &words;
         bool complete = false;
         images = ShaderRecompiler::ResourceMaterializer::ExpectedDeviceImages(*result.deviceImagePlan, runtime, complete);
-        if (!complete) {
+        if (!complete && !Graphics::DeviceImageTable::KeepsUnexpectedPrograms()) {
             device.FallBackDeviceImages(result, codeAddress, "a device image use whose T# cannot be evaluated before the work is recorded (a key from a lane, from memory the CPU cannot read, or more than " + std::to_string(ShaderRecompiler::ResourceMaterializer::MaxDeviceImageCandidates) + " candidates)");
             return false;
         }
+        unexpected = !complete;
         std::ranges::sort(words);
         words.erase(std::unique(words.begin(), words.end()), words.end());
         if (memos.size() >= ExpectationMemoEntries) memos.clear();
-        memos.insert_or_assign(key, ExpectationMemo{result.deviceImagePlan, codeAddress, {userData.begin(), userData.end()}, images, std::move(words), state});
+        memos.insert_or_assign(key, ExpectationMemo{result.deviceImagePlan, codeAddress, {userData.begin(), userData.end()}, images, std::move(words), state, complete});
     }
     Abi::NameInterfaces(images, result.deviceImageInterfaces);
     Abi::NameSamplerClasses(images, result.deviceSamplerClasses);
@@ -891,7 +895,7 @@ bool ExpectDeviceImages(const VulkanDevice& device, std::span<const std::uint32_
     {
         GuestMemory::TagGpuLockSite(dispatch ? GuestMemory::GpuLockSite::Dispatch : GuestMemory::GpuLockSite::Draw);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
-        unserved = device.ExpectDeviceImages(images);
+        unserved = device.ExpectDeviceImages(images, unexpected);
     }
     if (!unserved.has_value()) return true;
     device.FallBackDeviceImages(result, codeAddress, *unserved);

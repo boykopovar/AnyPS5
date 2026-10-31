@@ -205,6 +205,7 @@ private:
         std::vector<std::uint32_t> hopMemory;
         std::vector<const IrValue*> hopReads;
         std::optional<KeyDomain> keyDomain;
+        bool runtimeAddress = false;
     };
 
     void MakeSource(const IrValue& handle, std::uint32_t width, bool sampler, bool sampleAdjust, DescriptorSource& descriptor) {
@@ -1052,6 +1053,44 @@ private:
         return true;
     }
 
+    bool PlanRuntimeAddressColumn(IrValue& handle, bool r128) {
+        if (!m_deviceImageTables || FindTableColumn(handle) != nullptr || handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u) {
+            return false;
+        }
+        DescriptorSource direct;
+        MakeSource(handle, 8u, false, false, direct);
+        std::uint32_t badDword = 0;
+        if (ValidateSource(direct, badDword)) {
+            return false;
+        }
+        std::uint32_t words = 8u;
+        if (r128) {
+            bool zeroTail = true;
+            for (std::uint32_t dword = 4u; dword < 8u; dword++) {
+                std::uint32_t immediate = 0;
+                zeroTail = zeroTail && immediateU32(handle.Argument(dword), immediate) && immediate == 0u;
+            }
+            if (zeroTail) words = 4u;
+        }
+        for (std::uint32_t dword = 0; dword < words; dword++) {
+            if (handle.Argument(dword)->Resolve()->Type() != IrType::U32) {
+                return false;
+            }
+        }
+        TableColumn column;
+        column.heapSource = InternSource(DescriptorSource{});
+        column.dwordCount = words;
+        column.unkeyed = true;
+        DescriptorSource columnSource = direct;
+        columnSource.tableColumn = column;
+        TableColumnPlan plan;
+        plan.handle = &handle;
+        plan.source = InternSource(columnSource);
+        plan.runtimeAddress = true;
+        m_tableColumns.push_back(std::move(plan));
+        return true;
+    }
+
     static constexpr std::uint32_t phiSearchDepth = 8u;
     static constexpr std::uint32_t firstLaneMultipleDepth = 32u;
 
@@ -1853,8 +1892,8 @@ private:
                 }
                 const auto memory = m_program.Resources().memoryInfo[flags.index];
                 IrValue& image = *inst->Argument(0)->Resolve();
-                if (std::ranges::none_of(directImages, [&](const IrValue* handle) { return SameHandle(*handle, image); })) {
-                    static_cast<void>(PlanTableColumn(image, false, memory.imageR128));
+                if (std::ranges::none_of(directImages, [&](const IrValue* handle) { return SameHandle(*handle, image); }) && !PlanTableColumn(image, false, memory.imageR128)) {
+                    static_cast<void>(PlanRuntimeAddressColumn(image, memory.imageR128));
                 }
                 if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && !DirectSampler(*inst->Argument(1)->Resolve())) {
                     static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false));
@@ -1930,7 +1969,7 @@ private:
         if (!m_deviceImageTables) return;
         for (const auto& plan : m_tableColumns) {
             const auto& column = *m_sources[plan.source].tableColumn;
-            if (!column.sampler && !column.address && !column.indirect && column.pointerHops.empty()) m_deviceSources[plan.source] = 1u;
+            if (!column.sampler) m_deviceSources[plan.source] = 1u;
         }
         for (auto& block : m_program.Blocks()) {
             for (IrValue* inst : block->Instructions()) {
@@ -1942,6 +1981,7 @@ private:
         for (std::uint32_t source = 0; source < m_sources.size(); ++source) {
             if (m_deviceSources[source] != 0u) m_sources[source].tableColumn->keyDomains.clear();
         }
+        std::erase_if(m_tableColumns, [&](const TableColumnPlan& plan) { return plan.runtimeAddress && !DeviceSource(plan.source); });
     }
 
     bool DeviceSource(std::uint32_t source) const {
