@@ -288,6 +288,21 @@ class OriginFlagTests(unittest.TestCase):
         self.assertEqual(asked["origins"], {"Pending": {"commit": sha, "date": "2026-02-03"}, "Ready": {"commit": sha, "date": "2026-02-03"}})
         self.assertEqual({key: value for key, value in asked.items() if key != "origins"}, plain)
 
+    def test_the_site_gets_a_detailed_map_only_with_traceability_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_repository(root)
+            traced = progress.summarize(json.loads(self.run_json(root, "--origins")[1])["libraries"]["groups"])
+            plain = progress.summarize(json.loads(self.run_json(root)[1])["libraries"]["groups"])
+            shaders = dict(progress.summarize([]), extra=[])
+            progress.write_site(root / "traced", traced, shaders)
+            progress.write_site(root / "plain", plain, shaders)
+            self.assertIn("Pending: observed stub, declared in", (root / "traced" / "progress-detail.svg").read_text(encoding="utf-8"))
+            self.assertNotIn("Pending:", (root / "traced" / "progress.svg").read_text(encoding="utf-8"))
+            self.assertIn('href="progress-detail.svg"', (root / "traced" / "progress.html").read_text(encoding="utf-8"))
+            self.assertFalse((root / "plain" / "progress-detail.svg").exists())
+            self.assertNotIn("progress-detail.svg", (root / "plain" / "progress.html").read_text(encoding="utf-8"))
+
     def test_origins_need_a_git_work_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
