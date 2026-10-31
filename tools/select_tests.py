@@ -178,7 +178,10 @@ def chunks(names):
 
 
 def load_graph(path):
-    graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    try:
+        graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except RecursionError as error:
+        raise ValueError(f"{path}: test graph is nested too deeply") from error
     if not isinstance(graph, dict) or not isinstance(graph.get("tests"), dict) or not isinstance(graph.get("closures"), dict):
         raise ValueError(f"{path}: invalid test graph (expected tests and closures objects)")
     fields = ("registered", "arguments", "sets", "requires", "depends")
