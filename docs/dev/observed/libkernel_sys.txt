@@ -1,0 +1,2 @@
+# NIDs of libkernel_sys that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+WslcK1FQcGI  # manual: reported in PR #12427

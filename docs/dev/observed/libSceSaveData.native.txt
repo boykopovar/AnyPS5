@@ -1,0 +1,2 @@
+# NIDs of libSceSaveData.native that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+e6y3WMBYbiM  # manual: reported in issue #2598

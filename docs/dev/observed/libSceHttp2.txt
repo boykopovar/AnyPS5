@@ -1,0 +1,5 @@
+# NIDs of libSceHttp2 that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+EWcwMpbr5F8  # manual: reported in PR #13734 and issue #13715
+Gcjh+CisAZM  # manual: reported in PR #12944
+nrPfOE8TQu0  # manual: reported in issue #12109
+rbqZig38AT8  # manual: reported in issue #12089

@@ -1,0 +1,3 @@
+# NIDs of libSceVideoOut that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+T0ynQY3mH-0  # manual: reported in issue #3762
+WkYtyOg30do  # manual: reported in issue #3762

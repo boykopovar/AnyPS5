@@ -1,0 +1,3 @@
+# NIDs of libSceContentDelete that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+pXJh3aVk8Ks  # manual: reported in issue #4109, loader stop in issue #2686
+qC3QW+AltHs  # manual: reported in issue #4109, loader stop in issue #2686
