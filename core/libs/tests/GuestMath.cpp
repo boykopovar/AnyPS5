@@ -740,14 +740,14 @@ static void CheckFmodfErrno() {
     const RestoreFloatingPointState saved;
     const struct { std::uint32_t dividend; std::uint32_t divisor; std::uint32_t expected; bool invalid; bool nan; } cases[] = {
         {0x3f800000u, 0x00000000u, 0u, true, true}, {0x3f800000u, 0x80000000u, 0u, true, true},
-        {0x7f800000u, 0x40000000u, 0u, true, true}, {0x7fc00000u, 0x40000000u, 0u, false, true},
+        {0x7f800000u, 0x40000000u, 0u, true, true}, {0x7fc00000u, 0x40000000u, 0u, true, true},
         {0x3f800000u, 0x7f800000u, 0x3f800000u, false, false}, {0xbf800000u, 0x7f800000u, 0xbf800000u, false, false},
         {0x41280000u, 0x40000000u, 0x3f000000u, false, false}, {0xc1280000u, 0x40000000u, 0xbf000000u, false, false},
         {0x41280000u, 0xc0000000u, 0x3f000000u, false, false}, {0xc1280000u, 0xc0000000u, 0xbf000000u, false, false},
         {0x00000000u, 0x40000000u, 0x00000000u, false, false}, {0x80000000u, 0x40000000u, 0x80000000u, false, false},
         {0x00000000u, 0x80000000u, 0u, true, true},
-        {0x3f800000u, 0x7fc00001u, 0u, false, true},
-        {0x00000000u, 0x7fc00001u, 0u, false, true},
+        {0x3f800000u, 0x7fc00001u, 0u, true, true},
+        {0x00000000u, 0x7fc00001u, 0u, true, true},
         {0x7f800001u, 0x40000000u, 0u, true, true},
         {0x3f800000u, 0x7f800001u, 0u, true, true},
         {0x00000003u, 0x00000002u, 0x00000001u, false, false},
@@ -761,7 +761,7 @@ static void CheckFmodfErrno() {
         const std::uint32_t bits = std::bit_cast<std::uint32_t>(result);
         const int invalid = std::fetestexcept(FE_INVALID) != 0;
         const bool nan = std::isnan(result);
-        if (nan != test.nan || (!nan && bits != test.expected) || invalid != test.invalid || *__error_nid_postfix() != 73) {
+        if (nan != test.nan || (!nan && bits != test.expected) || invalid != test.invalid || *__error_nid_postfix() != (test.nan ? EDOM : 73)) {
             std::fprintf(stderr, "Guest fmodf failed for %08x and %08x: got %08x, invalid %d, errno %d\n",
                 test.dividend, test.divisor, bits, invalid, *__error_nid_postfix());
             std::abort();
@@ -771,7 +771,7 @@ static void CheckFmodfErrno() {
     std::feraiseexcept(FE_DIVBYZERO);
     *__error_nid_postfix() = 73;
     (void)fmodf_nid_postfix(1.0f, 0.0f);
-    if (*__error_nid_postfix() != 73 || std::fetestexcept(FE_DIVBYZERO) == 0) {
+    if (*__error_nid_postfix() != EDOM || std::fetestexcept(FE_DIVBYZERO) == 0) {
         std::fprintf(stderr, "Guest fmodf dropped the floating-point environment\n");
         std::abort();
     }
@@ -852,7 +852,7 @@ static void CheckNearbyintl() {
 static void CheckFmodErrno() {
     errno = 0;
     (void)fmod_nid_postfix(1.0, 0.0);
-    Require(errno == 0);
+    Require(errno == EDOM);
     Require(fmod_nid_postfix(1e300, 3.0) == std::fmod(1e300, 3.0));
 }
 
@@ -1261,6 +1261,77 @@ static void CheckExpm1ScalingRounding() {
         }
     }
     _mm_setcsr(savedCsr);
+}
+static void CheckFmodEdgeFlags() {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double infinity = std::numeric_limits<double>::infinity();
+    constexpr double one = 1.0;
+    const std::pair<double, double> cases[] = {{0.0, nan}, {one, -nan}, {nan, one}, {-nan, 0.0}, {one, 0.0}, {infinity, one}, {-infinity, -2.0}};
+    for (const auto& [x, y] : cases) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(fmod_nid_postfix(x, y)) && errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(fmodf_nid_postfix(static_cast<float>(x), static_cast<float>(y))) && errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
+}
+
+static void CheckFmodConsoleBits() {
+    constexpr struct {
+        std::uint64_t x;
+        std::uint64_t y;
+        std::uint64_t expected;
+        int expectedErrno;
+    } cases[] = {
+        {0x3ff0000000000000ull, 0x0000000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0xbff0000000000000ull, 0x8000000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff0000000000000ull, 0x4000000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0xfff0000000000000ull, 0x7ff0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff8000000000123ull, 0x4000000000000000ull, 0x7ff8000000000123ull, EDOM},
+        {0xfff8000000000123ull, 0x0000000000000000ull, 0xfff8000000000123ull, EDOM},
+        {0x3ff0000000000000ull, 0x7ff8000000000456ull, 0x7ff8000000000456ull, EDOM},
+        {0x7ff8000000000123ull, 0xfff8000000000456ull, 0xfff8000000000456ull, EDOM},
+        {0x7ff4000000000000ull, 0x4000000000000000ull, 0x7ffc000000000000ull, EDOM},
+        {0x3ff0000000000000ull, 0x7ff4000000000000ull, 0x7ffc000000000000ull, EDOM},
+        {0x7ff0000000000000ull, 0x7ff8000000000456ull, 0x7ff8000000000456ull, EDOM},
+        {0x3ff0000000000000ull, 0x7ff0000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x4016000000000000ull, 0x4000000000000000ull, 0x3ff8000000000000ull, 0},
+        {0x0000000000000000ull, 0x8000000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x0000000000000003ull, 0x0000000000000002ull, 0x0000000000000001ull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(fmod_nid_postfix(std::bit_cast<double>(item.x), std::bit_cast<double>(item.y))) == item.expected);
+        Require(errno == (item.expectedErrno != 0 ? item.expectedErrno : 1234));
+    }
+    constexpr struct {
+        std::uint32_t x;
+        std::uint32_t y;
+        std::uint32_t expected;
+        int expectedErrno;
+    } floatCases[] = {
+        {0x3f800000u, 0x00000000u, 0xffc00000u, EDOM},
+        {0xbf800000u, 0x80000000u, 0xffc00000u, EDOM},
+        {0x7f800000u, 0x40000000u, 0xffc00000u, EDOM},
+        {0xff800000u, 0x7f800000u, 0xffc00000u, EDOM},
+        {0x7fc00123u, 0x40000000u, 0x7fc00123u, EDOM},
+        {0xffc00123u, 0x00000000u, 0xffc00123u, EDOM},
+        {0x3f800000u, 0x7fc00456u, 0x7fc00456u, EDOM},
+        {0x7fc00123u, 0xffc00456u, 0xffc00456u, EDOM},
+        {0x7fa00000u, 0x40000000u, 0x7fe00000u, EDOM},
+        {0x3f800000u, 0x7fa00000u, 0x7fe00000u, EDOM},
+        {0x7f800000u, 0x7fc00456u, 0x7fc00456u, EDOM},
+        {0x3f800000u, 0x7f800000u, 0x3f800000u, 0},
+        {0x40b00000u, 0x40000000u, 0x3fc00000u, 0},
+        {0x00000000u, 0x80000000u, 0xffc00000u, EDOM},
+        {0x00000003u, 0x00000002u, 0x00000001u, 0},
+    };
+    for (const auto& item : floatCases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(fmodf_nid_postfix(std::bit_cast<float>(item.x), std::bit_cast<float>(item.y))) == item.expected);
+        Require(errno == (item.expectedErrno != 0 ? item.expectedErrno : 1234));
+    }
 }
 
 static void CheckAsinl() {
@@ -2621,6 +2692,8 @@ int main() {
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
     CheckExpm1ScalingRounding();
+    CheckFmodConsoleBits();
+    CheckFmodEdgeFlags();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);

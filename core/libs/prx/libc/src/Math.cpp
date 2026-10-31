@@ -428,6 +428,18 @@ std::int64_t APS5_VABI imaxabs_nid_postfix(std::int64_t x) {
 }
 
 float APS5_VABI fmodf_nid_postfix(float x, float y) {
+    const std::uint32_t ix = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
+    const std::uint32_t iy = std::bit_cast<std::uint32_t>(y) & 0x7fffffffu;
+    if (iy == 0 || ix >= 0x7f800000u || iy > 0x7f800000u) {
+        _Feraise_nid_postfix(0x01);
+        if (iy > 0x7f800000u) {
+            return y + y;
+        }
+        if (ix > 0x7f800000u) {
+            return x + x;
+        }
+        return (x * y) / (x * y);
+    }
     const int saved_errno = errno;
     const float result = std::fmod(x, y);
     errno = saved_errno;
@@ -1786,8 +1798,20 @@ float APS5_VABI ldexpf_nid_postfix(float x, int exp) {
     return result;
 }
 double APS5_VABI fmod_nid_postfix(double x, double y) {
-    int saved_errno = errno;
-    double result = std::fmod(x, y);
+    const std::uint64_t ix = std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull;
+    const std::uint64_t iy = std::bit_cast<std::uint64_t>(y) & 0x7fffffffffffffffull;
+    if (iy == 0 || ix >= 0x7ff0000000000000ull || iy > 0x7ff0000000000000ull) {
+        _Feraise_nid_postfix(0x01);
+        if (iy > 0x7ff0000000000000ull) {
+            return y + y;
+        }
+        if (ix > 0x7ff0000000000000ull) {
+            return x + x;
+        }
+        return (x * y) / (x * y);
+    }
+    const int saved_errno = errno;
+    const double result = std::fmod(x, y);
     errno = saved_errno;
     return result;
 }
