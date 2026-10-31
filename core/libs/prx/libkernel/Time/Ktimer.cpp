@@ -103,8 +103,8 @@ int APS5_VABI ktimer_create_nid_postfix(int clock, const GuestSigevent* event, i
     if (id == TimerMax) return static_cast<int>(Fail(GuestEagain));
     if (timerid == nullptr) return static_cast<int>(Fail(GuestEfault));
     if (event == nullptr || event->notify != SigevNone) NotImplemented_nid_no_patch("ktimer_create delivering a signal");
+    if (!GuestCopyOut_nid_no_patch(timerid, &id, sizeof(id))) return static_cast<int>(Fail(GuestEfault));
     g_ktimers[id] = {true, clock, 0, 0};
-    *timerid = id;
     return 0;
 }
 
@@ -138,7 +138,8 @@ int APS5_VABI ktimer_gettime_nid_postfix(int id, GuestItimerspec* value) {
     Ktimer* timer = FindTimer(id);
     if (timer == nullptr) return static_cast<int>(Fail(GuestEinval));
     if (value == nullptr) return static_cast<int>(Fail(GuestEfault));
-    *value = Remaining(*timer);
+    const GuestItimerspec remaining = Remaining(*timer);
+    if (!GuestCopyOut_nid_no_patch(value, &remaining, sizeof(remaining))) return static_cast<int>(Fail(GuestEfault));
     return 0;
 }
 
