@@ -75,6 +75,16 @@ def change_tag(image, tag, value=None, replacement=None):
             return image
     raise AssertionError(f"Missing dynamic tag {tag:#x}")
 
+def duplicate_dynamic_segment(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    image[insert_at:insert_at + 56] = image[176:176 + 56]
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
 
 def unsized_lifecycle(rela, sce, initial):
     image = module(rela, sce=sce, lifecycle=True, initial=initial)
@@ -138,6 +148,7 @@ def invalid_cases(sce):
     ambiguous = module(plt=[NOOP], sce=sce)
     yield "ambiguous-plt-format", change_tag(ambiguous, 0x61000027 if sce else 3, value=7,
                                             replacement=20 if sce else 0x6100002b), "Missing or ambiguous dynamic tag"
+    yield "duplicate-dynamic-segment", duplicate_dynamic_segment(module([NOOP], sce=sce)), "Duplicate dynamic segment"
 
 
 def main():
