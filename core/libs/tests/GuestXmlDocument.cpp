@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -21,11 +22,14 @@ struct TestAllocator {
     std::vector<void*> blocks;
     std::size_t first = 0;
     std::string log;
+    std::size_t calls = 0;
+    std::size_t failAt = SIZE_MAX;
 };
 
 void* APS5_VABI TestAllocate(XmlMemAllocator* self, std::size_t size, void* userData) {
     auto* allocator = reinterpret_cast<TestAllocator*>(self);
     Require(userData == reinterpret_cast<void*>(0x1234), "allocate receives the user data");
+    if (allocator->calls++ == allocator->failAt) return nullptr;
     allocator->log += "a" + std::to_string(size) + " ";
     void* block = std::malloc(size);
     allocator->blocks.push_back(block);
@@ -198,6 +202,11 @@ void TestStatusAndAttributes() {
     Require(Attribute(&document, root, "a", 1) == "1" && Attribute(&document, root, "ab", 2) == "2" && Attribute(&document, root, "b", 1) == "&amp;", "attribute values");
     Require(Attribute(&document, root, "A", 1) == "<null>" && Attribute(&document, root, "", 0) == "<null>" && Attribute(&document, root, nullptr, 0) == "<null>", "attributes that are not there");
     Require(Attribute(&document, root, "a\0x", 3) == "1", "the name is compared up to its first zero byte");
+    Require(Attribute(&document, root, "a", 0) == "<null>", "a name with size 0 finds nothing");
+    XmlString value{};
+    const XmlString noBuffer{nullptr, 1};
+    _ZNK3sce3Xml3Dom8Document12getAttributeENS1_6NodeIdEPKNS0_6StringE(&value, &document, root, &noBuffer);
+    Require(value.buffer == nullptr && value.size == 0, "a name without a buffer finds nothing");
     XmlNodeId docRoot{};
     _ZNK3sce3Xml3Dom8Document10getDocRootEv(&docRoot, &document);
     Require(Attribute(&document, docRoot, "a", 1) == "<null>", "only elements have attributes");
@@ -213,12 +222,33 @@ void TestStatusAndAttributes() {
     _ZN3sce3Xml3Dom8DocumentD1Ev(&document);
 }
 
+void TestAllocationFailures() {
+    for (std::size_t k = 0; k < 9; ++k) {
+        Fixture f;
+        Require(f.Parse("<r/>") == 0, "parse");
+        f.Mark();
+        f.allocator.calls = 0;
+        f.allocator.failAt = k;
+        XmlHandle document{nullptr};
+        try {
+            _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(&document, &f.builder);
+        } catch (const std::exception&) {
+        }
+        f.allocator.failAt = SIZE_MAX;
+        Require(document.impl == nullptr, "a getDocument whose allocation fails leaves no document");
+        for (std::size_t i = f.allocator.first + (k > 0 ? 1 : 0); i < f.allocator.blocks.size(); ++i) Require(f.allocator.blocks[i] == nullptr, "a getDocument whose allocation fails frees the document's blocks");
+        Require(_ZN3sce3Xml3Dom15DocumentBuilder9terminateEv(&f.builder) == 0, "terminate the builder");
+        for (std::size_t i = f.allocator.first; i < f.allocator.blocks.size(); ++i) Require(f.allocator.blocks[i] == nullptr, "terminate frees the builder block");
+    }
+}
+
 }
 
 int main() {
     TestLifecycle();
     TestEmptyDocument();
     TestStatusAndAttributes();
+    TestAllocationFailures();
     std::puts("guest_xml_document: all checks passed");
     return 0;
 }

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -33,6 +34,7 @@ DocumentRef* RefOf(const XmlHandle* document) {
 }
 
 void Attach(XmlHandle* document, XmlMemAllocator* allocator, void* userData, std::shared_ptr<Generation> generation) {
+    auto ref = std::make_unique<DocumentRef>(DocumentRef{std::move(generation), allocator, userData});
     void* impl = allocator->vtable->allocate(allocator, ImplSize, userData);
     if (impl == nullptr) AllocationFailed();
     std::array<void*, ScratchSizes.size()> scratch{};
@@ -44,8 +46,8 @@ void Attach(XmlHandle* document, XmlMemAllocator* allocator, void* userData, std
         AllocationFailed();
     }
     for (std::size_t k = ScratchSizes.size(); k-- > 0;) allocator->vtable->deallocate(allocator, scratch[k], userData);
-    auto* ref = new DocumentRef{std::move(generation), allocator, userData};
-    std::memcpy(impl, &ref, sizeof(ref));
+    DocumentRef* owned = ref.release();
+    std::memcpy(impl, &owned, sizeof(owned));
     document->impl = impl;
 }
 
@@ -226,11 +228,10 @@ XmlString* DocumentString(XmlString* result, const XmlHandle* document, StringQu
 
 XmlString* DocumentAttribute(XmlString* result, const XmlHandle* document, XmlNodeId node, const XmlString* name) {
     if (document == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::Document: null object");
-    if (document->impl == nullptr || name == nullptr) {
+    if (document->impl == nullptr || name == nullptr || name->buffer == nullptr || name->size == 0) {
         SetString(result, nullptr);
         return result;
     }
-    if (name->buffer == nullptr) throw std::logic_error("sce::Xml::Dom::Document::getAttribute: a name with a null buffer was not measured");
     Live(document);
     Generation& generation = *RefOf(document)->generation;
     const Reader reader(generation.buffers);
