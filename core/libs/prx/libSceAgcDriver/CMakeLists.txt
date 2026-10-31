@@ -336,6 +336,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RuntimeSwitches.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeferredDestruction.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MemoryAccounting.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PlaceholderImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ParallelCompare.cpp
@@ -1414,6 +1415,14 @@ configure_windows_unwind(agc_buffer_pool_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_buffer_pool_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_buffer_pool COMMAND agc_buffer_pool_tests)
+    add_test(NAME agc_memory_accounting COMMAND agc_buffer_pool_tests --memory-accounting)
+    set_tests_properties(agc_memory_accounting PROPERTIES ENVIRONMENT "APS5_TRACE_MEMORY_BUDGET=1" TIMEOUT 30)
+    add_test(NAME agc_memory_accounting_budget_cap COMMAND agc_buffer_pool_tests --memory-accounting-budget-cap)
+    set_tests_properties(agc_memory_accounting_budget_cap PROPERTIES ENVIRONMENT "APS5_TRACE_MEMORY_BUDGET=1"
+        PASS_REGULAR_EXPRESSION "cap=1073741824 selected=1073741824" TIMEOUT 30)
+    add_test(NAME agc_memory_accounting_budget_floor COMMAND agc_buffer_pool_tests --memory-accounting-budget-floor)
+    set_tests_properties(agc_memory_accounting_budget_floor PROPERTIES ENVIRONMENT "APS5_TRACE_MEMORY_BUDGET=1"
+        PASS_REGULAR_EXPRESSION "cap=536870912 selected=536870912" TIMEOUT 30)
     add_test(NAME agc_buffer_pool_small_device_shared COMMAND agc_buffer_pool_tests --small-device-retention)
     set_tests_properties(agc_buffer_pool_small_device_shared PROPERTIES ENVIRONMENT
         "APS5_STAGING_POOL_MIB=256;APS5_BUFFER_POOL_SHARED=1")
@@ -1421,7 +1430,7 @@ if(BUILD_TESTING)
     set_tests_properties(agc_buffer_pool_small_device_no_staging PROPERTIES ENVIRONMENT
         "APS5_STAGING_POOL_MIB=0")
     if(WIN32)
-        set_tests_properties(agc_buffer_pool agc_buffer_pool_small_device_shared agc_buffer_pool_small_device_no_staging PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_memory_accounting agc_memory_accounting_budget_cap agc_memory_accounting_budget_floor agc_buffer_pool agc_buffer_pool_small_device_shared agc_buffer_pool_small_device_no_staging PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -1434,8 +1443,10 @@ configure_windows_unwind(agc_deferred_destruction_tests)
 if(BUILD_TESTING)
     set_target_properties(agc_deferred_destruction_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_deferred_destruction COMMAND agc_deferred_destruction_tests)
+    add_test(NAME agc_deferred_memory_accounting COMMAND agc_deferred_destruction_tests --memory-accounting)
+    set_tests_properties(agc_deferred_memory_accounting PROPERTIES ENVIRONMENT "APS5_TRACE_MEMORY_BUDGET=1" TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(agc_deferred_destruction PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_deferred_destruction agc_deferred_memory_accounting PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -2924,6 +2935,8 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_job_manager_compute_capacity PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    set_tests_properties(agc_driver_memory_accounting PROPERTIES
+        ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_TRACE_MEMORY_BUDGET=1;APS5_IMAGE_POOL_MIB=8;APS5_STAGING_POOL_MIB=32" TIMEOUT 30)
     add_test(NAME agc_driver_guarded_direct_root COMMAND agc_driver_guarded_null_pointer_tests --direct-root-only)
     set_tests_properties(agc_driver_guarded_direct_root PROPERTIES
         ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
