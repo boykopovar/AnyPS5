@@ -550,7 +550,7 @@ BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark)
     auto offset = wrapRingOffset(alignUp(ringCursor, ringAlignment), bytes);
     const auto keptAhead = [&] {
         for (auto chunk = chunkOf(offset); chunk <= lastChunkOf(offset, bytes); ++chunk) {
-            if (chunk != ringChunk && ringChunks[chunk].open) return true;
+            if (chunk == ringChunk ? offset < ringCursor : ringChunks[chunk].open) return true;
         }
         return false;
     };

@@ -86,6 +86,7 @@ public:
         std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0;
     };
     Counts Statistics() const;
+    std::size_t RingChunkCount() const { return ringChunks.size(); }
 
     static constexpr std::size_t RingBytes = 64u << 20u;
     static constexpr std::size_t RingChunkBytes = 2u << 20u;

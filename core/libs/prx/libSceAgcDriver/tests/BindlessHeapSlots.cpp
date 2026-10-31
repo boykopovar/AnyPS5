@@ -228,6 +228,7 @@ void ringSpans(const Context& context) {
 
 void ringLargeSpans(const Context& context) {
     BindlessHeap heap(context);
+    if (heap.RingChunkCount() < 5u) return;
     constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
     constexpr std::size_t largeWords = chunkWords * 2u + 1024u;
     BindlessHeap::SpanMark pin;
@@ -258,6 +259,30 @@ void ringLargeSpans(const Context& context) {
         refused = true;
     }
     require(refused, "a span over half the ring is refused");
+}
+
+void ringCurrentChunk(const Context& context) {
+    BindlessHeap heap(context);
+    constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
+    Recorder recorder(context);
+    std::vector<BindlessHeap::SpanMark> pins(heap.RingChunkCount() - 1u);
+    for (auto& pin : pins) {
+        static_cast<void>(heap.Allocate(chunkWords, pin));
+        heap.Submitted(recorder, 0u);
+        for (const auto& kept : pins) {
+            if (kept.entry != 0u) require(heap.Held(kept), "every pinned chunk stays held");
+        }
+    }
+    BindlessHeap::SpanMark live;
+    static_cast<void>(heap.Allocate(16u, live));
+    bool refused = false;
+    try {
+        static_cast<void>(heap.Allocate(chunkWords));
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    require(refused, "a span never wraps onto the current chunk behind data this batch already wrote");
+    require(heap.Held(live), "the current chunk's span is still held");
 }
 
 }
@@ -417,6 +442,7 @@ int main(int argc, char** argv) {
             samplerSlots(context);
             ringSpans(context);
             ringLargeSpans(context);
+            ringCurrentChunk(context);
             viewSlots(context, placeholders.View(Abi::FirstStorageImageBinding));
             encodedViews(context);
             ownerSlots(context, placeholders.View(Abi::FirstStorageImageBinding));
