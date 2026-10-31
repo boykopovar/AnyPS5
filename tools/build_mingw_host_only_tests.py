@@ -94,7 +94,7 @@ def link_command_mentions_target(command, target):
     link_names = set()
     for artifact in target.get("artifacts", []):
         name = Path(artifact.get("path", "")).name
-        if name and name in command:
+        if name and re.search(rf"(?i)(?:^|[/\\:=\s\"',]){re.escape(name)}(?=$|[\s\"',])", command):
             return True
         for suffix in (".dll.a", ".dylib", ".prx", ".so", ".a", ".lib"):
             if name.casefold().endswith(suffix):
