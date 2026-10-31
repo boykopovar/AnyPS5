@@ -305,7 +305,7 @@ std::pair<std::uint64_t, std::uint64_t> progress() {
 struct Replay {
     const Options& options;
     const FrameCaptureReader& reader;
-    Frames frames;
+    Frames& frames = *new Frames;
     std::map<std::uint32_t, std::shared_ptr<ReplayOutput>> outputs;
     std::mutex memoryMutex;
     std::map<std::uint64_t, std::vector<const FrameMemoryChunk*>> groups;
