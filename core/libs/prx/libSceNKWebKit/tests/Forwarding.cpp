@@ -11,6 +11,7 @@ extern "C" std::uint64_t NotImplementedCalls_nid_no_patch();
 extern "C" {
 int JSRemoteInspectorDisableAutoStart();
 int WKAccessibilityEnableEnhancedAccessibility();
+int WKContextGetApplicationCacheManager();
 int WKContextGetKeyValueStorageManager();
 int WKContextGetResourceCacheManager();
 int WKContextGetWebsiteDataStore();
@@ -90,6 +91,9 @@ void* _ZN3JSC19HeapSnapshotBuildernaEm(unsigned long);
 void _ZN3JSC19HeapSnapshotBuilderdlEPv(void*);
 void _ZN3JSC19HeapSnapshotBuilderdaEPv(void*);
 void _ZN3JSC12HeapCellTypeD0Ev(void*);
+void* _ZN7WebCore13MIMETypeCachenwEm(unsigned long);
+void _ZN7WebCore13MIMETypeCachedlEPv(void*);
+void _ZN9Inspector18InspectorHeapAgentdlEPv(void*);
 void* WKMutableArrayCreate();
 void* WKUserMediaPermissionRequestAudioDeviceUIDs();
 void* WKUserMediaPermissionRequestVideoDeviceUIDs();
@@ -123,6 +127,7 @@ static void ExpectStub(int (*forward)(), int line) {
 int main() {
     RequireStub(&JSRemoteInspectorDisableAutoStart);
     RequireStub(&WKAccessibilityEnableEnhancedAccessibility);
+    RequireStub(&WKContextGetApplicationCacheManager);
     RequireStub(&WKContextGetKeyValueStorageManager);
     RequireStub(&WKContextGetResourceCacheManager);
     RequireStub(&WKContextGetWebsiteDataStore);
@@ -211,6 +216,14 @@ int main() {
     auto* freed = static_cast<std::uint8_t*>(_ZN3JSC19HeapSnapshotBuildernwEm(32));
     Require(freed != nullptr);
     _ZN3JSC12HeapCellTypeD0Ev(freed);
+
+    auto* mime = static_cast<std::uint8_t*>(_ZN7WebCore13MIMETypeCachenwEm(24));
+    Require(mime != nullptr);
+    _ZN7WebCore13MIMETypeCachedlEPv(mime);
+
+    auto* inspected = static_cast<std::uint8_t*>(_ZN3JSC19HeapSnapshotBuildernwEm(16));
+    Require(inspected != nullptr);
+    _ZN9Inspector18InspectorHeapAgentdlEPv(inspected);
 
     Require(WKUserMediaPermissionRequestAudioDeviceUIDs() != nullptr);
     Require(WKUserMediaPermissionRequestVideoDeviceUIDs() != nullptr);
