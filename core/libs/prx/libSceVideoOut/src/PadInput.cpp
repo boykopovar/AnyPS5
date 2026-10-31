@@ -23,15 +23,20 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceVideoOut/include/HostVolumeInput.hpp"
+#include "prx/libScePad/include/HostVolumeSettings.hpp"
 
 PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
+    HostVolumeConfigureFromEnvironment_nid_no_patch();
 }
 
 static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status panel lists one line per controller slot");
 
-PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)), statusProvider{[this] { return statusSnapshot(); }} {
+PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
     static_cast<void>(Pad::RumblePercent());
     openAvailableControllers();
+    port0 = Port0Presence::Presence(port0Mode, slots[0].controller != nullptr);
+    if (port0Mode == Port0Presence::Mode::Controller) applyPort0(port0.Connected());
 }
 
 PadInput::~PadInput() {
@@ -91,8 +96,10 @@ void PadInput::openController(int deviceIndex) {
         SDL_GameControllerHasSensor(gc, SDL_SENSOR_ACCEL) == SDL_TRUE, SDL_GameControllerHasSensor(gc, SDL_SENSOR_GYRO) == SDL_TRUE,
         SDL_GameControllerGetNumTouchpads(gc), SDL_GameControllerHasLED(gc) == SDL_TRUE, SDL_GameControllerHasRumbleTriggers(gc) == SDL_TRUE);
     enableSensors(slot);
-    PadSetPortConnected_nid_postfix(slot, true);
-    UserServiceSetUserConnected_nid_postfix(slot, true);
+    if (slot > 0) {
+        PadSetPortConnected_nid_postfix(slot, true);
+        UserServiceSetUserConnected_nid_postfix(slot, true);
+    }
 }
 
 void PadInput::enableSensors(int slot) {
@@ -137,6 +144,15 @@ AgcDriver::PadStatusSnapshot PadInput::statusSnapshot() const {
 
 void PadInput::reportStatus() {
     AgcDriverPadStatusPoll_nid_postfix(&statusProvider);
+}
+
+void PadInput::applyPort0(bool connected) {
+    PadSetPortConnected_nid_postfix(0, connected);
+    UserServiceSetUserConnected_nid_postfix(0, connected);
+}
+
+void PadInput::updatePort0() {
+    if (const auto change = port0.Observe(slots[0].controller != nullptr, std::chrono::steady_clock::now())) applyPort0(*change);
 }
 
 void PadInput::applyOutput() {
@@ -310,6 +326,8 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     }
     if (event.type == SDL_WINDOWEVENT) {
         if (keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now()).releaseMouse) setMouseMode(false);
+        HostVolume volume;
+        if (window.Handle() != nullptr && ApplyHostFocusEvent(event, SDL_GetWindowID(window.Handle()), &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
         publish(window.FrameNumber(), 0);
         return;
     }
@@ -330,11 +348,20 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         AgcDriverPadStatusShow_nid_postfix();
         reportStatus();
     }
+    if (window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) {
+        HostVolume volume;
+        if (ApplyHostVolumeRequests(requests, &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
+    }
     if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
     if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
 }
 
 void PadInput::Update(const DisplayWindow& window) {
+    if (!hostFocusSynced && window.Handle() != nullptr) {
+        hostFocusSynced = true;
+        HostVolume volume;
+        if (HostVolumeFocus_nid_no_patch(SDL_GetKeyboardFocus() == window.Handle(), &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
+    }
     bool anyController = false;
     for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
         if (slots[slot].controller != nullptr) {
@@ -343,6 +370,7 @@ void PadInput::Update(const DisplayWindow& window) {
         }
     }
     if (anyController) SDL_GameControllerUpdate();
+    updatePort0();
     reportStatus();
     applyOutput();
     for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
@@ -357,7 +385,9 @@ void PadInput::Update(const DisplayWindow& window) {
         return;
     }
     const bool changed = keyboardMouse.Advance(std::chrono::steady_clock::now());
-    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed) {
+    const bool captured = ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix();
+    const bool captureChanged = std::exchange(padCaptured, captured) != captured;
+    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed || captured || captureChanged) {
         publish(window.FrameNumber(), 0);
     }
     for (int slot = 1; slot < PAD_MAX_CONTROLLERS; ++slot) {
@@ -377,6 +407,7 @@ PadInputState PadInput::handOff(int slot, PadInputState state) {
     auto& held = slots[slot].heldThroughCapture;
     const bool imeCaptures = ImeCapturesPad_nid_postfix();
     if (imeCaptures || ModalDialogCapturesInput_nid_postfix()) {
+        if (slot == 0) PadApplyInjectedInput_nid_postfix(&state);
         if (slot == 0 && imeCaptures) ImePublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
         else if (slot == 0) ModalDialogPublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
         held = state.buttons;
@@ -396,7 +427,8 @@ PadInputState PadInput::handOff(int slot, PadInputState state) {
 void PadInput::publish(std::uint64_t frame, int slot) {
     if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return;
     if (slot == 0) {
-        const auto state = handOff(0, keyboardMouse.Compose(slots[0].state));
+        const auto composed = port0.Connected() ? keyboardMouse.Compose(slots[0].state) : PadInputState{};
+        const auto state = handOff(0, composed);
         PadPublishInput_nid_postfix(state);
         if (auto* telemetry = VideoOutTelemetry::Instance(); telemetry != nullptr) VideoOutTelemetry::EmitPadIfChanged(*telemetry, telemetryFilter, frame, state);
     } else {
