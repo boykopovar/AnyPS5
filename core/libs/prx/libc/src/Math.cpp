@@ -579,7 +579,22 @@ float APS5_VABI scalbnf_nid_postfix(float x, int exponent) {
 long double APS5_VABI scalbnl_nid_postfix(long double x, int exponent) { return std::scalbn(x, exponent); }
 float APS5_VABI significandf_nid_postfix(float x) { return x == 0.0f || !std::isfinite(x) ? x : std::scalbn(x, -std::ilogb(x)); }
 double APS5_VABI significand_nid_postfix(double x) { return x == 0.0 || !std::isfinite(x) ? x : std::scalbn(x, -std::ilogb(x)); }
-double APS5_VABI frexp_nid_postfix(double x, int* exponent) { return std::frexp(x, exponent); }
+double APS5_VABI frexp_nid_postfix(double x, int* exponent) {
+    auto bits = std::bit_cast<std::uint64_t>(x);
+    auto magnitude = bits & 0x7fffffffffffffffull;
+    *exponent = 0;
+    if (magnitude == 0 || magnitude >= 0x7ff0000000000000ull) return x;
+    int adjustment = 0;
+    if (magnitude < 0x0010000000000000ull) {
+        volatile double subnormal = x;
+        x = subnormal * 0x1p54;
+        bits = std::bit_cast<std::uint64_t>(x);
+        magnitude = bits & 0x7fffffffffffffffull;
+        adjustment = -54;
+    }
+    *exponent = static_cast<int>(magnitude >> 52) - 1022 + adjustment;
+    return std::bit_cast<double>((bits & 0x800fffffffffffffull) | 0x3fe0000000000000ull);
+}
 float APS5_VABI frexpf_nid_postfix(float x, int* exponent) {
     auto bits = std::bit_cast<std::uint32_t>(x);
     auto magnitude = bits & 0x7fffffffu;

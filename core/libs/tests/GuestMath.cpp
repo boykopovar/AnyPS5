@@ -2104,6 +2104,68 @@ static void CheckIntegerAbsAndDivision() {
     Require(large.quot == -0x12345678ll && large.rem == 0x9abll);
 }
 
+static void CheckFrexpEnvironment() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t fraction;
+        int exponent;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0},
+        {0x8000000000000000ull, 0x8000000000000000ull, 0},
+        {0x0000000000000001ull, 0x3fe0000000000000ull, -1073},
+        {0x8000000000000001ull, 0xbfe0000000000000ull, -1073},
+        {0x000fffffffffffffull, 0x3feffffffffffffeull, -1022},
+        {0x800fffffffffffffull, 0xbfeffffffffffffeull, -1022},
+        {0x0010000000000000ull, 0x3fe0000000000000ull, -1021},
+        {0x8010000000000000ull, 0xbfe0000000000000ull, -1021},
+        {0x3fe0000000000000ull, 0x3fe0000000000000ull, 0},
+        {0x3ff0000000000000ull, 0x3fe0000000000000ull, 1},
+        {0xbff0000000000000ull, 0xbfe0000000000000ull, 1},
+        {0x4028000000000000ull, 0x3fe8000000000000ull, 4},
+        {0x7fefffffffffffffull, 0x3fefffffffffffffull, 1024},
+        {0xffefffffffffffffull, 0xbfefffffffffffffull, 1024},
+        {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0},
+        {0xfff0000000000000ull, 0xfff0000000000000ull, 0},
+        {0x7ff0000000000001ull, 0x7ff0000000000001ull, 0},
+        {0xfff0000000000001ull, 0xfff0000000000001ull, 0},
+        {0x7ff8000000001234ull, 0x7ff8000000001234ull, 0},
+        {0xfff8000000001234ull, 0xfff8000000001234ull, 0},
+    };
+    std::fenv_t saved;
+    Require(std::fegetenv(&saved) == 0);
+    const unsigned savedCsr = _mm_getcsr();
+    constexpr int rounding[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
+    const int savedError = *__error_nid_postfix();
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        for (unsigned denorm = 0; denorm != 4; ++denorm) {
+            const unsigned control = 0x1f80u | (mode << 13) | ((denorm & 1u) ? 0x40u : 0u) | ((denorm & 2u) ? 0x8000u : 0u);
+            for (const unsigned sticky : {0u, 5u, 32u}) {
+                for (const auto& item : cases) {
+                    Require(std::fesetenv(FE_DFL_ENV) == 0);
+                    Require(std::fesetround(rounding[mode]) == 0);
+                    *__error_nid_postfix() = 97;
+                    _mm_setcsr(control | sticky);
+                    int exponent = 77;
+                    const auto fraction = std::bit_cast<std::uint64_t>(frexp_nid_postfix(std::bit_cast<double>(item.input), &exponent));
+                    const unsigned after = _mm_getcsr();
+                    const bool subnormal = (item.input & 0x7fffffffffffffffull) != 0 && (item.input & 0x7fffffffffffffffull) < 0x0010000000000000ull;
+                    const bool flushed = subnormal && (denorm & 1u) != 0;
+                    const unsigned flags = sticky | (subnormal && !flushed ? 2u : 0u);
+                    const auto expectedFraction = flushed ? (item.input & 0x8000000000000000ull) | 0x3fe0000000000000ull : item.fraction;
+                    const int expectedExponent = flushed ? -1076 : item.exponent;
+                    if (fraction != expectedFraction || exponent != expectedExponent || after != (control | flags) || *__error_nid_postfix() != 97) {
+                        std::fprintf(stderr, "frexp input=%016llx mode=%u denorm=%u sticky=%u fraction=%016llx exponent=%d csr=%x\n", static_cast<unsigned long long>(item.input), mode, denorm, sticky, static_cast<unsigned long long>(fraction), exponent, after);
+                        std::abort();
+                    }
+                }
+            }
+        }
+    }
+    Require(std::fesetenv(&saved) == 0);
+    _mm_setcsr(savedCsr);
+    *__error_nid_postfix() = savedError;
+}
+
 static void CheckScaling() {
     Require(scalbnl_nid_postfix(3.0L, 4) == 48.0L && scalbnl_nid_postfix(1.0L, -16445) == 0x1p-16445L);
     Require(scalbnl_nid_postfix(1.0L, 16384) == std::numeric_limits<long double>::infinity());
@@ -2763,6 +2825,7 @@ int main() {
     CheckFmodfErrno();
     CheckDoubleClassification();
     CheckIntegerAbsAndDivision();
+    CheckFrexpEnvironment();
     CheckScaling();
     CheckLongDoubleFunctions();
     CheckLongDoubleHyperbolic();
