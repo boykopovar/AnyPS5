@@ -251,6 +251,60 @@ class ObservedStubTests(unittest.TestCase):
         self.assertEqual((group["todo"], group["unobserved"]), (0, 1))
 
 
+class ManifestLoadingTests(unittest.TestCase):
+    def make_tree(self, root):
+        prx = root / "core" / "libs" / "prx"
+        (prx / "libSceA").mkdir(parents=True)
+        (prx / "libSceA" / "Export.cpp").write_text(
+            "int APS5_VABI Ready() { return 0; }\n"
+            "int APS5_VABI Imported() { NotImplemented_nid_no_patch(__func__); }\n"
+            "int APS5_VABI Unseen() { NotImplemented_nid_no_patch(__func__); }\n")
+        (prx / "libSceB").mkdir()
+        (prx / "libSceB" / "Export.cpp").write_text("int APS5_VABI Pending() { NotImplemented_nid_no_patch(__func__); }\n")
+        observed = root / "docs" / "dev" / "observed"
+        observed.mkdir(parents=True)
+        (observed / "libSceA.txt").write_text(f"# observed\n{progress.tokenizer.compute_nid('Imported')}\n", encoding="utf-8")
+        return prx, observed
+
+    def test_each_library_is_classified_by_its_own_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prx, observed = self.make_tree(root)
+            with patch.object(progress, "PRX", prx), patch.object(progress, "OBSERVED", observed):
+                data = progress.collect_libraries()
+            groups = {group["name"]: group for group in data["groups"]}
+            self.assertTrue(groups["libSceA"]["classified"])
+            self.assertEqual((groups["libSceA"]["todo_names"], groups["libSceA"]["unobserved_names"]), (["Imported"], ["Unseen"]))
+            self.assertFalse(groups["libSceB"]["classified"])
+            self.assertEqual((groups["libSceB"]["todo_names"], groups["libSceB"]["unobserved"]), (["Pending"], 0))
+            self.assertEqual((data["done"], data["total"]), (1, 3))
+
+    def test_root_reads_the_manifests_of_that_tree_and_restores_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_tree(root)
+            before = progress.PRX, progress.OPCODES, progress.OBSERVED
+            output = io.StringIO()
+            with patch.object(progress, "collect_shaders", return_value=progress.summarize([])), patch("sys.stdout", output):
+                self.assertEqual(progress.main(["--root", str(root), "--json"]), 0)
+            data = json.loads(output.getvalue())
+            groups = {group["name"]: group for group in data["libraries"]["groups"]}
+            self.assertEqual(groups["libSceA"]["unobserved_names"], ["Unseen"])
+            self.assertEqual(progress.OBSERVED, before[2])
+            self.assertEqual((progress.PRX, progress.OPCODES), before[:2])
+
+    def test_malformed_manifest_is_a_usage_error_naming_the_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, observed = self.make_tree(root)
+            (observed / "libSceA.txt").write_text("not-a-nid\n", encoding="utf-8")
+            with patch.object(progress, "collect_shaders", return_value=progress.summarize([])), \
+                 patch("sys.stderr", io.StringIO()) as errors, self.assertRaises(SystemExit) as exit_code:
+                progress.main(["--root", str(root), "--json"])
+            self.assertEqual(exit_code.exception.code, 2)
+            self.assertIn("libSceA.txt:1: invalid NID 'not-a-nid'", errors.getvalue())
+
+
 class ProgressTests(unittest.TestCase):
     def report_library(self, name, done=(), todo=(), **extra):
         return {"name": name, "label": name, "done": len(done), "todo": len(todo),

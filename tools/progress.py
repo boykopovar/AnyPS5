@@ -18,6 +18,8 @@ PRX = ROOT / "core" / "libs" / "prx"
 OPCODES = ROOT / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / "RdnaDecoder" / "RdnaOpcode.hpp"
 ISA = Path(__file__).resolve().parent / "rdna_isa.txt"
 NID = re.compile(r"[A-Za-z0-9+\-]{11}")
+OBSERVED_RELATIVE = Path("docs/dev/observed")
+OBSERVED = ROOT / OBSERVED_RELATIVE
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
@@ -228,8 +230,13 @@ def summarize(groups):
     return {"done": done, "total": total, "percent": round(100 * done / total, 2) if total else 0, "groups": groups}
 
 
+def observed_nids(library):
+    manifest = OBSERVED / f"{library.name}.txt"
+    return read_manifest(manifest) if manifest.is_file() else None
+
+
 def collect_libraries():
-    return summarize([scan_library(p) for p in sorted(PRX.iterdir()) if p.is_dir()])
+    return summarize([scan_library(p, observed_nids(p)) for p in sorted(PRX.iterdir()) if p.is_dir()])
 
 
 def select_libraries(libraries, modules):
@@ -600,8 +607,8 @@ def main(argv=None):
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
-    global PRX, OPCODES
-    previous = PRX, OPCODES
+    global PRX, OPCODES, OBSERVED
+    previous = PRX, OPCODES, OBSERVED
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path, nargs="?")
     parser.add_argument("--root", type=Path, help="source tree to measure instead of the one containing this script")
@@ -635,10 +642,13 @@ def main(argv=None):
         if args.root:
             PRX = args.root / "core" / "libs" / "prx"
             OPCODES = args.root / previous[1].relative_to(ROOT)
+            OBSERVED = args.root / OBSERVED_RELATIVE
         try:
             libraries, shaders = collect_libraries(), collect_shaders()
         except FileNotFoundError as error:
             parser.error(f"{args.root or ROOT} is not a source tree: {error.filename} not found")
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
         try:
             libraries = select_libraries(libraries, args.module or [])
         except ValueError as error:
@@ -657,7 +667,7 @@ def main(argv=None):
             print(f'shaders {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')
         return 0
     finally:
-        PRX, OPCODES = previous
+        PRX, OPCODES, OBSERVED = previous
 
 
 if __name__ == "__main__":
