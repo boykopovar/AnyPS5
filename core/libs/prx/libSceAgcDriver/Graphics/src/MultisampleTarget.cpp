@@ -509,6 +509,59 @@ public:
     VkRenderPass ResolvePass(VkFormat format) {
         auto& resolvePass = resolvePasses[format];
         if (resolvePass != VK_NULL_HANDLE) return resolvePass;
+        const bool isDepthStencil = format == VK_FORMAT_D16_UNORM || format == VK_FORMAT_D32_SFLOAT ||
+                                   format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT ||
+                                   format == VK_FORMAT_D16_UNORM_S8_UINT || format == VK_FORMAT_S8_UINT;
+        if (isDepthStencil) {
+            std::array<VkAttachmentDescription2, 2> attachments2{};
+            attachments2[0].sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
+            attachments2[0].format = format;
+            attachments2[0].samples = static_cast<VkSampleCountFlagBits>(target.samples);
+            attachments2[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            attachments2[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            attachments2[0].initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+            attachments2[0].finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+            attachments2[1].sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
+            attachments2[1].format = format;
+            attachments2[1].samples = VK_SAMPLE_COUNT_1_BIT;
+            attachments2[1].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            attachments2[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            attachments2[1].initialLayout = VK_IMAGE_LAYOUT_GENERAL;
+            attachments2[1].finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            const bool hasStencil = format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D16_UNORM_S8_UINT || format == VK_FORMAT_S8_UINT;
+            VkAttachmentReference2 depthRef{VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2};
+            depthRef.attachment = 0;
+            depthRef.layout = VK_IMAGE_LAYOUT_GENERAL;
+            depthRef.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | (hasStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
+
+            VkAttachmentReference2 depthResolveRef{VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2};
+            depthResolveRef.attachment = 1;
+            depthResolveRef.layout = VK_IMAGE_LAYOUT_GENERAL;
+            depthResolveRef.aspectMask = depthRef.aspectMask;
+
+            VkSubpassDescriptionDepthStencilResolve dsResolve{VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE};
+            dsResolve.depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+            dsResolve.stencilResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+            dsResolve.pDepthStencilResolveAttachment = &depthResolveRef;
+
+            VkSubpassDescription2 subpass{VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2};
+            subpass.pNext = &dsResolve;
+            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.pDepthStencilAttachment = &depthRef;
+
+            VkRenderPassCreateInfo2 info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2};
+            info.attachmentCount = static_cast<std::uint32_t>(attachments2.size());
+            info.pAttachments = attachments2.data();
+            info.subpassCount = 1;
+            info.pSubpasses = &subpass;
+
+            const auto createRenderPass2 = context.Function<PFN_vkCreateRenderPass2>("vkCreateRenderPass2");
+            if (createRenderPass2 != nullptr) {
+                Check(createRenderPass2(context.device, &info, nullptr, &resolvePass), "vkCreateRenderPass2 resolve");
+                return resolvePass;
+            }
+        }
         std::array<VkAttachmentDescription, 2> attachments{};
         attachments[0].format = format;
         attachments[0].samples = static_cast<VkSampleCountFlagBits>(target.samples);
