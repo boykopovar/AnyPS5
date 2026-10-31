@@ -17,6 +17,8 @@ import progress
 SERIES = (("libraries", "System library functions", "#2f81f7"), ("shaders", "GPU shader instructions", "#2ea043"))
 WIDTH, LEFT, RIGHT, TITLE, PANEL, GAP, AXIS = 900, 56, 190, 34, 150, 16, 32
 MAX_DOTS = 45
+COUNT_KEYS = ("done", "total", "percent")
+SPLIT_KEYS = ("unobserved", "declared_total")
 BACKGROUND, GRID, TEXT, MUTED = "#0d1117", "#30363d", "#c9d1d9", "#8b949e"
 
 
@@ -66,8 +68,8 @@ def measure(sha):
             return None
         finally:
             progress.PRX, progress.OPCODES, progress.OBSERVED, progress.INVENTORY = saved
-    return {name: {key: data[key] for key in ("done", "total", "percent")}
-            for name, data in (("libraries", libraries), ("shaders", shaders))}
+    return {"libraries": {key: libraries[key] for key in COUNT_KEYS + SPLIT_KEYS},
+            "shaders": {key: shaders[key] for key in COUNT_KEYS}}
 
 
 def cache_signature():
@@ -101,8 +103,11 @@ def load_cache(path, signature):
         if not isinstance(counts, dict) or counts.keys() != {"libraries", "shaders"}:
             raise ValueError(f"{path}: invalid cached counts for {sha}")
         for metric in counts.values():
-            if not isinstance(metric, dict) or metric.keys() != {"done", "total", "percent"}:
+            if not isinstance(metric, dict) or metric.keys() not in ({*COUNT_KEYS}, {*COUNT_KEYS, *SPLIT_KEYS}):
                 raise ValueError(f"{path}: invalid cached metric for {sha}")
+            if SPLIT_KEYS[0] in metric and (type(metric["unobserved"]) is not int or metric["unobserved"] < 0 or
+                                            metric["declared_total"] != metric["total"] + metric["unobserved"]):
+                raise ValueError(f"{path}: inconsistent cached split for {sha}")
             done, total, percent = (metric[key] for key in ("done", "total", "percent"))
             if type(done) is not int or type(total) is not int or not 0 <= done <= total or type(percent) not in (int, float) or percent != (round(100 * done / total, 2) if total else 0):
                 raise ValueError(f"{path}: inconsistent cached metric for {sha}")

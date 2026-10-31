@@ -184,6 +184,37 @@ class ProgressHistoryTests(unittest.TestCase):
                 self.assertEqual(progress_history.measured_paths("HEAD~1")[-1], "core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp")
         self.assertEqual([(p["libraries"]["done"], p["libraries"]["total"]) for p in points], [(0, 1), (0, 0)])
 
+    def test_points_keep_the_observed_and_unobserved_split(self):
+        stub = "static void Stub() { NotImplemented_nid_no_patch(__func__); }\n"
+        body = "int APS5_VABI Pending() { Stub(); return 0; }\n" + stub
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "first", body)
+            observed = root / "docs/dev/observed"
+            observed.mkdir(parents=True)
+            (observed / "libSceExample.txt").write_text("AbCdEfGhIjK\n", encoding="utf-8")
+            commit(root, "2026-01-02", "second", body)
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES, OBSERVED=observed):
+                points = progress_history.collect("HEAD")
+        self.assertEqual([(p["libraries"]["unobserved"], p["libraries"]["declared_total"]) for p in points], [(0, 1), (1, 1)])
+        self.assertEqual(sorted(points[0]["shaders"]), ["done", "percent", "total"])
+        self.assertEqual(len(points[1]["commit"]), 40)
+
+    def test_cache_accepts_old_records_and_checks_the_split(self):
+        old = {"libraries": {"done": 1, "total": 2, "percent": 50.0}, "shaders": {"done": 1, "total": 1, "percent": 100.0}}
+        new = {"libraries": {"done": 1, "total": 2, "percent": 50.0, "unobserved": 3, "declared_total": 5}, "shaders": old["shaders"]}
+        broken = {"libraries": {**new["libraries"], "declared_total": 4}, "shaders": old["shaders"]}
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "history.json"
+            for record, valid in ((old, True), (new, True), (broken, False)):
+                cache.write_text(json.dumps({"schema_version": 1, "rules": "r", "commits": {"a" * 40: record}}), encoding="utf-8")
+                if valid:
+                    self.assertEqual(progress_history.load_cache(cache, "r"), {"a" * 40: record})
+                else:
+                    with self.assertRaisesRegex(ValueError, "inconsistent cached split"):
+                        progress_history.load_cache(cache, "r")
+
     def test_one_point_per_day_at_the_last_commit(self):
         stub = "static void Stub() { NotImplemented_nid_no_patch(__func__); }\n"
         with tempfile.TemporaryDirectory() as directory:
