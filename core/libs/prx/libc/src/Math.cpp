@@ -367,6 +367,28 @@ float GuestBesselSecondKindZero() {
     return -std::numeric_limits<float>::infinity();
 }
 
+float ScaledSine(float x, float y) {
+    const float magnitude = std::fabs(x);
+    float result;
+    if (magnitude < 0x1p-12f) {
+        result = y == 1.0f ? magnitude : magnitude * y;
+    } else if (magnitude < 0x1.193ea8p-1f) {
+        const float z = magnitude * magnitude;
+        const float denominator = (z * 0x1.e256c4p-10f + -0x1.f401b8p-5f) * z + 1.0f;
+        result = (magnitude + magnitude * z * 0x1.b0a9d8p-4f) / denominator * y;
+    } else if (magnitude < 4.0f) {
+        const float rising = expm1f_nid_postfix(magnitude);
+        result = (expm1f_nid_postfix(-magnitude) * (rising * 0.5f) + rising) * y;
+    } else if (magnitude < 7.7f) {
+        const float rising = expm1f_nid_postfix(magnitude);
+        result = (expm1f_nid_postfix(-magnitude) * 0.5f + 1.0f) * rising * y;
+    } else {
+        result = magnitude;
+        _FExp_nid_postfix(&result, y, -1);
+    }
+    return x < 0.0f ? -result : result;
+}
+
 float ScaledHyperbolic(float x, float y, bool sine) {
     const auto xBits = std::bit_cast<std::uint32_t>(x);
     const auto xMagnitude = xBits & 0x7fffffffu;
@@ -381,11 +403,12 @@ float ScaledHyperbolic(float x, float y, bool sine) {
     }
     if (xMagnitude == infinity) return sine ? x * y : std::copysign(std::numeric_limits<float>::infinity(), y);
     if (xMagnitude == 0 || yMagnitude == 0 || yMagnitude == infinity) return sine ? x * y : y;
+    if (sine) return ScaledSine(x, y);
     constexpr double limit = 2.0 * std::numeric_limits<float>::max_exponent;
     const float magnitude = std::bit_cast<float>(xMagnitude);
     const double argument = magnitude < limit ? static_cast<double>(magnitude) : limit;
-    const double value = static_cast<double>(y) * (sine ? std::sinh(argument) : std::cosh(argument));
-    const bool exponential = magnitude >= (sine ? 7.7f : 8.675f);
+    const double value = static_cast<double>(y) * std::cosh(argument);
+    const bool exponential = magnitude >= 8.675f;
     float result;
     if (exponential && std::fabs(value) >= 0x1p128) {
         result = std::copysign(std::numeric_limits<float>::infinity(), y);
@@ -396,7 +419,7 @@ float ScaledHyperbolic(float x, float y, bool sine) {
         errno = ERANGE;
         std::feraiseexcept(FE_OVERFLOW | FE_INEXACT);
     }
-    return sine && (xBits & 0x80000000u) != 0 ? -result : result;
+    return result;
 }
 
 }
@@ -937,7 +960,84 @@ double APS5_VABI expm1_nid_postfix(double x) {
     }
     return result;
 }
-float APS5_VABI expm1f_nid_postfix(float x) { return std::expm1(x); }
+static float Expm1f(float x) {
+    const float one = 1.0f, tiny = 1.0e-30f, o_threshold = static_cast<float>(8.8721679688e+01);
+    const float ln2_hi = static_cast<float>(6.9313812256e-01), ln2_lo = static_cast<float>(9.0580006145e-06), invln2 = static_cast<float>(1.4426950216e+00);
+    const float Q1 = static_cast<float>(-3.3333212137e-2), Q2 = static_cast<float>(1.5807170421e-3);
+    static volatile float huge = 1.0e+30f;
+    float y, hi, lo, c = 0.0f, t, e, hxs, hfx, r1, twopk;
+    std::int32_t k;
+    std::uint32_t hx = std::bit_cast<std::uint32_t>(x);
+    const std::uint32_t xsb = hx & 0x80000000u;
+    hx &= 0x7fffffff;
+    if (hx >= 0x4195b844) {
+        if (hx >= 0x42b17218) {
+            if (hx > 0x7f800000) return x + x;
+            if (hx == 0x7f800000) return xsb == 0 ? x : -1.0f;
+            if (x > o_threshold) return huge * huge;
+        }
+        if (xsb != 0) {
+            if (x + tiny < 0.0f) return tiny - one;
+        }
+    }
+    if (hx > 0x3eb17218) {
+        if (hx < 0x3F851592) {
+            if (xsb == 0) { hi = x - ln2_hi; lo = ln2_lo; k = 1; }
+            else { hi = x + ln2_hi; lo = -ln2_lo; k = -1; }
+        } else {
+            k = static_cast<std::int32_t>(invln2 * x + (xsb == 0 ? 0.5f : -0.5f));
+            t = static_cast<float>(k);
+            hi = x - t * ln2_hi;
+            lo = t * ln2_lo;
+        }
+        volatile float rounded = hi - lo;
+        x = rounded;
+        c = (hi - x) - lo;
+    } else if (hx < 0x33000000) {
+        t = huge + x;
+        return x - (t - (huge + x));
+    } else k = 0;
+    hfx = 0.5f * x;
+    hxs = x * hfx;
+    r1 = one + hxs * (Q1 + hxs * Q2);
+    t = 3.0f - r1 * hfx;
+    e = hxs * ((r1 - t) / (6.0f - x * t));
+    if (k == 0) return x - (x * e - hxs);
+    twopk = std::bit_cast<float>(static_cast<std::uint32_t>(0x7f + k) << 23);
+    e = (x * (e - c) - c);
+    e -= hxs;
+    if (k == -1) return 0.5f * (x - e) - 0.5f;
+    if (k == 1) {
+        if (x < -0.25f) return -2.0f * (e - (x + 0.5f));
+        return one + 2.0f * (x - e);
+    }
+    if (k <= -2 || k > 56) {
+        y = one - (e - x);
+        if (k == 128) y = y * 2.0f * 0x1p127f;
+        else y = y * twopk;
+        return y - one;
+    }
+    t = one;
+    if (k < 23) {
+        t = std::bit_cast<float>(static_cast<std::uint32_t>(0x3f800000 - (0x1000000 >> k)));
+        y = t - (e - x);
+        y = y * twopk;
+    } else {
+        t = std::bit_cast<float>(static_cast<std::uint32_t>((0x7f - k) << 23));
+        y = x - (e + t);
+        y += one;
+        y = y * twopk;
+    }
+    return y;
+}
+
+float APS5_VABI expm1f_nid_postfix(float x) {
+    const float result = Expm1f(x);
+    if (std::isinf(result) && std::isfinite(x)) {
+        errno = ERANGE;
+    }
+    return result;
+}
 float APS5_VABI erff_nid_postfix(float x) { return std::erf(x); }
 double APS5_VABI erf_nid_postfix(double x) { return std::erf(x); }
 double APS5_VABI erfc_nid_postfix(double x) { return std::erfc(x); }
@@ -1955,7 +2055,32 @@ double APS5_VABI tanh_nid_postfix(double x) {
     }
     return jx >= 0 ? z : -z;
 }
-float APS5_VABI tanhf_nid_postfix(float x) { return std::tanh(x); }
+
+
+float APS5_VABI tanhf_nid_postfix(float x) {
+    const float one = 1.0f, two = 2.0f;
+    static volatile float tiny = 1.0e-30f;
+    float t, z;
+    const std::int32_t jx = std::bit_cast<std::int32_t>(x);
+    const std::int32_t ix = jx & 0x7fffffff;
+    if (ix >= 0x7f800000) {
+        if (jx >= 0) return one / x + one;
+        return one / x - one;
+    }
+    if (ix < 0x41100000) {
+        if (ix < 0x39800000) return x;
+        if (ix >= 0x3f800000) {
+            t = Expm1f(two * std::fabs(x));
+            z = one - two / (t + two);
+        } else {
+            t = Expm1f(-two * std::fabs(x));
+            z = -t / (t + two);
+        }
+    } else {
+        z = one - tiny;
+    }
+    return jx >= 0 ? z : -z;
+}
 long double APS5_VABI atanl_nid_postfix(long double x) { return std::atan(x); }
 long double APS5_VABI sinl_nid_postfix(long double x) { return std::sin(x); }
 long double APS5_VABI cosl_nid_postfix(long double x) { return std::cos(x); }
