@@ -582,6 +582,8 @@ Each GPU queue keeps its last 16 command buffer submissions: when each was submi
 
 With `APS5_STALL_WATCHDOG_SECS=<n>`, a queue that has waited `n` seconds without progress in a `WAIT_REG_MEM`, a `REWIND` or behind queue 0 prints the rings once for that wait, and the title keeps running. A `WAIT_REG_MEM` progresses while any other packet runs or completes, as for `APS5_GPU_WAIT_TIMEOUT_MS`. `n` is from 0 to 86400 and 0, the default, disables the watchdog; any other value stops the title at its first submission, as for `APS5_PM4_RING`. While the rings are printed for a queue held behind queue 0, new submissions and the other queues wait.
 
+With `ANYPS5_STALL_PROMPT=1` as well, the first time a watched wait expires the host shows a message box: `Wait` keeps the title running, and `Quit` ends it with exit code 124 after the rings are printed. After `Wait`, the box comes back one period later, at most three times for the same wait; the rings are printed once per wait in any case. Only one box is open at a time, and a wait that finds it open is asked after that box is answered. If no message box can be shown, the rings are printed and the title keeps running. Unset or `0`, the default, shows no box; any other value than `0` or `1` stops the title at its first submission. Without the prompt the watchdog never ends a title: it prints the rings once for each wait and the title keeps running.
+
 ## Exit codes
 
 `0`: conversion succeeded, or help or the version was displayed. `1`: invalid arguments, or a `--verify-patches` entry that is a mismatch. `2`: conversion failed; the error is printed to stderr. With `--autorun`, successful conversion returns the launched application's exit code.
