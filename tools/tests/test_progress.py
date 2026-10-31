@@ -381,6 +381,14 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("| libScePad | `Unseen` |", text)
         self.assertNotIn("`Imported`", text.split("implemented but not observed")[1].split("</details>")[0])
 
+    def test_report_table_shows_unobserved_stubs_beside_the_headline(self):
+        before = self.report_snapshot(self.report_library("libScePad", ["A"], ["T"]))
+        after = self.report_snapshot(dict(self.report_library("libScePad", ["A"], ["T"]), unobserved=2, unobserved_names=["U", "V"]),
+                                     dict(self.report_library("libSceNew", [], []), unobserved=3, unobserved_names=["W", "X", "Y"]))
+        table = "\n".join(progress.library_report(before["libraries"], after["libraries"]))
+        self.assertIn("| libScePad | 1/2 (50.00%) | 1/2 (50.00%), +2 unobserved | +0.00% |", table)
+        self.assertIn("| libSceNew | Not present | 0/0 observed, +3 unobserved | n/a |", table)
+
     def test_report_marks_new_removed_and_empty_libraries_without_percentages(self):
         base = self.report_snapshot(self.report_library("libSceRemoved", ["Ready"]),
                                     self.report_library("libSceEmptied", ["Old"]))

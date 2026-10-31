@@ -512,11 +512,15 @@ def library_progress(group):
         return f'Shared sources: `{group["shared_sources"]}`', None
     if "done" not in group or "todo" not in group:
         return "Counts unavailable", None
+    unobserved = group.get("unobserved", 0)
     total = group["done"] + group["todo"]
-    if not total:
+    if not total and not unobserved:
         return "No exports", None
+    suffix = f", +{unobserved} unobserved" if unobserved else ""
+    if not total:
+        return f"0/0 observed{suffix}", None
     percent = 100 * group["done"] / total
-    return f'{group["done"]}/{total} ({percent:.2f}%)', percent
+    return f'{group["done"]}/{total} ({percent:.2f}%){suffix}', percent
 
 
 def percent_change(old_percent, new_percent):
@@ -527,7 +531,7 @@ def percent_change(old_percent, new_percent):
 
 def library_report(base, head):
     before, after = ({group["name"]: group for group in data["groups"]} for data in (base, head))
-    fields = ("done", "todo", "done_names", "todo_names", "shared_sources")
+    fields = ("done", "todo", "unobserved", "done_names", "todo_names", "unobserved_names", "shared_sources")
     rows = []
     for name in sorted(before.keys() | after.keys(), key=str.casefold):
         old, new = before.get(name), after.get(name)
