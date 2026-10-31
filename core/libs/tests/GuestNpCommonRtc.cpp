@@ -29,6 +29,16 @@ int main() {
     CHECK(sceNpRtcFormatRFC3339(text, sizeof(text) - 1, &epoch, 0) == bufferTooSmall && text[0] == 'x');
     CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, 0) == 0 && std::strcmp(text, "1970-01-01T00:00:00.00Z") == 0);
     CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &epoch, 90) == 0 && std::strcmp(text, "1970-01-01T01:30:00.00+01:30") == 0);
+
+    RtcTick parsed{1};
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-01T00:00:00.00Z") == 0 && parsed.tick == unixEpochTick);
+    parsed.tick = 1;
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-01T01:30:00.00+01:30") == 0 && parsed.tick == unixEpochTick);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "1970-01-02T00:00:01.50Z") == 0 && parsed.tick == dayLater.tick);
+    CHECK(sceNpRtcFormatRFC3339(text, sizeof(text), &dayLater, -300) == 0);
+    parsed.tick = 1;
+    CHECK(sceNpRtcParseRFC3339(&parsed, text) == 0 && parsed.tick == dayLater.tick);
+    CHECK(sceNpRtcParseRFC3339(&parsed, "not a date") < 0);
     std::puts("NP common RTC tests passed");
     return 0;
 }
