@@ -1672,8 +1672,9 @@ void ShaderResources::KeepStorageImageBytes(Recorder& recorder) const {
     }
 }
 
-ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots) : context(context), guestMemory(context) {
+ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots, std::optional<std::uint32_t> maxVertex) : context(context), guestMemory(context) {
     drawBuild = true;
+    drawMaxVertex = maxVertex;
     prepareAddressBindings(shaders, snapshots);
     build(shaders, &target, colorAttachments, indexAddress, indexBytes);
 }
@@ -2145,7 +2146,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         const bool atomic = element < binding.bufferAtomic.size() && binding.bufferAtomic[element];
                         const bool read = element < binding.bufferRead.size() && binding.bufferRead[element];
                         const std::uint32_t extent = element < binding.bufferExtent.size() ? binding.bufferExtent[element] : 0u;
-                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic, read, extent);
+                        const auto index = addGuestBuffer(std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 4, 4), target, indexAddress, indexBytes, written, atomic, read, extent, VertexBoundBytes(binding, element, drawMaxVertex));
                         const bool classified = element < binding.bufferWritten.size() && element < binding.bufferRead.size() && element < binding.bufferAtomic.size();
                         allocations[index].writeOnly = classified && allocations[index].guest && allocations[index].written && binding.bufferWritten[element] && !read && !atomic;
                         const auto& push = shader.program->pushConstants;
@@ -4504,10 +4505,10 @@ DescriptorCache::Stats DescriptorCache::Counters() const {
     return stats;
 }
 
-std::uint64_t ShaderResources::guestBufferBytes(std::span<const std::uint32_t> words) const {
+std::uint64_t ShaderResources::guestBufferBytes(std::span<const std::uint32_t> words, std::uint64_t bound) const {
     const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1] & ~0x40000000u, words[2], words[3]}};
     const auto address = descriptor.Base48();
-    auto byteSize = descriptor.GetSize();
+    auto byteSize = std::min(descriptor.GetSize(), bound);
     if (byteSize > context.limits.maxStorageBufferRange) {
         const auto mappedEnd = RegisteredReadableEnd(address);
         if (mappedEnd <= address) byteSize = 0;
@@ -4531,12 +4532,12 @@ std::uint64_t ShaderResources::BytesUpToTarget(std::uint64_t address, std::uint6
     return target->address - address;
 }
 
-std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, std::uint32_t extent) {
+std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, std::uint32_t extent, std::uint64_t bound) {
     Require(words.size() == 4, "buffer descriptor must contain four DWORDs");
     const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1] & ~0x40000000u, words[2], words[3]}};
     Require(descriptor.Type() == 0u, "buffer descriptor uses an unsupported type");
     const auto address = descriptor.Base48();
-    const auto byteSize = guestBufferBytes(words);
+    const auto byteSize = guestBufferBytes(words, bound);
     if (byteSize == 0 || address == 0) {
         allocations.push_back({0, EmptyBufferBytes, false, nullptr, ShaderRecompiler::DescriptorRole::GuestBuffers, false});
         return allocations.size() - 1;
@@ -5656,7 +5657,7 @@ ShaderResources::DrawBindings::~DrawBindings() {
     release(fragmentLayout, fragmentAllocation);
 }
 
-std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target) const {
+std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, std::optional<std::uint32_t> maxVertex) const {
     std::vector<MovedBuffer> moved;
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return moved;
     for (const auto& shader : shaders) {
@@ -5684,7 +5685,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
                 const auto address = descriptor.Base48();
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
-                const auto size = BytesUpToTarget(address, descriptor.GetSize(), descriptor.Stride(), written ? nullptr : target);
+                const auto size = BytesUpToTarget(address, VertexBoundBytes(binding, element, maxVertex), descriptor.Stride(), written ? nullptr : target);
                 const auto index = kept->allocations[element];
                 const auto& item = allocations[index];
                 const bool empty = size == 0 || address == 0;
@@ -5762,6 +5763,40 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
         }
     }
     return moved;
+}
+
+bool ShaderResources::BindsVertexRange(std::span<const CompiledShader> shaders, const ColorTarget* target, std::optional<std::uint32_t> maxVertex) const {
+    for (const auto& shader : shaders) {
+        if (shader.program == nullptr) return false;
+        for (const auto& binding : shader.program->bindings) {
+            if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers || binding.guestDescriptor.size() != static_cast<std::size_t>(binding.count) * 4u) continue;
+            const auto kept = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& item) { return item.layout.binding == binding.binding; });
+            for (std::uint32_t element = 0; element < binding.count && element < binding.bufferVertexExtent.size(); ++element) {
+                if (binding.bufferVertexExtent[element] == 0u) continue;
+                if (kept == bindings.end() || kept->allocations.size() != binding.count) return false;
+                const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
+                const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
+                const auto& item = allocations[kept->allocations[element]];
+                if (!item.guest) continue;
+                const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
+                const auto bytes = guestBufferBytes(std::span<const std::uint32_t>(words, 4), VertexBoundBytes(binding, element, maxVertex));
+                if (item.address != descriptor.Base48() || item.size != BytesUpToTarget(descriptor.Base48(), bytes, descriptor.Stride(), written ? nullptr : target)) return false;
+            }
+        }
+    }
+    return true;
+}
+
+std::uint64_t ShaderResources::VertexBoundBytes(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element, std::optional<std::uint32_t> maxVertex) {
+    Require(binding.guestDescriptor.size() >= (static_cast<std::size_t>(element) + 1u) * 4u, "buffer descriptor must contain four DWORDs");
+    const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
+    const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
+    const auto bytes = descriptor.GetSize();
+    const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
+    const auto extent = element < binding.bufferVertexExtent.size() ? binding.bufferVertexExtent[element] : 0u;
+    if (!maxVertex.has_value() || written || extent == 0u || descriptor.SwizzleEnabled() || descriptor.AddTid()) return bytes;
+    const auto reach = (static_cast<std::uint64_t>(*maxVertex) * descriptor.Stride() + extent + 15u) & ~std::uint64_t{15};
+    return std::min(bytes, reach);
 }
 
 std::size_t ShaderResources::MaxDrawSnapshotBytes() {

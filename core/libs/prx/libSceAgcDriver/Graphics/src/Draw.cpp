@@ -1165,7 +1165,7 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
 // addGuestBuffer), repeated for a cached build whose own checks compared the buffers against
 // another draw's render target and index buffer. The same conditions and messages, so a draw that
 // would have failed its build fails its hit.
-void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint64_t indexAddress, std::uint64_t indexBytes) {
+void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint64_t indexAddress, std::uint64_t indexBytes, std::optional<std::uint32_t> maxVertex) {
     const auto overlap = [](std::uint64_t first, std::uint64_t firstSize, std::uint64_t second, std::uint64_t secondSize) { return first < second + secondSize && second < first + firstSize; };
     for (const auto& shader : shaders) {
         for (const auto& binding : shader.program->bindings) {
@@ -1174,9 +1174,9 @@ void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarg
             for (std::size_t offset = 0; offset + 4 <= words.size(); offset += 4) {
                 const ShaderRecompiler::ShaderBufferResource descriptor{{words[offset], words[offset + 1], words[offset + 2], words[offset + 3]}};
                 const auto address = descriptor.Base48();
-                auto size = descriptor.GetSize();
-                if (size == 0 || address == 0) continue;
                 const auto element = offset / 4;
+                auto size = ShaderResources::VertexBoundBytes(binding, static_cast<std::uint32_t>(element), maxVertex);
+                if (size == 0 || address == 0) continue;
                 const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
                 if (!written) size = ShaderResources::BytesUpToTarget(address, size, descriptor.Stride(), &target);
                 Require(!overlap(address, size, target.address, target.bytes), "shader buffer aliases the render target");
@@ -1284,7 +1284,7 @@ bool DrawRecipes() {
 }
 
 const char* DrawRecipeMissName(DrawRecipeMiss miss) {
-    constexpr std::array<const char*, static_cast<std::size_t>(DrawRecipeMiss::Count)> names{"none", "not recordable", "target gone", "template gone", "objects gone", "proof"};
+    constexpr std::array<const char*, static_cast<std::size_t>(DrawRecipeMiss::Count)> names{"none", "not recordable", "target gone", "template gone", "objects gone", "proof", "vertex range"};
     return names[static_cast<std::size_t>(miss)];
 }
 
@@ -1441,6 +1441,11 @@ struct DrawInputs {
 
 bool StripPatches(const State& state, std::span<const CompiledShader> shaders) {
     return state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && BarycentricPatches(state, shaders);
+}
+
+std::optional<std::uint32_t> drawVertexBound(const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs) {
+    if (draw.indirect || state.stages.path != ShaderPath::Vertex || state.stages.mesh || state.stages.tessellation) return std::nullopt;
+    return inputs.maxIndex;
 }
 
 std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t bytes) {
@@ -1850,7 +1855,7 @@ struct ResolvedResources {
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
-ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
+ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, std::optional<std::uint32_t> maxVertex, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
     // A recordable draw whose stages' compiled content repeats an earlier one binds that build's
@@ -1871,9 +1876,9 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             const bool valid = cached->Revalidate(shaders);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
+            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, maxVertex);
             if (moved.has_value()) {
-                if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
+                if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes, maxVertex);
                 resolved.resources = std::move(cached);
                 resolved.moved = std::move(*moved);
                 outcome.kind = KindTemplateHit;
@@ -1890,7 +1895,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     }
     timer.phase(PhaseLookup);
     if (resolved.resources == nullptr) {
-        resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
+        resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots, maxVertex);
         resolved.built = &resolved.resources->Timing();
         outcome.addressBased = resolved.resources->HoldsLease();
         outcome.kind = outcome.addressBased ? KindBda : KindBuild;
@@ -3054,8 +3059,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     const bool recordDraws = RecordDraws();
     auto* recorder = prepared.recorder = Recorder::Active();
     bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
+    const auto maxVertex = drawVertexBound(state, draw, inputs);
     auto& resolved = prepared.resolved;
-    resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
+    resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, maxVertex, recordable, outcome, timer);
     auto& resources = resolved.resources;
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
     if (!stencilReferences.empty()) {
@@ -3210,7 +3216,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         Require(std::ranges::any_of(images, [&](const std::pair<VkImage, bool>& image) { return image.first == binding.resident->Image() && image.second; }), "the partial write of a packed color target does not store into the target's resident image");
     }
     if (!lean && !resolved.moved.empty()) {
-        resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
+        resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots, maxVertex);
         resolved.moved.clear();
     }
     if (state.depth) RequireNoNativeDepthFeedback_nid_no_patch(context, *state.depth, resources->SampledTextures());
@@ -3817,7 +3823,12 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
         timer.phase(PhaseLookup);
         return miss(DrawRecipeMiss::Proof);
     }
-    CheckBufferAliases(shaders, state.color, draw.indexAddress, inputs.indexBytes);
+    const auto maxVertex = drawVertexBound(state, draw, inputs);
+    if (!resources->BindsVertexRange(shaders, &state.color, maxVertex)) {
+        timer.phase(PhaseLookup);
+        return miss(DrawRecipeMiss::VertexRange);
+    }
+    CheckBufferAliases(shaders, state.color, draw.indexAddress, inputs.indexBytes, maxVertex);
     SharedResourceCache().Touch(recipe.key);
     countCache(&DrawProfile::cacheHits);
     timer.phase(PhaseLookup);

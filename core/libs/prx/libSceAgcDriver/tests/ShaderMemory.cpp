@@ -1706,6 +1706,52 @@ void verifyTypeZeroImageMaterialization() {
     gateSecondWaitOnSrtRoot = false;
 }
 
+void verifyVertexIndexExtents() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00180000u, 0x00100000u, 0x00027facu};
+    constexpr std::uint32_t FormatLoad = 0xe00c2000u;
+    constexpr std::uint32_t PairLoad = 0xe0342008u;
+    constexpr std::uint32_t Export = 0xf80008cfu;
+    constexpr std::uint32_t ExportQuad = 0x04030201u;
+    constexpr std::uint32_t ExportPair = 0x02010201u;
+    constexpr std::uint32_t End = 0xbf810000u;
+    constexpr std::uint32_t VertexIndex = 5u;
+    constexpr std::uint32_t Wait = 0xbf8c3f70u;
+    constexpr std::uint32_t AddOne = 0x4a0c0a81u;
+    const auto data = [](std::uint32_t soffset, std::uint32_t address) { return (soffset << 24u) | 0x100u | address; };
+    struct Case {
+        const char* name;
+        std::vector<std::uint32_t> code;
+        std::uint32_t extent;
+    };
+    const std::array<Case, 4> cases{{
+        {"buffer_load_format_xyzw indexed by the vertex index", {FormatLoad, data(0x80u, VertexIndex), Wait, Export, ExportQuad, End}, 16u},
+        {"buffer_load_dwordx2 indexed by the vertex index at offset 8 and SOFFSET 4", {PairLoad, data(0x84u, VertexIndex), Wait, Export, ExportPair, End}, 20u},
+        {"buffer_load_format_xyzw indexed by the vertex index plus one", {AddOne, FormatLoad, data(0x80u, 6u), Wait, Export, ExportQuad, End}, 0u},
+        {"a vertex-indexed load and a load indexed by the vertex index plus one", {AddOne, FormatLoad, data(0x80u, VertexIndex), PairLoad, data(0x80u, 6u), Wait, Export, ExportQuad, End}, 0u},
+    }};
+    for (const auto& item : cases) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Vertex, 0x10000u, item.code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.vertex = ShaderVertexStageInfo{};
+        request.target = BufferTarget();
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 64u;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        const auto prefix = std::string("vertex index extents: ") + item.name;
+        const auto result = Recompile(request);
+        const auto guest = std::ranges::find_if(result.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::GuestBuffers; });
+        require(guest != result.bindings.end() && guest->count == 1u && guest->bufferVertexExtent.size() == 1u, (prefix + ": the program does not bind its V# with a vertex extent").c_str());
+        require(guest->bufferVertexExtent[0] == item.extent, (prefix + ": vertex extent " + std::to_string(guest->bufferVertexExtent[0]) + ", expected " + std::to_string(item.extent)).c_str());
+    }
+}
+
 void verifyOutOfRangeConstantReads() {
     std::vector<std::uint32_t> code{0xf40c0200u, 0xfa000000u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf4000400u, 0xfa000050u, 0xf4080a00u, 0xfa000080u, 0xbf8cc07fu, 0xf42c0814u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850008u};
     for (std::uint32_t dword = 0; dword < 8u; dword++) {
@@ -9595,6 +9641,11 @@ int main(int argc, char** argv) {
             std::cout << "Quad masks preserve neighbour-lane helpers or refuse without demote\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--vertex-index-extents") {
+            verifyVertexIndexExtents();
+            std::cout << "Loads indexed by the vertex index report how far past index * stride they read\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--frontend-pair") {
             verifyFrontendPair();
             std::cout << "Prepared frontend reuse preserves full and partial-thread programs\n";
@@ -9704,6 +9755,7 @@ int main(int argc, char** argv) {
         verifySignedSrtComparison();
         verifyTypeZeroImageMaterialization();
         verifyOutOfRangeConstantReads();
+        verifyVertexIndexExtents();
         verifySignedMinimum();
         verifyMayEvaluate();
         verifyPureFlatSlots();
