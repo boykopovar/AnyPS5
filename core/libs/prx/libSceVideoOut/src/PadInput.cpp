@@ -32,9 +32,11 @@ PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
 
 static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status panel lists one line per controller slot");
 
-PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)), statusProvider{[this] { return statusSnapshot(); }} {
+PadInput::PadInput(Pad::InputConfiguration configuration) : keyboardMouse(std::move(configuration)), statusProvider{[this] { return statusSnapshot(); }}, port0Mode(Port0Presence::ConfiguredMode()), port0(port0Mode, false) {
     static_cast<void>(Pad::RumblePercent());
     openAvailableControllers();
+    port0 = Port0Presence::Presence(port0Mode, slots[0].controller != nullptr);
+    if (port0Mode == Port0Presence::Mode::Controller) applyPort0(port0.Connected());
 }
 
 PadInput::~PadInput() {
@@ -94,8 +96,10 @@ void PadInput::openController(int deviceIndex) {
         SDL_GameControllerHasSensor(gc, SDL_SENSOR_ACCEL) == SDL_TRUE, SDL_GameControllerHasSensor(gc, SDL_SENSOR_GYRO) == SDL_TRUE,
         SDL_GameControllerGetNumTouchpads(gc), SDL_GameControllerHasLED(gc) == SDL_TRUE, SDL_GameControllerHasRumbleTriggers(gc) == SDL_TRUE);
     enableSensors(slot);
-    PadSetPortConnected_nid_postfix(slot, true);
-    UserServiceSetUserConnected_nid_postfix(slot, true);
+    if (slot > 0) {
+        PadSetPortConnected_nid_postfix(slot, true);
+        UserServiceSetUserConnected_nid_postfix(slot, true);
+    }
 }
 
 void PadInput::enableSensors(int slot) {
@@ -140,6 +144,15 @@ AgcDriver::PadStatusSnapshot PadInput::statusSnapshot() const {
 
 void PadInput::reportStatus() {
     AgcDriverPadStatusPoll_nid_postfix(&statusProvider);
+}
+
+void PadInput::applyPort0(bool connected) {
+    PadSetPortConnected_nid_postfix(0, connected);
+    UserServiceSetUserConnected_nid_postfix(0, connected);
+}
+
+void PadInput::updatePort0() {
+    if (const auto change = port0.Observe(slots[0].controller != nullptr, std::chrono::steady_clock::now())) applyPort0(*change);
 }
 
 void PadInput::applyOutput() {
@@ -357,6 +370,7 @@ void PadInput::Update(const DisplayWindow& window) {
         }
     }
     if (anyController) SDL_GameControllerUpdate();
+    updatePort0();
     reportStatus();
     applyOutput();
     for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
@@ -413,7 +427,8 @@ PadInputState PadInput::handOff(int slot, PadInputState state) {
 void PadInput::publish(std::uint64_t frame, int slot) {
     if (slot < 0 || slot >= PAD_MAX_CONTROLLERS) return;
     if (slot == 0) {
-        const auto state = handOff(0, keyboardMouse.Compose(slots[0].state));
+        const auto composed = port0.Connected() ? keyboardMouse.Compose(slots[0].state) : PadInputState{};
+        const auto state = handOff(0, composed);
         PadPublishInput_nid_postfix(state);
         if (auto* telemetry = VideoOutTelemetry::Instance(); telemetry != nullptr) VideoOutTelemetry::EmitPadIfChanged(*telemetry, telemetryFilter, frame, state);
     } else {
