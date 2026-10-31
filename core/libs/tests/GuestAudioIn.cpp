@@ -37,6 +37,7 @@ namespace {
 constexpr int user = 0x10000000;
 
 void TestOpenEx() {
+    Require(sceAudioInChangeAppModuleState() == 0);
     constexpr int invalidSize = static_cast<int>(0x80260102);
     constexpr int invalidFreq = static_cast<int>(0x80260103);
     constexpr int invalidType = static_cast<int>(0x80260104);
