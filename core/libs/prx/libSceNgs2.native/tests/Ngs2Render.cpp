@@ -654,6 +654,7 @@ static void TestPeakMeter() {
     invalidSampler.rack_option.max_grain_samples = 256;
     invalidSampler.rack_option.max_voices = 1;
     invalidSampler.max_channel_works = 1;
+    invalidSampler.max_waveform_blocks = 4;
     uintptr_t rejectedSampler = 0;
     Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SAMPLER, &invalidSampler.rack_option, &buffer, &rejectedSampler) == SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS);
     invalidSampler.num_peak_meter_blocks = 8;
@@ -2227,6 +2228,35 @@ static void TestSilentRenderValidation() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestCustomSamplerRackWithoutWaveformBlocks() {
+    constexpr int invalid = static_cast<int>(0x804A8053u);
+    const auto system = CreateSystem();
+    Ngs2CustomSamplerRackOption custom{};
+    custom.custom_rack_option.rack_option.size = sizeof(custom);
+    custom.custom_rack_option.rack_option.max_grain_samples = 512;
+    custom.custom_rack_option.rack_option.max_voices = 1;
+    custom.custom_rack_option.rack_option.max_matrices = 1;
+    custom.custom_rack_option.rack_option.max_ports = 1;
+    custom.custom_rack_option.state_size = 48;
+    custom.custom_rack_option.num_buffers = 1;
+    custom.custom_rack_option.num_modules = 1;
+    custom.custom_rack_option.module[0].module_id = SCE_NGS2_CUSTOM_MODULE_ID_FILTER;
+    custom.max_channel_works = 1;
+    custom.max_waveform_blocks = 0;
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &custom.custom_rack_option.rack_option, &query) == invalid);
+    std::vector<std::uint64_t> storage(4096);
+    Ngs2ContextBufferInfo buffer{};
+    buffer.host_buffer = storage.data();
+    buffer.host_buffer_size = storage.size() * sizeof(std::uint64_t);
+    uintptr_t rack = 0;
+    Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &custom.custom_rack_option.rack_option, &buffer, &rack) == invalid && rack == 0);
+    const Ngs2BufferAllocator allocator{Allocate, Release, 9};
+    const auto allocated = allocations;
+    Require(sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &custom.custom_rack_option.rack_option, &allocator, &rack) == invalid && rack == 0 && allocations == allocated);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestAllocator() {
     const Ngs2BufferAllocator allocator{Allocate, Release, 9};
     uintptr_t system = 0;
@@ -2307,6 +2337,7 @@ int main() {
     TestRenderBigEndianThrows();
     TestSilentRenderValidation();
     TestAllocator();
+    TestCustomSamplerRackWithoutWaveformBlocks();
     exitSystem = CreateSystem();
     return 0;
 }
