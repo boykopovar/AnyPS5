@@ -11,11 +11,6 @@ int APS5_VABI _ZN3sce2np10CancelableC2Ev(void) {
     return 0;
 }
 
-int APS5_VABI sceNpUtilXmlEscape(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np4CondD0Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -227,11 +222,6 @@ int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void) {
 }
 
 int APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpUtilXmlUnescape(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

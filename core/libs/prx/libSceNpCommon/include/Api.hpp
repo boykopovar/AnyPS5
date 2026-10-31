@@ -303,7 +303,7 @@ int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const cha
 int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* dstLength);
 
 int APS5_VABI _ZN3sce2np10CancelableC2Ev(void);
-int APS5_VABI sceNpUtilXmlEscape(void);
+int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required);
 int APS5_VABI _ZN3sce2np4CondD0Ev(void);
 int APS5_VABI _sceNpAllocatorExRealloc(void);
 int APS5_VABI _ZN3sce2np8WorkItem6CancelEi(void);
@@ -347,7 +347,7 @@ int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTyp
 int APS5_VABI sceNpUtilParseJid(void);
 int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void);
 int APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(void);
-int APS5_VABI sceNpUtilXmlUnescape(void);
+int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required);
 int APS5_VABI sceNpXmlParse(void);
 int APS5_VABI _ZN3sce2np9WorkQueue15GetFinishedItemENS0_14WorkItemStatusE(void);
 int APS5_VABI _ZN3sce2np9EventFlag4PollEmjPm(void);
