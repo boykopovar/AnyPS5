@@ -90,7 +90,7 @@ std::string ModuleStem(std::string name, const bool windows) {
 
 }
 
-std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress) const {
+std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, const bool windows, const bool macos, const bool toIntel, const bool toRosetta, ISyscallScanner& syscallScanner, const bool lazyBinding, const bool omitUnavailableDependencies, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress) const {
     std::vector<std::filesystem::path> paths;
     std::map<std::filesystem::path, GuestImage> discovered;
     progress.Report({Domain::ProgressStage::Modules, {}, 0, modules.size()});
@@ -367,19 +367,24 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         runDirectories.push_back(std::move(directory));
         begin = end + 1;
     }
-    std::set<std::string> omittedDependencies;
+    std::set<std::pair<std::size_t, std::string>> reportedDependencies;
     const auto unavailableUnused = [&](std::size_t index, const std::string& dependency) {
         if (!runDirectoriesExist || findGuest(dependency) != guestNames.end()) return false;
         const auto stem = ModuleStem(dependency, windows);
         if (stem.empty()) return false;
         const auto& symbols = images[index].Symbols;
-        if (std::any_of(symbols.begin(), symbols.end(), [&](const auto& symbol) { return symbol.Section == 0 && symbol.Library == stem; })) return false;
+        if (std::any_of(symbols.begin(), symbols.end(), [&](const auto& symbol) { return symbol.Section == 0 && !symbol.Library.empty() && (symbol.Library == dependency || symbol.Library == stem || ModuleStem(symbol.Library, windows) == stem); })) return false;
         const auto file = hostLibrary(dependency);
-        std::error_code error;
-        if (std::any_of(runDirectories.begin(), runDirectories.end(), [&](const auto& directory) { return std::filesystem::exists(directory / file, error); })) return false;
-        if (omittedDependencies.insert(dependency).second)
-            progress.Message("Warning: " + Io::Utf8Path(images[index].SourcePath) + " needs " + dependency + ", which no module or run path library provides and from which it imports nothing; it is left out of the needed libraries");
-        return true;
+        for (const auto& directory : runDirectories) {
+            std::error_code error;
+            const bool exists = std::filesystem::exists(directory / file, error);
+            if (exists || error) return false;
+        }
+        if (reportedDependencies.emplace(index, dependency).second) {
+            const auto subject = Io::Utf8Path(images[index].SourcePath) + " needs " + dependency + ", which no module or run path library provides and from which it imports nothing";
+            progress.Message(omitUnavailableDependencies ? "Warning: " + subject + "; it is left out of the needed libraries" : "Note: " + subject + "; --omit-unavailable-dependencies leaves it out");
+        }
+        return omitUnavailableDependencies;
     };
     const auto addHost = [&](const std::string& name, const bool startup) {
         if (findGuest(name) != guestNames.end()) return;

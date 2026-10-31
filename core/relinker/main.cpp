@@ -65,6 +65,7 @@ ConvertedExecutable Convert(const Cli::Args& args, const std::string& inputPath,
     options.TrapSdkSyscallStubs = args.trapSdkSyscallStubs;
     options.UnusedFilterLevel = args.unusedFilterLevel;
     options.LazyBinding = args.lazyBinding;
+    options.OmitUnavailableDependencies = args.omitUnavailableDependencies;
     options.RunPath = args.runPath;
     options.WindowsGui = args.windowsGui;
     options.TraceImports = args.traceImports;

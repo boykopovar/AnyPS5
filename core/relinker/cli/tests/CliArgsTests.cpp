@@ -99,6 +99,11 @@ void rpath() {
     require(args.runPath == "/custom/libs", "--rpath value was not captured");
 }
 
+void omitUnavailableDependencies() {
+    require(!parse({"input.elf", "output.elf"}).omitUnavailableDependencies, "dependencies were left out by default");
+    require(parse({"--omit-unavailable-dependencies", "input.elf", "output.elf"}).omitUnavailableDependencies, "--omit-unavailable-dependencies was ignored");
+}
+
 void rpathConsumesNextTokenVerbatim() {
     const auto args = parse({"--rpath", "--windows", "input.elf", "output.elf"});
     require(args.runPath == "--windows", "--rpath did not consume the following token as its value");
@@ -361,6 +366,7 @@ int main() {
         positionalsInterleaveWithFlags();
         singleDashIsPositional();
         rpath();
+        omitUnavailableDependencies();
         rpathConsumesNextTokenVerbatim();
         rpathWithoutValue();
         excludeSceModule();

@@ -25,6 +25,8 @@ const char* Usage() {
            "  --to-rosetta                   Convert as --to-intel and lower what Rosetta lacks too. Implies --to-intel.\n"
            "  --frame-red-zone               Windows: give leaf functions a frame so an exception on a guest thread can unwind.\n"
            "  --rpath <path>                 System library search path. Default: $ORIGIN/libs.\n"
+           "  --omit-unavailable-dependencies Linux: leave out a module dependency that no module provides, no import uses\n"
+           "                                 and no run path directory holds at conversion time.\n"
            "  --registry                     Write <output-stem>.registry.json beside the output.\n"
            "  --autorun                      Run the output after conversion and print its exit code.\n"
            "\n"
@@ -67,7 +69,7 @@ namespace {
 constexpr std::string_view kVerifyRejectedOptions[] = {
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
     "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
-    "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
+    "--rpath", "--registry", "--omit-unavailable-dependencies", "--lazy-binding", "--autorun", "--patches", "--no-patches",
 };
 
 constexpr std::string_view kModuleDiscoveryOptions[] = {"--sce-module-path", "--module-dir", "--exclude-sce-module", "--skip-sce-module"};
@@ -182,6 +184,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.toMacos = true;
         } else if (arg == "--lazy-binding") {
             args.lazyBinding = true;
+        } else if (arg == "--omit-unavailable-dependencies") {
+            args.omitUnavailableDependencies = true;
         } else if (arg == "--autorun") {
             args.autorun = true;
         } else if (arg == "--windows-diagnostics") {
