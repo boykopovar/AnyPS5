@@ -39,7 +39,7 @@ using namespace AgcDriver::Graphics;
 constexpr std::uint32_t Side = 256;
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::size_t LayerBytes = std::size_t{Side} * Side * 4u;
-constexpr std::size_t BlockBytes = 2u * LayerBytes;
+constexpr std::size_t BlockBytes = 4u * LayerBytes;
 constexpr int Skipped = 77;
 
 PFN_vkGetDeviceProcAddr realDeviceProc = nullptr;
@@ -594,6 +594,51 @@ void RunCubeTiledSlice(const Context& base, const WatchedBlock& block) {
     ClearDepthSurfaces(context.device);
 }
 
+
+void RunCubeArrayGather(const Context& base, const WatchedBlock& block) {
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    constexpr VkExtent2D extent{64, 64};
+    constexpr std::uint32_t faces = 12;
+    GuestTextureResource resource{};
+    resource.width = extent.width;
+    resource.height = extent.height;
+    resource.depthOrLastArray = faces - 1u;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kZ64KBX;
+    resource.dimension = TextureDimension::kCube;
+    resource.format = Format32Float;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    const auto geometry = DescribeSurface(resource);
+    Require(geometry.guestBytes <= BlockBytes, "the cube array fixture does not fit the guest block");
+    const auto address = block.Address();
+    resource.baseAddress = address;
+    ClearDepthSurfaces(context.device);
+    for (std::uint32_t layer = 0; layer < faces; ++layer) {
+        DepthSurfaceView(context, DepthTarget{address + geometry.GuestLayerOffset(layer), 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0});
+    }
+    imageToBufferCopies = 0;
+    bufferToImageCopies = 0;
+    const auto texture = DepthSurfaceTexture(context, words, resource, components);
+    Require(texture != nullptr, "a cube array of two cubes over twelve depth surfaces was not sampled through their depth planes");
+    if (imageToBufferCopies.load() != faces || bufferToImageCopies.load() != 1) {
+        throw std::runtime_error("sampling a cube array over twelve depth surfaces recorded " + std::to_string(imageToBufferCopies.load()) + " depth surface copies and " + std::to_string(bufferToImageCopies.load()) + " plane copy fills, expected 12 and 1");
+    }
+    resource.depthOrLastArray = 7;
+    bool refused = false;
+    try {
+        static_cast<void>(DepthSurfaceTexture(context, words, resource, components));
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    Require(refused, "a cube whose array slice count is not a multiple of six was sampled through the depth planes");
+    ClearDepthSurfaces(context.device);
+}
+
 }
 
 int main() {
@@ -630,6 +675,7 @@ int main() {
             SharedLayerRanges(context, block);
             RunCubeGather(context, block);
             RunCubeTiledSlice(context, block);
+            RunCubeArrayGather(context, block);
             SparseGuestLayers(context);
         }
         device.reset();
