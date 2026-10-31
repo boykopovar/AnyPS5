@@ -247,8 +247,9 @@ static void CheckUriEscapeBytes() {
         std::size_t required = 0;
         Require(sceHttpUriEscape(nullptr, &required, 0, input) == 0 && required == size);
         char output[5] = {'Z', 'Z', 'Z', 'Z', 'Z'};
-        Require(sceHttpUriEscape(output, &required, size - 1, input) == static_cast<int>(0x80431022));
-        for (char byte : output) Require(byte == 'Z');
+        required = 77;
+        Require(sceHttpUriEscape(output, &required, size - 1, input) == static_cast<int>(0x80431022) && required == 77);
+        Require(output[size - 1] == 'Z' && output[4] == 'Z' && (size != 2 || output[0] == input[0]));
         Require(sceHttpUriEscape(output, &required, size, input) == 0 && required == size);
         Require(Equal(output, expected) && output[size] == 'Z');
     }
@@ -592,6 +593,10 @@ int main(int argc, char** argv) {
     Require(sceHttpUriEscape(escaped, nullptr, sizeof(escaped), "a b/~\xC3\xA9") == 0);
     Require(Equal(escaped, "a%20b%2F~%C3%A9"));
     Require(sceHttpUriEscape(escaped, nullptr, sizeof(escaped), nullptr) == invalidValue);
+    std::memset(escaped, 'Z', sizeof(escaped));
+    required = 123;
+    Require(sceHttpUriEscape(escaped, &required, 4, "hello world") == outOfMemory && required == 123);
+    Require(std::memcmp(escaped, "hellZ", 5) == 0);
     const std::string previousCtype = std::setlocale(LC_CTYPE, nullptr);
     Require(std::setlocale(LC_CTYPE, "C") != nullptr);
     CheckUriEscapeBytes();
