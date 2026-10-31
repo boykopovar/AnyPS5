@@ -144,6 +144,13 @@ bool Ready() {
     return true;
 #endif
 }
+#ifndef _WIN32
+void SetGuestSystemError(int hostError) {
+    const int guestError = GuestErrnoFromHost_nid_no_patch(hostError);
+    errno = guestError == GuestSockets::GuestErrorIo ? GuestSockets::GuestErrorFromHost(hostError) : guestError;
+}
+#endif
+
 int GuestError(int error) {
     if (error == 0) return 0;
     if (error == EAI_AGAIN) return 2;
@@ -157,9 +164,7 @@ int GuestError(int error) {
     if (error == WSAEFAULT) return 14;
 #else
     if (error == EAI_SYSTEM) {
-        const int hostError = errno;
-        const int guestError = GuestErrnoFromHost_nid_no_patch(hostError);
-        errno = guestError == GuestSockets::GuestErrorIo ? GuestSockets::GuestErrorFromHost(hostError) : guestError;
+        SetGuestSystemError(errno);
         return 11;
     }
     if (error == EAI_OVERFLOW) return 14;
@@ -204,7 +209,7 @@ GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) 
         }
         if (error != 0 || !native) {
             *sceNetErrnoLoc() = hostError != 0 ? hostError : 3;
-            if (hostError == -1) errno = error == EAGAIN ? 35 : error;
+            if (hostError == -1) SetGuestSystemError(error ? error : errno);
             return nullptr;
         }
 #endif
