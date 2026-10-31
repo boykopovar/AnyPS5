@@ -425,6 +425,7 @@ inline constexpr std::uint32_t MeshCapturedItemAddressDword = 0;
 inline constexpr std::uint32_t TessellationCaptureArgumentAddressDword = 2;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
+inline constexpr std::uint32_t ScratchPoolDescriptorSet = 2;
 
 struct GraphicsDrawParameters {
     std::uint64_t indexAddress;
@@ -757,6 +758,7 @@ struct CompiledShaderArtifact {
     bool fullSubgroups = false;
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
+    std::uint32_t scratchPoolSlotDwords = 0;
     std::vector<std::uint32_t> parameterExports;
     std::vector<FragmentParameter> fragmentParameters;
     BarycentricEmulation barycentricEmulation;
