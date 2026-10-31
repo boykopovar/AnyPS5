@@ -3006,6 +3006,23 @@ void countFullWalkTime(FastFail reason, std::chrono::steady_clock::time_point st
     Revalidations().fullNanoseconds[static_cast<std::size_t>(reason)].fetch_add(static_cast<std::uint64_t>(nanoseconds), std::memory_order_relaxed);
 }
 
+struct UntrackedVerification {
+    std::atomic<std::uint64_t> checked{0}, disagreed{0};
+};
+
+UntrackedVerification& UntrackedVerified() {
+    static UntrackedVerification verification;
+    static const bool registered = [] {
+        std::atexit([] {
+            const auto& total = UntrackedVerified();
+            if (total.checked.load() != 0) std::fprintf(stderr, "[verify-untracked] at exit: %llu fast proofs over untracked memory checked by the full walk, %llu disagreed\n", static_cast<unsigned long long>(total.checked.load()), static_cast<unsigned long long>(total.disagreed.load()));
+        });
+        return true;
+    }();
+    (void)registered;
+    return verification;
+}
+
 constexpr std::size_t RefusedSurfaceLimit = 65536;
 
 void countCollectRefusal(bool storage, std::uint64_t address, std::size_t bytes) {
@@ -3766,7 +3783,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         static const bool verifyUntracked = std::getenv("APS5_VERIFY_UNTRACKED_PROOFS") != nullptr;
         const bool anyUntracked = std::any_of(validatedTextures.begin(), validatedTextures.end(), [](const ValidatedSurface& surface) { return surface.untracked[0] != 0; }) || std::any_of(storageUntracked.begin(), storageUntracked.end(), [](const auto& stamp) { return stamp[0] != 0; });
         if (verifyUntracked && fast && anyUntracked) {
-            static std::atomic<std::uint64_t> checked{0}, disagreed{0};
+            auto& [checked, disagreed] = UntrackedVerified();
             const auto saved = validatedTextures;
             const auto savedStorage = storageUntracked;
             if (!fullWalk()) disagreed.fetch_add(1, std::memory_order_relaxed);
