@@ -914,6 +914,10 @@ int APS5_VABI sceNetPoolCreate(const char* name, int size, int flags) {
         return fail(NET_EINVAL);
     }
     std::lock_guard lk(g_mutex);
+    std::uint32_t parameterFlags = 0;
+    std::memcpy(&parameterFlags, g_net_init_param.data(), sizeof(parameterFlags));
+    const std::size_t capacity = (parameterFlags & 1u) != 0 ? 128 : 32;
+    if (g_pools.size() >= capacity) return fail(23);
     const int id = g_next_pool++;
     g_pools.emplace(id, static_cast<std::size_t>(size));
     return id;

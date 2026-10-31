@@ -4,6 +4,18 @@ target_link_libraries(libSceNet PRIVATE libSceNetCtl)
 configure_windows_unwind(libSceNet)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_net_pool_capacity_tests ${LIBS_INCLUDE_DIR}/tests/GuestNetPoolCapacity.cpp)
+    target_include_directories(guest_net_pool_capacity_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_net_pool_capacity_tests PRIVATE libSceNet libkernel libc)
+    configure_windows_unwind(guest_net_pool_capacity_tests)
+    foreach(poolFlags IN ITEMS unset 0 1 fffffffe ffffffff)
+        add_test(NAME guest_net_pool_capacity_${poolFlags} COMMAND guest_net_pool_capacity_tests ${poolFlags})
+        set_tests_properties(guest_net_pool_capacity_${poolFlags} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_net_pool_capacity_${poolFlags} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNet>")
+        endif()
+    endforeach()
     add_test_executable(net_ipv6only_patched_tests tests/Ipv6OnlyPatched.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp)
