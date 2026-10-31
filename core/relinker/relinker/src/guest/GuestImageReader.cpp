@@ -36,6 +36,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     const Domain::ProgramHeader* dynamic = nullptr;
     const Domain::ProgramHeader* dynlib = nullptr;
     const Domain::ProgramHeader* tls = nullptr;
+    const Domain::ProgramHeader* ehFrame = nullptr;
     std::map<std::uint64_t, std::uint64_t> loads;
     constexpr std::uint32_t sceComment = 0x6fffff00;
     constexpr std::uint32_t sceLibVersion = 0x6fffff01;
@@ -58,6 +59,10 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (header.Type == 0x61000000) {
             if (dynlib != nullptr) fail("Duplicate SCE dynamic data");
             dynlib = &header;
+        }
+        if (header.Type == 0x6474e550) {
+            if (ehFrame != nullptr) fail("Duplicate EH frame segment");
+            ehFrame = &header;
         }
         if (header.Type == 7) {
             if (tls != nullptr || header.FileSize > header.MemorySize || (header.Alignment > 1 && !std::has_single_bit(header.Alignment))) fail("Invalid TLS segment");
