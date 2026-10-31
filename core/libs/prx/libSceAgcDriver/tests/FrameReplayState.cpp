@@ -2,8 +2,10 @@
 #include "../tools/FrameReplay.cpp"
 #undef main
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <barrier>
+#include <new>
 
 namespace {
 
@@ -182,6 +184,94 @@ void testEopTokens() {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
 }
 
+class ReservationOutput final : public AgcDriver::IVideoOutput {
+public:
+    explicit ReservationOutput(Frames& frames) : frames(frames) {}
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override {
+        ++reservations;
+        if (failure) std::rethrow_exception(failure);
+        return available ? std::make_shared<ReplayFlip>(frames) : nullptr;
+    }
+    void Fail(std::exception_ptr error) noexcept override { frames.Failed(error); }
+    std::exception_ptr failure;
+    bool available = true;
+    std::size_t reservations = 0;
+
+private:
+    Frames& frames;
+};
+
+FrameCall reservationCall(std::uint32_t token) {
+    FrameCall call;
+    call.kind = FrameCallKind::ReserveEopFlip;
+    call.values = {7, static_cast<std::uint64_t>(-1), 1, 99, token};
+    return call;
+}
+
+template <typename TException>
+void expectReservationFailure(Replay& replay, const FrameCall& call) {
+    const auto kept = replay.keptReservations.load();
+    bool failed = false;
+    try { replay.runWindow(std::span(&call, 1)); }
+    catch (const TException&) { failed = true; }
+    check(failed, "the replay accepted a failed EOP reservation");
+    check(replay.keptReservations.load() == kept, "a failed EOP reservation was counted as kept");
+}
+
+void testRepeatedReservations(const std::filesystem::path& directory, bool driverFailure) {
+    FrameCaptureWriter writer(directory);
+    writer.Finish("{}");
+    const FrameCaptureReader reader(directory);
+    Options options;
+    options.pace = false;
+    options.release = false;
+    Replay replay{options, reader};
+    auto output = std::make_shared<ReservationOutput>(replay.frames);
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    AgcDriverRegisterVideoOutput_nid_postfix(8, output);
+    const auto call = reservationCall(AgcDriver::EopFlipTokenBase);
+    replay.execute(call);
+    expectReservationFailure<AgcDriver::EopFlipAlreadyReserved>(replay, call);
+    replay.pass = 1;
+    if (driverFailure) {
+        AgcDriverReportFailure_nid_postfix(std::make_exception_ptr(std::runtime_error("reservation driver failure")));
+        expectReservationFailure<std::runtime_error>(replay, call);
+        bool failed = false;
+        try { AgcDriverShutdown_nid_postfix(); }
+        catch (const std::runtime_error& error) { failed = std::string_view(error.what()) == "reservation driver failure"; }
+        check(failed, "the injected driver failure was not propagated at shutdown");
+        return;
+    }
+    replay.runWindow(std::span(&call, 1));
+    check(replay.keptReservations.load() == 1 && output->reservations == 1, "a compatible pending reservation was not kept without allocating again");
+    for (std::size_t field = 0; field < 4; ++field) {
+        auto different = call;
+        ++different.values[field];
+        expectReservationFailure<std::runtime_error>(replay, different);
+    }
+    auto missing = call;
+    missing.values[0] = 9;
+    expectReservationFailure<std::runtime_error>(replay, missing);
+    expectReservationFailure<std::runtime_error>(replay, reservationCall(AgcDriver::EopFlipTokenBase - 1));
+    expectReservationFailure<std::runtime_error>(replay, reservationCall(AgcDriver::EopFlipTokenLimit + 1));
+    const auto fresh = reservationCall(AgcDriver::EopFlipTokenBase + 1);
+    output->failure = std::make_exception_ptr(std::bad_alloc{});
+    expectReservationFailure<std::bad_alloc>(replay, fresh);
+    output->failure = std::make_exception_ptr(std::runtime_error("reservation output failure"));
+    expectReservationFailure<std::runtime_error>(replay, fresh);
+    output->failure = nullptr;
+    output->available = false;
+    expectReservationFailure<std::runtime_error>(replay, fresh);
+    output->available = true;
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+    auto replacement = std::make_shared<ReservationOutput>(replay.frames);
+    AgcDriverRegisterVideoOutput_nid_postfix(7, replacement);
+    replay.runWindow(std::span(&call, 1));
+    check(replay.keptReservations.load() == 1 && replacement->reservations == 1, "a closed output's token was kept after reopening");
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, replacement);
+    AgcDriverUnregisterVideoOutput_nid_postfix(8, output);
+}
+
 class WaitingOutput final : public AgcDriver::IVideoOutput {
 public:
     WaitingOutput(Frames& frames, const std::uint32_t* label) : frames(frames), label(label) {}
@@ -302,10 +392,11 @@ int main(int argc, char** argv) {
         else if (mode == "host_neighbors") testHostNeighbors(directory);
         else if (mode == "unwatched") testUnwatched();
         else if (mode == "tokens") testEopTokens();
+        else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
         else throw std::runtime_error("unknown test");
-        AgcDriverShutdown_nid_postfix();
+        if (mode != "reservation_failure") AgcDriverShutdown_nid_postfix();
         std::puts("frame replay state test passed");
         return 0;
     } catch (const std::exception& error) {
