@@ -302,6 +302,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_MOVED_BUFFER_TEMPLATES` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | keys the full descriptor words of read-only guest buffers instead of allowing a hit when they move |
 | `APS5_NO_OBSERVATION_GUARD` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | observes every validated range, not only the ranges whose flush hook waited |
 | `APS5_NO_OPPORTUNISTIC_REAP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | skips retiring already-finished batches before a submit |
+| `APS5_NO_OWNED_DRAW_INPUTS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/RuntimeSwitches.cpp` |  | disables token-based reuse of untracked vertex/index copies; APS5_AB can toggle it |
 | `APS5_NO_OWN_IMAGE_REFRESH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | lets a Pending failure of the fast proof take the full walk instead of the own-object refresh |
 | `APS5_NO_PARALLEL_MIRROR_REFRESH` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | disables the mirror-refresh thread pool, so mirror refreshes run on the calling thread |
 | `APS5_NO_PATTERN_FILL_HLE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferFill.cpp` |  | disables the dword-pattern fill HLE |
@@ -481,6 +482,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_VERIFY_DRAW_RECIPE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` |  | re-decodes a draw recipe instead of using the cache and checks the result |
 | `APS5_VERIFY_DRAW_SNAPSHOTS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | re-reads a reused draw snapshot and counts the ones that differ |
 | `APS5_VERIFY_KNOWN_VALUES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferCopy.cpp` |  | serves known values through the hook too and counts mismatches |
+| `APS5_VERIFY_OWNED_DRAW_INPUTS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | compares reused owned input bytes and throws if they differ while the proof still holds |
 | `APS5_VERIFY_PROOFS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | runs the full walk beside every own-object refresh proof and aborts on a different decision |
 | `APS5_VERIFY_RECIPE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | makes the ordinary prepare path beside a recipe hit and compares the answers |
 | `APS5_VERIFY_REGISTER_KEYS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawRegisterKey.cpp` |  | checks the incremental register fingerprint against the full state |

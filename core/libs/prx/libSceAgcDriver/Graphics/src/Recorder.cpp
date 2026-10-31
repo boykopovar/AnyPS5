@@ -20,6 +20,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4Opcodes.hpp"
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAgcDriver/Graphics/shaders/DispatchArguments_spv.h"
 #include <algorithm>
 #include <array>
@@ -2851,6 +2852,10 @@ std::shared_ptr<Buffer> Recorder::ReusableDrawSnapshot(std::uint64_t address, st
         return containingDrawSnapshot(address, bytes, offset);
     }
     if (offset != nullptr) *offset = 0;
+    if (!found->second.owned.words.empty()) {
+        eraseDrawSnapshot(found);
+        return {};
+    }
     const bool sameRegistry = found->second.registryGeneration == GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     if (!sameRegistry || !GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
         if (!sameRegistry || generation == 0 || use != SnapshotUse::Storage || !refreshDrawSnapshot(found->second, address, bytes)) {
@@ -2950,6 +2955,60 @@ void Recorder::KeepDrawSnapshot(std::uint64_t address, std::size_t bytes, std::u
         throw;
     }
     pool.bytes += bytes;
+}
+
+Recorder::OwnedDrawInputProof Recorder::ArmOwnedDrawInput(std::uint64_t address, std::size_t bytes) const {
+    GuestMemory::AssertGpuLockHeld("arm owned draw input");
+    if (bytes == 0 || bytes > DrawInputBudget || bytes > std::numeric_limits<std::uint64_t>::max() - address || !GuestMemory::WriteWatched() || PendingWriteOverlaps(address, bytes)) return {};
+    OwnedDrawInputProof proof;
+    proof.words.resize((address + bytes - 1) / 65536 - address / 65536 + 1);
+    if (!GuestArena::GuestArenaArmOwned_nid_no_patch(static_cast<std::uintptr_t>(address), bytes, proof.words.data(), proof.words.size(), 1)) return {};
+    proof.registry = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    proof.forget = GuestMemory::ForgetSerial();
+    proof.since = GuestMemory::TrackerGeneration();
+    proof.note = NewestWriteNote(address, bytes);
+    if (proof.since == 0 || (proof.forget & 1u) != 0) return {};
+    return proof;
+}
+
+bool Recorder::ownedDrawInputHolds(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof) const {
+    GuestMemory::AssertGpuLockHeld("check owned draw input");
+    if (proof.words.empty() || proof.since == 0 || (proof.forget & 1u) != 0 || !GuestMemory::WriteWatched()) return false;
+    if (proof.registry != GuestAllocations::GuestAllocationsGeneration_nid_postfix() || proof.forget != GuestMemory::ForgetSerial()) return false;
+    if (PendingWriteOverlaps(address, bytes) || proof.note != NewestWriteNote(address, bytes) || GuestMemory::NewestStamp(address, bytes) > proof.since) return false;
+    return GuestArena::GuestArenaOwnedUnchanged_nid_no_patch(static_cast<std::uintptr_t>(address), bytes, proof.words.data(), proof.words.size());
+}
+
+std::shared_ptr<Buffer> Recorder::ReusableOwnedDrawInput(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint32_t* derived) {
+    GuestMemory::AssertGpuLockHeld("reuse owned draw input");
+    Require(use != SnapshotUse::Storage, "an owned draw input is a vertex or index buffer");
+    const auto found = drawSnapshots.find({address, use, bytes});
+    if (found == drawSnapshots.end() || found->second.owned.words.empty()) return {};
+    if (!ownedDrawInputHolds(address, bytes, found->second.owned)) {
+        eraseDrawSnapshot(found);
+        return {};
+    }
+    static const bool verify = std::getenv("APS5_VERIFY_OWNED_DRAW_INPUTS") != nullptr;
+    if (verify) {
+        const bool equal = GuestMemory::EqualsCommittedUnsynced(address, found->second.buffer->Bytes());
+        if (!ownedDrawInputHolds(address, bytes, found->second.owned)) {
+            eraseDrawSnapshot(found);
+            return {};
+        }
+        Require(equal, "an owned draw input differs while its proof holds");
+    }
+    auto& recency = drawSnapshotPools[SnapshotPool(use)].recency;
+    recency.splice(recency.end(), recency, found->second.recent);
+    if (derived != nullptr) *derived = found->second.derived;
+    return found->second.buffer;
+}
+
+void Recorder::KeepOwnedDrawInput(std::uint64_t address, std::size_t bytes, const OwnedDrawInputProof& proof, std::shared_ptr<Buffer> buffer, SnapshotUse use, std::uint32_t derived) {
+    Require(use != SnapshotUse::Storage, "an owned draw input is a vertex or index buffer");
+    if (buffer == nullptr || buffer->Bytes().size() != bytes || !ownedDrawInputHolds(address, bytes, proof)) return;
+    auto kept = proof;
+    KeepDrawSnapshot(address, bytes, proof.since, proof.registry, std::move(buffer), use, derived);
+    if (const auto found = drawSnapshots.find({address, use, bytes}); found != drawSnapshots.end()) found->second.owned = std::move(kept);
 }
 
 bool Recorder::KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest) {

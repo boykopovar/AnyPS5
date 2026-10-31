@@ -6,6 +6,11 @@
 
 ### Unknown function info
 
+- [GuestArenaArmOwned](../../../core/libs/prx/libc/include/WindowsMappings.hpp) (libc) is a host-only byte-change proof, not console ABI. Tokens cover whole 64 KiB blocks; writes outside the requested subrange can invalidate them. Callers must synchronize stores around the snapshot they cache.
+- [GuestArenaArmOwned](../../../core/libs/prx/libc/include/WindowsMappings.hpp) (libc) accepts only fully committed writable write-watched blocks queryable as one Windows allocation. Private commits require flag 1. Shared, pinned, host-open, unwatched and incomplete blocks refuse; other platforms refuse.
+- [GuestArenaOwnedUnchanged](../../../core/libs/prx/libc/include/WindowsMappings.hpp) (libc) requires mapping changes, pins and host accesses to pass through the arena APIs. It does not prove unchanged protection or track GPU writes; future driver consumers must check GPU write stamps separately.
+- [GuestArenaOwnedUnchanged](../../../core/libs/prx/libc/include/WindowsMappings.hpp) (libc) conservatively invalidates tokens on rearming, protection notifications and clearing collections. The mutex serializes tracker operations, not concurrent CPU stores; no snapshot transaction or epoch reuse is supplied.
+
 - [frexpf](../../../core/libs/prx/libc/src/Math.cpp) (libc) - follows the bundled PPSA03766 implementation: exponent-bit decomposition, conditional single-precision subnormal scaling, zero exponent for zero/NaN/infinity, and unchanged signaling NaNs. PPSA07923 agrees on results/exponents but unconditionally scales finite inputs, additionally raising overflow/inexact on large values; that SDK variant is not reproduced. Masked-exception observations cover rounding, DAZ/FTZ and sticky flags; unmasked traps and other SDK versions are unverified.
 
 - [strtonum](../../../core/libs/prx/libc/src/StringExtensions.cpp) (libc) is unverified on the console. Its signature, decimal parsing, inclusive bounds, error strings, error precedence and errno preservation follow [FreeBSD 11.4 strtonum.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdlib/strtonum.c). Parsing uses the host `strtoll` with base 10. It is not exported by `libSceLibcInternal.sprx` on a PS5 (firmware 13.60), so a payload process cannot call it there

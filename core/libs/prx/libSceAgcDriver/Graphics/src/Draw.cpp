@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SampleOrder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -1332,9 +1333,16 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
     DrawInputCopy copy;
     if (recorder != nullptr && bytes != 0) {
         GuestMemory::FlushGpuWrites(address, bytes);
+        const bool owned = !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs);
+        if (owned) copy.buffer = recorder->ReusableOwnedDrawInput(address, bytes, use, &copy.derived);
+        if (copy.buffer != nullptr) {
+            copy.reused = true;
+            return copy;
+        }
         copy.registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         copy.generation = GuestMemory::CollectWrites(address, bytes);
         if (copy.generation != 0) copy.buffer = recorder->ReusableDrawSnapshot(address, bytes, use, &copy.derived);
+        else if (owned) copy.owned = recorder->ArmOwnedDrawInput(address, bytes);
         if (copy.buffer != nullptr) {
             copy.reused = true;
             return copy;
@@ -1363,7 +1371,11 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
 }
 
 void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCopy& copy, Recorder::SnapshotUse use, std::uint32_t derived) {
-    if (recorder == nullptr || copy.reused || copy.generation == 0 || copy.buffer == nullptr) return;
+    if (recorder == nullptr || copy.reused || copy.buffer == nullptr) return;
+    if (copy.generation == 0) {
+        if (!RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs)) recorder->KeepOwnedDrawInput(address, copy.buffer->Bytes().size(), copy.owned, copy.buffer, use, derived);
+        return;
+    }
     recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived);
 }
 
