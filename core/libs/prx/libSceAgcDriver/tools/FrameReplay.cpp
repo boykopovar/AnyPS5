@@ -785,13 +785,16 @@ int main(int argc, char** argv) {
     int code = 2;
     try {
         code = run(options);
-        if (code == 0) {
-            AgcDriverShutdown_nid_postfix();
-            return 0;
-        }
     } catch (const std::exception& error) {
         std::fprintf(stderr, "agc_frame_replay: %s\n", error.what());
     }
+    try {
+        AgcDriverShutdown_nid_postfix();
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "agc_frame_replay: %s\n", error.what());
+        if (code == 0) code = 2;
+    }
+    if (code == 0) return 0;
     std::fflush(stdout);
     std::fflush(stderr);
     std::_Exit(code);
