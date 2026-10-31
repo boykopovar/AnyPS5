@@ -240,9 +240,16 @@ class ProgressHistoryTests(unittest.TestCase):
         point = {"date": "2026-01-01", "libraries": {"done": 3292, "total": 3706, "percent": 88.83},
                  "shaders": {"done": 1166, "total": 1166, "percent": 100.0}}
         svg = progress_history.chart([point, {**point, "date": "2026-01-02"}])
-        self.assertIn("Declared 3,706", svg)
-        self.assertIn("Declared 1,166", svg)
+        self.assertIn("Counted 3,706", svg)
+        self.assertIn("Counted 1,166", svg)
         self.assertIn("Implemented 1,166 (100%)", svg)
+
+    def test_page_text_says_early_points_use_the_declared_figure(self):
+        point = {"date": "2026-01-01", "libraries": {"done": 1, "total": 2, "percent": 50.0},
+                 "shaders": {"done": 1, "total": 1, "percent": 100.0}}
+        page = progress_history.page([point])
+        self.assertIn("their counted figure is the declared one", page)
+        self.assertIn("Unobserved stubs are not counted", page)
 
     def test_axis_labels_fall_on_calendar_days_without_commits(self):
         start = date(2026, 8, 3).toordinal()
@@ -359,7 +366,7 @@ class ProgressHistoryTests(unittest.TestCase):
             ET.fromstring(svg)
             self.assertNotIn("nan", svg.lower())
             self.assertNotIn("infinity", svg.lower())
-            self.assertIn(f"Declared {value:,}", svg)
+            self.assertIn(f"Counted {value:,}", svg)
 
     def test_cache_recursion_is_reported_as_a_path_specific_value_error(self):
         with tempfile.TemporaryDirectory() as directory:

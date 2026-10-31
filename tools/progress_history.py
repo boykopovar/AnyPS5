@@ -174,7 +174,7 @@ def chart(points):
     labels = [(px(d), labelled(date.fromordinal(d), span)) for d in range(first, days[-1] + 1)]
     height = len(SERIES) * (TITLE + PANEL + GAP) - GAP + AXIS
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {height}" role="img" '
-           'aria-label="Implemented and declared system library functions and GPU shader instructions over time" '
+           'aria-label="Implemented and counted system library functions and GPU shader instructions over time" '
            f'font-family="sans-serif" font-size="12" fill="{TEXT}">',
            '<style>.hit{fill:#fff;fill-opacity:0}.hit:hover{fill-opacity:0.06}</style>',
            f'<rect width="{WIDTH}" height="{height}" rx="6" fill="{BACKGROUND}"/>']
@@ -200,12 +200,12 @@ def chart(points):
             out += [f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{color}"/>' for x, y in done]
         last = points[-1][name]
         declared_y, implemented_y = spread([total[-1][1], done[-1][1]])
-        out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{declared_y + 4:.1f}" fill="{MUTED}">Declared {last["total"]:,}</text>'
+        out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{declared_y + 4:.1f}" fill="{MUTED}">Counted {last["total"]:,}</text>'
                    f'<text x="{WIDTH - RIGHT + 8}" y="{implemented_y + 4:.1f}" fill="{TEXT}" font-weight="bold">'
                    f'<tspan fill="{color}">\u25cf</tspan> Implemented {last["done"]:,} ({last["percent"]:.0f}%)</text>')
         for left, right, p in zip(edges, edges[1:], points):
             out.append(f'<rect class="hit" x="{left:.1f}" y="{top}" width="{right - left:.1f}" height="{PANEL}">'
-                       f'<title>{p["date"]} · {title}\nImplemented {p[name]["done"]:,} of {p[name]["total"]:,} declared '
+                       f'<title>{p["date"]} · {title}\nImplemented {p[name]["done"]:,} of {p[name]["total"]:,} counted '
                        f'({p[name]["percent"]}%)</title></rect>')
     axis = height - AXIS + 18
     out += [f'<text class="x" x="{x:.1f}" y="{axis}" text-anchor="middle" font-size="11" fill="{MUTED}">{label}</text>'
@@ -227,12 +227,15 @@ def page(points):
         '</head><body>',
         '<h1>Progress history</h1>',
         chart(points),
-        f'<p>Each panel has its own scale: the solid line is what is implemented, the dashed line what is declared. Library '
-        'functions are declared in the <code>prx</code> sources; the shader total is the AMD RDNA 1 + RDNA 2 instruction list '
+        f'<p>Each panel has its own scale: the solid line is what is implemented, the dashed line what is counted: implemented '
+        'functions plus observed stubs, the figure the percentage uses. Unobserved stubs are not counted. Library functions are '
+        'declared in the <code>prx</code> sources; the shader total is the AMD RDNA 1 + RDNA 2 instruction list '
         f'(<a href="{progress.SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>). '
         'One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point is measured '
         f'with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> rules and instruction list, '
-        'so the series is comparable across days. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
+        'so the series is comparable across days. Commits from before the manifests in '
+        f'<a href="{progress.SOURCE}/docs/dev/observed">docs/dev/observed</a> have none, so every stub counts as observed and their '
+        'counted figure is the declared one. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
         '<a href="progress.html">Back to the current progress</a>.</p>',
         '<table><tr><th>Date</th>' + "".join(f'<th>{escape(label)}</th><th>%</th>' for _, label, _ in SERIES) + '</tr>',
         rows,
