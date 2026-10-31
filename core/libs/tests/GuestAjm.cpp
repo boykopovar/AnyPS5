@@ -1848,18 +1848,18 @@ struct At9Run {
     std::uint32_t reserved;
 };
 
-At9Run RunAt9Job(std::uint32_t context, std::uint32_t instance, std::uint64_t flags, const std::uint8_t* input, std::size_t inputSize) {
+At9Run RunAt9Job(std::uint32_t context, std::uint32_t instance, std::uint64_t flags, const std::uint8_t* input, std::size_t inputSize, std::size_t outputSamples = 1024) {
     constexpr std::uint64_t runMultipleFrames = 1ull << 12;
     constexpr std::uint64_t sidebandStream = 1ull << 47;
     std::vector<std::uint8_t> batch(4096);
-    std::vector<std::int16_t> pcm(1024);
+    std::vector<std::int16_t> pcm(outputSamples);
     At9Run decoded{{-1, -1, 0, 0, 0}, 0, 0};
     AjmBatchInfo info{};
     Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
     const std::size_t sidebandSize = (flags & runMultipleFrames) != 0 ? sizeof(decoded) : sizeof(decoded.stream);
     Require(sceAjmBatchJobRun(&info, instance, sidebandStream | flags, input, inputSize, pcm.data(), pcm.size() * sizeof(std::int16_t), &decoded, sidebandSize) == 0);
     Submit(context, info);
-    Require(decoded.stream.result == 0 || decoded.stream.result == 0x8 || decoded.stream.result == 0x18);
+    Require(decoded.stream.result == 0 || decoded.stream.result == 0x8 || decoded.stream.result == 0x10 || decoded.stream.result == 0x18);
     return decoded;
 }
 
@@ -1915,6 +1915,261 @@ void TestAt9GaplessResetRestartsTotal(std::uint32_t context) {
     const auto third = RunAt9Job(context, instance, runMultipleFrames, stream.data() + second.stream.inputConsumed, stream.size() - static_cast<std::size_t>(second.stream.inputConsumed));
     Require(third.stream.totalDecodedSamples == 512 + static_cast<std::uint64_t>(third.stream.outputWritten) / 2);
     Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
+void TestAt9GaplessEndTailShortPrefix(std::uint32_t context) {
+    std::fprintf(stderr, "TestAt9GaplessEndTailShortPrefix\n");
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    std::vector<std::uint8_t> stream(1024, 0);
+    std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+    const At9Control start{{512, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0};
+    std::int32_t result[2] = {-1, -1};
+    RunControl(context, instance, CONTROL_START, &start, sizeof(start), result);
+    Require(result[0] == 0);
+    const auto first = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size());
+    Require(first.frames == 2 && first.stream.outputWritten == 1024 && first.stream.totalDecodedSamples == 512);
+    const auto consumed = static_cast<std::size_t>(first.stream.inputConsumed);
+    Require(consumed > 0 && consumed < stream.size());
+    const std::vector<std::uint8_t> tail(stream.begin() + consumed, stream.end());
+    for (const std::size_t size : {std::size_t{1}, tail.size() / 2, tail.size() - 1}) {
+        const auto prefix = RunAt9Job(context, instance, runMultipleFrames, tail.data(), size);
+        Require(prefix.stream.result == 0x8 && prefix.stream.inputConsumed == 0 && prefix.stream.outputWritten == 0 && prefix.frames == 0 && prefix.stream.totalDecodedSamples == 512);
+    }
+    const auto retried = RunAt9Job(context, instance, runMultipleFrames, tail.data(), tail.size());
+    if (retried.stream.outputWritten != 0 || retried.frames != 0) throw std::runtime_error("TestAt9GaplessEndTailShortPrefix: full retry decoded the saved tail");
+    Require(retried.stream.result == 0 && retried.stream.inputConsumed == static_cast<std::int32_t>(tail.size()) && retried.stream.totalDecodedSamples == 512);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
+void TestAt9GaplessEndTailAlreadyEnded(std::uint32_t context) {
+    std::fprintf(stderr, "TestAt9GaplessEndTailAlreadyEnded\n");
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    const std::size_t pageSize = system.dwPageSize;
+    auto* pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(pages != nullptr);
+    DWORD oldProtection = 0;
+    Require(VirtualProtect(pages + pageSize, pageSize, PAGE_NOACCESS, &oldProtection) != 0);
+#else
+    const long hostPageSize = sysconf(_SC_PAGESIZE);
+    Require(hostPageSize > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(hostPageSize);
+    auto* pages = static_cast<std::uint8_t*>(mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(pages != MAP_FAILED);
+    Require(mprotect(pages + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    for (const std::size_t inputSize : {std::size_t{1}, std::size_t{0}, std::size_t{17}, std::size_t{1011}}) {
+        for (const std::uint32_t total : {128u, 256u}) {
+            std::vector<std::uint8_t> stream(1024, 0);
+            std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
+            std::uint32_t instance = 0;
+            Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+            const At9Control start{{0, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0};
+            std::int32_t result[2] = {-1, -1};
+            RunControl(context, instance, CONTROL_START, &start, sizeof(start), result);
+            Require(result[0] == 0);
+            const auto first = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size(), 256);
+            Require(first.stream.result == 0x10 && first.frames == 1 && first.stream.inputConsumed == 13 && first.stream.outputWritten == 512 && first.stream.totalDecodedSamples == 256);
+            const std::vector<std::uint8_t> tail(stream.begin() + first.stream.inputConsumed, stream.end());
+            std::vector<std::uint8_t> batch(4096);
+            AjmBatchInfo info{};
+            const GaplessDecode gapless{total, 0, 0};
+            Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+            Require(sceAjmBatchJobSetGaplessDecode(&info, instance, &gapless, 0, result) == 0);
+            Submit(context, info);
+            Require(result[0] == 0);
+            auto* input = pages + pageSize - inputSize;
+            std::memset(input, 0xff, inputSize);
+            const auto ended = RunAt9Job(context, instance, runMultipleFrames, inputSize == 0 ? nullptr : input, inputSize);
+            Require(ended.stream.result == 0 && ended.frames == 0 && ended.stream.inputConsumed == 0 && ended.stream.outputWritten == 0 && ended.stream.totalDecodedSamples == 256);
+            stream.back() ^= 1;
+            const auto retried = RunAt9Job(context, instance, runMultipleFrames, tail.data(), tail.size());
+            Require(retried.stream.result == 0 && retried.frames == 0 && retried.stream.inputConsumed == static_cast<std::int32_t>(tail.size()) && retried.stream.outputWritten == 0 && retried.stream.totalDecodedSamples == 256);
+            Require(sceAjmInstanceDestroy(context, instance) == 0);
+        }
+    }
+#ifdef _WIN32
+    Require(VirtualFree(pages, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(pages, 2 * pageSize) == 0);
+#endif
+}
+
+void TestAt9GaplessEndTail(std::uint32_t context) {
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    enum class Case { Exact, Appended, Different, ShortMismatch, GaplessReset, Clear, ControlReset, Initialize };
+    for (const auto mode : {Case::Exact, Case::Appended, Case::Different, Case::ShortMismatch, Case::GaplessReset, Case::Clear, Case::ControlReset, Case::Initialize}) {
+        std::vector<std::uint8_t> stream(1024, 0);
+        std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
+        std::uint32_t instance = 0;
+        Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+        const At9Control start{{512, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0};
+        std::int32_t result[2] = {-1, -1};
+        RunControl(context, instance, CONTROL_START, &start, sizeof(start), result);
+        Require(result[0] == 0);
+        const auto first = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size());
+        Require(first.frames == 2 && first.stream.outputWritten == 512 * 2 && first.stream.totalDecodedSamples == 512);
+        Require(first.stream.inputConsumed > 0 && first.stream.inputConsumed < 1024);
+        const auto consumed = static_cast<std::size_t>(first.stream.inputConsumed);
+        std::vector<std::uint8_t> tail(stream.begin() + consumed, stream.end());
+        if (mode == Case::Exact) stream.back() ^= 1;
+        if (mode == Case::Appended) tail.insert(tail.end(), stream.begin(), stream.end());
+        if (mode == Case::Different) tail.back() ^= 1;
+        if (mode == Case::ShortMismatch) {
+            std::vector<std::uint8_t> prefix(tail.begin(), tail.begin() + tail.size() / 2);
+            prefix.back() ^= 1;
+            const auto partial = RunAt9Job(context, instance, runMultipleFrames, prefix.data(), prefix.size());
+            Require(partial.stream.result == 0x8 && partial.stream.inputConsumed == 0 && partial.stream.outputWritten == 0 && partial.frames == 0 && partial.stream.totalDecodedSamples == 512);
+        }
+        if (mode == Case::GaplessReset || mode == Case::Clear) {
+            std::vector<std::uint8_t> batch(4096);
+            AjmBatchInfo info{};
+            Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+            if (mode == Case::GaplessReset) Require(sceAjmBatchJobSetGaplessDecode(&info, instance, &start.gapless, 1, result) == 0);
+            else Require(sceAjmBatchJobClearContext(&info, instance, result) == 0);
+            Submit(context, info);
+            Require(result[0] == 0);
+        }
+        if (mode == Case::ControlReset) {
+            RunControl(context, instance, CONTROL_RESET, nullptr, 0, result);
+            Require(result[0] == 0);
+        }
+        if (mode == Case::Initialize) {
+            RunControl(context, instance, CONTROL_INITIALIZE, start.config, 8, result);
+            Require(result[0] == 0);
+        }
+        const auto query = RunAt9Job(context, instance, runMultipleFrames, nullptr, 0);
+        Require(query.stream.inputConsumed == 0 && query.stream.outputWritten == 0 && query.frames == 0);
+        const auto second = RunAt9Job(context, instance, runMultipleFrames, tail.data(), tail.size());
+        if (mode == Case::Exact) {
+            Require(second.stream.inputConsumed == static_cast<std::int32_t>(tail.size()));
+            Require(second.stream.outputWritten == 0 && second.frames == 0 && second.stream.totalDecodedSamples == 512);
+            const auto next = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size());
+            Require(next.frames == 2 && next.stream.outputWritten == 512 * 2 && next.stream.totalDecodedSamples == 1024);
+        } else if (mode == Case::Appended) {
+            Require(second.frames == 2 && second.stream.outputWritten == 512 * 2 && second.stream.totalDecodedSamples == 1024);
+            Require(second.stream.inputConsumed == 1024);
+        } else if (mode == Case::Different || mode == Case::ShortMismatch || mode == Case::GaplessReset) {
+            Require(second.frames == 2 && second.stream.outputWritten == 512 * 2);
+            Require(second.stream.inputConsumed == static_cast<std::int32_t>(tail.size()));
+            Require(second.stream.totalDecodedSamples == (mode == Case::GaplessReset ? 512 : 1024));
+        } else {
+            Require(second.stream.result == 0x8 && second.stream.inputConsumed == 0);
+            Require(second.frames == 0 && second.stream.outputWritten == 0 && second.stream.totalDecodedSamples == 0);
+        }
+        Require(sceAjmInstanceDestroy(context, instance) == 0);
+    }
+}
+
+void TestAt9GaplessEndTailChannelsAndSkip(std::uint32_t context) {
+    std::fprintf(stderr, "TestAt9GaplessEndTailChannelsAndSkip\n");
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    constexpr std::uint64_t sidebandStream = 1ull << 47;
+    const SyntheticAt9Channel blocks[2] = {{0x00, 0xA5, 27}, {0x01, 0x0E, 22}};
+    const struct {
+        std::uint8_t config[4];
+        std::size_t channels;
+        bool multichannel;
+    } layouts[] = {{{0xFE, 0x72, 0x17, 0xF0}, 2, false}, {{0x30, 0x71, 0x41, 0x7E}, 6, true}, {{0x30, 0x73, 0xC1, 0x7E}, 16, true}};
+    for (const auto& layout : layouts) {
+        const auto& config = layout.config;
+        const auto channels = layout.channels;
+        std::vector<std::uint8_t> stream;
+        for (std::uint32_t frame = 0; frame < 4; ++frame) {
+            for (std::size_t channel = 0; channel < channels; ++channel) {
+                const auto& description = blocks[channel % 2];
+                auto block = SyntheticAt9Block(description, frame);
+                if (layout.multichannel && frame == 3) block.resize(384 - 3 * description.blockBytes, 1);
+                stream.insert(stream.end(), block.begin(), block.end());
+            }
+        }
+        stream.resize(channels * 384, 1);
+        const auto reference = DecodeAt9Superframe(context, config, stream, channels);
+        Require(std::any_of(reference.begin(), reference.end(), [](auto value) { return value != 0; }));
+        for (const std::uint16_t skip : {std::uint16_t{0}, std::uint16_t{100}, std::uint16_t{300}}) {
+            std::uint32_t instance = 0;
+            Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+            At9Control start{{300, skip, 0}, {}, 0};
+            std::memcpy(start.config, config, sizeof(config));
+            std::int32_t result[2] = {-1, -1};
+            RunControl(context, instance, CONTROL_START, &start, sizeof(start), result);
+            Require(result[0] == 0);
+            std::vector<std::uint8_t> batch(4096);
+            std::vector<std::int16_t> pcm(1024 * channels, 123);
+            const auto run = [&](const std::uint8_t* input, std::size_t inputSize) {
+                std::fill(pcm.begin(), pcm.end(), 123);
+                At9Run decoded{};
+                AjmBatchInfo info{};
+                Require(sceAjmBatchInitialize(batch.data(), batch.size(), &info) == 0);
+                Require(sceAjmBatchJobRun(&info, instance, sidebandStream | runMultipleFrames, input, inputSize, pcm.data(), pcm.size() * sizeof(std::int16_t), &decoded, sizeof(decoded)) == 0);
+                Submit(context, info);
+                return decoded;
+            };
+            const auto first = run(stream.data(), stream.size());
+            Require(first.stream.result == 0 && first.frames == (skip == 300 ? 3u : 2u));
+            Require(first.stream.outputWritten == static_cast<std::int32_t>(300 * channels * 2) && first.stream.totalDecodedSamples == 300);
+            Require(std::equal(pcm.begin(), pcm.begin() + 300 * channels, reference.begin() + skip * channels));
+            Require(std::all_of(pcm.begin() + 300 * channels, pcm.end(), [](auto value) { return value == 123; }));
+            Require(first.stream.inputConsumed > 0 && static_cast<std::size_t>(first.stream.inputConsumed) < stream.size());
+            const auto consumed = static_cast<std::size_t>(first.stream.inputConsumed);
+            const auto tail = run(stream.data() + consumed, stream.size() - consumed);
+            Require(tail.stream.result == 0 && tail.frames == 0 && tail.stream.inputConsumed == static_cast<std::int32_t>(stream.size() - consumed) && tail.stream.outputWritten == 0 && tail.stream.totalDecodedSamples == 300);
+            Require(std::all_of(pcm.begin(), pcm.end(), [](auto value) { return value == 123; }));
+            const auto next = run(stream.data(), stream.size());
+            Require(next.stream.result == 0 && next.frames == 2 && next.stream.outputWritten == static_cast<std::int32_t>(300 * channels * 2) && next.stream.totalDecodedSamples == 600);
+            Require(std::equal(pcm.begin(), pcm.begin() + 300 * channels, reference.begin()));
+            Require(sceAjmInstanceDestroy(context, instance) == 0);
+        }
+    }
+}
+
+void TestAt9GaplessEndTailSingleFrame(std::uint32_t context) {
+    std::fprintf(stderr, "TestAt9GaplessEndTailSingleFrame\n");
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    std::vector<std::uint8_t> stream(256, 1);
+    std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, 13);
+    std::uint32_t instance = 0;
+    Require(sceAjmInstanceCreate(context, 1, 0, &instance) == 0);
+    const At9Control start{{128, 0, 0}, {0xFE, 0x70, 0x1F, 0xE0}, 0};
+    std::int32_t result[2] = {-1, -1};
+    RunControl(context, instance, CONTROL_START, &start, sizeof(start), result);
+    Require(result[0] == 0);
+    for (std::uint64_t segment = 1; segment <= 3; ++segment) {
+        const auto decoded = RunAt9Job(context, instance, runMultipleFrames, stream.data(), stream.size());
+        Require(decoded.stream.result == 0 && decoded.frames == 1 && decoded.stream.inputConsumed == 256 && decoded.stream.outputWritten == 256 && decoded.stream.totalDecodedSamples == segment * 128);
+    }
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
+}
+
+void TestAt9GaplessEndTailTwoInstances(std::uint32_t context) {
+    std::fprintf(stderr, "TestAt9GaplessEndTailTwoInstances\n");
+    constexpr std::uint64_t runMultipleFrames = 1ull << 12;
+    std::uint32_t instances[2] = {};
+    std::vector<std::uint8_t> tails[2];
+    const At9Control starts[2] = {{{256, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0}, {{512, 0, 0}, {0xFE, 0x70, 0x1F, 0xF0}, 0}};
+    for (std::size_t index = 0; index < 2; ++index) {
+        std::vector<std::uint8_t> stream(1024, static_cast<std::uint8_t>(index));
+        std::memcpy(stream.data(), AT9_MONO_SILENT_SUPERFRAME, sizeof(AT9_MONO_SILENT_SUPERFRAME));
+        Require(sceAjmInstanceCreate(context, 1, 0, &instances[index]) == 0);
+        std::int32_t result[2] = {-1, -1};
+        RunControl(context, instances[index], CONTROL_START, &starts[index], sizeof(starts[index]), result);
+        Require(result[0] == 0);
+        const auto first = RunAt9Job(context, instances[index], runMultipleFrames, stream.data(), stream.size());
+        Require(first.frames == index + 1 && first.stream.outputWritten == static_cast<std::int32_t>((index + 1) * 512) && first.stream.totalDecodedSamples == (index + 1) * 256);
+        Require(first.stream.inputConsumed > 0 && first.stream.inputConsumed < 1024);
+        tails[index].assign(stream.begin() + first.stream.inputConsumed, stream.end());
+    }
+    const auto prefix = RunAt9Job(context, instances[0], runMultipleFrames, tails[0].data(), 1);
+    Require(prefix.stream.result == 0x8 && prefix.frames == 0 && prefix.stream.inputConsumed == 0 && prefix.stream.outputWritten == 0);
+    for (const std::size_t index : {std::size_t{1}, std::size_t{0}}) {
+        const auto tail = RunAt9Job(context, instances[index], runMultipleFrames, tails[index].data(), tails[index].size());
+        Require(tail.stream.result == 0 && tail.frames == 0 && tail.stream.outputWritten == 0 && tail.stream.inputConsumed == static_cast<std::int32_t>(tails[index].size()) && tail.stream.totalDecodedSamples == (index + 1) * 256);
+        Require(sceAjmInstanceDestroy(context, instances[index]) == 0);
+    }
 }
 
 void TestAt9RunDecodesWholeInput(std::uint32_t context) {
@@ -2536,11 +2791,27 @@ void TestPcmResample(std::uint32_t context) {
 }
 
 int main(int argc, char** argv) {
-    Require(argc == 2);
+    Require(argc == 2 || (argc == 3 && std::strcmp(argv[2], "--gapless-tail") == 0));
+    const bool gaplessTail = argc == 3;
+#ifdef _WIN32
+    Require(_putenv_s("APS5_AJM_GAPLESS_END_TAIL", gaplessTail ? "1" : "0") == 0);
+#else
+    Require(setenv("APS5_AJM_GAPLESS_END_TAIL", gaplessTail ? "1" : "0", 1) == 0);
+#endif
     constexpr int invalidParameter = static_cast<int>(0x80930005);
     std::uint32_t context = 0;
     Require(sceAjmInitialize(0, nullptr) == invalidParameter);
     Require(sceAjmInitialize(0, &context) == 0 && context != 0);
+    if (gaplessTail) {
+        TestAt9GaplessEndTailAlreadyEnded(context);
+        TestAt9GaplessEndTailShortPrefix(context);
+        TestAt9GaplessEndTail(context);
+        TestAt9GaplessEndTailChannelsAndSkip(context);
+        TestAt9GaplessEndTailSingleFrame(context);
+        TestAt9GaplessEndTailTwoInstances(context);
+        Require(sceAjmFinalize(context) == 0);
+        return 0;
+    }
 
     const std::uint8_t stereo48k[4] = {0xFE, 0x72, 0x1F, 0xF0};
     AjmDecAt9ConfigDataInfo info{};
@@ -2623,4 +2894,11 @@ int main(int argc, char** argv) {
     TestConsoleStaleHeaderBits(context);
     Require(sceAjmDecWVorbisCreateHeaderPacket(nullptr) == static_cast<int>(0x8A6E0001));
     Require(sceAjmFinalize(context) == 0);
+    const std::string arguments = "\"" + std::string(argv[0]) + "\" \"" + argv[1] + "\" --gapless-tail";
+#ifdef _WIN32
+    const std::string command = "\"" + arguments + "\"";
+#else
+    const std::string command = arguments;
+#endif
+    Require(std::system(command.c_str()) == 0);
 }

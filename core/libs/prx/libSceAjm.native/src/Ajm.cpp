@@ -147,6 +147,8 @@ struct Instance {
     bool initialized = false;
     std::uint32_t superframeRemaining = 0;
     std::uint32_t frameInSuperframe = 0;
+    std::vector<std::uint8_t> gaplessEndTail;
+    std::vector<std::uint8_t> superframeTail;
     std::uint64_t totalDecodedSamples = 0;
     std::uint64_t segmentSamples = 0;
     SidebandGaplessDecode gapless{};
@@ -364,6 +366,8 @@ bool ResetDecoder(Instance& instance) {
     instance.channelDecoders.clear();
     instance.superframeRemaining = 0;
     instance.frameInSuperframe = 0;
+    instance.gaplessEndTail.clear();
+    instance.superframeTail.clear();
     unsigned char config[ATRAC9_CONFIG_DATA_SIZE];
     std::memcpy(config, instance.info.configData, sizeof(config));
     if (IsAt9Vibration(config)) {
@@ -777,6 +781,25 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     int decodeStatus = 0;
     std::size_t consumed = 0;
     std::uint32_t frames = 0;
+    static const bool gaplessEndTailEnabled = [] {
+        const char* value = std::getenv("APS5_AJM_GAPLESS_END_TAIL");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    bool discardedTailOnly = false;
+    if (gaplessEndTailEnabled && !instance.gaplessEndTail.empty() && !input.empty()) {
+        const auto compared = std::min(input.size(), instance.gaplessEndTail.size());
+        if (std::memcmp(input.data(), instance.gaplessEndTail.data(), compared) != 0) {
+            instance.gaplessEndTail.clear();
+        } else if (input.size() >= instance.gaplessEndTail.size()) {
+            consumed = instance.gaplessEndTail.size();
+            AJM_TRACE("[ajm] instance %u discards %zu resubmitted bytes after the gapless total\n", job.instance, consumed);
+            if (!ResetDecoder(instance)) {
+                WriteRunSideband(job, instance, AJM_RESULT_CODEC_ERROR | AJM_RESULT_FATAL, consumed, 0, 0, CurrentFormat(instance));
+                return;
+            }
+            discardedTailOnly = consumed == input.size();
+        }
+    }
 
     // A superframe is a fixed superframeSize bytes holding framesInSuperframe frames packed back to back,
     // each byte aligned but of its own size (the encoder moves bits between the frames of a superframe),
@@ -786,9 +809,9 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
     // reported as partial input, and the title resubmits it from the consumed offset.
     const auto superframeSize = static_cast<std::size_t>(instance.info.superframeSize);
     const auto framesInSuperframe = static_cast<std::uint32_t>(std::max(1, instance.info.framesInSuperframe));
-    if (Resampling(instance)) ResamplerProduce(instance, pcmOutputs, channels, encoding, sampleBytes);
+    if (!discardedTailOnly && Resampling(instance)) ResamplerProduce(instance, pcmOutputs, channels, encoding, sampleBytes);
     const auto segmentEnded = [&] { return instance.gapless.totalSamples != 0 && instance.segmentSamples >= instance.gapless.totalSamples; };
-    for (;;) {
+    for (; !discardedTailOnly;) {
         if (segmentEnded()) break;
         if (instance.superframeRemaining == 0) consumed += RiffDataOffset(input.data() + consumed, input.size() - consumed);
         const std::size_t needed = instance.superframeRemaining == 0 ? superframeSize : instance.superframeRemaining;
@@ -833,7 +856,16 @@ void RunAt9(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
         EmitFrame(instance, pcmOutputs, pcm.data(), frameSamples, channels, sampleBytes);
         if (job.console && (job.flags & RUN_MULTIPLE_FRAMES) == 0) break;
     }
-    if (segmentEnded()) instance.segmentSamples = 0;
+    if (gaplessEndTailEnabled && frames != 0) {
+        instance.superframeTail.clear();
+        if (instance.superframeRemaining != 0 && instance.superframeRemaining <= input.size() - consumed) {
+            instance.superframeTail.assign(input.data() + consumed, input.data() + consumed + instance.superframeRemaining);
+        }
+    }
+    if (segmentEnded()) {
+        if (gaplessEndTailEnabled) instance.gaplessEndTail = std::move(instance.superframeTail);
+        instance.segmentSamples = 0;
+    }
 
     if (TraceEnabled()) {
         std::fprintf(stderr, "[ajm] instance %u run flags 0x%llx: %zu input bytes in %u buffers, %zu output bytes in %u buffers, sideband %llu bytes; superframe %d (%d frames), %d channels, %d samples/frame, %d Hz, config %02x %02x %02x %02x -> result 0x%x, decoder status 0x%x, %u frames, consumed %zu, produced %zu, total samples %llu, gapless total %u skip %u skipped %u, input",
@@ -1603,6 +1635,8 @@ void RunAac(Instance& instance, const JobHeader& job, const AjmBuffer* inputs, c
 }
 
 void ClearContext(Instance& instance) {
+    instance.gaplessEndTail.clear();
+    instance.superframeTail.clear();
     instance.totalDecodedSamples = 0;
     instance.segmentSamples = 0;
     instance.gapless.skippedSamples = 0;
@@ -1690,6 +1724,8 @@ void Execute(const JobHeader& job, const AjmBuffer* inputs, const AjmBuffer* out
         instance->gapless.totalSamples = gapless.totalSamples;
         instance->gapless.skipSamples = gapless.skipSamples;
         if (job.flags) {
+            instance->gaplessEndTail.clear();
+            instance->superframeTail.clear();
             instance->gapless.skippedSamples = 0;
             instance->segmentSamples = 0;
             instance->totalDecodedSamples = 0;

@@ -514,6 +514,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `APS5_AJM_GAPLESS_END_TAIL` | string | `core/libs/prx/libSceAjm.native/src/Ajm.cpp` | 0 | Console handling of bytes after a gapless total inside the same superframe is unmeasured; this opt-in rule conflicts with `TestAt9GaplessSegments`. Exactly `1` enables discarding an exact resubmission of the retained ATRAC9 superframe tail without output; unset or any other value keeps today's segment continuation |
 | `APS5_TRACE_AJM` | presence | `core/libs/prx/libSceAjm.native/src/Ajm.cpp` |  | logs every job the title submits and what the library writes back |
 
 ### libSceAudioOut
