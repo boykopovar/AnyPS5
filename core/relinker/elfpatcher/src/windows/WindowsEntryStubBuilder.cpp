@@ -756,7 +756,7 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
             code.PatchBranch(weakDone, code.GetRva());
             continue;
         }
-        if (lazyBinding) {
+        if (lazyBinding && imports[index].Lazy) {
             lazyUnresolvedImports.push_back(index);
             const auto skipGotWrite = code.Branch({0xe9});
             patchResolved();
