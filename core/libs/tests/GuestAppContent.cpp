@@ -49,6 +49,9 @@ int main() {
     Require(sceAppContentAddcontShrink(0, nullptr) == notInitialized);
     Require(sceAppContentGetAddcontInfoByEntitlementId(nullptr, nullptr) == notInitialized);
     Require(sceAppContentGetAddcontInfoListByIroTag(0, nullptr, 0, nullptr) == notInitialized);
+    bool matches = false;
+    Require(sceAppContentUnknown_SWVxsi_ZBlw("MDID", &matches) == notInitialized);
+    Require(!matches);
     std::uint32_t pftFlag = 0x5a5a5a5a;
     Require(sceAppContentGetPftFlag(&pftFlag) == notInitialized);
     Require(pftFlag == 0x5a5a5a5a);
@@ -308,6 +311,10 @@ int main() {
     Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 0, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoListByIroTag(1, reinterpret_cast<AppContentAddcontInfo*>(info), 0, nullptr) == ErrorParameter);
     Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 1, nullptr) == ErrorParameter);
+    Require(sceAppContentUnknown_SWVxsi_ZBlw(nullptr, &matches) == ErrorParameter);
+    Require(!matches);
+    Require(sceAppContentUnknown_SWVxsi_ZBlw("MDID", nullptr) == ErrorParameter);
+    Require(!matches);
     std::filesystem::current_path(original);
     std::filesystem::remove_all(directory);
 }
