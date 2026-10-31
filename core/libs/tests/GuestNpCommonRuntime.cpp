@@ -219,6 +219,41 @@ void TestObjects() {
         "a failed allocation returns null");
 }
 
+void TestAllocatorEx() {
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-test") == 0, "a memory heap is created");
+    NpAllocatorEx allocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1234, &allocator);
+
+    Require(_sceNpAllocatorExConvertAllocator(&allocator) == &allocator.allocator, "the extended allocator converts to its allocator");
+    auto* block = static_cast<std::uint8_t*>(_sceNpAllocatorExMalloc(&allocator, 16));
+    Require(block != nullptr, "the extended allocator hands out memory");
+    block[15] = 0x5A;
+    block = static_cast<std::uint8_t*>(_sceNpAllocatorExRealloc(&allocator, block, 128));
+    Require(block != nullptr && block[15] == 0x5A, "reallocation keeps the contents");
+    _sceNpAllocatorExFree(&allocator, block);
+    char* copy = _sceNpAllocatorExStrdup(&allocator, "np-common");
+
+    Require(copy != nullptr && std::strcmp(copy, "np-common") == 0, "a string is duplicated");
+    _sceNpAllocatorExFree(&allocator, copy);
+    copy = _sceNpAllocatorExStrndup(&allocator, "np-common", 2);
+    Require(copy != nullptr && std::strcmp(copy, "np") == 0, "a duplicated prefix is terminated");
+    _sceNpAllocatorExFree(&allocator, copy);
+    copy = _sceNpAllocatorExStrndup(&allocator, "np", 16);
+
+    Require(copy != nullptr && std::strcmp(copy, "np") == 0, "a short string is duplicated whole");
+    _sceNpAllocatorExFree(&allocator, copy);
+    sceNpMemoryHeapDestroy(&memoryHeap);
+    AllocatorRecord record {};
+    record.fail = true;
+    NpAllocatorEx failing {{RecordAllocate, nullptr, RecordRelease, &record}, 0};
+
+    Require(_sceNpAllocatorExStrdup(&failing, "abc") == nullptr && record.size == 4, "a failed duplicate returns null after asking for the string and its terminator");
+    Require(_sceNpAllocatorExStrndup(&failing, "abcdef", 3) == nullptr && record.size == 4, "a failed prefix duplicate returns null");
+    _sceNpAllocatorExFree(&failing, record.block.data());
+    Require(record.released == record.block.data(), "freeing goes through the allocator");
+}
+
 void TestObjectsThroughStoredAllocator() {
     AllocatorRecord record {};
     NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
@@ -249,6 +284,145 @@ void TestObjectsThroughStoredAllocator() {
     record.fail = true;
     Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
         "a failed array allocation returns null");
+}
+
+struct ExRecord {
+    std::array<std::uint8_t, 64> block {};
+    int allocations = 0;
+    int reallocations = 0;
+    int releases = 0;
+    void* reallocated = nullptr;
+    std::size_t size = 0;
+    void* released = nullptr;
+    bool fail = false;
+};
+
+void* APS5_VABI ExAllocate(std::size_t size, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->allocations;
+    record->size = size;
+    return record->fail ? nullptr : record->block.data();
+}
+
+void* APS5_VABI ExReallocate(void* pointer, std::size_t size, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->reallocations;
+    record->reallocated = pointer;
+    record->size = size;
+    return record->fail ? nullptr : record->block.data() + 8;
+}
+
+void APS5_VABI ExRelease(void* pointer, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->releases;
+    record->released = pointer;
+}
+
+void TestAllocatorExRecorded() {
+    ExRecord record {};
+    NpAllocatorEx allocator {{ExAllocate, ExReallocate, ExRelease, &record}, 0x1234};
+    std::uint8_t old = 0;
+
+    Require(_sceNpAllocatorExRealloc(&allocator, &old, 96) == record.block.data() + 8 && record.reallocated == &old && record.size == 96
+            && record.reallocations == 1 && record.allocations == 0 && record.releases == 0,
+        "reallocation is one call to the allocator's reallocate with the pointer and size");
+    record.fail = true;
+    Require(_sceNpAllocatorExRealloc(&allocator, &old, 32) == nullptr && record.reallocations == 2 && record.releases == 0,
+        "a failed reallocation returns null and keeps the old block");
+    Require(_sceNpAllocatorExMalloc(&allocator, 24) == nullptr && record.allocations == 1 && record.size == 24,
+        "a failed allocation is one call to allocate");
+    _sceNpAllocatorExFree(&allocator, nullptr);
+    Require(record.releases == 1 && record.released == nullptr, "freeing null still calls release");
+
+    record.fail = false;
+    record.size = 0;
+    Require(_sceNpAllocatorExStrndup(&allocator, "abc", 10) != nullptr && record.size == 4,
+        "a short string asks for its length and terminator, not the limit");
+    Require(_sceNpAllocatorExStrndup(&allocator, "abc", SIZE_MAX) != nullptr && record.size == 4
+            && std::memcmp(record.block.data(), "abc", 4) == 0,
+        "an unbounded limit duplicates the whole string");
+    const char unterminated[3] = {'x', 'y', 'z'};
+    Require(_sceNpAllocatorExStrndup(&allocator, unterminated, sizeof(unterminated)) != nullptr && record.size == 4
+            && std::memcmp(record.block.data(), "xyz", 4) == 0,
+        "the limit bounds the read of an unterminated buffer");
+}
+
+void TestRingBuf() {
+    constexpr int NoSpace = static_cast<int>(0x80559E0A);
+    constexpr int NoData = static_cast<int>(0x80559E0B);
+    std::uint8_t storage[8];
+    NpRingBuf ring {};
+    _ZN3sce2np7RingBufC1Ev(&ring);
+    const void* const* ringVtable = ring.vtable;
+
+    Require(ring.buf == nullptr && ring.bufSize == 0 && _ZNK3sce2np7RingBuf7IsEmptyEv(&ring) && _ZNK3sce2np7RingBuf11GetFreeSizeEv(&ring) == 0,
+        "a new ring buffer has no storage");
+    Require(_ZN3sce2np7RingBuf4InitEPvm(&ring, storage, sizeof(storage)) == 0 && _ZNK3sce2np7RingBuf7IsEmptyEv(&ring)
+            && _ZNK3sce2np7RingBuf11GetFreeSizeEv(&ring) == 8,
+        "a ring buffer takes the caller's storage");
+    Require(_ZN3sce2np7RingBuf5WriteEPKvm(&ring, "abcdef", 6) == 0 && _ZN3sce2np7RingBuf5WriteEPKvm(&ring, "xyz", 3) == NoSpace
+            && _ZNK3sce2np7RingBuf11GetDataSizeEv(&ring) == 6,
+        "a write that does not fit is refused whole");
+    char out[16] = {};
+    Require(_ZN3sce2np7RingBuf4ReadEPvm(&ring, out, 4) == 0 && std::memcmp(out, "abcd", 4) == 0, "data is read in order");
+    Require(_ZN3sce2np7RingBuf5WriteEPKvm(&ring, "ghijk", 5) == 0 && _ZNK3sce2np7RingBuf11GetDataSizeEv(&ring) == 7
+            && std::memcmp(storage, "ijkdefgh", 8) == 0,
+        "a write wraps around the end of the storage");
+    Require(_ZN3sce2np7RingBuf4PeekEmPvm(&ring, 3, out, 4) == 0 && std::memcmp(out, "hijk", 4) == 0 && _ZNK3sce2np7RingBuf11GetDataSizeEv(&ring) == 7,
+        "peeking across the wrap leaves the data in place");
+    Require(_ZN3sce2np7RingBuf4PeekEmPvm(&ring, 4, out, 4) == NoSpace, "a peek past the data is refused");
+    Require(_ZN3sce2np7RingBuf4ReadEPvm(&ring, out, 8) == NoData && _ZN3sce2np7RingBuf4ReadEPvm(&ring, nullptr, 2) == 0
+            && _ZN3sce2np7RingBuf4ReadEPvm(&ring, out, 5) == 0 && std::memcmp(out, "ghijk", 5) == 0 && _ZNK3sce2np7RingBuf7IsEmptyEv(&ring),
+        "a read past the data is refused and a null buffer skips the data");
+    std::size_t blockSize = 0;
+    auto* block = static_cast<std::uint8_t*>(_ZN3sce2np7RingBuf16CheckoutForWriteEPm(&ring, &blockSize));
+    Require(block == storage && blockSize == 8, "an empty ring buffer hands out its whole storage for writing");
+    std::memcpy(block, "AB", 2);
+    _ZN3sce2np7RingBuf15CheckinForWriteEm(&ring, 2);
+    block = static_cast<std::uint8_t*>(_ZN3sce2np7RingBuf15CheckoutForReadEPm(&ring, &blockSize));
+    Require(block == storage && blockSize == 2 && block[1] == 'B', "the written block is handed out for reading");
+    _ZN3sce2np7RingBuf14CheckinForReadEm(&ring, 2);
+    Require(_ZN3sce2np7RingBuf15CheckoutForReadEPm(&ring, &blockSize) == nullptr && _ZNK3sce2np7RingBuf7IsEmptyEv(&ring), "nothing is left to read");
+    _ZN3sce2np7RingBuf7DestroyEv(&ring);
+    Require(ring.buf == nullptr && ring.vtable == ringVtable, "destroying detaches the storage");
+
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-test") == 0, "a memory heap is created");
+    NpAllocatorEx heapAllocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1234, &heapAllocator);
+    AllocatorRecord record {};
+    NpAllocator objectAllocator {RecordAllocate, nullptr, RecordRelease, &record};
+    auto* memory = static_cast<NpRingBufMemory*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpRingBufMemory), &objectAllocator));
+    _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(memory, &heapAllocator);
+
+    Require(memory->ringBuf.buf == nullptr && memory->allocator == &heapAllocator && memory->ringBuf.vtable != ringVtable,
+        "a memory ring buffer keeps its allocator");
+    Require(_ZN3sce2np13RingBufMemory4InitEm(memory, 4) == 0 && memory->ringBuf.buf != nullptr && memory->ringBuf.bufSize == 4,
+        "a memory ring buffer allocates its storage");
+    Require(_ZN3sce2np7RingBuf5WriteEPKvm(&memory->ringBuf, "abc", 3) == 0 && _ZN3sce2np7RingBuf4ReadEPvm(&memory->ringBuf, out, 2) == 0
+            && _ZN3sce2np7RingBuf5WriteEPKvm(&memory->ringBuf, "de", 2) == 0,
+        "a memory ring buffer wraps like a plain one");
+    Require(_ZN3sce2np13RingBufMemory6ExpandEm(memory, 4) == 0 && memory->ringBuf.bufSize == 8 && _ZN3sce2np7RingBuf5WriteEPKvm(&memory->ringBuf, "fgh", 3) == 0
+            && _ZN3sce2np7RingBuf4ReadEPvm(&memory->ringBuf, out, 6) == 0 && std::memcmp(out, "cdefgh", 6) == 0,
+        "expanding moves the wrapped data and keeps its order");
+    NpRingBufMemory full {};
+    _ZN3sce2np13RingBufMemoryC1EP16SceNpAllocatorEx(&full, &heapAllocator);
+    Require(_ZN3sce2np13RingBufMemory4InitEm(&full, 4) == 0 && _ZN3sce2np7RingBuf5WriteEPKvm(&full.ringBuf, "ABCD", 4) == 0
+            && _ZN3sce2np7RingBuf4ReadEPvm(&full.ringBuf, out, 1) == 0 && _ZN3sce2np7RingBuf5WriteEPKvm(&full.ringBuf, "E", 1) == 0
+            && full.ringBuf.readPointer == full.ringBuf.buf + 1 && full.ringBuf.writePointer == full.ringBuf.buf + 1,
+        "a full ring buffer has its pointers together");
+    Require(_ZN3sce2np13RingBufMemory6ExpandEm(&full, 2) == 0 && full.ringBuf.bufSize == 6 && full.ringBuf.size == 4
+            && full.ringBuf.readPointer == full.ringBuf.buf + 1 && full.ringBuf.writePointer == full.ringBuf.buf + 1,
+        "expanding a full ring buffer moves no data and keeps its pointers together");
+    Require(_ZN3sce2np7RingBuf5WriteEPKvm(&full.ringBuf, "FG", 2) == 0 && full.ringBuf.size == 6 && full.ringBuf.readPointer == full.ringBuf.buf
+            && full.ringBuf.writePointer == full.ringBuf.buf + 2 && std::memcmp(full.ringBuf.buf, "FGCD", 4) == 0,
+        "the next write takes the expanded full buffer for empty and starts over the queued data, as in the module");
+    _ZN3sce2np13RingBufMemory7DestroyEv(&full);
+    using Destructor = void (APS5_VABI*)(NpRingBufMemory*);
+    reinterpret_cast<Destructor>(memory->ringBuf.vtable[1])(memory);
+
+    Require(record.released == record.block.data(), "the deleting destructor frees the object through its allocator");
+    sceNpMemoryHeapDestroy(&memoryHeap);
 }
 
 void TestTitleIdObjects() {
@@ -1066,7 +1240,10 @@ int main() {
     TestThreads();
     TestHeaps();
     TestObjects();
+    TestAllocatorEx();
     TestObjectsThroughStoredAllocator();
+    TestAllocatorExRecorded();
+    TestRingBuf();
     TestMemoryStreams();
     TestTitleIdObjects();
     TestStreamHelpers();
