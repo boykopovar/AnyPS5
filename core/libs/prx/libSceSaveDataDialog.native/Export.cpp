@@ -41,14 +41,23 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
  if (result == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
- auto* r = static_cast<SaveDataDialogResult*>(result);
- r->mode = g_mode;
- r->result = SAVE_DATA_DIALOG_RESULT_OK;
- r->button_id = SAVE_DATA_DIALOG_BUTTON_ID_OK;
- r->user_data = g_user_data;
- if (r->dir_name != nullptr) {
-  std::snprintf(static_cast<SaveDataDirName*>(r->dir_name)->data,
-   sizeof(SaveDataDirName::data), "%s", g_dir_name);
+ SaveDataDialogResult r{};
+ if (!GuestCopyIn_nid_no_patch(&r, result, sizeof(r))) {
+  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+ }
+ r.mode = g_mode;
+ r.result = SAVE_DATA_DIALOG_RESULT_OK;
+ r.button_id = SAVE_DATA_DIALOG_BUTTON_ID_OK;
+ r.user_data = g_user_data;
+ if (r.dir_name != nullptr) {
+  SaveDataDirName dir_name{};
+  std::snprintf(dir_name.data, sizeof(dir_name.data), "%s", g_dir_name);
+  if (!GuestCopyOut_nid_no_patch(r.dir_name, &dir_name, sizeof(dir_name))) {
+   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
+  }
+ }
+ if (!GuestCopyOut_nid_no_patch(result, &r, sizeof(r))) {
+  return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
  return SAVE_DATA_DIALOG_OK;
 }
