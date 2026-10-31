@@ -4221,6 +4221,108 @@ bool sparseRunImportTests(const Device& device, bool copied) {
     return true;
 }
 
+bool pendingUploadGpuCopyTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    const auto alignment = context.limits.minStorageBufferOffsetAlignment;
+    if (alignment < 8 || alignment > 256) {
+        std::cout << "storage buffer offset alignment " << alignment << ": uploads behind a pending GPU write not tested\n";
+        return false;
+    }
+    constexpr std::size_t bytes = 4u << 20u;
+    void* block = context.hostImportAlignment != 0 ? AllocateWatched(bytes, 65536) : nullptr;
+    if (block == nullptr) {
+        std::cout << "host imports or write watching unavailable: uploads behind a pending GPU write not tested\n";
+        return false;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    auto* guest = static_cast<std::uint8_t*>(block);
+    for (std::size_t at = 0; at < bytes; ++at) guest[at] = static_cast<std::uint8_t>(at * 5u + 1u);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+        }
+    } unregister{context, block};
+    const auto* import = HostImportFor(context, address, bytes);
+    if (import == nullptr) {
+        std::cout << "host import of the watched block refused: uploads behind a pending GPU write not tested\n";
+        return false;
+    }
+    constexpr std::size_t viewOffset = 4096 + 4;
+    constexpr std::size_t viewBytes = 3u << 20u;
+    constexpr std::size_t producedOffset = 1u << 20u;
+    constexpr std::size_t producedBytes = 1u << 20u;
+    const auto view = address + viewOffset;
+    const auto produced = address + producedOffset;
+    Require((view - import->base) % alignment != 0 && (view - import->base) % 4 == 0, "the test view is not a DWORD-aligned view off the storage buffer offset alignment");
+    std::vector<std::uint8_t> expected(guest + viewOffset, guest + viewOffset + viewBytes);
+    auto source = std::make_shared<Buffer>(context, producedBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    auto* pattern = reinterpret_cast<std::uint8_t*>(source->Bytes().data());
+    for (std::size_t at = 0; at < producedBytes; ++at) {
+        pattern[at] = static_cast<std::uint8_t>((at * 7u + 3u) ^ 0xa5u);
+        expected[producedOffset - viewOffset + at] = pattern[at];
+    }
+    {
+        std::lock_guard lock(GpuMutex());
+        recorder.Sync();
+        const auto commands = recorder.Commands();
+        CopyBuffer(context, commands, source->Handle(), 0, import->buffer, HostImportOffset(*import, produced), producedBytes);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+        recorder.Keep(source);
+        recorder.NotePendingWrite(produced, producedBytes);
+    }
+    Require(recorder.OpenWriteOverlaps(produced, producedBytes), "the producer's GPU write is not pending in the open batch");
+    {
+        GuestBufferMemory memory(context);
+        memory.AddReadable(view, viewBytes);
+        const auto waitsBefore = Recorder::ThreadHookWaits();
+        const auto submissionsBefore = recorder.Submissions();
+        {
+            std::lock_guard lock(GpuMutex());
+            memory.Upload(false);
+        }
+        const auto waits = Recorder::ThreadHookWaits() - waitsBefore;
+        const auto submissions = recorder.Submissions() - submissionsBefore;
+        Require(waits == 0 && submissions == 0 && recorder.OpenWriteOverlaps(produced, producedBytes), "the upload of a misaligned " + std::to_string(viewBytes >> 20u) + " MiB region over a pending GPU write waited for it on the CPU (" + std::to_string(waits) + " flush-hook waits, " + std::to_string(submissions) + " submissions)");
+        auto readback = std::make_shared<Buffer>(context, viewBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        {
+            std::lock_guard lock(GpuMutex());
+            std::uint32_t adjustment = 0;
+            const auto info = memory.Descriptor(view, viewBytes, adjustment);
+            const auto commands = recorder.Commands();
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            CopyBuffer(context, commands, info.buffer, info.offset + adjustment, readback->Handle(), 0, viewBytes);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            recorder.Keep(readback);
+            recorder.Submit();
+        }
+        device.WaitQueue();
+        {
+            std::lock_guard lock(GpuMutex());
+            recorder.Sync();
+        }
+        const auto* read = reinterpret_cast<const std::uint8_t*>(readback->Bytes().data());
+        const auto mismatch = std::mismatch(expected.begin(), expected.end(), read);
+        Require(mismatch.first == expected.end(), "the region uploaded behind the pending GPU write misses the producer's bytes at byte " + std::to_string(mismatch.first - expected.begin()) + " of the view");
+        Require(std::memcmp(guest + producedOffset, pattern, producedBytes) == 0, "the producer's GPU write did not reach guest memory");
+    }
+    std::cout << "uploads behind a pending GPU write tests passed\n";
+    return true;
+}
+
 void misalignedRegionTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     const auto alignment = context.limits.minStorageBufferOffsetAlignment;
@@ -12463,6 +12565,9 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--typed-fill-clear-only") {
             return denormalClearTests(device, recorder) ? 0 : 77;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pending-upload-gpu-copy-only") {
+            return pendingUploadGpuCopyTests(device, recorder) ? 0 : 77;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--integer-clear-only") {
             integerClearTests(device);
             return 0;
@@ -12721,6 +12826,7 @@ int main(int argc, char** argv) {
         fmaskDecompressMsaaTests(device, recorder);
         misalignedSnapshotTests(device, recorder);
         misalignedRegionTests(device, recorder);
+        pendingUploadGpuCopyTests(device, recorder);
         drawSnapshotReuseTests(device, recorder);
         drawDescriptorWriteTests(device, recorder);
         drawSnapshotTableSetTests(device, recorder);
