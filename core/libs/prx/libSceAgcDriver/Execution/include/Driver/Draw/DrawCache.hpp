@@ -119,7 +119,7 @@ private:
     std::size_t bucketMask = 0;
 };
 
-enum class DrawVerdict { Drawn, Nothing, Rejected };
+enum class DrawVerdict { Drawn, Nothing, Rejected, Split };
 
 struct StageCapture {
     std::shared_ptr<const ShaderRecompiler::RecompileResult> compiled;
