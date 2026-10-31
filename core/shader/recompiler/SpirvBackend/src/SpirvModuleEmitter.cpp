@@ -220,6 +220,15 @@ std::uint32_t EmitBuiltinU32(SpirvEmitterState& state, StageInputKind kind, std:
         const auto local = WorkgroupLocalSize(state, *ShaderWorkgroupInput(state));
         return EmitBinaryU32(state, spv::OpIAdd, value, EmitBinaryU32(state, spv::OpIMul, offset, ConstantU32(state, local[component])));
     }
+    if (StageOf(state) == IrShaderStage::Mesh && kind == StageInputKind::WorkgroupId && component == 0u) {
+        if (state.numWorkgroupsVariable == 0u) throw std::runtime_error("a mesh program reads its group without NumWorkgroups");
+        const auto columnsPointer = state.module.AllocateId();
+        const auto columns = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeU32(state)), columnsPointer, state.numWorkgroupsVariable, ConstantU32(state, 0u));
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), columns, columnsPointer);
+        const auto layer = EmitInputComponentU32(state, kind, 2u);
+        return EmitBinaryU32(state, spv::OpIAdd, EmitInputComponentU32(state, kind, 0u), EmitBinaryU32(state, spv::OpIMul, layer, columns));
+    }
     const auto variable = InputVariableForKind(state, kind);
     if (variable == 0) {
         return ConstantU32(state, 0u);

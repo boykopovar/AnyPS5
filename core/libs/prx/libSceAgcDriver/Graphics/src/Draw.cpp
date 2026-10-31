@@ -1204,6 +1204,15 @@ MeshArgumentRules MeshArgumentRulesFor(const Context& context, const ShaderRecom
     return {indexCount, inputSize, step, mesh.primitivesPerGroup, context.meshLimits.maxMeshWorkGroupCount[0], context.meshLimits.maxMeshWorkGroupCount[1], context.meshLimits.maxMeshWorkGroupTotalCount};
 }
 
+std::optional<MeshGrid> MeshGridFor(const Context& context, std::uint32_t groups, std::uint32_t instances) {
+    const auto& limits = context.meshLimits;
+    if (groups == 0 || instances > limits.maxMeshWorkGroupCount[1] || limits.maxMeshWorkGroupCount[0] == 0) return std::nullopt;
+    const auto layers = (groups - 1u) / limits.maxMeshWorkGroupCount[0] + 1u;
+    const auto columns = (groups - 1u) / layers + 1u;
+    if (layers > limits.maxMeshWorkGroupCount[2] || (instances != 0 && columns > limits.maxMeshWorkGroupTotalCount / instances / layers)) return std::nullopt;
+    return MeshGrid{columns, instances, layers};
+}
+
 MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshArgumentRules& rules) {
     const auto first = record.firstVertexOrIndex;
     const auto effective = first < rules.indexCount ? std::min(record.count, rules.indexCount - first) : 0u;
@@ -1434,6 +1443,7 @@ struct DrawInputs {
     std::uint32_t fragmentOutputs = 0;
     VkPipelineStageFlags shaderStages = 0;
     std::uint32_t meshGroups = 0;
+    std::uint32_t meshLayers = 1;
     std::vector<std::uint32_t> restartTable;
     std::uint32_t expandedIndexCount = 0;
     const VertexInputLayout& VertexLayout() const { return retainedVertexInput != nullptr ? *retainedVertexInput : vertexInput; }
@@ -1518,9 +1528,12 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         if (args == nullptr) {
             const auto step = mesh.inputPrimitive == 5 || mesh.inputPrimitive == 6 ? 1u : inputSize;
             const auto primitives = (draw.indexCount - inputSize) / step + 1u;
-            inputs.meshGroups = (primitives - 1u) / mesh.primitivesPerGroup + 1u;
-            APS5_LOG_OUT_DEBUG("Mesh primitives=%u groups=%u", primitives, inputs.meshGroups);
-            Require(inputs.meshGroups <= context.meshLimits.maxMeshWorkGroupCount[0] && draw.instanceCount <= context.meshLimits.maxMeshWorkGroupCount[1] && static_cast<std::uint64_t>(inputs.meshGroups) * draw.instanceCount <= context.meshLimits.maxMeshWorkGroupTotalCount, "mesh draw exceeds workgroup count limits");
+            const auto groups = (primitives - 1u) / mesh.primitivesPerGroup + 1u;
+            const auto grid = MeshGridFor(context, groups, draw.instanceCount);
+            Require(grid.has_value(), "mesh draw exceeds workgroup count limits");
+            APS5_LOG_OUT_DEBUG("Mesh primitives=%u groups=%u as %u x %u", primitives, groups, grid->groups, grid->layers);
+            inputs.meshGroups = grid->groups;
+            inputs.meshLayers = grid->layers;
         }
     }
     if (state.stages.tessellation) Require(draw.indexCount % state.stages.tessellation->inputControlPoints == 0, "incomplete tessellation patch");
@@ -1959,8 +1972,8 @@ void recordDrawCommands(const Context& context, VkCommandBuffer commands, const 
         return;
     }
     if (state.stages.mesh) {
-        APS5_LOG_OUT_DEBUG("vkCmdDrawMeshTasksEXT groups=%u instances=%u", inputs.meshGroups, draw.instanceCount);
-        context.Function<PFN_vkCmdDrawMeshTasksEXT>("vkCmdDrawMeshTasksEXT")(commands, inputs.meshGroups, draw.instanceCount, 1);
+        APS5_LOG_OUT_DEBUG("vkCmdDrawMeshTasksEXT groups=%u instances=%u layers=%u", inputs.meshGroups, draw.instanceCount, inputs.meshLayers);
+        context.Function<PFN_vkCmdDrawMeshTasksEXT>("vkCmdDrawMeshTasksEXT")(commands, inputs.meshGroups, draw.instanceCount, inputs.meshLayers);
         recorded(subdraw++);
         return;
     }
