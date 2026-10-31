@@ -1895,7 +1895,7 @@ private:
                 if (std::ranges::none_of(directImages, [&](const IrValue* handle) { return SameHandle(*handle, image); }) && !PlanTableColumn(image, false, memory.imageR128)) {
                     static_cast<void>(PlanRuntimeAddressColumn(image, memory.imageR128));
                 }
-                if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && !DirectSampler(*inst->Argument(1)->Resolve())) {
+                if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && ((m_deviceImageTables && FindTableColumn(image) != nullptr) || !DirectSampler(*inst->Argument(1)->Resolve()))) {
                     static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false));
                 }
             }
@@ -1959,6 +1959,7 @@ private:
         if (!ImageOpcodeInfoOf(inst.Opcode()).needsSampler) return true;
         if (inst.ArgumentCount() < 2u) return false;
         const IrValue& sampler = *inst.Argument(1)->Resolve();
+        if (FindTableColumn(sampler) != nullptr) return true;
         if (!DirectSampler(sampler)) return false;
         const IrValue* word0 = sampler.Argument(0)->Resolve();
         return !(word0->HasImmediate() && word0->Type() == IrType::U32 && (word0->ImmediateU32() & samplerForceUnnormalizedBit) != 0u);
@@ -1967,15 +1968,26 @@ private:
     void PlanDeviceColumns() {
         m_deviceSources.assign(m_sources.size(), 0u);
         if (!m_deviceImageTables) return;
-        for (const auto& plan : m_tableColumns) {
-            const auto& column = *m_sources[plan.source].tableColumn;
-            if (!column.sampler) m_deviceSources[plan.source] = 1u;
-        }
-        for (auto& block : m_program.Blocks()) {
-            for (IrValue* inst : block->Instructions()) {
-                if (ImageOpcodeInfoOf(inst->Opcode()).access == ImageAccess::None || inst->ArgumentCount() == 0u) continue;
-                const auto* column = FindTableColumn(*inst->Argument(0)->Resolve());
-                if (column != nullptr && !DeviceAccess(*inst)) m_deviceSources[column->source] = 0u;
+        for (const auto& plan : m_tableColumns) m_deviceSources[plan.source] = 1u;
+        for (bool changed = true; changed;) {
+            changed = false;
+            const auto demote = [&](const TableColumnPlan* column) {
+                if (column != nullptr && m_deviceSources[column->source] != 0u) {
+                    m_deviceSources[column->source] = 0u;
+                    changed = true;
+                }
+            };
+            for (auto& block : m_program.Blocks()) {
+                for (IrValue* inst : block->Instructions()) {
+                    const auto imageInfo = ImageOpcodeInfoOf(inst->Opcode());
+                    if (imageInfo.access == ImageAccess::None || inst->ArgumentCount() == 0u) continue;
+                    const auto* image = FindTableColumn(*inst->Argument(0)->Resolve());
+                    const auto* sampler = imageInfo.needsSampler && inst->ArgumentCount() > 1u ? FindTableColumn(*inst->Argument(1)->Resolve()) : nullptr;
+                    if (image == nullptr || !DeviceColumn(*image) || !DeviceAccess(*inst) || (sampler != nullptr && !DeviceColumn(*sampler))) {
+                        demote(image);
+                        demote(sampler);
+                    }
+                }
             }
         }
         for (std::uint32_t source = 0; source < m_sources.size(); ++source) {
@@ -2364,21 +2376,22 @@ private:
     std::uint32_t ElementSource(const TableColumnPlan& column) {
         if (const auto found = m_elementSources.find(column.handle); found != m_elementSources.end()) return found->second;
         DescriptorSource element;
-        MakeSource(*column.handle, 8u, false, false, element);
+        const bool sampler = m_sources[column.source].tableColumn->sampler;
+        MakeSource(*column.handle, sampler ? 4u : 8u, false, false, element);
         const auto index = static_cast<std::uint32_t>(m_sources.size());
         m_sources.push_back(std::move(element));
         m_elementSources.emplace(column.handle, index);
         return index;
     }
 
-    void AddImageUse(std::uint32_t image, std::uint32_t sampler, std::uint32_t descriptor, std::uint32_t pc) {
+    void AddImageUse(std::uint32_t image, std::uint32_t sampler, std::uint32_t descriptor, std::uint32_t pc, std::uint32_t samplerDescriptor) {
         for (auto& use : m_imageUses) {
-            if (use.image == image && use.sampler == sampler && use.descriptor == descriptor) {
+            if (use.image == image && use.sampler == sampler && use.descriptor == descriptor && use.samplerDescriptor == samplerDescriptor) {
                 use.firstUsePc = std::min(use.firstUsePc, pc);
                 return;
             }
         }
-        m_imageUses.push_back({image, sampler, descriptor, pc});
+        m_imageUses.push_back({image, sampler, descriptor, pc, samplerDescriptor});
     }
 
     void AddHandlePatch(IrValue* handle, std::uint32_t resource) {
@@ -2489,6 +2502,7 @@ private:
         }
         AddHandlePatch(handle, resource);
         std::uint32_t sampler = 0;
+        std::uint32_t samplerDescriptor = NoSampler;
         if (imageInfo.needsSampler) {
             if (inst.ArgumentCount() < 2) {
                 fail("sampled image operation has no sampler handle");
@@ -2498,6 +2512,7 @@ private:
             const TableColumnPlan* samplerColumn = FindTableColumn(*samplerHandle);
             if (samplerColumn != nullptr) {
                 samplerSource = samplerColumn->source;
+                if (DeviceColumn(*samplerColumn)) samplerDescriptor = ElementSource(*samplerColumn);
             } else {
                 const bool sampleAdjust = (memory.imageSampleFlags & RdnaImageSampleFlagAdjust) != 0;
                 GetHandle(inst.Argument(1), IrOpcode::GetSamplerResource, 4, samplerHandle, samplerSource, true, sampleAdjust);
@@ -2509,7 +2524,7 @@ private:
             AddHandlePatch(samplerHandle, sampler);
             AddSampledPair(resource, sampler, flags.pc);
         }
-        if (column != nullptr && DeviceColumn(*column)) AddImageUse(resource, imageInfo.needsSampler ? sampler : NoSampler, ElementSource(*column), flags.pc);
+        if (column != nullptr && DeviceColumn(*column)) AddImageUse(resource, imageInfo.needsSampler ? sampler : NoSampler, ElementSource(*column), flags.pc, samplerDescriptor);
         AddMemoryPatch(flags.index, resource, sampler, imageInfo.needsSampler);
     }
 

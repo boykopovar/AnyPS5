@@ -717,7 +717,8 @@ public:
         if (count == 0u) {
             return;
         }
-        const bool snapshotted = std::ranges::any_of(plan.info.images, [](const ImageResource& image) { return image.table != NoTable && !image.deviceTable; }) || std::ranges::any_of(plan.info.samplers, [](const SamplerResource& sampler) { return sampler.table != NoTable; });
+        bool snapshotted = std::ranges::any_of(plan.info.images, [](const ImageResource& image) { return image.table != NoTable && !image.deviceTable; });
+        for (std::uint32_t sampler = 0; sampler < plan.info.samplers.size(); ++sampler) snapshotted = snapshotted || (plan.info.samplers[sampler].table != NoTable && !ResourceMaterializer::DeviceTableSampler(plan.info, sampler));
         tables.shader = plan.shaderHash;
         tables.tables.resize(count);
         if (!snapshotted) return;
@@ -741,8 +742,9 @@ public:
             for (const auto& image : plan.info.images) {
                 if (image.table != NoTable && !image.deviceTable) Snapshot(image.source, image.table);
             }
-            for (const auto& sampler : plan.info.samplers) {
-                if (sampler.table != NoTable) Snapshot(sampler.source, sampler.table);
+            for (std::uint32_t index = 0; index < plan.info.samplers.size(); ++index) {
+                const auto& sampler = plan.info.samplers[index];
+                if (sampler.table != NoTable && !ResourceMaterializer::DeviceTableSampler(plan.info, index)) Snapshot(sampler.source, sampler.table);
             }
             if (!checkEpoch || runtime.descriptorScope(runtime.userContext, 0u) == invalidationsBefore) {
                 completed = true;
@@ -1972,7 +1974,7 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
         if (info.images[resource].table != NoTable && !info.images[resource].deviceTable) fill(resource, info.images[resource].table, false);
     }
     for (std::uint32_t resource = 0; resource < info.samplers.size(); resource++) {
-        if (info.samplers[resource].table != NoTable) fill(resource, info.samplers[resource].table, true);
+        if (info.samplers[resource].table != NoTable && !DeviceTableSampler(info, resource)) fill(resource, info.samplers[resource].table, true);
     }
     out.map[Abi::HeaderElementCount] = static_cast<std::uint32_t>(out.elements.size());
     out.map[Abi::HeaderSamplerCount] = static_cast<std::uint32_t>(out.samplers.size());
@@ -2608,9 +2610,10 @@ IrResourcePlan ResourceMaterializer::ExtractPlan(const IrProgram& program) const
             plan.requiresSpecializationMemory = true;
         }
     }
-    for (const auto& sampler : plan.info.samplers) {
+    for (std::uint32_t index = 0; index < plan.info.samplers.size(); ++index) {
+        const auto& sampler = plan.info.samplers[index];
         if (sampler.table != NoTable) {
-            plan.requiresSpecializationMemory = true;
+            plan.requiresSpecializationMemory = plan.requiresSpecializationMemory || !DeviceTableSampler(plan.info, index);
         } else {
             addSource(sampler.source);
         }
@@ -2790,6 +2793,17 @@ std::shared_ptr<const DeviceImageInterface> ResourceMaterializer::FindDeviceImag
     return found != registry.interfaces.end() ? found->second : nullptr;
 }
 
+bool ResourceMaterializer::DeviceTableSampler(const ShaderInfo& info, std::uint32_t sampler) {
+    if (info.samplers.at(sampler).table == NoTable) return false;
+    bool used = false;
+    for (const auto& pair : info.sampledPairs) {
+        if (pair.sampler != sampler) continue;
+        if (!info.images.at(pair.image).deviceTable) return false;
+        used = true;
+    }
+    return used;
+}
+
 std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDeviceImages(const IrResourcePlan& plan, const SrtRuntime& runtime, bool& complete) {
     namespace Abi = DeviceImageTableAbi;
     std::vector<Abi::Expectation> expected;
@@ -2900,7 +2914,15 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
             complete = false;
             continue;
         }
-        const Words words(descriptor.dwords.begin(), descriptor.dwords.begin() + Abi::DescriptorWords);
+        Words words(descriptor.dwords.begin(), descriptor.dwords.begin() + Abi::DescriptorWords);
+        if (use.samplerDescriptor != NoSampler) {
+            const auto& sampler = plan.descriptorSources.at(use.samplerDescriptor);
+            if (sampler.dwordCount != Abi::SamplerWords || std::any_of(sampler.dwords.begin(), sampler.dwords.begin() + Abi::SamplerWords, [](const IrValue* word) { return word == nullptr; })) {
+                complete = false;
+                continue;
+            }
+            words.insert(words.end(), sampler.dwords.begin(), sampler.dwords.begin() + Abi::SamplerWords);
+        }
         bool joined = false;
         const auto images = valuesOf(words, joined);
         if (images.empty()) complete = false;
@@ -2911,6 +2933,7 @@ std::vector<DeviceImageTableAbi::Expectation> ResourceMaterializer::ExpectedDevi
             expectation.sampler = use.sampler;
             expectation.candidate = joined;
             std::copy_n(value.begin(), Abi::DescriptorWords, expectation.key.begin());
+            if (use.samplerDescriptor != NoSampler) std::copy_n(value.begin() + Abi::DescriptorWords, Abi::SamplerWords, expectation.key.begin() + Abi::SamplerWord);
             if (Abi::NullDescriptor(expectation.key[0], expectation.key[1])) continue;
             const auto same = std::ranges::find_if(expected, [&](const Abi::Expectation& held) { return held.key == expectation.key && held.pc == expectation.pc && held.image == expectation.image && held.sampler == expectation.sampler; });
             if (same == expected.end()) expected.push_back(expectation);

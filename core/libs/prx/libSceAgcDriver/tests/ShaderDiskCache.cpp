@@ -371,6 +371,7 @@ CompiledVariant sampleVariant() {
     info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, 1}};
     info.info.usesFaultBuffer = true;
     info.info.sampledPairs = {{0, 0, 0x10}};
+    info.info.deviceImageUses = {{0, 0, 11, 0x18, 13}, {0, NoSampler, 17, 0x34}};
     StageInput input{};
     input.kind = StageInputKind::GlobalInvocationId;
     input.location = 2;
@@ -475,6 +476,7 @@ void verifyEntryRoundTrip() {
     require(ShaderDiskCache::DecodeEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded, "an encoded entry does not decode");
     requireSameVariant(variant, decoded, "entry round trip");
     require(decoded.artifact.variantId == 0, "the artifact stored a per-process id");
+    require(decoded.info.info.deviceImageUses.at(0).samplerDescriptor == 13u && decoded.info.info.deviceImageUses.at(1).samplerDescriptor == NoSampler, "the device image uses lost their raw sampler source or no-sampler sentinel");
 
     for (std::size_t size = 0; size < file.size(); size += size < 512 ? 1 : 131) {
         CompiledVariant partial;
@@ -2223,6 +2225,23 @@ void verifyMalformedPlans() {
     rejects("an image table heap past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->heapSource = 4u; });
     rejects("an image table key past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->keyDomains[1].source = 4u; });
     rejects("an image table selection past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->selection = 4u; });
+    const auto samplerUse = [](IrResourcePlan& plan, std::uint32_t source) {
+        plan.info.samplers = {SamplerResource{}};
+        plan.info.deviceImageUses = {{0u, 0u, 1u, 0x40u, source}};
+    };
+    rejects("a raw sampler source past the sources", [&](IrResourcePlan& plan) { samplerUse(plan, 4u); });
+    rejects("a raw sampler source of eight dwords", [&](IrResourcePlan& plan) { samplerUse(plan, 1u); });
+    rejects("a raw sampler source with missing words", [&](IrResourcePlan& plan) { samplerUse(plan, 2u); });
+    rejects("a raw sampler source with a wide word", [&](IrResourcePlan& plan) {
+        samplerUse(plan, 0u);
+        plan.descriptorSources[0].dwords[3] = plan.descriptorSources[3].dwords[3];
+    });
+    auto samplerPlan = handBuiltPlan();
+    samplerUse(samplerPlan, 0u);
+    samplerPlan.info.deviceImageUses.push_back({0u, NoSampler, 1u, 0x44u});
+    const auto samplerBytes = encodedPlan(samplerPlan);
+    IrResourcePlan samplerDecoded;
+    require(ShaderDiskCache::DecodePlan(samplerBytes, samplerDecoded) && encodedPlan(samplerDecoded) == samplerBytes, "a valid raw sampler source and no-sampler use did not round trip");
     auto foreign = handBuiltPlan();
     IrValue stray(IrOpcode::Void, IrType::U32, 99u);
     foreign.srtReads[0].value = &stray;

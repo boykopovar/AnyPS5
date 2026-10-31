@@ -89,6 +89,7 @@ public:
     static std::uint64_t DeviceImageInterfaceId(const ImageResource& image, std::span<const ImageResource> modes);
     static std::uint64_t RegisterDeviceImageInterface(const ImageResource& image, std::span<const ImageResource> modes);
     static void RegisterDeviceImageInterfaces(const ShaderInfo& info);
+    static bool DeviceTableSampler(const ShaderInfo& info, std::uint32_t sampler);
     static std::shared_ptr<const DeviceImageInterface> FindDeviceImageInterface(std::uint64_t id);
     static constexpr std::size_t MaxDeviceImageCandidates = 16;
     static std::vector<DeviceImageTableAbi::Expectation> ExpectedDeviceImages(const IrResourcePlan& plan, const SrtRuntime& runtime, bool& complete);

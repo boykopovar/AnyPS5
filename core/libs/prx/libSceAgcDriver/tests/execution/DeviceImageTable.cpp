@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -58,6 +59,8 @@ constexpr std::array<std::uint32_t, 5> Formats{1u, 13u, 14u, 22u, 56u};
 constexpr std::uint64_t InterfaceId = 0x1234'5678'9abc'def0ull;
 constexpr ShaderRecompiler::PipelineIdentity Program{0x5151'0000'0000'0001ull, 0x5151'0000'0000'0002ull};
 constexpr std::uint64_t ProgramAddress = 0x7700'0000ull;
+constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
+constexpr std::array<std::uint32_t, 4> PointRepeat{0u, (4u * 256u) << 12u, 0u, 0u};
 
 alignas(256) std::array<std::array<std::uint32_t, Side * Side>, Formats.size()> Textures{};
 
@@ -99,6 +102,12 @@ struct FakeHeap {
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::weak_ptr<Texture>> holders;
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> generations;
     std::map<std::uint32_t, std::uint32_t> next;
+    std::map<const Sampler*, std::uint32_t> samplerSlots;
+    std::map<std::uint32_t, std::weak_ptr<Sampler>> samplers;
+    std::map<std::uint32_t, std::uint32_t> samplerGenerations;
+    std::vector<std::uint32_t> freeSamplers;
+    std::uint32_t nextSampler = 0;
+    std::uint32_t samplerTakes = 0;
 
     void Sweep(std::uint32_t kind, std::uint32_t slot) {
         for (auto found = slots.begin(); found != slots.end();) {
@@ -107,6 +116,17 @@ struct FakeHeap {
         }
         holders.erase({kind, slot});
         ++generations[{kind, slot}];
+        ++serial;
+    }
+
+    void SweepSampler(std::uint32_t slot) {
+        for (auto found = samplerSlots.begin(); found != samplerSlots.end();) {
+            if (found->second == slot) found = samplerSlots.erase(found);
+            else ++found;
+        }
+        samplers.erase(slot);
+        ++samplerGenerations[slot];
+        freeSamplers.push_back(slot);
         ++serial;
     }
 };
@@ -124,6 +144,20 @@ DeviceImageTable::Slots FakeSlots(const std::shared_ptr<FakeHeap>& heap) {
         return slot;
     };
     slots.generation = [heap](std::uint32_t kind, std::uint32_t slot) { return heap->generations[{kind, slot}]; };
+    slots.takeSampler = [heap](const std::shared_ptr<Sampler>& sampler) -> std::optional<std::uint32_t> {
+        ++heap->samplerTakes;
+        if (const auto found = heap->samplerSlots.find(sampler.get()); found != heap->samplerSlots.end()) {
+            if (!heap->samplers.at(found->second).expired()) return found->second;
+            heap->samplerSlots.erase(found);
+        }
+        if (heap->freeSamplers.empty() && heap->nextSampler >= heap->cap) return std::nullopt;
+        const auto slot = heap->freeSamplers.empty() ? heap->nextSampler++ : heap->freeSamplers.back();
+        if (!heap->freeSamplers.empty()) heap->freeSamplers.pop_back();
+        heap->samplerSlots.emplace(sampler.get(), slot);
+        heap->samplers[slot] = sampler;
+        return slot;
+    };
+    slots.samplerGeneration = [heap](std::uint32_t slot) { return heap->samplerGenerations[slot]; };
     slots.serial = [heap] { return heap->serial; };
     slots.nearlyFull = [heap] { return heap->nearlyFull; };
     return slots;
@@ -136,6 +170,63 @@ Key KeyFor(const std::array<std::uint32_t, 8>& descriptor, std::uint32_t sampler
     key[Abi::InterfaceWord + 1u] = static_cast<std::uint32_t>(InterfaceId >> 32u);
     key[Abi::SamplerClassWord] = samplerClass;
     return key;
+}
+
+Key SamplerKey(const std::array<std::uint32_t, 8>& descriptor, const std::array<std::uint32_t, 4>& sampler) {
+    auto key = KeyFor(descriptor, Abi::RuntimeSampler);
+    std::copy(sampler.begin(), sampler.end(), key.begin() + Abi::SamplerWord);
+    return key;
+}
+
+class SubmissionGate {
+public:
+    SubmissionGate(const Context& context, Recorder& recorder) : context(context), recorder(recorder) {
+        destroySemaphore = context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore");
+        signalSemaphore = reinterpret_cast<PFN_vkSignalSemaphore>(context.deviceProc(context.device, "vkSignalSemaphoreKHR"));
+        if (signalSemaphore == nullptr) signalSemaphore = context.Function<PFN_vkSignalSemaphore>("vkSignalSemaphore");
+        VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+        type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+        Require(context.Function<PFN_vkCreateSemaphore>("vkCreateSemaphore")(context.device, &info, nullptr, &semaphore) == VK_SUCCESS, "cannot create the sampler retention submission gate");
+    }
+
+    ~SubmissionGate() {
+        static_cast<void>(Release());
+        try {
+            recorder.Sync();
+        } catch (...) {
+        }
+        destroySemaphore(context.device, semaphore, nullptr);
+    }
+
+    void Arm() {
+        static_cast<void>(recorder.Commands());
+        recorder.HoldNextSubmit(semaphore, 1u);
+    }
+
+    VkResult Release() {
+        if (released) return VK_SUCCESS;
+        VkSemaphoreSignalInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
+        info.semaphore = semaphore;
+        info.value = 1u;
+        const auto result = signalSemaphore(context.device, &info);
+        released = result == VK_SUCCESS;
+        return result;
+    }
+
+private:
+    Context context;
+    Recorder& recorder;
+    PFN_vkDestroySemaphore destroySemaphore = nullptr;
+    PFN_vkSignalSemaphore signalSemaphore = nullptr;
+    VkSemaphore semaphore = VK_NULL_HANDLE;
+    bool released = false;
+};
+
+void RequireSamplerReleased(const std::weak_ptr<Sampler>& sampler, const std::string& message) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!sampler.expired() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    Require(sampler.expired(), message);
 }
 
 void WriteRecords(std::span<std::uint32_t> ring, std::span<const Key> keys, std::uint32_t count, std::uint32_t pcFlags = 0u) {
@@ -346,6 +437,127 @@ void RejectsAndFaults(AgcDriver::VulkanDevice& device) {
     std::printf("fault: %s\n", fault.c_str());
 }
 
+std::vector<Key> SamplerRefusalKeys() {
+    const auto descriptor = TextureDescriptor(Textures[0].data(), Formats[0]);
+    std::vector<Key> keys;
+    for (std::uint32_t variant = 0; variant < 16u; ++variant) {
+        for (std::uint32_t refusal = 0; refusal < 5u; ++refusal) {
+            auto words = PointClamp;
+            words[1] |= variant << 24u;
+            if (refusal < 3u) {
+                const auto shift = refusal * 3u;
+                words[0] = (words[0] & ~(7u << shift)) | (6u << shift);
+            } else {
+                words[0] |= 1u << (refusal == 3u ? 15u : 28u);
+            }
+            keys.push_back(SamplerKey(descriptor, words));
+        }
+    }
+    Require(std::set<Key>(keys.begin(), keys.end()).size() == 80u, "the refusal stream has 80 distinct raw sampler keys");
+    for (const auto& key : keys) Require(ExpectedMode(key).mode.has_value(), "the refusal stream's T# is accepted before sampler validation");
+    return keys;
+}
+
+void SamplerRefusals(AgcDriver::VulkanDevice& device) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr, "the sampler refusal test has an active recorder");
+    auto context = device.graphicsContext();
+    context.nonSeamlessCubeMap = false;
+    const auto heap = std::make_shared<FakeHeap>();
+    DeviceImageTable table(context, Lookup(), FakeSlots(heap));
+    table.NoteProgram(Program, ProgramAddress);
+    const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{Program};
+    const auto keys = SamplerRefusalKeys();
+    const auto total = static_cast<std::uint32_t>(keys.size());
+    const auto reason = ShaderRecompiler::ImageTableAbi::PoisonReason::DriverRejected;
+    const auto poison = 1u + static_cast<std::uint32_t>(reason);
+    const auto requireServed = [&] {
+        const auto counts = table.Totals();
+        Require(table.ServesProgram(ProgramAddress) && table.ServesIdentity(Program) && counts.fallbacks == 0u && table.LastFallback().empty(), "unsupported sampler keys remain poison without selecting CPU fallback");
+        Require(counts.heapFull == 0u && counts.tableFull == 0u && counts.dropped == 0u, "the refusal test reaches no heap, table or ring capacity fallback");
+        Require(heap->slots.empty() && heap->samplerSlots.empty() && heap->samplerTakes == 0u, "refused samplers allocate neither texture nor sampler slots");
+    };
+    table.Prepare(context, *recorder, programs);
+    WriteRecords(table.RingChunk(*recorder), keys, total + 5u);
+    recorder->Sync();
+    Require(table.Totals().rejected == 0u && table.Totals().drained == total + 5u, "the first batch drains misses without resolving them");
+    table.Prepare(context, *recorder, programs);
+    const auto first = table.Totals();
+    Require(first.rejected == total && first.distinct == total && first.entries == total && first.inserted == 0u, "80 distinct refused samplers become poison once, including five duplicate miss records");
+    for (const auto& key : keys) {
+        const auto value = table.Find(key);
+        Require(value.has_value() && value->fault == poison && value->slot == 0u && value->samplerSlot == 0u && table.EntryTexture(key) == nullptr, "each unsupported sampler has the driver-rejected poison and no allocated resources");
+    }
+    Require(first.rejectionDetails == 64u && first.rejectionLogLines == 65u && first.suppressedRejections == 16u, "80 refused keys retain 64 details and one suppression line");
+    requireServed();
+    WriteRecords(table.RingChunk(*recorder), keys, total * 2u);
+    recorder->Sync();
+    table.Prepare(context, *recorder, programs);
+    const auto repeated = table.Totals();
+    Require(repeated.rejected == first.rejected && repeated.distinct == first.distinct && repeated.entries == first.entries && repeated.drained == total * 3u + 5u, "repeated misses for stored poison keys add no resolver refusals or entries");
+    Require(repeated.rejectionDetails == first.rejectionDetails && repeated.rejectionLogLines == first.rejectionLogLines && repeated.suppressedRejections == first.suppressedRejections, "stored poison repeats add no rejection details, suppression attempts or log lines");
+    requireServed();
+    const std::array<const char*, 5> details{
+        "a sampler table entry with a border needs dynamic texture numeric-class pairing",
+        "a sampler table entry with a border needs dynamic texture numeric-class pairing",
+        "a sampler table entry with a border needs dynamic texture numeric-class pairing",
+        "guest sampler descriptor uses unnormalized coordinates which are not implemented",
+        "a sampler table entry that disables seamless cube filtering needs VK_EXT_non_seamless_cube_map",
+    };
+    for (std::uint32_t index = 0; index < 6u; ++index) {
+        const auto selected = index < 5u ? index : total - 1u;
+        WriteRecords(table.RingChunk(*recorder), std::span<const Key>(keys).subspan(selected, 1u), 1u, Abi::FaultFlag);
+        recorder->Sync();
+        const auto fault = table.LastFault();
+        Require(table.Totals().faults == index + 1u, "each selected poison key drains one fault record");
+        Require(fault.find("image table: pc 0x100 selected the descriptor (words " + HexWords(std::span<const std::uint32_t>(keys[selected]).first(Abi::DescriptorWords)) + ")") != std::string::npos && fault.find(std::string(ShaderRecompiler::ImageTableAbi::PoisonReasonName(reason))) != std::string::npos, "the drain reports the selected descriptor, PC and poison reason: " + fault);
+        if (index < 5u) Require(fault.find(details[index]) != std::string::npos, "the retained fault detail identifies the specific sampler refusal: " + fault);
+        requireServed();
+        std::printf("sampler-refusal-fault case=%u key=%u passed\n", index, selected);
+    }
+    const auto final = table.Totals();
+    Require(final.rejected == total && final.faults == 6u && final.entries == total && final.inserted == 0u, "draining sampler poison does not resolve or allocate it again");
+    std::printf("sampler-refusal-summary keys=%u rejected=%llu repeatedRejected=%llu entries=%u faults=%llu fallbacks=%llu\n", total, static_cast<unsigned long long>(first.rejected), static_cast<unsigned long long>(repeated.rejected), final.entries, static_cast<unsigned long long>(final.faults), static_cast<unsigned long long>(final.fallbacks));
+    recorder->Sync();
+}
+
+void SamplerRefusalRetries(AgcDriver::VulkanDevice& device) {
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr, "the sampler refusal retry test has an active recorder");
+    auto context = device.graphicsContext();
+    context.nonSeamlessCubeMap = false;
+    const auto heap = std::make_shared<FakeHeap>();
+    DeviceImageTable table(context, Lookup(), FakeSlots(heap), DeviceImageTable::Budget{1u << 20u, std::uint64_t{1} << 40u, 0u, 0u, 16u});
+    table.NoteProgram(Program, ProgramAddress);
+    const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{Program};
+    const auto keys = SamplerRefusalKeys();
+    const auto total = static_cast<std::uint32_t>(keys.size());
+    table.Prepare(context, *recorder, programs);
+    WriteRecords(table.RingChunk(*recorder), keys, total);
+    recorder->Sync();
+    table.Prepare(context, *recorder, programs);
+    const auto first = table.Totals();
+    const auto missing = total - first.entries;
+    Require(first.rejected == total && first.buckets == 16u && missing != 0u && first.tableFull == missing, "the small key table leaves some of 80 refused samplers unresolved");
+    Require(first.fallbacks == 1u && !table.ServesProgram(ProgramAddress) && !table.ServesIdentity(Program), "key-table capacity retains its existing program fallback");
+    Require(first.rejectionDetails == 64u && first.rejectionLogLines == 65u && first.suppressedRejections == 16u, "the diagnostic limit also bounds refusals that cannot enter the key table");
+    std::printf("sampler-refusal-retry round=0 rejected=%llu missing=%u entries=%u fallbacks=%llu\n", static_cast<unsigned long long>(first.rejected), missing, first.entries, static_cast<unsigned long long>(first.fallbacks));
+    for (std::uint32_t round = 1; round <= 2u; ++round) {
+        WriteRecords(table.RingChunk(*recorder), keys, total);
+        recorder->Sync();
+        table.Prepare(context, *recorder, programs);
+        const auto counts = table.Totals();
+        Require(counts.entries == first.entries && counts.distinct == total + round * missing && counts.tableFull == (round + 1u) * missing && counts.inserted == 0u && counts.fallbacks == 1u, "injected repeated misses resolve only keys absent from the full key table");
+        Require(heap->slots.empty() && heap->samplerSlots.empty() && heap->samplerTakes == 0u, "capacity retries of refused samplers allocate no resources");
+        Require(counts.rejected == total + round * missing, "rejected counts resolver refusal attempts, including retries of keys absent from the full key table");
+        Require(counts.rejectionDetails == 64u && counts.rejectionLogLines == 65u && counts.suppressedRejections == 16u * (round + 1u), "retry attempts with no retained detail are counted without retaining or logging more keys");
+        std::printf("sampler-refusal-retry round=%u rejected=%llu missing=%u entries=%u fallbacks=%llu\n", round, static_cast<unsigned long long>(counts.rejected), missing, counts.entries, static_cast<unsigned long long>(counts.fallbacks));
+    }
+    recorder->Sync();
+}
+
 constexpr std::size_t BlockBytes = std::size_t{4} << 20u;
 constexpr std::size_t TextureStride = 1024u;
 constexpr std::uint32_t WatchedTextures = 2000u;
@@ -389,6 +601,76 @@ private:
     bool watched = true;
     std::uint8_t* block = nullptr;
 };
+
+void RuntimeSamplersKeepSlots(AgcDriver::VulkanDevice& device) {
+    GuestBlock block;
+    std::memset(block.Texture(0), 0x47, Side * Side * 4u);
+    std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto* recorder = Recorder::Active();
+    auto context = device.graphicsContext();
+    context.samplerCache = nullptr;
+    const auto clamp = DecodeSamplerResource(PointClamp);
+    const auto repeat = DecodeSamplerResource(PointRepeat);
+    Require(clamp.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE && repeat.addressModeU == VK_SAMPLER_ADDRESS_MODE_REPEAT && clamp.minFilter == VK_FILTER_NEAREST && repeat.minFilter == VK_FILTER_NEAREST, "the runtime sampler fixtures decode as ordinary point clamp and repeat");
+    const auto descriptor = TextureDescriptor(block.Texture(0), Formats[4]);
+    const std::array<Key, 2> keys{SamplerKey(descriptor, PointClamp), SamplerKey(descriptor, PointRepeat)};
+    const auto heap = std::make_shared<FakeHeap>();
+    DeviceImageTable table(context, Lookup(), FakeSlots(heap));
+    table.Prepare(context, *recorder);
+    WriteRecords(table.RingChunk(*recorder), keys, static_cast<std::uint32_t>(keys.size()));
+    recorder->Sync();
+    table.Prepare(context, *recorder);
+    const auto clampValue = table.Find(keys[0]);
+    const auto repeatValue = table.Find(keys[1]);
+    Require(clampValue.has_value() && repeatValue.has_value() && clampValue->fault == 0u && repeatValue->fault == 0u && table.Totals().inserted == keys.size(), "one texture with two runtime sampler descriptors inserts two live keys");
+    Require(clampValue->slot == repeatValue->slot && table.EntryTexture(keys[0]) == table.EntryTexture(keys[1]), "the two runtime sampler keys share their image slot and texture");
+    Require(std::set<std::uint32_t>{clampValue->samplerSlot, repeatValue->samplerSlot} == std::set<std::uint32_t>{0u, 1u}, "both sampler slot zero and a distinct nonzero sampler slot are valid");
+    const auto zeroIndex = clampValue->samplerSlot == 0u ? 0u : 1u;
+    const auto otherIndex = 1u - zeroIndex;
+    const auto zeroSampler = heap->samplers.at(0u);
+    const auto otherSampler = heap->samplers.at(1u);
+    Require(!zeroSampler.expired() && !otherSampler.expired(), "the entries retain both sampler owners while the fake heap holds only weak references");
+    const auto words = table.KeyWords();
+    const auto uploaded = ReadTable(context, *recorder, table, Abi::HeaderWords + words.size());
+    Require(std::equal(words.begin(), words.end(), uploaded.begin() + Abi::HeaderWords), "the uploaded runtime sampler keys and sampler slots equal the host table");
+    ++heap->serial;
+    table.Prepare(context, *recorder);
+    Require(table.Totals().entries == keys.size() && table.Totals().swept == 0u, "a common slot serial change without a generation change retains both sampler keys");
+    const auto imageGeneration = heap->generations[{KindOf(*clampValue), clampValue->slot}];
+    const auto samplerGeneration = heap->samplerGenerations[0u];
+    heap->SweepSampler(0u);
+    const auto uploads = table.Totals().uploads;
+    table.Prepare(context, *recorder);
+    Require(!table.Find(keys[zeroIndex]).has_value() && table.Find(keys[otherIndex]).has_value() && table.Totals().swept == 1u, "changing sampler slot zero's generation removes only its key");
+    Require(heap->generations[{KindOf(*clampValue), clampValue->slot}] == imageGeneration && table.Totals().uploads == uploads + 1u, "sampler invalidation uploads the removed key without changing the shared image generation");
+    Require(!zeroSampler.expired(), "the removed sampler is retained by the open batch");
+    if (recorder->HasTimeline()) {
+        SubmissionGate gate(context, *recorder);
+        gate.Arm();
+        recorder->Submit();
+        Require(recorder->UnsignaledBatches() != 0u && !zeroSampler.expired(), "an unsignaled submitted batch retains the removed sampler owner");
+        Require(gate.Release() == VK_SUCCESS, "the sampler retention submission gate can be released");
+        recorder->Sync();
+    } else {
+        std::puts("the recorder has no timeline: submitted sampler retention is not tested");
+        recorder->Sync();
+    }
+    recorder->FlushDeferredReleases();
+    gpu.unlock();
+    RequireSamplerReleased(zeroSampler, "the removed sampler is released after its submitted batch completes");
+    gpu.lock();
+    Require(!otherSampler.expired(), "the unswept entry retains its sampler after the other batch completes");
+    WriteRecords(table.RingChunk(*recorder), std::span<const Key>(keys).subspan(zeroIndex, 1), 1u);
+    recorder->Sync();
+    table.Prepare(context, *recorder);
+    const auto again = table.Find(keys[zeroIndex]);
+    Require(again.has_value() && again->fault == 0u && again->samplerSlot == 0u && heap->samplerGenerations[0u] == samplerGeneration + 1u && !heap->samplers.at(0u).expired(), "a miss reuses sampler slot zero with its new generation and a retained new owner");
+    const auto other = table.Find(keys[otherIndex]);
+    Require(other.has_value() && other->samplerSlot == 1u && !otherSampler.expired(), "slot-zero reuse leaves the other sampler key intact");
+    recorder->Sync();
+    std::puts("runtime sampler slots: distinct keys, slot-zero generations and batch ownership passed");
+}
 
 double Microseconds(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
@@ -479,6 +761,59 @@ void RefreshesOnOwnStores(AgcDriver::VulkanDevice& device) {
     const auto counts = table.Totals();
     Require(counts.refreshed == 1u && table.EntryTexture(keys[5]) != before, "a store the driver made in the same collect epoch refreshes the entry it covers (" + std::to_string(counts.refreshed) + " refreshed)");
     recorder->Sync();
+}
+
+void RefreshesSamplerWithSameTexture(AgcDriver::VulkanDevice& device) {
+    GuestBlock block;
+    std::memset(block.Texture(0), 0x63, Side * Side * 4u);
+    std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::puts("guest memory has no write watch: same-texture sampler refresh is not tested");
+        return;
+    }
+    auto* recorder = Recorder::Active();
+    auto context = device.graphicsContext();
+    context.samplerCache = nullptr;
+    const auto heap = std::make_shared<FakeHeap>();
+    DeviceImageTable table(context, Lookup(), FakeSlots(heap));
+    const std::array<Key, 1> keys{SamplerKey(TextureDescriptor(block.Texture(0), Formats[4]), PointClamp)};
+    const auto& key = keys[0];
+    table.Prepare(context, *recorder);
+    WriteRecords(table.RingChunk(*recorder), keys, 1u);
+    recorder->Sync();
+    table.Prepare(context, *recorder);
+    table.Prepare(context, *recorder);
+    recorder->Sync();
+    const auto before = table.Find(key);
+    Require(before.has_value() && before->fault == 0u, "the same-texture refresh fixture starts with a resolved sampler");
+    const auto texture = table.EntryTexture(key);
+    const auto oldSampler = heap->samplers.at(before->samplerSlot);
+    const auto checked = table.Totals().checked;
+    const auto takes = heap->samplerTakes;
+    heap->samplerGenerations[heap->nextSampler] = 7u;
+    static_cast<void>(AgcDriver::GuestMemory::MarkWritten(reinterpret_cast<std::uint64_t>(block.Texture(0)), Side * Side * 4u));
+    table.Prepare(context, *recorder);
+    const auto after = table.Find(key);
+    Require(after.has_value() && after->fault == 0u && table.Totals().checked == checked + 1u && heap->samplerTakes == takes + 1u, "marking unchanged texture bytes written re-resolves the sampler once");
+    Require(table.EntryTexture(key) == texture && table.Totals().refreshed == 0u, "equal committed texture bytes keep the same texture object during sampler refresh");
+    Require(after->samplerSlot != before->samplerSlot && heap->samplerGenerations[after->samplerSlot] == 7u, "without a sampler cache the same-texture refresh installs a fresh sampler slot with a distinct generation");
+    const auto replacement = heap->samplers.at(after->samplerSlot);
+    Require(!oldSampler.expired() && !replacement.expired(), "the open batch keeps the previous sampler while the entry owns the replacement");
+    recorder->Sync();
+    recorder->FlushDeferredReleases();
+    gpu.unlock();
+    RequireSamplerReleased(oldSampler, "the previous sampler is released after its refresh batch completes");
+    gpu.lock();
+    Require(!replacement.expired(), "the same-texture entry retains its replacement sampler after the batch completes");
+    heap->SweepSampler(before->samplerSlot);
+    table.Prepare(context, *recorder);
+    Require(table.Find(key).has_value() && table.Totals().swept == 0u, "a generation change to the previous sampler slot does not invalidate the refreshed entry");
+    heap->SweepSampler(after->samplerSlot);
+    table.Prepare(context, *recorder);
+    Require(!table.Find(key).has_value() && table.Totals().swept == 1u, "a generation change to the replacement sampler slot invalidates the refreshed entry");
+    recorder->Sync();
+    std::puts("same-texture sampler refresh: replacement owner and current slot generation passed");
 }
 
 void KeepsUnwatchedEntries(AgcDriver::VulkanDevice& device) {
@@ -844,16 +1179,26 @@ int main(int argc, char** argv) {
         DevicePathRefusals();
         auto device = OpenVulkanTestDevice();
         if (device == nullptr) return VulkanTestSkipped;
+        if (mode == "--sampler-refusals" || mode == "--sampler-refusal-retries") {
+            if (mode == "--sampler-refusals") SamplerRefusals(*device);
+            else SamplerRefusalRetries(*device);
+            device->WaitIdle();
+            device.reset();
+            std::cout << "device image sampler refusal tests passed\n";
+            return 0;
+        }
         HeaderAtCreation(*device);
         ResolvesAndUploads(*device);
         TrailerAddresses(*device);
         SweptSlotsLeave(*device);
+        RuntimeSamplersKeepSlots(*device);
         MarginRefuses(*device);
         RejectsAndFaults(*device);
         CountsOverflow(*device);
         SettlesUnexpectedBatches(*device);
         RefreshesWrittenEntries(*device);
         RefreshesOnOwnStores(*device);
+        RefreshesSamplerWithSameTexture(*device);
         KeepsUnwatchedEntries(*device);
         EvictsLeastRecentlyUsed(*device);
         FullTableFallsBack(*device);

@@ -144,7 +144,7 @@ static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: updat
 static_assert(fieldCount<ImageResource>() == 47, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
-static_assert(fieldCount<DeviceImageUse>() == 4, "DeviceImageUse changed: update the info encoder");
+static_assert(fieldCount<DeviceImageUse>() == 5, "DeviceImageUse changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
 static_assert(fieldCount<IrResourcePlan>() == 24, "IrResourcePlan changed: update EncodePlan and DecodePlan");
@@ -881,6 +881,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(use.sampler);
         out.Value(use.descriptor);
         out.Value(use.firstUsePc);
+        out.Value(use.samplerDescriptor);
     });
     writer.List(info.inputs, [](Writer& out, const StageInput& input) {
         out.Value(input.kind);
@@ -996,11 +997,12 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(pair.sampler);
         in.Value(pair.firstUsePc);
     });
-    reader.List(info.deviceImageUses, 16, [](Reader& in, DeviceImageUse& use) {
+    reader.List(info.deviceImageUses, 20, [](Reader& in, DeviceImageUse& use) {
         in.Value(use.image);
         in.Value(use.sampler);
         in.Value(use.descriptor);
         in.Value(use.firstUsePc);
+        in.Value(use.samplerDescriptor);
     });
     reader.List(info.inputs, 21, [](Reader& in, StageInput& input) {
         in.Value(input.kind);
@@ -1422,6 +1424,12 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     if (!std::ranges::all_of(plan.info.buffers, [&](const BufferResource& buffer) { return knownSource(buffer.source); })) return false;
     if (!std::ranges::all_of(plan.info.images, [&](const ImageResource& image) { return knownSource(image.source); })) return false;
     if (!std::ranges::all_of(plan.info.samplers, [&](const SamplerResource& sampler) { return knownSource(sampler.source); })) return false;
+    if (!std::ranges::all_of(plan.info.deviceImageUses, [&](const DeviceImageUse& use) {
+        if (use.samplerDescriptor == NoSampler) return true;
+        if (!knownSource(use.samplerDescriptor)) return false;
+        const auto& source = plan.descriptorSources[use.samplerDescriptor];
+        return source.dwordCount == DeviceImageTableAbi::SamplerWords && std::all_of(source.dwords.begin(), source.dwords.begin() + DeviceImageTableAbi::SamplerWords, [](const IrValue* word) { return word != nullptr && word->Type() == IrType::U32; });
+    })) return false;
     const bool blocksValid = std::ranges::all_of(plan.controlFlow, [&](const ResourceBlock& block) {
         return (block.condition == nullptr || block.successors.size() == 2u) &&
                std::ranges::all_of(block.successors, [&](std::uint32_t successor) { return successor < plan.controlFlow.size(); }) &&

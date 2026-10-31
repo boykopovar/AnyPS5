@@ -268,9 +268,9 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
     if (samplerResource.table != NoTable) {
         if (state.tableSamplerVariable == 0 || !state.tableAccess.active) ExitDescriptorBindingFailure(state, DescriptorBindingKind::SamplerTable, sampler, "sampler table array was not emitted");
         const auto variant = image != nullptr && image->depthCompare ? 2u : 0u;
-        const auto element = Binary(state, spv::OpIAdd, TypeU32(state), state.tableAccess.samplerElement, ConstantU32(state, variant + (point ? 1u : 0u)));
+        const auto element = state.tableAccess.device ? state.tableAccess.samplerElement : Binary(state, spv::OpIAdd, TypeU32(state), state.tableAccess.samplerElement, ConstantU32(state, variant + (point ? 1u : 0u)));
         const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.tableSamplerVariable, state.TableHeap() ? tableHeapSlot(state, RuntimeAbi::HeapPart::Sampler, element, RuntimeAbi::GpuSamplerHeapSlots) : element);
+        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.tableSamplerVariable, state.TableHeap() && !state.tableAccess.device ? tableHeapSlot(state, RuntimeAbi::HeapPart::Sampler, element, RuntimeAbi::GpuSamplerHeapSlots) : element);
         DecorateTableNonUniform(state, pointer);
         const auto loaded = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, samplerType, loaded, pointer);

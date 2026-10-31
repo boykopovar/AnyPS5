@@ -286,6 +286,8 @@ function(add_shader_recompiler target runtimeTarget)
             RegistrationResult
             ResolveSource
             DescriptorBindingForImage
+            DeviceSamplerClass
+            PointFilteredSamplerWord
             ResourceMaterializer::EvaluateNanoseconds
             ResourceMaterializer::TryRuntimeImageMode
             ResourceMaterializer::ExpectedDeviceImages

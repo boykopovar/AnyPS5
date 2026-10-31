@@ -6,6 +6,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
+#include "Optimization/DescriptorBindingBuilder.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "DeviceImageTableAbi.hpp"
@@ -89,13 +91,15 @@ DeviceImageTable::Slots DeviceImageTable::HeapSlots(const Context& context) {
     slots.generation = [heap](std::uint32_t, std::uint32_t slot) { return heap->SlotGeneration(slot); };
     slots.serial = [heap] { return heap->SlotSerial(); };
     slots.nearlyFull = [] { return BindlessHeap::NearlyFull(); };
+    slots.takeSampler = [heap](const std::shared_ptr<Sampler>& sampler) { return heap->SamplerSlot(sampler); };
+    slots.samplerGeneration = [heap](std::uint32_t slot) { return heap->SamplerGeneration(slot); };
     return slots;
 }
 
 DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup, Slots slots) : DeviceImageTable(context, std::move(lookup), std::move(slots), Budget{}) {}
 
 DeviceImageTable::DeviceImageTable(const Context& context, InterfaceLookup lookup, Slots slots, Budget budget) : context(context), lookup(std::move(lookup)), slots(std::move(slots)), keys(std::min(DeviceImageKeys::InitialBuckets, budget.maxBuckets), budget.maxBuckets), budget(budget) {
-    if (!this->slots.take || !this->slots.generation || !this->slots.serial || !this->slots.nearlyFull) throw std::runtime_error("AGC device image table: its heap slots are incomplete");
+    if (!this->slots.take || !this->slots.generation || !this->slots.serial || !this->slots.nearlyFull || !this->slots.takeSampler || !this->slots.samplerGeneration) throw std::runtime_error("AGC device image table: its heap slots are incomplete");
     table = std::make_unique<Buffer>(context, static_cast<std::size_t>(TableBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 16u);
     chunkStride = (RingBytes + alignment - 1u) / alignment * alignment;
@@ -190,6 +194,7 @@ std::optional<std::string> DeviceImageTable::Expect(const Context& build, Record
         }
         if (!insert(image.key, *value)) {
             if (entry.texture != nullptr) recorder.Keep(std::move(entry.texture));
+            if (entry.sampler != nullptr) recorder.Keep(std::move(entry.sampler));
             if (!image.candidate && !unserved.has_value()) unserved = "the key table is full at " + std::to_string(keys.Entries()) + " entries in " + std::to_string(keys.Buckets()) + " buckets";
             continue;
         }
@@ -352,6 +357,7 @@ void DeviceImageTable::resolve(const Context& build, Recorder& recorder) {
         }
         if (!insert(key, *value)) {
             if (entry.texture != nullptr) recorder.Keep(std::move(entry.texture));
+            if (entry.sampler != nullptr) recorder.Keep(std::move(entry.sampler));
             fallBack(programs, "the key table is full at " + std::to_string(keys.Entries()) + " entries in " + std::to_string(keys.Buckets()) + " buckets, even after its budget evicted");
             continue;
         }
@@ -374,15 +380,36 @@ std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build
     if (*match.mode >= interface->modes.size()) throw std::runtime_error("AGC device image table: the runtime image mode check chose a mode the interface does not have");
     const auto& mode = interface->modes[*match.mode];
     if (multisampled(mode)) return reject(key, Reason::Multisampled, "an image table entry is multisampled");
-    const auto samplerClass = key[Abi::SamplerClassWord];
+    const bool runtimeSampler = (key[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u;
+    std::array<std::uint32_t, Abi::SamplerWords> samplerWords{};
+    if (runtimeSampler) std::copy_n(key.begin() + Abi::SamplerWord, Abi::SamplerWords, samplerWords.begin());
+    const auto samplerClass = runtimeSampler ? ShaderRecompiler::DeviceSamplerClass(samplerWords, false) : key[Abi::SamplerClassWord];
     if (pointSampled(mode) && (samplerClass & Abi::SamplerReduction) != 0u) return reject(key, Reason::Reduction, "a min or max reduction sampler that filters between texels or mip levels samples an image that needs point filtering (sint, converted or depth-bits format), which is not implemented");
     const auto kind = static_cast<std::uint32_t>(ShaderRecompiler::DescriptorBindingForImage(mode));
     if (kind < Runtime::FirstImageBinding || kind >= Runtime::FirstStorageImageBinding) return reject(key, Reason::UnsupportedOperation, "the device image table serves sampled images only");
     DeviceTableTexture texture;
+    std::shared_ptr<Sampler> sampler;
     std::uint64_t stamp = 0;
     try {
+        if (runtimeSampler) {
+            const auto resource = DecodeSamplerResource(samplerWords);
+            Sampler::Validate(build, resource);
+            Require(resource.addressModeU != VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && resource.addressModeV != VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER && resource.addressModeW != VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, "a sampler table entry with a border needs dynamic texture numeric-class pairing, which is not implemented");
+            Require(!resource.nonSeamlessCube || build.nonSeamlessCubeMap, "a sampler table entry that disables seamless cube filtering needs VK_EXT_non_seamless_cube_map because dynamic texture/sampler pairing is not implemented");
+        }
         const DeviceTableView view{shapeOf(mode), mode.depthCompare, mode.conversionFormat != ShaderRecompiler::IrBufferFormat::Invalid || mode.depthBits};
         texture = LookupDeviceTableTexture(build, std::span<const std::uint32_t, Abi::DescriptorWords>(key.data(), Abi::DescriptorWords), view, samplerClass);
+        if (runtimeSampler && texture.unservable.empty()) {
+            if (pointSampled(mode)) samplerWords[2] = ShaderRecompiler::PointFilteredSamplerWord(samplerWords[0], samplerWords[2]);
+            static const bool noSamplerCache = std::getenv("APS5_NO_SAMPLER_CACHE") != nullptr;
+            if (build.samplerCache != nullptr && !noSamplerCache) {
+                sampler = build.samplerCache->Get(build, samplerWords, mode.depthCompare, false);
+            } else {
+                auto resource = DecodeSamplerResource(samplerWords);
+                resource.compareEnable = mode.depthCompare;
+                sampler = std::make_shared<Sampler>(build, resource);
+            }
+        }
         stamp = GuestMemory::TrackerGeneration();
     } catch (const std::runtime_error& error) {
         return reject(key, Reason::DriverRejected, error.what());
@@ -398,15 +425,39 @@ std::optional<DeviceImageValue> DeviceImageTable::lookupKey(const Context& build
         if (failure != nullptr) *failure = "the image heap has no free sampled slot outside its margin";
         return std::nullopt;
     }
+    std::uint32_t samplerSlot = 0;
+    if (sampler != nullptr) {
+        const auto taken = slots.takeSampler(sampler);
+        if (!taken.has_value()) {
+            ++totals.heapFull;
+            if (failure != nullptr) *failure = "the sampler heap has no free slot";
+            return std::nullopt;
+        }
+        Require(*taken < Runtime::GpuSamplerHeapSlots, "AGC device image table: a sampler slot is outside the GPU heap");
+        samplerSlot = *taken;
+    }
     entry = {std::move(texture.texture), Runtime::FirstImageBinding, *slot, slots.generation(Runtime::FirstImageBinding, *slot), texture.address, texture.guestBytes, texture.generation, stamp, 0u, 0u, texture.words, texture.depthCompare};
-    return DeviceImageValue{*slot, *match.mode, 0u, 0u};
+    entry.sampler = std::move(sampler);
+    entry.samplerSlot = samplerSlot;
+    if (entry.sampler != nullptr) entry.samplerGeneration = slots.samplerGeneration(samplerSlot);
+    return DeviceImageValue{*slot, *match.mode, 0u, samplerSlot};
 }
 
 DeviceImageValue DeviceImageTable::reject(const Key& key, Reason reason, const std::string& message) {
-    if (rejections.try_emplace(key, Rejection{reason, message}).second) {
-        ++totals.rejected;
-        const auto name = ShaderRecompiler::ImageTableAbi::PoisonReasonName(reason);
-        std::fprintf(stderr, "[device-images] the descriptor (words %s) is rejected: %.*s: %s\n", hexWords(std::span<const std::uint32_t>(key).first(Abi::DescriptorWords)).c_str(), static_cast<int>(name.size()), name.data(), message.c_str());
+    ++totals.rejected;
+    if (!rejections.contains(key)) {
+        if (rejections.size() < RejectionDetailLimit) {
+            const auto bounded = message.substr(0u, RejectionMessageBytes);
+            rejections.emplace(key, Rejection{reason, bounded});
+            const auto name = ShaderRecompiler::ImageTableAbi::PoisonReasonName(reason);
+            std::fprintf(stderr, "[device-images] the descriptor (words %s) is rejected: %.*s: %s\n", hexWords(std::span<const std::uint32_t>(key).first(Abi::DescriptorWords)).c_str(), static_cast<int>(name.size()), name.data(), bounded.c_str());
+        } else {
+            ++totals.suppressedRejections;
+            if (!rejectionLimitReported) {
+                std::fprintf(stderr, "[device-images] further rejection details are suppressed after %u keys; selected rejected descriptors still fault\n", RejectionDetailLimit);
+                rejectionLimitReported = true;
+            }
+        }
     }
     return {0u, 0u, 1u + static_cast<std::uint32_t>(reason), 0u};
 }
@@ -461,6 +512,7 @@ void DeviceImageTable::release(const Key& key, Recorder& recorder) {
         --liveTextures[entry.kind];
     }
     if (entry.texture != nullptr) recorder.Keep(std::move(entry.texture));
+    if (entry.sampler != nullptr) recorder.Keep(std::move(entry.sampler));
     entries.erase(found);
 }
 
@@ -470,7 +522,7 @@ void DeviceImageTable::retainSlots(Recorder& recorder) {
     slotSerial = serial;
     std::set<Key> swept;
     for (const auto& [key, entry] : entries) {
-        if (slots.generation(entry.kind, entry.slot) != entry.slotGeneration) swept.insert(key);
+        if (slots.generation(entry.kind, entry.slot) != entry.slotGeneration || (entry.sampler != nullptr && slots.samplerGeneration(entry.samplerSlot) != entry.samplerGeneration)) swept.insert(key);
     }
     if (swept.empty()) return;
     for (const auto& key : swept) release(key, recorder);
@@ -555,8 +607,14 @@ void DeviceImageTable::refresh(const Context& build, Recorder& recorder) {
         const bool replaced = fresh.texture != held.texture;
         if (!previous.has_value() || *previous != *value) static_cast<void>(insert(key, *value));
         if (!replaced) {
+            if (held.sampler != fresh.sampler) {
+                if (held.sampler != nullptr) recorder.Keep(std::move(held.sampler));
+                held.sampler = std::move(fresh.sampler);
+            }
             held.slot = fresh.slot;
             held.slotGeneration = fresh.slotGeneration;
+            held.samplerSlot = fresh.samplerSlot;
+            held.samplerGeneration = fresh.samplerGeneration;
             held.generation = fresh.generation;
             held.stamp = fresh.stamp;
             held.used = ++useSerial;
@@ -740,6 +798,8 @@ DeviceImageTable::Counts DeviceImageTable::Totals() const {
     auto counts = totals;
     counts.entries = keys.Entries();
     counts.buckets = keys.Buckets();
+    counts.rejectionDetails = static_cast<std::uint32_t>(rejections.size());
+    counts.rejectionLogLines = counts.rejectionDetails + (rejectionLimitReported ? 1u : 0u);
     return counts;
 }
 

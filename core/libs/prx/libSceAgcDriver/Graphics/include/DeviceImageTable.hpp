@@ -30,6 +30,7 @@ namespace AgcDriver::Graphics {
 
 class Buffer;
 class Recorder;
+class Sampler;
 class Texture;
 
 struct DeviceTableView {
@@ -72,6 +73,8 @@ public:
         std::function<std::uint32_t(std::uint32_t kind, std::uint32_t slot)> generation;
         std::function<std::uint64_t()> serial;
         std::function<bool()> nearlyFull;
+        std::function<std::optional<std::uint32_t>(const std::shared_ptr<Sampler>& sampler)> takeSampler;
+        std::function<std::uint32_t(std::uint32_t slot)> samplerGeneration;
     };
     struct Budget {
         std::uint32_t entries = 16384u;
@@ -81,6 +84,8 @@ public:
         std::uint32_t maxBuckets = DeviceImageKeys::MaxBuckets;
     };
     static constexpr std::uint32_t OverflowBatches = 3u;
+    static constexpr std::uint32_t RejectionDetailLimit = 64u;
+    static constexpr std::uint32_t RejectionMessageBytes = 512u;
 
     static constexpr std::uint32_t RingCapacity = 4096u;
     static constexpr std::uint32_t RingChunks = 16u;
@@ -129,6 +134,9 @@ public:
         std::uint64_t inserted = 0;
         std::uint64_t faults = 0;
         std::uint64_t rejected = 0;
+        std::uint64_t suppressedRejections = 0;
+        std::uint32_t rejectionDetails = 0;
+        std::uint32_t rejectionLogLines = 0;
         std::uint64_t uploads = 0;
         std::uint64_t uploadBytes = 0;
         std::uint64_t chunkWaits = 0;
@@ -166,6 +174,9 @@ private:
         std::uint64_t usedPresent = 0;
         std::array<std::uint32_t, 8> words{};
         bool depthCompare = false;
+        std::shared_ptr<Sampler> sampler;
+        std::uint32_t samplerSlot = 0;
+        std::uint32_t samplerGeneration = 0;
     };
     struct ValidationState {
         std::uint64_t epoch = 0;
@@ -245,6 +256,7 @@ private:
     std::map<ShaderRecompiler::PipelineIdentity, std::uint64_t> overflowFrom;
     std::uint64_t resolveGeneration = 0;
     bool tableFullReported = false;
+    bool rejectionLimitReported = false;
     std::string lastFault;
     std::string lastFallback;
     std::shared_ptr<bool> alive = std::make_shared<bool>(true);

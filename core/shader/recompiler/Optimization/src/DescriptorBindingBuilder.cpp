@@ -468,6 +468,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     }
     for (std::uint32_t sampler = 0; sampler < info.samplers.size(); ++sampler) {
         if (std::ranges::none_of(info.sampledPairs, [&](const SampledResourcePair& pair) { return pair.sampler == sampler && info.images.at(pair.image).deviceTable; })) continue;
+        if (ResourceMaterializer::DeviceTableSampler(info, sampler)) {
+            plan.specialization.push_back({PipelineSpecialization::DeviceSamplerClassBase + sampler, DeviceImageTableAbi::RuntimeSampler});
+            continue;
+        }
         const auto& words = snapshot.samplers.at(sampler).dwords;
         std::uint32_t bits = 0u;
         for (const auto mode : {1u, 2u}) {
