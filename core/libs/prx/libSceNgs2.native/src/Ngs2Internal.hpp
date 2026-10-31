@@ -93,8 +93,11 @@ struct Ngs2Port {
     Ngs2Handle detachedDest = 0;
     float volume = 1.0f;
     std::int32_t matrix = -1;
-    std::vector<float> rampFrom;
     std::uint32_t destInput = 0;
+    std::vector<float> mixedGains;
+    std::uint32_t mixedOutputs = 0;
+    std::uint32_t mixedSources = 0;
+    bool mixed = false;
 };
 
 struct Ngs2UserFx2 {
@@ -373,7 +376,6 @@ void Ngs2ProcessLegacyUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_
 void Ngs2PublishSamplerState(Ngs2Voice& voice);
 void Ngs2ResetJobSchedulerOption(Ngs2JobSchedulerOption& option);
 void Ngs2ResetUserFx2(Ngs2Voice& voice);
-void Ngs2PrepareControlMix(Ngs2Voice& voice);
 void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 void Ngs2RenderSilence(const Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo);
 float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest);

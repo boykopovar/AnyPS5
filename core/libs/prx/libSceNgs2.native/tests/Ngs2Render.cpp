@@ -790,6 +790,249 @@ static void TestPeakMeterHistory() {
     }
 }
 
+static std::vector<float> EightLaneRamp(float from, float to, std::uint32_t grain) {
+    const float step = (to - from) / static_cast<float>(grain);
+    std::vector<float> ramp(grain);
+    for (std::uint32_t lane = 0; lane < 8; lane++) {
+        float value = from + static_cast<float>(lane) * step;
+        for (std::uint32_t frame = lane; frame < grain; frame += 8) {
+            ramp[frame] = value;
+            value += 8.0f * step;
+        }
+    }
+    return ramp;
+}
+
+struct GainRig {
+    std::uint32_t grain;
+    std::uint32_t channels;
+    std::vector<std::int16_t> pcm;
+    uintptr_t system = 0;
+    uintptr_t sampler = 0;
+    uintptr_t master = 0;
+
+    GainRig(std::uint32_t grainFrames, std::uint32_t channelCount, std::int16_t amplitude, std::uint32_t blockFrames)
+        : grain(grainFrames), channels(channelCount) {
+        system = CreateSystem();
+        Require(sceNgs2SystemSetGrainSamples(system, grain) == SCE_NGS2_OK);
+        master = Mastering(system, channels);
+        sampler = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER));
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, channels, 48000, 0, 0, 0}});
+        pcm.assign(static_cast<std::size_t>(blockFrames) * channels, amplitude);
+        const Ngs2WaveformBlock block{0, pcm.size() * sizeof(std::int16_t), 0, 0, blockFrames, 0, 0};
+        Control(sampler, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm.data(), 0, 1, &block});
+        Patch(sampler, master);
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+    }
+    ~GainRig() {
+        if (system != 0) sceNgs2SystemDestroy(system, nullptr);
+    }
+    GainRig(const GainRig&) = delete;
+    GainRig& operator=(const GainRig&) = delete;
+
+    void Volume(float volume) { Control(sampler, SCE_NGS2_VOICE_PARAM_PORT_VOLUME, Ngs2VoicePortVolumeParam{{}, 0, volume}); }
+
+    void Levels(std::uint32_t matrix, const std::vector<float>& levels) {
+        Control(sampler, SCE_NGS2_VOICE_PARAM_MATRIX_LEVELS, Ngs2VoiceMatrixLevelsParam{{}, matrix, static_cast<std::uint32_t>(levels.size()), levels.data()});
+    }
+
+    void Matrix(std::int32_t matrix) { Control(sampler, SCE_NGS2_VOICE_PARAM_PORT_MATRIX, Ngs2VoicePortMatrixParam{{}, 0, matrix}); }
+
+    std::vector<float> Render() {
+        std::vector<float> out(static_cast<std::size_t>(grain) * channels, -1.0f);
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, channels};
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        return out;
+    }
+};
+
+static void ExpectRampFrames(const std::vector<float>& out, std::uint32_t channels, float source, float from, float to, std::uint32_t grain, std::uint32_t firstFrame = 0) {
+    const auto ramp = EightLaneRamp(from, to, grain);
+    for (std::uint32_t frame = firstFrame; frame < grain; frame++) {
+        for (std::uint32_t channel = 0; channel < channels; channel++) Require(out[frame * channels + channel] == source * ramp[frame]);
+    }
+}
+
+static void ExpectFlatFrames(const std::vector<float>& out, std::uint32_t channels, float value, std::uint32_t firstFrame, std::uint32_t grain) {
+    for (std::uint32_t frame = firstFrame; frame < grain; frame++) {
+        for (std::uint32_t channel = 0; channel < channels; channel++) Require(out[frame * channels + channel] == value);
+    }
+}
+
+static void ExpectMeasuredGains(const std::vector<float>& out, std::uint32_t channels, float source, const std::vector<std::uint32_t>& frames, const std::vector<float>& gains) {
+    for (std::size_t i = 0; i < frames.size(); i++) Require(out[frames[i] * channels] == source * gains[i]);
+}
+
+static void TestPortVolumeRampLikePs5() {
+    for (const std::uint32_t grain : {256u, 128u, 512u}) {
+        GainRig rig(grain, 1, 16384, grain * 4);
+        rig.Volume(1.0f);
+        ExpectFlatFrames(rig.Render(), 1, 0.5f, 3, grain);
+        rig.Volume(0.25f);
+        ExpectRampFrames(rig.Render(), 1, 0.5f, 1.0f, 0.25f, grain);
+        ExpectFlatFrames(rig.Render(), 1, 0.125f, 0, grain);
+    }
+
+    const std::vector<std::uint32_t> frames{1, 2, 8, 128, 254, 255};
+    GainRig down(256, 1, 16384, 256 * 4);
+    down.Volume(1.0f);
+    down.Render();
+    down.Volume(0.25f);
+    ExpectMeasuredGains(down.Render(), 1, 0.5f, frames, {0.997070312f, 0.994140625f, 0.9765625f, 0.625f, 0.255859375f, 0.252929688f});
+
+    const std::vector<std::uint32_t> narrowFrames{1, 2, 8, 64, 126, 127};
+    GainRig narrow(128, 1, 16384, 128 * 4);
+    narrow.Volume(1.0f);
+    narrow.Render();
+    narrow.Volume(0.25f);
+    ExpectMeasuredGains(narrow.Render(), 1, 0.5f, narrowFrames, {0.994140625f, 0.98828125f, 0.953125f, 0.625f, 0.26171875f, 0.255859375f});
+
+    const std::vector<std::uint32_t> wideFrames{1, 2, 8, 256, 510, 511};
+    GainRig wide(512, 1, 16384, 512 * 4);
+    wide.Volume(1.0f);
+    wide.Render();
+    wide.Volume(0.25f);
+    ExpectMeasuredGains(wide.Render(), 1, 0.5f, wideFrames, {0.998535156f, 0.997070312f, 0.98828125f, 0.625f, 0.252929688f, 0.251464844f});
+
+    GainRig odd(256, 1, 16384, 256 * 4);
+    odd.Volume(0.3f);
+    odd.Render();
+    odd.Volume(0.7f);
+    ExpectMeasuredGains(odd.Render(), 1, 0.5f, {0, 1, 128, 254, 255}, {0.300000012f, 0.301562518f, 0.499999821f, 0.696874678f, 0.698437154f});
+}
+
+static void TestPortMatrixLevelRampLikePs5() {
+    GainRig rig(256, 1, 8192, 256 * 4);
+    rig.Matrix(0);
+    ExpectFlatFrames(rig.Render(), 1, 0.25f, 3, 256);
+    rig.Levels(0, {0.25f});
+    const auto fall = rig.Render();
+    ExpectRampFrames(fall, 1, 0.25f, 1.0f, 0.25f, 256);
+    ExpectMeasuredGains(fall, 1, 0.25f, {1, 2, 8, 128, 254, 255}, {0.997070312f, 0.994140625f, 0.9765625f, 0.625f, 0.255859375f, 0.252929688f});
+    ExpectFlatFrames(rig.Render(), 1, 0.0625f, 0, 256);
+
+    GainRig back(256, 1, 8192, 256 * 4);
+    back.Matrix(0);
+    back.Levels(0, {0.25f});
+    back.Render();
+    back.Levels(0, {1.0f});
+    const auto rise = back.Render();
+    ExpectRampFrames(rise, 1, 0.25f, 0.25f, 1.0f, 256);
+    ExpectMeasuredGains(rise, 1, 0.25f, {1, 2, 8, 128, 254, 255}, {0.252929688f, 0.255859375f, 0.2734375f, 0.625f, 0.994140625f, 0.997070312f});
+
+    GainRig product(256, 1, 8192, 256 * 4);
+    product.Matrix(0);
+    product.Levels(0, {1.0f});
+    product.Volume(1.0f);
+    product.Render();
+    product.Levels(0, {0.5f});
+    product.Volume(0.25f);
+    const auto ramped = product.Render();
+    ExpectRampFrames(ramped, 1, 0.25f, 1.0f, 0.125f, 256);
+    ExpectMeasuredGains(ramped, 1, 0.25f, {0, 1, 2, 4, 8, 128, 254, 255}, {1.0f, 0.996582032f, 0.993164064f, 0.986328124f, 0.972656248f, 0.5625f, 0.1318359376f, 0.1284179688f});
+    ExpectFlatFrames(product.Render(), 1, 0.03125f, 0, 256);
+}
+
+static void TestPortGainRampResetsLikePs5() {
+    {
+        GainRig rig(256, 1, 8192, 256 * 4);
+        rig.Volume(0.5f);
+        rig.Render();
+        rig.Volume(0.25f);
+        Event(rig.sampler, SCE_NGS2_VOICE_EVENT_STOP_IMM);
+        Event(rig.sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        ExpectFlatFrames(rig.Render(), 1, 0.0625f, 3, 256);
+    }
+    {
+        GainRig rig(256, 1, 8192, 256 * 4);
+        rig.Volume(0.5f);
+        rig.Render();
+        rig.Volume(0.25f);
+        Event(rig.sampler, SCE_NGS2_VOICE_EVENT_KILL);
+        Event(rig.sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        ExpectFlatFrames(rig.Render(), 1, 0.0625f, 3, 256);
+    }
+    {
+        GainRig rig(256, 1, 8192, 256 * 4);
+        rig.Volume(0.5f);
+        rig.Render();
+        rig.Volume(0.25f);
+        Event(rig.sampler, SCE_NGS2_VOICE_EVENT_PAUSE);
+        Event(rig.sampler, SCE_NGS2_VOICE_EVENT_RESUME);
+        const auto out = rig.Render();
+        const auto ramp = EightLaneRamp(0.5f, 0.25f, 256);
+        for (std::uint32_t frame = 64; frame < 256; frame++) Require(out[frame] == 0.25f * ramp[frame]);
+    }
+    {
+        GainRig rig(256, 1, 8192, 256 * 4);
+        rig.Volume(0.5f);
+        rig.Render();
+        rig.Volume(0.25f);
+        Patch(rig.sampler, rig.master);
+        ExpectRampFrames(rig.Render(), 1, 0.25f, 0.5f, 0.25f, 256);
+    }
+    {
+        GainRig rig(256, 1, 8192, 256 * 4);
+        rig.Volume(1.0f);
+        rig.Render();
+        rig.Volume(4.0f);
+        rig.Volume(0.25f);
+        ExpectRampFrames(rig.Render(), 1, 0.25f, 1.0f, 0.25f, 256);
+    }
+    {
+        GainRig rig(256, 1, 8192, 256 * 4);
+        rig.Volume(0.5f);
+        rig.Render();
+        rig.Volume(0.25f);
+        rig.Volume(0.5f);
+        ExpectFlatFrames(rig.Render(), 1, 0.125f, 0, 256);
+    }
+}
+
+static void TestPortGainRampFromZeroLikePs5() {
+    GainRig rig(256, 1, 8192, 256 * 4);
+    rig.Volume(0.0f);
+    ExpectFlatFrames(rig.Render(), 1, 0.0f, 0, 256);
+    rig.Volume(1.0f);
+    ExpectRampFrames(rig.Render(), 1, 0.25f, 0.0f, 1.0f, 256);
+    rig.Volume(0.0f);
+    ExpectRampFrames(rig.Render(), 1, 0.25f, 1.0f, 0.0f, 256);
+}
+
+static void TestMutedPatchCycleRenders() {
+    const auto firstBuffer = usedBuffers;
+    const auto system = CreateSystem();
+    const auto first = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
+    const auto second = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
+    Control(first, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 1, 0});
+    Control(second, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 1, 0});
+    Patch(first, second);
+    Patch(second, first);
+    Control(first, SCE_NGS2_VOICE_PARAM_PORT_VOLUME, Ngs2VoicePortVolumeParam{{}, 0, 0.0f});
+    Control(second, SCE_NGS2_VOICE_PARAM_PORT_VOLUME, Ngs2VoicePortVolumeParam{{}, 0, 0.0f});
+    Event(first, SCE_NGS2_VOICE_EVENT_PLAY);
+    Event(second, SCE_NGS2_VOICE_EVENT_PLAY);
+    std::vector<float> out(Grain, -1.0f);
+    const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1};
+    Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    ResetBuffers(firstBuffer);
+}
+
+static void TestPortGainFusedSumLikePs5() {
+    GainRig rig(256, 2, 9830, 256 * 4);
+    rig.Levels(0, {0.3f, 0.61f, 0.0f, 0.0f});
+    rig.Matrix(0);
+    const auto out = rig.Render();
+    for (std::uint32_t frame = 3; frame < 256; frame++) Require(out[frame * 2] == 0.272988885641098f && out[frame * 2 + 1] == 0.0f);
+    rig.Volume(0.5f);
+    const auto ramped = rig.Render();
+    const auto left = EightLaneRamp(0.3f, 0.15f, 256);
+    const auto right = EightLaneRamp(0.61f, 0.305f, 256);
+    const float source = 9830.0f / 32768.0f;
+    for (std::uint32_t frame = 0; frame < 256; frame++) Require(ramped[frame * 2] == std::fma(source, right[frame], std::fma(source, left[frame], 0.0f)));
+}
+
 static void TestSubmixerMatrix() {
     const auto system = CreateSystem();
     const auto master = Mastering(system, 2);
@@ -2276,6 +2519,14 @@ int main() {
     TestPcmCallbackRefill();
     TestPcmCallbackSetup();
     TestSetupClearsCallback();
+
+    TestPortVolumeRampLikePs5();
+    TestPortMatrixLevelRampLikePs5();
+    TestPortGainRampResetsLikePs5();
+    TestPortGainRampFromZeroLikePs5();
+    TestPortGainFusedSumLikePs5();
+    TestMutedPatchCycleRenders();
+
     TestMasteringGain();
     TestMatrixLevelClamp();
 
