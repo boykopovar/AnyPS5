@@ -322,8 +322,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
                 constantFolder.Fold(program);
                 ResolveControlFlowIdentities(program);
                 deadCodeEliminator.RemoveIdentities(program);
+                deadCodeEliminator.Eliminate(program);
             }
-            deadCodeEliminator.Eliminate(program);
         }
         if (constantFolder.ComposePackedAncillary(program)) {
             deadCodeEliminator.Eliminate(program);
