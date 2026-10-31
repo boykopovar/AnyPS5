@@ -151,6 +151,17 @@ void TestHeaps() {
     Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
     Require(sceNpFreeKernelMemory(nullptr) == NpNullObject, "freeing needs an object");
 
+    Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", &address, nullptr) == NpNullObject,
+        "unaligned kernel memory allocation needs an object");
+    address = nullptr;
+    Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", &address, &memory) == 0
+            && address != nullptr && address == memory.address && memory.size == 0x4000,
+        "kernel memory allocation writes the mapped address");
+    Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
+    Require(sceNpAllocateKernelMemoryNoAlignment(0x4000, "np-test", nullptr, &memory) == 0 && memory.address != nullptr,
+        "kernel memory allocation accepts a null address output");
+    Require(sceNpFreeKernelMemory(&memory) == 0 && memory.address == nullptr, "kernel memory is released");
+
     Require(sceNpArchInit() == 0 && sceNpArchInit() == 0, "the library initialises more than once");
     NpAllocatorEx* global = sceNpGlobalHeapGetAllocatorExPtr();
     Require(global->outOfMemoryError == NpOutOfMemory, "the global allocator reports the library's out-of-memory error");
