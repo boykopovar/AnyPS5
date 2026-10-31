@@ -105,7 +105,7 @@ struct DepthSamplingState {
 };
 
 bool htileProvesClear(std::uint32_t word, bool depthOnly, float clearDepth) {
-    if ((word & 15u) == 15u) return false;
+    if ((word & 15u) == 15u && word != 0xffffffffu) return false;
     const auto depth = depthOnly ? word : word & 0xfffff00fu;
     if (depth == 0u) return clearDepth == 0.0f;
     if (depth == (depthOnly ? 0xfffffff0u : 0xfffc0000u)) return clearDepth == 1.0f;
