@@ -1521,18 +1521,36 @@ int DoReserveVirtual(void** addr, size_t len, int flags, size_t alignment) {
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     GuestAllocations::Mutation mutation;
     const bool fixed = *addr != nullptr && (flags & GuestMapFixedFlag) != 0;
-    if (fixed && mutation.Covers(*addr, len)) {
-        constexpr int GuestMapNoOverwrite = 0x80;
-        if ((flags & GuestMapNoOverwrite) == 0 && RemapFixedIntoRegistered(mutation, *addr, len, 0, GuestMapFixedFlag)) {
-            RecordProtection(*addr, len, -1);
-            RecordReservation(*addr, len);
-            return 0;
+    if (fixed) {
+        if (GuestArena::GuestArenaAvailable_nid_postfix() && !GuestArena::GuestArenaContains_nid_postfix(*addr, len)) return SCE_KERNEL_ERROR_EINVAL;
+        if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
+        if (mutation.Covers(*addr, len)) {
+            constexpr int GuestMapNoOverwrite = 0x80;
+            if ((flags & GuestMapNoOverwrite) == 0 && RemapFixedIntoRegistered(mutation, *addr, len, 0, GuestMapFixedFlag)) {
+                RecordProtection(*addr, len, -1);
+                RecordReservation(*addr, len);
+                return 0;
+            }
         }
         mutation.RequireAvailable(*addr, len);
+        std::uintptr_t usedStart = 0, usedEnd = 0;
+        if (GuestArena::GuestArenaAvailable_nid_postfix() &&
+            GuestArena::GuestArenaNextUsed_nid_no_patch(reinterpret_cast<std::uintptr_t>(*addr), &usedStart, &usedEnd) &&
+            usedStart < reinterpret_cast<std::uintptr_t>(*addr) + len && reinterpret_cast<std::uintptr_t>(*addr) < usedEnd) {
+            return SCE_KERNEL_ERROR_ENOMEM;
+        }
     }
-    if (fixed) mutation.RequireAvailable(*addr, len);
     constexpr int GuestMapNoCoalesce = 0x400000;
-    void* mapped = MapAligned(*addr, len, PROT_NONE, fixed ? GuestMapFixedFlag | (flags & GuestMapNoCoalesce) : 0, alignment);
+    void* mapped = nullptr;
+    if (fixed) {
+        try {
+            mapped = MapAligned(*addr, len, PROT_NONE, GuestMapFixedFlag | (flags & GuestMapNoCoalesce), alignment);
+        } catch (const std::invalid_argument&) {
+            return SCE_KERNEL_ERROR_EINVAL;
+        }
+    } else {
+        mapped = MapAligned(*addr, len, PROT_NONE, 0, alignment);
+    }
     try {
         mutation.Add(mapped, len, false, false, false);
     } catch (...) {
