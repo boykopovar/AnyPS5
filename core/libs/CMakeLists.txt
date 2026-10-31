@@ -121,6 +121,7 @@ endif()
 set(UNPATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/libs/unpatched)
 set(PATCHED_DIR ${CMAKE_CURRENT_BINARY_DIR}/libs)
 set(IMPLIB_DIR ${PATCHED_DIR}/implib)
+set(RELEASE_IMPLIBS "libc=$<TARGET_LINKER_FILE:libc>\n")
 
 set_target_properties(libc PROPERTIES
         PREFIX ""
@@ -210,10 +211,17 @@ foreach(LIB_DIR ${LIBS_DIRS})
         )
 
         list(APPEND PATCHED_OUTPUTS ${PATCHED_FILE})
+        string(APPEND RELEASE_IMPLIBS "${LIB_NAME}=$<TARGET_LINKER_FILE:${LIB_NAME}>\n")
     endif()
 endforeach()
 
+if(WIN32)
+    file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/release-implibs.txt CONTENT "${RELEASE_IMPLIBS}")
+endif()
+
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
+
+include(prx/libSceFreeType/PostScriptInfo.cmake)
 
 if(APS5_ENABLE_TRACY)
     set_target_properties(TracyClient PROPERTIES
@@ -233,7 +241,7 @@ if(APS5_ENABLE_TRACY)
     list(APPEND PATCHED_OUTPUTS ${TRACY_CLIENT_COPIED})
 endif()
 
-if(TARGET mimalloc)
+if(TARGET mimalloc AND WIN32)
     add_executable(pe_import_first ${CMAKE_CURRENT_SOURCE_DIR}/allocator/PeImportFirstMain.cpp ${CMAKE_CURRENT_SOURCE_DIR}/allocator/PeImportFirst.cpp)
     target_compile_features(pe_import_first PRIVATE cxx_std_20)
     if(MINGW)
@@ -254,6 +262,14 @@ if(TARGET mimalloc)
             COMMENT "Copying mimalloc-redirect.dll beside the libraries"
     )
     list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/mimalloc.dll ${PATCHED_DIR}/mimalloc-redirect.dll)
+elseif(TARGET mimalloc)
+    add_custom_command(
+            OUTPUT ${PATCHED_DIR}/libmimalloc.dylib
+            COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> ${PATCHED_DIR}/libmimalloc.dylib
+            DEPENDS mimalloc
+            COMMENT "Copying libmimalloc.dylib beside the libraries"
+    )
+    list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/libmimalloc.dylib)
 endif()
 
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
@@ -269,6 +285,15 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_posix_scalar_io PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_kernel_sys_upd_version_tests tests/GuestKernelSysUpdVersion.cpp)
+    target_include_directories(guest_kernel_sys_upd_version_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_upd_version_tests PRIVATE libkernel_sys libkernel libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_kernel_sys_upd_version_tests)
+    add_test(NAME guest_kernel_sys_upd_version COMMAND guest_kernel_sys_upd_version_tests)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_upd_version PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
     add_test_executable(guest_kernel_sys_sdk_version_tests tests/GuestKernelSysSdkVersion.cpp)
     target_include_directories(guest_kernel_sys_sdk_version_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -295,6 +320,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_kernel_sys_cpumode COMMAND guest_kernel_sys_cpumode_tests)
     if(WIN32)
         set_tests_properties(guest_kernel_sys_cpumode PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+    add_test_executable(guest_kernel_sys_neo_mode_tests tests/GuestKernelSysNeoMode.cpp)
+    target_include_directories(guest_kernel_sys_neo_mode_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_neo_mode_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_neo_mode_tests)
+    add_test(NAME guest_kernel_sys_neo_mode COMMAND guest_kernel_sys_neo_mode_tests)
+    set_tests_properties(guest_kernel_sys_neo_mode PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_neo_mode PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
     add_test_executable(nid_buffer_validation_tests nid/tests/BufferValidation.cpp)
@@ -417,9 +452,20 @@ if(BUILD_TESTING)
     target_link_libraries(guest_kernel_sys_tests PRIVATE libkernel_sys libSceAmpr libkernel libc)
     configure_windows_unwind(guest_kernel_sys_tests)
     add_test(NAME guest_kernel_sys COMMAND guest_kernel_sys_tests)
+    set_tests_properties(guest_kernel_sys PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_kernel_sys PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAmpr>")
+    endif()
+    add_test_executable(guest_kernel_sys_vm_map_timestamp_tests tests/GuestKernelSysVmMapTimestamp.cpp)
+    target_include_directories(guest_kernel_sys_vm_map_timestamp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_vm_map_timestamp_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_vm_map_timestamp_tests)
+    add_test(NAME guest_kernel_sys_vm_map_timestamp COMMAND guest_kernel_sys_vm_map_timestamp_tests)
+    set_tests_properties(guest_kernel_sys_vm_map_timestamp PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_vm_map_timestamp PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
     add_test_executable(guest_kernel_sys_thread_defaults_tests tests/GuestKernelSysThreadDefaults.cpp)
     target_include_directories(guest_kernel_sys_thread_defaults_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -446,13 +492,23 @@ if(BUILD_TESTING)
     set_tests_properties(guest_kernel_sys_constants PROPERTIES TIMEOUT 20)
     add_test_executable(guest_firmware_constant_returns_tests tests/GuestFirmwareConstantReturns.cpp)
     target_include_directories(guest_firmware_constant_returns_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(guest_firmware_constant_returns_tests PRIVATE libSceComposite libSceFsInternalForVsh libSceHttpCache libScePlayReady libSceSdma libSceSsl libSceVisionManager libmdbg_syscore libkernel libc)
+    target_link_libraries(guest_firmware_constant_returns_tests PRIVATE libSceAvSetting libSceComposite libSceFsInternalForVsh libSceHttpCache libScePlayReady libSceSdma libSceSsl libSceVisionManager libmdbg_syscore libkernel libc)
     configure_windows_unwind(guest_firmware_constant_returns_tests)
     add_test(NAME guest_firmware_constant_returns COMMAND guest_firmware_constant_returns_tests)
     set_tests_properties(guest_firmware_constant_returns PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_firmware_constant_returns PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceComposite>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttpCache>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSsl>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVisionManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libmdbg_syscore>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceComposite>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttpCache>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSsl>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVisionManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libmdbg_syscore>")
+    endif()
+    add_test_executable(guest_playready_tests tests/GuestPlayReady.cpp)
+    target_include_directories(guest_playready_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_playready_tests PRIVATE libScePlayReady libkernel libc)
+    configure_windows_unwind(guest_playready_tests)
+    add_test(NAME guest_playready COMMAND guest_playready_tests)
+    set_tests_properties(guest_playready PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_playready PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>")
     endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME nid_verneed COMMAND ${Python3_EXECUTABLE}
@@ -613,6 +669,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVoice>")
     endif()
 
+    add_test_executable(guest_remoteplay_tests tests/GuestRemoteplay.cpp)
+    target_include_directories(guest_remoteplay_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_remoteplay_tests PRIVATE libSceRemoteplay libc)
+    configure_windows_unwind(guest_remoteplay_tests)
+    add_test(NAME guest_remoteplay COMMAND guest_remoteplay_tests)
+    if(WIN32)
+        set_tests_properties(guest_remoteplay PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRemoteplay>")
+    endif()
+
     add_test_executable(guest_gnm_neo_retail_tests tests/GuestGnmNeoRetail.cpp)
     target_include_directories(guest_gnm_neo_retail_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_gnm_neo_retail_tests PRIVATE libSceGnmDriverForNeoMode libc)
@@ -620,6 +686,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_gnm_neo_retail COMMAND guest_gnm_neo_retail_tests)
     if(WIN32)
         set_tests_properties(guest_gnm_neo_retail PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
+    endif()
+
+    add_test_executable(guest_gnm_neo_context_state_internal_tests tests/GuestGnmNeoContextStateInternal.cpp)
+    target_include_directories(guest_gnm_neo_context_state_internal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_gnm_neo_context_state_internal_tests PRIVATE libSceGnmDriverForNeoMode libc)
+    configure_windows_unwind(guest_gnm_neo_context_state_internal_tests)
+    add_test(NAME guest_gnm_neo_context_state_internal COMMAND guest_gnm_neo_context_state_internal_tests)
+    if(WIN32)
+        set_tests_properties(guest_gnm_neo_context_state_internal PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
     endif()
 
@@ -696,6 +772,17 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_np_common_runtime PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
+    endif()
+
+    add_test_executable(guest_xml_value_types_tests tests/GuestXmlValueTypes.cpp)
+    target_include_directories(guest_xml_value_types_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_xml_value_types_tests PRIVATE libSceXml libkernel libc)
+    configure_windows_unwind(guest_xml_value_types_tests)
+    add_test(NAME guest_xml_value_types COMMAND guest_xml_value_types_tests)
+    set_tests_properties(guest_xml_value_types PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_xml_value_types PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
     endif()
 
     add_test_executable(guest_offline_imports_tests tests/GuestOfflineImports.cpp)
@@ -903,6 +990,13 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(savedata_memory_growth savedata_memory_growth_read_failure PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+        add_test_executable(savedata_memory_host_write_tests tests/SaveDataMemoryHostWrite.cpp)
+        target_include_directories(savedata_memory_host_write_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        target_link_libraries(savedata_memory_host_write_tests PRIVATE libSceSaveData.native libkernel libc)
+        configure_windows_unwind(savedata_memory_host_write_tests)
+        add_test(NAME savedata_memory_host_write COMMAND savedata_memory_host_write_tests)
+        set_tests_properties(savedata_memory_host_write PROPERTIES TIMEOUT 20
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
     add_test_executable(savedata_memory_journal_tests tests/SaveDataMemoryJournal.cpp)
     target_include_directories(savedata_memory_journal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -983,6 +1077,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_kernel_sys_ktimer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
+    add_test_executable(guest_src_utility_tests tests/GuestSrcUtility.cpp)
+    target_include_directories(guest_src_utility_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_src_utility_tests PRIVATE libSceSrcUtl libc)
+    configure_windows_unwind(guest_src_utility_tests)
+    add_test(NAME guest_src_utility COMMAND guest_src_utility_tests)
+    if(WIN32)
+        set_tests_properties(guest_src_utility PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSrcUtl>")
     endif()
 
     add_test_executable(guest_crt_tests tests/GuestCrt.cpp)
@@ -1134,3 +1238,4 @@ if(BUILD_TESTING)
 endif()
 
 include(prx/libSceFreeType/CurveBounds.cmake)
+include(prx/libSceBeisobmf/Tests.cmake)

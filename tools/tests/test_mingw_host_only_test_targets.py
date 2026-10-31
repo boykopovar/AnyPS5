@@ -57,6 +57,18 @@ class HostOnlyTargets(unittest.TestCase):
         source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
         self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), ["host_tests"])
 
+    def test_excludes_mingw_libc_import_library_from_host_only_targets(self):
+        guest = self.target("guest_mktime_tests", source="core/libs/tests/GuestMktime.cpp",
+                            fragment="C:/build/core/libs/libs/implib/liblibc.dll.a")
+        source_root = Path(self.temporary.name).resolve()
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, {guest["id"]: guest}), [])
+
+    def test_libc_link_does_not_accept_similarly_named_libraries(self):
+        for fragment in ("/build/notliblibc.dll.a", "/build/liblibc.dll.a.extra", "/build/liblibc.prx"):
+            with self.subTest(fragment=fragment):
+                target = self.target("host_tests", fragment=fragment)
+                self.assertFalse(build_mingw_host_only_tests.links_guest_libc(target))
+
     def test_excludes_a_transitive_guest_libc_dependency(self):
         helper = self.target("guest_helper", target_type="STATIC_LIBRARY", source="core/libs/tests/GuestHelper.cpp",
                              dependencies=("libc-id",))
@@ -219,6 +231,28 @@ class HostOnlyTargets(unittest.TestCase):
                     self.assertEqual(build_mingw_host_only_tests.main([str(root / "build"), "--list-only"]), 1)
                 self.assertIn(expected, errors.getvalue())
                 self.assertNotIn("Traceback", errors.getvalue())
+
+
+    def test_library_filename_substring_does_not_exclude_a_host_test(self):
+        product = self.target("product_lib", target_type="STATIC_LIBRARY", source="core/libs/utility/src/Utility.cpp")
+        product["artifacts"] = [{"path": "core/libs/utility/libproduct_lib.a"}]
+        host = self.target("host_tests", fragment="C:/build/external/libprefix_libproduct_lib.a")
+        guest = self.target("product_tests", fragment='"C:/build/core/libs/utility/libproduct_lib.a"')
+        source_root, targets = build_mingw_host_only_tests.read_reply(self.fixture([product, host, guest]))
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), ["host_tests"])
+
+    def assert_exact_file_argument_links_product(self, fragment):
+        product = self.target("product_lib", target_type="STATIC_LIBRARY", source="core/libs/utility/src/Utility.cpp")
+        product["artifacts"] = [{"path": "core/libs/utility/libproduct_lib.a"}]
+        guest = self.target("product_tests", fragment=fragment)
+        source_root, targets = build_mingw_host_only_tests.read_reply(self.fixture([product, guest]))
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), [])
+
+    def test_gnu_exact_file_linker_argument_links_a_product_library(self):
+        self.assert_exact_file_argument_links_product("-l:libproduct_lib.a")
+
+    def test_gnu_exact_file_linker_argument_through_wl_links_a_product_library(self):
+        self.assert_exact_file_argument_links_product("-Wl,-l:libproduct_lib.a")
 
 
 if __name__ == "__main__":
