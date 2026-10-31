@@ -652,7 +652,12 @@ static int PathError(const char* path, std::string& copy) {
 
 #ifdef _WIN32
 bool DescriptorIsOpen_nid_no_patch(int descriptor) {
-    return descriptor >= 0 && WithoutParameterHandler([descriptor] { return ::_get_osfhandle(descriptor) == -1 ? -1 : 0; }) == 0;
+    return descriptor >= 0 && WithoutParameterHandler([descriptor] {
+        const auto handle = ::_get_osfhandle(descriptor);
+        if (handle == -1) return -1;
+        DWORD flags = 0;
+        return handle == -2 || GetHandleInformation(reinterpret_cast<HANDLE>(handle), &flags) ? 0 : -1;
+    }) == 0;
 }
 #else
 bool DescriptorIsOpen_nid_no_patch(int descriptor) {

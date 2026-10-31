@@ -682,8 +682,10 @@ bool QueryPipe(int descriptor, const char* function, ACCESS_MASK& access, PipeLo
     if (!query) throw std::runtime_error(std::string(function) + ": NtQueryInformationFile is unavailable");
     PipeIoStatus status{};
     if (query(handle, &status, &access, sizeof(access), FileAccessInformationClass) < 0 ||
-        query(handle, &status, &pipe, sizeof(pipe), FilePipeLocalInformationClass) < 0)
+        query(handle, &status, &pipe, sizeof(pipe), FilePipeLocalInformationClass) < 0) {
+        if (reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor)) != handle || GetFileType(handle) != FILE_TYPE_PIPE) return false;
         throw std::runtime_error(std::string(function) + ": querying pipe descriptor " + std::to_string(descriptor) + " failed");
+    }
     return true;
 }
 bool PipeReadiness(int descriptor, short events, short& revents) {
