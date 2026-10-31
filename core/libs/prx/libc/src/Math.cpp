@@ -116,6 +116,22 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+/* Derived from FreeBSD lib/msun/src/s_cbrtl.c (release/11.4.0) */
+/*-
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ * Copyright (c) 2009-2011, Bruce D. Evans, Steven G. Kargl, David Schultz.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ *
+ * The argument reduction and testing for exceptional cases was
+ * written by Steven G. Kargl with input from Bruce D. Evans
+ * and David A. Schultz.
+ */
 #include "prx/libc/include/Api.hpp"
 #include <mutex>
 #include <array>
@@ -289,6 +305,15 @@ ExtendedParts SplitExtended(long double value) {
     std::memcpy(&parts.mantissa, bytes, sizeof(parts.mantissa));
     std::memcpy(&parts.signExponent, bytes + sizeof(parts.mantissa), sizeof(parts.signExponent));
     return parts;
+}
+
+long double JoinExtended(std::uint64_t mantissa, std::uint16_t signExponent) {
+    unsigned char bytes[sizeof(long double)] = {};
+    std::memcpy(bytes, &mantissa, sizeof(mantissa));
+    std::memcpy(bytes + sizeof(mantissa), &signExponent, sizeof(signExponent));
+    long double value;
+    std::memcpy(&value, bytes, sizeof(value));
+    return value;
 }
 
 long double ClearLowMantissaWord(long double value) {
@@ -686,7 +711,49 @@ long double APS5_VABI acoshl_nid_postfix(long double x) { return std::acosh(x); 
 long double APS5_VABI asinhl_nid_postfix(long double x) { return std::asinh(x); }
 long double APS5_VABI atanhl_nid_postfix(long double x) { return std::atanh(x); }
 long double APS5_VABI atan2l_nid_postfix(long double y, long double x) { return std::atan2(y, x); }
-long double APS5_VABI cbrtl_nid_postfix(long double x) { return std::cbrt(x); }
+long double APS5_VABI cbrtl_nid_postfix(long double x) {
+    constexpr std::uint32_t B1 = 709958130;
+    constexpr int Bias = 0x3fff;
+    ExtendedParts parts = SplitExtended(x);
+    const std::uint16_t sign = parts.signExponent & 0x8000;
+    int k = parts.signExponent & 0x7fff;
+    if (k == 0x7fff) return x + x;
+    if (k == 0) {
+        if (parts.mantissa == 0) return x;
+        parts = SplitExtended(x * 0x1p514L);
+        k = (parts.signExponent & 0x7fff) - (Bias + 514);
+    } else {
+        k -= Bias;
+    }
+    long double reduced = JoinExtended(parts.mantissa, Bias);
+    switch (k % 3) {
+    case 1:
+    case -2:
+        reduced = 2 * reduced;
+        --k;
+        break;
+    case 2:
+    case -1:
+        reduced = 4 * reduced;
+        k -= 2;
+        break;
+    }
+    const long double scale = JoinExtended(0x8000000000000000ull, static_cast<std::uint16_t>(sign | (Bias + k / 3)));
+    const float estimate = std::bit_cast<float>((std::bit_cast<std::uint32_t>(static_cast<float>(reduced)) & 0x7fffffffu) / 3 + B1);
+    const double dx = static_cast<double>(reduced);
+    double dt = estimate;
+    double dr = dt * dt * dt;
+    dt = dt * (dx + dx + dr) / (dx + dr + dr);
+    dr = dt * dt * dt;
+    dt = dt * (dx + dx + dr) / (dx + dr + dr);
+    const volatile double shift = 0x1p32;
+    const volatile double away = 0x1p-31;
+    long double t = (static_cast<long double>(shift) + away + dt) - 0x1p32L;
+    long double r = reduced / (t * t);
+    r = (r - t) / ((t + t) + r);
+    t = t + t * r;
+    return t * scale;
+}
 long double APS5_VABI erfl_nid_postfix(long double x) { return std::erf(x); }
 long double APS5_VABI erfcl_nid_postfix(long double x) { return std::erfc(x); }
 long double APS5_VABI expm1l_nid_postfix(long double x) { return std::expm1(x); }
