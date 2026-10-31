@@ -244,6 +244,13 @@ public:
     std::uint64_t PendingWriterSerial(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t PendingWriterSerial(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> exceptNotes) const;
     std::uint64_t PendingLeaseSerial(std::uint64_t address, std::size_t bytes) const;
+    struct WriterWait {
+        std::array<std::uint64_t, 2> targets{};
+        std::size_t leftInFlight = 0;
+        std::size_t leftOpen = 0;
+    };
+    WriterWait FinishWritersByLane(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t leaseBegin, std::uint64_t leaseEnd, std::span<const std::uint64_t> exceptNotes = {});
+    bool WritersPendingOver(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t leaseBegin, std::uint64_t leaseEnd, std::span<const std::uint64_t> exceptNotes = {}) const;
     // What SyncThrough(address, bytes) would wait for, for the [hooksync] attribution: the newest
     // batch whose noted range overlaps the access (the open batch counts first, with the serial it
     // will get), whether that batch's fence has already signaled (its GPU work is done, so the
@@ -888,6 +895,7 @@ private:
     void removeLabels(Batch& batch);
     void release(Batch& batch) noexcept;
     static bool overlaps(const Batch& batch, std::uint64_t address, std::uint64_t end);
+    static bool writesOver(const Batch& batch, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t leaseBegin, std::uint64_t leaseEnd, std::span<const std::uint64_t> exceptNotes);
     static std::optional<ReadKind> readOverlap(const Batch& batch, std::uint64_t address, std::uint64_t end, std::optional<ReadKind> only = std::nullopt);
     static std::vector<std::pair<std::uint64_t, std::uint64_t>> notedReads(const Batch& batch);
     bool signaled(const Batch& batch) const;
@@ -924,7 +932,8 @@ private:
     std::map<VkCommandBuffer, BorrowedCommand> borrowed;
     void requireUnborrowed(const Batch* batch = nullptr) const;
     void requireHandleUnborrowed(VkCommandBuffer commands) const;
-    void prepareWaits(std::array<std::uint64_t, 2> targets);
+    std::array<std::uint64_t, 2> closeWaitTargets(std::array<std::uint64_t, 2> targets) const;
+    std::array<std::uint64_t, 2> prepareWaits(std::array<std::uint64_t, 2> targets);
     std::array<std::uint64_t, 2> waitTargets(std::uint64_t serial) const;
     Context context;
     VkSemaphore timeline = VK_NULL_HANDLE;
@@ -995,6 +1004,7 @@ private:
     bool hasConsumedLabels() const;
     Batch* newestInFlight(int lane) const;
     void finishLaneThrough(int lane, std::uint64_t target, bool wait, int source);
+    void finishWaitTargets(std::array<std::uint64_t, 2> targets, int source);
     std::uint64_t laneTargetAtOrBefore(int lane, std::uint64_t serial) const;
     mutable std::mutex laneLogMutex;
     std::deque<std::pair<std::uint64_t, int>> laneLog;

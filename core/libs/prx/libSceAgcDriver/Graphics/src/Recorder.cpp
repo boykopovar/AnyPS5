@@ -1406,21 +1406,28 @@ void Recorder::requireHandleUnborrowed(VkCommandBuffer commands) const {
     Require(!borrowed.contains(commands), "cannot end a borrowed command buffer");
 }
 
-void Recorder::prepareWaits(std::array<std::uint64_t, 2> targets) {
-    resolveReturnEdge();
-    requireUnborrowed();
-    if (!AsyncLaneActive()) return;
-    std::array<bool, 2> submit{};
+std::array<std::uint64_t, 2> Recorder::closeWaitTargets(std::array<std::uint64_t, 2> targets) const {
+    if (!AsyncLaneActive()) return targets;
     for (auto it = inFlight.rbegin(); it != inFlight.rend(); ++it) {
         const auto& batch = *it;
         if (batch->serial > targets[static_cast<std::size_t>(batch->lane)]) continue;
         Require(batch->waitOther < batch->serial, "a recorder lane dependency is not forward ordered");
         targets[static_cast<std::size_t>(1 - batch->lane)] = std::max(targets[static_cast<std::size_t>(1 - batch->lane)], batch->waitOther);
     }
+    return targets;
+}
+
+std::array<std::uint64_t, 2> Recorder::prepareWaits(std::array<std::uint64_t, 2> targets) {
+    resolveReturnEdge();
+    requireUnborrowed();
+    targets = closeWaitTargets(targets);
+    if (!AsyncLaneActive()) return targets;
+    std::array<bool, 2> submit{};
     for (const auto& batch : inFlight) {
         if (batch->serial <= targets[static_cast<std::size_t>(batch->lane)] && fenceStatus(batch->fence) != VK_SUCCESS) submit[static_cast<std::size_t>(1 - batch->lane)] = true;
     }
     for (int lane = 0; lane < 2; ++lane) if (submit[static_cast<std::size_t>(lane)]) submitLane(lane);
+    return targets;
 }
 
 void Recorder::PrepareWait(std::uint64_t serial) {
@@ -1651,6 +1658,20 @@ void Recorder::finishLaneThrough(int lane, std::uint64_t target, bool wait, int 
         auto batch = std::move(*it);
         inFlight.erase(it);
         finish(std::move(batch), wait, source);
+    }
+}
+
+void Recorder::finishWaitTargets(std::array<std::uint64_t, 2> targets, int source) {
+    for (;;) {
+        targets = prepareWaits(targets);
+        const auto it = std::find_if(inFlight.begin(), inFlight.end(), [&](const auto& batch) {
+            return batch->serial <= targets[static_cast<std::size_t>(batch->lane)];
+        });
+        if (it == inFlight.end()) return;
+        requireUnborrowed();
+        auto batch = std::move(*it);
+        inFlight.erase(it);
+        finish(std::move(batch), true, source);
     }
 }
 
@@ -3875,6 +3896,26 @@ std::uint64_t Recorder::PendingLeaseSerial(std::uint64_t address, std::size_t by
     return 0;
 }
 
+bool Recorder::writesOver(const Batch& batch, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t leaseBegin, std::uint64_t leaseEnd, std::span<const std::uint64_t> exceptNotes) {
+    if (leaseBegin < leaseEnd && readOverlap(batch, leaseBegin, leaseEnd, ReadKind::AddressBased)) return true;
+    for (const auto& [begin, end] : ranges) {
+        if (begin >= end) continue;
+        for (std::size_t index = 0; index < batch.writes.size(); ++index) {
+            const auto& [writtenBegin, writtenEnd] = batch.writes[index];
+            if (begin >= writtenEnd || writtenBegin >= end) continue;
+            if (index < batch.writeNotes.size() && batch.writeNotes[index] != 0 && std::find(exceptNotes.begin(), exceptNotes.end(), batch.writeNotes[index]) != exceptNotes.end()) continue;
+            return true;
+        }
+        if (readOverlap(batch, begin, end, ReadKind::AddressBased)) return true;
+    }
+    return false;
+}
+
+bool Recorder::WritersPendingOver(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t leaseBegin, std::uint64_t leaseEnd, std::span<const std::uint64_t> exceptNotes) const {
+    const auto writes = [&](const Batch& batch) { return writesOver(batch, ranges, leaseBegin, leaseEnd, exceptNotes); };
+    return anyOpen(writes) || std::any_of(inFlight.begin(), inFlight.end(), [&](const auto& batch) { return writes(*batch); });
+}
+
 bool Recorder::signaled(const Batch& batch) const {
     return batch.submitted && fenceStatus(batch.fence) == VK_SUCCESS;
 }
@@ -4576,6 +4617,45 @@ bool Recorder::WaitSerialFor(std::uint64_t serial, std::uint64_t timeoutNanos) {
     if (result == VK_TIMEOUT) return false;
     Check(result, "vkWaitSemaphoresKHR submission progress");
     return true;
+}
+
+Recorder::WriterWait Recorder::FinishWritersByLane(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::uint64_t leaseBegin, std::uint64_t leaseEnd, std::span<const std::uint64_t> exceptNotes) {
+    GuestMemory::AssertGpuLockHeld("Recorder::FinishWritersByLane");
+    WriterWait result;
+    std::array<std::uint64_t, 2> opened{};
+    for (std::size_t lane = 0; lane < lanes.size(); ++lane) {
+        if (lanes[lane] != nullptr && writesOver(*lanes[lane], ranges, leaseBegin, leaseEnd, exceptNotes)) opened[lane] = lanes[lane]->openedAt;
+    }
+    for (const auto& batch : inFlight) {
+        if (writesOver(*batch, ranges, leaseBegin, leaseEnd, exceptNotes)) result.targets[static_cast<std::size_t>(batch->lane)] = batch->serial;
+    }
+    if (opened[0] != 0 || opened[1] != 0 || result.targets[0] != 0 || result.targets[1] != 0) {
+        requireUnborrowed();
+        auto preflight = result.targets;
+        for (std::size_t lane = 0; lane < lanes.size(); ++lane) {
+            if (opened[lane] == 0) continue;
+            Require(lanes[lane]->waitOther < OpenSerial(), "a recorder lane dependency is not forward ordered");
+            preflight[lane] = std::max(preflight[lane], laneSubmitted[lane]);
+            preflight[1 - lane] = std::max(preflight[1 - lane], lanes[lane]->waitOther);
+        }
+        static_cast<void>(closeWaitTargets(preflight));
+        for (std::size_t lane = 0; lane < lanes.size(); ++lane) {
+            if (opened[lane] == 0) continue;
+            requireUnborrowed();
+            if (lanes[lane] != nullptr && lanes[lane]->openedAt == opened[lane]) submitLane(static_cast<int>(lane));
+        }
+        for (const auto& batch : inFlight) {
+            const auto lane = static_cast<std::size_t>(batch->lane);
+            if (opened[lane] != 0 && batch->openedAt == opened[lane]) result.targets[lane] = std::max(result.targets[lane], batch->serial);
+        }
+        const auto source = std::exchange(announcedSource, 4);
+        const void* site = std::exchange(announcedSite, nullptr);
+        const RestoreSyncSite restore{BeginSyncSite(source, site != nullptr ? site : __builtin_return_address(0))};
+        finishWaitTargets(result.targets, source);
+    }
+    result.leftInFlight = inFlight.size();
+    result.leftOpen = static_cast<std::size_t>(std::count_if(lanes.begin(), lanes.end(), [](const auto& batch) { return batch != nullptr; }));
+    return result;
 }
 
 void Recorder::FinishUpTo(std::uint64_t serial) {

@@ -4430,36 +4430,27 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
                     for (const auto& range : LiveShadowedRanges(address, bytes, scope)) stored.push_back(range);
                 }
             };
-            const auto pendingWriter = [&](const Recorder& active) {
+            std::uint64_t leaseBegin = 0;
+            std::uint64_t leaseEnd = 0;
+            if (publishes) {
                 constexpr std::uint64_t block = 65536;
-                std::uint64_t writer = 0;
-                if (publishes) {
-                    constexpr auto top = std::numeric_limits<std::uint64_t>::max();
-                    const auto first = address / block * block;
-                    const auto end = bytes > top - address ? top : address + bytes;
-                    const auto last = end > top - block ? end : (end + block - 1) / block * block;
-                    writer = active.PendingLeaseSerial(first, static_cast<std::size_t>(last - first));
-                }
-                for (const auto& [begin, end] : stored) {
-                    if (writer == active.OpenSerial()) break;
-                    writer = std::max(writer, active.PendingWriterSerial(begin, static_cast<std::size_t>(end - begin), ownNotes));
-                }
-                return writer;
+                constexpr auto top = std::numeric_limits<std::uint64_t>::max();
+                leaseBegin = address / block * block;
+                const auto end = bytes > top - address ? top : address + bytes;
+                leaseEnd = end > top - block ? end : (end + block - 1) / block * block;
+            }
+            const auto pendingWriter = [&](const Recorder& active) {
+                return active.WritersPendingOver(stored, leaseBegin, leaseEnd, ownNotes);
             };
             const auto openWrites = [&stored](const Recorder& active) {
                 return std::any_of(stored.begin(), stored.end(), [&active](const auto& range) { return active.OpenWriteOverlaps(range.first, static_cast<std::size_t>(range.second - range.first)); });
             };
-            for (waitRanges(); pendingWriter(*recorder) != 0; waitRanges()) {
+            for (waitRanges(); pendingWriter(*recorder); waitRanges()) {
                 recorder->Reap();
                 waitRanges();
-                const auto writer = pendingWriter(*recorder);
-                if (writer == recorder->OpenSerial()) {
-                    Recorder::CountSync(openWrites(*recorder) ? 1 : 3);
-                    recorder->Sync();
-                    break;
-                }
-                if (writer == 0) break;
-                recorder->FinishUpTo(writer);
+                if (!pendingWriter(*recorder)) break;
+                Recorder::CountSync(openWrites(*recorder) ? 1 : 3);
+                recorder->FinishWritersByLane(stored, leaseBegin, leaseEnd, ownNotes);
             }
         }
         std::exception_ptr failure;
