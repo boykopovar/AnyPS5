@@ -1,3 +1,4 @@
+#include "prx/libc/include/GuestGs.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -70,6 +71,9 @@ struct ThreadArgs {
     PthreadEntry entry;
     void* arg;
     PthreadPrivate* self;
+#ifdef _WIN32
+    std::uint64_t gsBase = 0;
+#endif
 #ifndef _WIN32
     sigset_t signalMask;
 #endif
@@ -799,6 +803,9 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;
 #endif
+#ifdef _WIN32
+    GuestGsSet_nid_no_patch(args->gsBase);
+#endif
     args.reset();
     self->suspended.wait(true, std::memory_order_acquire);
 #ifdef _WIN32
@@ -987,6 +994,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
 #ifdef _WIN32
+    args->gsBase = GuestGsGet_nid_no_patch();
     SYSTEM_INFO system{};
     GetSystemInfo(&system);
     if (p->stackSize < 16384 || p->stackSize > std::numeric_limits<unsigned>::max() - HOST_STACK_MARGIN - system.dwPageSize)
