@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include <climits>
+#include <cerrno>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -121,7 +122,7 @@ static void CheckCount() {
     int count = -7;
     Require(Format(buffer, 16, u"ab%ncd", &count) == 4 && buffer == std::u16string(u"abcd") && count == 2, "vswprintf %n");
     count = -7;
-    Require(Format(buffer, 16, u"%s%n!", "\xf0\x9f\x98\x80", &count) == 3 && count == 2, "vswprintf %n counts UTF-16 units");
+    Require(Format(buffer, 16, u"%s%n!", "\xed\xa0\xbd\xed\xb8\x80", &count) == 3 && count == 2, "vswprintf %n counts UTF-16 units");
     count = -7;
     Require(Format(buffer, 16, u"%n", &count) == 0 && buffer[0] == 0 && count == 0, "vswprintf %n at start");
     unsigned char bytes[2] = {0xaa, 0xaa};
@@ -208,8 +209,25 @@ static void CheckSwprintf() {
     Require(buffer == std::u16string(u"42-ab") && buffer[6] == u'x', "swprintf output");
     Require(swprintf_nid_postfix(buffer, 8, u"中%ls%s", u"文", "\xc3\xa9") == 3, "swprintf non-ASCII length");
     Require(buffer == std::u16string(u"中文é"), "swprintf non-ASCII output");
-    Require(swprintf_nid_postfix(buffer, 8, u"%s", "\xf0\x9f\x98\x80") == 2, "swprintf surrogate pair length");
-    Require(buffer == std::u16string(u"\U0001f600"), "swprintf surrogate pair output");
+    Require(swprintf_nid_postfix(buffer, 8, u"%s", "\xed\xa0\xbd\xed\xb8\x80") == 2 && buffer == std::u16string(u"\U0001f600"),
+        "swprintf decodes each 3-byte surrogate");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%s]", "\xf0\x9f\x98\x80") == -1 && errno == 86 && buffer == std::u16string(u"["),
+        "swprintf rejects a 4-byte sequence and keeps the output before it");
+    for (const char* invalid : {"\x80", "\xc3", "\xc3x", "\xe2\x82", "\xff", "\xf8\x88\x80\x80\x80", "\xc3\xa9\xc3"}) {
+        errno = 0;
+        Require(swprintf_nid_postfix(buffer, 8, u"x%sy", invalid) == -1 && errno == 86 && buffer == std::u16string(u"x"), "swprintf rejects invalid UTF-8");
+    }
+    Require(swprintf_nid_postfix(buffer, 8, u"[%s]", "\xc0\x80" "A") == 2 && buffer == std::u16string(u"[]"), "an overlong NUL ends the string");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%s|%s]", "\xc1\x81", "\xe0\x81\x81") == 5 && buffer == std::u16string(u"[A|A]"), "overlong forms decode");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.1s]", "A\x80") == 3 && buffer == std::u16string(u"[A]"), "the precision stops before an invalid byte");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.2s]", "A\x80") == -1 && errno == 86, "the precision reaches an invalid byte");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.0s]", "AB") == 2 && buffer == std::u16string(u"[]"), "precision zero writes nothing");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%3s|%-3.0s]", "", "AB") == 3 && buffer == std::u16string(u"[|]"), "an empty narrow field is not padded");
+    Require(swprintf_nid_postfix(buffer, 8, u"[%3s]", "A\xc0\x80") == 5 && buffer == std::u16string(u"[  A]"), "a field with characters is padded");
+    errno = 0;
+    Require(swprintf_nid_postfix(buffer, 8, u"[%.0s]", "\x80") == -1 && errno == 86, "precision zero still decodes the first character");
     Require(swprintf_nid_postfix(buffer, 8, u"") == 0 && buffer[0] == 0, "swprintf empty format");
     for (auto& unit : buffer) unit = u'x';
     Require(swprintf_nid_postfix(buffer, 3, u"%ls", u"abcd") < 0, "swprintf truncation result");
@@ -353,9 +371,9 @@ int main() {
     Check(u"%.2s", "abcd", u"ab");
     Check(u"%4.2s", "\xc3\xa9\xc3\xa8", u"  \u00e9\u00e8");
     Check(u"%-4.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8  ");
-    Check(u"%.2s", "\xf0\x9f\x98\x80x", u"\U0001f600");
-    Check(u"%.1s", "\xf0\x9f\x98\x80x", u"");
-    Check(u"%.3s", "\xf0\x9f\x98\x80x", u"\U0001f600x");
+    Check(u"%.2s", "\xed\xa0\xbd\xed\xb8\x80x", u"\U0001f600");
+    Check(u"%.1s", "\xed\xa0\xbd\xed\xb8\x80x", u"\xd83d");
+    Check(u"%.3s", "\xed\xa0\xbd\xed\xb8\x80x", u"\U0001f600x");
     CheckGroupingFlag();
     CheckUnsignedSignFlags();
 }
