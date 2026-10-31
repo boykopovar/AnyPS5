@@ -59,7 +59,7 @@ struct OwnedImage {
 
 class Texture {
 public:
-    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false);
+    Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare = false, const VkClearColorValue* clear = nullptr);
     Texture(const Context& context, const std::shared_ptr<ResidentColor>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
     // A view of a storage image's own VkImage: the sampled texture follows the image's content, so a
     // compute pass writing it and the next pass sampling it share one image and copy nothing.
@@ -163,6 +163,7 @@ private:
     VkFormat blockFormat = VK_FORMAT_UNDEFINED;
     bool repackCopy = false;
     std::uint32_t copyWidth = 0, copyHeight = 0, copyLevels = 0, copyLayers = 0, copyElementBytes = 0;
+    std::uint32_t copyTexelsPerElement = 4;
 };
 
 VkFormat AttachmentProxyFormat(const Context& context, VkFormat format);
@@ -217,6 +218,7 @@ public:
     // overlapping pending image, as before).
     static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr, bool waited = false);
     static void FlushAllPending(const char* reason);
+    static bool FlushAllPendingUntil(const char* reason, const std::function<bool()>& stop);
     static bool WaitForFlushing(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr);
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
@@ -357,6 +359,7 @@ public:
     const GuestTextureResource& Descriptor() const { return descriptor; }
     std::uint32_t ImageLayers() const { return geometry.imageLayers; }
     std::uint32_t ImageDepth() const { return geometry.imageDepth; }
+    VkFormat ImageFormat() const { return imageFormat; }
     // Content version: advances when the image is re-uploaded or a shader wrote it. Together with
     // Generation (the write generation guest memory was last known to match the content at) it
     // validates textures copied from this image.
@@ -381,6 +384,7 @@ public:
     inline static std::atomic<std::uint64_t> epochRefreshes{0};
     static std::uint64_t SinglePassMoves();
     static std::uint64_t SlabRetiles();
+    static std::uint64_t PaddingSeedCopies();
     static std::uint64_t RefreshesProved();
     static std::uint64_t ClearHandOvers();
     static std::uint64_t HandedOverSuperseded();
@@ -399,6 +403,7 @@ private:
     // The regions of every array layer, or of the tracked layers `layers` selects.
     std::vector<VkBufferImageCopy> CopyRegions(const std::vector<bool>* layers = nullptr) const;
     void upload(const std::vector<bool>* layers = nullptr);
+    void clearImage(VkCommandBuffer commands, VkClearColorValue value, const VkImageSubresourceRange& range);
     std::vector<bool> cpuUploadLayers(const std::vector<bool>& units) const;
     void captureGuestBytes(const std::vector<bool>* layers);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
@@ -456,6 +461,7 @@ private:
     // covered tile blocks and of linear rows, tail blocks, the bytes between mips; every byte of a
     // thick surface), ascending: a write-back keeps the guest's bytes there.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> uncoveredBytes(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs) const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> coveredBytes(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs) const;
     // The seed of a write-back's tiled scratch where its copies would carry bytes no element holds:
     // those bytes' current contents (a fresh unit shadow's, else the import's), copied into the
     // scratch before the retile, so the copies out of the scratch store them unchanged. `copied`
@@ -667,6 +673,7 @@ private:
     VkDeviceMemory proxyMemory = VK_NULL_HANDLE;
     VkImageView proxyView = VK_NULL_HANDLE;
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
+    VkFormat imageFormat = VK_FORMAT_UNDEFINED;
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
     bool drawnListed = false;

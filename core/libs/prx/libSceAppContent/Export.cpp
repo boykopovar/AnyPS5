@@ -1,3 +1,4 @@
+#include "prx/libSceAppContent/include/InventoryExports.hpp"
 #include "prx/libSceAppContent/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -68,6 +69,23 @@ static void ClearDirectory(const std::filesystem::path& directory) {
 }
 
 extern "C" {
+
+int APS5_VABI sceAppContentCheckBundleLicenseOnDisc() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppContentDownloadDataGetBlockSize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppContentGetGameTrialsFlag() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceAppContentGetPlayableStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 int APS5_VABI sceAppContentAddcontMount(uint32_t service_label, const NpUnifiedEntitlementLabel* entitlement_label, AppContentMountPoint* mount_point) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;

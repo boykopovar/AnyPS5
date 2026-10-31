@@ -118,6 +118,10 @@ void SetHostImportDeferredSettles(bool enabled);
 std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);
 void SetHostImportMaxBytes(std::uint64_t bytes);
 std::uint64_t HostImportLiveBytes();
+// A flip ends a frame: an import used in the current or the previous frame is never evicted for another one.
+void NoteHostImportFrame();
+std::uint64_t HostImportFramesEnded();
+std::uint64_t HostImportEpoch();
 std::uint64_t HostImportBudgetRemaining(const Context& context);
 struct HostImportSettleCounts {
     std::uint64_t submitted = 0;
@@ -322,6 +326,7 @@ public:
     // were confirmed unchanged): the previous use's copy-back left the shadow behind, and the next
     // RecordCopyBacks copies it back again. Nothing to do without staged regions.
     void RecordStagingCopies(Recorder& recorder);
+    bool StagingDecisionsCurrent() const;
     void AddSnapshot(const GuestMemorySnapshot& snapshot);
     // Upload is the two stages below back to back. UploadPrepare needs no device lock: it merges the
     // regions, binds the image mirrors and host imports that already serve them (an import pointer is
@@ -332,7 +337,7 @@ public:
     // and the recorder's pending-write note stays closed.
     void Upload(bool addressable);
     void UploadPrepare(bool addressable);
-    void UploadFinish(bool addressable);
+    void UploadFinish(bool addressable, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt);
     VkDescriptorBufferInfo Descriptor(std::uint64_t address, std::size_t bytes, std::uint32_t& adjustment) const;
     static std::uint64_t ViewBytes(std::uint64_t bytes, std::uint32_t adjustment);
     std::vector<ShaderRecompiler::BdaAbi::Range> AddressRanges() const;
@@ -453,6 +458,7 @@ private:
         // path it would take without staging, in both upload stages.
         bool unstaged = false;
         bool overlay = false;
+        bool adaptiveInPlace = false;
     };
 
     // How [begin, end) lies against the space's base regions.
@@ -498,6 +504,8 @@ private:
     // written element inside, and an atomic element or a size within the written-shadow window.
     // Independent of the import, so UploadPrepare and UploadFinish decide alike.
     bool stagingEligible(const Region& region, bool addressable) const;
+    bool stagingWanted(const Region& region, bool addressable) const;
+    bool adaptiveInPlace(const Region& region, bool use) const;
     bool overlayCandidate(const Region& inside, bool readOnly) const;
     void resolveOverlays();
     bool bindableInPlace(std::uint64_t offset, bool addressable) const;

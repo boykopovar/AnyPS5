@@ -110,5 +110,10 @@ int APS5_VABI sceNpSessionSignalingGetGroupFromPeerAddress();
 int APS5_VABI sceNpSessionSignalingInitializeWithPort();
 int APS5_VABI sceNpSessionSignalingJoinActivate();
 int APS5_VABI sceNpSessionSignalingSetCustomProperty();
+int APS5_VABI sceNpSessionSignalingManualUdpAbortConnection();
+int APS5_VABI sceNpSessionSignalingManualUdpCreateJoin();
+int APS5_VABI sceNpSessionSignalingManualUdpEstablishConnection();
+int APS5_VABI sceNpSessionSignalingManualUdpJoin();
+int APS5_VABI sceNpSessionSignalingRegisterInternalCallback();
 
 }
