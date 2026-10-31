@@ -574,10 +574,14 @@ static void TestResidualAccessors() {
     IntrusivePtr end{};
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE5beginEv(&begin, &vector) == &begin);
     Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE3endEv(&end, &vector) == &end);
+    IntrusivePtr wrapper{&vector, nullptr, &context};
+    auto* dereferenced = _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V53SkuEEEEEEptEv(&wrapper);
+    Require(dereferenced == &vector);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_13InGameCatalog2V53SkuEEEE4sizeEv(dereferenced) == 3);
     IntrusivePtr step = begin;
     unsigned visited = 0;
     while (_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEEneERKS9_(&step, &end)) {
-        Require(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_13InGameCatalog2V53SkuEEEEppEv(&step) == &step);
+        Require(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEEppEv(&step) == &step);
         ++visited;
     }
     Require(visited == 3);

@@ -1906,7 +1906,10 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
         if (sourceElements[index].buffer != nullptr) {
             const std::size_t length = std::strlen(sourceElements[index].buffer) + 1;
             copy.buffer = static_cast<char*>(std::malloc(length));
-            if (copy.buffer == nullptr) return ParameterAllocationFailed;
+            if (copy.buffer == nullptr) {
+                body->size = index;
+                return ParameterAllocationFailed;
+            }
             std::memcpy(copy.buffer, sourceElements[index].buffer, length);
             copy.bufferSize = length;
         }
