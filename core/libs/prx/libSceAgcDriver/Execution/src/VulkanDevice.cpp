@@ -347,7 +347,19 @@ struct ComputePipelineKey {
     ShaderRecompiler::PipelineIdentity identity;
     bool pushConstants = false;
     auto operator<=>(const ComputePipelineKey&) const = default;
-    static ComputePipelineKey Of(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) { return {shader.Identity(), pushConstants}; }
+    static ComputePipelineKey Of(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) {
+        auto identity = shader.Identity();
+        if (identity.Empty() && !shader.spirv.empty()) {
+            std::uint64_t low = 0xcbf29ce484222325ull;
+            std::uint64_t high = 0x100000001b3ull;
+            for (const auto word : shader.spirv) {
+                low = (low ^ word) * 0x100000001b3ull;
+                high = (high ^ (static_cast<std::uint64_t>(word) * 0x9e3779b97f4a7c15ull)) * 0xc2b2ae3d27d4eb4full;
+            }
+            identity = {low, high};
+        }
+        return {identity, pushConstants};
+    }
 };
 
 constexpr std::uint64_t WorkgroupMemoryGranule = 1u << 20u;
