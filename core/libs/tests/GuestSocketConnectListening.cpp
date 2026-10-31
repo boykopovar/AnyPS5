@@ -10,6 +10,8 @@ namespace {
 
 constexpr int Inet = 2;
 constexpr int Stream = 1;
+constexpr int ErrorBadDescriptor = 9;
+constexpr int ErrorFault = 14;
 constexpr int ErrorNotSupported = 45;
 constexpr int ErrorInvalid = 22;
 
@@ -60,6 +62,17 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(connect_nid_postfix(listener, wrongFamily.data(), wrongFamily.size()) == -1 && *__error_nid_postfix() == ErrorNotSupported,
         "connect on a listening socket with an address of another family must fail with EOPNOTSUPP (45)");
+
+    std::array<std::uint8_t, 16> peer{};
+    *__error_nid_postfix() = 0;
+    Require(accept_nid_postfix(listener, peer.data(), nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
+        "accept with an address buffer and no length pointer must fail with EFAULT (14)");
+    *__error_nid_postfix() = 0;
+    Require(accept_nid_postfix(-1, peer.data(), nullptr) == -1 && *__error_nid_postfix() == ErrorFault,
+        "accept must check the length pointer before the descriptor, as FreeBSD accept1 does");
+    *__error_nid_postfix() = 0;
+    Require(accept_nid_postfix(-1, nullptr, nullptr) == -1 && *__error_nid_postfix() == ErrorBadDescriptor,
+        "accept on an invalid descriptor without an address must fail with EBADF (9)");
 
     const int client = socket_nid_postfix(Inet, Stream, 0);
     Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0, "a refused connect must leave the listener working");

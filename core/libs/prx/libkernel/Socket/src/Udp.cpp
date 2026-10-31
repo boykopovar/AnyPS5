@@ -1385,9 +1385,10 @@ int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
     return Fail(error == 56 ? 22 : error);
 }
 int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
+    if (address && !length) return Fail(14);
     const auto listener = Lookup(descriptor);
     if (!listener) return -1;
-    if (listener->type != 1 || (address && !length)) return Fail(22);
+    if (listener->type != 1) return Fail(22);
     sockaddr_storage peer{};
     socklen_t size = sizeof(peer);
     const auto native = ::accept(listener->value, address ? reinterpret_cast<sockaddr*>(&peer) : nullptr,
