@@ -3088,6 +3088,46 @@ static void CheckDirectMemoryBackingNeedsNoFilesystem() {
     Require(sceKernelReleaseDirectMemory(phys, page) == 0);
 }
 
+static void CheckDirectMemorySharedBackingRuns() {
+    constexpr std::size_t page = 0x4000;
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 4, 0, 0, &physical) == 0);
+    void* reserved = nullptr;
+    Require(sceKernelReserveVirtualRange(&reserved, page * 4, 0, 0) == 0 && reserved != nullptr);
+    auto* bytes = static_cast<unsigned char*>(reserved);
+    constexpr int fixed = 0x10;
+    void* piece = bytes;
+    Require(sceKernelMapDirectMemory(&piece, page * 2, 3, fixed, physical + page * 2, 0) == 0 && piece == bytes);
+    piece = bytes + page * 2;
+    Require(sceKernelMapDirectMemory(&piece, page, 3, fixed, physical, 0) == 0 && piece == bytes + page * 2);
+    piece = bytes + page * 3;
+    Require(sceKernelMapDirectMemory(&piece, page, 3, fixed, physical + page, 0) == 0 && piece == bytes + page * 3);
+    bytes[page * 2 + 7] = 0x6b;
+    const auto address = reinterpret_cast<std::uintptr_t>(reserved);
+    const auto offset = static_cast<std::uint64_t>(physical);
+    int file = -1;
+    GuestArena::SharedBackingRun runs[4]{};
+    std::size_t count = 0;
+    Require(GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address, page * 4, &file, runs, 4, &count));
+    Require(count == 2 && runs[0].offset == offset + page * 2 && runs[0].bytes == page * 2);
+    Require(runs[1].offset == offset && runs[1].bytes == page * 2);
+    unsigned char byte = 0;
+    Require(pread(file, &byte, 1, static_cast<off_t>(runs[1].offset + 7)) == 1 && byte == 0x6b);
+    close(file);
+    Require(GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address + page, page * 3, &file, runs, 4, &count));
+    Require(count == 2 && runs[0].offset == offset + page * 3 && runs[0].bytes == page);
+    Require(runs[1].offset == offset && runs[1].bytes == page * 2);
+    close(file);
+    file = -1;
+    Require(!GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address, page * 4, &file, runs, 1, &count));
+    Require(file == -1 && count == 0);
+    Require(!GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address, page * 5, &file, runs, 4, &count));
+    Require(!GuestArena::GuestArenaSharedBackingRuns_nid_postfix(address, 0, &file, runs, 4, &count));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(reserved), page * 4) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, page * 4) == 0);
+}
+
+
 static void CheckDirectMemorySharedBacking() {
     constexpr std::size_t page = 0x4000;
     std::int64_t phys = 0;
@@ -3999,6 +4039,7 @@ int main(int argc, char** argv) {
     CheckDirectMemoryWriteWatchFollowsRemovedMappings();
     CheckMappingCostFollowsTheMappingCount();
     CheckDirectMemoryBackingNeedsNoFilesystem();
+    CheckDirectMemorySharedBackingRuns();
     CheckDirectMemorySharedBacking();
     CheckVirtualQueryFindsNeighbours();
     CheckReleaseFindsEveryDirectMapping();
