@@ -17,6 +17,9 @@
 #include <codegen/x86/WideStoreOperands.hpp>
 #include <codegen/x86/MaskedStoreLowering.hpp>
 #include <codegen/x86/AndnLowering.hpp>
+#include <codegen/x86/BlsLowering.hpp>
+#include <codegen/x86/ShiftLowering.hpp>
+#include <codegen/x86/BitfieldLowering.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/x86/MulxLowering.hpp>
@@ -256,6 +259,12 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const D
         return std::nullopt;
     if (const auto andn = DecodeAndn(instr.Data, instr.Length))
         return _trampoline("ANDN", instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitAndn(body, *andn); }));
+    if (const auto bls = DecodeBls(instr.Data, instr.Length))
+        return _trampoline(BlsName(bls->Operation), instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitBls(body, *bls); }));
+    if (const auto shift = DecodeShift(instr.Data, instr.Length))
+        return _trampoline(ShiftName(shift->Operation), instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitShift(body, *shift); }));
+    if (const auto bitfield = DecodeBitfield(instr.Data, instr.Length))
+        return _trampoline(BitfieldName(bitfield->Operation), instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitBitfield(body, *bitfield); }));
     if (instr.IsRdseed()) {
         std::vector<std::uint8_t> replacement(instr.Data, instr.Data + instr.Length);
         replacement[instr.OpcodeOffset() + 2] &= static_cast<std::uint8_t>(~(1u << X64OpcodeConstants::ModRmRegShift));
@@ -326,6 +335,18 @@ const char* Amd64OnlyInstructionMatcher::_emitOutOfLine(StubBodyBuilder& body, c
     if (const auto andn = _target == Amd64OnlyTarget::Rosetta ? DecodeAndn(instr.Data, instr.Length) : std::nullopt) {
         EmitAndn(body, *andn);
         return "ANDN";
+    }
+    if (const auto bls = _target == Amd64OnlyTarget::Rosetta ? DecodeBls(instr.Data, instr.Length) : std::nullopt) {
+        EmitBls(body, *bls);
+        return BlsName(bls->Operation);
+    }
+    if (const auto shift = _target == Amd64OnlyTarget::Rosetta ? DecodeShift(instr.Data, instr.Length) : std::nullopt) {
+        EmitShift(body, *shift);
+        return ShiftName(shift->Operation);
+    }
+    if (const auto bitfield = _target == Amd64OnlyTarget::Rosetta ? DecodeBitfield(instr.Data, instr.Length) : std::nullopt) {
+        EmitBitfield(body, *bitfield);
+        return BitfieldName(bitfield->Operation);
     }
     if (_target == Amd64OnlyTarget::Rosetta && instr.IsRdtscp()) {
         body.Raw(_rdtscpReplacement(instr));
