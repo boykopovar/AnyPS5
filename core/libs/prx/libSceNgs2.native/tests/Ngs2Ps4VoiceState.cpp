@@ -1,5 +1,6 @@
 #include "Ngs2Test.hpp"
 #include "prx/libSceNgs2.native/include/Api.hpp"
+#include "prx/libSceNgs2/include/Api.hpp"
 
 #include <algorithm>
 #include <array>
@@ -38,6 +39,8 @@ int main() {
         Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
         InvalidVoice(voice);
         Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+        Require(sceNgs2FftInit() == 0);
+        Require(sceNgs2FftProcess() == 0);
         std::cout << "NGS2 PS4 voice state errors checked\n";
         return 0;
     } catch (const std::exception& error) {
