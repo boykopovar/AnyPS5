@@ -189,6 +189,25 @@ void TestAdvanceRetainsRewrittenBuffer() {
     RequirePlayed(played, {&first, &second});
 }
 
+void TestAdvancedRegivenBufferPlaysSilenceWithoutANewSet() {
+    auto buffer = Grain(0.01f);
+    const auto first = buffer;
+    const auto second = Grain(0.02f);
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        SetData(port, buffer.data());
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        buffer = second;
+        SetData(port, buffer.data());
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        std::fill(buffer.begin(), buffer.end(), 0.5f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+    }, true);
+    RequirePlayed(played, {&first, &second});
+}
+
 void TestAdvanceRetainsVolume() {
     const auto buffer = Grain(0.02f);
     auto reduced = buffer;
@@ -319,6 +338,7 @@ int main() {
     TestBurstThenGapKeepsEveryBuffer();
     TestAdvancingPortWithoutNewBufferPlaysSilence();
     TestRewrittenBufferRepeats();
+    TestAdvancedRegivenBufferPlaysSilenceWithoutANewSet();
     TestRenderingSizedByLevelStaysWithinQueueDepth();
     TestBufferReusedAcrossPortsKeepsEachPortsGrain(false);
     TestBufferReusedAcrossPortsKeepsEachPortsGrain(true);

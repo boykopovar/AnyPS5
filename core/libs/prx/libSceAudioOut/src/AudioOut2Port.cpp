@@ -296,12 +296,12 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
             std::memcpy(&entry->data, attribute.value, sizeof(entry->data));
             MarkBufferReused(*entry);
             AudioOut2QueuedData queued{entry->data, CopyGrain(*entry)};
-            entry->repeatedData = entry->data != nullptr && (entry->lastBuffer == nullptr || entry->lastBuffer == entry->data) ? entry->data : nullptr;
+            entry->repeatedData = entry->data != nullptr && entry->lastBuffer == nullptr ? entry->data : nullptr;
             entry->repeatedPcm = queued.pcm;
             entry->repeatedReused = false;
             entry->queuedData.push_back(std::move(queued));
             if (entry->queuedData.size() > QUEUED_DATA_MAX) entry->queuedData.pop_front();
-            if (entry->data != nullptr) entry->lastBuffer = entry->data;
+            entry->lastBuffer = entry->data;
             entry->dataSets++;
             verdict = "pcm data pointer";
         } else if (attribute.attribute_id == ATTRIBUTE_VOLUME && entry->channels != 0 && attribute.value_size == entry->channels * sizeof(float)) {
