@@ -134,7 +134,9 @@ private:
     std::uint32_t reserveEopFlip(const FlipInfo& info, std::uint32_t token);
     static bool& onWorkerThread();
     static void copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words);
-    static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget);
+    static constexpr std::size_t MaximumSegmentDepth = 64;
+    static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth);
+    static bool copyLink(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget, std::size_t depth, const std::uint32_t*& chained, std::size_t& chainedWords);
     static void readRegisterLists(Submission& submission);
     void waitForFlipRoom(const Submission& submission);
     void holdFlipBehindWorker(const Submission& submission);
