@@ -3,14 +3,17 @@
 
 #include "SDL_events.h"
 #include "SDL_gamecontroller.h"
+#include "SDL_hidapi.h"
 #include "prx/libScePad/include/KeyboardMouse.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libSceVideoOut/include/PadOutputPacing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PadStatus.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <string>
+#include <thread>
 #include "prx/libSceVideoOut/include/Telemetry.hpp"
 
 class DisplayWindow;
@@ -57,6 +60,9 @@ private:
     void enableSensors(int slot);
     AgcDriver::PadStatusSnapshot statusSnapshot() const;
     void reportStatus();
+    void openHaptics(SDL_GameController* controller);
+    void closeHaptics();
+    void streamHaptics();
 
     Pad::KeyboardMouse keyboardMouse;
     std::array<ControllerSlot, PAD_MAX_CONTROLLERS> slots{};
@@ -64,6 +70,11 @@ private:
     AgcDriver::PadStatusProvider statusProvider;
     bool padCaptured = false;
     bool hostFocusSynced = false;
+    SDL_hid_device* haptics = nullptr;
+    std::atomic<bool> hapticsRunning{false};
+    std::thread hapticsThread;
+    bool hapticsRumbled = false;
+    std::atomic<std::chrono::steady_clock::rep> hapticsReconfigureAt{0};
 };
 
 #endif
