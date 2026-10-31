@@ -1931,7 +1931,6 @@ float APS5_VABI modff_nid_postfix(float x, float* integral) {
     return (bits & mask) == 0 ? zero : x - *integral;
 }
 double APS5_VABI tanh_nid_postfix(double x) {
-    static volatile double tiny = 1.0e-300;
     const double huge = 1.0e300;
     const std::int32_t jx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
     const std::int32_t ix = jx & 0x7fffffff;
@@ -1951,7 +1950,7 @@ double APS5_VABI tanh_nid_postfix(double x) {
             z = -t / (t + 2.0);
         }
     } else {
-        z = 1.0 - tiny;
+        z = 1.0;
     }
     return jx >= 0 ? z : -z;
 }
