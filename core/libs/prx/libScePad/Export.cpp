@@ -40,10 +40,10 @@ constexpr int PAD_ERROR_INVALID_PORT_INDEX = static_cast<int>(0x809b0003);
 constexpr int PAD_ERROR_NOT_PERMITTED = static_cast<int>(0x80920101);
 constexpr int PAD_USER_ID_INVALID = -1;
 
-std::array<bool, PAD_MAX_CONTROLLERS> g_opened{false};
-std::array<bool, PAD_MAX_CONTROLLERS> g_everOpened{false};
-bool g_remoteOpened = false;
-std::array<int, PAD_SPECIAL_HANDLE_COUNT> g_specialUsers{};
+std::array<std::atomic_bool, PAD_MAX_CONTROLLERS> g_opened{};
+std::array<std::atomic_bool, PAD_MAX_CONTROLLERS> g_everOpened{};
+std::atomic_bool g_remoteOpened{false};
+std::array<std::atomic<int>, PAD_SPECIAL_HANDLE_COUNT> g_specialUsers{};
 std::atomic_bool g_initialized{false};
 
 bool SpecialHandle(int handle) {
@@ -275,10 +275,8 @@ int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void
  if (type == PAD_PORT_TYPE_SPECIAL) {
   if (SpecialHandleOf(userId) != PAD_ERROR_DEVICE_NO_HANDLE) return PAD_ERROR_ALREADY_OPENED;
   for (int slot = 0; slot < PAD_SPECIAL_HANDLE_COUNT; ++slot) {
-   if (g_specialUsers[slot] == 0) {
-    g_specialUsers[slot] = userId;
-    return PAD_SPECIAL_HANDLE + slot;
-   }
+   int free = 0;
+   if (g_specialUsers[slot].compare_exchange_strong(free, userId)) return PAD_SPECIAL_HANDLE + slot;
   }
   return PAD_ERROR_UNKNOWN_USER;
  }

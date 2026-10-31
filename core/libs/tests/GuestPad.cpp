@@ -4,6 +4,9 @@
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <vector>
+#include <set>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -821,7 +824,31 @@ static void CheckInjectedQueueTimes(const std::filesystem::path& path) {
     PadPublishInput_nid_postfix(PadInputState{});
 }
 
+void CheckConcurrentSpecialOpens() {
+    constexpr int threads = 8;
+    for (int round = 0; round < 200; ++round) {
+        std::array<int, threads> handles{};
+        std::atomic<int> ready{0};
+        std::vector<std::thread> workers;
+        for (int index = 0; index < threads; ++index) {
+            workers.emplace_back([&, index] {
+                ready.fetch_add(1);
+                while (ready.load() < threads) std::this_thread::yield();
+                handles[index] = scePadOpen_nid_postfix(0x20000000 + index, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+            });
+        }
+        for (auto& worker : workers) worker.join();
+        const std::set<int> distinct(handles.begin(), handles.end());
+        Require(distinct.size() == threads);
+        for (const auto handle : handles) {
+            Require(handle >= 0);
+            Require(scePadClose_nid_postfix(handle) == PAD_OK);
+        }
+    }
+}
+
 int main() {
+    CheckConcurrentSpecialOpens();
     CheckInputCommands();
     std::uint32_t accessibilityState = 7;
     Require(scePadGetAccessibilityControllerState(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
