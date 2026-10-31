@@ -38,6 +38,7 @@ std::atomic<bool> failStartup{false};
 std::atomic<unsigned> queries{0};
 std::atomic<unsigned> faults{0};
 std::size_t initialBytes = 64;
+unsigned incompleteSnapshots = 0;
 
 std::vector<std::byte> Payload() {
     std::vector<std::byte> bytes(initialBytes);
@@ -79,6 +80,10 @@ VKAPI_ATTR VkResult VKAPI_CALL Data(VkDevice, VkPipelineCache cache, std::size_t
     if (output != nullptr) {
         Check(*size >= bytes.size(), "cache snapshot buffer is too small");
         std::memcpy(output, bytes.data(), bytes.size());
+        if (incompleteSnapshots != 0) {
+            --incompleteSnapshots;
+            return VK_INCOMPLETE;
+        }
     }
     *size = bytes.size();
     if (output == nullptr && armed && ++queries == 2) {
@@ -114,7 +119,7 @@ void Grow(VkPipelineCache cache, std::size_t bytes = 128) {
 int main(int argc, char** argv) {
     Check(argc == 2, "expected startup, now, busy, destructor, worker or read-retry");
     const std::string_view mode(argv[1]);
-    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry", "unknown mode");
+    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry" || mode == "same-size" || mode == "incomplete", "unknown mode");
 #ifndef _WIN32
     if (mode == "read-retry") return 77;
 #endif
@@ -161,6 +166,51 @@ int main(int argc, char** argv) {
     std::filesystem::path file;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) if (entry.path().extension() == ".bin") file = entry.path();
     Check(!file.empty(), "initial save created no cache file");
+    if (mode == "same-size" || mode == "incomplete") {
+        auto before = Read(file);
+        {
+            std::lock_guard lock(mutex);
+            caches.at(cache->Handle()).back() = std::byte{17};
+        }
+        if (mode == "incomplete") {
+            incompleteSnapshots = 10;
+            cache->SaveNow();
+            Check(Read(file) == before, "an incomplete snapshot replaced the cache");
+            incompleteSnapshots = 0;
+        }
+        cache->SaveNow();
+        Check(Read(file).size() == before.size() && Read(file) != before, "equal-size cache content change was not saved");
+        {
+            PipelineCache writer(context, properties);
+            {
+                std::lock_guard lock(mutex);
+                caches.at(writer.Handle()).back() = std::byte{18};
+            }
+            writer.SaveNow();
+        }
+        before = Read(file);
+        cache->SaveNow();
+        Check(Read(file).size() == before.size() && Read(file) != before, "equal-size merged cache content change was not saved");
+        Check(file.parent_path().filename() == "driver", "driver cache remains tied to the recompiler source version");
+        const auto saved = Read(file);
+        cache.reset();
+        const auto legacy = root / "0123456789abcdef" / file.filename();
+        std::filesystem::create_directories(legacy.parent_path());
+        std::filesystem::rename(file, legacy);
+        {
+            PipelineCache migrated(context, properties);
+            migrated.SaveNow();
+            Check(Read(file) == saved, "a compatible cache from a previous source version was not imported");
+        }
+        ++properties.driverVersion;
+        {
+            PipelineCache differentDriver(context, properties);
+            std::lock_guard lock(mutex);
+            Check(caches.at(differentDriver.Handle()) == Payload(), "a different driver imported incompatible legacy data");
+        }
+        std::puts("equal-size snapshots and merges persist content changes, incomplete snapshots preserve the file");
+        return 0;
+    }
 #ifdef _WIN32
     if (mode == "read-retry") {
         {
