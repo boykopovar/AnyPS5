@@ -11,6 +11,7 @@
 #include <map>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -25,6 +26,8 @@ constexpr std::uint32_t PlaneDwords = MaxThreads;
 constexpr std::uint32_t GroupDwords = Planes * PlaneDwords;
 constexpr std::uint32_t Inactive = 0x80000000u;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
+constexpr std::uint32_t WorkgroupLdsDwords = MaxThreads;
+constexpr std::uint32_t DeviceMemoryLdsDwords = 16384;
 
 alignas(256) std::array<std::uint32_t, Groups * GroupDwords> Input{};
 alignas(256) std::array<std::uint32_t, Groups * GroupDwords> Output{};
@@ -37,9 +40,11 @@ struct Operation {
     const char* name;
     std::uint32_t opcode;
     bool wide;
+    std::uint32_t offset1 = 0;
+    std::uint32_t secondDwords = 0;
 };
 
-constexpr std::array<Operation, 17> Operations{{
+constexpr std::array<Operation, 19> Operations{{
     {"ds_add_rtn_u32", 0x20u, false},
     {"ds_sub_rtn_u32", 0x21u, false},
     {"ds_rsub_rtn_u32", 0x22u, false},
@@ -54,12 +59,14 @@ constexpr std::array<Operation, 17> Operations{{
     {"ds_xor_rtn_b32", 0x2bu, false},
     {"ds_mskor_rtn_b32", 0x2cu, false},
     {"ds_wrxchg_rtn_b32", 0x2du, false},
+    {"ds_wrxchg2_rtn_b32", 0x2eu, false, 8u, 8u},
+    {"ds_wrxchg2st64_rtn_b32", 0x2fu, false, 1u, 64u},
     {"ds_cmpst_rtn_b32", 0x30u, false},
     {"ds_wrap_rtn_b32", 0x34u, false},
     {"ds_add_rtn_u64", 0x60u, true},
 }};
 
-constexpr Program AtomicProgram(std::uint32_t opcode, std::uint32_t waveSize, bool masked) {
+constexpr Program AtomicProgram(std::uint32_t opcode, std::uint32_t offset1, std::uint32_t waveSize, bool masked) {
     const bool wave64 = waveSize == 64u;
     constexpr std::uint32_t Nop = 0xbf800000u;
     const std::array<std::uint32_t, 37> body{
@@ -78,7 +85,7 @@ constexpr Program AtomicProgram(std::uint32_t opcode, std::uint32_t waveSize, bo
         masked ? 0x7d060280u : Nop,
         !masked ? Nop : wave64 ? 0xbe8a246au : 0xbe8a3c6au,
         0x34020282u,
-        0xd8000000u | (opcode << 18u), 0x06030201u,
+        0xd8000000u | (opcode << 18u) | (offset1 << 8u), 0x06030201u,
         !masked ? Nop : wave64 ? 0xbefe040au : 0xbefe030au,
         0xbf8cc07fu,
         0xbf8a0000u,
@@ -102,8 +109,8 @@ constexpr std::size_t ProgramsPerWave = Operations.size() + 1u;
 constexpr std::array<Program, ProgramsPerWave * WaveSizes.size()> BuildPrograms() {
     std::array<Program, ProgramsPerWave * WaveSizes.size()> programs{};
     for (std::size_t wave = 0; wave < WaveSizes.size(); ++wave) {
-        for (std::size_t operation = 0; operation < Operations.size(); ++operation) programs[wave * ProgramsPerWave + operation] = AtomicProgram(Operations[operation].opcode, WaveSizes[wave], true);
-        programs[wave * ProgramsPerWave + Operations.size()] = AtomicProgram(Operations[0].opcode, WaveSizes[wave], false);
+        for (std::size_t operation = 0; operation < Operations.size(); ++operation) programs[wave * ProgramsPerWave + operation] = AtomicProgram(Operations[operation].opcode, Operations[operation].offset1, WaveSizes[wave], true);
+        programs[wave * ProgramsPerWave + Operations.size()] = AtomicProgram(Operations[0].opcode, 0u, WaveSizes[wave], false);
     }
     return programs;
 }
@@ -148,7 +155,7 @@ struct Lane {
     bool active = true;
 };
 
-void Dispatch(AgcDriver::VulkanDevice& device, const Program& program, std::uint32_t waveSize, std::uint32_t threads, const ShaderRecompiler::SpirvTarget& target, const std::function<Lane(std::uint32_t, std::uint32_t)>& lane) {
+void Dispatch(AgcDriver::VulkanDevice& device, const Program& program, std::uint32_t waveSize, std::uint32_t threads, const ShaderRecompiler::SpirvTarget& target, std::uint32_t ldsDwords, const std::function<Lane(std::uint32_t, std::uint32_t)>& lane) {
     Input.fill(0u);
     Output.fill(0xfeedfaceu);
     for (std::uint32_t group = 0; group < Groups; ++group) {
@@ -167,7 +174,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, const Program& program, std::uint
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(program.words);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1, 1}, MaxThreads, {true, false, false}, false, 1};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1, 1}, ldsDwords, {true, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
@@ -187,7 +194,7 @@ std::string Join(std::span<const std::uint32_t> values) {
 }
 
 std::uint32_t MeasureOrder(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::uint32_t waveSize, std::uint32_t threads, bool masked, const char* label) {
-    Dispatch(device, masked ? ProgramFor(0, waveSize) : UnmaskedAdd(waveSize), waveSize, threads, target, [&](std::uint32_t, std::uint32_t thread) {
+    Dispatch(device, masked ? ProgramFor(0, waveSize) : UnmaskedAdd(waveSize), waveSize, threads, target, WorkgroupLdsDwords, [&](std::uint32_t, std::uint32_t thread) {
         return Lane{(thread / waveSize) * waveSize, 1u, 0u, 0u, true};
     });
     std::uint32_t waves = 0;
@@ -223,7 +230,7 @@ std::uint32_t MeasureOrder(AgcDriver::VulkanDevice& device, const ShaderRecompil
 std::uint32_t CheckRanks(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, const char* label) {
     constexpr std::uint32_t Digits = 16;
     const auto digit = [](std::uint32_t group, std::uint32_t thread) { return Random(group, thread, 1u) % Digits; };
-    Dispatch(device, UnmaskedAdd(64u), 64u, MaxThreads, target, [&](std::uint32_t group, std::uint32_t thread) {
+    Dispatch(device, UnmaskedAdd(64u), 64u, MaxThreads, target, WorkgroupLdsDwords, [&](std::uint32_t group, std::uint32_t thread) {
         return Lane{digit(group, thread), 1u << (8u * (thread / 64u)), 0u, 0u, true};
     });
     std::uint32_t wrong = 0;
@@ -277,7 +284,7 @@ Lane OperationLane(const Operation& operation, std::uint32_t waveSize, std::uint
     const auto wave = thread / waveSize;
     const auto pick = Random(group, thread, 2u);
     Lane lane;
-    lane.address = wave * waveSize + (operation.wide ? 2u * (pick % 4u) : pick % 8u);
+    lane.address = (operation.secondDwords == 64u ? wave * 8u : wave * waveSize) + (operation.wide ? 2u * (pick % 4u) : pick % 8u);
     lane.active = Random(group, thread, 3u) % 8u != 0u;
     lane.data0 = Random(group, thread, 4u);
     lane.data1 = Random(group, thread, 5u);
@@ -312,9 +319,9 @@ Lane OperationLane(const Operation& operation, std::uint32_t waveSize, std::uint
     return lane;
 }
 
-std::uint32_t CheckOperation(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::size_t index, std::uint32_t waveSize, const char* label) {
+std::uint32_t CheckOperation(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::size_t index, std::uint32_t waveSize, std::uint32_t ldsDwords, const std::string& label) {
     const auto& operation = Operations[index];
-    Dispatch(device, ProgramFor(index, waveSize), waveSize, MaxThreads, target, [&](std::uint32_t group, std::uint32_t thread) { return OperationLane(operation, waveSize, group, thread); });
+    Dispatch(device, ProgramFor(index, waveSize), waveSize, MaxThreads, target, ldsDwords, [&](std::uint32_t group, std::uint32_t thread) { return OperationLane(operation, waveSize, group, thread); });
     std::uint32_t wrongReturns = 0;
     std::uint32_t wrongMemory = 0;
     std::string example;
@@ -325,7 +332,10 @@ std::uint32_t CheckOperation(AgcDriver::VulkanDevice& device, const ShaderRecomp
             const auto lane = OperationLane(operation, waveSize, group, thread);
             std::uint32_t expectedLow = Untouched;
             std::uint32_t expectedHigh = 0u;
-            if (lane.active) {
+            if (lane.active && operation.secondDwords != 0u) {
+                expectedLow = std::exchange(memory[lane.address], lane.data0);
+                expectedHigh = std::exchange(memory[lane.address + operation.secondDwords], lane.data1);
+            } else if (lane.active) {
                 const std::uint64_t old = memory[lane.address] | (operation.wide ? static_cast<std::uint64_t>(memory[lane.address + 1u]) << 32u : 0u);
                 const auto next = Apply(operation.opcode, old, lane.data0, lane.data1);
                 memory[lane.address] = static_cast<std::uint32_t>(next);
@@ -333,7 +343,8 @@ std::uint32_t CheckOperation(AgcDriver::VulkanDevice& device, const ShaderRecomp
                 expectedLow = static_cast<std::uint32_t>(old);
                 expectedHigh = static_cast<std::uint32_t>(old >> 32u);
             }
-            const bool same = At(Output, group, 0, thread) == expectedLow && (!operation.wide || !lane.active || At(Output, group, 2, thread) == expectedHigh);
+            const bool second = operation.wide || operation.secondDwords != 0u;
+            const bool same = At(Output, group, 0, thread) == expectedLow && (!second || !lane.active || At(Output, group, 2, thread) == expectedHigh);
             if (!same && example.empty()) {
                 char text[160];
                 std::snprintf(text, sizeof(text), " (group %u lane %u returned 0x%08x, expected 0x%08x)", group, thread, At(Output, group, 0, thread), expectedLow);
@@ -343,7 +354,7 @@ std::uint32_t CheckOperation(AgcDriver::VulkanDevice& device, const ShaderRecomp
         }
         for (std::uint32_t thread = 0; thread < MaxThreads; ++thread) wrongMemory += At(Output, group, 1, thread) == memory[thread] ? 0u : 1u;
     }
-    std::printf("%s: %s, wave%u, %u threads: %u of %u returns and %u of %u final LDS dwords differ from lane order%s\n", label, operation.name, waveSize, MaxThreads, wrongReturns, Groups * MaxThreads, wrongMemory, Groups * MaxThreads, example.c_str());
+    std::printf("%s: %s, wave%u, %u threads: %u of %u returns and %u of %u final LDS dwords differ from lane order%s\n", label.c_str(), operation.name, waveSize, MaxThreads, wrongReturns, Groups * MaxThreads, wrongMemory, Groups * MaxThreads, example.c_str());
     return wrongReturns + wrongMemory;
 }
 
@@ -354,8 +365,11 @@ std::uint32_t RunAll(AgcDriver::VulkanDevice& device, const ShaderRecompiler::Sp
         for (const std::uint32_t threads : {32u, 64u, 128u, 256u}) failures += MeasureOrder(device, wave32, 32u, threads, masked, label) != 0u ? 1u : 0u;
     }
     failures += CheckRanks(device, wave64, label) != 0u ? 1u : 0u;
-    for (const std::uint32_t waveSize : WaveSizes) {
-        for (std::size_t index = 0; index < Operations.size(); ++index) failures += CheckOperation(device, waveSize == 64u ? wave64 : wave32, index, waveSize, label) != 0u ? 1u : 0u;
+    for (const std::uint32_t ldsDwords : {WorkgroupLdsDwords, DeviceMemoryLdsDwords}) {
+        const std::string place = std::string(label) + (ldsDwords == WorkgroupLdsDwords ? "" : ", LDS in device memory");
+        for (const std::uint32_t waveSize : WaveSizes) {
+            for (std::size_t index = 0; index < Operations.size(); ++index) failures += CheckOperation(device, waveSize == 64u ? wave64 : wave32, index, waveSize, ldsDwords, place) != 0u ? 1u : 0u;
+        }
     }
     return failures;
 }
@@ -366,6 +380,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (device->Target().subgroupSize < 32u) {
+            std::printf("skipped, the device's subgroups are narrower than a wave (%u lanes)\n", device->Target().subgroupSize);
+            return VulkanTestSkipped;
+        }
         std::printf("device: %s, driver %s, subgroup %u\n", device->DeviceName().c_str(), device->DriverInfo().c_str(), device->ComputeTarget(64).subgroupSize);
         auto failures = RunAll(*device, device->ComputeTarget(64), device->ComputeTarget(32), "device target");
         auto ordered64 = device->ComputeTarget(64);
