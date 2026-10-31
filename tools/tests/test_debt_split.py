@@ -479,5 +479,32 @@ class DebtSplitTests(unittest.TestCase):
         self.assertIn("- A toolchain limitation\n\n" + paragraph + "\n", self.read(INDEX))
 
 
+    def test_split_keeps_the_note_and_sub_headings_of_an_existing_debt_file(self):
+        self.write("docs/dev/debt/libSceA.md", "# libSceA technical debt\n\nA hand-written note that must stay.\n\n"
+                   "#### Detail heading\n\n### Silent stubs\n\n" + A_STUB + "\n")
+        extra = "- [libSceA](../../core/libs/prx/libSceA/Export.cpp) - `sceAExtra` returns 1"
+        self.write(INDEX, "# Project technical debt\n\n### Silent stubs\n\n" + extra + "\n")
+        self.split()
+        text = self.read("docs/dev/debt/libSceA.md")
+        self.assertIn("A hand-written note that must stay.", text)
+        self.assertIn("#### Detail heading", text)
+        self.assertIn("`sceAExtra` returns 1", text)
+        self.assertEqual(text.count(A_STUB), 1)
+        self.assertLess(text.index("A hand-written note"), text.index("### Silent stubs"))
+
+    def test_a_debt_file_with_only_a_note_is_written_and_not_deleted(self):
+        debt_split.write_debt(self.root, "libSceA", {}, [], ["A note that belongs to no section."])
+        self.assertIn("A note that belongs to no section.", self.read("docs/dev/debt/libSceA.md"))
+
+    def test_split_refuses_an_entry_above_the_first_section_without_writing(self):
+        before = self.read(INDEX)
+        self.write(INDEX, "# Project technical debt\n\n" + B_STUB + "\n\n### Silent stubs\n\n" + A_STUB + "\n")
+        result = self.tool("split")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("above the first ### section", result.stderr)
+        self.assertFalse((self.root / "docs/dev/debt").exists())
+        self.assertNotEqual(before, "")
+
+
 if __name__ == "__main__":
     unittest.main()
