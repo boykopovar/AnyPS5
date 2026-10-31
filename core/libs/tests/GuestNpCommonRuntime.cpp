@@ -691,6 +691,62 @@ void TestTitleIds() {
     Require(sceNpUtilBuildTitleId(&parts, titleId, sizeof(titleId)) == NpUtilOutOfRange, "the index is at most 99");
 }
 
+void TestJid() {
+    constexpr int NpUtilInvalidJid = static_cast<int>(0x80550604);
+    NpJid jid{};
+    char buffer[64];
+    std::size_t length = 0;
+    Require(sceNpUtilParseJid(&jid, "user@np.playstation.net/res", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "user")
+            && Equals(jid.domain, "np.playstation.net") && Equals(jid.resource, "res") && length == 28 && jid.user == buffer,
+        "a jid splits into user, domain and resource in the buffer");
+    Require(sceNpUtilParseJid(&jid, "  a.b_c+d@x-y.z", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "a.b_c+d") && Equals(jid.domain, "x-y.z")
+            && Equals(jid.resource, "") && length == 15,
+        "leading spaces are skipped and a missing resource is empty");
+    Require(sceNpUtilParseJid(&jid, "nodomain", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "") && Equals(jid.domain, "nodomain"),
+        "text without an at sign is a domain");
+    Require(sceNpUtilParseJid(&jid, "a@b./res", buffer, sizeof(buffer), &length) == 0 && Equals(jid.domain, "b") && Equals(jid.resource, "/res"),
+        "trailing dots leave the domain and one character after it is skipped");
+    Require(sceNpUtilParseJid(&jid, "a@b c", buffer, sizeof(buffer), &length) == 0 && Equals(jid.domain, "b") && Equals(jid.resource, "c"),
+        "the character after the domain is skipped whatever it is");
+    length = 0;
+    Require(sceNpUtilParseJid(nullptr, "user@dom/res", nullptr, 0, &length) == 0 && length == 13, "parsing without a buffer only measures");
+    Require(sceNpUtilParseJid(&jid, "user@dom/res", buffer, 12, &length) == NpUtilBufferTooSmall && jid.user == nullptr && jid.domain == nullptr,
+        "a buffer that is too small clears the jid");
+    Require(sceNpUtilParseJid(&jid, "user@dom/res", buffer, 13, &length) == 0 && Equals(jid.resource, "res"), "a buffer of the measured size is enough");
+    Require(sceNpUtilParseJid(&jid, "   ", buffer, sizeof(buffer), &length) == NpUtilInvalidJid, "a blank jid is refused");
+    Require(sceNpUtilParseJid(&jid, "a-b@c_d", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "a-b") && Equals(jid.domain, "c_d"),
+        "a user may hold a dash and a domain an underscore");
+    Require(sceNpUtilParseJid(&jid, "a@b+c", buffer, sizeof(buffer), &length) == 0 && Equals(jid.domain, "b") && Equals(jid.resource, "c"),
+        "a plus sign ends the domain");
+    Require(sceNpUtilParseJid(&jid, "a@b../r", buffer, sizeof(buffer), &length) == 0 && Equals(jid.domain, "b") && Equals(jid.resource, "./r"),
+        "every trailing dot leaves the domain but only one is skipped");
+    Require(sceNpUtilParseJid(&jid, "\ta@b", buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "") && Equals(jid.domain, "")
+            && Equals(jid.resource, "a@b"),
+        "only spaces are skipped before a jid");
+    jid = {buffer, buffer, buffer, 0};
+    Require(sceNpUtilParseJid(&jid, "   ", buffer, sizeof(buffer), &length) == NpUtilInvalidJid && jid.user == nullptr && jid.resource == nullptr,
+        "a refused jid is cleared");
+    Require(sceNpUtilParseJid(&jid, nullptr, buffer, sizeof(buffer), &length) == NpUtilInvalid, "parsing needs text");
+    Require(sceNpUtilParseJid(&jid, "a@b", nullptr, 0, nullptr) == NpUtilInvalid, "parsing needs a buffer or a length");
+
+    NpIdFull npId{};
+    std::memset(&npId, 0xCC, sizeof(npId));
+    const NpJid psn{"user", "a1.b2.np.playstation.net", "r", 0};
+    Require(sceNpUtilJidToNpId(&npId, &psn) == 0 && Equals(npId.handle.data, "user") && npId.opt[0] == 'a' && npId.opt[1] == '1' && npId.opt[2] == 'b'
+            && npId.opt[3] == '2' && npId.opt[4] == 'r' && npId.opt[5] == 0 && npId.reserved[0] == 1 && npId.reserved[1] == 0,
+        "a PSN jid becomes an npid with its domain code and resource");
+    const NpJid sixteen{"abcdefghijklmnop", "a1.b2..playstation.net", nullptr, 0};
+    Require(sceNpUtilJidToNpId(&npId, &sixteen) == 0 && std::memcmp(npId.handle.data, "abcdefghijklmnop", 16) == 0 && npId.handle.data[16] == 0,
+        "a 16-character user fills the online id and the label may be empty");
+    const NpJid invalid[] = {{"", psn.domain, nullptr, 0}, {"abcdefghijklmnopq", psn.domain, nullptr, 0}, {"u", "a1.b2.np.playstation.ne", nullptr, 0},
+                             {"u", "a.b2.np.playstation.net", nullptr, 0}, {"u", "a1.b2", nullptr, 0}, {"u", psn.domain, "abcde", 0}, {"u", nullptr, nullptr, 0},
+                             {nullptr, psn.domain, nullptr, 0}};
+    for (const NpJid& bad : invalid) Require(sceNpUtilJidToNpId(&npId, &bad) == NpUtilInvalidJid, "only a PSN jid with a short user and resource converts");
+    const NpJid shapes[] = {{"u", "a1.-2.np.playstation.net", nullptr, 0}, {"u", "a1.b2.np.playstation.network", nullptr, 0}};
+    for (const NpJid& bad : shapes) Require(sceNpUtilJidToNpId(&npId, &bad) == NpUtilInvalidJid, "the domain code is alphanumeric and the suffix exact");
+    Require(sceNpUtilJidToNpId(nullptr, &psn) == NpUtilInvalid &&sceNpUtilJidToNpId(&npId, nullptr) == NpUtilInvalid, "conversion needs both pointers");
+}
+
 void TestLanguagesAndDebugIds() {
     char code[6] = {};
     char tag[36] = {};
@@ -1077,6 +1133,7 @@ int main() {
     TestHexAndCopies();
     TestCallouts();
     TestIds();
+    TestJid();
     TestLanguagesAndDebugIds();
     TestJsonText();
     TestJsonParser();

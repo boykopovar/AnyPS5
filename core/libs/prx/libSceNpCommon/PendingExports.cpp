@@ -24,32 +24,7 @@ int APS5_VABI sceNpGetNavSdkVersion(void) {
     return 0;
 }
 
-int APS5_VABI sceNpIntGetPlatformType(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpIntSetPlatformType(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceNpOpenSema(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpSetPlatformType(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpUtilCanonicalizeNpIdForPs4(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpUtilCanonicalizeNpIdForPsp2(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -120,11 +95,6 @@ int APS5_VABI sceNpUtilGetWebApi2FakeRateLimitTarget(void) {
 }
 
 int APS5_VABI sceNpUtilGetWebTraceSetting(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceNpUtilJidToNpId(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
