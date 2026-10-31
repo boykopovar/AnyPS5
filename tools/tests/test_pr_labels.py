@@ -134,6 +134,18 @@ class PairTests(unittest.TestCase):
         self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + differing("b", gpu="Other GPU")))
         self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + differing("b", env={"APS5_TRACE_FRAMES": "600:4", "APS5_X": "1"})))
 
+    def test_repeated_captures_of_one_commit_keep_every_line(self):
+        x, y = differing("a", gpu="GPU X"), differing("a", gpu="GPU Y")
+        b = differing("b", gpu="GPU Y")
+        for lines in ([x, y, b], [y, x, b], [b, x, y]):
+            with self.subTest(order=[json.loads(line)["gpu"] + "/" + json.loads(line)["commit"] for line in lines]):
+                before, after = pr_labels.matching_pair("\n".join(lines))
+                self.assertEqual({before["commit"], after["commit"]}, {"a", "b"})
+                self.assertEqual(before["gpu"], "GPU Y")
+
+    def test_two_captures_of_one_commit_are_not_a_pair(self):
+        self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + summary("a")))
+
     def test_a_matching_pair_among_more_lines_counts(self):
         body = "\n".join([summary("a"), differing("b", resolution="1280x720"), summary("c")])
         before, after = pr_labels.matching_pair(body)

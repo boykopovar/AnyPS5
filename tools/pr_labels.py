@@ -53,24 +53,25 @@ def is_perf(title):
 def summaries(body):
     body = strip_comments(body)
     candidates = [line.strip() for line in body.splitlines()] + [block.strip() for block in FENCE.findall(body)]
-    found = {}
+    found = []
     for text in candidates:
         if not text.startswith("{"):
             continue
         try:
             summary = json.loads(text)
             if isinstance(summary, dict):
-                summary = performance_compare.validate(summary)
-                found.setdefault(summary["commit"], summary)
+                found.append(performance_compare.validate(summary))
         except (ValueError, RecursionError):
             continue
-    return list(found.values())
+    return found
 
 
 def matching_pair(body):
     found = summaries(body)
     for index, before in enumerate(found):
         for after in found[index + 1:]:
+            if before["commit"] == after["commit"]:
+                continue
             try:
                 if not performance_compare.compare(before, after)["configuration_differences"]:
                     return before, after
