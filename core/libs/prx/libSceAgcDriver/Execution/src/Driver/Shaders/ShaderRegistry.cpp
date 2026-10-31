@@ -894,6 +894,10 @@ void ReportPreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler:
         APS5_LOG_OUT_DEBUG("Shader 0x%llx samples a converted image; preparing its converted-sample variant at use", static_cast<unsigned long long>(request.shader.codeAddress));
         return;
     }
+    if (request.context.layerRowSamples) {
+        APS5_LOG_OUT_DEBUG("Shader 0x%llx samples a 1D array past maxImageArrayLayers; preparing its layer-row variant at use", static_cast<unsigned long long>(request.shader.codeAddress));
+        return;
+    }
     if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && request.context.waveSize == 32u) {
         APS5_LOG_ERR("The null pixel program has no wave%u artifact for this draw; preparing it at draw", request.context.waveSize);
         return;
@@ -1088,6 +1092,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     std::unique_lock lock(snapshot.prepared->mutex);
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
     if (std::ranges::find(snapshot.prepared->convertedSamples, codeOffset) != snapshot.prepared->convertedSamples.end()) source.context.convertedSamples = true;
+    if (std::ranges::find(snapshot.prepared->layerRowSamples, codeOffset) != snapshot.prepared->layerRowSamples.end()) source.context.layerRowSamples = true;
     auto invocationRequest = source;
     struct PreparedKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, PreparedKeyStorage>();
@@ -1115,18 +1120,22 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
 }
 
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation) {
-    try {
-        return memory.Capture(invocation);
-    } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
-        if (invocation.Request().context.convertedSamples) throw;
-    }
-    {
+    const auto record = [&](std::vector<std::size_t>& offsets) {
         std::lock_guard lock(snapshot.prepared->mutex);
-        auto& offsets = snapshot.prepared->convertedSamples;
         if (std::ranges::find(offsets, codeOffset) == offsets.end()) offsets.push_back(codeOffset);
+    };
+    while (true) {
+        try {
+            return memory.Capture(invocation);
+        } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
+            if (invocation.Request().context.convertedSamples) throw;
+            record(snapshot.prepared->convertedSamples);
+        } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
+            if (invocation.Request().context.layerRowSamples) throw;
+            record(snapshot.prepared->layerRowSamples);
+        }
+        invocation = InvocationFor(snapshot, codeOffset, request);
     }
-    invocation = InvocationFor(snapshot, codeOffset, request);
-    return memory.Capture(invocation);
 }
 namespace {
 

@@ -499,6 +499,7 @@ private:
         bool depthCompare = false;
         VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D;
         bool firstSample = false;
+        bool layerRows = false;
         std::shared_ptr<Texture> texture;
     };
     PreviousSampled previousSampled;

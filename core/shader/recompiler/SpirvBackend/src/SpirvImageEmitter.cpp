@@ -209,6 +209,31 @@ std::uint32_t CoordF32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access
     return result;
 }
 
+std::uint32_t LayerRowsCoord(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t coord) {
+    auto& state = ctx.state;
+    const auto f32 = TypeF32(state);
+    const auto u32 = TypeU32(state);
+    const auto extract = [&](std::uint32_t type, std::uint32_t composite, std::uint32_t index) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, type, value, composite, index);
+        return value;
+    };
+    state.module.EmitCapability(spv::CapabilityImageQuery);
+    const auto size = state.module.AllocateId();
+    state.module.AddFunction(spv::OpImageQuerySizeLod, ImageViewSizeType(state, RdnaImageDimension::Dim2D), size, LoadSampledImageDescriptor(state, access.mem.resource), ConstantU32(state, 0u));
+    const auto rows = extract(u32, size, 1u);
+    const auto lastLayer = Binary(state, spv::OpISub, u32, Binary(state, spv::OpShiftRightLogical, u32, rows, ConstantU32(state, 1u)), ConstantU32(state, 1u));
+    const auto rounded = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, f32, rounded, GlslStd450(state), GLSLstd450RoundEven, extract(f32, coord, 1u));
+    const auto clamped = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, f32, clamped, GlslStd450(state), GLSLstd450NClamp, rounded, ConstantF32(state, 0u), Unary(state, spv::OpConvertUToF, f32, lastLayer));
+    const auto center = Binary(state, spv::OpFAdd, f32, Binary(state, spv::OpFMul, f32, clamped, ConstantF32(state, std::bit_cast<std::uint32_t>(2.0f))), ConstantF32(state, std::bit_cast<std::uint32_t>(1.0f)));
+    const auto v = Binary(state, spv::OpFDiv, f32, center, Unary(state, spv::OpConvertUToF, f32, rows));
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), result, extract(f32, coord, 0u), v);
+    return result;
+}
+
 std::uint32_t CoordU32(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
     const auto components = RdnaImageDimensionInfoFor(access.image.dimension).coordinateComponents;
     const auto encoded = std::min(components, AddressDimension(access).coordinateComponents);
@@ -1226,7 +1251,11 @@ SampleSetup MakeSampleSetup(SpirvValueEmitContext& ctx, const ImageEmitAccess& a
     if (ImageConversionFormat(access.image).type == SpirvFormatComponentType::Float) {
         ctx.Fail(access.inst, "samples or gathers a converted float image, which needs filtering in the shader and is not implemented");
     }
-    const auto coord = CoordF32(ctx, access, layout.coord, dimensionInfo.coordinateComponents, AddressDimension(access).coordinateComponents);
+    auto coord = CoordF32(ctx, access, layout.coord, dimensionInfo.coordinateComponents, AddressDimension(access).coordinateComponents);
+    if (access.image.layerRows) {
+        if (dref || access.inst.Opcode() != IrOpcode::ImageSampleRaw || (access.mem.imageSampleFlags != RdnaImageSampleFlagLevelZero && access.mem.imageSampleFlags != RdnaImageSampleFlagLod)) ctx.Fail(access.inst, "reads a 1D array laid out as rows of a 2D image other than by image_sample_lz or image_sample_l");
+        coord = LayerRowsCoord(ctx, access, coord);
+    }
     return {dimensionInfo, layout, access.image.numericClass, dref, coord};
 }
 

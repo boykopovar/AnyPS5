@@ -360,8 +360,12 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
+    program.Resources().maxImageArrayLayers = request.target.maxImageArrayLayers;
     if (request.context.convertedSamples) {
         for (auto& image : program.Resources().info.images) image.convertedSamples = true;
+    }
+    if (request.context.layerRowSamples) {
+        for (auto& image : program.Resources().info.images) image.maxArrayLayers = request.target.maxImageArrayLayers;
     }
 
     return program;
@@ -1454,14 +1458,18 @@ RecompileResult recompileOnce(const RecompileRequest& request) {
 }
 
 RecompileResult RecompileImpl(const RecompileRequest& request) {
-    try {
-        return recompileOnce(request);
-    } catch (const ConvertedSampleRequired&) {
-        if (request.context.convertedSamples) throw;
+    auto current = request;
+    while (true) {
+        try {
+            return recompileOnce(current);
+        } catch (const ConvertedSampleRequired&) {
+            if (current.context.convertedSamples) throw;
+            current.context.convertedSamples = true;
+        } catch (const LayerRowSamplesRequired&) {
+            if (current.context.layerRowSamples) throw;
+            current.context.layerRowSamples = true;
+        }
     }
-    auto converted = request;
-    converted.context.convertedSamples = true;
-    return recompileOnce(converted);
 }
 
 // APS5_NO_RESULT_MEMO=1: every Recompile(request, capture) materializes its own result as before.
