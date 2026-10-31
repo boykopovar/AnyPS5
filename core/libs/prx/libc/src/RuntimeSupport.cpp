@@ -153,20 +153,39 @@ unsigned int APS5_VABI _ZSt14_Random_devicev_nid_postfix() {
 
 void APS5_VABI _Lockfilelock_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("_Lockfilelock: null stream");
+    auto gate = PinFileStreamIfValid_nid_no_patch(stream);
+    if (!gate) { errno = 9; throw std::runtime_error("_Lockfilelock: closed stream"); }
+    gate->lock();
+    try {
+        std::FILE* const native = stream->RawHandle_nid_no_patch();
+        if (!native) throw std::runtime_error("_Lockfilelock: closed stream");
 #ifdef _WIN32
-    _lock_file(GetStreamHandle(stream));
+        _lock_file(native);
 #else
-    flockfile(GetStreamHandle(stream));
+        flockfile(native);
 #endif
+    } catch (...) {
+        gate->unlock();
+        UnpinFileStream_nid_no_patch(stream);
+        throw;
+    }
 }
 
 void APS5_VABI _Unlockfilelock_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("_Unlockfilelock: null stream");
+    auto gate = stream->GatePtr_nid_no_patch();
+    if (!gate) throw std::runtime_error("_Unlockfilelock: stream has no gate");
+    std::FILE* const native = stream->RawHandle_nid_no_patch();
+    if (!native) {
+        throw std::runtime_error("_Unlockfilelock: closed stream");
+    }
 #ifdef _WIN32
-    _unlock_file(GetStreamHandle(stream));
+    _unlock_file(native);
 #else
-    funlockfile(GetStreamHandle(stream));
+    funlockfile(native);
 #endif
+    gate->unlock();
+    UnpinFileStream_nid_no_patch(stream);
 }
 
 void APS5_VABI flockfile_nid_postfix(FileStream* stream) {
@@ -181,11 +200,34 @@ void APS5_VABI funlockfile_nid_postfix(FileStream* stream) {
 
 int APS5_VABI ftrylockfile_nid_postfix(FileStream* stream) {
     if (stream == nullptr) throw std::invalid_argument("ftrylockfile: null stream");
+    auto gate = PinFileStreamIfValid_nid_no_patch(stream);
+    if (!gate) { errno = 9; throw std::runtime_error("ftrylockfile: closed stream"); }
+    if (!gate->try_lock()) {
+        UnpinFileStream_nid_no_patch(stream);
+        return -1;
+    }
+    std::FILE* const native = stream->RawHandle_nid_no_patch();
+    bool nativeOk;
+    try {
+        if (!native) throw std::runtime_error("ftrylockfile: closed stream");
+        else {
 #ifdef _WIN32
-    return TryEnterCriticalSection(&reinterpret_cast<UcrtStream*>(GetStreamHandle(stream))->lock) ? 0 : -1;
+            nativeOk = TryEnterCriticalSection(&reinterpret_cast<UcrtStream*>(native)->lock);
 #else
-    return ftrylockfile(GetStreamHandle(stream)) == 0 ? 0 : -1;
+            nativeOk = ftrylockfile(native) == 0;
 #endif
+        }
+    } catch (...) {
+        gate->unlock();
+        UnpinFileStream_nid_no_patch(stream);
+        throw;
+    }
+    if (!nativeOk) {
+        gate->unlock();
+        UnpinFileStream_nid_no_patch(stream);
+        return -1;
+    }
+    return 0;
 }
 
 std::uint64_t APS5_VABI _Stoul_nid_postfix(const char* str, char** endptr, int base) {

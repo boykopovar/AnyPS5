@@ -240,6 +240,7 @@ int APS5_VABI freopen_s_nid_postfix(FileStream** result, const char* filename, c
 FileStream* APS5_VABI fopen_nid_postfix(const char* filename, const char* mode);
 int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, const char* mode);
 int APS5_VABI fclose_nid_postfix(FileStream* stream);
+void APS5_VABI fcloseall_nid_postfix();
 FileStream* APS5_VABI _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(const char* filename, int mode, int protection);
 size_t APS5_VABI fread_nid_postfix(void* buffer, size_t size, size_t count, FileStream* stream);
 size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t count, FileStream* stream);
