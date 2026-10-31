@@ -19,6 +19,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
@@ -7405,6 +7406,28 @@ void sampledTextureBudgetTests() {
     Require(SampledTextureBudget(memory, &reported, 0) == 2 * GiB, "a device without a device-local heap does not keep 2 GiB of sampled textures");
 }
 
+void unitShadowBudgetTests() {
+    using AgcDriver::Graphics::UnitShadowBudget;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    VkPhysicalDeviceMemoryProperties memory{};
+    memory.memoryHeapCount = 2;
+    memory.memoryHeaps[0] = {32 * GiB, 0};
+    memory.memoryHeaps[1] = {8 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    Require(UnitShadowBudget(memory, nullptr) == 1024 * MiB, "without VK_EXT_memory_budget the unit shadow does not keep its 1 GiB budget");
+    Require(UnitShadowBudget(memory, &reported) == 1024 * MiB, "a zero budget for the device-local heap did not keep the unit shadow's 1 GiB budget");
+    reported.heapBudget[1] = 6 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 384 * MiB, "a 6 GiB device-local budget does not give the unit shadow a sixteenth of it");
+    reported.heapBudget[1] = 24 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 1024 * MiB, "a 24 GiB device-local budget raised the unit shadow above 1 GiB");
+    reported.heapBudget[1] = 1 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 128 * MiB, "a 1 GiB device-local budget took the unit shadow below its 128 MiB floor");
+    reported.heapBudget[0] = 64 * GiB;
+    reported.heapBudget[1] = 6 * GiB;
+    Require(UnitShadowBudget(memory, &reported) == 384 * MiB, "the unit shadow budget was read from a host heap");
+}
+
 void storageTextureBudgetTests() {
     using AgcDriver::Graphics::StorageTextureBudget;
     constexpr std::uint64_t GiB = 1ull << 30u;
@@ -13038,6 +13061,7 @@ int main(int argc, char** argv) {
         textureCacheBudgetTests();
         sampledTextureBudgetTests();
         storageTextureBudgetTests();
+        unitShadowBudgetTests();
         sampledBudgetReportTests();
         meshArgumentTests();
         meshLimitTests();

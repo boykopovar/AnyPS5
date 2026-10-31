@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -25,11 +26,22 @@ constexpr std::uint64_t UnitBytes = 65536;
 constexpr std::size_t ReasonCount = static_cast<std::size_t>(PublishReason::Count);
 constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown", "address"};
 
-std::uint64_t BudgetBytes() {
-    static const std::uint64_t budget = [] {
-        const char* text = std::getenv("APS5_UNIT_SHADOW_MIB");
-        return (text != nullptr ? std::strtoull(text, nullptr, 10) : 1024ull) << 20u;
-    }();
+std::uint64_t BudgetBytes(const Context& context) {
+    static const char* text = std::getenv("APS5_UNIT_SHADOW_MIB");
+    if (text != nullptr) return std::strtoull(text, nullptr, 10) << 20u;
+    static std::once_flag once;
+    static std::uint64_t budget = 0;
+    std::call_once(once, [&] {
+        if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) {
+            budget = UnitShadowBudget(context.memory, nullptr);
+            return;
+        }
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+        properties.pNext = &reported;
+        context.memoryProperties2(context.physical, &properties);
+        budget = UnitShadowBudget(context.memory, &reported);
+    });
     return budget;
 }
 
@@ -489,6 +501,14 @@ bool evictOne(Shadows& registry) {
 
 }
 
+std::uint64_t UnitShadowBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported) {
+    constexpr std::uint64_t Ceiling = std::uint64_t{1024} << 20u;
+    constexpr std::uint64_t Floor = std::uint64_t{128} << 20u;
+    const auto heap = LargestDeviceLocalHeap(memory);
+    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return Ceiling;
+    return std::clamp<std::uint64_t>(reported->heapBudget[*heap] / 16u, Floor, Ceiling);
+}
+
 bool UnitShadowEnabled() {
     static const bool enabled = std::getenv("APS5_NO_UNIT_SHADOW") == nullptr && GuestMemory::WriteWatched();
     return enabled;
@@ -636,7 +656,7 @@ std::optional<ShadowDestination> ShadowDestinationFor(const Context& context, co
         for (;;) {
             {
                 std::lock_guard lock(registry.mutex);
-                if (registry.liveBytes + needed <= BudgetBytes()) break;
+                if (registry.liveBytes + needed <= BudgetBytes(context)) break;
             }
             if (!evictOne(registry)) {
                 Stats().refused.fetch_add(1, std::memory_order_relaxed);

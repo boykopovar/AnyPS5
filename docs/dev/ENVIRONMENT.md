@@ -469,7 +469,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_TEXTURES` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | prints a sampled texture's bytes and how many are nonzero |
 | `APS5_TRACE_UNREADABLE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp` |  | names the code that checked an inaccessible range |
 | `APS5_TRACE_UPLOAD` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | names why a storage image is uploaded again |
-| `APS5_UNIT_SHADOW_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/UnitShadow.cpp` | 1024 | budget in MiB of the unit shadow's slabs |
+| `APS5_UNIT_SHADOW_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/UnitShadow.cpp` | 1/16 of the reported device-local heap budget, 128-1024 | budget in MiB of the unit shadow's slabs |
 | `APS5_UNIT_SHADOW_SLAB_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/UnitShadow.cpp` | 8 | size in MiB of one unit-shadow slab |
 | `APS5_VALIDATE_LEGACY` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | uses the legacy snapshot and full-compare path for pending-write validation |
 | `APS5_VALIDATE_SYNC_SKIP` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | reads skipped dwords through the hook too and counts a mismatch |
