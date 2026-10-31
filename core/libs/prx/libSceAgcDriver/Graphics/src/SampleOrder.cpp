@@ -244,9 +244,9 @@ public:
         const VkRect2D scissor{{0, 0}, region};
         context.Resolved(&DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &viewport);
         context.Resolved(&DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &scissor);
-        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, sampledPipelineLayout, 0, 1, &set, 0, nullptr);
         const auto draw = [&](VkPipeline pipeline, std::uint32_t bit, std::uint32_t writeMask, std::uint32_t reference) {
             context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, sampledPipelineLayout, 0, 1, &set, 0, nullptr);
             context.Resolved(&DeviceFunctions::cmdSetStencilWriteMask, "vkCmdSetStencilWriteMask")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, writeMask);
             context.Resolved(&DeviceFunctions::cmdSetStencilReference, "vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, reference);
             const DepthPush push{map, bit};
