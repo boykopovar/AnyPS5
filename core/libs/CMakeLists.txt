@@ -990,6 +990,17 @@ if(BUILD_TESTING)
         set_tests_properties(savedata_memory_journal PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
+    add_test_executable(guest_json_reader_equivalence_tests tests/GuestJsonReaderEquivalence.cpp)
+    target_include_directories(guest_json_reader_equivalence_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_json_reader_equivalence_tests PRIVATE libSceJson2 libc)
+    configure_windows_unwind(guest_json_reader_equivalence_tests)
+    add_test(NAME guest_json_reader_equivalence COMMAND guest_json_reader_equivalence_tests)
+    set_tests_properties(guest_json_reader_equivalence PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_json_reader_equivalence PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJson2>")
+    endif()
+
     add_library(host_thread_local_test_library SHARED tests/HostThreadLocalLibrary.cpp)
     set_target_properties(host_thread_local_test_library PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
     target_include_directories(host_thread_local_test_library PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
