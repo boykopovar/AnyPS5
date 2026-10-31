@@ -106,6 +106,8 @@ struct DepthTarget {
     bool htilePipeAligned = false;
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
+    bool depthPartiallyResident = false;
+    bool stencilPartiallyResident = false;
 };
 
 struct State {

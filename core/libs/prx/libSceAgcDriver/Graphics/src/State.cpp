@@ -499,6 +499,8 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     }
     depth.format = zFormat == 1 ? (stencil ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM) : (stencil ? VK_FORMAT_D32_SFLOAT_S8_UINT : VK_FORMAT_D32_SFLOAT);
     depth.htileDepthOnly = (stencilInfo & (1u << 29u)) != 0u;
+    depth.depthPartiallyResident = zFormat != 0 && (read(cx, 0x010) & 0x1000u) != 0;
+    depth.stencilPartiallyResident = stencil && (stencilInfo & 0x1000u) != 0;
     if (const auto htile = find(cx, 0x005); zFormat != 0 && htile != cx.end() && htile->second != 0 && (read(cx, 0x010) & (1u << 29u)) != 0) {
         depth.htileAddress = base(0x005, 0x01e) + static_cast<std::uint64_t>(view & 0x1fffu) * HtileMetadataBytes(depth.extent);
         depth.htileStencil = stencil && !depth.htileDepthOnly;
@@ -511,8 +513,6 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     zero(cx, 0x000, 0x0000101cu, "depth copy, resummarize or decompress draws (DB_RENDER_CONTROL)");
     const bool depthClear = (read(cx, 0x000) & 1u) != 0;
     const auto view = read(cx, 0x002);
-    zero(cx, 0x010, 0x00001000u, "partially resident depth (DB_Z_INFO)");
-    zero(cx, 0x011, 0x00001000u, "partially resident stencil (DB_STENCIL_INFO)");
     const auto zFormat = read(cx, 0x010) & 3u;
     const bool stencil = (read(cx, 0x011) & 1u) != 0;
     const bool stencilClear = stencil && (read(cx, 0x000) & 2u) != 0;

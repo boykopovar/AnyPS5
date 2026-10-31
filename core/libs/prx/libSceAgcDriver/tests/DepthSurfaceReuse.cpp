@@ -506,6 +506,66 @@ void TestReadOnlyStalePlaneFlush(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+void TestPartiallyResidentPlanes(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr std::size_t bytes = 2 * 1024 * 1024;
+    constexpr std::size_t hole = 65536;
+#ifdef _WIN32
+    const auto release = [](void* pointer) { VirtualFree(pointer, 0, MEM_RELEASE); };
+    std::unique_ptr<void, decltype(release)> mapping(VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS), release);
+    Require(mapping != nullptr, "cannot reserve partially resident depth planes");
+#else
+    const auto release = [](void* pointer) { munmap(pointer, bytes); };
+    std::unique_ptr<void, decltype(release)> mapping(mmap(nullptr, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0), release);
+    Require(mapping.get() != MAP_FAILED, "cannot reserve partially resident depth planes");
+#endif
+    const auto base = (reinterpret_cast<std::uintptr_t>(mapping.get()) + hole - 1u) & ~std::uintptr_t{hole - 1u};
+    const auto commit = [&](std::uintptr_t address, std::size_t length) {
+#ifdef _WIN32
+        Require(VirtualAlloc(reinterpret_cast<void*>(address), length, MEM_COMMIT, PAGE_READWRITE) != nullptr, "cannot map a partially resident depth page");
+#else
+        Require(mprotect(reinterpret_cast<void*>(address), length, PROT_READ | PROT_WRITE) == 0, "cannot map a partially resident depth page");
+#endif
+    };
+    constexpr VkExtent2D extent{256, 256};
+    const auto depthBytes = DepthSliceBytes(extent, 4u);
+    const auto stencilBytes = DepthSliceBytes(extent, 1u);
+    const auto htileBytes = HtileMetadataBytes(extent);
+    const auto depth = base;
+    const auto stencil = depth + depthBytes;
+    const auto htile = stencil + stencilBytes + hole;
+    const auto end = htile + htileBytes;
+    Require(end <= reinterpret_cast<std::uintptr_t>(mapping.get()) + bytes, "the partially resident fixture does not fit its reservation");
+    commit(depth, depthBytes - hole);
+    commit(stencil, stencilBytes);
+    const auto refused = [&](const DepthTarget& target, std::string_view expected) {
+        try {
+            static_cast<void>(DepthSurfaceView(context, target));
+        } catch (const std::runtime_error& error) {
+            return std::string_view(error.what()).find(expected) != std::string_view::npos;
+        }
+        return false;
+    };
+    DepthTarget target{depth, stencil, extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a depth surface with an unmapped page and no PARTIALLY_RESIDENT must still render");
+    target.depthPartiallyResident = true;
+    Require(refused(target, "partially resident depth (DB_Z_INFO) with pages that are not mapped"), "a partially resident depth plane with an unmapped page must be refused");
+    target.depthPartiallyResident = false;
+    target.stencilPartiallyResident = true;
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a partially resident stencil plane that is mapped must render beside a depth plane with an unmapped page");
+    commit(depth + depthBytes - hole, hole);
+    target.depthPartiallyResident = true;
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "partially resident depth and stencil planes whose pages are all mapped must render");
+    target.htileAddress = htile;
+    Require(refused(target, "partially resident depth (DB_Z_INFO) with pages that are not mapped"), "a partially resident depth plane with an unmapped HTILE must be refused");
+    commit(htile, htileBytes);
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a partially resident depth plane with a mapped HTILE must render");
+    DepthTarget shifted{stencil + hole, stencil + stencilBytes, extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
+    shifted.stencilPartiallyResident = true;
+    Require(refused(shifted, "partially resident stencil (DB_STENCIL_INFO) with pages that are not mapped"), "a partially resident stencil plane with an unmapped page must be refused");
+    ClearDepthSurfaces(context.device);
+}
+
 void RunDepthSurfaceReuseTests() {
     static int deviceTag = 0;
     Context context{};
@@ -523,6 +583,7 @@ void RunDepthSurfaceReuseTests() {
     TestStencilUnormView(context);
     TestUnmappedStalePlaneFlush(context);
     TestReadOnlyStalePlaneFlush(context);
+    TestPartiallyResidentPlanes(context);
     constexpr std::uint64_t depth32 = 0x40000000;
     constexpr std::uint64_t depth16 = 0x50000000;
     constexpr std::uint64_t depthStencil = 0x60000000;

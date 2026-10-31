@@ -547,6 +547,13 @@ void stateTests() {
     queue.context[0x10d] = 0x01ffff00;
     state =AgcDriver::Graphics::DecodeState(queue);
     Require(!state.depthTest && state.stencilTest, "a depth test on an absent depth plane was kept beside a stencil plane");
+    Require(state.depth.has_value() && !state.depth->depthPartiallyResident && !state.depth->stencilPartiallyResident, "a stencil plane without PARTIALLY_RESIDENT was marked partially resident");
+    queue.context[0x010] = 0x80001180;
+    queue.context[0x011] = 0x20001181;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depth.has_value() && state.stencilTest && state.depth->stencilPartiallyResident && !state.depth->depthPartiallyResident, "a PARTIALLY_RESIDENT stencil plane beside an absent depth plane was refused or marked wrongly");
+    queue.context[0x010] = 0x80000180;
+    queue.context[0x011] = 0x20000181;
     queue.context[0x200] = 0x007007bbu;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "depth bounds without a depth plane");
     queue = makeState();
@@ -572,6 +579,10 @@ void stateTests() {
     queue.context[0x200] = 0x007007b3;
     state = AgcDriver::Graphics::DecodeState(queue);
     Require(state.depth.has_value() && state.depthTest && !state.stencilTest && state.renderExtent.width == 32 && state.renderExtent.height == 2, "a depth test on a bound depth plane lost its surface");
+    Require(!state.depth->depthPartiallyResident && !state.depth->stencilPartiallyResident, "a depth plane without PARTIALLY_RESIDENT was marked partially resident");
+    queue.context[0x010] = 0x80001183;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depth.has_value() && state.depthTest && state.depth->depthPartiallyResident && !state.depth->stencilPartiallyResident && state.depth->address == 0x100000u, "a PARTIALLY_RESIDENT depth plane was refused or marked wrongly");
     queue = makeState();
     queue.context[0x10f] = 0x7fc00000;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite");
