@@ -372,8 +372,6 @@ public:
     DccKeys UploadedKeys() const { return uploadedKeys; }
     DccKeys FilledKeys() const { return filledKeys; }
     bool HasWritesSinceFill() const { return writes > writesAtFill; }
-    std::uint64_t Writes() const { return writes; }
-    std::uint64_t WritesAtFill() const { return writesAtFill; }
     bool GuestSnapshotValid() const { return originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); }
     DccKeyProof& KeyProof() const { return keyProof; }
     DccRangeProof& TargetKeyProof() const { return targetKeyProof; }
