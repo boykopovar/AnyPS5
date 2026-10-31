@@ -1,0 +1,5 @@
+# libSceCloudMessaging technical debt
+
+### Unknown function info
+
+- [libSceCloudMessaging inventory exports](../../../core/libs/prx/libSceCloudMessaging/Export.cpp) - all six names and NIDs are present in the complete [PS5 13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscecloudmessaging-1d0153bc23.jsonl), and the pinned [module map](https://github.com/boykopovar/ps5-nid-map/blob/cc1d586fddab576a520f226da6b2632b031e6d09/data/Modules/libSceCloudMessaging.inc) assigns them to the physical `libSceCloudMessaging.sprx` provider. The mangled names establish export identities only; their encoded types are not treated as verified signatures. Parameter lists, return types and behavior are unverified; the parameterless `int` declarations are import-resolution placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No cloud-messaging behavior is implemented.
