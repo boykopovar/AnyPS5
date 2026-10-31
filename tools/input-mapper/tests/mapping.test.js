@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {actions, defaults, mouseValues, padButtons, typesForAction} from '../mapping.js';
 import {exportableKeys, keyNames} from '../keys.js';
 import {captureKey} from '../capture.js';
-import {parseIni, serialize, validate} from '../validation.js';
+import {parseIni, serialize, settings, validate, validateSettings} from '../validation.js';
 
 const binding = (action, type = 'KEY', value = 'F') => ({action, type, value});
 
@@ -30,6 +30,89 @@ test('built-in conflict catalogue agrees with the current native bindings', () =
         native[action].push(value);
     }
     assert.deepEqual(native, defaults);
+});
+
+test('setting names and order agree with the current native parser', () => {
+    const source = readFileSync(new URL('../../../core/libs/prx/libSceVideoOut/src/InputMapping.cpp', import.meta.url), 'utf8');
+    const definitions = [...source.matchAll(/InputSettingName\{"(\w+)", InputSetting::\w+\}/gu)].map(match => match[1]);
+    assert.deepEqual(settings.map(setting => setting.name), definitions);
+    assert.equal(new Set(definitions).size, definitions.length);
+});
+
+test('settings from a documented configuration import and round trip', () => {
+    const source = '\uFEFF# tuned\r\nCross = KEY:Return\r\nLeftStickDeadzone = 12\r\nMouseSensitivity = 2.50\r\nStickModifierScale = 0.4\r\nTriggerRampMs = 250\r\n';
+    const imported = parseIni(source);
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.entries, [binding('Cross', 'KEY', 'Return')]);
+    assert.deepEqual(imported.settings, [
+        {name: 'LeftStickDeadzone', value: '12'},
+        {name: 'MouseSensitivity', value: '2.50'},
+        {name: 'StickModifierScale', value: '0.4'},
+        {name: 'TriggerRampMs', value: '250'}
+    ]);
+    assert.equal(serialize(imported.entries, imported.settings),
+        'Cross = KEY:Return\nLeftStickDeadzone = 12\nMouseSensitivity = 2.50\nStickModifierScale = 0.4\nTriggerRampMs = 250\n');
+    assert.equal(serialize(imported.entries), 'Cross = KEY:Return\n');
+});
+
+test('settings-only files import without bindings', () => {
+    const imported = parseIni('MouseCurve = 1.3\nMouseDecayMs = 33\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.entries, []);
+    assert.equal(serialize(imported.entries, imported.settings), 'MouseCurve = 1.3\nMouseDecayMs = 33\n');
+});
+
+test('setting names canonicalize like the native parser', () => {
+    const imported = parseIni('leftstickdeadzone = 8\nMOUSESENSITIVITY = 1e0\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.settings, [{name: 'LeftStickDeadzone', value: '8'}, {name: 'MouseSensitivity', value: '1e0'}]);
+});
+
+test('a signed zero deadzone imports like the native parser', () => {
+    const imported = parseIni('LeftStickDeadzone = -0\nRightStickDeadzone = -00\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.settings, [{name: 'LeftStickDeadzone', value: '-0'}, {name: 'RightStickDeadzone', value: '-00'}]);
+    assert.equal(serialize(imported.entries, imported.settings), 'LeftStickDeadzone = -0\nRightStickDeadzone = -00\n');
+});
+
+test('out-of-range and malformed setting values report their line', () => {
+    const cases = {
+        'LeftStickDeadzone = 91': 'LeftStickDeadzone must be a whole percentage from 0 to 90.',
+        'LeftStickDeadzone = 12.5': 'LeftStickDeadzone must be a whole percentage from 0 to 90.',
+        'LeftStickDeadzone = +12': 'LeftStickDeadzone must be a whole percentage from 0 to 90.',
+        'LeftStickDeadzone = -1': 'LeftStickDeadzone must be a whole percentage from 0 to 90.',
+        'MouseSensitivity = 0': 'MouseSensitivity must be a number greater than 0 and at most 10.',
+        'MouseSensitivity = 10.1': 'MouseSensitivity must be a number greater than 0 and at most 10.',
+        'MouseSensitivity = abc': 'MouseSensitivity must be a number greater than 0 and at most 10.',
+        'MouseSensitivity = 1e999': 'MouseSensitivity must be a number greater than 0 and at most 10.',
+        'MouseSensitivity = 0x1': 'MouseSensitivity must be a number greater than 0 and at most 10.',
+        'MouseSensitivity = +2.5': 'MouseSensitivity must be a number greater than 0 and at most 10.',
+        'MouseCurve = 0.1': 'MouseCurve must be a number from 0.2 to 5.',
+        'MouseDecayMs = 0': 'MouseDecayMs must be a number from 1 to 1000.',
+        'StickModifierScale = 1.1': 'StickModifierScale must be a number from 0.05 to 1.'
+    };
+    for (const [line, message] of Object.entries(cases)) {
+        const result = parseIni(line);
+        assert.deepEqual(result.errors, [{line: 1, message}], line);
+        assert.deepEqual(result.settings, [], line);
+    }
+    for (const line of ['MouseSensitivity = 10', 'MouseCurve = 1e0', 'MouseDeadzoneOffset = 0', 'KeyboardRampMs = 2000', 'LeftStickDeadzone = 0', 'RightStickDeadzone = 90']) {
+        assert.deepEqual(parseIni(line).errors, [], line);
+    }
+});
+
+test('a setting set more than once is refused like the native parser', () => {
+    const result = parseIni('Cross = KEY:F\nMouseSensitivity = 1\nMouseSensitivity = 2\n');
+    assert.deepEqual(result.errors, [{line: 3, message: 'MouseSensitivity is set more than once.'}]);
+    assert.deepEqual(result.settings, [{name: 'MouseSensitivity', value: '1'}]);
+});
+
+test('serialize refuses invalid settings it is handed', () => {
+    for (const configuration of [[{name: 'MouseSensitivity', value: '0'}], [{name: 'MadeUp', value: '1'}], [{name: 'MouseCurve', value: '9'}], [{name: 'MouseCurve', value: '1'}, {name: 'MouseCurve', value: '2'}], null]) {
+        assert.throws(() => serialize([], configuration));
+        assert.ok(validateSettings(configuration).errors.length >= 1);
+    }
+    assert.deepEqual(validateSettings([{name: 'mousecurve', value: ' 2 '}]), {errors: [], settings: [{name: 'MouseCurve', value: '2'}]});
 });
 
 test('every action serializes with a supported key', () => {

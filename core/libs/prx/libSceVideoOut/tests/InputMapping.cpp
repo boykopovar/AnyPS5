@@ -80,6 +80,9 @@ void settingsParse() {
     bool crossOnF = false;
     for (const auto& binding : configuration.bindings) crossOnF = crossOnF || (binding.control == Pad::InputControl::Button && binding.button == Pad::PadButton::Cross && binding.key == SDL_SCANCODE_F);
     require(crossOnF, "bindings are read alongside settings");
+    useConfig("LeftStickDeadzone = -0\nRightStickDeadzone = -00\n");
+    const auto signedZero = Pad::LoadInputMapping();
+    require(signedZero.settings.leftStickDeadzonePercent == 0 && signedZero.settings.rightStickDeadzonePercent == 0, "a signed zero deadzone reads as 0");
 }
 
 void settingsReject() {

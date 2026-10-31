@@ -1,6 +1,69 @@
 import {actions, canonicalValue, defaults, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {keyNames} from './keys.js';
 
+export const settings = [
+    {name: 'LeftStickDeadzone', kind: 'percent'},
+    {name: 'RightStickDeadzone', kind: 'percent'},
+    {name: 'MouseSensitivity', kind: 'sensitivity'},
+    {name: 'MouseVerticalScale', minimum: 0.1, maximum: 10},
+    {name: 'MouseCurve', minimum: 0.2, maximum: 5},
+    {name: 'MouseDeadzoneOffset', minimum: 0, maximum: 0.9},
+    {name: 'MouseMaxSpeed', minimum: 0.1, maximum: 10},
+    {name: 'MouseSmoothingMs', minimum: 0, maximum: 500},
+    {name: 'MouseDecayMs', minimum: 1, maximum: 1000},
+    {name: 'StickModifierScale', minimum: 0.05, maximum: 1},
+    {name: 'KeyboardRampMs', minimum: 0, maximum: 2000},
+    {name: 'TriggerRampMs', minimum: 0, maximum: 2000}
+];
+
+const numberPattern = /^-?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/u;
+
+export function settingValue(setting, value) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (setting.kind === 'percent') {
+        if (!/^-?\d+$/u.test(text) || Number(text) < 0 || Number(text) > 90) return `${setting.name} must be a whole percentage from 0 to 90.`;
+        return '';
+    }
+    const parsed = numberPattern.test(text) ? Number(text) : undefined;
+    if (setting.kind === 'sensitivity') {
+        if (parsed === undefined || !Number.isFinite(parsed) || !(parsed > 0) || parsed > 10) return `${setting.name} must be a number greater than 0 and at most 10.`;
+        return '';
+    }
+    if (parsed === undefined || !Number.isFinite(parsed) || parsed < setting.minimum || parsed > setting.maximum) {
+        return `${setting.name} must be a number from ${setting.minimum} to ${setting.maximum}.`;
+    }
+    return '';
+}
+
+export function findSetting(name) {
+    const canonical = canonicalValue(name, settings.map(setting => setting.name));
+    return canonical === undefined ? undefined : settings.find(setting => setting.name === canonical);
+}
+
+export function validateSettings(configuration) {
+    const errors = [];
+    const accepted = [];
+    const seen = new Set();
+    if (!Array.isArray(configuration)) return {errors: [{index: 0, message: 'Settings must be a list of names and values.'}], settings: accepted};
+    for (const [index, item] of configuration.entries()) {
+        const setting = findSetting(item?.name);
+        if (setting === undefined) {
+            errors.push({index, message: `${item?.name ?? 'Setting'}: unknown input setting.`});
+            continue;
+        }
+        const failure = settingValue(setting, item?.value);
+        if (seen.has(setting.name)) {
+            errors.push({index, message: `${setting.name} is set more than once.`});
+        } else if (failure) {
+            errors.push({index, message: failure});
+        } else {
+            seen.add(setting.name);
+            accepted.push({name: setting.name, value: item.value.trim()});
+        }
+    }
+    return {errors, settings: accepted};
+}
+
 export function validate(entries) {
     const errors = [];
     const warnings = [];
@@ -49,14 +112,20 @@ export function validate(entries) {
     return {errors, warnings, bindings};
 }
 
-export function serialize(entries) {
+export function serialize(entries, configuration = []) {
     const result = validate(entries);
     if (result.errors.length) throw new Error(result.errors.map(error => error.message).join('\n'));
+    const checked = validateSettings(configuration);
+    if (checked.errors.length) throw new Error(checked.errors.map(error => error.message).join('\n'));
     const lines = [];
     for (const action of actions) {
         for (const binding of result.bindings.filter(binding => binding.action === action)) {
             lines.push(`${action} = ${binding.type}:${binding.value}`);
         }
+    }
+    for (const setting of settings) {
+        const found = checked.settings.find(item => item.name === setting.name);
+        if (found) lines.push(`${found.name} = ${found.value}`);
     }
     return lines.length ? `${lines.join('\n')}\n` : '';
 }
@@ -64,6 +133,7 @@ export function serialize(entries) {
 export function parseIni(text) {
     if (typeof text !== 'string') throw new TypeError('INI content must be text.');
     const entries = [];
+    const configuration = [];
     const errors = [];
     const warnings = [];
     const identities = new Set();
@@ -72,6 +142,17 @@ export function parseIni(text) {
         if (!content) return;
         const separator = content.indexOf('=');
         const source = content.slice(separator + 1);
+        const setting = findSetting(content.slice(0, separator));
+        if (separator !== -1 && setting !== undefined) {
+            if (configuration.some(item => item.name === setting.name)) {
+                errors.push({line: index + 1, message: `${setting.name} is set more than once.`});
+            } else {
+                const failure = settingValue(setting, source);
+                if (failure) errors.push({line: index + 1, message: failure});
+                else configuration.push({name: setting.name, value: source.trim()});
+            }
+            return;
+        }
         const colon = source.indexOf(':');
         if (separator === -1 || colon === -1) {
             errors.push({line: index + 1, message: 'Expected Action = TYPE:VALUE.'});
@@ -89,5 +170,5 @@ export function parseIni(text) {
         else entries.push(binding);
         identities.add(identity);
     });
-    return {entries, errors, warnings};
+    return {entries, settings: configuration, errors, warnings};
 }
