@@ -25,6 +25,7 @@
 #include <fstream>
 #endif
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -407,7 +408,11 @@ int APS5_VABI getifaddrs_nid_postfix(GuestInterfaceAddress** list) {
         std::vector<Entry> entries;
         if (HostEntries(entries) != 0) return -1;
         if (entries.empty()) {
-            *list = nullptr;
+            GuestInterfaceAddress* nullItems = nullptr;
+            if (!GuestCopyOut_nid_no_patch(list, &nullItems, sizeof(nullItems))) {
+                *__error_nid_postfix() = 14;
+                return -1;
+            }
             return 0;
         }
         std::size_t size = entries.size() * sizeof(GuestInterfaceAddress);
@@ -437,7 +442,11 @@ int APS5_VABI getifaddrs_nid_postfix(GuestInterfaceAddress** list) {
             item.destination = entry.destination.empty() ? nullptr : place(entry.destination.data(), entry.destination.size());
             item.data = entry.data.empty() ? nullptr : place(entry.data.data(), entry.data.size());
         }
-        *list = items;
+        if (!GuestCopyOut_nid_no_patch(list, &items, sizeof(items))) {
+            ApplicationHeapFree_nid_no_patch(block);
+            *__error_nid_postfix() = 14;
+            return -1;
+        }
         return 0;
     } catch (const std::bad_alloc&) { *__error_nid_postfix() = 12; return -1; }
 }
