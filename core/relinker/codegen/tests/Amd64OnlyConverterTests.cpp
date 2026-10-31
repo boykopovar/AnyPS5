@@ -842,6 +842,29 @@ void wideStoreSplit() {
     const Bytes absolute32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F};
     const auto absolute32Split = Codegen::DecodeVexWideStore(absolute32.data(), absolute32.size());
     require(absolute32Split && absolute32Split->Low.Bytes == Bytes{0x67, 0xC5, 0xF8, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F} && absolute32Split->High.Bytes == Bytes{0x67, 0xC4, 0xE3, 0x7D, 0x19, 0x04, 0x25, 0x08, 0x00, 0x00, 0x80, 0x01}, "A 32-bit absolute 256-bit store was not split across the signed displacement boundary");
+    const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const auto rosetta32 = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    for (const auto& dynamic32 : {
+             Bytes{0x67, 0xC5, 0xFE, 0x7F, 0x01},
+             Bytes{0x67, 0xC5, 0xFC, 0x11, 0x41, 0xF8},
+             Bytes{0x67, 0xC5, 0xFD, 0x11, 0x81, 0x00, 0x01, 0x00, 0x00},
+             Bytes{0x67, 0xC5, 0xFE, 0x7F, 0x81, 0x00, 0xFF, 0xFF, 0xFF},
+             Bytes{0x67, 0xC5, 0xFC, 0x11, 0x04, 0x0D, 0x00, 0x00, 0x00, 0x00},
+             Bytes{0x67, 0xC5, 0xFE, 0x7F, 0x04, 0x89},
+             Bytes{0x67, 0xC4, 0xA1, 0x7C, 0x11, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00},
+             Bytes{0x67, 0xC4, 0xC1, 0x7C, 0x11, 0x45, 0x00}}) {
+        requireFailure([&] { (void)Codegen::DecodeVexWideStore(dynamic32.data(), dynamic32.size()); }, "A runtime 32-bit address can wrap the upper half despite a small displacement");
+        requireFailure([&] { (void)rosetta32->Match(dynamic32.data(), dynamic32.size()); }, "Rosetta conversion accepted an unsafe 32-bit addressed wide-store split");
+        require(!intel->Match(dynamic32.data(), dynamic32.size()), "Intel conversion changed a native 32-bit addressed wide store");
+    }
+    const Bytes lastAbsolute32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0xEF, 0xFF, 0xFF, 0xFF};
+    const auto lastAbsolute32Split = Codegen::DecodeVexWideStore(lastAbsolute32.data(), lastAbsolute32.size());
+    require(lastAbsolute32Split && lastAbsolute32Split->High.Bytes == Bytes{0x67, 0xC4, 0xE3, 0x7D, 0x19, 0x04, 0x25, 0xFF, 0xFF, 0xFF, 0xFF, 0x01}, "The last representable 32-bit absolute upper-half address was rejected");
+    const Bytes firstWrappedAbsolute32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0xF0, 0xFF, 0xFF, 0xFF};
+    requireFailure([&] { (void)Codegen::DecodeVexWideStore(firstWrappedAbsolute32.data(), firstWrappedAbsolute32.size()); }, "A 32-bit absolute upper-half address wrapped to zero");
+    const Bytes eip = {0x67, 0xC5, 0xFC, 0x11, 0x05, 0x00, 0x01, 0x00, 0x00};
+    const auto eipSplit = Codegen::DecodeVexWideStore(eip.data(), eip.size());
+    require(eipSplit && eipSplit->Low.RipTarget == 9 + 0x100 && eipSplit->High.RipTarget == 9 + 0x110, "EIP-relative wide-store target metadata changed");
     const Bytes disp32 = {0x67, 0xC5, 0xFC, 0x11, 0x80, 0xF8, 0xFF, 0xFF, 0x7F};
     requireFailure([&] { (void)Codegen::DecodeVexWideStore(disp32.data(), disp32.size()); }, "A 32-bit base-relative 256-bit store whose upper half can wrap was split");
     const Bytes indexed32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x0D, 0xF8, 0xFF, 0xFF, 0x7F};
