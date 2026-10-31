@@ -157,6 +157,25 @@ def macro_definitions(texts):
     return macros
 
 
+def record_provided(provided, name, origin=None):
+    base, postfix = base_of(name)
+    prefix = f"{origin} " if origin else ""
+    if postfix == "_nid_no_patch_cut":
+        provided.setdefault(base, f"{prefix}literally as {base} under {name}")
+        return
+    if postfix == "_nid_no_patch":
+        provided.setdefault(name, f"{prefix}literally as {name}")
+        return
+    if postfix is not None and postfix != "_nid_postfix":
+        return
+    base = strip_disambig(base)
+    nid = nid_names.compute_nid(base)
+    if postfix is None:
+        provided.setdefault(nid, f"{prefix}under its own name {name}")
+    else:
+        provided.setdefault(nid, f"{prefix}under {name} for {base}")
+
+
 def collect_provided(module_dir):
     texts = source_texts(module_dir)
     macros = macro_definitions(texts)
@@ -166,25 +185,9 @@ def collect_provided(module_dir):
             if line.lstrip().startswith("#"):
                 continue
             for match in VABI.finditer(line):
-                name = match.group(1)
-                base, postfix = base_of(name)
-                if postfix == "_nid_no_patch_cut":
-                    if base not in provided:
-                        provided[base] = f"literally as {base} under {name}"
-                    continue
-                if postfix == "_nid_no_patch":
-                    if name not in provided:
-                        provided[name] = f"literally as {name}"
-                    continue
-                if postfix is not None and postfix != "_nid_postfix":
-                    continue
-                base = strip_disambig(base)
-                nid = nid_names.compute_nid(base)
-                if nid not in provided:
-                    if postfix is None:
-                        provided[nid] = f"under its own name {name}"
-                    else:
-                        provided[nid] = f"under {name} for {base}"
+                record_provided(provided, match.group(1))
+        for name in nid_names.source_assembly_definitions(text):
+            record_provided(provided, name, "defined in assembly")
         for nid, helper in nid_names.source_aliases(text):
             if nid not in provided:
                 provided[nid] = f"bound with APS5_EXPORT as {helper}"

@@ -68,17 +68,21 @@ def nid_of(name):
     return nid_names.compute_nid(name)
 
 
-def provides(name, nid):
+def provides_with(source, nid):
     with tempfile.TemporaryDirectory() as directory:
         root, prx, tables = tree(directory)
-        write_module(prx, MODULE, {"Export.cpp": f"int APS5_VABI {name}(void) {{ return 0; }}\n"})
+        write_module(prx, MODULE, {"Export.cpp": source})
         write_table(tables, MODULE, [nid])
         db = write_db(directory, [(nid, "sceExamplePlaceholder")])
         out = Path(directory) / "out.txt"
         code, _ = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables), "--db", str(db), "--out", str(out)])
         if code != 0:
-            raise AssertionError(f"export_gap failed for {name}")
+            raise AssertionError(f"export_gap failed for {nid}")
         return out.read_text(encoding="utf-8") == ""
+
+
+def provides(name, nid):
+    return provides_with(f"int APS5_VABI {name}(void) {{ return 0; }}\n", nid)
 
 
 class ExportGapTests(unittest.TestCase):
@@ -111,6 +115,22 @@ class ExportGapTests(unittest.TestCase):
             self.assertFalse([line for line in report.splitlines() if line.startswith("missing ")])
             self.assertIn("already provided", report)
             self.assertIn("sceExamplePostfixBase_nid_postfix", report)
+
+    def test_assembly_postfix_name_counts_as_provided(self):
+        name = "sceExampleAsm_nid_postfix"
+        source = f'asm(APS5_ASM_FUNCTION("{name}") "ret");\n'
+        self.assertTrue(provides_with(source, nid_of("sceExampleAsm")))
+
+    def test_assembly_no_patch_name_does_not_provide_hashed_nid(self):
+        name = "sceExampleAsm_nid_no_patch"
+        source = f'asm(APS5_ASM_FUNCTION("{name}") "ret");\n'
+        self.assertFalse(provides_with(source, nid_of("sceExampleAsm")))
+
+    def test_assembly_no_patch_name_with_export_alias_counts_as_provided(self):
+        name = "sceExampleAsm_nid_no_patch"
+        nid = nid_of("sceExampleAsm")
+        source = f'asm(APS5_ASM_FUNCTION("{name}") "ret");\nAPS5_EXPORT("{nid}", {name});\n'
+        self.assertTrue(provides_with(source, nid))
 
     def test_no_patch_name_does_not_provide_hashed_nid(self):
         self.assertFalse(provides("sceExampleNoPatchBase_nid_no_patch", "T2IWNGg3cnI"))
