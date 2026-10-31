@@ -34,6 +34,8 @@ int APS5_VABI pthread_spin_init_nid_postfix(PthreadSpinlockPrivate** lock, int p
 
 int APS5_VABI pthread_spin_destroy_nid_postfix(PthreadSpinlockPrivate** lock) {
     if (!lock || !*lock) return PosixThread::GUEST_EINVAL;
+    if ((*lock)->owner.load(std::memory_order_relaxed) != std::thread::id{})
+        return GUEST_EBUSY;
     delete *lock;
     *lock = nullptr;
     return 0;

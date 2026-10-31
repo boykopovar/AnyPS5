@@ -113,6 +113,33 @@ static void CheckLoops(PthreadMutexattr* attr) {
     }
 }
 
+static void CheckNullPointerValidation() {
+    Require(pthread_mutex_init_nid_postfix(nullptr, nullptr) == POSIX_EINVAL);
+    Require(pthread_mutex_destroy_nid_postfix(nullptr) == POSIX_EINVAL);
+    Require(pthread_mutex_lock_nid_postfix(nullptr) == POSIX_EINVAL);
+    Require(pthread_mutex_trylock_nid_postfix(nullptr) == POSIX_EINVAL);
+    Require(pthread_mutex_unlock_nid_postfix(nullptr) == POSIX_EINVAL);
+    const KernelTimespec soon{100, 0};
+    Require(pthread_mutex_timedlock_nid_postfix(nullptr, &soon) == POSIX_EINVAL);
+    Require(pthread_mutex_timedlock_nid_postfix(nullptr, nullptr) == POSIX_EINVAL);
+    Require(pthread_mutex_reltimedlock_np_nid_postfix(nullptr, 1000) == POSIX_EINVAL);
+    int count = -1;
+    Require(pthread_mutex_getspinloops_np_nid_postfix(nullptr, &count) == POSIX_EINVAL);
+    Require(pthread_mutex_setspinloops_np_nid_postfix(nullptr, 10) == POSIX_EINVAL);
+    Require(pthread_mutex_getyieldloops_np_nid_postfix(nullptr, &count) == POSIX_EINVAL);
+    Require(pthread_mutex_setyieldloops_np_nid_postfix(nullptr, 10) == POSIX_EINVAL);
+
+    PthreadMutex mutex = nullptr;
+    Require(pthread_mutex_init_nid_postfix(&mutex, nullptr) == 0);
+    Require(pthread_mutex_getspinloops_np_nid_postfix(&mutex, nullptr) == POSIX_EINVAL);
+    Require(pthread_mutex_getyieldloops_np_nid_postfix(&mutex, nullptr) == POSIX_EINVAL);
+    Require(pthread_mutex_destroy_nid_postfix(&mutex) == 0);
+
+    Require(pthread_mutexattr_init_nid_postfix(nullptr) == POSIX_EINVAL);
+    Require(pthread_mutexattr_destroy_nid_postfix(nullptr) == POSIX_EINVAL);
+    Require(pthread_mutexattr_settype_nid_postfix(nullptr, 1) == POSIX_EINVAL);
+}
+
 int main() {
     PthreadMutexattr attr = nullptr;
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);
@@ -142,4 +169,5 @@ int main() {
     CheckLoops(&attr);
     CheckOwnershipAndRelativeLock();
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    CheckNullPointerValidation();
 }

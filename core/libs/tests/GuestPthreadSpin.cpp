@@ -62,6 +62,7 @@ static void SingleThread(int pshared) {
     Require(pthread_spin_unlock_nid_postfix(&lock) == GUEST_EPERM);
     Require(pthread_spin_lock_nid_postfix(&lock) == 0);
     Require(pthread_spin_trylock_nid_postfix(&lock) == GUEST_EBUSY);
+    Require(pthread_spin_destroy_nid_postfix(&lock) == GUEST_EBUSY);
     bool threw = false;
     try {
         pthread_spin_lock_nid_postfix(&lock);
@@ -88,6 +89,7 @@ static void HeldByAnotherThread() {
     Require(scePthreadJoin(thread, nullptr) == 0);
     Require(shared.trylock == GUEST_EBUSY);
     Require(shared.unlock == GUEST_EPERM);
+    Require(pthread_spin_destroy_nid_postfix(&shared.lock) == GUEST_EBUSY);
     Require(pthread_spin_unlock_nid_postfix(&shared.lock) == 0);
     Require(pthread_spin_destroy_nid_postfix(&shared.lock) == 0);
 }

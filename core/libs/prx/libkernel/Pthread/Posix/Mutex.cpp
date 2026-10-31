@@ -25,15 +25,16 @@ bool _isStaticInitializer(PthreadMutex mutex) {
     return value == 0 || value == POSIX_ADAPTIVE_MUTEX_INITIALIZER;
 }
 
-void _initializeStatic(PthreadMutex* mutex, const char* funcName) {
-    if (!mutex) throw std::runtime_error(std::string(funcName) + ": null mutex");
+static bool _initializeStatic(PthreadMutex* mutex) {
+    if (!mutex) return false;
     std::atomic_ref<PthreadMutex> slot(*mutex);
     PthreadMutex current = slot.load(std::memory_order_acquire);
-    if (!_isStaticInitializer(current)) return;
+    if (!_isStaticInitializer(current)) return true;
     auto* created = new PthreadMutexPrivate();
     created->SetType(reinterpret_cast<std::uintptr_t>(current) == POSIX_ADAPTIVE_MUTEX_INITIALIZER ? MutexType::Adaptive : MutexType::ErrorCheck);
     if (!slot.compare_exchange_strong(current, created, std::memory_order_acq_rel, std::memory_order_acquire))
         delete created;
+    return true;
 }
 
 }
@@ -41,7 +42,7 @@ void _initializeStatic(PthreadMutex* mutex, const char* funcName) {
 extern "C" {
 
 int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex) {
-    if (!mutex) throw std::runtime_error("pthread_mutex_destroy: null mutex");
+    if (!mutex) return POSIX_EINVAL;
     if (_isStaticInitializer(*mutex)) {
         *mutex = nullptr;
         return 0;
@@ -50,19 +51,21 @@ int APS5_VABI pthread_mutex_destroy_nid_postfix(PthreadMutex* mutex) {
 }
 
 int APS5_VABI pthread_mutex_init_nid_postfix(PthreadMutex* mutex, const PthreadMutexattr* attr) {
+    if (!mutex) return POSIX_EINVAL;
     const int result = scePthreadMutexInit(mutex, attr, nullptr);
     if (result == 0 && (!attr || !*attr)) (*mutex)->_type = MutexType::ErrorCheck;
     return PosixThread::ToErrno(result);
 }
 
 int APS5_VABI pthread_mutex_lock_nid_postfix(PthreadMutex* mutex) {
-    _initializeStatic(mutex, __func__);
+    if (!_initializeStatic(mutex)) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexLock(mutex));
 }
 
 int APS5_VABI pthread_mutex_timedlock_nid_postfix(PthreadMutex* mutex, const KernelTimespec* abstime) {
+    if (!mutex) return POSIX_EINVAL;
     if (!abstime) return pthread_mutex_lock_nid_postfix(mutex);
-    _initializeStatic(mutex, __func__);
+    if (!_initializeStatic(mutex)) return POSIX_EINVAL;
     if (scePthreadMutexTrylock(mutex) == 0) return 0;
     KernelUseconds usec = 0;
     if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec)) return POSIX_EINVAL;
@@ -70,17 +73,17 @@ int APS5_VABI pthread_mutex_timedlock_nid_postfix(PthreadMutex* mutex, const Ker
 }
 
 int APS5_VABI pthread_mutex_trylock_nid_postfix(PthreadMutex* mutex) {
-    _initializeStatic(mutex, __func__);
+    if (!_initializeStatic(mutex)) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexTrylock(mutex));
 }
 
 int APS5_VABI pthread_mutex_unlock_nid_postfix(PthreadMutex* mutex) {
-    _initializeStatic(mutex, __func__);
+    if (!_initializeStatic(mutex)) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexUnlock(mutex));
 }
 
 int APS5_VABI pthread_mutex_reltimedlock_np_nid_postfix(PthreadMutex* mutex, KernelUseconds usec) {
-    _initializeStatic(mutex, __func__);
+    if (!_initializeStatic(mutex)) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexTimedlock(mutex, usec));
 }
 
@@ -89,26 +92,32 @@ int APS5_VABI pthread_mutex_isowned_np_nid_postfix(PthreadMutex* mutex) {
 }
 
 int APS5_VABI pthread_mutex_getspinloops_np_nid_postfix(PthreadMutex* mutex, int* count) {
+    if (!mutex || !count) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexGetspinloops(mutex, count));
 }
 
 int APS5_VABI pthread_mutex_setspinloops_np_nid_postfix(PthreadMutex* mutex, int count) {
+    if (!mutex) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexSetspinloops(mutex, count));
 }
 
 int APS5_VABI pthread_mutex_getyieldloops_np_nid_postfix(PthreadMutex* mutex, int* count) {
+    if (!mutex || !count) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexGetyieldloops(mutex, count));
 }
 
 int APS5_VABI pthread_mutex_setyieldloops_np_nid_postfix(PthreadMutex* mutex, int count) {
+    if (!mutex) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexSetyieldloops(mutex, count));
 }
 
 int APS5_VABI pthread_mutexattr_destroy_nid_postfix(PthreadMutexattr* attr) {
+    if (!attr) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexattrDestroy(attr));
 }
 
 int APS5_VABI pthread_mutexattr_init_nid_postfix(PthreadMutexattr* attr) {
+    if (!attr) return POSIX_EINVAL;
     const int result = scePthreadMutexattrInit(attr);
     if (result == 0) (*attr)->type = MutexType::ErrorCheck;
     return PosixThread::ToErrno(result);
@@ -159,6 +168,7 @@ int APS5_VABI pthread_mutexattr_getprioceiling_nid_postfix(const PthreadMutexatt
 }
 
 int APS5_VABI pthread_mutexattr_settype_nid_postfix(PthreadMutexattr* attr, int type) {
+    if (!attr || !*attr) return POSIX_EINVAL;
     return PosixThread::ToErrno(scePthreadMutexattrSettype(attr, type));
 }
 
