@@ -46,6 +46,7 @@
 - [sceAudioOutMasteringTerm](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) (libSceAudioOut) - returns 0 without doing anything: there is no mastering stage to tear down, and `sceAudioOutMasteringInit` keeps no state. Whether the console fails a Term without a matching Init is unknown
 - [sceAudioOutSetMainOutput](../../../core/libs/prx/libSceAudioOut/src/AudioOut.cpp) (libSceAudioOut) - returns 0 and does nothing, as the console function does on firmware 12.70: [PS5-Audio-Passthrough-Research](https://github.com/sainsaji/PS5-Audio-Passthrough-Research/blob/cf3c921d79bf00db4847f31b68a7bd95a8037cd7/docs/FINDINGS.md#L25) reads that export as `xor eax,eax; ret`. The export reads no argument, so its parameters stay unknown; other firmware versions are unverified
 - [sceAudioOut2ContextSetAttributes](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) - for a valid context and attribute list, returns 0 and ignores every attribute (an invalid context gives `INVALID_HANDLE`, a null list with a nonzero count `INVALID_ARGUMENT`); what a context attribute changes on a console is unknown. PPSA25286 01.000.568 sets attribute 2 to a 4-byte 1 at start-up, and PPSA02225 passes two attributes from an object at its single call.
+- [sceAudioOutSetSystemDebugState](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - returns 0 without applying a system debug mix state, parallel to [sceAudioOut2SetSystemDebugState](../../../core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp); the host has no system mix to apply it to. The parameterless pending export is not measured on a console
 
 ### Unknown function info
 
@@ -96,7 +97,6 @@
 - [sceAudioOut2InitializeEx and sceAudioOut2LoInit repeats](../../../core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp) (libSceAudioOut) - a repeated `sceAudioOut2InitializeEx` or `sceAudioOut2LoInit` returns 0, and either one after `sceAudioOut2Initialize` or `sceAudioOutInit` returns 0 too; the console was not measured for these two. On PS5 firmware 13.60 a repeated `sceAudioOut2Initialize` returns `0x80268004` and a repeated `sceAudioOutInit` `0x8026000e`, and `sceAudioOutInit` after `sceAudioOut2Initialize` still returns 0, which AnyPS5 follows.
 - [sceAudioOut2UserCreateEx](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutOpenEx](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
-- [sceAudioOutSetSystemDebugState](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutGetHandleStatusInfo](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutGetSimulatedHandleStatusInfo2](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
 - [sceAudioOutChangeAppModuleState](../../../core/libs/prx/libSceAudioOut/src/Unimplemented.cpp) (libSceAudioOut) - unknown signature
