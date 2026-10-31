@@ -4125,8 +4125,7 @@ int main(int argc, char** argv) {
     Require(madvise_nid_postfix(memory, page, 4) == 0);
     Require(mincore_nid_postfix(memory, page, mincoreVec) == -1 && *__error_nid_postfix() == 12);
     *__error_nid_postfix() = 0;
-    Require(mprotect_nid_postfix(memory, page, 1) == -1 && *__error_nid_postfix() == 22);
-    *__error_nid_postfix() = 0;
+    Require(mprotect_nid_postfix(memory, page, 1) == 0 && *__error_nid_postfix() == 0);
     Require(mprotect_nid_postfix(memory, std::numeric_limits<std::size_t>::max(), 1) == -1 &&
             *__error_nid_postfix() == 22);
     for (int protection : {0, 1, 3, 5}) {

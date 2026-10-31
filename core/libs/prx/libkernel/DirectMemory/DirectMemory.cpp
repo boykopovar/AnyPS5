@@ -1344,37 +1344,41 @@ static bool IsGuestModuleImage(const void* base) {
     return false;
 }
 #else
-struct GuestImageSearch {
-    std::uintptr_t address = 0;
+struct GuestImageOverlap {
     std::uintptr_t base = 0;
-    std::uintptr_t pageSize = 0;
     bool guestModule = false;
-    bool first = true;
-    bool main = false;
-    bool found = false;
+    bool containsStart = false;
 };
 
-static int FindImageContaining(dl_phdr_info* image, std::size_t, void* data) {
+struct GuestImageSearch {
+    std::uintptr_t start = 0;
+    std::uintptr_t end = 0;
+    std::uintptr_t pageSize = 0;
+    bool first = true;
+    std::vector<GuestImageOverlap> images;
+};
+
+static int FindImagesOverlapping(dl_phdr_info* image, std::size_t, void* data) {
     auto& search = *static_cast<GuestImageSearch*>(data);
     const bool main = search.first;
     search.first = false;
+    GuestImageOverlap overlap{.base = image->dlpi_addr, .guestModule = image->dlpi_name != nullptr && std::string_view(image->dlpi_name).ends_with(".guest.prx")};
+    bool overlaps = false;
     for (int index = 0; index < image->dlpi_phnum; ++index) {
         const auto& header = image->dlpi_phdr[index];
         if (header.p_type != PT_LOAD) continue;
         const auto start = (image->dlpi_addr + header.p_vaddr) & ~(search.pageSize - 1);
         const auto end = (image->dlpi_addr + header.p_vaddr + header.p_memsz + search.pageSize - 1) & ~(search.pageSize - 1);
-        if (search.address < start || search.address >= end) continue;
-        search.base = image->dlpi_addr;
-        search.guestModule = image->dlpi_name != nullptr && std::string_view(image->dlpi_name).ends_with(".guest.prx");
-        search.main = main;
-        search.found = true;
-        return 1;
+        if (search.end <= start || search.start >= end) continue;
+        overlaps = true;
+        if (search.start >= start) overlap.containsStart = true;
     }
+    if (overlaps && !main) search.images.push_back(overlap);
     return 0;
 }
 #endif
 
-int DoMprotect(const void* addr, size_t len, int prot) {
+int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) {
     Trace("protect %p+0x%zx prot=0x%x", addr, len, prot);
     const auto address = reinterpret_cast<std::uintptr_t>(addr);
     constexpr auto pageMask = static_cast<std::uintptr_t>(PS5_PAGE_SIZE - 1);
@@ -1437,33 +1441,31 @@ int DoMprotect(const void* addr, size_t len, int prot) {
     }
     GuestAllocations::Mutation mutation;
 #ifdef _WIN32
-    MEMORY_BASIC_INFORMATION memory{};
-    if (VirtualQuery(pointer, &memory, sizeof(memory)) != sizeof(memory)) throw std::runtime_error("Cannot query guest memory protection range");
-    if (memory.Type == MEM_IMAGE) {
-        if (memory.AllocationBase == GetModuleHandleW(nullptr)) mutation.RegisterMainImage();
-        else if (IsGuestModuleImage(memory.AllocationBase)) mutation.RegisterImage(memory.AllocationBase);
-        else throw std::invalid_argument("Memory protection of a foreign image is not supported");
-    }
     for (auto cursor = first; cursor < end;) {
         MEMORY_BASIC_INFORMATION view{};
         if (VirtualQuery(reinterpret_cast<const void*>(cursor), &view, sizeof(view)) != sizeof(view)) throw std::runtime_error("Cannot query guest memory protection range");
+        if (view.Type == MEM_IMAGE) {
+            if (view.AllocationBase == GetModuleHandleW(nullptr)) mutation.RegisterMainImage();
+            else if (IsGuestModuleImage(view.AllocationBase)) mutation.RegisterImage(view.AllocationBase);
+            else if (cursor == first) throw std::invalid_argument("Memory protection of a foreign image is not supported");
+        }
         if (view.Type == MEM_MAPPED && (nativeProtection & ~PosixRightsFromWin(view.AllocationProtect)) != 0)
             throw std::system_error(EACCES, std::generic_category(), "mprotect above the maximum protection of a mapped view");
         cursor = reinterpret_cast<std::uintptr_t>(view.BaseAddress) + view.RegionSize;
     }
 #else
     mutation.RegisterMainImage();
-    GuestImageSearch image{.address = address, .pageSize = static_cast<std::uintptr_t>(::sysconf(_SC_PAGESIZE))};
-    dl_iterate_phdr(FindImageContaining, &image);
-    if (image.found && !image.main) {
-        if (!image.guestModule) throw std::invalid_argument("Memory protection of a foreign image is not supported");
-        mutation.RegisterImage(reinterpret_cast<const void*>(image.base));
+    GuestImageSearch search{.start = first, .end = end, .pageSize = static_cast<std::uintptr_t>(::sysconf(_SC_PAGESIZE))};
+    dl_iterate_phdr(FindImagesOverlapping, &search);
+    for (const auto& image : search.images) {
+        if (image.guestModule) mutation.RegisterImage(reinterpret_cast<const void*>(image.base));
+        else if (image.containsStart) throw std::invalid_argument("Memory protection of a foreign image is not supported");
     }
     mutation.TrimToRegistered(PS5_PAGE_SIZE, pointer, bytes);
 #endif
     std::vector<std::pair<const void*, std::size_t>> spans;
     mutation.ForRegistered(pointer, bytes, [&](const void* span, std::size_t spanBytes) { spans.emplace_back(span, spanBytes); });
-    if (spans.empty() || spans.front().first != pointer) return SCE_KERNEL_ERROR_EINVAL;
+    if (requireMappedStart && (spans.empty() || spans.front().first != pointer)) return SCE_KERNEL_ERROR_EINVAL;
     for (const auto& [span, spanBytes] : spans) mutation.RequireUnpinned(span, spanBytes);
     for (const auto& [span, spanBytes] : spans) {
         mutation.Protect(span, spanBytes, (prot & 3) != 0, (prot & 2) != 0, (prot & GuestProtGpuReadWrite) != 0, [&] {
@@ -1479,8 +1481,8 @@ int DoMprotect(const void* addr, size_t len, int prot) {
     return 0;
 }
 
-int DoMtypeprotect(const void* addr, size_t len, int type, int prot) {
-    const int result = DoMprotect(addr, len, prot);
+int DoMtypeprotect(const void* addr, size_t len, int type, int prot, bool requireMappedStart) {
+    const int result = DoMprotect(addr, len, prot, requireMappedStart);
     if (result != 0) return result;
     const auto address = reinterpret_cast<std::uintptr_t>(addr);
     constexpr auto pageMask = static_cast<std::uintptr_t>(PS5_PAGE_SIZE - 1);
