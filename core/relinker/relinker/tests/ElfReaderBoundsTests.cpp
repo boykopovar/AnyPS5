@@ -208,12 +208,12 @@ int main() {
             }
         }},
         {"section name table index", [] {
-            for (const std::uint16_t index : {std::uint16_t{3}, std::uint16_t{4}, std::numeric_limits<std::uint16_t>::max()}) {
+            for (const std::uint16_t index : {std::uint16_t{3}, std::uint16_t{4}, std::uint16_t{0xff00}}) {
                 auto bytes = Fixture();
                 Write<std::uint16_t>(bytes, 62, index);
                 RejectSections(std::move(bytes), "Section header string table index out of bounds", 0x3e);
             }
-            for (const std::uint16_t index : {std::uint16_t{1}, std::numeric_limits<std::uint16_t>::max()}) {
+            for (const std::uint16_t index : {std::uint16_t{1}, std::uint16_t{0xff00}}) {
                 auto zeroSections = Fixture();
                 Write<std::uint16_t>(zeroSections, 60, 0);
                 Write<std::uint16_t>(zeroSections, 62, index);
