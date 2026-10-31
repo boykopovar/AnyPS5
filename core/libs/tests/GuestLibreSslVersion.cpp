@@ -14,5 +14,7 @@ static void Require(bool condition, std::source_location location = std::source_
 int main() {
     Require(SSLeay_nid_postfix() == std::uint64_t{0x20000000});
     Require(SSLeay_nid_postfix() == SSLeay_nid_postfix());
+    Require(SSL_library_init_nid_postfix() == 1);
+    Require(SSL_library_init_nid_postfix() == 1);
     return 0;
 }
