@@ -263,8 +263,8 @@ class ProgressHistoryTests(unittest.TestCase):
                     for i in range(count)]
         short, medium, long = (progress_history.chart(series(count)) for count in (20, 100, 400))
         week = progress_history.chart(series(10))
-        self.assertEqual((week.count('class="x"'), week.count("<circle")), (10, 20))
-        self.assertEqual((short.count('class="x"'), short.count("<circle")), (3, 40))
+        self.assertEqual((week.count('class="x"'), week.count("<circle")), (10, 30))
+        self.assertEqual((short.count('class="x"'), short.count("<circle")), (3, 60))
         self.assertEqual((medium.count('class="x"'), medium.count("<circle")), (14, 0))
         self.assertEqual((long.count('class="x"'), long.count("<circle")), (14, 0))
 
@@ -299,11 +299,13 @@ class ProgressHistoryTests(unittest.TestCase):
         self.assertIn("Observed stubs 2", svg)
         self.assertIn("Unobserved stubs 7", svg)
         self.assertIn("Observed stubs 2, unobserved stubs 7\nCommit 0123456789", svg)
-        self.assertEqual(svg.count("Unobserved stubs"), 1)
+        self.assertEqual(svg.count("\u25cf</tspan> Unobserved stubs 7"), 1)
+        self.assertIn("Unobserved stubs 7 of 12 declared functions", svg)
+        self.assertIn("Unobserved library stubs: no measured use is known", svg)
         line = re.search(rf'<polyline points="([^"]+)" fill="none" stroke="{progress.UNOBSERVED_COLOR}"', svg).group(1)
         first_y, second_y = (float(point.split(",")[1]) for point in line.split())
         self.assertGreater(first_y, second_y)
-        self.assertLess(second_y, 36 + 150 - 1)
+        self.assertLess(second_y, 2 * (34 + 150 + 16) + 34 + 150 - 1)
 
     def test_old_points_without_the_split_still_chart_with_no_unobserved_stubs(self):
         points = [{"date": "2026-01-01", "libraries": {"done": 1, "total": 2, "percent": 50.0}, "shaders": {"done": 1, "total": 1, "percent": 100.0}}]
