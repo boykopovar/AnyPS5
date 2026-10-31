@@ -226,8 +226,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         const auto idleEpochAtWait = idleEpoch.load(std::memory_order_acquire);
                         changed.wait(lock, [&] { return ready() || (id == 0 && (idleEpoch.load(std::memory_order_acquire) != idleEpochAtWait || completionsPending())); });
                         if (id == 0) queue0Dormant.store(false, std::memory_order_relaxed);
-                        if (id == 0 && !ready() && (idleEpoch.load(std::memory_order_acquire) != idleEpochAtWait || completionsPending())) continue;
-                        break;
+                        continue;
                     }
                     if (poll(ready)) break;
                     lock.unlock();
