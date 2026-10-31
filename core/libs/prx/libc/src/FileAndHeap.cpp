@@ -802,6 +802,42 @@ void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t co
     return nullptr;
 }
 
+void* APS5_VABI lfind_nid_postfix(const void* key, const void* base, size_t* count,
+    size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
+    if (!count) throw std::invalid_argument("lfind: null element count");
+    if (*count == 0) return nullptr;
+    if (!key || !base || !compare || size == 0)
+        throw std::invalid_argument("lfind: invalid arguments");
+    if (*count > std::numeric_limits<size_t>::max() / size)
+        throw std::overflow_error("lfind: array size overflow");
+    const auto* bytes = static_cast<const unsigned char*>(base);
+    for (size_t index = 0; index < *count; ++index) {
+        const auto* element = bytes + index * size;
+        if (compare(key, element) == 0) return const_cast<unsigned char*>(element);
+    }
+    return nullptr;
+}
+
+void* APS5_VABI lsearch_nid_postfix(const void* key, void* base, size_t* count,
+    size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
+    if (!count) throw std::invalid_argument("lsearch: null element count");
+    if (!key || !base || !compare || size == 0)
+        throw std::invalid_argument("lsearch: invalid arguments");
+    if (*count > std::numeric_limits<size_t>::max() / size)
+        throw std::overflow_error("lsearch: array size overflow");
+    auto* bytes = static_cast<unsigned char*>(base);
+    for (size_t index = 0; index < *count; ++index) {
+        auto* element = bytes + index * size;
+        if (compare(key, element) == 0) return element;
+    }
+    if (*count >= std::numeric_limits<size_t>::max() / size)
+        throw std::overflow_error("lsearch: append capacity overflow");
+    auto* tail = bytes + *count * size;
+    std::memcpy(tail, key, size);
+    ++*count;
+    return tail;
+}
+
 int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
     if (size < 4) {
         errno = 22;
