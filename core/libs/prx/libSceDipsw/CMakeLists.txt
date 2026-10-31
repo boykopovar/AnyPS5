@@ -1,0 +1,15 @@
+add_library(libSceDipsw SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceDipsw PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceDipsw)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_dipsw_tests ${LIBS_INCLUDE_DIR}/tests/GuestDipsw.cpp)
+    target_include_directories(guest_dipsw_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_dipsw_tests PRIVATE libSceDipsw libc)
+    configure_windows_unwind(guest_dipsw_tests)
+    add_test(NAME guest_dipsw_retail COMMAND guest_dipsw_tests retail)
+    if(WIN32)
+        set_tests_properties(guest_dipsw_retail PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceDipsw>")
+    endif()
+endif()
