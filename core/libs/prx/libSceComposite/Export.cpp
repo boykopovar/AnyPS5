@@ -419,8 +419,8 @@ int APS5_VABI sceCompositorGetVirtualCanvasHandle() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceCompositorIsVirtualCanvasHandle() {
-    NotImplemented_nid_no_patch(__func__);
+bool APS5_VABI sceCompositorIsVirtualCanvasHandle(std::uint32_t handle) {
+    return (handle & 0xff00) == 0xff00;
 }
 
 int APS5_VABI sceCompositorMemoryPoolCommit() {
