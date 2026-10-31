@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/AdaptiveStaging.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ThreadOwned.hpp"
@@ -5164,6 +5165,37 @@ void traceStaged(std::uint64_t begin, std::uint64_t end, bool atomic) {
     std::fprintf(stderr, "[staging] 0x%llx+0x%llx (%.1f KiB)%s\n", static_cast<unsigned long long>(begin), static_cast<unsigned long long>(end - begin), (end - begin) / 1024.0, atomic ? " atomic" : "");
 }
 
+class AdaptiveStagingGate {
+public:
+    static AdaptiveStagingGate& Get() {
+        static AdaptiveStagingGate instance;
+        return instance;
+    }
+
+    static bool Enabled() {
+        static const bool disabled = std::getenv("APS5_NO_ADAPTIVE_STAGING") != nullptr;
+        return !disabled;
+    }
+
+    bool InPlace(std::uint64_t begin, std::uint64_t end, bool use) {
+        if (!Enabled()) return false;
+        std::lock_guard lock(mutex);
+        if (!stampsRequested) {
+            Recorder::RequestBatchStamps();
+            policy.report = [](const std::string& line) { std::fprintf(stderr, "%s\n", line.c_str()); };
+            stampsRequested = true;
+        }
+        const auto [frames, busyMs] = Recorder::FrameGpuBusy();
+        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        return policy.InPlace(begin, end, use, frames, busyMs, nowMs);
+    }
+
+private:
+    std::mutex mutex;
+    AdaptiveStaging policy;
+    bool stampsRequested = false;
+};
+
 void reportStaging() {
     auto& stats = Copies();
     const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -5207,6 +5239,24 @@ bool GuestBufferMemory::bindableInPlace(std::uint64_t offset, bool addressable) 
 }
 
 bool GuestBufferMemory::stagingEligible(const Region& region, bool addressable) const {
+    return !region.adaptiveInPlace && stagingWanted(region, addressable);
+}
+
+bool GuestBufferMemory::adaptiveInPlace(const Region& region, bool use) const {
+    if (!region.swept || region.atomic || region.overlay) return false;
+    return AdaptiveStagingGate::Get().InPlace(region.begin, region.end, use);
+}
+
+bool GuestBufferMemory::StagingDecisionsCurrent() const {
+    if (!AdaptiveStagingGate::Enabled()) return true;
+    for (const auto& region : regions) {
+        if (!(region.gpuCopy && region.deviceLocal) && !region.adaptiveInPlace) continue;
+        if (adaptiveInPlace(region, true) != region.adaptiveInPlace) return false;
+    }
+    return true;
+}
+
+bool GuestBufferMemory::stagingWanted(const Region& region, bool addressable) const {
     if (!stagingAllowed || (addressable && !region.overlay) || region.unstaged || !gpuCopiesEnabled() || region.sparse || region.mirror != nullptr) return false;
     const auto bytes = region.end - region.begin;
     if (!WritesOverlap(region.begin, static_cast<std::size_t>(bytes))) return false;
@@ -5378,6 +5428,7 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
             // staged region (see stagingEligible) takes the same path, aligned or not, with a
             // device-local buffer that the CPU fallback replaces (none without a recorder to
             // record the copies: UploadFinish then binds the region in place).
+            region.adaptiveInPlace = Recorder::Active() != nullptr && stagingWanted(region, addressable) && adaptiveInPlace(region, true);
             bool staged = Recorder::Active() != nullptr && stagingEligible(region, addressable);
             const bool misaligned = !bindableInPlace(HostImportOffset(*entry, region.begin), addressable);
             if (staged) {
@@ -5442,7 +5493,7 @@ void GuestBufferMemory::completeSpaceWrites() const {
     }
 }
 
-void GuestBufferMemory::UploadFinish(bool addressable) {
+void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) {
     Require(prepared && !uploaded, "guest memory upload was not prepared");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = std::chrono::steady_clock::now();
@@ -5450,7 +5501,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
     if (space != nullptr) completeSpaceWrites();
     uploaded = true;
     for (const auto& region : regions) static_cast<void>(FlushDepthPlanes(region.begin, static_cast<std::size_t>(region.end - region.begin)));
-    for (const auto& [begin, end] : writes) RequireNoResidentDepthRead_nid_no_patch(begin, static_cast<std::size_t>(end - begin));
+    for (const auto& [begin, end] : writes) RequireNoResidentDepthRead_nid_no_patch(begin, static_cast<std::size_t>(end - begin), htileClear);
     for (const auto& [begin, end] : writes) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");
     if (context.hostImportAlignment != 0) {
         auto& state = Imports();

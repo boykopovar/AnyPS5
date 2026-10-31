@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceIpmi/include/InventoryExports.hpp"
 #include "prx/libSceIpmi/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -231,5 +233,24 @@ int APS5_VABI sceIpmiUnknown_r0t1NxWUNwI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("r0t1NxWUNwI", sceIpmiUnknown_r0t1NxWUNwI_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceIpmiUnknown_fjPNqzuUop8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fjPNqzuUop8", libSceIpmiUnknown_fjPNqzuUop8_nid_no_patch);
+
+int APS5_VABI libSceIpmiUnknown_gL4bo5h2nwU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("gL4bo5h2nwU", libSceIpmiUnknown_gL4bo5h2nwU_nid_no_patch);
+
+int APS5_VABI libSceIpmiUnknown_rq3L3xKnt3Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("rq3L3xKnt3Y", libSceIpmiUnknown_rq3L3xKnt3Y_nid_no_patch);
 
 }

@@ -260,6 +260,518 @@ static int InitializeParameterWithBody(void* self, const std::uint64_t* context,
     return ParameterBodyMissing;
 }
 
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead19getPlayerAttributesEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V115LocationFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_8LocationEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V116AttributeFactory6createEPNS1_6Common10LibContextEPKcNS3_13AttributeTypeES9_PNS5_12IntrusivePtrINS3_9AttributeEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody10getPlayersEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody10getPlayersEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody19getTicketAttributesEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V121PlayerForTicketCreate10setNatTypeERKi(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V121PlayerForTicketCreate11setTeamNameEPKc(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V121PlayerForTicketCreate19setPlayerAttributesERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_9AttributeEEEEE(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V123SubmitTicketRequestBody11setLocationERKNS1_6Common12IntrusivePtrINS3_8LocationEEE(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V123SubmitTicketRequestBody19setTicketAttributesERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_9AttributeEEEEE(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V128PlayerForTicketCreateFactory6createEPNS1_6Common10LibContextERKmNS3_8PlatformEPNS5_12IntrusivePtrINS3_21PlayerForTicketCreateEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V130SubmitTicketRequestBodyFactory6createEPNS1_6Common10LibContextEPKcRKNS5_6VectorINS5_12IntrusivePtrINS3_21PlayerForTicketCreateEEEEEPNSB_INS3_23SubmitTicketRequestBodyEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api12cancelTicketEiRKNS4_23ParameterToCancelTicketERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api12submitTicketEiRKNS4_23ParameterToSubmitTicketERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_24SubmitTicketResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api19ParameterToGetOffer10initializeEPNS1_6Common10LibContextEPKc(void* self, const std::uint64_t* context, const char* id) {
+    return InitializeParameter(self, context, id != nullptr);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api19ParameterToGetOffer9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api19ParameterToGetOfferC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api19ParameterToGetOfferD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api20ParameterToGetTicket10initializeEPNS1_6Common10LibContextEPKc(void* self, const std::uint64_t* context, const char* id) {
+    return InitializeParameter(self, context, id != nullptr);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api20ParameterToGetTicket7setviewEPKc(void* self, const char* view) {
+    return SetParameterText(self, view);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api20ParameterToGetTicket9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api20ParameterToGetTicketC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api20ParameterToGetTicketD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api23ParameterToCancelTicket10initializeEPNS1_6Common10LibContextEPKc(void* self, const std::uint64_t* context, const char* id) {
+    return InitializeParameter(self, context, id != nullptr);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api23ParameterToCancelTicket9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api23ParameterToCancelTicketC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api23ParameterToCancelTicketD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api23ParameterToSubmitTicket10initializeEPNS1_6Common10LibContextENS6_12IntrusivePtrINS3_23SubmitTicketRequestBodyEEE(void* self, const std::uint64_t* context, const IntrusivePtr* body) {
+    return InitializeParameterWithBody(self, context, true, body);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api23ParameterToSubmitTicket9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api23ParameterToSubmitTicketC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api23ParameterToSubmitTicketD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api8getOfferEiRKNS4_19ParameterToGetOfferERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_20GetOfferResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V13Api9getTicketEiRKNS4_20ParameterToGetTicketERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_21GetTicketResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11Matchmaking2V18Location16setGameSessionIdEPKc(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead11getOnlineIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead11getPlatformEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead11getTeamNameEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead12getAccountIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead13onlineIdIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead13platformIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead13teamNameIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead14accountIdIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V113PlayerForRead21playerAttributesIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead11getOnlineIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead11getPlatformEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead11getTeamNameEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead11getTicketIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead12getAccountIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead13onlineIdIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead13platformIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead13teamNameIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead13ticketIdIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V118PlayerForOfferRead14accountIdIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody10getOfferIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody11getLocationEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody11statusIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody12offerIdIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody12playersIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody13locationIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody14getRulesetNameEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody16rulesetNameIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody18getCreatedDateTimeEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody18getUpdatedDateTimeEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody20createdDateTimeIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody20updatedDateTimeIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody9getStatusEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody11getTicketIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody11statusIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody12getSubmitterEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody12playersIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody13ticketIdIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody14getRulesetNameEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody14submitterIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody16rulesetNameIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody18getCreatedDateTimeEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody18getUpdatedDateTimeEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody20createdDateTimeIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody20updatedDateTimeIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody21ticketAttributesIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody9getStatusEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V124SubmitTicketResponseBody11getTicketIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V124SubmitTicketResponseBody13ticketIdIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V18Location16getGameSessionIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V18Location18gameSessionIdIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Attribute7getNameEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Attribute7getTypeEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Attribute8getValueEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter11getPlatformEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter12getAccountIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter13platformIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V19Submitter14accountIdIsSetEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
     (void)value;
     return InitializeParameter(self, context, text != nullptr);
@@ -276,6 +788,175 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDow
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadDataD1Ev(void* self) {
     (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V129SetDataInfoRequestBodyFactory6createEPNS1_6Common10LibContextEPvmPNS5_12IntrusivePtrINS3_22SetDataInfoRequestBodyEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi10uploadDataEiRKNS4_21ParameterToUploadDataERNS1_6Common19UpStreamTransactionINS8_12IntrusivePtrINS3_22UploadDataResponseBodyEEENSA_INS4_25UploadDataResponseHeadersEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi10uploadDataEiRKNS4_42ParameterWithBinaryRequestBodyToUploadDataERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_22UploadDataResponseBodyEEENSA_INS4_25UploadDataResponseHeadersEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi11setDataInfoEiRKNS4_22ParameterToSetDataInfoERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS4_26SetDataInfoResponseHeadersEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi12downloadDataEiRKNS4_23ParameterToDownloadDataERNS1_6Common11TransactionINS8_12IntrusivePtrINS8_6BinaryEEENSA_INS4_27DownloadDataResponseHeadersEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
+    (void)value;
+    return InitializeParameter(self, context, text != nullptr);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadData21setxPsnNpServiceLabelEj(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadData22setxPsnAtomicOperationENS5_19XPsnAtomicOperationE(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadData9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadDataC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21ParameterToUploadDataD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi21deleteMultiDataByUserEiRKNS4_32ParameterToDeleteMultiDataByUserERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE(void* self) {
+    (void)self;
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfo10initializeEPNS1_6Common10LibContextEPKciNS6_12IntrusivePtrINS3_22SetDataInfoRequestBodyEEE(void* self, const std::uint64_t* context, const char* text, int value, const IntrusivePtr* body) {
+    (void)value;
+    return InitializeParameterWithBody(self, context, text != nullptr, body);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfo22setxPsnAtomicOperationENS5_19XPsnAtomicOperationE(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfo24setxPsnAtomicOperationIdEPKc(void* self, const char* text) {
+    return SetParameterText(self, text);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfo9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfoC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi22ParameterToSetDataInfoD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi23ParameterToDownloadData17setnpServiceLabelEj(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser10initializeEPNS1_6Common10LibContextEPKcSA_(void* self, const std::uint64_t* context, const char* first, const char* second) {
+    return InitializeParameter(self, context, first != nullptr && second != nullptr);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser17setnpServiceLabelEj(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUser9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUserC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi32ParameterToDeleteMultiDataByUserD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi37ParameterToGetMultiDataStatusesByUser17setnpServiceLabelEj(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadData10initializeEPNS1_6Common10LibContextEPKci(void* self, const std::uint64_t* context, const char* text, int value) {
+    (void)value;
+    return InitializeParameter(self, context, text != nullptr);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadData14setRequestBodyEPKhm(void* self, const void* data, std::size_t size) {
+    if (static_cast<const ParameterObject*>(self)->implementation == nullptr) return ParameterNotInitialized;
+    if (data == nullptr && size != 0) return ParameterInvalidArgument;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadData9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadDataC1Ev(void* self) {
+    ConstructParameter(self);
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadDataD1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus22getLastUpdatedDateTimeEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V110DataStatus7getInfoEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24getXPsnAtomicOperationIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24hasXPsnAtomicOperationIdEv(void* self) {
+    (void)self;
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
