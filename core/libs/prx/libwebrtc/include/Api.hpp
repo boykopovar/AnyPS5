@@ -10,7 +10,7 @@ int APS5_VABI _ZN6webrtc11EnableMediaERNS_33PeerConnectionFactoryDependenciesE_n
 int APS5_VABI libwebrtcUnknown02(void);
 int APS5_VABI _ZN6webrtc10CallConfigD1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown03(void);
-int APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(void);
+char* APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(int value, char* buffer);
 int APS5_VABI _ZN3rtc18webrtc_checks_impl8FatalLogEPKciS2_PKNS0_12CheckArgTypeEz_nid_postfix(void);
 int APS5_VABI _ZN6webrtc18callback_list_impl21CallbackListReceiversC1Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc19webrtc_logging_impl3LogEPKNS0_10LogArgTypeEz_nid_postfix(void);

@@ -1,0 +1,16 @@
+add_library(libwebrtc SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+target_include_directories(libwebrtc PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libwebrtc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_fast_int_to_buffer_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/FastIntToBuffer.cpp)
+    target_include_directories(guest_webrtc_fast_int_to_buffer_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_webrtc_fast_int_to_buffer_tests PRIVATE libwebrtc libc)
+    configure_windows_unwind(guest_webrtc_fast_int_to_buffer_tests)
+    add_test(NAME guest_webrtc_fast_int_to_buffer COMMAND guest_webrtc_fast_int_to_buffer_tests)
+    set_tests_properties(guest_webrtc_fast_int_to_buffer PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_webrtc_fast_int_to_buffer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
+    endif()
+endif()
