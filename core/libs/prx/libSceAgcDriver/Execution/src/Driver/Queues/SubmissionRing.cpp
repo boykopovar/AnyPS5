@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -22,6 +23,10 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+#endif
+
+#ifdef __APPLE__
+extern "C" void Aps5RunOnMainThread_nid_no_patch(void (*function)(void*), void* context);
 #endif
 
 namespace AgcDriver::DriverDetail {
@@ -40,6 +45,29 @@ std::atomic<StallPresenter> stallPresenter{ShowStallPrompt};
 std::atomic<bool> stallPromptOpen{false};
 constexpr int StallQuitExitCode = 124;
 constexpr int MaxStallPrompts = 3;
+
+StallChoice askOnMainThread(StallPresenter presenter, const char* message) {
+#ifdef __APPLE__
+    struct Call {
+        StallPresenter presenter;
+        const char* message;
+        StallChoice choice = StallChoice::Unavailable;
+        std::exception_ptr error;
+    } call{presenter, message};
+    Aps5RunOnMainThread_nid_no_patch([](void* context) {
+        auto& call = *static_cast<Call*>(context);
+        try {
+            call.choice = call.presenter(call.message);
+        } catch (...) {
+            call.error = std::current_exception();
+        }
+    }, &call);
+    if (call.error) std::rethrow_exception(call.error);
+    return call.choice;
+#else
+    return presenter(message);
+#endif
+}
 
 struct Entry {
     std::uint64_t tenthsOfMs = 0;
@@ -314,7 +342,7 @@ void StallWatch::Check(const char* waiter, std::uint64_t value, std::unique_lock
     std::snprintf(message, sizeof(message), "This title has not made progress for %lld seconds (queue 0x%x %s 0x%llx).\n\nWait keeps it running. Quit stops it; the submission rings are on stderr.", static_cast<long long>(period.count()), queue, waiter, static_cast<unsigned long long>(value));
     if (stallPromptOpen.exchange(true)) return;
     if (held != nullptr) held->unlock();
-    const auto choice = stallPresenter.load()(message);
+    const auto choice = askOnMainThread(stallPresenter.load(), message);
     stallPromptOpen.store(false);
     switch (choice) {
         case StallChoice::Wait:
