@@ -45,6 +45,7 @@ constexpr std::uint32_t Filled = 0x33333333u;
 constexpr std::size_t FillBytes = 4096u;
 constexpr std::size_t FillPast = 0x10000u;
 constexpr std::size_t ShadowUnitBytes = 0x10000u;
+constexpr std::uint32_t Standard256B = 1u;
 
 alignas(256) constexpr std::array<std::uint32_t, 11> StoreImageCode{0x7e000280u, 0x7e020280u, 0x7e0402ffu, Stored, 0xf0200108u, 0x00010200u, 0x7e0202ffu, 0x00000064u, 0xf0200108u, 0x00010200u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 7> StoreGlobalCode{0x7e000208u, 0x7e020209u, 0x7e0402ffu, Overwritten, 0xdc708100u, 0x007d0200u, 0xbf810000u};
@@ -109,12 +110,12 @@ ShaderRecompiler::RecompileResult Compile(std::span<const std::uint32_t> code, s
     return ShaderRecompiler::Recompile(request);
 }
 
-std::vector<std::uint32_t> ImageUserData(std::uint64_t base) {
+std::vector<std::uint32_t> ImageUserData(std::uint64_t base, std::uint32_t tileMode = 0u) {
     std::vector<std::uint32_t> userData(12, 0u);
     userData[4] = static_cast<std::uint32_t>(base >> 8u);
     userData[5] = static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format32UInt << 20u) | (((Width - 1u) & 3u) << 30u);
     userData[6] = ((Width - 1u) >> 2u) | ((Height - 1u) << 14u);
-    userData[7] = 0xfacu | (Type2D << 28u);
+    userData[7] = 0xfacu | (tileMode << 20u) | (Type2D << 28u);
     return userData;
 }
 
@@ -138,9 +139,9 @@ bool OpenBatchWrites(std::uint64_t address, std::size_t bytes) {
     return recorder != nullptr && recorder->OpenWriteOverlaps(address, bytes);
 }
 
-std::uint64_t StoreImage(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset) {
+std::uint64_t StoreImage(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, std::uint32_t tileMode = 0u) {
     const auto image = guest.Address() + offset;
-    const auto storeImage = Compile(StoreImageCode, ImageUserData(image), device.Target());
+    const auto storeImage = Compile(StoreImageCode, ImageUserData(image, tileMode), device.Target());
     device.Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
     return image;
 }
@@ -184,10 +185,10 @@ void RunShadowedUnitUnderWriter(AgcDriver::VulkanDevice& device, const GuestBloc
     }
     const auto* shadowedWords = guest.Words();
     const auto* flushedWords = guest.Words() + (BlockBytes / 2u) / 4u;
-    const auto shadowedImage = StoreImage(device, guest, 0);
+    const auto shadowedImage = StoreImage(device, guest, 0, Standard256B);
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(shadowedImage, ImageBytes, nullptr, "test", AgcDriver::Graphics::PublishScope::None), what + "the first image's store left no results pending");
-    if (!AgcDriver::Graphics::AnyShadowedOverlaps(shadowedImage, ShadowUnitBytes)) {
-        std::puts("the write-back did not retile into the unit shadow: the shadowed-unit case is skipped");
+    if (!AgcDriver::Graphics::AnyShadowedOverlaps(shadowedImage, ShadowUnitBytes) || !AgcDriver::Graphics::AnyShadowedOverlaps(shadowedImage + ShadowUnitBytes, ShadowUnitBytes)) {
+        std::puts("the write-back did not retile both units into the unit shadow: the shadowed-unit case is skipped");
         return;
     }
     Fill(device, shadowedImage, ShadowUnitBytes, what);
@@ -195,9 +196,9 @@ void RunShadowedUnitUnderWriter(AgcDriver::VulkanDevice& device, const GuestBloc
     Require(AgcDriver::Graphics::StorageTexture::FlushPending(shadowedImage, static_cast<std::size_t>(flushedImage + ImageBytes - shadowedImage), nullptr, "test"), what + "the second image's store left no results pending");
     Require(!OpenBatchWrites(shadowedImage, ShadowUnitBytes), what + "the flush did not wait for the writer over the shadowed unit it publishes");
     device.WaitIdle();
-    Require(shadowedWords[OverwrittenDword] == Filled, what + "the publish put the shadowed unit's older texels over a newer fill");
+    Require(shadowedWords[0] == Filled, what + "the publish put the shadowed unit's older texels over a newer fill");
     Require(shadowedWords[ShadowUnitBytes / 4u - 1u] == Filled, what + "the fill's last dword did not land");
-    Require(shadowedWords[FarDword] == Stored, what + "the shadowed unit the fill did not touch was not published");
+    Require(std::count(shadowedWords + ShadowUnitBytes / 4u, shadowedWords + ImageBytes / 4u, Stored) == 1, what + "the shadowed unit the fill did not touch was not published");
     Require(flushedWords[FarDword] == Stored, what + "the flushed image's texel was not stored");
 }
 
