@@ -54,6 +54,14 @@ class ProgressSnapshotTests(unittest.TestCase):
     def snapshot(self):
         return {"libraries": {"percent": 0, "groups": []}, "shaders": {"percent": 0, "groups": []}}
 
+    def assert_accepted(self, snapshot):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / "base.json", Path(directory) / "head.json"]
+            paths[0].write_text(json.dumps(self.snapshot()), encoding="utf-8")
+            paths[1].write_text(json.dumps(snapshot), encoding="utf-8")
+            with patch("sys.stdout", io.StringIO()):
+                self.assertEqual(progress.main(["--compare", str(paths[0]), str(paths[1])]), 0)
+
     def assert_rejected(self, snapshot, message):
         for position in (0, 1):
             with self.subTest(position=position), tempfile.TemporaryDirectory() as directory:
@@ -141,6 +149,22 @@ class ProgressSnapshotTests(unittest.TestCase):
             snapshot = self.snapshot()
             del snapshot[section]["percent"]
             self.assert_rejected(snapshot, section + ".percent")
+
+    def test_observed_fields_are_validated_and_optional(self):
+        for field, value in (("unobserved", -1), ("unobserved", "1"), ("unobserved", True), ("classified", 1),
+                             ("unobserved_names", "Pending"), ("done_unobserved_names", [1])):
+            with self.subTest(field=field, value=value):
+                snapshot = self.snapshot()
+                snapshot["libraries"]["groups"] = [{"name": "libSceExample", field: value}]
+                self.assert_rejected(snapshot, f"libraries.groups[0].{field}")
+        snapshot = self.snapshot()
+        snapshot["libraries"]["declared_percent"] = 101
+        self.assert_rejected(snapshot, "libraries.declared_percent")
+        snapshot = self.snapshot()
+        snapshot["libraries"]["groups"] = [{"name": "libSceExample", "classified": True, "unobserved": 2,
+                                            "unobserved_names": ["A", "B"], "done_unobserved_names": []}]
+        snapshot["libraries"]["declared_percent"] = 50
+        self.assert_accepted(snapshot)
 
     def test_valid_snapshots_keep_reports_and_optional_fields_compatible(self):
         base, head = self.snapshot(), self.snapshot()

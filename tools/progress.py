@@ -586,6 +586,9 @@ def validate_snapshot(snapshot):
         percent = data.get("percent")
         if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not 0 <= percent <= 100:
             raise ValueError(f"{section}.percent must be a finite number between 0 and 100")
+        declared = data.get("declared_percent", 0)
+        if isinstance(declared, bool) or not isinstance(declared, (int, float)) or not 0 <= declared <= 100:
+            raise ValueError(f"{section}.declared_percent must be a finite number between 0 and 100")
         seen = set()
         for index, group in enumerate(groups):
             location = f"{section}.groups[{index}]"
@@ -597,10 +600,12 @@ def validate_snapshot(snapshot):
             if "shared_sources" in group and not isinstance(group["shared_sources"], str):
                 raise ValueError(f"{location}.shared_sources must be a string")
             if section == "libraries":
-                for field in ("done", "todo"):
+                for field in ("done", "todo", "unobserved"):
                     if field in group and (type(group[field]) is not int or group[field] < 0):
                         raise ValueError(f"{location}.{field} must be a non-negative integer")
-            for field in ("done_names", "todo_names", "inert_names"):
+                if "classified" in group and type(group["classified"]) is not bool:
+                    raise ValueError(f"{location}.classified must be a boolean")
+            for field in ("done_names", "todo_names", "inert_names", "unobserved_names", "done_unobserved_names"):
                 values = group.get(field, [])
                 if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
                     raise ValueError(f"{location}.{field} must be a list of strings")
