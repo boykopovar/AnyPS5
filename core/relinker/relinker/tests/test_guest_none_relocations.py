@@ -76,6 +76,12 @@ def change_tag(image, tag, value=None, replacement=None):
     raise AssertionError(f"Missing dynamic tag {tag:#x}")
 
 
+def truncate_dynamic_terminator(image):
+    size, = struct.unpack_from("<Q", image, 176 + 32)
+    struct.pack_into("<QQ", image, 176 + 32, size - 8, size - 8)
+    return image
+
+
 def unsized_lifecycle(rela, sce, initial):
     image = module(rela, sce=sce, lifecycle=True, initial=initial)
     return change_tag(change_tag(image, 27, replacement=0x61000001), 28, replacement=0x61000001)
@@ -138,6 +144,7 @@ def invalid_cases(sce):
     ambiguous = module(plt=[NOOP], sce=sce)
     yield "ambiguous-plt-format", change_tag(ambiguous, 0x61000027 if sce else 3, value=7,
                                             replacement=20 if sce else 0x6100002b), "Missing or ambiguous dynamic tag"
+    yield "unterminated-dynamic-segment", truncate_dynamic_terminator(module([NOOP], sce=sce)), "Unterminated dynamic segment"
 
 
 def main():
