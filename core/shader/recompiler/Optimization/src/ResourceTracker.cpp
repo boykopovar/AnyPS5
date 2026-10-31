@@ -1053,18 +1053,20 @@ private:
         return true;
     }
 
-    bool PlanRuntimeAddressColumn(IrValue& handle, bool r128) {
-        if (!m_deviceImageTables || FindTableColumn(handle) != nullptr || handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u) {
+    bool PlanRuntimeAddressColumn(IrValue& handle, bool sampler, bool r128) {
+        const auto opcode = sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
+        const std::uint32_t descriptorWords = sampler ? 4u : 8u;
+        if (!m_deviceImageTables || FindTableColumn(handle) != nullptr || handle.Opcode() != opcode || handle.ArgumentCount() != descriptorWords) {
             return false;
         }
         DescriptorSource direct;
-        MakeSource(handle, 8u, false, false, direct);
+        MakeSource(handle, descriptorWords, sampler, false, direct);
         std::uint32_t badDword = 0;
         if (ValidateSource(direct, badDword)) {
             return false;
         }
-        std::uint32_t words = 8u;
-        if (r128) {
+        std::uint32_t words = descriptorWords;
+        if (!sampler && r128) {
             bool zeroTail = true;
             for (std::uint32_t dword = 4u; dword < 8u; dword++) {
                 std::uint32_t immediate = 0;
@@ -1078,6 +1080,7 @@ private:
             }
         }
         TableColumn column;
+        column.sampler = sampler;
         column.heapSource = InternSource(DescriptorSource{});
         column.dwordCount = words;
         column.unkeyed = true;
@@ -1893,10 +1896,13 @@ private:
                 const auto memory = m_program.Resources().memoryInfo[flags.index];
                 IrValue& image = *inst->Argument(0)->Resolve();
                 if (std::ranges::none_of(directImages, [&](const IrValue* handle) { return SameHandle(*handle, image); }) && !PlanTableColumn(image, false, memory.imageR128)) {
-                    static_cast<void>(PlanRuntimeAddressColumn(image, memory.imageR128));
+                    static_cast<void>(PlanRuntimeAddressColumn(image, false, memory.imageR128));
                 }
                 if (imageInfo.needsSampler && inst->ArgumentCount() > 1u && ((m_deviceImageTables && FindTableColumn(image) != nullptr) || !DirectSampler(*inst->Argument(1)->Resolve()))) {
-                    static_cast<void>(PlanTableColumn(*inst->Argument(1)->Resolve(), true, false));
+                    auto& sampler = *inst->Argument(1)->Resolve();
+                    if (!PlanTableColumn(sampler, true, false) && FindTableColumn(image) != nullptr) {
+                        static_cast<void>(PlanRuntimeAddressColumn(sampler, true, false));
+                    }
                 }
             }
         }

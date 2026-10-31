@@ -47,6 +47,7 @@ constexpr std::size_t SamplersOffset = 0x2000;
 constexpr std::size_t OtherSamplersOffset = 0x3000;
 constexpr std::size_t SrtOffset = 0x4000;
 constexpr std::size_t OutputsOffset = 0x5000;
+constexpr std::size_t SamplerPointerOffset = 0x6000;
 constexpr std::uint32_t ImageEntries = 2;
 constexpr std::uint32_t SamplerEntries = 2;
 constexpr SamplerWords PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
@@ -67,8 +68,17 @@ alignas(256) constexpr std::array<std::uint32_t, 15> DirectCode{
     0xf09c0f08u, 0x00e50000u, 0xbf8c0000u, 0xe0780000u, 0x80010000u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 26> RuntimeAddressCode{
+    0x7e0002ffu, 0x3f900000u, 0x7e0202ffu, 0x3e000000u,
+    0xf4080200u, 0xfa000000u, 0xf4080300u, 0xfa000010u, 0xbf8cc07fu,
+    0x8f108502u, 0xf42c0504u, 0x20000000u, 0xe0340000u, 0x80030200u, 0xbf8c0000u,
+    0x7e240502u, 0x7e260503u, 0xf4080709u, 0xfa000000u, 0xbf8cc07fu,
+    0xf09c0f08u, 0x00e50000u, 0xbf8c0000u, 0xe0780000u, 0x80010000u, 0xbf810000u,
+};
+
 alignas(256) constexpr auto WordDirectCode = [] { auto words = DirectCode; words[1] = 0x3f880000u; return words; }();
 alignas(256) constexpr auto WordTableCode = [] { auto words = TableCode; words[1] = 0x3f880000u; return words; }();
+alignas(256) constexpr auto WordRuntimeCode = [] { auto words = RuntimeAddressCode; words[1] = 0x3f880000u; return words; }();
 constexpr SamplerWords LinearRepeat{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
 constexpr SamplerWords BiasedRepeat{0u, (4u * 256u) << 12u, 128u, 0u};
 
@@ -117,6 +127,7 @@ public:
     std::uint32_t* OtherSamplers() const { return reinterpret_cast<std::uint32_t*>(block + OtherSamplersOffset); }
     std::uint32_t* Srt() const { return reinterpret_cast<std::uint32_t*>(block + SrtOffset); }
     float* Output(std::size_t index) const { return reinterpret_cast<float*>(block + OutputsOffset) + index * 4u; }
+    std::uint32_t* SamplerPointer() const { return reinterpret_cast<std::uint32_t*>(block + SamplerPointerOffset); }
 
 private:
     std::uint8_t* block = nullptr;
@@ -159,6 +170,7 @@ struct Header {
 
 alignas(8) Header TableHeader{};
 alignas(8) Header DirectHeader{};
+alignas(8) Header RuntimeAddressHeader{};
 
 void Register(Header& header, std::span<const std::uint32_t> code) {
     header.shader.file_header = 0x34333231u;
@@ -318,6 +330,64 @@ std::vector<DeviceImageTable::Key> ResolvedKeys() {
     return keys;
 }
 
+void SetSamplerPointer(const GuestBlock& block, const std::uint32_t* sampler) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(sampler));
+    block.SamplerPointer()[0] = static_cast<std::uint32_t>(address);
+    block.SamplerPointer()[1] = static_cast<std::uint32_t>(address >> 32u);
+}
+
+void CheckRuntimeSamplers(const GuestBlock& block) {
+    Require(DeviceImageTable::KeepsUnexpectedPrograms(), "runtime sampler addresses need APS5_KEEP_UNEXPECTED_DEVICE_IMAGES");
+    std::copy(PointClamp.begin(), PointClamp.end(), block.Srt() + 16u);
+    const auto directClamp = Sample(block, DirectCode.data(), 0u, 0u, 0u);
+    std::copy(PointRepeat.begin(), PointRepeat.end(), block.Srt() + 16u);
+    const auto directRepeat = Sample(block, DirectCode.data(), 0u, 0u, 1u);
+    RequireTexel(directClamp, ClampTexel, "runtime-address direct clamp-to-edge control");
+    RequireTexel(directRepeat, RepeatTexel, "runtime-address direct repeat control");
+    Require(directClamp != directRepeat, "runtime-address direct controls did not distinguish sampler addressing modes");
+    const auto pointerBuffer = Buffer(block.SamplerPointer(), 2u * sizeof(std::uint32_t));
+    std::copy(pointerBuffer.begin(), pointerBuffer.end(), block.Srt() + 4u);
+    const auto initial = ReadCounts();
+    Require(initial.entries == 0u, "runtime sampler addresses require a table with no warmed image keys");
+    std::size_t output = 2u;
+    const auto sample = [&](const Texel& expected, bool cold, bool resolves, const std::string& what) {
+        const auto before = ReadCounts();
+        const auto actual = Sample(block, RuntimeAddressCode.data(), 1u, 0u, output++);
+        const auto after = ReadCounts();
+        const auto detail = Describe(before, after);
+        Require(after.tables == 1u && after.heapBinds > before.heapBinds && after.prepares > before.prepares, what + " did not bind the descriptor heap and prepare its device image table" + detail);
+        Require(after.expectedInserted == before.expectedInserted, what + " inserted a host expectation for a GPU-loaded sampler address" + detail);
+        Require(after.misses == before.misses + (cold ? 1u : 0u) && after.inserted == before.inserted + (resolves ? 1u : 0u), what + " did not record or resolve exactly its own new sampler key" + detail);
+        Require(after.fallbacks == before.fallbacks && after.faults == before.faults, what + " faulted or fell back" + detail);
+        RequireTexel(actual, expected, what);
+    };
+    SetSamplerPointer(block, block.Samplers());
+    sample({}, true, false, "cold runtime clamp address");
+    sample(directClamp, false, true, "settled runtime clamp address");
+    SetSamplerPointer(block, block.Samplers() + 4u);
+    sample({}, true, false, "cold runtime repeat address");
+    sample(directRepeat, false, true, "settled runtime repeat address");
+    const auto keys = ResolvedKeys();
+    Require(keys.size() == 2u && std::equal(keys[0].begin(), keys[0].begin() + Abi::SamplerWord, keys[1].begin()), "the two settled runtime keys differ in their image, interface or sampler class");
+    const auto descriptor = Image(block.Texture());
+    for (const auto& key : keys) {
+        Require(std::equal(descriptor.begin(), descriptor.end(), key.begin()) && (key[Abi::SamplerClassWord] & Abi::RuntimeSampler) != 0u, "a settled runtime sampler key changed the fixed image or lacks the runtime sampler class");
+    }
+    const auto hasSampler = [&](const SamplerWords& words) {
+        return std::any_of(keys.begin(), keys.end(), [&](const auto& key) { return std::equal(words.begin(), words.end(), key.begin() + Abi::SamplerWord); });
+    };
+    Require(hasSampler(PointClamp) && hasSampler(PointRepeat), "the two settled runtime keys do not contain the four raw clamp and repeat S# words");
+    SetSamplerPointer(block, block.Samplers());
+    sample(directClamp, false, false, "runtime address A before mutation");
+    std::copy(PointRepeat.begin(), PointRepeat.end(), block.Samplers());
+    sample(directRepeat, false, false, "runtime address A after changing only its S# words to B");
+    SetSamplerPointer(block, block.OtherSamplers());
+    sample(directClamp, false, false, "runtime pointer relocated to a separate A descriptor");
+    const auto after = ReadCounts();
+    Require(after.entries == 2u && after.inserted == initial.inserted + 2u && after.misses == initial.misses + 2u, "runtime sampler mutation or pointer relocation introduced extra keys or misses" + Describe(initial, after));
+    std::printf("runtime sampler addresses: two cold keys, exact settled clamp/repeat and A/B/A mutation colors%s\n", Describe(initial, after).c_str());
+}
+
 void CheckWordKeySlots(const std::array<SamplerWords, 2>& samplers) {
     const auto keys = ResolvedKeys();
     Require(keys.size() == 2u && std::equal(keys[0].begin(), keys[0].begin() + Abi::SamplerWord, keys[1].begin()), "word-only samplers must share the image, interface and sampler class");
@@ -340,7 +410,7 @@ void CheckWordKeySlots(const std::array<SamplerWords, 2>& samplers) {
     Require(values[0].samplerSlot != values[1].samplerSlot, "samplers differing only in filter or LOD bias reused a sampler slot");
 }
 
-void CheckWordOnlySamplers(const GuestBlock& block, bool devicePath, bool filterOnly) {
+void CheckWordOnlySamplers(const GuestBlock& block, bool devicePath, bool runtimeAddress, bool filterOnly) {
     const std::array<SamplerWords, 2> samplers{PointRepeat, filterOnly ? LinearRepeat : BiasedRepeat};
     Require(samplers[0][0] == samplers[1][0] && samplers[0][1] == samplers[1][1] && samplers[0][2] != samplers[1][2] && samplers[0][3] == samplers[1][3], "the sampler pair must differ in word2 alone");
     const std::array<Texel, 2> expected{RepeatTexel, filterOnly ? Texel{0.25f, 0.75f, 0.0f, 1.0f} : RepeatTexel};
@@ -352,25 +422,38 @@ void CheckWordOnlySamplers(const GuestBlock& block, bool devicePath, bool filter
         direct[index] = Sample(block, WordDirectCode.data(), 0u, 0u, index);
         RequireTexel(direct[index], expected[index], "word-only direct control " + std::to_string(index), filterOnly && index == 1u ? 1.0f / 255.0f : 1e-6f);
     }
+    if (runtimeAddress) {
+        Require(DeviceImageTable::KeepsUnexpectedPrograms(), "runtime word-only samplers need APS5_KEEP_UNEXPECTED_DEVICE_IMAGES");
+        const auto pointerBuffer = Buffer(block.SamplerPointer(), 2u * sizeof(std::uint32_t));
+        std::copy(pointerBuffer.begin(), pointerBuffer.end(), block.Srt() + 4u);
+    }
     const auto initial = ReadCounts();
     Require(initial.entries == 0u, "word-only samplers require a cold table");
     std::size_t output = 2u;
-    const auto sample = [&](std::uint32_t samplerIndex, const Texel& color, const std::string& what) {
+    const auto sample = [&](std::uint32_t samplerIndex, const Texel& color, bool cold, bool resolves, const std::string& what) {
         const auto before = ReadCounts();
-        const auto actual = Sample(block, WordTableCode.data(), 1u, samplerIndex, output++);
+        const auto actual = Sample(block, runtimeAddress ? WordRuntimeCode.data() : WordTableCode.data(), 1u, samplerIndex, output++);
         const auto after = ReadCounts();
         const auto detail = Describe(before, after);
         RequireTexel(actual, color, what);
         if (devicePath) {
             Require(after.tables == 1u && after.heapBinds > before.heapBinds && after.prepares > before.prepares, what + " did not use the prepared heap path" + detail);
             Require(after.fallbacks == before.fallbacks && after.faults == before.faults, what + " fell back or faulted" + detail);
-            Require(after.misses == before.misses, what + " had unexpected misses" + detail);
+            Require(after.misses == before.misses + (cold ? 1u : 0u), what + " had unexpected misses" + detail);
+            if (runtimeAddress) {
+                Require(after.expectedInserted == before.expectedInserted, what + " captured a GPU-loaded sampler on the CPU" + detail);
+                Require(after.inserted == before.inserted + (resolves ? 1u : 0u), what + " did not resolve exactly its runtime key" + detail);
+            }
         } else {
             Require(after.tables == 0u, what + " unexpectedly created a device table");
         }
     };
     for (std::uint32_t index = 0; index < samplers.size(); ++index) {
-        sample(index, direct[index], "settled word-only sampler " + std::to_string(index));
+        if (runtimeAddress) {
+            SetSamplerPointer(block, block.Samplers() + index * 4u);
+            sample(0u, {}, true, false, "cold runtime word-only sampler " + std::to_string(index));
+        }
+        sample(index, direct[index], false, runtimeAddress, "settled word-only sampler " + std::to_string(index));
     }
     const auto settled = ReadCounts();
     if (devicePath) {
@@ -378,16 +461,21 @@ void CheckWordOnlySamplers(const GuestBlock& block, bool devicePath, bool filter
         CheckWordKeySlots(samplers);
     }
     std::copy(samplers[1].begin(), samplers[1].end(), block.Samplers());
-    sample(0u, direct[1], "word-only sampler A mutated to B");
-    const auto moved = Buffer(block.OtherSamplers(), SamplerEntries * 16u);
-    std::copy(moved.begin(), moved.end(), block.Srt() + 4u);
-    sample(0u, direct[0], "word-only pointer relocated to A");
+    if (runtimeAddress) SetSamplerPointer(block, block.Samplers());
+    sample(0u, direct[1], false, false, "word-only sampler A mutated to B");
+    if (runtimeAddress) {
+        SetSamplerPointer(block, block.OtherSamplers());
+    } else {
+        const auto moved = Buffer(block.OtherSamplers(), SamplerEntries * 16u);
+        std::copy(moved.begin(), moved.end(), block.Srt() + 4u);
+    }
+    sample(0u, direct[0], false, false, "word-only pointer relocated to A");
     const auto after = ReadCounts();
     if (devicePath) {
         Require(after.entries == settled.entries && after.inserted == settled.inserted && after.misses == settled.misses, "word-only mutation or pointer move created extra keys" + Describe(settled, after));
         CheckWordKeySlots(samplers);
     }
-    std::printf("%s %s-only samplers: fixed colors%s%s\n", "table", filterOnly ? "filter" : "LOD bias", devicePath ? ", raw keys and distinct slots" : " through the CPU table", Describe(initial, after).c_str());
+    std::printf("%s %s-only samplers: fixed colors%s%s\n", runtimeAddress ? "runtime pointer" : "table", filterOnly ? "filter" : "LOD bias", devicePath ? ", raw keys and distinct slots" : " through the CPU table", Describe(initial, after).c_str());
 }
 
 void CheckSamplerPoison(const GuestBlock& block, std::span<const std::uint32_t> code, bool runtimeAddress) {
@@ -469,9 +557,10 @@ void CheckSamplerPoison(const GuestBlock& block, std::span<const std::uint32_t> 
 
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
-    const bool poison = mode == "--sampler-poison";
-    const bool filterOnly = mode == "--filter-only";
-    const bool wordOnly = filterOnly || mode == "--lod-bias-only";
+    const bool poison = mode == "--sampler-poison" || mode == "--runtime-sampler-poison";
+    const bool filterOnly = mode == "--filter-only" || mode == "--runtime-filter-only";
+    const bool wordOnly = filterOnly || mode == "--lod-bias-only" || mode == "--runtime-lod-bias-only";
+    const bool runtimeAddress = mode == "--runtime-address" || mode == "--runtime-filter-only" || mode == "--runtime-lod-bias-only" || mode == "--runtime-sampler-poison";
 #ifdef _WIN32
     _putenv_s("APS5_EAGER_WRITEBACK", "1");
 #else
@@ -495,16 +584,33 @@ int main(int argc, char** argv) {
             std::puts("skipped, descriptor heap features, limits or validation policy do not permit the device image path; see the device diagnostics");
             return VulkanTestSkipped;
         }
+        if (runtimeAddress && !devicePath) {
+            std::puts("skipped, runtime sampler addresses require the enabled and supported device image path");
+            return VulkanTestSkipped;
+        }
         GuestBlock block;
         FillGuest(block);
         if (poison) {
             Register(DirectHeader, DirectCode);
-            Register(TableHeader, TableCode);
-            CheckSamplerPoison(block, TableCode, false);
+            if (runtimeAddress) {
+                Register(RuntimeAddressHeader, RuntimeAddressCode);
+                const auto pointerBuffer = Buffer(block.SamplerPointer(), 2u * sizeof(std::uint32_t));
+                std::copy(pointerBuffer.begin(), pointerBuffer.end(), block.Srt() + 4u);
+                SetSamplerPointer(block, block.Samplers());
+                CheckSamplerPoison(block, RuntimeAddressCode, true);
+            } else {
+                Register(TableHeader, TableCode);
+                CheckSamplerPoison(block, TableCode, false);
+            }
         } else if (wordOnly) {
             Register(DirectHeader, WordDirectCode);
-            Register(TableHeader, WordTableCode);
-            CheckWordOnlySamplers(block, devicePath, filterOnly);
+            if (runtimeAddress) Register(RuntimeAddressHeader, WordRuntimeCode);
+            else Register(TableHeader, WordTableCode);
+            CheckWordOnlySamplers(block, devicePath, runtimeAddress, filterOnly);
+        } else if (runtimeAddress) {
+            Register(DirectHeader, DirectCode);
+            Register(RuntimeAddressHeader, RuntimeAddressCode);
+            CheckRuntimeSamplers(block);
         } else {
             Register(DirectHeader, DirectCode);
             Register(TableHeader, TableCode);
