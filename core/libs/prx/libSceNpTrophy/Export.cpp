@@ -13,6 +13,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <system_error>
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -103,11 +104,21 @@ std::optional<std::map<std::string, TrpEntry>> ReadPackage(const std::filesystem
     return entries;
 }
 
-void LoadState(Context& context) {
+std::set<int> LoadState(const Context& context) {
+    std::error_code error;
+    const bool exists = std::filesystem::exists(context.state, error);
+    if (error) throw std::filesystem::filesystem_error("sceNpTrophy: cannot check the unlock state", context.state, error);
+    if (!exists) return {};
     std::ifstream file(context.state);
-    int id = 0;
-    while (file >> id) {
-        if (id >= 0 && id < context.trophies) context.unlocked.insert(id);
+    if (!file) throw std::runtime_error("sceNpTrophy: cannot read the unlock state " + context.state.string());
+    std::set<int> unlocked;
+    for (;;) {
+        file >> std::ws;
+        if (file.bad()) throw std::runtime_error("sceNpTrophy: cannot read the unlock state " + context.state.string());
+        if (file.eof()) return unlocked;
+        int id = 0;
+        if (!(file >> id)) throw std::runtime_error("sceNpTrophy: malformed unlock state " + context.state.string());
+        if (id >= 0 && id < context.trophies) unlocked.insert(id);
     }
 }
 
@@ -239,7 +250,7 @@ int APS5_VABI sceNpTrophyRegisterContext(int contextId, int handle, std::uint64_
     }
     std::snprintf(name, sizeof(name), "trophy%02u.%d", context->serviceLabel, context->userId);
     context->state = std::filesystem::path("_trophy") / name;
-    LoadState(*context);
+    context->unlocked = LoadState(*context);
     context->registered = true;
     return 0;
 }
