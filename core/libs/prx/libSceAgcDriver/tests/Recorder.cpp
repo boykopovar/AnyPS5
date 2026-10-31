@@ -12533,6 +12533,13 @@ int main(int argc, char** argv) {
                 std::cout << "skipped, unit shadows or host imports are unavailable\n";
                 return 77;
             }
+#ifndef _WIN32
+            if (const auto probe = AgcDriver::Graphics::ProbeImportWriteProtection(device.GetContext()); probe.failure != nullptr || probe.writtenAfterSubmit != 0) {
+                if (probe.failure != nullptr) std::cout << "skipped, the host import probe failed at " << probe.failure << " (" << static_cast<int>(probe.result) << ")\n";
+                else std::cout << "skipped, the device reports " << probe.writtenAfterSubmit << " of " << probe.pages << " host-imported pages written after a GPU read, so a forced watch of the import reads its submissions as CPU stores\n";
+                return 77;
+            }
+#endif
             idlePublishWaitTests(device, recorder);
             return 0;
         }
