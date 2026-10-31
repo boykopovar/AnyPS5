@@ -25,6 +25,7 @@ DT_JMPREL = 23
 DT_PLTRELSZ = 2
 DT_PLTREL = 20
 DT_STRSZ = 10
+DT_SYMENT = 11
 DT_RELAENT = 9
 DT_REL = 17
 DT_RELA_KIND = 7
@@ -35,7 +36,7 @@ RELA_SIZE = 24
 R_X86_64_NONE = 0
 
 LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
-STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)?jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%rip\)\s+# 0x([0-9a-f]+)")
+STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)*jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%(?:rip|eip)\)\s+# 0x([0-9a-f]+)")
 BRANCH = re.compile(r"\b(?:call|jmp)q?\s+0x([0-9a-f]+)")
 REFERENCE = re.compile(r"# 0x([0-9a-f]+)")
 
@@ -57,6 +58,8 @@ class Module:
         if self.strtab + self.strsz > len(self.data):
             raise ModuleError("the string table of DT_STRSZ %#x extends past the end of the file" % self.strsz)
         self.address(self.tags[DT_STRTAB], self.strsz)
+        if self.require_tag(DT_SYMENT, "DT_SYMENT") != SYMBOL_SIZE:
+            raise ModuleError("DT_SYMENT is not %d" % SYMBOL_SIZE)
         self.symbol_count = self.count_symbols()
         self.address(self.tags[DT_SYMTAB], self.symbol_count * SYMBOL_SIZE)
         self.check_relocation_tags()
@@ -195,12 +198,12 @@ class Module:
     def code_segments(self):
         segments = []
         for vaddr, offset, size, flags in sorted(self.loads):
-            if flags & PF_X:
+            if flags & PF_X and size:
                 if offset + size > len(self.data):
                     raise ModuleError("the executable PT_LOAD segment at %#x extends past the end of the file" % vaddr)
                 segments.append((vaddr, self.data[offset:offset + size]))
         if not segments:
-            raise ModuleError("no executable PT_LOAD segment")
+            raise ModuleError("no executable PT_LOAD segment with file-backed data")
         return segments
 
 
@@ -243,12 +246,23 @@ def disassemble(code, vaddr):
     return result.stdout.splitlines()
 
 
+def referenced_address(line):
+    if "%fs:" in line or "%gs:" in line:
+        return None
+    reference = REFERENCE.search(line)
+    if reference is None:
+        return None
+    address = int(reference.group(1), 16)
+    return address & 0xFFFFFFFF if "(%eip)" in line else address
+
+
 def find_stubs(listing, slots, namer):
     stubs = {}
     for line in listing:
         match = STUB.match(line)
-        if match and int(match.group(2), 16) in slots:
-            stubs[int(match.group(1), 16)] = namer.resolve(slots[int(match.group(2), 16)])
+        target = referenced_address(line)
+        if match and target in slots:
+            stubs[int(match.group(1), 16)] = namer.resolve(slots[target])
     return stubs
 
 
@@ -257,9 +271,9 @@ def line_note(line, slots, stubs, namer):
     branch = BRANCH.search(line)
     if branch and int(branch.group(1), 16) in stubs:
         note = "   ; -> " + stubs[int(branch.group(1), 16)]
-    reference = REFERENCE.search(line)
-    if reference and int(reference.group(1), 16) in slots:
-        note = "   ; GOT " + namer.resolve(slots[int(reference.group(1), 16)])
+    reference = referenced_address(line)
+    if reference in slots:
+        note = "   ; GOT " + namer.resolve(slots[reference])
     return note
 
 

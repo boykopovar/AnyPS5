@@ -14,11 +14,15 @@ Supported input sources are:
 
 While a title has a mouse open (`sceMouseOpen`) and the window is focused, AnyPS5 hides and captures the host cursor, so the title's own cursor is the only one; the capture ends when the window loses focus or when the mouse-to-stick toggle (`ToggleMouse`) is on. Mouse movement reaches the title scaled from the window's presented image to the title's display resolution, so the title's cursor moves as far as the host cursor would.
 
+The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) never reach the game's pad. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
+
 Game-controller bindings are enabled automatically and are not affected by keyboard or mouse overrides in this file.
 
 Supported actions are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left`, `LeftStickLeft`, `LeftStickRight`, `LeftStickUp`, `LeftStickDown`, `RightStickLeft`, `RightStickRight`, `RightStickUp`, `RightStickDown`, `TouchLeft`, `TouchRight`, `StickModifier`, `Shake`, `ToggleMouse`, `ToggleFullscreen` (F11), `TogglePerformanceOverlay` (F10, the [performance overlay](USAGE.md#performance-overlay)), `Screenshot` (F12, saves the next displayed frame as described in [screenshots](USAGE.md#screenshots)), and `ShowPadStatus` (F9, shows the [controller status panel](USAGE.md#controller-status-panel) for a few seconds). `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot` and `ShowPadStatus` accept only keyboard keys.
 
 A key bound to `ShowPadStatus` and to another action triggers both, as for every other action. F9 is the built-in key of `ShowPadStatus`: if you moved `Screenshot`, `TogglePerformanceOverlay` or another action to F9, also rebind `ShowPadStatus` to a key you do not use, or each press shows the controller status panel too. The [web configurator](#web-configurator) warns about a key that two actions share.
+
+Three more actions control the host's output volume: `VolumeDown` (F5), `VolumeUp` (F6) and `ToggleMute` (F8), described in [host volume and mute](USAGE.md#host-volume-and-mute). They accept only keyboard keys too.
 
 ### Default bindings
 
@@ -47,6 +51,9 @@ Without an `anyps5-input.ini`, or for actions the file does not mention, these b
 | `TogglePerformanceOverlay` | F10 |
 | `Screenshot` | F12 |
 | `ShowPadStatus` | F9 |
+| `VolumeDown` | F5 |
+| `VolumeUp` | F6 |
+| `ToggleMute` | F8 |
 
 For example, this changes Cross to F or Space, moves the left stick to IJKL, uses the mouse buttons for Square and R2, makes the middle mouse button the only `ToggleMouse` input (the line replaces F7), and keeps all other built-in bindings:
 
@@ -68,6 +75,7 @@ The same file also accepts these settings, each at most once, in the form `Setti
 |---------|-------|---------|
 | `LeftStickDeadzone`, `RightStickDeadzone` | Whole percentage from 0 to 90 of the controller stick's travel that reads as centered. Outside it the travel is rescaled, so the stick still reaches its full range. Keyboard and mouse stick bindings are not affected. | `0` |
 | `MouseSensitivity` | Number greater than 0 and at most 10. At 1, moving the mouse 3000 counts per second tilts the stick fully, about 5 cm per second at 1600 DPI; a larger number needs less movement. | `1` |
+| `MouseStickTarget` | `Left` or `Right`. Selects which analog stick is controlled by mouse movement when `ToggleMouse` is enabled. | `Right` |
 | `MouseVerticalScale` | Number from 0.1 to 10 that multiplies vertical mouse speed, for games that pitch slower or faster than they turn. | `1` |
 | `MouseCurve` | Number from 0.2 to 5, the response exponent. Above 1 gives finer control at low speed; below 1 reaches large tilts sooner. | `1` |
 | `MouseDeadzoneOffset` | Number from 0 to 0.9, the smallest tilt any movement produces as a fraction of full tilt. Set it just above the game's own deadzone: raise it if slow movement doesn't move the camera, lower it if small movements jump. | `0.2` |
@@ -121,11 +129,17 @@ With `TriggerRampMs` above 0, a key or mouse button bound to `L2` or `R2` presse
 
 While the `Shake` input is held (X by default), the controller reports its acceleration and angular velocity swinging back and forth every 50 ms, for titles that ask the player to shake the controller. A controller's own motion sensors are used otherwise.
 
-## Mouse as the right stick
+## Mouse as an analog stick
 
-`ToggleMouse` (the middle mouse button or F7 by default; a mouse without a middle button can use F7) captures the mouse and drives the right stick from how fast the mouse moves. Capture uses raw relative input, so the pointer speed and acceleration set in the operating system don't apply. Press it again to release the mouse. Capture also ends, and every held key is let go, when the window loses focus.
+`ToggleMouse` (the middle mouse button or F7 by default; a mouse without a middle button can use F7) captures the mouse and drives the analog stick selected by `MouseStickTarget` (`Right` by default) from how fast the mouse moves. Capture uses raw relative input, so the pointer speed and acceleration set in the operating system don't apply. Press it again to release the mouse. Capture also ends, and every held key is let go, when the window loses focus.
 
 The stick tilts in the direction the mouse moves, and further the faster it moves. Speed is measured in counts per second over the time between updates, so the same hand speed gives the same tilt at any frame rate. Any movement tilts the stick at least `MouseDeadzoneOffset`, so slow movement isn't lost inside the game's own deadzone. When the mouse stops, the stick eases back and is centered `MouseDecayMs` after the last movement.
+
+To control the left analog stick with mouse movement:
+
+```ini
+MouseStickTarget = Left
+```
 
 For example, for a game with a small deadzone that needs fast turns:
 

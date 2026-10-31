@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceAmprCommandBufferDestructor, sceAmprAprCommandBufferDestructor, sceAmprAmmCommandBufferConstructor, sceAmprAmmCommandBufferDestructor](../../../core/libs/prx/libSceAmpr/Export.cpp) (libSceAmpr) - return 0 without reading or changing the buffer, or the APR gather and scatter states. Unlike `sceAmprCommandBufferConstructor` and `sceAmprAprCommandBufferConstructor`, the AMM constructor leaves every field of the buffer as the caller left it. Borderlands 4 (PPSA01494), Ghost of Tsushima (PPSA02225), Forspoken (PPSA03984), Astro Bot (PPSA21564), Crimson Desert (PPSA25286), MXGP 26 (PPSA30839) and Super Meat Boy 3D (PPSA31162) call both destructors; Forspoken also calls the AMM constructor and destructor once each
+- [sceAmprCommandBufferDestructor, sceAmprAprCommandBufferDestructor, sceAmprAmmCommandBufferConstructor, sceAmprAmmCommandBufferDestructor](../../../core/libs/prx/libSceAmpr/Export.cpp) (libSceAmpr) - return 0 for a non-null buffer and leave its contents and the APR gather and scatter states untouched, except that a buffer whose commands the emulator expanded (see the command sizes entry below) is released: its original `base` and `size` are restored and `offset` and the command count reset to 0. The AMM constructor returns `SCE_KERNEL_ERROR_EINVAL` for null and, unlike `sceAmprCommandBufferConstructor` and `sceAmprAprCommandBufferConstructor`, does not initialize the buffer. Borderlands 4 (PPSA01494), Ghost of Tsushima (PPSA02225), Forspoken (PPSA03984), Astro Bot (PPSA21564), Crimson Desert (PPSA25286), MXGP 26 (PPSA30839) and Super Meat Boy 3D (PPSA31162) call both destructors; Forspoken also calls the AMM constructor and destructor once each
 
 ### Unknown function info
 

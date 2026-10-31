@@ -1,5 +1,23 @@
 # libSceHmd2 technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceHmd2/InventoryExports.cpp) - 11 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. These NIDs are absent from the pinned public 3.20 catalogue. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `7Qwh+itD9r4` |
+| `Unknown` | `Ec6R1zHrEmA` |
+| `Unknown` | `FBUEhH9tQ1A` |
+| `Unknown` | `GLtAhJ6E2io` |
+| `Unknown` | `Ijl+flgyR7Q` |
+| `Unknown` | `PcdNgERzCos` |
+| `Unknown` | `UbHtTtGRplE` |
+| `Unknown` | `dvGkONYMdJg` |
+| `Unknown` | `fY41qRGCvTM` |
+| `Unknown` | `n9wYmNVt6S4` |
+| `Unknown` | `wDDAIxOeaqg` |
+
 ### Silent stubs
 
 - [libSceHmd2](../../../core/libs/prx/libSceHmd2/Export.cpp) has no PS VR2 runtime: Initialize returns unsupported-feature, so normal calls never reach initialized device behavior. Reprojection and gaze operations retain their throwing bodies. Four size/alignment queries return measured constants; QueryBufferSizeAlign still throws. Device setup, headset tracking and rendering are not implemented.
@@ -85,3 +103,5 @@
 - [libSceHmd2 reprojection exports](../../../core/libs/prx/libSceHmd2/Export.cpp) - frame identifiers and predicted display times are 64-bit. Event setters accept a kernel event queue and 32-bit event ID, consumed by sceKernelTriggerUserEvent. Mirroring uses two memory pointers and a separate 32-byte mode/reserved option. Status and current-output queries write 104 and 32 bytes; those field layouts and the reprojection initialization fields remain incomplete. Positional-reprojection mode is a byte with values 0 through 5, not a boolean.
 
 - [Reprojection parameter submission](../../../core/libs/prx/libSceHmd2/Export.cpp) - SetParam and SetParamWithBuffer take a 32-bit buffer-set ID, 64-bit frame ID, parameter pointer and reserved register slot. The parameter contains a layer pointer, signed count and optional 128-byte flags/reserved structure; plain and buffered layer strides are 328 and 472 bytes. Layer union fields remain incomplete. SetRenderConfig consumes three 64-bit slots; only bits 0 and 32 of the first can be nonzero. SetParam and SetParamWithBuffer remain unimplemented.
+
+- [Older callable NIDs](../../../core/libs/prx/libSceHmd2/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.
