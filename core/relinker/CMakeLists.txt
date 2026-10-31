@@ -98,6 +98,11 @@ if(BUILD_TESTING)
     add_test_executable(andn_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/AndnLoweringTests.cpp)
     target_link_libraries(andn_lowering_tests PRIVATE relinker_core)
     add_test(NAME andn_lowering COMMAND andn_lowering_tests)
+
+    add_test_executable(import_module_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ImportModuleTests.cpp)
+    target_link_libraries(import_module_tests PRIVATE relinker_core)
+    add_test(NAME import_module COMMAND import_module_tests)
+
     set_tests_properties(andn_lowering PROPERTIES TIMEOUT 20)
 
     add_test_executable(masked_store_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/MaskedStoreLoweringTests.cpp)
