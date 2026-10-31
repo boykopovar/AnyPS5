@@ -22,10 +22,13 @@ if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 install(FILES ${CMAKE_SOURCE_DIR}/3rdparty/nghttp2/COPYING DESTINATION licenses/nghttp2)
 
-add_library(anyps5_http2_transport STATIC EXCLUDE_FROM_ALL Transport.cpp)
-target_include_directories(anyps5_http2_transport PRIVATE ${LIBS_INCLUDE_DIR})
+set(http2ZlibDir ${CMAKE_SOURCE_DIR}/3rdparty/libjpeg-turbo/src/spng/zlib)
+add_library(anyps5_http2_transport STATIC EXCLUDE_FROM_ALL Transport.cpp
+    ${http2ZlibDir}/adler32.c ${http2ZlibDir}/crc32.c ${http2ZlibDir}/inffast.c
+    ${http2ZlibDir}/inflate.c ${http2ZlibDir}/inftrees.c ${http2ZlibDir}/zutil.c)
+target_include_directories(anyps5_http2_transport PRIVATE ${LIBS_INCLUDE_DIR} ${http2ZlibDir})
 target_link_libraries(anyps5_http2_transport PRIVATE libSceNet libSceSsl libkernel libc nghttp2_static)
-set_target_properties(anyps5_http2_transport PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
+set_target_properties(anyps5_http2_transport PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_options(anyps5_http2_transport INTERFACE LINKER:--exclude-libs,libanyps5_http2_transport.a)
 endif()

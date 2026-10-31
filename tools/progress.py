@@ -236,13 +236,14 @@ def collect_shaders():
     opcodes = [o for o in re.findall(r"^\s*([A-Z]\w*)\s*[,=]", enum, re.M) if o not in OPCODE_SENTINELS]
     supported, extra = set(), []
     for opcode in opcodes:
-        supported.update(name for name in OPCODE_VARIANTS.get(opcode, ()) if name in isa)
+        variants = [name for name in OPCODE_VARIANTS.get(opcode, ()) if name in isa]
+        supported.update(variants)
         name = OPCODE_ALIASES.get(opcode) or by_camel.get(opcode)
         if name in isa:
             supported.add(name)
             if name.startswith("FLAT_"):
                 supported.update(n for n in (s + name.removeprefix("FLAT_") for s in FLAT_SEGMENTS) if n in isa)
-        else:
+        elif not variants:
             extra.append(opcode)
     groups = {}
     for name, encoding in isa.items():
