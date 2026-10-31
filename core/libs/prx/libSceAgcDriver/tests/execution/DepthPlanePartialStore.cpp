@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -181,6 +182,12 @@ int main(int argc, char** argv) {
             std::puts(partialWatch ? "depth plane CPU descriptors with partial write watch tests passed" : "depth plane CPU descriptors after memoized collect tests passed");
             return 0;
         }
+
+        auto* guestPlane = reinterpret_cast<float*>(AllocateBlocks(PlaneBytes, true));
+        Fill(guestPlane, 0.75f);
+        const Surface unclearable{reinterpret_cast<std::uintptr_t>(guestPlane), 0, 0, false, VK_FORMAT_D32_SFLOAT, 0, 0, swizzle, std::numeric_limits<float>::quiet_NaN()};
+        Require(draw(unclearable, {.minDepth = 0.5f, .maxDepth = 0.5f}) == PlaneTexels, "a new depth surface with a NaN DB_DEPTH_CLEAR did not start from the 0.75 its plane holds: a draw at 0.5 failed LESS");
+        Require(draw(unclearable, {.minDepth = 0.8f, .maxDepth = 0.8f}) == 0u, "a new depth surface with a NaN DB_DEPTH_CLEAR did not start from the 0.75 its plane holds: a draw at 0.8 passed LESS");
 
         Fill(plane, 1.0f);
         Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 did not cover the plane");

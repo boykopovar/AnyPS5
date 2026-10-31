@@ -534,7 +534,7 @@ void decodeDepth(const Registers& cx, std::uint32_t depthControl, bool testValEx
     Require(!depthWritten || base(0x014, 0x01c) == readAddress, "depth read and written at different addresses is unsupported");
     Require(!stencil || stencilReadOnly || base(0x015, 0x01d) == stencilReadAddress, "stencil read and written at different addresses is unsupported");
     auto depth = decodeDepthPlane(cx);
-    depth.clearDepth = readFloat(cx, 0x00b);
+    depth.clearDepth = std::bit_cast<float>(read(cx, 0x00b));
     depth.clearStencil = static_cast<std::uint8_t>(read(cx, 0x00a) & 0xffu);
     result.depth = depth;
     result.depthTest = (depthControl & 2u) != 0;
@@ -1751,6 +1751,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     result.depthClampMax = readFloat(cx, 0xb5);
     result.viewport = collapsed ? VkViewport{xo, yo, 1, 1, minDepth, maxDepth} : VkViewport{xo - xs, yo - ys, 2 * xs, 2 * ys, minDepth, maxDepth};
     if (const auto renderControl = find(cx, 0x000); result.depth && renderControl != cx.end() && (renderControl->second & 1u) != 0) {
+        Require(std::isfinite(result.depth->clearDepth), "non-finite depth clear value (DB_DEPTH_CLEAR) in a depth clear draw");
         result.viewport.minDepth = result.depth->clearDepth;
         result.viewport.maxDepth = result.depth->clearDepth;
         result.depthBias = false;

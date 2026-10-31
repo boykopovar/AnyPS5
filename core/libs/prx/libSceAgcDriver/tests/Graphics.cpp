@@ -3028,8 +3028,19 @@ void DepthBoundsBiasTests() {
     }
     queue.context[0x008] = bits(0.25f);
     queue.context[0x009] = bits(0.75f);
-    queue.context[0x00b] = bits(infinity);
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register");
+    for (const auto garbage : {bits(infinity), bits(-infinity), bits(std::numeric_limits<float>::quiet_NaN()), 0xffffffffu}) {
+        queue.context[0x00b] = garbage;
+        state = AgcDriver::Graphics::DecodeState(queue);
+        Require(state.depthTest && state.depth && std::bit_cast<std::uint32_t>(state.depth->clearDepth) == garbage, "a depth draw that clears nothing refused or changed a non-finite DB_DEPTH_CLEAR");
+        queue.context[0x000] = 1;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite depth clear value (DB_DEPTH_CLEAR) in a depth clear draw");
+        queue.context[0x000] = 0;
+    }
+    queue.context[0x00b] = bits(0.5f);
+    queue.context[0x000] = 1;
+    state = AgcDriver::Graphics::DecodeState(queue);
+    Require(state.depth && state.viewport.minDepth == 0.5f && state.viewport.maxDepth == 0.5f, "a depth clear draw did not take its finite DB_DEPTH_CLEAR");
+    queue.context[0x000] = 0;
     queue.context[0x00b] = bits(0.0f);
     queue.context[0x1b3] = 2;
     queue.context[0x1b4] = 2;
