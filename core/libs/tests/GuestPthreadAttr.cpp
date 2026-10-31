@@ -317,6 +317,11 @@ static void CheckEndedThreads() {
         CheckPosixQuery(detached, GUEST_ESRCH);
     }
     Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
+
+    Pthread adopted = nullptr;
+    std::thread([&adopted] { adopted = scePthreadSelf(); }).join();
+    Require(adopted != nullptr && ReportedEnded(adopted));
+    CheckPosixQuery(adopted, GUEST_ESRCH);
 }
 
 static void CheckGetprioOfTheCallingThread() {

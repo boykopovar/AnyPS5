@@ -131,6 +131,7 @@ struct PthreadPrivate {
     std::int64_t tid = nextThreadId.fetch_add(1, std::memory_order_relaxed);
 #ifdef _WIN32
     void* nativeHandle = nullptr;
+    bool hostAdopted = false;
 #else
     pthread_t hostThread{};
 #endif
