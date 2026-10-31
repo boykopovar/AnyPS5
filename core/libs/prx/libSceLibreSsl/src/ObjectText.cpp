@@ -229,4 +229,8 @@ int APS5_VABI i2t_ASN1_OBJECT_nid_postfix(char* buffer, int length, const LibreS
     return ObjectText(buffer, length, object, __func__);
 }
 
+int APS5_VABI OBJ_obj2nid_nid_postfix(const LibreSslAsn1Object* object) {
+    return LibreSslObjectNid_nid_no_patch(object);
+}
+
 }
