@@ -30,8 +30,11 @@ static constexpr std::size_t FACT_ATRAC9_SIZE = 12;
 static constexpr std::uint32_t MAX_SAMPLE_RATE = 192000;
 static constexpr std::uint32_t WAVEFORM_TYPE_PCM_FIRST = 0x10;
 static constexpr std::uint32_t WAVEFORM_TYPE_PCM_LAST = 0x1b;
-static constexpr std::uint32_t WAVEFORM_TYPE_VAG = 0x1c;
 static constexpr std::uint32_t VAG_FRAME_SAMPLES = 28;
+static constexpr std::uint32_t VAG_FRAME_BYTES = 16;
+static constexpr std::uint32_t VAG_HEADER_SIZE = 0x30;
+static constexpr std::uint8_t VAG_FLAG_LOOP_END = 3;
+static constexpr std::uint8_t VAG_FLAG_LOOP_START = 6;
 static constexpr std::uint32_t ATRAC9_FRAME_SAMPLES[16] = {0, 64, 0, 0, 128, 0, 0, 256, 0, 0, 0, 0, 0, 0, 0, 0};
 static constexpr std::uint32_t PCM_BYTES_PER_SAMPLE[] = {1, 1, 2, 2, 3, 3, 4, 4, 4, 4, 8, 8};
 
@@ -51,7 +54,7 @@ static Ngs2WaveformBlock PcmBlock(std::uint32_t type, std::uint32_t channels, st
 }
 
 static Ngs2WaveformBlock VagBlock(std::uint32_t channels, std::uint32_t pos, std::uint32_t count) {
-    const std::uint32_t frameBytes = 16u * channels;
+    const std::uint32_t frameBytes = VAG_FRAME_BYTES * channels;
     const std::uint32_t first = pos / VAG_FRAME_SAMPLES;
     const std::uint32_t past = (pos + count + VAG_FRAME_SAMPLES - 1u) / VAG_FRAME_SAMPLES;
     const auto offset = static_cast<std::uint32_t>(static_cast<std::uint64_t>(first) * frameBytes);
@@ -273,6 +276,68 @@ static std::uint32_t ReadLe32(const std::uint8_t* data) {
     return static_cast<std::uint32_t>(data[0]) | static_cast<std::uint32_t>(data[1]) << 8 | static_cast<std::uint32_t>(data[2]) << 16 | static_cast<std::uint32_t>(data[3]) << 24;
 }
 
+static std::uint32_t ReadBe32(const std::uint8_t* data) {
+    return static_cast<std::uint32_t>(data[0]) << 24 | static_cast<std::uint32_t>(data[1]) << 16 | static_cast<std::uint32_t>(data[2]) << 8 | static_cast<std::uint32_t>(data[3]);
+}
+
+static bool IsVag(std::size_t size, const std::uint8_t* magic) {
+    return size >= 4 && std::memcmp(magic, "VAGp", 4) == 0;
+}
+
+static void AddVagBlock(Ngs2WaveformInfo& info, std::uint32_t begin, std::uint32_t samples, std::uint32_t repeats) {
+    auto block = VagBlock(info.format.num_channels, begin, samples);
+    block.data_offset += info.data_offset;
+    block.num_repeats = repeats;
+    info.block[info.num_blocks++] = block;
+}
+
+template <class TRead>
+static int ParseVag(std::size_t size, TRead&& read, Ngs2WaveformInfo& info) {
+    if (size < VAG_HEADER_SIZE) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    const auto* header = read(0, VAG_HEADER_SIZE);
+    const std::uint32_t channels = header[0x1e] != 0 ? header[0x1e] : 1u;
+    const std::uint32_t frameBytes = VAG_FRAME_BYTES * channels;
+    const std::uint32_t dataSize = ReadBe32(header + 0x0c);
+    const std::size_t payload = size - VAG_HEADER_SIZE;
+    if (dataSize > payload || payload < static_cast<std::size_t>(frameBytes) + VAG_FRAME_BYTES) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    const bool dropsFrame = (read(VAG_HEADER_SIZE + frameBytes, VAG_FRAME_BYTES)[1] & 2) == 0;
+    const std::uint64_t lastFrame = dataSize != 0 ? (dataSize - 1u) / frameBytes : 0;
+    const std::uint64_t scanBytes = lastFrame * frameBytes + VAG_FRAME_BYTES;
+    if (!dropsFrame && dataSize != 0 && scanBytes > payload) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
+    info.format = {SCE_NGS2_WAVEFORM_TYPE_VAG, channels, ReadBe32(header + 0x10), 0, 0, 0};
+    info.data_offset = VAG_HEADER_SIZE;
+    info.data_size = dataSize;
+    if (dataSize / frameBytes > UINT32_MAX / VAG_FRAME_SAMPLES) throw std::runtime_error("NGS2: a VAG waveform of more than 2^32 samples is not implemented");
+    info.num_samples = dataSize / frameBytes * VAG_FRAME_SAMPLES;
+    info.audio_unit_size = frameBytes;
+    info.num_audio_unit_samples = VAG_FRAME_SAMPLES;
+    info.num_audio_unit_per_frame = 1;
+    info.audio_frame_size = frameBytes;
+    info.num_audio_frame_samples = VAG_FRAME_SAMPLES;
+    if (dropsFrame) {
+        if (info.num_samples < VAG_FRAME_SAMPLES) throw std::runtime_error("NGS2: a VAG waveform shorter than one frame is not implemented");
+        info.num_samples -= VAG_FRAME_SAMPLES;
+    } else if (dataSize != 0) {
+        const auto* frames = read(VAG_HEADER_SIZE, static_cast<std::size_t>(scanBytes));
+        for (std::uint64_t frame = 0; frame <= lastFrame; frame++) {
+            const std::uint8_t flag = frames[frame * frameBytes + 1] & 0xfu;
+            if (flag == VAG_FLAG_LOOP_END) info.loop_end_position = static_cast<std::uint32_t>(frame + 1) * VAG_FRAME_SAMPLES;
+            else if (flag == VAG_FLAG_LOOP_START) info.loop_begin_position = static_cast<std::uint32_t>(frame) * VAG_FRAME_SAMPLES;
+        }
+    }
+    const std::uint32_t begin = info.loop_begin_position;
+    const std::uint32_t end = info.loop_end_position;
+    if (end <= begin) {
+        AddVagBlock(info, 0, info.num_samples, 0);
+        return SCE_NGS2_OK;
+    }
+    if (end > info.num_samples) throw std::runtime_error("NGS2: a VAG loop ending past the last whole frame is not implemented");
+    if (begin != 0) AddVagBlock(info, 0, begin, 0);
+    AddVagBlock(info, begin, end - begin, UINT32_MAX);
+    if (end != info.num_samples) AddVagBlock(info, end, info.num_samples - end, 0);
+    return SCE_NGS2_OK;
+}
+
 struct RiffChunks {
     const std::uint8_t* format = nullptr;
     std::size_t formatSize = 0;
@@ -439,8 +504,10 @@ int APS5_VABI sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2W
     *info = {};
     if (data == nullptr) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     const auto* bytes = static_cast<const std::uint8_t*>(data);
+    const auto readBytes = [bytes](std::size_t at, std::size_t) { return bytes + at; };
+    if (IsVag(data_size, bytes)) return ParseVag(data_size, readBytes, *info);
     RiffChunks chunks;
-    const int result = ReadChunks(data_size, [bytes](std::size_t at, std::size_t) { return bytes + at; }, chunks);
+    const int result = ReadChunks(data_size, readBytes, chunks);
     if (result != SCE_NGS2_OK) return result;
     return ParseWaveform(chunks, data_size, *info);
 }
@@ -463,9 +530,14 @@ int APS5_VABI sceNgs2ParseWaveformFile(const char* path, uint32_t offset, Ngs2Wa
         if (!file.read(reinterpret_cast<char*>(piece.data()), static_cast<std::streamsize>(count))) throw std::runtime_error(function + ": read failed for " + host.string());
         return static_cast<const std::uint8_t*>(piece.data());
     };
-    RiffChunks chunks;
-    int result = ReadChunks(length, readBytes, chunks);
-    if (result == SCE_NGS2_OK) result = ParseWaveform(chunks, length, *info);
+    int result;
+    if (IsVag(length, length >= 4 ? readBytes(0, 4) : nullptr)) {
+        result = ParseVag(length, readBytes, *info);
+    } else {
+        RiffChunks chunks;
+        result = ReadChunks(length, readBytes, chunks);
+        if (result == SCE_NGS2_OK) result = ParseWaveform(chunks, length, *info);
+    }
     if (result != SCE_NGS2_OK) return result;
     info->data_offset += offset;
     for (std::uint32_t i = 0; i < info->num_blocks; i++) info->block[i].data_offset += offset;
@@ -481,7 +553,7 @@ int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_
         *block = PcmBlock(type, format->num_channels, sample_pos, num_samples);
         return SCE_NGS2_OK;
     }
-    if (type == WAVEFORM_TYPE_VAG) {
+    if (type == SCE_NGS2_WAVEFORM_TYPE_VAG) {
         *block = VagBlock(format->num_channels, sample_pos, num_samples);
         return SCE_NGS2_OK;
     }

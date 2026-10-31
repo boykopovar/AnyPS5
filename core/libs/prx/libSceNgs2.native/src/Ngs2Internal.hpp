@@ -38,6 +38,12 @@ struct Ngs2Block {
     std::size_t dataCursor = 0;
     bool started = false;
     std::uint32_t submittedRepeats = 0;
+    std::shared_ptr<const std::vector<std::int16_t>> pcm;
+};
+
+struct Ngs2Vag {
+    std::array<std::array<std::int32_t, 4>, NGS2_MAX_CHANNELS> history{};
+    const std::uint8_t* next = nullptr;
 };
 
 struct Ngs2Atrac9DecoderDeleter {
@@ -162,6 +168,7 @@ struct Ngs2Voice {
     std::uint32_t sampleRate = 0;
     std::uint32_t waveformType = 0;
     Ngs2Atrac9 atrac9;
+    Ngs2Vag vag;
     std::unique_ptr<Ngs2ReverbState, Ngs2ReverbDeleter> reverb;
     float pitch = 1.0f;
     std::uint64_t phase = 0;
@@ -350,6 +357,9 @@ void Ngs2PublishBlockQueue(Ngs2Voice& voice);
 bool Ngs2DecodePending(const Ngs2Voice& voice);
 void Ngs2DetachPendingPatches(Ngs2Voice& voice, const Ngs2Rack& rack);
 void Ngs2RestartAtrac9(Ngs2Voice& voice);
+std::size_t Ngs2VagBlockBytes(std::uint32_t channels, const Ngs2WaveformBlock& block);
+void Ngs2CheckVag(std::uint32_t channels, const std::uint8_t* data, const Ngs2WaveformBlock& block);
+void Ngs2DecodeVag(Ngs2Voice& voice, Ngs2Block& block);
 bool Ngs2FinishBlock(Ngs2Voice& voice);
 void Ngs2BindSamplerBlock(Ngs2Voice& voice, bool restartDecoder);
 int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option, std::uint32_t maxInputs);
@@ -361,6 +371,7 @@ void Ngs2SaveSamplerBlock(Ngs2Voice& voice, Ngs2Block& block);
 void Ngs2ConsumeSampler(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate);
 std::uint32_t Ngs2ReadSamplerPcm(Ngs2Voice& voice, float* dest, std::uint32_t stride, std::uint32_t count);
 std::uint32_t Ngs2ReadSamplerAtrac9(Ngs2Voice& voice, float* dest, std::uint32_t stride, std::uint32_t count);
+std::uint32_t Ngs2ReadSamplerVag(Ngs2Voice& voice, float* dest, std::uint32_t stride, std::uint32_t count);
 void Ngs2CleanupUserFx(Ngs2Rack& rack);
 int Ngs2ApplyCustomGainParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
 void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param);
