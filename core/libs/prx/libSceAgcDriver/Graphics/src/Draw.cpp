@@ -796,9 +796,35 @@ struct DrawProfile {
     // Draw packets that drew nothing, by DrawSkip, and their time.
     std::array<std::uint64_t, static_cast<std::size_t>(DrawSkip::Count)> skips{};
     std::array<double, static_cast<std::size_t>(DrawSkip::Count)> skipUs{};
+    AddressDrawReuseCounts addressSeen{};
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 constexpr std::array<const char*, static_cast<std::size_t>(DrawSkip::Count)> DrawSkipNames{"nothing to draw", "prechecked", "thrown"};
+constexpr std::array<const char*, static_cast<std::size_t>(AddressDrawReuse::Count)> AddressDrawReuseNames{"reused", "built", "not read-only", "not space-only", "snapshot outside the space (copied)", "partial overlap", "snapshot changed", "moved GuestBuffers element", "patched data word", "space or epoch change", "in use", "revalidation"};
+
+std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(AddressDrawReuse::Count)>& addressDrawReuses() {
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(AddressDrawReuse::Count)> counts{};
+    return counts;
+}
+
+void countAddressDrawReuse(AddressDrawReuse outcome) {
+    addressDrawReuses()[static_cast<std::size_t>(outcome)].fetch_add(1, std::memory_order_relaxed);
+}
+
+std::atomic<std::uint64_t>& addressDrawReuseVerifications() {
+    static std::atomic<std::uint64_t> verifications{0};
+    return verifications;
+}
+
+void completeSnapshotWrites(std::span<const GuestMemorySnapshot> snapshots) {
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || Recorder::InCompletion()) return;
+    for (const auto& snapshot : snapshots) {
+        if (snapshot.bytes.empty() || !recorder->PendingWriteOverlaps(snapshot.address, snapshot.bytes.size())) continue;
+        Recorder::CountSync(4);
+        recorder->SyncThrough(snapshot.address, snapshot.bytes.size());
+    }
+}
 
 DrawProfile& Profile() {
     static DrawProfile profile;
@@ -915,6 +941,17 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     }
     AgcDriver::ProfilePrint_nid_no_patch("%s\n", line);
     AgcDriver::ProfilePrint_nid_no_patch("[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
+    const auto address = AddressDrawReuseCounters();
+    if (address != profile.addressSeen) {
+        char reuse[512];
+        const auto seen = [&](AddressDrawReuse outcome) { return static_cast<unsigned long long>(address[static_cast<std::size_t>(outcome)] - profile.addressSeen[static_cast<std::size_t>(outcome)]); };
+        int at = std::snprintf(reuse, sizeof(reuse), "[rescache] address-based draws (10 s): reused %llu, built %llu; refused:", seen(AddressDrawReuse::Reused), seen(AddressDrawReuse::Built));
+        for (auto outcome = static_cast<std::size_t>(AddressDrawReuse::NotReadOnly); outcome < address.size() && at > 0 && static_cast<std::size_t>(at) < sizeof(reuse); ++outcome) {
+            at += std::snprintf(reuse + at, sizeof(reuse) - static_cast<std::size_t>(at), "%s %s %llu", outcome == static_cast<std::size_t>(AddressDrawReuse::NotReadOnly) ? "" : ",", AddressDrawReuseNames[outcome], seen(static_cast<AddressDrawReuse>(outcome)));
+        }
+        AgcDriver::ProfilePrint_nid_no_patch("%s\n", reuse);
+        profile.addressSeen = address;
+    }
     profile.totalsUs.fill(0);
     profile.maxUs.fill(0);
     profile.maxDrawUs = profile.hookWaitUs = profile.maxHookWaitUs = profile.ownSyncUs = 0;
@@ -1850,6 +1887,57 @@ struct ResolvedResources {
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
+enum class AddressStages { None, ReadOnly, Storing };
+
+AddressStages addressStages(std::span<const CompiledShader> shaders) {
+    auto stages = AddressStages::None;
+    for (const auto& shader : shaders) {
+        if (shader.program == nullptr || std::none_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; })) continue;
+        if (ShaderStoresThroughAddresses(shader.program->spirv)) return AddressStages::Storing;
+        stages = AddressStages::ReadOnly;
+    }
+    return stages;
+}
+
+bool verifyAddressDrawReuse() {
+    static const bool verify = std::getenv("APS5_VERIFY_ADDRESS_DRAW_REUSE") != nullptr;
+    return verify;
+}
+
+bool snapshotsInTable(std::span<const std::byte> table, std::span<const GuestMemorySnapshot> snapshots) {
+    ShaderRecompiler::BdaAbi::Header header{};
+    if (table.size() < sizeof(header)) return snapshots.empty();
+    std::memcpy(&header, table.data(), sizeof(header));
+    if (header.entryBytes != sizeof(ShaderRecompiler::BdaAbi::Range) || (table.size() - sizeof(header)) / sizeof(ShaderRecompiler::BdaAbi::Range) < header.count) return false;
+    std::vector<ShaderRecompiler::BdaAbi::Range> ranges(header.count);
+    if (!ranges.empty()) std::memcpy(ranges.data(), table.data() + sizeof(header), ranges.size() * sizeof(ranges.front()));
+    return std::ranges::all_of(snapshots, [&](const GuestMemorySnapshot& snapshot) {
+        auto at = snapshot.address;
+        const auto end = snapshot.address + snapshot.bytes.size();
+        for (const auto& range : ranges) {
+            if (at >= end || range.begin > at) break;
+            if (range.end > at && (range.permissions & ShaderRecompiler::BdaAbi::Read) != 0u) at = range.end;
+        }
+        return at >= end;
+    });
+}
+
+bool snapshotsEqualMemory(std::span<const GuestMemorySnapshot> snapshots) {
+    return std::ranges::all_of(snapshots, [](const GuestMemorySnapshot& snapshot) { return snapshot.bytes.empty() || std::memcmp(reinterpret_cast<const void*>(snapshot.address), snapshot.bytes.data(), snapshot.bytes.size()) == 0; });
+}
+
+void verifyServedSpace(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, const ShaderResources& served) {
+    const ShaderResources fresh(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
+    const auto servedTable = served.AddressTableBytes();
+    const auto freshTable = fresh.AddressTableBytes();
+    const char* what = !fresh.SpaceReuse() ? "space reuse" : !std::ranges::equal(servedTable, freshTable) ? "BDA table" : !snapshotsInTable(servedTable, snapshots) ? "snapshot ranges" : !snapshotsEqualMemory(snapshots) ? "snapshot bytes" : served.SampledTextures() != fresh.SampledTextures() ? "sampled textures" : served.StorageImages() != fresh.StorageImages() ? "storage images" : served.LayoutKey() != fresh.LayoutKey() || served.FragmentLayoutKey() != fresh.FragmentLayoutKey() ? "set layouts" : nullptr;
+    addressDrawReuseVerifications().fetch_add(1, std::memory_order_relaxed);
+    if (what == nullptr) return;
+    char message[320];
+    std::snprintf(message, sizeof(message), "APS5_VERIFY_ADDRESS_DRAW_REUSE: a served address-based draw hit disagrees with a fresh build or guest memory in its %s (BDA table %zu bytes served, %zu fresh; %zu / %zu sampled textures; %zu snapshots)", what, servedTable.size(), freshTable.size(), served.SampledTextures().size(), fresh.SampledTextures().size(), snapshots.size());
+    throw std::runtime_error(message);
+}
+
 ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
@@ -1864,23 +1952,64 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     // The render target and index ranges stay out of the key (see DrawResourceKey); a hit repeats
     // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
-    resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
+    const bool candidate = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; });
+    resolved.cacheable = candidate && !ShaderResources::NeverReusable(shaders);
+    const auto address = candidate && !ShaderResources::SpaceReuseDisabled() ? addressStages(shaders) : AddressStages::None;
+    std::optional<AddressDrawReuse> reuse;
+    if (address == AddressStages::Storing) reuse = AddressDrawReuse::NotReadOnly;
+    else if (address == AddressStages::ReadOnly && !resolved.cacheable) reuse = AddressDrawReuse::NotSpaceOnly;
     if (resolved.cacheable) {
         resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
         if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
-            const bool valid = cached->Revalidate(shaders);
+            const auto releaseSpace = [](ShaderResources* resources) { static_cast<void>(resources->ReleaseSpace()); };
+            std::unique_ptr<ShaderResources, decltype(releaseSpace)> heldSpace(nullptr, releaseSpace);
+            const bool counted = address == AddressStages::ReadOnly && cached->SpaceReuse();
+            bool spaceHeld = !cached->SpaceReuse();
+            bool inUse = false;
+            if (!spaceHeld) {
+                if (auto* active = Recorder::Active(); active != nullptr) static_cast<void>(cached->ReleaseCompletedSpace(active->CompletedThrough()));
+                if (cached->SpaceHeld()) {
+                    inUse = true;
+                    reuse = AddressDrawReuse::InUse;
+                } else if (!cached->RetakeSpace()) {
+                    reuse = AddressDrawReuse::SpaceChanged;
+                } else {
+                    heldSpace.reset(cached.get());
+                    if (!cached->AddressTableGuardCurrent()) {
+                        reuse = AddressDrawReuse::SpaceChanged;
+                        static_cast<void>(cached->ReleaseSpace());
+                    } else {
+                        completeSnapshotWrites(snapshots);
+                        const auto service = cached->SnapshotsServedInPlace(snapshots);
+                        spaceHeld = service == SnapshotService::Served;
+                        if (!spaceHeld) {
+                            reuse = service == SnapshotService::Partial ? AddressDrawReuse::PartialOverlap : service == SnapshotService::Changed ? AddressDrawReuse::SnapshotChanged : AddressDrawReuse::SnapshotOutside;
+                            static_cast<void>(cached->ReleaseSpace());
+                        }
+                    }
+                }
+            }
+            const bool valid = spaceHeld && cached->Revalidate(shaders);
+            if (counted && spaceHeld && !valid) reuse = AddressDrawReuse::Revalidation;
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
+            bool patched = false;
+            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
+                if (counted && verifyAddressDrawReuse()) verifyServedSpace(context, state, draw, shaders, snapshots, indexBytes, *cached);
+                static_cast<void>(heldSpace.release());
                 resolved.resources = std::move(cached);
                 resolved.moved = std::move(*moved);
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);
-            } else if (valid) {
+                if (counted) reuse = AddressDrawReuse::Reused;
+            } else if (valid || inUse) {
+                if (valid && cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
+                if (valid && counted) reuse = patched ? AddressDrawReuse::PatchedData : AddressDrawReuse::MovedBuffer;
                 countCache(&DrawProfile::cacheMisses);
             } else {
+                if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
                 SharedResourceCache().Remove(resolved.contentKey);
                 countCache(&DrawProfile::cacheInvalidated);
             }
@@ -1895,7 +2024,9 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
         outcome.addressBased = resolved.resources->HoldsLease();
         outcome.kind = outcome.addressBased ? KindBda : KindBuild;
         if (resolved.cacheable) countCache(&DrawProfile::cacheMisses);
+        if (address == AddressStages::ReadOnly && !reuse.has_value()) reuse = resolved.resources->SpaceReuse() ? AddressDrawReuse::Built : AddressDrawReuse::NotSpaceOnly;
     }
+    if (reuse.has_value()) countAddressDrawReuse(*reuse);
     timer.phase(PhaseResources);
     APS5_LOG_CHARS_OUT_DEBUG("ShaderResources created");
     return resolved;
@@ -2121,6 +2252,13 @@ std::function<void()> indirectRecordCheck(const IndirectRecord* indirect) {
     };
 }
 
+std::shared_ptr<std::shared_ptr<const void>> reserveSpaceKeep(Recorder& recorder, const ShaderResources& resources) {
+    if (!resources.SpaceReuse()) return nullptr;
+    auto slot = std::make_shared<std::shared_ptr<const void>>();
+    recorder.Keep(slot);
+    return slot;
+}
+
 // Everything a recorded draw uses lives until its batch completes.
 struct Kept {
     std::shared_ptr<ShaderResources> resources;
@@ -2135,7 +2273,7 @@ struct Kept {
 // The completion side of a recorded draw: the kept objects, the record check, the lease outcome,
 // the GPU write notes, the copied-buffer write-back (listed in DrawCopiedWriters or run as a
 // completion action) and the targets marked dirty.
-void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, std::shared_ptr<Pipeline> pipeline, std::shared_ptr<Framebuffer> framebuffer, DrawInputs& inputs, std::vector<std::shared_ptr<StorageTexture>> targets, std::vector<std::pair<std::uint32_t, std::uint32_t>> slices, VkRect2D scissor, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome) {
+void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>& resources, std::shared_ptr<Pipeline> pipeline, std::shared_ptr<Framebuffer> framebuffer, DrawInputs& inputs, std::vector<std::shared_ptr<StorageTexture>> targets, std::vector<std::pair<std::uint32_t, std::uint32_t>> slices, VkRect2D scissor, std::unique_ptr<DeviceBuffer> scratch, std::function<void()> checkRecords, bool listed, bool completion, const DrawOutcome& outcome, std::shared_ptr<ShaderResources::DrawUse> use, std::shared_ptr<const void>* spaceKeep) {
     auto kept = std::make_shared<Kept>();
     kept->resources = resources;
     kept->pipeline = std::move(pipeline);
@@ -2158,6 +2296,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1);
     // Every use of a (possibly shared) resources object registers its GPU writes anew.
     resources->MarkGpuWrites(recorder);
+    if (spaceKeep != nullptr) *spaceKeep = resources->ReleaseSpace();
     // The write-back (fault check, copied buffers) runs when the batch completed; a fault is
     // reported by the recorder ("deferred write-back failed") instead of thrown out of the draw.
     if (listed && resources->HasCopiedWrites()) {
@@ -2172,7 +2311,8 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
         writers->push_back(resources);
         GuestMemory::BreakProofs();
     } else if (completion) {
-        if (resources->Reusable()) recorder.OnComplete([resources] { resources->CheckFaults(); });
+        if (use != nullptr) recorder.OnComplete([resources, use] { resources->CompleteDrawUse(*use); });
+        else if (resources->Reusable()) recorder.OnComplete([resources] { resources->CheckFaults(); });
         else recorder.OnComplete([resources] { resources->WriteBackBuffers(); });
     }
     std::vector<bool> storeNow(residents.size(), false);
@@ -2213,6 +2353,7 @@ struct RecordedDraw {
     std::vector<SampleOrderTarget> reordered;
     SampleOrderPass reorderPass;
     std::optional<DepthSampleLocations> depthLocations;
+    std::shared_ptr<std::shared_ptr<const void>>* spaceKeep = nullptr;
 };
 
 // A remapped viewport depth range reads its scale and offset from the draw's push block (the vertex shader's
@@ -2444,7 +2585,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     for (const auto image : record.multisampleImages) passAttachments.emplace_back(image, true);
     const bool unknownMemory = addressBased || resources.UsesAddressTable() || resources.HasCopiedWrites();
     static_cast<void>(StorageTexture::StoreDrawnLinearTouching("draw access", [&](std::uint64_t begin, std::uint64_t end) { return std::any_of(passReads.begin(), passReads.end(), [&](const auto& read) { return read.first < end && begin < read.second; }) || resources.WritesOverlap(begin, static_cast<std::size_t>(end - begin)); }, unknownMemory));
-    const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved);
+    const auto drawUse = resources.BeginDrawUse(*recorder);
+    const auto drawBindings = resources.PrepareDrawBindings(*recorder, record.moved, false, drawUse != nullptr ? drawUse->record.get() : nullptr);
     static const bool addressReadPasses = std::getenv("APS5_NO_ADDRESS_READ_PASSES") == nullptr;
     const bool readOnlyBda = addressReadPasses && resources.BdaReadOnly();
     outcome.addressDraw = addressBased;
@@ -2475,6 +2617,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     const bool fenced = state.depth.has_value() || !record.proxies.empty();
     if (UsesMeshWindow(shaders)) PrepareMeshWindow(context);
     const auto start = recorder->StartDrawPass(passKey, capture || readsTarget || gpuIndirect || meshIndirect || captured || PixelFunctionLdsSubgroup(shaders) != 0u, fenced, passAccess);
+    if (record.spaceKeep != nullptr) *record.spaceKeep = reserveSpaceKeep(*recorder, resources);
     for (const auto& target : record.multisampleTargets) KeepMultisampleTarget_nid_no_patch(target);
     const bool continued = start.continued;
     outcome.passContinued = continued;
@@ -2555,7 +2698,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         if (set != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), 0, 1, &set, 0, nullptr);
         if (fragmentSet != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout(), ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet, 1, &fragmentSet, 0, nullptr);
     } else {
-        resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout());
+        resources.BindDrawUse(commands, record.pipeline->Layout(), drawUse.get());
     }
     if (std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
     if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
@@ -2614,7 +2757,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
     timer.phase(PhaseRecord);
-    keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(record.targetSlices), state.scissor, std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome);
+    keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(record.targetSlices), state.scissor, std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome, drawUse, record.spaceKeep != nullptr && *record.spaceKeep != nullptr ? record.spaceKeep->get() : nullptr);
     timer.phase(PhaseKeep);
     if (record.waited) {
         // The wait the dispatch path makes for such work (source 3, "address-based"): the
@@ -2738,7 +2881,14 @@ struct PreparedDraw {
     std::vector<SampleOrderTarget> reordered;
     SampleOrderPass reorderPass;
     std::optional<DepthSampleLocations> depthLocations;
+    std::shared_ptr<std::shared_ptr<const void>> spaceKeep;
 };
+
+void keepHeldSpace(PreparedDraw& prepared) {
+    const auto& resources = prepared.resolved.resources;
+    if (prepared.spaceKeep != nullptr || prepared.recorder == nullptr || resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
+    prepared.spaceKeep = reserveSpaceKeep(*prepared.recorder, *resources);
+}
 
 bool ShapeMemoEnabled() {
     static const bool enabled = std::getenv("APS5_NO_SHAPE_MEMO") == nullptr;
@@ -3210,6 +3360,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         Require(std::ranges::any_of(images, [&](const std::pair<VkImage, bool>& image) { return image.first == binding.resident->Image() && image.second; }), "the partial write of a packed color target does not store into the target's resident image");
     }
     if (!lean && !resolved.moved.empty()) {
+        if (resolved.resources->SpaceReuse()) static_cast<void>(resolved.resources->ReleaseSpace());
         resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
         resolved.moved.clear();
     }
@@ -3350,12 +3501,13 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
         record.reordered = reordered;
         record.reorderPass = reorderPass;
         record.depthLocations = depthLocations;
+        record.spaceKeep = &prepared.spaceKeep;
         recordDraw(context, state, draw, shaders, inputs, record, outcome, timer, ownWaitedMs, prepared.trace);
         // The recipe for the caller's draw-cache entry (design_cpu_final M8, rule R3 for draws):
         // only a template the resource cache serves under this content key (reusable: no lease,
         // no copied writes, every direct region import- or mirror-served) of a direct draw, so a
         // hit's proof is the template's ProveCurrent and nothing needs completion work.
-        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && resolved.moved.empty() && !multisampled && !pipeline->ReordersSamples()) {
+        if (recipeOut != nullptr && DrawRecipes() && cacheable && !outcome.waited && args == nullptr && resources->Reusable() && !resources->SpaceReuse() && resolved.moved.empty() && !multisampled && !pipeline->ReordersSamples()) {
             auto recipe = std::make_shared<DrawRecipe>();
             recipe->device = context.device;
             recipe->templateRef = resources;
@@ -3406,6 +3558,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     // A queued label store over such memory likewise (Recorder::RecordStore).
     if (recorded && recorder->HasQueuedStores() && (resources->HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     const auto commands = recorded ? recorder->Commands() : batch->Handle();
+    if (recorded) prepared.spaceKeep = reserveSpaceKeep(*recorder, *resources);
     if (recorded) recorder->PrepareSampleSlot();
     APS5_LOG_CHARS_OUT_DEBUG("CommandBatch created");
     // The draw's [gputime] class range: from its first barrier to the download barrier.
@@ -3493,7 +3646,8 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
     pipeline->Begin(commands, *framebuffer, state.renderExtent, state);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
-    resources->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->Layout());
+    const auto drawUse = recorded ? resources->BeginDrawUse(*recorder) : nullptr;
+    resources->BindDrawUse(commands, pipeline->Layout(), drawUse.get());
     if (pixelLdsSubgroup != 0u) BindPixelFunctionLds(context, commands, pipeline->Layout());
     if (UsesMeshWindow(shaders)) BindMeshWindow(context, commands, pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
@@ -3588,7 +3742,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_CHARS_OUT_DEBUG("SubmitAndWait");
     timer.phase(PhaseRecord);
     if (recorded) {
-        keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, [&] { std::vector<std::pair<std::uint32_t, std::uint32_t>> slices; for (const auto& binding : targets) slices.emplace_back(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u); return slices; }(), state.scissor, std::move(scratch), std::move(checkRecords), listed, completion, outcome);
+        keepRecordedDraw(*recorder, resources, pipeline, framebuffer, inputs, owners, [&] { std::vector<std::pair<std::uint32_t, std::uint32_t>> slices; for (const auto& binding : targets) slices.emplace_back(binding.color.arraySlice, binding.color.arrayLastSlice != 0 ? binding.color.layers : 1u); return slices; }(), state.scissor, std::move(scratch), std::move(checkRecords), listed, completion, outcome, drawUse, prepared.spaceKeep != nullptr ? prepared.spaceKeep.get() : nullptr);
         timer.phase(PhaseKeep);
         if (outcome.waited) {
             // The wait the dispatch path makes for such work (source 3, "address-based"): the
@@ -3735,7 +3889,23 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     prepared.recipeOut = recipeOut;
     prepared.trace = trace;
     prepared.shape = shape;
-    if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
+    const struct HeldSpace {
+        PreparedDraw& prepared;
+        ~HeldSpace() {
+            const auto& resources = prepared.resolved.resources;
+            if (resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
+            if (prepared.spaceKeep != nullptr) *prepared.spaceKeep = resources->ReleaseSpace();
+            else if (prepared.recorder != nullptr) resources->HoldSpaceThrough(prepared.recorder->OpenSerial());
+            else static_cast<void>(resources->ReleaseSpace());
+        }
+    } heldSpace{prepared};
+    try {
+        if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
+    } catch (...) {
+        keepHeldSpace(prepared);
+        throw;
+    }
+    keepHeldSpace(prepared);
 }
 
 DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawRecipe& recipe, const DrawTraceContext* trace) {
@@ -3933,6 +4103,21 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
         }
         storeClearTexels(context, color, texel);
     }
+}
+
+AddressDrawReuseCounts AddressDrawReuseCounters() {
+    AddressDrawReuseCounts counts{};
+    const auto& counters = addressDrawReuses();
+    for (std::size_t index = 0; index < counts.size(); ++index) counts[index] = counters[index].load(std::memory_order_relaxed);
+    return counts;
+}
+
+const char* AddressDrawReuseName(AddressDrawReuse outcome) {
+    return static_cast<std::size_t>(outcome) < AddressDrawReuseNames.size() ? AddressDrawReuseNames[static_cast<std::size_t>(outcome)] : "?";
+}
+
+std::uint64_t AddressDrawReuseVerifications() {
+    return addressDrawReuseVerifications().load(std::memory_order_relaxed);
 }
 
 bool DrawPipelineEnabled() {
