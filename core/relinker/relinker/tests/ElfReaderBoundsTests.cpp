@@ -93,10 +93,13 @@ void RejectAddress(Bytes bytes, const std::uint64_t address) {
     throw std::runtime_error("Invalid file mapping was accepted");
 }
 
-void RejectProgramHeaders(Bytes bytes) {
+void RejectProgramHeaders(Bytes bytes, const std::string& expectedMessage = "") {
     try {
         Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
-    } catch (const Relinker::RelinkerException&) {
+    } catch (const Relinker::RelinkerException& error) {
+        if (!expectedMessage.empty() && std::string(error.what()).find(expectedMessage) == std::string::npos) {
+            throw std::runtime_error("Unexpected exception message: " + std::string(error.what()));
+        }
         return;
     }
     throw std::runtime_error("Invalid program header was accepted");
@@ -106,6 +109,23 @@ void RejectProgramHeaders(Bytes bytes) {
 
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> cases = {
+        {"program header table truncation", [] {
+            auto bytes = Fixture();
+            bytes.resize(64 + 56 - 1);
+            RejectProgramHeaders(std::move(bytes), "Program header table out of bounds");
+        }},
+        {"program header table offset overflow", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 32, std::numeric_limits<std::uint64_t>::max() - 31);
+            RejectProgramHeaders(std::move(bytes), "Program header table out of bounds");
+        }},
+        {"absent program headers with offset past end of file", [] {
+            auto bytes = Fixture();
+            Write<std::uint16_t>(bytes, 56, 0);
+            Write<std::uint64_t>(bytes, 32, 0x1000);
+            const auto headers = Relinker::ElfReader(std::move(bytes)).ReadProgramHeaders();
+            Require(headers.empty());
+        }},
         {"load file range past end of file", [] {
             auto bytes = Fixture();
             Write<std::uint64_t>(bytes, 96, 0xd0);
