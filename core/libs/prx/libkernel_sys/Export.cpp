@@ -741,6 +741,11 @@ int APS5_VABI fchdir_nid_postfix(int fd) {
     return 0;
 }
 
+int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size) {
+    if (buffer == nullptr) return static_cast<int>(Fail(GuestEfault));
+    return getcwd_nid_postfix(buffer, size) == nullptr ? -1 : 0;
+}
+
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz);
 
 int APS5_VABI settimeofday_nid_postfix(const KernelTimeval* tv, const KernelTimezone* tz) {

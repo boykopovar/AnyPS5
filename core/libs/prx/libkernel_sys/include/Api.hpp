@@ -556,5 +556,6 @@ int APS5_VABI wait3_nid_postfix(void);
 int APS5_VABI wait4_nid_postfix(void);
 
 int APS5_VABI _openat_nid_postfix(int fd, const char* path, int flags, ...);
+int APS5_VABI __getcwd_nid_postfix(char* buffer, std::size_t size);
 
 }
