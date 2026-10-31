@@ -669,7 +669,12 @@ int main() {
     Require(chflags_nid_postfix(file.string().c_str(), ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(chflags_nid_postfix(file.string().c_str(), 0x200000) == -1 && *__error_nid_postfix() == 1);
     Require(ChflagsThrows(file, 0x2, "UF_IMMUTABLE"));
-    Require(ChflagsThrows(file, 0x1000 | 0x40000, "UF_READONLY|SF_APPEND"));
+    Require(ChflagsThrows(file, 0x1000, "UF_READONLY"));
+    for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x370000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
+        Require(chflags_nid_postfix(file.string().c_str(), system) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix(file.string().c_str(), 0x40000 | 0x20) == -1 && *__error_nid_postfix() == 45);
+    Require(chflags_nid_postfix(root.string().c_str(), 0x20000) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix((root / "missing").string().c_str(), 0x20000) == -1 && *__error_nid_postfix() == 2);
     const auto chflagsDangling = root / "dangling.link";
     const auto chflagsPointing = root / "file.link";
 #ifdef _WIN32
@@ -698,7 +703,11 @@ int main() {
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(fchflags_nid_postfix(flagged, 0x200000) == -1 && *__error_nid_postfix() == 1);
     Require(FchflagsThrows(flagged, 0x2, "UF_IMMUTABLE"));
-    Require(FchflagsThrows(flagged, 0x1000 | 0x40000, "UF_READONLY|SF_APPEND"));
+    Require(FchflagsThrows(flagged, 0x1000, "UF_READONLY"));
+    for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
+        Require(fchflags_nid_postfix(flagged, system) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x370000) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x40000 | 0x20) == -1 && *__error_nid_postfix() == 45);
     Require(close_nid_postfix(flagged) == 0);
     Require(fchflags_nid_postfix(flagged, 0) == -1 && *__error_nid_postfix() == 9);
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 9);

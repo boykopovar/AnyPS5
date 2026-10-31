@@ -1508,6 +1508,9 @@ int main() {
     Require(lchflags_nid_postfix((file + "/child").c_str(), 0) == -1 && Error() == 20);
     Require(lchflags_nid_postfix(file.c_str(), 0x20) == -1 && Error() == 45);
     Require(lchflags_nid_postfix(file.c_str(), 0x200000) == -1 && Error() == 1);
+    Require(lchflags_nid_postfix(file.c_str(), 0x20000) == -1 && Error() == 1);
+    Require(lchflags_nid_postfix(file.c_str(), 0x2 | 0x40000) == -1 && Error() == 1);
+    Require(lchflags_nid_postfix(file.c_str(), 0x40000 | 0x20) == -1 && Error() == 45);
     const auto symbolic = (root / "symbolic").string();
     const int created = symlink_nid_postfix("original.bin", symbolic.c_str());
     if (created == 0) {
