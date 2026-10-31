@@ -1524,7 +1524,8 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Le
 static constexpr std::uint64_t VectorBodyMagic = 0x434e507056656342ULL;
 struct VectorBody {
     std::uint64_t magic;
-    std::uint8_t reserved[0x28];
+    void* libContext;
+    std::uint8_t reserved[0x20];
     std::int32_t referenceCount;
     std::int32_t elementKind;  // 1 = IntrusivePtr elements, 2 = String elements
     void* elements;
@@ -1551,6 +1552,14 @@ static void APS5_VABI DestroyVectorBody(void* object) {
 }
 
 static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementKind, const char* function) {
+    auto* direct = static_cast<VectorBody*>(static_cast<void*>(self));
+    if (direct != nullptr && direct->magic == VectorBodyMagic) {
+        if (direct->elementKind != elementKind) {
+            NotImplemented_nid_no_patch(function);
+            return nullptr;
+        }
+        return direct;
+    }
     auto* body = static_cast<VectorBody*>(self->object);
     if (body == nullptr) {
         body = static_cast<VectorBody*>(std::calloc(1, sizeof(VectorBody)));
@@ -1558,6 +1567,7 @@ static VectorBody* VectorBodyFor(IntrusivePtr* self, const std::int32_t elementK
         body->magic = VectorBodyMagic;
         body->referenceCount = 1;
         body->elementKind = elementKind;
+        body->libContext = self->libContext;
         self->object = body;
         self->deleter = &DestroyVectorBody;
         return body;
@@ -1580,15 +1590,22 @@ static bool VectorGrow(VectorBody* body, const std::size_t elementSize) {
     return true;
 }
 
+static const VectorBody* ResolveVectorBody(const void* self) {
+    const auto* direct = static_cast<const VectorBody*>(self);
+    if (direct == nullptr) return nullptr;
+    if (direct->magic == VectorBodyMagic) return direct;
+    return static_cast<const VectorBody*>(static_cast<const IntrusivePtr*>(self)->object);
+}
+
 static std::uint64_t HostVectorSize(const void* self, const char* function) {
-    const auto* body = static_cast<const VectorBody*>(static_cast<const IntrusivePtr*>(self)->object);
+    const auto* body = ResolveVectorBody(self);
     if (body == nullptr) return 0;
     if (body->magic != VectorBodyMagic) NotImplemented_nid_no_patch(function);
     return body->size;
 }
 
 static IntrusivePtr* HostVectorElement(void* self, const std::uint64_t index, const char* function) {
-    auto* body = static_cast<VectorBody*>(static_cast<IntrusivePtr*>(self)->object);
+    auto* body = const_cast<VectorBody*>(ResolveVectorBody(self));
     if (body == nullptr || body->magic != VectorBodyMagic || body->elementKind != 1) NotImplemented_nid_no_patch(function);
     return static_cast<IntrusivePtr*>(body->elements) + index;
 }
@@ -1636,7 +1653,7 @@ struct CommonIterator {
 static_assert(sizeof(CommonIterator) == 0x10);
 
 static const VectorBody* HostVectorBody(const void* self, const std::int32_t elementKind, const char* function) {
-    const auto* body = static_cast<const VectorBody*>(static_cast<const IntrusivePtr*>(self)->object);
+    const auto* body = ResolveVectorBody(self);
     if (body == nullptr) return nullptr;
     if (body->magic != VectorBodyMagic || body->elementKind != elementKind) NotImplemented_nid_no_patch(function);
     return body;
@@ -1682,8 +1699,13 @@ static bool VectorReserve(VectorBody* body, const std::size_t elementSize, const
 static int HostVectorCopyFrom(IntrusivePtr* self, const IntrusivePtr* source, const char* function) {
     VectorBody* body = VectorBodyFor(self, 1, function);
     if (body == nullptr) return ParameterAllocationFailed;
-    if (self->libContext == nullptr) self->libContext = source->libContext;
-    const auto* sourceBody = static_cast<const VectorBody*>(source->object);
+    const auto* sourceDirect = static_cast<const VectorBody*>(static_cast<const void*>(source));
+    const bool sourceIsBody = sourceDirect != nullptr && sourceDirect->magic == VectorBodyMagic;
+    const auto* sourceBody = sourceIsBody ? sourceDirect : static_cast<const VectorBody*>(source->object);
+    void** const selfContext = body == static_cast<VectorBody*>(static_cast<void*>(self)) ? &body->libContext : &self->libContext;
+    void* const sourceContext = sourceIsBody ? sourceDirect->libContext : source->libContext;
+    if (*selfContext == nullptr) *selfContext = sourceContext;
+    if (body->libContext == nullptr) body->libContext = *selfContext;
     if (sourceBody != nullptr && (sourceBody->magic != VectorBodyMagic || sourceBody->elementKind != 1)) {
         NotImplemented_nid_no_patch(function);
         return ParameterAllocationFailed;
