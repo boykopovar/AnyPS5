@@ -38,40 +38,44 @@ class ObservedManifestTests(unittest.TestCase):
             return subprocess.run([sys.executable, "-I", str(CHECKER), "--base", "HEAD~1", "--head", "HEAD"],
                                   cwd=root, capture_output=True, text=True, env=env, timeout=20)
 
-    def assertFinding(self, result, text):
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("[observed-manifest]", result.stdout)
-        self.assertIn(text, result.stdout)
-
-    def assertPasses(self, result):
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("[observed-manifest]", result.stdout)
+    def findings(self, result):
+        return "\n".join(line for line in result.stdout.splitlines() if "[observed-manifest]" in line)
 
     def test_a_sorted_manifest_with_comments_passes(self):
-        self.assertPasses(self.check({"docs/dev/observed/libSceOne.txt": f"# header\n{FIRST}\n{SECOND}  # evidence: by name\n"}))
+        result = self.check({"docs/dev/observed/libSceOne.txt": f"# header\n{FIRST}\n{SECOND}  # evidence: by name\n"})
+        self.assertEqual((result.returncode, self.findings(result)), (0, ""), result.stdout + result.stderr)
 
     def test_an_empty_manifest_passes(self):
-        self.assertPasses(self.check({"docs/dev/observed/libSceOne.txt": "# nothing observed yet\n"}))
+        result = self.check({"docs/dev/observed/libSceOne.txt": "# nothing observed yet\n"})
+        self.assertEqual((result.returncode, self.findings(result)), (0, ""), result.stdout + result.stderr)
 
     def test_unsorted_entries_fail_with_their_line(self):
         result = self.check({"docs/dev/observed/libSceOne.txt": f"{SECOND}\n{FIRST}\n"})
-        self.assertFinding(result, "docs/dev/observed/libSceOne.txt:2: error: [observed-manifest] ")
-        self.assertIn("is not in sorted order", result.stdout)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/dev/observed/libSceOne.txt:2: error: [observed-manifest] ", self.findings(result))
+        self.assertIn("is not in sorted order", self.findings(result))
 
     def test_repeated_and_malformed_entries_fail(self):
         result = self.check({"docs/dev/observed/libSceOne.txt": f"{FIRST}\n{FIRST}\nshort\n"})
-        self.assertFinding(result, f"duplicate NID {FIRST}")
-        self.assertIn("invalid NID 'short'", result.stdout)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(f"duplicate NID {FIRST}", self.findings(result))
+        self.assertIn("invalid NID 'short'", self.findings(result))
 
     def test_a_manifest_for_a_library_that_does_not_exist_fails(self):
-        self.assertFinding(self.check({"docs/dev/observed/libSceGone.txt": f"{FIRST}\n"}), "libSceGone is not a library of core/libs/prx")
+        result = self.check({"docs/dev/observed/libSceGone.txt": f"{FIRST}\n"})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("libSceGone is not a library of core/libs/prx", self.findings(result))
 
     def test_other_file_names_fail(self):
-        self.assertFinding(self.check({"docs/dev/observed/libSceOne.csv": f"{FIRST}\n"}), "expected docs/dev/observed/<library>.txt")
-        self.assertFinding(self.check({"docs/dev/observed/nested/libSceOne.txt": f"{FIRST}\n"}), "expected docs/dev/observed/<library>.txt")
+        for name in ("libSceOne.csv", "nested/libSceOne.txt"):
+            with self.subTest(name=name):
+                result = self.check({f"docs/dev/observed/{name}": f"{FIRST}\n"})
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("expected docs/dev/observed/<library>.txt", self.findings(result))
 
     def test_a_manifest_the_pull_request_does_not_touch_is_not_rechecked(self):
-        self.assertPasses(self.check({"README.txt": "x\n"}, {"docs/dev/observed/libSceOne.txt": f"{SECOND}\n{FIRST}\n"}))
+        result = self.check({"README.txt": "x\n"}, {"docs/dev/observed/libSceOne.txt": f"{SECOND}\n{FIRST}\n"})
+        self.assertEqual((result.returncode, self.findings(result)), (0, ""), result.stdout + result.stderr)
 
     def test_deleting_a_manifest_passes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -95,7 +99,7 @@ class ObservedManifestTests(unittest.TestCase):
             git("commit", "-qm", "fix: remove the manifest")
             result = subprocess.run([sys.executable, "-I", str(CHECKER), "--base", "HEAD~1", "--head", "HEAD"],
                                     cwd=root, capture_output=True, text=True, env=env, timeout=20)
-            self.assertPasses(result)
+            self.assertEqual((result.returncode, self.findings(result)), (0, ""), result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
