@@ -54,6 +54,16 @@ int main() {
     Require(sched_rr_get_interval_nid_postfix(self + 1, &interval) == -1 && *__error_nid_postfix() == 3);
     *__error_nid_postfix() = 0;
     Require(sched_rr_get_interval_nid_postfix(0, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sched_rr_get_interval_nid_postfix(0, reinterpret_cast<KernelTimespec*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sched_rr_get_interval_nid_postfix(-1, reinterpret_cast<KernelTimespec*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 3);
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(sched_rr_get_interval_nid_postfix(0, static_cast<KernelTimespec*>(page)) == -1 && *__error_nid_postfix() == 14);
+    Require(static_cast<KernelTimespec*>(page)->tv_nsec == 0);
     for (int policy : {1, 3}) {
         Require(sched_get_priority_max_nid_postfix(policy) == 767);
         Require(sched_get_priority_min_nid_postfix(policy) == 256);
@@ -73,18 +83,16 @@ int main() {
     RequireSet(PrioProcess, 0, 0);
     RequireSet(PrioProcess, self, 5);
     RequireSet(PrioProcess, self, -20);
-    RequireSet(PrioGroup, 0, 20);
-    RequireSet(PrioUser, 0, -1);
     RequireSetError(PrioProcess, self + 1, 0, 3);
     RequireSetError(PrioProcess, -1, 0, 3);
     RequireSetError(PrioGroup, self + 1, 0, 3);
     RequireSetError(PrioUser, 1000, 0, 3);
     RequireSetError(3, 0, 0, 22);
     RequireSetError(-1, self, 0, 22);
-    Require(setpriority_nid_postfix(PrioProcess, 0, 10) == 0 && getpriority_nid_postfix(PrioProcess, 0) == 10);
-    Require(setpriority_nid_postfix(PrioProcess, 0, 99) == 0 && getpriority_nid_postfix(PrioProcess, 0) == 20);
-    Require(setpriority_nid_postfix(PrioProcess, 0, -99) == 0 && getpriority_nid_postfix(PrioProcess, 0) == -20);
-    Require(setpriority_nid_postfix(PrioProcess, 0, 0) == 0 && getpriority_nid_postfix(PrioProcess, 0) == 0);
+    for (const int nice : {-25, -5, 5, 10, 25, 99, -99}) {
+        Require(setpriority_nid_postfix(PrioProcess, 0, nice) == 0 && getpriority_nid_postfix(PrioProcess, 0) == 0);
+        Require(getpriority_nid_postfix(PrioProcess, self) == 0 && getpriority_nid_postfix(PrioGroup, 0) == 0 && getpriority_nid_postfix(PrioUser, 0) == 0);
+    }
     GuestRtPrio rtprio{7, 7};
     Require(rtprio_thread_nid_postfix(0, 0, &rtprio) == 0 && rtprio.type == 10 && rtprio.prio == 700);
     bool rtprioThrew = false;

@@ -15,23 +15,22 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckProsperoSystemSwVersion() {
     *__error_nid_postfix() = 13;
-    Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(nullptr) == SCE_KERNEL_ERROR_EFAULT);
-    const std::uint64_t sizes[] = {0, 0x18, 0x27, 0x30};
+    Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(nullptr) == 0);
+    const std::uint64_t sizes[] = {0, 0x18, 0x27, 0x28, 0x29, 0x30, 0x100, ~0ull};
     for (const std::uint64_t size : sizes) {
-        SceKernelProsperoSystemSwVersion version{};
-        std::memset(&version, 0xaa, sizeof(version));
-        version.size = size;
-        Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(&version) == SCE_KERNEL_ERROR_EINVAL);
-        Require(version.size == size && version.version == 0xaaaaaaaa && static_cast<unsigned char>(version.versionString[0]) == 0xaa);
+        struct {
+            SceKernelProsperoSystemSwVersion version;
+            unsigned char suffix[0x40];
+        } storage;
+        std::memset(&storage, 0xaa, sizeof(storage));
+        storage.version.size = size;
+        Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(&storage.version) == 0);
+        Require(storage.version.size == size);
+        Require(std::strcmp(storage.version.versionString, "01.000.000") == 0);
+        for (std::size_t i = sizeof("01.000.000"); i < sizeof(storage.version.versionString); ++i) Require(storage.version.versionString[i] == 0);
+        Require(storage.version.version == 0x01000000);
+        for (const unsigned char byte : storage.suffix) Require(byte == 0xaa);
     }
-    SceKernelProsperoSystemSwVersion version{};
-    std::memset(&version, 0xaa, sizeof(version));
-    version.size = sizeof(version);
-    Require(sceKernelGetProsperoSystemSwVersion_nid_postfix(&version) == 0);
-    Require(version.size == sizeof(version));
-    Require(std::strcmp(version.versionString, "01.000.000") == 0);
-    for (std::size_t i = sizeof("01.000.000"); i < sizeof(version.versionString); ++i) Require(version.versionString[i] == 0);
-    Require(version.version == 0x01000000);
     Require(*__error_nid_postfix() == 13);
 }
 

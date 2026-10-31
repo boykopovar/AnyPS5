@@ -350,6 +350,32 @@ void LargerClass() {
     Expect(MemoryOf(best.Handle()) != twelve && ClassOf(best.Handle()) == 5 * MiB, "a 4 MiB + 1 request did not take the smallest retained class that fits (5 MiB)");
 }
 
+void ExactSizeReuse() {
+    mock = MockDevice{};
+    {
+        auto context = mockContext();
+        VkBuffer first = VK_NULL_HANDLE;
+        VkBuffer second = VK_NULL_HANDLE;
+        {
+            auto a = std::make_unique<Buffer>(context, 3000, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, HostVisible);
+            auto b = std::make_unique<Buffer>(context, 4000, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, HostVisible);
+            first = a->Handle();
+            second = b->Handle();
+            a.reset();
+            b.reset();
+        }
+        const auto destroyed = mock.destroyedBuffers;
+        {
+            Buffer again(context, 3000, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, HostVisible);
+            Expect(again.Handle() == first && mock.destroyedBuffers == destroyed, "a pooled buffer of the requested exact size was passed over for a newer one that had to be rebuilt");
+            Expect(mock.sizes.at(again.Handle()) == 3000 && again.Bytes().size() == 3000, "a reused buffer does not have the requested size");
+        }
+        Buffer other(context, 4000, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, HostVisible);
+        Expect(other.Handle() == second && mock.sizes.at(other.Handle()) == 4000, "the other exact size was not kept for its own request");
+    }
+    Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "exact-size reuse leaked Vulkan objects");
+}
+
 void KeptUntilFence() {
     mock = MockDevice{};
     auto context = mockContext();
@@ -388,7 +414,7 @@ void Budget() {
     Expect(MemoryOf(probe.Handle()) != first, "the least recently used device buffer survived the eviction");
 }
 
-void AddressAndHostUnchanged() {
+void AddressAndHostClasses() {
     mock = MockDevice{};
     auto context = mockContext();
     VkDeviceMemory scratch = VK_NULL_HANDLE;
@@ -400,17 +426,23 @@ void AddressAndHostUnchanged() {
     Expect(MemoryOf(addressed.Handle()) != scratch && addressed.DeviceAddress() != 0, "an addressable device-local buffer took a scratch buffer without a device address");
     Buffer shadow(context, 2 * MiB - 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     Expect(MemoryOf(shadow.Handle()) == scratch, "a device-local staging buffer did not share the scratch buffers' class");
-    VkBuffer host = VK_NULL_HANDLE;
+    VkDeviceMemory host = VK_NULL_HANDLE;
     {
         Buffer copy(context, 10 * MiB + 4096, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, HostVisible);
-        host = copy.Handle();
-        Expect(mock.sizes.at(host) == 10 * MiB + 4096, "a large host buffer was rounded to a class");
-        Expect(mock.usages.at(host) == VK_BUFFER_USAGE_TRANSFER_SRC_BIT, "a host buffer was created with more usages than asked");
+        host = MemoryOf(copy.Handle());
+        Expect(mock.sizes.at(copy.Handle()) == 10 * MiB + 4096, "a 10 MiB + 4 KiB host buffer was created with " + std::to_string(mock.sizes.at(copy.Handle())) + " bytes, not the requested size");
+        Expect(ClassOf(copy.Handle()) == 11 * MiB, "a 10 MiB + 4 KiB host buffer has " + std::to_string(ClassOf(copy.Handle())) + " bytes of memory, not its 11 MiB class");
+        Expect(mock.usages.at(copy.Handle()) == VK_BUFFER_USAGE_TRANSFER_SRC_BIT, "a host buffer was created with more usages than asked");
+        Expect(copy.Bytes().size() == 10 * MiB + 4096, "a host buffer maps its class instead of the requested size");
     }
-    Buffer other(context, 10 * MiB + 8192, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, HostVisible);
-    Expect(other.Handle() != host, "a large host buffer of another exact size was reused");
-    Buffer same(context, 10 * MiB + 4096, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, HostVisible);
-    Expect(same.Handle() == host, "a large host buffer of the same exact size was not reused");
+    const auto made = mock.allocations;
+    {
+        Buffer other(context, 10 * MiB + 8192, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, HostVisible);
+        Expect(MemoryOf(other.Handle()) == host && mock.allocations == made, "a retained 11 MiB host buffer did not serve another size in its class");
+        Expect(mock.sizes.at(other.Handle()) == 10 * MiB + 8192 && other.Bytes().size() == 10 * MiB + 8192, "a reused host buffer kept the size of the earlier one");
+    }
+    Buffer larger(context, 11 * MiB + 4096, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, HostVisible);
+    Expect(MemoryOf(larger.Handle()) != host && mock.allocations == made + 1, "a host buffer was served by a retained buffer of a smaller class");
 }
 
 void SmallDeviceClasses() {
@@ -1168,10 +1200,11 @@ int main(int argc, char** argv) {
         Expect(mock.liveBytes == 0, "slab return test leaked memory");
         SizeClassesAndDirections();
         LargerClass();
+        ExactSizeReuse();
         KeptUntilFence();
         SmallDeviceRetention();
         Budget();
-        AddressAndHostUnchanged();
+        AddressAndHostClasses();
         SmallDeviceClasses();
         SlabMetadataFailure();
         SlabMapFailure();

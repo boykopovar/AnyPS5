@@ -13,7 +13,7 @@ ENTRY = 0x100
 TRAILING_ADDRESS = 0xF00
 
 
-def fixture(interpreter=True, trailing=False):
+def fixture(interpreter=True, trailing=False, data_flags=4):
     image = bytearray(0x2000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16,
@@ -24,7 +24,7 @@ def fixture(interpreter=True, trailing=False):
     tags = [(5, DATA_ADDRESS + 0x600), (10, 1), (6, DATA_ADDRESS + 0x620), (11, 24),
             (7, DATA_ADDRESS + 0x700), (8, 24), (9, 24), (0, 0)]
     struct.pack_into("<IIQQQQQQ", image, 64,
-                     1, 4, 0, DATA_ADDRESS, DATA_ADDRESS, CODE_OFFSET, CODE_OFFSET, 0x1000)
+                     1, data_flags, 0, DATA_ADDRESS, DATA_ADDRESS, CODE_OFFSET, CODE_OFFSET, 0x1000)
     struct.pack_into("<IIQQQQQQ", image, 120,
                      1, 5, CODE_OFFSET, 0, 0, 0x1000, 0x1000, 0x1000)
     struct.pack_into("<IIQQQQQQ", image, 176, 2, 6, 0x400, DATA_ADDRESS + 0x400,
@@ -47,7 +47,7 @@ def main():
             for name, interpreter, trailing in (("interpreter", True, False), ("plain", False, False), ("trailing", False, True)):
                 source = work / (name + target + ".elf")
                 output = work / (name + target + suffix)
-                source.write_bytes(fixture(interpreter, trailing))
+                source.write_bytes(fixture(interpreter, trailing, 6 if target == "--macos" else 4))
                 result = subprocess.run([str(relinker), "--skip-sce-module", target, str(source), str(output)],
                                         capture_output=True, text=True, timeout=20)
                 if result.returncode != 0 or not output.exists():

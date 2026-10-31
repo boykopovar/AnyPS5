@@ -185,7 +185,8 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     std::vector<VkPipeline> libraries;
     for (std::size_t part = 0; part < flags.size(); ++part) {
         if (part == 0 && mesh) continue;
-        const auto key = Combined(*partKeys[part], *contextKeys[part]);
+        auto key = Combined(*partKeys[part], *contextKeys[part]);
+        key.push_back(static_cast<std::byte>(optimize));
         auto& cache = device.parts[part];
         if (const auto found = cache.find(key); found != cache.end()) {
             libraries.push_back(found->second);
@@ -195,7 +196,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         VkGraphicsPipelineLibraryCreateInfoEXT library{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, flags[part] == VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT ? &rendering : &shaderRendering};
         library.flags = flags[part];
         VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &library};
-        create.flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT;
+        create.flags = optimize ? VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
         create.pDynamicState = info.pDynamicState;
         create.layout = partLayouts[part];
         switch (flags[part]) {
