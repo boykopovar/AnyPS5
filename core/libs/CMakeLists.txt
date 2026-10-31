@@ -510,6 +510,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_playready PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>")
     endif()
+    add_test_executable(guest_sdec_version_tests tests/GuestSdecVersion.cpp)
+    target_include_directories(guest_sdec_version_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_sdec_version_tests PRIVATE libSceVdecSavc libSceVdecSavc2 libSceVdecShevc libkernel libc)
+    configure_windows_unwind(guest_sdec_version_tests)
+    add_test(NAME guest_sdec_version COMMAND guest_sdec_version_tests)
+    set_tests_properties(guest_sdec_version PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_sdec_version PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecSavc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecSavc2>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVdecShevc>")
+    endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME nid_verneed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_verneed.py $<TARGET_FILE:nid_patcher>)
