@@ -113,9 +113,9 @@ int main() {
 
     Require(Rejects(handle, nullptr));
     Require(Rejects(-1, nullptr));
-    Require(Rejects(0, &status));
-    Require(Rejects(-1, &status));
-    Require(Rejects(NEVER_OPENED_HANDLE, &status));
+    Require(sceVideoOutGetResolutionStatus(0, &status) == static_cast<int>(0x8029000Bu));
+    Require(sceVideoOutGetResolutionStatus(-1, &status) == static_cast<int>(0x8029000Bu));
+    Require(sceVideoOutGetResolutionStatus(NEVER_OPENED_HANDLE, &status) == static_cast<int>(0x8029000Bu));
 
     Require(RejectsOutputStatus(handle, nullptr));
     Require(RejectsOutputStatus(-1, nullptr));
@@ -124,7 +124,7 @@ int main() {
     Require(RejectsOutputStatus(NEVER_OPENED_HANDLE, &output));
 
     Require(sceVideoOutClose(handle) == 0);
-    Require(Rejects(handle, &status));
+    Require(sceVideoOutGetResolutionStatus(handle, &status) == static_cast<int>(0x8029000Bu));
     Require(RejectsOutputStatus(handle, &output));
     Require(sceVideoOutGetOutputStatusWithVrr(handle, vrr.data()) == static_cast<int>(0x8029000Bu));
     Require(sceVideoOutGetOutputStatusWithVrr(handle, nullptr) == static_cast<int>(0x80290002u));
