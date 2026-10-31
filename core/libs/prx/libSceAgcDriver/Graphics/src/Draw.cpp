@@ -532,7 +532,7 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
     if (color.coverageSamples > color.samples) {
         for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
             for (std::uint32_t tileX = 0; tileX < layout.TilesX(); ++tileX) {
-                const auto nibble = layout.Nibble(tileX, tileY);
+                const auto nibble = layout.Nibble(tileX, tileY, color.cmaskSlice);
                 const auto code = (std::to_integer<std::uint32_t>(mask[nibble / 2u]) >> ((nibble % 2u) * 4u)) & 0xfu;
                 if (code != 0u && (code >> 2u) != 3u) {
                     char text[128];
@@ -546,7 +546,7 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
     if (uniform(std::byte{0})) return CmaskState::Cleared;
     for (std::uint32_t tileY = 0; tileY < layout.TilesY(); ++tileY) {
         for (std::uint32_t tileX = 0; tileX < layout.TilesX(); ++tileX) {
-            const auto nibble = layout.Nibble(tileX, tileY);
+            const auto nibble = layout.Nibble(tileX, tileY, color.cmaskSlice);
             const auto code = (std::to_integer<std::uint32_t>(mask[nibble / 2u]) >> ((nibble % 2u) * 4u)) & 0xfu;
             if (code == 0u) cleared.push_back(tileY * layout.TilesX() + tileX);
         }
@@ -558,7 +558,7 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
 
 void storeCmaskClearTexels(const ColorTarget& color, const CmaskLayout& layout, const std::vector<std::uint32_t>* tiles, const std::array<std::byte, 16>& texel) {
     StorageTexture::FlushPending(color.address, color.bytes, nullptr, "fast-clear materialization");
-    const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+    const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes, color.pipeBankXor);
     Require(surface.Bytes() == color.bytes, "CMASK fast clear over a color target whose layout differs from its surface");
     std::vector<std::byte> texels(surface.Bytes());
     GuestMemory::Read(color.address, texels, surface.Alignment());
@@ -586,12 +586,12 @@ void recordCmaskClear(const Context& context, Recorder& recorder, const HostImpo
     const auto commands = recorder.Commands();
     if (resident != nullptr && !resident->Cached()) recorder.KeepBytes(resident.get(), static_cast<std::size_t>(resident->BudgetBytes()));
     recorder.Keep(resident);
-    context.detiler->DispatchCmaskClear(commands, import.buffer, HostImportOffset(import, address), bytes, view, color.extent.width, color.extent.height, color.elementBytes, color.clearWords, color.dccAddress == 0);
+    context.detiler->DispatchCmaskClear(commands, import.buffer, HostImportOffset(import, address), bytes, view, color.extent.width, color.extent.height, color.elementBytes, color.clearWords, color.dccAddress == 0, color.cmaskSlice);
     recorder.NotePendingWrite(address, bytes);
     proveCmask(address, bytes, GuestMemory::MarkWritten(address, bytes));
 }
 
-bool materializeCmaskClear(const Context& context, const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
+bool materializeCmaskClearOf(const Context& context, const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
     if (color.cmaskAddress == 0) return false;
     if (context.detiler != nullptr) requireCmaskCodes(context.detiler->CmaskErrors());
     const CmaskLayout layout(color.extent.width, color.extent.height);
@@ -621,7 +621,7 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
     Require(color.dccAddress == 0, "CMASK fast clear of a DCC color target, whose clear belongs in its DCC keys");
     const auto texel = clearTexel(color, DccKeys::ClearRegister);
     const char* refusal = nullptr;
-    const bool filled = state == CmaskState::Cleared && color.mipCount == 1 && resident != nullptr && clearToTexel(*resident, texel, color.elementBytes, refusal);
+    const bool filled = state == CmaskState::Cleared && color.mipCount == 1 && color.arrayLastSlice == 0 && resident != nullptr && clearToTexel(*resident, texel, color.elementBytes, refusal);
     if (!filled) {
         storeCmaskClearTexels(color, layout, state == CmaskState::Cleared ? nullptr : &cleared, texel);
         if (resident != nullptr) resident->Refresh();
@@ -629,6 +629,23 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
     const std::vector<std::byte> expanded(bytes, std::byte{0xff});
     GuestMemory::Write(color.cmaskAddress, expanded, CmaskLayout::Alignment);
     proveCmask(color.cmaskAddress, bytes, GuestMemory::CollectWrites(color.cmaskAddress, bytes));
+    return filled;
+}
+
+bool materializeCmaskClear(const Context& context, const ColorTarget& color, const std::shared_ptr<StorageTexture>& resident) {
+    if (color.cmaskAddress == 0 || color.arrayLastSlice == 0 || color.samples > 1) return materializeCmaskClearOf(context, color, resident);
+    const auto sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
+    bool filled = false;
+    for (std::uint32_t layer = 0; layer < color.layers; ++layer) {
+        auto one = color;
+        one.layers = 1;
+        one.address += layer * sliceBytes;
+        one.arraySlice += layer;
+        if (ColorTileModeIsXor(color.tileMode)) one.pipeBankXor ^= ColorSliceXor(color, color.arraySlice + layer);
+        one.cmaskAddress += layer * color.cmaskSliceBytes;
+        one.cmaskSlice = color.cmaskSlice + layer;
+        filled = materializeCmaskClearOf(context, one, resident) || filled;
+    }
     return filled;
 }
 
@@ -2964,7 +2981,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             // millisecond or more are counted apart; the [texture] line says how many uploaded.
             binding.resident = refreshResidentTarget(context, state, color, outcome, profile, [&] {
                 if (color.arrayLastSlice != 0) {
-                    Require(color.dccAddress == 0 && color.cmaskAddress == 0 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED, "a slice of a 2D array color target with DCC, CMASK or an attachment proxy has no resident array image");
+                    Require(color.dccAddress == 0 && AttachmentProxyFormat(context, color.format) == VK_FORMAT_UNDEFINED, "a slice of a 2D array color target with DCC or an attachment proxy has no resident array image");
                     const auto array = ArraySurfaceForTarget(color);
                     // DecodeColorBuffer offsets slice s by s times this size; every slice the image stores must agree.
                     const auto sliceBytes = ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
