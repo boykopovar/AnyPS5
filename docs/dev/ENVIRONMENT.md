@@ -563,7 +563,9 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_DATE_FORMAT` | string | `core/libs/prx/libSceSystemService/DateTimeLocale.hpp` | 1 | console date format returned by sceSystemServiceParamGetInt parameter 2: 0 year, month, day; 1 day, month, year (the default); 2 month, day, year; `auto` (any letter case) maps the host's short date pattern once per process and falls back to 1 with one stderr line; any other value throws |
 | `ANYPS5_LANGUAGE` | integer | `core/libs/prx/libSceSystemService/SystemService.hpp` | 1 | console language number from 0 to 30 returned by sceSystemServiceParamGetInt, defaulting to English US; any other value throws |
+| `ANYPS5_TIME_FORMAT` | string | `core/libs/prx/libSceSystemService/DateTimeLocale.hpp` | 1 | console time format returned by sceSystemServiceParamGetInt parameter 3: 0 for 12-hour, 1 for 24-hour (the default); `auto` (any letter case) maps the host's time pattern once per process and falls back to 1 with one stderr line; any other value throws |
 
 ### libSceUsbStorage
 

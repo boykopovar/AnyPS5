@@ -2,6 +2,9 @@ add_library(libSceSystemService SHARED EXCLUDE_FROM_ALL Export.cpp PendingExport
 target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage)
 configure_windows_unwind(libSceSystemService)
+if(APPLE)
+    target_link_libraries(libSceSystemService PRIVATE "-framework CoreFoundation")
+endif()
 
 if(BUILD_TESTING)
     if(WIN32)
@@ -97,6 +100,45 @@ if(BUILD_TESTING)
     add_test(NAME guest_system_service_time_zone COMMAND guest_system_service_time_zone_tests)
     if(WIN32)
         set_tests_properties(guest_system_service_time_zone PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(system_service_date_time_locale_tests ${LIBS_INCLUDE_DIR}/tests/SystemServiceDateTimeLocale.cpp)
+    target_include_directories(system_service_date_time_locale_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(system_service_date_time_locale_tests)
+    if(APPLE)
+        target_link_libraries(system_service_date_time_locale_tests PRIVATE "-framework CoreFoundation")
+    endif()
+    add_test(NAME system_service_date_time_locale COMMAND system_service_date_time_locale_tests)
+    set_tests_properties(system_service_date_time_locale PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_system_service_date_time_format_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceDateTimeFormat.cpp)
+    target_include_directories(guest_system_service_date_time_format_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_date_time_format_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_date_time_format_tests)
+    add_test(NAME guest_system_service_date_time_format COMMAND guest_system_service_date_time_format_tests)
+    set_tests_properties(guest_system_service_date_time_format PROPERTIES TIMEOUT 20)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(dateTimeFormatIndex 0)
+        foreach(dateTimeFormatCase IN ITEMS
+                "auto,auto,-,-,-,1,1,2"
+                "AUTO,Auto,C,-,-,1,1,2"
+                "auto,-,-,-,C.UTF-8,1,1,1"
+                "-,auto,-,POSIX,de_DE.UTF-8,1,1,1"
+                "auto,auto,-,-,no_SUCH_locale.nothing,1,1,2"
+                "auto,0,-,-,-,1,0,1"
+                "2,auto,-,-,-,2,1,1"
+                "1,1,-,-,-,1,1,0"
+                "0,0,C,-,-,0,0,0"
+                "-,-,-,-,-,1,1,0"
+                "auto,x,-,-,-,1,throws,1"
+                "x,auto,-,-,-,throws,1,1")
+            string(REPLACE "," ";" dateTimeFormatArguments "${dateTimeFormatCase}")
+            add_test(NAME guest_system_service_date_time_format_host_${dateTimeFormatIndex} COMMAND guest_system_service_date_time_format_tests ${dateTimeFormatArguments})
+            set_tests_properties(guest_system_service_date_time_format_host_${dateTimeFormatIndex} PROPERTIES TIMEOUT 20)
+            math(EXPR dateTimeFormatIndex "${dateTimeFormatIndex} + 1")
+        endforeach()
+    endif()
+    if(WIN32)
+        set_tests_properties(guest_system_service_date_time_format PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_system_service_usb_storage_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceUsbStorage.cpp)
