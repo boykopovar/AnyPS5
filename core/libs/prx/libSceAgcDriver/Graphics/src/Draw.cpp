@@ -603,7 +603,7 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
         static_cast<void>(readCmask(color, layout, codes));
     }
     auto* recorder = Recorder::Active();
-    if (resident != nullptr && context.detiler != nullptr && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread()) {
+    if (color.dccAddress == 0 && resident != nullptr && context.detiler != nullptr && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread()) {
         const auto* import = HostImportFor(context, color.cmaskAddress, bytes);
         const auto view = import != nullptr ? resident->ElementView() : VK_NULL_HANDLE;
         if (view != VK_NULL_HANDLE) {
@@ -618,7 +618,19 @@ bool materializeCmaskClear(const Context& context, const ColorTarget& color, con
         proveCmask(color.cmaskAddress, bytes, collected);
         return false;
     }
-    Require(color.dccAddress == 0, "CMASK fast clear of a DCC color target, whose clear belongs in its DCC keys");
+    if (color.dccAddress != 0) {
+        const auto keys = CurrentDccKeys(color.dccAddress, color.bytes);
+        if (IsDccClear(keys) && std::memcmp(clearTexel(color, keys).data(), clearTexel(color, DccKeys::ClearRegister).data(), color.elementBytes) == 0) {
+            const std::vector<std::byte> expanded(bytes, std::byte{0xff});
+            GuestMemory::Write(color.cmaskAddress, expanded, CmaskLayout::Alignment);
+            proveCmask(color.cmaskAddress, bytes, GuestMemory::CollectWrites(color.cmaskAddress, bytes));
+            return false;
+        }
+        const auto tiles = static_cast<std::size_t>(layout.TilesX()) * layout.TilesY();
+        char text[384];
+        std::snprintf(text, sizeof(text), "AGC graphics: CMASK fast clear of the DCC color target 0x%llx (%ux%u, %u-byte elements, tile mode %u, %u samples, %zu of %zu tiles cleared, DCC keys %s, clear words 0x%08x 0x%08x), whose clear belongs in its DCC keys", static_cast<unsigned long long>(color.address), color.extent.width, color.extent.height, color.elementBytes, static_cast<unsigned>(color.tileMode), color.coverageSamples, state == CmaskState::Cleared ? tiles : cleared.size(), tiles, DccKeysName(keys), color.clearWords[0], color.clearWords[1]);
+        throw std::runtime_error(text);
+    }
     const auto texel = clearTexel(color, DccKeys::ClearRegister);
     const char* refusal = nullptr;
     const bool filled = state == CmaskState::Cleared && color.mipCount == 1 && resident != nullptr && clearToTexel(*resident, texel, color.elementBytes, refusal);
