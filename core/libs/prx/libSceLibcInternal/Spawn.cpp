@@ -590,7 +590,8 @@ int SpawnProgram(const char* function, const char* file, bool searchesPath, Posi
     std::string found;
     if (!ProgramFound(file, searchesPath, found)) return NoSuchFile;
     if (arguments == nullptr) return Fault;
-    return SpawnChild(function, found, actions, attributes, processId, arguments, environment);
+    std::int32_t ignoredProcessId = 0;
+    return SpawnChild(function, found, actions, attributes, processId != nullptr ? processId : &ignoredProcessId, arguments, environment);
 }
 
 int APS5_VABI posix_spawn_nid_postfix(std::int32_t* processId, const char* path, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes, char* const* arguments, char* const* environment) {
