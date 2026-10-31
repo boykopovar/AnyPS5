@@ -1302,7 +1302,9 @@ int APS5_VABI sceSaveDataGetEventInfo() {
     return 0;
 }
 
-int APS5_VABI sceSaveDataGetMountedSaveDataCount() {
+int APS5_VABI sceSaveDataGetMountedSaveDataCount(std::int32_t reserved, std::uint32_t* count) {
+    (void)reserved;
+    (void)count;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
