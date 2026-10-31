@@ -11,6 +11,8 @@
 - [MD5 and SHA1](../../../core/libs/prx/libSceLibreSsl3/src/Digest.cpp) (libSceLibreSsl3) - follow LibreSSL's [md5.c, sha1.c](https://github.com/libressl/openbsd/tree/bc9483725c5815efb64b6d9acc52fc5fba139212/src/lib/libcrypto) and hash through libSceLibreSsl's `MD5_*` and `SHA1_*`. A null digest buffer, which LibreSSL 4.0.0 does not check, throws. Nothing is checked on the console
 - [EVP_PKEY_up_ref, EC_KEY_up_ref and RSA_up_ref](../../../core/libs/prx/libSceLibreSsl3/src/Key.cpp) - console layouts and retain/release interoperability are unverified. The 32-byte EVP, 64-byte EC and 152-byte RSA layouts, with counters at offsets 4, 48 and 104, follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `evp/evp_local.h`, `evp/p_lib.c`, `ec/ec_local.h`, `ec/ec_key.c`, `rsa/rsa_local.h` and `rsa/rsa_lib.c`; the RSA layout has no `engine` field, unlike libSceLibreSsl's `LibreSslRsa`. Atomic retains replace its internal mutex; future releases must synchronize with the same counters. With no key constructors/destructors in this module, tests use caller-owned objects without validating allocator or destruction compatibility. Null keys and signed-counter overflow, undefined upstream, throw without mutation. Closes when: console layouts and lifetime interoperability are measured.
 
+- [EVP_PKEY_bits](../../../core/libs/prx/libSceLibreSsl3/src/Key.cpp) has no console ABI or behavior verification. Its `int (const EVP_PKEY*)` signature and dispatch follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/p_lib.c): a null key, method or callback returns 0; otherwise it calls `pkey_bits` with the original key and returns its result. The method pointer at offset 8 uses the existing 32-byte key model; the callback at offset 104 follows the LP64 method layout in the same revision's `evp_local.h`. Tests use caller-owned keys and methods; native layouts and interoperability with real key constructors remain unverified. Closes when: measured on a PS5.
+
 - [Parent export forwarding](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) exposes 395 parent-library exports on Windows through IAT tail jumps without changing their ABI. Non-Windows hosts use their existing dependency lookup. Static COFF inspection verifies names, parent imports and tail jumps; Windows loading and runtime behavior remain unverified. Parent functions retain their existing implementation limitations.
 - [EVP_MD_CTX_md](../../../core/libs/prx/libSceLibreSsl3/src/DigestContext.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_digest.c) `evp_digest.c`, a null context returns null and any other returns its first field, `digest`. That field is first in 4.0.0's `evp_local.h` and in the [2.5.4 layout](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp.h) of the contexts the forwarded libSceLibreSsl exports handle; the layouts differ after it, so the context and digest are declared opaque. Closes when: compared with the console.
 - [EVP_CIPHER_key_length and EVP_CIPHER_iv_length](../../../core/libs/prx/libSceLibreSsl3/src/Cipher.cpp) (libSceLibreSsl3) - nothing is checked on the console. They return `key_len` and `iv_len` from the 80-byte `EVP_CIPHER` of [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp) `evp_local.h` and `evp_cipher.c`. The fields are at offsets 8 and 12, as in the [2.5.4 layout](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp.h) of the ciphers the forwarded libSceLibreSsl exports handle. A null cipher, which LibreSSL dereferences, throws. Closes when: compared with the console.
@@ -18,7 +20,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 177 callable exports: 51 named and 126 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 176 callable exports: 50 named and 126 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -171,7 +173,6 @@
 | `unknown` | `rJZ-aiNIYCA` |
 | `unknown` | `s8WMaKNjwvE` |
 | `unknown` | `sENJFZ7WbLU` |
-| `EVP_PKEY_bits` | `ssruelYxprY` |
 | `SSL_do_handshake` | `tJsbVTdWjT4` |
 | `unknown` | `tZG2VIefbX0` |
 | `unknown` | `uITUdhDDAg8` |

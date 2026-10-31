@@ -17,6 +17,58 @@ static void Require(bool condition, const char* message) {
     }
 }
 
+using PkeyBitsFunction = int (APS5_VABI *)(const LibreSsl3EvpPkey*);
+
+static const LibreSsl3EvpPkey* expectedBitsKey;
+static int bitsCalls;
+
+static int APS5_VABI BitsFromKey(const LibreSsl3EvpPkey* key) {
+    Require(key == expectedBitsKey, "bits callback received the wrong key");
+    ++bitsCalls;
+    return key->type;
+}
+
+static int APS5_VABI WrongMethod(const LibreSsl3EvpPkey*) {
+    Require(false, "bits called a neighboring method slot");
+    return 0;
+}
+
+static void CheckBits() {
+    Require(EVP_PKEY_bits_nid_postfix(nullptr) == 0, "null key bit count");
+    LibreSsl3EvpPkey key{6, 17, nullptr, reinterpret_cast<void*>(1), 1};
+    std::array<unsigned char, sizeof(key)> before;
+    std::memcpy(before.data(), &key, sizeof(key));
+    Require(EVP_PKEY_bits_nid_postfix(&key) == 0, "key without a method bit count");
+    Require(std::memcmp(before.data(), &key, sizeof(key)) == 0, "bits changed a key without a method");
+    alignas(8) std::array<unsigned char, 112> method{};
+    const PkeyBitsFunction wrong = WrongMethod;
+    std::memcpy(method.data() + 96, &wrong, sizeof(wrong));
+    key.method = method.data();
+    std::memcpy(before.data(), &key, sizeof(key));
+    auto unchangedMethod = method;
+    Require(EVP_PKEY_bits_nid_postfix(&key) == 0, "key without a bits callback bit count");
+    Require(std::memcmp(before.data(), &key, sizeof(key)) == 0, "bits changed a key without a callback");
+    Require(method == unchangedMethod, "bits changed a method without a callback");
+    const PkeyBitsFunction callback = BitsFromKey;
+    std::memcpy(method.data() + 104, &callback, sizeof(callback));
+    unchangedMethod = method;
+    expectedBitsKey = &key;
+    for (int result : {0, 1, 255, 256, 2048, -7, std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}) {
+        key.type = result;
+        std::memcpy(before.data(), &key, sizeof(key));
+        const int calls = bitsCalls;
+        Require(EVP_PKEY_bits_nid_postfix(&key) == result, "bits did not preserve the callback result");
+        Require(bitsCalls == calls + 1, "bits did not call the callback exactly once");
+        Require(std::memcmp(before.data(), &key, sizeof(key)) == 0, "bits changed the key");
+        Require(method == unchangedMethod, "bits changed the key method");
+    }
+    const PkeyBitsFunction missing = nullptr;
+    std::memcpy(method.data() + 104, &missing, sizeof(missing));
+    const int calls = bitsCalls;
+    Require(EVP_PKEY_bits_nid_postfix(&key) == 0, "bits retained a removed callback");
+    Require(bitsCalls == calls, "bits called a removed callback");
+}
+
 template<class TKey, class TRetain>
 static void CheckKey(TRetain retain, std::size_t referenceOffset) {
     struct GuardedKey {
@@ -86,5 +138,7 @@ int main(int argc, char** argv) {
         CheckKey<LibreSsl3EcKey>(EC_KEY_up_ref_nid_postfix, 48);
     if (argc == 1 || std::strcmp(argv[1], "rsa") == 0)
         CheckKey<LibreSsl3Rsa>(RSA_up_ref_nid_postfix, 104);
+    if (argc == 1 || std::strcmp(argv[1], "bits") == 0)
+        CheckBits();
     return 0;
 }
