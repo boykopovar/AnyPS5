@@ -26,6 +26,16 @@
 namespace AgcDriver {
 
 #ifdef _WIN32
+bool ReadableStackRegion(std::uint64_t address, std::uint64_t& low, std::uint64_t& high) {
+    constexpr DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    MEMORY_BASIC_INFORMATION memory{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) == 0 || memory.State != MEM_COMMIT) return false;
+    if ((memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0 || (memory.Protect & readable) == 0) return false;
+    low = reinterpret_cast<std::uint64_t>(memory.BaseAddress);
+    high = low + memory.RegionSize;
+    return true;
+}
+
 namespace {
 
 std::jthread processSamplerThread;
@@ -72,7 +82,7 @@ struct Sampler {
     }
 
     bool readStack(std::uint64_t address, std::uint64_t& value) const {
-        if (address < stackLow || address > stackHigh - sizeof(value)) return false;
+        if (stackHigh < stackLow + sizeof(value) || address < stackLow || address > stackHigh - sizeof(value)) return false;
         std::memcpy(&value, reinterpret_cast<const void*>(address), sizeof(value));
         return true;
     }
@@ -104,6 +114,11 @@ struct Sampler {
     }
 
     int walk(CONTEXT& context, std::array<std::uint64_t, WorkerDepth>& frames) {
+        if (context.Rsp < stackLow || context.Rsp >= stackHigh) {
+            stackLow = 0;
+            stackHigh = 0;
+            ReadableStackRegion(context.Rsp, stackLow, stackHigh);
+        }
         const bool dwarf = stackHigh != 0 && context.Rsp >= stackLow && context.Rsp < stackHigh;
         int count = 0;
         while (count < depth && context.Rip != 0) {
@@ -364,6 +379,7 @@ void StopWorkerSampler() {
     if (committerSamplerThread.joinable()) committerSamplerThread.join();
 }
 #else
+bool ReadableStackRegion(std::uint64_t, std::uint64_t&, std::uint64_t&) { return false; }
 void StartWorkerSampler(std::uint32_t) {}
 void StartCommitterSampler() {}
 void StopWorkerSampler() {}
