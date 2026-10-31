@@ -616,6 +616,92 @@ int main() {
         }
     }
 
+    {
+        ShaderRecompiler::RecompileRequest dynamic{};
+        dynamic.shader.stage = ShaderRecompiler::ShaderStage::Vertex;
+        dynamic.graphics = ShaderRecompiler::GraphicsCompileContext{};
+        const auto expectRejected = [&](const std::vector<std::uint8_t>& bytes, std::string_view expected) {
+            bool rejected = false;
+            try {
+                static_cast<void>(serializer.Deserialize(EncodeBase64(bytes)));
+            } catch (const std::runtime_error& error) {
+                rejected = error.what() == expected;
+            }
+            Require(rejected);
+        };
+        for (const bool barycentric : {false, true}) {
+            dynamic.target.fragmentBarycentricBuiltins = barycentric;
+            const auto ordinary = serializer.Serialize(dynamic);
+            Require(DecodeBase64(ordinary)[4] == 49u);
+            const auto replay49 = serializer.Deserialize(ordinary);
+            Require(replay49.request.graphics->instanceInputSgpr == -1 && replay49.request.target.fragmentBarycentricBuiltins == barycentric);
+            Require(serializer.Serialize(replay49.request) == ordinary);
+            auto legacy48 = DecodeBase64(ordinary);
+            legacy48[4] = 48u;
+            const auto replay48 = serializer.Deserialize(EncodeBase64(legacy48));
+            Require(replay48.request.graphics->instanceInputSgpr == -1 && replay48.request.target.fragmentBarycentricBuiltins == barycentric);
+            Require(serializer.Serialize(replay48.request) == ordinary);
+            auto legacy47 = legacy48;
+            legacy47[4] = 47u;
+            legacy47.pop_back();
+            const auto replay47 = serializer.Deserialize(EncodeBase64(legacy47));
+            Require(replay47.request.graphics->instanceInputSgpr == -1 && !replay47.request.target.fragmentBarycentricBuiltins);
+            for (const auto sgpr : {8, 10, 11, 39}) {
+                dynamic.graphics->instanceInputSgpr = sgpr;
+                const auto encoded = serializer.Serialize(dynamic);
+                const auto bytes = DecodeBase64(encoded);
+                const auto replay50 = serializer.Deserialize(encoded);
+                Require(bytes[4] == 50u && replay50.request.graphics->instanceInputSgpr == sgpr);
+                Require(replay50.request.target.fragmentBarycentricBuiltins == barycentric);
+                Require(serializer.Serialize(replay50.request) == encoded);
+                auto expected = DecodeBase64(ordinary);
+                expected[4] = 50u;
+                expected.insert(expected.end(), {static_cast<std::uint8_t>(sgpr), 0u, 0u, 0u});
+                Require(bytes == expected);
+                for (std::size_t missing = 1; missing <= sizeof(std::int32_t); ++missing) {
+                    auto truncated = bytes;
+                    truncated.resize(truncated.size() - missing);
+                    expectRejected(truncated, "RequestSerializer: truncated data");
+                }
+                auto trailing = bytes;
+                trailing.push_back(0u);
+                expectRejected(trailing, "RequestSerializer: unexpected trailing data");
+            }
+            dynamic.graphics->instanceInputSgpr = -1;
+            Require(serializer.Serialize(dynamic) == ordinary);
+            legacy47.insert(legacy47.end(), {8u, 0u, 0u, 0u});
+            expectRejected(legacy47, "RequestSerializer: unexpected trailing data");
+            dynamic.context.pixel = ShaderRecompiler::ShaderPixelStageInfo{};
+            dynamic.context.pixel->depthExportMin = 0.25f;
+            dynamic.context.pixel->depthExportMax = 0.75f;
+            for (const bool depthExport : {false, true}) {
+                dynamic.context.pixel->depthExportEnable = depthExport;
+                dynamic.graphics->instanceInputSgpr = -1;
+                const auto plain = serializer.Serialize(dynamic);
+                const auto replayPlain = serializer.Deserialize(plain);
+                Require(DecodeBase64(plain)[4] == 49u && replayPlain.request.graphics->instanceInputSgpr == -1);
+                dynamic.graphics->instanceInputSgpr = 10;
+                const auto routed = serializer.Serialize(dynamic);
+                auto expected = DecodeBase64(plain);
+                expected[4] = 50u;
+                expected.insert(expected.end(), {10u, 0u, 0u, 0u});
+                Require(DecodeBase64(routed) == expected);
+                const auto replay = serializer.Deserialize(routed);
+                Require(replay.request.graphics->instanceInputSgpr == 10 && replay.request.target.fragmentBarycentricBuiltins == barycentric);
+                Require(replay.request.context.pixel->depthExportEnable == depthExport);
+                Require(replay.request.context.pixel->depthExportMin == (depthExport ? 0.25f : 0.0f) && replay.request.context.pixel->depthExportMax == (depthExport ? 0.75f : 1.0f));
+                Require(serializer.Serialize(replay.request) == routed);
+            }
+            dynamic.context.pixel.reset();
+            dynamic.graphics->instanceInputSgpr = -1;
+        }
+        ShaderRecompiler::RecompileRequest noGraphics{};
+        auto missingContext = DecodeBase64(serializer.Serialize(noGraphics));
+        missingContext[4] = 50u;
+        missingContext.insert(missingContext.end(), {8u, 0u, 0u, 0u});
+        expectRejected(missingContext, "RequestSerializer: dynamic instance input requires a graphics context");
+    }
+
     ShaderRecompiler::RecompileRequest request{};
     for (const bool preserve : {false, true}) {
         request.target.float16DenormPreserve = preserve;
@@ -638,7 +724,7 @@ int main() {
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
         auto future = bytes;
-        future[4] = 50u;
+        future[4] = 51u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));

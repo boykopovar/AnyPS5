@@ -898,7 +898,8 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(49u);
+    const bool instanceInput = request.graphics && request.graphics->instanceInputSgpr != -1;
+    writer.WriteU32(instanceInput ? 50u : 49u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -940,6 +941,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteBool(request.target.largePixelFunctionLdsBuffer);
     writer.WriteU32(request.target.pixelFunctionStorageDwords);
     writer.WriteBool(request.target.fragmentBarycentricBuiltins);
+    if (instanceInput) writer.WriteI32(request.graphics->instanceInputSgpr);
     return base64Encode(buffer);
 }
 
@@ -948,7 +950,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 49u) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 50u) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1008,6 +1010,10 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.pixelFunctionStorageDwords = reader.ReadU32();
     }
     if (version >= 48u) result.request.target.fragmentBarycentricBuiltins = reader.ReadBool();
+    if (version >= 50u) {
+        if (!result.request.graphics) throw std::runtime_error("RequestSerializer: dynamic instance input requires a graphics context");
+        result.request.graphics->instanceInputSgpr = reader.ReadI32();
+    }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }
