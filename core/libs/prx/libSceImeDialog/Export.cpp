@@ -238,10 +238,13 @@ int APS5_VABI sceImeDialogGetPanelSizeExtended(const Param* param, const Extende
 }
 
 int APS5_VABI sceImeDialogGetResult(Result* result) {
-    std::lock_guard lock(g_mutex);
-    if (result == nullptr || g_dialog.status != StatusFinished) return ErrorNotOpened;
-    *result = Result{};
-    result->endstatus = g_dialog.endStatus;
+    Result res{};
+    {
+        std::lock_guard lock(g_mutex);
+        if (result == nullptr || g_dialog.status != StatusFinished) return ErrorNotOpened;
+        res.endstatus = g_dialog.endStatus;
+    }
+    if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ErrorNotOpened;
     return 0;
 }
 
