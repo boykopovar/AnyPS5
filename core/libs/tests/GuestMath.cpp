@@ -1768,6 +1768,24 @@ static void CheckCoshfMsunBoundaries() {
     Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(INFINITY)) == 0x7f800000u);
     Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(-INFINITY)) == 0x7f800000u);
     Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(0x7fc12345u))) == 0x7fc12345u);
+    const auto clearFlags = [] {
+        asm volatile("fnclex");
+        _mm_setcsr(_mm_getcsr() & ~0x3fu);
+    };
+    for (const std::uint32_t bits : {0x42b2d4fdu, 0x42b30000u, 0xc2b30000u, 0x42b40000u, 0x7f7fffffu}) {
+        clearFlags();
+        *__error_nid_postfix() = 0;
+        Require(std::bit_cast<std::uint32_t>(coshf_nid_postfix(std::bit_cast<float>(bits))) == 0x7f800000u);
+        Require(*__error_nid_postfix() == 34);
+        Require((X87StatusWord() & 0x3f) == 0x28 && (_mm_getcsr() & 0x3f) == 0x28);
+    }
+    for (const std::uint32_t bits : {0x42b2d4fcu, 0x7f800000u, 0xff800000u, 0x7fc00000u}) {
+        clearFlags();
+        *__error_nid_postfix() = 0;
+        static_cast<void>(coshf_nid_postfix(std::bit_cast<float>(bits)));
+        Require(*__error_nid_postfix() == 0 && (X87StatusWord() & 0x08) == 0 && (_mm_getcsr() & 0x08) == 0);
+    }
+    clearFlags();
 }
 
 static void CheckScaledHyperbolic() {

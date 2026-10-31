@@ -1320,8 +1320,9 @@ float APS5_VABI coshf_nid_postfix(float x) {
         const float t = 0.5f * w;
         return t * w;
     }
-    volatile float huge = 1.0e30f;
-    return huge * huge;
+    constexpr int GuestFeOverflow = 0x08;
+    _Feraise_nid_postfix(GuestFeOverflow);
+    return std::numeric_limits<float>::infinity();
 }
 
 float APS5_VABI sinhf_nid_postfix(float x) {
