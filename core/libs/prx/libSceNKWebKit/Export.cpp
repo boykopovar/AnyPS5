@@ -25443,18 +25443,6 @@ int APS5_VABI _ZN7WebCore16convertToIntegerItEET_RN3JSC14JSGlobalObjectENS2_7JSV
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore16enclosingIntRectERKNS_10LayoutRectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16enclosingIntRectERKNS_9FloatRectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore16findIntersectionERKNS_10FloatPointES2_S2_S2_RS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore16isEndOfParagraphERKNS_15VisiblePositionENS_27EditingBoundaryCrossingRuleE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -27183,15 +27171,7 @@ int APS5_VABI _ZN7WebCore19UserContentProviderD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore19enclosingLayoutRectERKNS_9FloatRectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore19floatValueForLengthERKNS_6LengthEf() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore19makeMapBetweenRectsERKNS_9FloatRectES2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -29536,10 +29516,6 @@ int APS5_VABI _ZN7WebCore25computeViewportAttributesENS_17ViewportArgumentsEiiif
 }
 
 int APS5_VABI _ZN7WebCore25directionOfEnclosingBlockERKNS_8PositionE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore25encloseRectToDevicePixelsERKNS_9FloatRectEf() {
     NotImplemented_nid_no_patch(__func__);
 }
 
