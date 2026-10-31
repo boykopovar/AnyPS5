@@ -821,6 +821,17 @@ static void CheckInjectedQueueTimes(const std::filesystem::path& path) {
     PadPublishInput_nid_postfix(PadInputState{});
 }
 
+static void CheckVrControllerRead(int handle) {
+    PadVrControllerData samples[2]{};
+    samples[0].buttons = 0xdeadbeefu;
+    Require(scePadVrControllerRead(handle + 99, samples, 1) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadVrControllerRead(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
+    Require(scePadVrControllerRead(handle, samples, 0) == PAD_ERROR_INVALID_ARG);
+    samples[0].buttons = 0xdeadbeefu;
+    Require(scePadVrControllerRead(handle, samples, 2) == 1);
+    Require(samples[0].buttons == 0);
+}
+
 int main() {
     CheckInputCommands();
     std::uint32_t accessibilityState = 7;
@@ -940,6 +951,7 @@ int main() {
     CheckLatchedPressAtSlowReads(handle);
     CheckLatchedPressPerPort();
     CheckReadStateHandle(handle);
+    CheckVrControllerRead(handle);
     CheckRemoteController(handle);
     CheckTrackerDevices(handle);
     CheckAccessibilityControllerState(handle);

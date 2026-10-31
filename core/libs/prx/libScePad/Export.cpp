@@ -427,8 +427,10 @@ int APS5_VABI scePadVrControllerGetDeviceInformation(std::int32_t handle, PadVrC
 }
 
 int APS5_VABI scePadVrControllerRead(std::int32_t handle, PadVrControllerData* data, std::int32_t count) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+ if (data == nullptr || count <= 0) return PAD_ERROR_INVALID_ARG;
+ data[0] = PadVrControllerData{};
+ return 1;
 }
 
 int APS5_VABI scePadVrControllerGetTriggerEffectState(std::int32_t leftHandle, std::int32_t rightHandle, PadTriggerEffectStateInformation* states) {
