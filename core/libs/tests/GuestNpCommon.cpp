@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 
@@ -124,8 +125,7 @@ static bool wakeWaiters(bool lightweight, int count, Wake wake) {
     if (!ok) return false;
     Pthread threads[2] = {};
     for (int index = 0; index < count; ++index)
-        ok &= expect(scePthreadCreate(&threads[index], nullptr, waitUntilReady, &wakeup, "np-waiter") == 0, "a waiter was not created");
-    if (!ok) return false;
+        if (!expect(scePthreadCreate(&threads[index], nullptr, waitUntilReady, &wakeup, "np-waiter") == 0, "a waiter was not created")) std::abort();
     for (;;) {
         sceNpMutexLock(&wakeup.mutex);
         const bool waiting = wakeup.waiting == count;
@@ -139,7 +139,7 @@ static bool wakeWaiters(bool lightweight, int count, Wake wake) {
     else if (wake == Wake::To) signalled = lightweight ? sceNpLwCondSignalTo(&wakeup.cond, threads[0]) : sceNpCondSignalTo(&wakeup.cond, threads[0]);
     else signalled = lightweight ? sceNpLwCondSignal(&wakeup.cond) : sceNpCondSignal(&wakeup.cond);
     sceNpMutexUnlock(&wakeup.mutex);
-    ok &= expect(signalled == 0, "signalling the waiters failed");
+    if (!expect(signalled == 0, "signalling the waiters failed")) std::abort();
     for (int index = 0; index < count; ++index) ok &= expect(scePthreadJoin(threads[index], nullptr) == 0, "a waiter was not joined");
     ok &= expect(wakeup.woken == count, "not every waiter returned from its wait");
     ok &= expect((lightweight ? sceNpLwCondDestroy(&wakeup.cond) : sceNpCondDestroy(&wakeup.cond)) == 0, "the wake condition was not destroyed");
