@@ -1541,7 +1541,11 @@ int APS5_VABI ioctl_nid_postfix(int descriptor, std::uint64_t request, void* arg
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (!argument) return Fail(14);
-    if (request != 0x8004667e && request != 0x4004667f) return Fail(25);
+    if (request != 0x8004667e && request != 0x4004667f) {
+        const char group = static_cast<char>((request >> 8) & 0xff);
+        const bool internet = socket->family == 2 || socket->family == 28;
+        return Fail(internet && group != 'i' && group != 'r' && group != 'f' ? 49 : 25);
+    }
     std::lock_guard lock(socket->modeMutex);
     if (request == 0x4004667f && socket->receiveShut) {
         *static_cast<int*>(argument) = 0;

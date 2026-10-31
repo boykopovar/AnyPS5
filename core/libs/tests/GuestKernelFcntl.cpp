@@ -56,6 +56,7 @@ static constexpr int GuestEinval = 22;
 static constexpr int GuestEnotty = 25;
 static constexpr int GuestEagain = 35;
 static constexpr int GuestEopnotsupp = 45;
+static constexpr int GuestEaddrnotavail = 49;
 static constexpr int GuestEoverflow = 84;
 static constexpr std::uint64_t NonblockingRequest = 0x8004667e;
 static constexpr std::uint64_t ReadableRequest = 0x4004667f;
@@ -209,7 +210,9 @@ static void SocketsKeepTheirPath() {
     Require(ioctl_nid_postfix(socket, ReadableRequest, &queued) == 0 && queued == 0);
     RequireMalformedRequestsFail(socket);
     RequireFailure(ioctl_nid_postfix(socket, IntegerArgumentRequest, nullptr), GuestEfault);
-    RequireFailure(ioctl_nid_postfix(socket, EmptyInputRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, EmptyInputRequest, nullptr), GuestEnotty);
+    char windowSize[8] = {};
+    RequireFailure(ioctl_nid_postfix(socket, WindowSizeRequest, windowSize), GuestEaddrnotavail);
     for (const int descriptor : {closing, duplicate, socket}) Require(close_nid_postfix(descriptor) == 0);
     Require(sceKernelFcntl(socket, GetFlags) == SceEbadf);
     Require(sceKernelFcntl(-1, GetFlags) == SceEbadf);
@@ -266,6 +269,8 @@ static void FileFlagsRoundTrip() {
     Require(ioctl_nid_postfix(file, ReadableRequest, &readable) == 0 && readable == 3);
     char size[8] = {};
     RequireFailure(ioctl_nid_postfix(file, WindowSizeRequest, size), GuestEnotty);
+    RequireFailure(ioctl_nid_postfix(file, EmptyInputRequest, nullptr), GuestEnotty);
+    RequireFailure(ioctl_nid_postfix(file, EmptyInputRequest, size), GuestEnotty);
     RequireMalformedRequestsFail(file);
     RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, nullptr), GuestEfault);
     RequireFailure(ioctl_nid_postfix(file, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
@@ -512,6 +517,7 @@ static void PipeFlagsRoundTrip() {
     RequireFailure(fcntl_nid_postfix(pipe[1], SetLock, &lock), GuestEbadf);
     char size[8] = {};
     RequireFailure(ioctl_nid_postfix(pipe[0], WindowSizeRequest, size), GuestEnotty);
+    RequireFailure(ioctl_nid_postfix(pipe[0], EmptyInputRequest, nullptr), GuestEnotty);
     RequireMalformedRequestsFail(pipe[0]);
     Require(ThrowsWith([&pipe] { fcntl_nid_postfix(pipe[0], SetFlags, NonBlocking | 0x40); }, "fcntl: O_ASYNC on a pipe is not implemented"));
     for (const int descriptor : pipe) Require(close_nid_postfix(descriptor) == 0);

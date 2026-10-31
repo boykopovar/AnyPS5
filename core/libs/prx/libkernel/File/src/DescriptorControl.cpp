@@ -558,7 +558,7 @@ bool IoctlRequestMalformed(std::uint64_t request) {
     const auto command = static_cast<std::uint32_t>(request);
     const std::uint32_t length = (command >> 16) & 0x1fff;
     if ((command & (RequestIn | RequestOut | RequestVoid)) == 0) return true;
-    if ((command & RequestOut) && length == 0) return true;
+    if ((command & (RequestIn | RequestOut)) && length == 0) return true;
     return (command & RequestVoid) && length != 0 && length != sizeof(int);
 }
 
