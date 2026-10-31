@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <source_location>
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
@@ -158,6 +159,145 @@ static void CheckRoundingModes() {
     Require(std::fesetround(saved) == 0);
 }
 
+static void CheckLongDoubleExpOverflowRounding() {
+    const long double infinity = std::numeric_limits<long double>::infinity();
+    const int saved = std::fegetround();
+    for (const int mode : {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO}) {
+        Require(std::fesetround(mode) == 0);
+        for (const long double multiplier : {1.0L, -1.0L}) {
+            errno = 0;
+            std::feclearexcept(FE_ALL_EXCEPT);
+            long double result = 1.0L;
+            const short kind = _LExp_nid_postfix(&result, multiplier, 16384);
+            Require(SameBits(result, std::copysign(infinity, multiplier)));
+            Require(kind == 1);
+            Require(errno == ERANGE);
+            Require((std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_INEXACT)) == (FE_OVERFLOW | FE_INEXACT));
+        }
+    }
+    Require(std::fesetround(FE_TOWARDZERO) == 0);
+    for (const long double multiplier : {1.0L, -1.0L}) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        long double result = 30000.0L;
+        Require(_LExp_nid_postfix(&result, multiplier, 0) == 1);
+        Require(SameBits(result, std::copysign(infinity, multiplier)));
+        Require(errno == ERANGE && (std::fetestexcept(FE_ALL_EXCEPT) & FE_OVERFLOW) != 0);
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        result = -30000.0L;
+        Require(_LExp_nid_postfix(&result, multiplier, 0) == 0);
+        Require(SameBits(result, std::copysign(0.0L, multiplier)));
+        Require(errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    }
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    long double result = 1.0L;
+    Require(_LExp_nid_postfix(&result, 1.0L, -16400) == -1);
+    Require(__fpclassifyl_nid_postfix(result) == -2);
+    Require(errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & FE_INEXACT) != 0);
+    Require((std::fetestexcept(FE_ALL_EXCEPT) & (FE_UNDERFLOW | FE_OVERFLOW | FE_INVALID | FE_DIVBYZERO)) == 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = -0.5L;
+    Require(_LExp_nid_postfix(&result, 1.0L, -16400) == -1);
+    Require(SameBits(result, 0x0.0001368b2fc6f96p-16385L));
+    Require(errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & FE_INEXACT) != 0);
+    Require(std::fesetround(saved) == 0);
+}
+
+static void CheckLongDoubleExpMeasuredRange() {
+    struct Case {
+        long double x;
+        long double multiplier;
+        short scale;
+        bool infinity;
+    };
+    const Case cases[] = {
+        {30000.0L, 1.0L, -32768, true},
+        {30000.0L, -1.0L, -32768, true},
+        {-30000.0L, 1.0L, 32767, false},
+        {-30000.0L, -1.0L, 32767, false},
+        {1.0L, std::numeric_limits<long double>::max(), -2, true},
+        {1.0L, -std::numeric_limits<long double>::max(), -2, true},
+    };
+    const long double infinity = std::numeric_limits<long double>::infinity();
+    for (const auto& test : cases) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        long double result = test.x;
+        const short kind = _LExp_nid_postfix(&result, test.multiplier, test.scale);
+        if (test.infinity) {
+            Require(kind == 1 && SameBits(result, std::copysign(infinity, test.multiplier)));
+            Require(errno == ERANGE && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_INEXACT)) == (FE_OVERFLOW | FE_INEXACT));
+        } else {
+            Require(kind == 0 && SameBits(result, std::copysign(0.0L, test.multiplier)));
+            Require(errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+        }
+    }
+}
+
+static void CheckLongDoubleExpTinyMultiplierOverflow() {
+    const long double tiny = std::numeric_limits<long double>::denorm_min();
+    const long double infinity = std::numeric_limits<long double>::infinity();
+    for (const int mode : {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO}) {
+        Require(std::fesetround(mode) == 0);
+        for (const long double multiplier : {tiny, -tiny}) {
+            for (const long double x : {50000.0L, 50001.0L}) {
+                errno = 0;
+                std::feclearexcept(FE_ALL_EXCEPT);
+                long double result = x;
+                const short kind = _LExp_nid_postfix(&result, multiplier, 0);
+                Require(SameBits(result, std::copysign(infinity, multiplier)));
+                Require(kind == 1 && errno == ERANGE);
+                const int raised = std::fetestexcept(FE_ALL_EXCEPT);
+                Require((raised & (FE_OVERFLOW | FE_INEXACT)) == (FE_OVERFLOW | FE_INEXACT));
+                Require((raised & (FE_UNDERFLOW | FE_INVALID | FE_DIVBYZERO)) == 0);
+            }
+        }
+    }
+    Require(std::fesetround(FE_TONEAREST) == 0);
+}
+
+static void CheckLongDoubleExpTinyRounding() {
+    struct Case {
+        int mode;
+        long double multiplier;
+        long double x;
+        short scale;
+    };
+    const Case cases[] = {
+        {FE_TONEAREST, 1.0L, 0.0L, -20000},
+        {FE_TOWARDZERO, 1.0L, 0.0L, -20000},
+        {FE_DOWNWARD, 1.0L, 0.0L, -20000},
+        {FE_UPWARD, 1.0L, 0.0L, -20000},
+        {FE_TONEAREST, -1.0L, 0.0L, -20000},
+        {FE_TOWARDZERO, -1.0L, 0.0L, -20000},
+        {FE_UPWARD, -1.0L, 0.0L, -20000},
+        {FE_DOWNWARD, -1.0L, 0.0L, -20000},
+        {FE_TONEAREST, 1.0L, -0.001L, -16446},
+        {FE_TOWARDZERO, 1.0L, -0.001L, -16446},
+        {FE_DOWNWARD, 1.0L, -0.001L, -16446},
+        {FE_UPWARD, 1.0L, -0.001L, -16446},
+        {FE_TONEAREST, -1.0L, -0.001L, -16446},
+        {FE_TOWARDZERO, -1.0L, -0.001L, -16446},
+        {FE_UPWARD, -1.0L, -0.001L, -16446},
+        {FE_DOWNWARD, -1.0L, -0.001L, -16446},
+    };
+    const int saved = std::fegetround();
+    for (const auto& test : cases) {
+        Require(std::fesetround(test.mode) == 0);
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        long double result = test.x;
+        const short kind = _LExp_nid_postfix(&result, test.multiplier, test.scale);
+        Require(result == 0.0L && !std::signbit(result) && kind == 0);
+        Require(errno == ERANGE);
+        Require((std::fetestexcept(FE_ALL_EXCEPT) & (FE_UNDERFLOW | FE_INEXACT)) == (FE_UNDERFLOW | FE_INEXACT));
+    }
+    Require(std::fesetround(saved) == 0);
+}
+
 static void CheckRintTiesToEven() {
     const int saved = std::fegetround();
     Require(std::fesetround(FE_TONEAREST) == 0);
@@ -190,6 +330,107 @@ static void CheckClassification() {
     Require(_LDsign_nid_postfix(-2.0L) == -32768 && _LDsign_nid_postfix(2.0L) == 0);
 }
 
+static void CheckLongDoubleExp() {
+    const long double e = std::exp(1.0L);
+    const int saved = std::fegetround();
+    long double result = 1.0L;
+    Require(_LExp_nid_postfix(&result, 1.0L, 0) == -1);
+    Require(std::fabs(result - e) <= std::fabs(e) * 1e-17L);
+    result = 0.0L;
+    Require(_LExp_nid_postfix(&result, 1.0L, 0) == -1 && result == 1.0L);
+    result = 1.0L;
+    Require(_LExp_nid_postfix(&result, 1.0L, 10) == -1);
+    Require(std::fabs(result - e * 1024.0L) <= std::fabs(e * 1024.0L) * 1e-17L);
+    result = 1.0L;
+    Require(_LExp_nid_postfix(&result, 3.0L, 0) == -1);
+    Require(std::fabs(result - 3.0L * e) <= std::fabs(3.0L * e) * 1e-17L);
+    result = 1.0L;
+    Require(_LExp_nid_postfix(&result, -2.0L, 0) == -1);
+    Require(std::fabs(result + 2.0L * e) <= std::fabs(2.0L * e) * 1e-17L);
+    result = 0.0L;
+    Require(_LExp_nid_postfix(&result, 5.0L, 0) == -1 && result == 5.0L);
+    for (int i = -200; i <= 200; ++i) {
+        const long double x = static_cast<long double>(i) / 16.0L;
+        const long double expected = std::exp(x);
+        result = x;
+        Require(_LExp_nid_postfix(&result, 1.0L, 0) == -1);
+        Require(std::fabs(result - expected) <= std::fabs(expected) * 1e-17L);
+    }
+    result = 1.0L;
+    Require(_LExp_nid_postfix(&result, 0.0L, 0) == 0 && result == 0.0L);
+    result = 1.0L;
+    Require(_LExp_nid_postfix(&result, -0.0L, 0) == 0 && SameBits(result, -0.0L));
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = -60000.0L;
+    Require(_LExp_nid_postfix(&result, 1.0L, 0) == 0 && SameBits(result, 0.0L));
+    Require(errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = -60000.0L;
+    Require(_LExp_nid_postfix(&result, INFINITY, 0) == 1 && SameBits(result, INFINITY));
+    Require(errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    Require(std::fesetround(FE_TOWARDZERO) == 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = -5.0L;
+    Require(_LExp_nid_postfix(&result, INFINITY, 0) == 1 && SameBits(result, INFINITY));
+    Require(errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = NAN;
+    Require(_LExp_nid_postfix(&result, 0.0L, 0) == 2 && std::isnan(result) && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    result = NAN;
+    Require(_LExp_nid_postfix(&result, 0.0L, 17) == 2 && std::isnan(result));
+    result = 29491.0L;
+    Require(_LExp_nid_postfix(&result, 0.0L, 0) == 0 && result == 0.0L);
+    result = INFINITY;
+    Require(_LExp_nid_postfix(&result, 0.0L, -17) == 2 && std::isnan(result) && errno == EDOM && (std::fetestexcept(FE_ALL_EXCEPT) & FE_INVALID) != 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = -INFINITY;
+    Require(_LExp_nid_postfix(&result, INFINITY, 0) == 2 && std::isnan(result) && errno == EDOM && (std::fetestexcept(FE_ALL_EXCEPT) & FE_INVALID) != 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = INFINITY;
+    Require(_LExp_nid_postfix(&result, -INFINITY, 0) == 1 && std::isinf(result) && result < 0.0L && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    result = -INFINITY;
+    Require(_LExp_nid_postfix(&result, 1.0L, 0) == 0 && result == 0.0L);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = INFINITY;
+    Require(_LExp_nid_postfix(&result, 1.0L, 0) == 1 && std::isinf(result) && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = NAN;
+    Require(_LExp_nid_postfix(&result, 1.0L, 0) == 2 && std::isnan(result) && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = 1.0L;
+    Require(_LExp_nid_postfix(&result, NAN, 0) == 2 && std::isnan(result) && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = 1.0L;
+    Require(_LExp_nid_postfix(&result, INFINITY, 0) == 1 && std::isinf(result) && result > 0.0L && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = 1.0L;
+    Require(_LExp_nid_postfix(&result, -INFINITY, 0) == 1 && std::isinf(result) && result < 0.0L && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    errno = 0;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    result = INFINITY;
+    Require(_LExp_nid_postfix(&result, NAN, 0) == 2 && std::isnan(result) && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0);
+    result = 12000.0L;
+    Require(_LExp_nid_postfix(&result, 1.0L, 0) == 1 && std::isinf(result));
+    result = -12000.0L;
+    Require(_LExp_nid_postfix(&result, 1.0L, 0) == 0 && result == 0.0L);
+    result = 1.0L;
+    Require(_LExp_nid_postfix(&result, 1.0L, -20000) == 0 && result == 0.0L);
+    result = 1.0L;
+    Require(_LExp_nid_postfix(&result, 1.0L, 20000) == 1 && std::isinf(result));
+    Require(std::fesetround(saved) == 0);
+}
+
 int main() {
     CheckRoundingAndScaling();
     CheckLogblLroundl();
@@ -198,7 +439,12 @@ int main() {
     CheckFiniteClassification();
     CheckConsoleQuirks();
     CheckRoundingModes();
+    CheckLongDoubleExpOverflowRounding();
+    CheckLongDoubleExpMeasuredRange();
+    CheckLongDoubleExpTinyMultiplierOverflow();
+    CheckLongDoubleExpTinyRounding();
     CheckRintTiesToEven();
     CheckClassification();
+    CheckLongDoubleExp();
     return 0;
 }
