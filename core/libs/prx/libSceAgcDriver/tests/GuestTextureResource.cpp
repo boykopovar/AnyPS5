@@ -155,6 +155,9 @@ void RunGuestTextureResourceTests() {
     Require(IsNullTextureResource(pack(nullType)), "a type-1 texture with a nonzero base was not classified as null");
     nullType.typeRaw = 2;
     Require(!IsNullTextureResource(pack(nullType)), "a reserved type-2 texture was classified as null");
+    const std::array<std::uint32_t, 8> reportedStorage{0x04efd000u, 0x00040011u, 0x00017a00u, 0x00005204u, 0x0af00000u, 0u, 0x00000612u, 0x00fff000u};
+    Require(IsNullTextureResource(reportedStorage), "the type-0 words of a written storage slot were not classified as null");
+    reject([&] { static_cast<void>(DecodeTextureResource(reportedStorage)); }, "guest texture descriptor");
     auto result = DecodeTextureResource(pack(base));
     Require(result.baseAddress == (base.base40 << 8u), "decoded base address changed");
     Require(result.width == 16 && result.height == 16, "decoded width or height changed");

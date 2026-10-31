@@ -111,7 +111,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> DrawWriteRanges(const Graph
                 const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
                 if (!written || binding.guestDescriptor.size() < (static_cast<std::size_t>(element) + 1) * 8) continue;
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8, 8);
-                if (words[0] == 0u && (words[1] & 0xffu) == 0u) continue;
+                if (Graphics::IsNullTextureResource(words)) continue;
                 const auto resource = Graphics::DecodeTextureResource(words);
                 if (resource.baseAddress == 0) continue;
                 const auto surfaceBytes = Graphics::DescribeSurface(resource).guestBytes;
