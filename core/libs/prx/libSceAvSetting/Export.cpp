@@ -1,8 +1,25 @@
 #include "prx/libSceAvSetting/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
+#include <limits>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+template <typename TValue>
+bool ReadAvSettingField(const void* object, std::size_t offset, TValue& value) noexcept {
+    const auto address = reinterpret_cast<std::uintptr_t>(object);
+    if (address == 0 || offset > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+    try {
+        return GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + offset), sizeof(value));
+    } catch (...) {
+        return false;
+    }
+}
+
+}
 
 extern "C" {
 
@@ -215,14 +232,20 @@ int APS5_VABI sceAvControlIsAudioOutModeSupportedByMonitorInfo() {
     return 0;
 }
 
-int APS5_VABI sceAvControlIsColorimetryHdr() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceAvControlIsColorimetryHdr(std::uint32_t colorimetry) {
+    constexpr std::array<std::uint32_t, 12> isHdr{1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1};
+    return colorimetry >= 9 && colorimetry <= 20 && isHdr[colorimetry - 9] != 0;
 }
 
-int APS5_VABI sceAvControlIsDeepColorSupportedByMonitorInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceAvControlIsDeepColorSupportedByMonitorInfo(const void* monitorInfo) {
+    std::uint8_t deepColorFlags = 0;
+    if (!ReadAvSettingField(monitorInfo, 0x74, deepColorFlags)) return false;
+    if ((deepColorFlags & 0x0a) != 0) return true;
+    std::uint8_t deepColorFlags2 = 0;
+    if (!ReadAvSettingField(monitorInfo, 0x75, deepColorFlags2)) return false;
+    if ((deepColorFlags2 & 0x0a) != 0) return true;
+    std::uint8_t hdrFlags = 0;
+    return ReadAvSettingField(monitorInfo, 0x352, hdrFlags) && (hdrFlags & 0x03) != 0;
 }
 
 int APS5_VABI sceAvControlIsDeviceConnected() {
@@ -230,19 +253,22 @@ int APS5_VABI sceAvControlIsDeviceConnected() {
     return 0;
 }
 
-int APS5_VABI sceAvControlIsHdrSupportedByMonitorInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceAvControlIsHdrSupportedByMonitorInfo(const void* monitorInfo) {
+    std::uint8_t capabilityFlags = 0;
+    if (!ReadAvSettingField(monitorInfo, 0x358, capabilityFlags) || (capabilityFlags & 0x04) == 0)
+        return false;
+    std::uint8_t hdrFlags = 0;
+    return ReadAvSettingField(monitorInfo, 0x78, hdrFlags) && (hdrFlags & 0x30) != 0;
 }
 
-int APS5_VABI sceAvControlIsModeGen1Vr() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceAvControlIsModeGen1Vr(const void* videoOutMode) {
+    std::uint32_t modeFlags = 0;
+    return ReadAvSettingField(videoOutMode, 0x30, modeFlags) && (modeFlags & 0x02) != 0;
 }
 
-int APS5_VABI sceAvControlIsModeSystemDefault() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceAvControlIsModeSystemDefault(const void* videoOutMode) {
+    std::uint32_t modeFlags = 0;
+    return ReadAvSettingField(videoOutMode, 0x30, modeFlags) && (modeFlags & 0x01) == 0;
 }
 
 int APS5_VABI sceAvControlIsSuspendedProcessOutputModeAvailable() {
