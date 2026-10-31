@@ -25,6 +25,8 @@ struct SpirvRequirements {
     bool functionScratch = false;
     bool pixelValidMask = false;
     bool bufferInt64Atomics = false;
+    bool bufferInt64AtomicsExact = false;
+    bool bufferInt64AtomicsSplit = false;
     bool coherentBufferPairs = false;
     bool bufferU64View = false;
     bool imageInt64Atomics = false;
@@ -39,6 +41,7 @@ struct SpirvRequirements {
     std::vector<std::string> extensions;
 };
 
+[[nodiscard]] bool IsSplittableBufferAtomic64(const IrValue* inst);
 [[nodiscard]] SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program);
 [[nodiscard]] bool IsIntegerFloat64Opcode(IrOpcode opcode);
 inline constexpr std::uint32_t FunctionLdsDwordLimit = 8192u;
