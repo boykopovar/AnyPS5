@@ -580,8 +580,8 @@ static void TestCustomRackChecks() {
     const ModuleOptionWords reverbOff{SCE_NGS2_CUSTOM_REVERB_OPTION_SIZE, {0}};
     const ModuleOptionWords reverbSize{16, {1}};
     const ModuleOptionWords reverbWord{SCE_NGS2_CUSTOM_REVERB_OPTION_SIZE, {2}};
-    Require(CreateThrows<std::runtime_error>(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverb, 0)));
-    Require(CreateThrows<std::runtime_error>(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverbOff, 0)));
+    Require(!CreateThrows<std::runtime_error>(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverb, 0)));
+    Require(!CreateThrows<std::runtime_error>(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverbOff, 0)));
     Require(create(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverbSize, 0)) == SCE_NGS2_ERROR_INVALID_OPTION_SIZE);
     Require(create(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverbWord, 0)) == SCE_NGS2_ERROR_INVALID_REVERB_OPTION);
     Require(create(BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_REVERB, &reverb, 4)) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
@@ -913,6 +913,41 @@ static void TestCustomGain() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestCustomUserFxBuffers() {
+    const auto system = CreateSystem();
+    const auto master = Mastering(system, 2);
+    const auto userFx2 = Module(Gain);
+    auto option = BuiltInRackOption(userFx2, SCE_NGS2_CUSTOM_MODULE_ID_USER_FX, nullptr, 0);
+    option.custom_rack_option.num_buffers = 2;
+    option.max_inputs = 2;
+    option.custom_rack_option.module[0].source_buffer_id = 1;
+    option.custom_rack_option.module[0].dest_buffer_id = 0;
+    const auto rack = CustomRack(system, option);
+    const auto custom = Voice(rack);
+    Control(custom, SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP, Ngs2CustomSubmixerVoiceSetupParam{{}, 2, 2, 0, 0});
+    Patch(custom, master);
+    Event(custom, SCE_NGS2_VOICE_EVENT_PLAY);
+    const std::vector<std::int16_t> loud(Grain * 2 * 8, 16384);
+    const std::vector<std::int16_t> quiet(Grain * 2 * 8, 8192);
+    const auto first = Sampler(system, loud);
+    const auto second = Sampler(system, quiet);
+    Patch(first, custom);
+    Control(second, SCE_NGS2_VOICE_PARAM_PATCH, Ngs2VoicePatchParam{{}, 0, 1, custom});
+    Event(first, SCE_NGS2_VOICE_EVENT_PLAY);
+    Event(second, SCE_NGS2_VOICE_EVENT_PLAY);
+
+    for (int grain = 0; grain < 2; grain++) {
+        const auto out = Render(system);
+        for (std::uint32_t i = 0; i < Grain; i++) {
+            const float expected = grain == 0 && i < 3 ? 0.0f : 0.25f;
+            Require(out[i * 2] == expected && out[i * 2 + 1] == expected);
+        }
+    }
+
+    Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 template <typename TException>
 static bool ModuleInfoThrows(uintptr_t rack, std::uint32_t moduleIndex, std::size_t infoSize) {
     Ngs2CustomModuleInfo info;
@@ -1031,6 +1066,7 @@ int main() {
     TestCustomFilter();
     for (const auto moduleIndex : {0u, 1u, 23u}) TestCustomLegacyUserFx(moduleIndex);
     TestCustomGain();
+    TestCustomUserFxBuffers();
     TestCustomModuleInfo();
     TestCustomMastering();
     return 0;
