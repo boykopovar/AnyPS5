@@ -32,10 +32,7 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
         writeF64Result(inst.destination, *result);
         return true;
     }
-    rejectHalfOrDoubleOutputModifier(inst.destination);
-    RdnaOperand destination = inst.destination;
-    destination.omod = 0u;
-    writeOperand(destination, result);
+    writeOperand(inst.destination, result);
     return true;
 }
 
