@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -41,9 +42,16 @@ class Api:
             if "pullRequests" in query:
                 return json.dumps(self.pages.pop(0))
             fields = {}
-            for index, path in enumerate(self.files):
-                fields[f"b{index}"] = {"oid": self.blobs.get(("base", path), "same")}
-                fields[f"m{index}"] = {"oid": self.blobs.get(("main", path), "same")}
+            for alias, expression in re.findall(r'(\w+): object\(expression: ("(?:\\.|[^"\\])*")\)', query):
+                folder = json.loads(expression).split(":", 1)[1]
+                side = "base" if alias.startswith("b") else "main"
+                entries = []
+                for path in self.files:
+                    parent, _, leaf = path.rpartition("/")
+                    item = self.blobs.get((side, path), (33188, "blob", "same"))
+                    if parent == folder and item is not None:
+                        entries.append({"name": leaf, "mode": item[0], "type": item[1], "oid": item[2]})
+                fields[alias] = {"entries": entries}
             return json.dumps({"data": {"repository": fields}})
         if args[:2] == ("api", "--paginate") and "/files" in args[2]:
             return json.dumps(self.files)
@@ -81,7 +89,26 @@ class ConfirmTests(unittest.TestCase):
         self.assertTrue(self.confirm(OLD, ["a.cpp", "b.cpp"]))
 
     def test_an_older_merge_is_not_confirmed_when_a_file_changed(self):
-        self.assertFalse(self.confirm(OLD, ["a.cpp", "b.cpp"], {("main", "b.cpp"): "new"}))
+        self.assertFalse(self.confirm(OLD, ["a.cpp", "src/b.cpp"], {("main", "src/b.cpp"): (33188, "blob", "new")}))
+
+    def test_a_mode_change_alone_is_not_confirmed(self):
+        self.assertFalse(self.confirm(OLD, ["tools/run.sh"], {("main", "tools/run.sh"): (33261, "blob", "same")}))
+
+    def test_a_file_type_change_alone_is_not_confirmed(self):
+        self.assertFalse(self.confirm(OLD, ["link"], {("base", "link"): (40960, "blob", "same")}))
+
+    def test_a_missing_folder_counts_as_changed(self):
+        api = Api([], ["gone/a.cpp"])
+        real = api.__call__
+
+        def fake(*args):
+            if args[:2] == ("api", "graphql") and "pullRequests" not in args[3]:
+                data = json.loads(real(*args))
+                data["data"]["repository"]["m0"] = None
+                return json.dumps(data)
+            return real(*args)
+        with patch.object(pr_unchanged.pr_labels, "gh", fake):
+            self.assertFalse(pr_unchanged.unchanged_since("o/r", OLD, MAIN, ["gone/a.cpp"]))
 
     def test_a_file_added_since_counts_as_changed(self):
         api = Api([], ["a.cpp"])
@@ -99,7 +126,13 @@ class ConfirmTests(unittest.TestCase):
         api = Api([], ['a "b".cpp'])
         with patch.object(pr_unchanged.pr_labels, "gh", api), patch.object(pr_unchanged, "graphql", wraps=pr_unchanged.graphql) as spy:
             pr_unchanged.unchanged_since("o/r", OLD, MAIN, ['a "b".cpp'])
-        self.assertIn(json.dumps(OLD + ':a "b".cpp'), spy.call_args[0][0])
+        self.assertIn(json.dumps(OLD + ":"), spy.call_args[0][0])
+
+    def test_folders_are_quoted_in_the_query(self):
+        api = Api([], ['x "y"/a.cpp'])
+        with patch.object(pr_unchanged.pr_labels, "gh", api), patch.object(pr_unchanged, "graphql", wraps=pr_unchanged.graphql) as spy:
+            self.assertTrue(pr_unchanged.unchanged_since("o/r", OLD, MAIN, ['x "y"/a.cpp']))
+        self.assertIn(json.dumps(OLD + ':x "y"'), spy.call_args[0][0])
 
 
 class MainTests(unittest.TestCase):
@@ -132,10 +165,32 @@ class MainTests(unittest.TestCase):
         self.run_main(api)
         self.assertEqual(api.calls, [("pr", "edit", "7", "-R", "o/r", "--remove-label", "already in main")])
 
-    def test_a_labeled_confirmed_pull_request_is_left_alone(self):
-        api = Api([node(labels=["already in main"])])
+    def test_a_labeled_confirmed_pull_request_with_its_comment_is_left_alone(self):
+        api = Api([node(labels=["already in main"])], comments=1)
         self.run_main(api)
         self.assertEqual(api.calls, [])
+
+    def test_a_labeled_confirmed_pull_request_without_its_comment_gets_it(self):
+        api = Api([node(labels=["already in main"])])
+        self.run_main(api)
+        self.assertEqual(len(api.calls), 1)
+        self.assertIn(pr_unchanged.MARKER, api.calls[0][-1])
+
+    def test_a_failed_comment_is_retried_on_the_next_run(self):
+        api = Api([node()])
+        real = api.__call__
+
+        def failing(*args):
+            if args[:3] == ("api", "-X", "POST"):
+                raise pr_unchanged.subprocess.CalledProcessError(1, "gh", stderr="HTTP 502")
+            return real(*args)
+        code, _, err = self.run_main(failing)
+        self.assertIn("#7", code)
+        self.assertEqual(api.calls, [("pr", "edit", "7", "-R", "o/r", "--add-label", "already in main")])
+        retry = Api([node(labels=["already in main"])])
+        self.run_main(retry)
+        self.assertEqual(len(retry.calls), 1)
+        self.assertIn(pr_unchanged.MARKER, retry.calls[0][-1])
 
     def test_a_dry_run_writes_nothing(self):
         api = Api([node()])

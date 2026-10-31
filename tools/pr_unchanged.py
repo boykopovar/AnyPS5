@@ -33,7 +33,7 @@ query($owner: String!, $name: String!, $after: String, $size: Int!) {
 
 def comment(base):
     return (f"{MARKER}\nMerging this pull request would not change `main`: GitHub's test merge of it into `main` at {base[:10]} "
-            "has the same files as that commit, and no file it touches has changed in `main` since. Its changes look merged already, "
+            "has the same files as that commit, and no file it touches has changed in `main` since, including its mode and type. Its changes look merged already, "
             "possibly through another pull request. Nothing is closed automatically. Close it if it is superseded, or push what is "
             f"still missing; the `{LABEL}` label goes away once merging would change `main` again.")
 
@@ -91,13 +91,25 @@ def touched(repo, number):
 
 def unchanged_since(repo, base, main, paths):
     owner, name = repo.split("/", 1)
+    folders = sorted({path.rpartition("/")[0] for path in paths})
     fields = []
-    for index, path in enumerate(paths):
-        fields.append(f"b{index}: object(expression: {json.dumps(base + ':' + path)}) {{ oid }}")
-        fields.append(f"m{index}: object(expression: {json.dumps(main + ':' + path)}) {{ oid }}")
+    for index, folder in enumerate(folders):
+        for prefix, commit in (("b", base), ("m", main)):
+            fields.append(f"{prefix}{index}: object(expression: {json.dumps(commit + ':' + folder)}) "
+                          "{ ... on Tree { entries { name mode type oid } } }")
     query = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { " + " ".join(fields) + " } }"
     data = graphql(query, owner=owner, name=name)["repository"]
-    return all((data[f"b{index}"] or {}).get("oid") == (data[f"m{index}"] or {}).get("oid") for index in range(len(paths)))
+
+    def entry(prefix, path):
+        folder, _, leaf = path.rpartition("/")
+        tree = data[f"{prefix}{folders.index(folder)}"]
+        if tree is None:
+            return None
+        if not isinstance(tree.get("entries"), list):
+            return "not a folder"
+        return next(((item["mode"], item["type"], item["oid"]) for item in tree["entries"] if item["name"] == leaf), None)
+
+    return all(entry("b", path) == entry("m", path) for path in paths)
 
 
 def commented(repo, number):
@@ -136,15 +148,15 @@ def main(argv=None):
     for pr in prs:
         try:
             hit = confirmed(repo, head, pr)
-            if hit == (LABEL in pr["labels"]):
-                continue
-            print(f"{'would change' if args.dry_run else 'changed'} #{pr['number']}: {'+' if hit else '-'}{LABEL}")
-            if args.dry_run:
-                continue
-            pr_labels.gh("pr", "edit", str(pr["number"]), "-R", repo, "--add-label" if hit else "--remove-label", LABEL)
-            if hit and not commented(repo, pr["number"]):
+            if hit != (LABEL in pr["labels"]):
+                print(f"{'would change' if args.dry_run else 'changed'} #{pr['number']}: {'+' if hit else '-'}{LABEL}")
+                if not args.dry_run:
+                    pr_labels.gh("pr", "edit", str(pr["number"]), "-R", repo, "--add-label" if hit else "--remove-label", LABEL)
+                    time.sleep(WRITE_PAUSE)
+            if hit and not args.dry_run and not commented(repo, pr["number"]):
                 pr_labels.gh("api", "-X", "POST", f"repos/{repo}/issues/{pr['number']}/comments", "-f", f"body={comment(pr['base'])}")
-            time.sleep(WRITE_PAUSE)
+                print(f"commented on #{pr['number']}")
+                time.sleep(WRITE_PAUSE)
         except subprocess.CalledProcessError as error:
             failed.append(pr["number"])
             print(f"cannot check #{pr['number']}: {(error.stderr or '').strip()}", file=sys.stderr)
