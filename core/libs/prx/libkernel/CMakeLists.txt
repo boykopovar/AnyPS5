@@ -979,7 +979,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_timed_wait_cpu COMMAND guest_timed_wait_cpu_tests)
     set_tests_properties(guest_timed_wait_cpu PROPERTIES TIMEOUT 30)
     if(WIN32)
-        set_tests_properties(guest_timed_wait_cpu PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_timed_wait_cpu PROPERTIES RUN_SERIAL TRUE ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_pthread_sem_tests ${LIBS_INCLUDE_DIR}/tests/GuestPthreadSem.cpp)

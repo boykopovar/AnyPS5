@@ -1317,9 +1317,6 @@ int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* de
     }
     if (protocol != 0) return Fail(43);
     if (plainType != 1 && plainType != 2 && plainType != 5) return Fail(41);
-    if (!descriptors) return Fail(14);
-    const GuestArena::HostWrite destination(descriptors, 2 * sizeof(int));
-    if (!destination.Open()) return Fail(14);
     NativeSocket native[2];
     if (const int error = NativePair(plainType, native)) return Fail(error);
     Socket firstGuard(native[0], GuestUnix, plainType);
@@ -1340,13 +1337,30 @@ int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* de
             GuestSockets::Close(firstDescriptor);
             return Fail(error);
         }
+        struct InstalledPair {
+            int first;
+            int second;
+            bool release = true;
+            ~InstalledPair() {
+                if (!release) return;
+                const int error = *__error_nid_postfix();
+                for (const int number : {first, second}) {
+                    try {
+                        GuestSockets::Close(number);
+                    } catch (...) {
+                    }
+                }
+                *__error_nid_postfix() = error;
+            }
+        } installedPair{firstDescriptor, secondDescriptor};
+        const int installed[2] = {firstDescriptor, secondDescriptor};
+        if (!GuestCopyOut_nid_no_patch(descriptors, installed, sizeof(installed))) return Fail(14);
         if ((type & GuestCloseOnExec) != 0) {
             std::lock_guard registry(socketsMutex);
             closeOnExecDescriptors.insert(firstDescriptor);
             closeOnExecDescriptors.insert(secondDescriptor);
         }
-        descriptors[0] = firstDescriptor;
-        descriptors[1] = secondDescriptor;
+        installedPair.release = false;
         return 0;
     } catch (const std::bad_alloc&) {
         return Fail(12);
