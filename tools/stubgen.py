@@ -271,7 +271,9 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace", newline="\n")
-    ap = argparse.ArgumentParser(description="Generate AnyPS5 Export.cpp skeletons and TechnicalDebt lines")
+    ap = argparse.ArgumentParser(description="Generate AnyPS5 Export.cpp skeletons and TechnicalDebt lines. Stubs for NIDs that no audited title imports "
+                                     "are inventory only: tools/progress.py counts them as unobserved stubs, so declare only NIDs "
+                                     "that tools/import_audit.py reports for a title (see docs/dev/PROGRESS.md)")
     ap.add_argument("--module", required=True, help="target module name, e.g. libSceAmpr, used for UnknownNN prefix and default TechnicalDebt path core/libs/prx/MODULE/Export.cpp")
     ap.add_argument("--nids", required=True, help="path to missing-NIDs file, one 11-char NID per line")
     ap.add_argument("--db", required=False, default=None, help="path to NID name CSV, NID name per line like aerolib.csv")

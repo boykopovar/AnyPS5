@@ -252,6 +252,18 @@ class StubGeneratorTests(unittest.TestCase):
                 self.assertEqual(code.stat().st_mode & 0o777, 0o666 & ~mask)
 
 
+class HelpTextTests(unittest.TestCase):
+    def test_help_says_stubs_for_unobserved_nids_are_inventory_only(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as error:
+            stubgen.main(["--help"])
+        self.assertEqual(error.exception.code, 0)
+        text = " ".join(output.getvalue().split())
+        self.assertIn("inventory only", text)
+        self.assertIn("unobserved stubs", text)
+        self.assertIn("docs/dev/PROGRESS.md", text)
+
+
 class ReadOnlyOutputTests(unittest.TestCase):
     def test_later_staging_failure_preserves_original_error_and_cleans_readonly_temporary(self):
         with tempfile.TemporaryDirectory() as directory:
