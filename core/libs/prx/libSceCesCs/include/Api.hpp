@@ -214,6 +214,7 @@ int APS5_VABI sceCesEucKrUcsProfileSetSbcs(void);
 int APS5_VABI sceCesGbUcsProfileSet4ByteCharRange(void);
 int APS5_VABI sceCesGbUcsProfileSetSbcs(void);
 int APS5_VABI sceCesGbUcsProfileSetUdaMapping(void);
+int APS5_VABI sceCesUcsProfileInitGb18030_2022(void);
 int APS5_VABI sceCesIso2022JpUcsProfileSetSbcs(void);
 int APS5_VABI sceCesIso2022StrGetUcs2Len(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* ucs2Len);
 int APS5_VABI sceCesIso2022StrGetUtf16Len(void* context, const uint8_t* iso, uint32_t isoMax, uint32_t* isoLen, uint32_t* utf16Len);
