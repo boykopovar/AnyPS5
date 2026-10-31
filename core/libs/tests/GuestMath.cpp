@@ -1533,7 +1533,10 @@ static void CheckHyperbolic() {
     Require(atanh_nid_postfix(0.) == 0. && atanh_nid_postfix(1.) == infinity && atanh_nid_postfix(-1.) == -infinity);
     Require(std::isnan(acosh_nid_postfix(0.5)) && std::isnan(acoshf_nid_postfix(0.5f)) && std::isnan(atanh_nid_postfix(2.)));
     Require(Near(sinh_nid_postfix(1.), 1.1752011936438014, 1e-15));
-    Require(Near(cosh_nid_postfix(1.), 1.5430806348152437, 1e-15));
+    for (const double x : {1., -1.}) {
+        errno = 7;
+        Require(std::bit_cast<std::uint64_t>(cosh_nid_postfix(x)) == 0x3ff8b07551d9f550ull && errno == 7);
+    }
     for (const auto& [x, expected] : {std::pair{0x1p-56, 0x1p+0}, std::pair{0x1.3333333333333p-2, 0x1.0b9b4e0b6ec4cp+0},
              std::pair{0x1.5e66666666666p+4, 0x1.82afcca727c18p+30}, std::pair{0x1.68p+4, 0x1.604b68cf05f66p+31},
              std::pair{-0x1.91p+6, 0x1.8c39b9134bac4p+143}, std::pair{-0x1.63p+9, 0x1.3e21a464507fap+1023},
