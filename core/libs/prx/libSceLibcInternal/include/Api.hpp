@@ -28,7 +28,7 @@ extern "C" {
 
 void* APS5_VABI fdopendir_nid_postfix(int fd);
 void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
-GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle);
+GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle, int skip);
 void APS5_VABI _seekdir_nid_postfix(void* handle, std::int64_t location);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
 void APS5_VABI err_set_exit_nid_postfix(ErrExit function);

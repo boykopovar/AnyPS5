@@ -4,10 +4,48 @@
 #include "prx/libc/include/GuestDirectory.hpp"
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <string>
+
+namespace {
+
+int s_fakeOffset = 0;
+
+int APS5_VABI FakeClose(int) { return 0; }
+
+int APS5_VABI FakeRead(int, char* buffer, int size) {
+    if (s_fakeOffset > 0) return 0;
+    GuestDirectoryEntry first{};
+    first.fileNumber = 0;
+    first.nameLength = 7;
+    std::memcpy(first.name, "deleted", 8);
+    first.recordLength = static_cast<std::uint16_t>(offsetof(GuestDirectoryEntry, name) + 8);
+    first.type = 8;
+
+    GuestDirectoryEntry second{};
+    second.fileNumber = 42;
+    second.nameLength = 6;
+    std::memcpy(second.name, "active", 7);
+    second.recordLength = static_cast<std::uint16_t>(offsetof(GuestDirectoryEntry, name) + 7);
+    second.type = 8;
+
+    const int total = first.recordLength + second.recordLength;
+    if (size < total) return -1;
+    std::memcpy(buffer, &first, first.recordLength);
+    std::memcpy(buffer + first.recordLength, &second, second.recordLength);
+    s_fakeOffset += total;
+    return total;
+}
+
+std::int64_t APS5_VABI FakeSeek(int, std::int64_t, int) {
+    s_fakeOffset = 0;
+    return 0;
+}
+
+}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -47,7 +85,9 @@ int main() {
         Require(__opendir2_nid_postfix(missing.c_str(), flags) == nullptr && *__error_nid_postfix() == missingError);
     }
     *__error_nid_postfix() = 0;
-    Require(_readdir_unlocked_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 9);
+    Require(_readdir_unlocked_nid_postfix(nullptr, 0) == nullptr && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(_readdir_unlocked_nid_postfix(nullptr, 1) == nullptr && *__error_nid_postfix() == 9);
     *__error_nid_postfix() = 0;
     _seekdir_nid_postfix(nullptr, 0);
     Require(*__error_nid_postfix() == 9);
@@ -56,7 +96,7 @@ int main() {
     std::map<std::string, int> unlockedEntries;
     std::int64_t bookmark = -1;
     std::string bookmarkedName;
-    while (auto* entry = _readdir_unlocked_nid_postfix(unlockedDir)) {
+    while (auto* entry = _readdir_unlocked_nid_postfix(unlockedDir, 1)) {
         unlockedEntries[entry->name] = entry->type;
         if (bookmark < 0) {
             bookmark = telldir_nid_postfix(unlockedDir);
@@ -68,9 +108,19 @@ int main() {
     Require(unlockedEntries == expected);
     Require(!bookmarkedName.empty());
     _seekdir_nid_postfix(unlockedDir, bookmark);
-    auto* entryAfterSeek = _readdir_unlocked_nid_postfix(unlockedDir);
+    auto* entryAfterSeek = _readdir_unlocked_nid_postfix(unlockedDir, 1);
     Require(entryAfterSeek != nullptr && bookmarkedName == entryAfterSeek->name);
     Require(closedir_nid_postfix(unlockedDir) == 0);
+
+    s_fakeOffset = 0;
+    void* fakeDir = OpenDescriptorDirectory_nid_no_patch("/virtual", 100, FakeClose, 0, FakeRead, FakeSeek);
+    Require(fakeDir != nullptr);
+    auto* skipped = _readdir_unlocked_nid_postfix(fakeDir, 1);
+    Require(skipped != nullptr && skipped->fileNumber == 42 && std::strcmp(skipped->name, "active") == 0);
+    _seekdir_nid_postfix(fakeDir, 0);
+    auto* unskipped = _readdir_unlocked_nid_postfix(fakeDir, 0);
+    Require(unskipped != nullptr && unskipped->fileNumber == 0 && std::strcmp(unskipped->name, "deleted") == 0);
+    Require(closedir_nid_postfix(fakeDir) == 0);
 
     std::filesystem::remove(root / "sample.txt");
     std::filesystem::remove(root / "subdirectory");

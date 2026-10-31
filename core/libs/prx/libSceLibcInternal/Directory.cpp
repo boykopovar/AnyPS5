@@ -30,10 +30,12 @@ extern "C" void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags) {
     return opendir_nid_postfix(name);
 }
 
-extern "C" GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle) {
-    return readdir_nid_postfix(handle);
+extern "C" GuestDirectoryEntry* APS5_VABI _readdir_unlocked_nid_postfix(void* handle, int skip) {
+    return ReadDirectoryUnlocked_nid_no_patch(handle, skip);
 }
+APS5_EXPORT("-u3XfqNumMU", _readdir_unlocked_nid_postfix);
 
 extern "C" void APS5_VABI _seekdir_nid_postfix(void* handle, std::int64_t location) {
-    seekdir_nid_postfix(handle, location);
+    SeekDirectoryUnlocked_nid_no_patch(handle, location);
 }
+APS5_EXPORT("Do3zPpsXj1o", _seekdir_nid_postfix);
