@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 static_assert(offsetof(LibreSslX509VerifyParam, flags) == 24);
 
@@ -20,7 +21,7 @@ int APS5_VABI X509_VERIFY_PARAM_set_flags_nid_postfix(LibreSslX509VerifyParam* p
     if (!param)
         throw std::invalid_argument("X509_VERIFY_PARAM_set_flags requires parameters");
     if ((flags & PolicyVariables) && !((param->flags | flags) & PolicyCheck))
-        NotImplemented_nid_no_patch(__func__);
+        throw std::runtime_error(std::string(__func__) + ": the console's policy handling is unmeasured");
     param->flags |= flags;
     return 1;
 }
