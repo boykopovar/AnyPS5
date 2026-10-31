@@ -8,7 +8,7 @@
 
 ### Functional
 
-- [Forwarded exports](../../../core/libs/prx/libSceNKWebKit/src/ForwardExports.cpp) (libSceNKWebKit) - 272 exports are the same function under another name in the PS5 11.00 module: the body at each address is a `jmp rel32` into another export of the same image, so they are implemented as an assembly tail jump to that export. The target is one of 196 `operator new`/`operator new[]` exports that forward to `WTF::fastMalloc`, 104 `operator delete`/`operator delete[]` and 16 destructors that forward to `WTF::fastFree`, and 2 `WKUserMediaPermissionRequest*DeviceUIDs` that forward to `WKMutableArrayCreate`; the jump keeps every register, so the return type and arguments are whatever the target uses, but their behaviour is only as verified as the target's and no prototype is claimed. Addresses, sizes and bytes come from the 11.00 `libSceNKWebKit.sprx`, with each NID recomputed from the declared name; only 11.00 was measured.
+- [Forwarded exports](../../../core/libs/prx/libSceNKWebKit/src/ForwardExports.cpp) (libSceNKWebKit) - 275 exports are the same function under another name in the PS5 11.00 module: the body at their address is a `jmp rel32` into another export of the same image (26 distinct targets), so they are implemented as an assembly tail jump to that export. The jump keeps every register, so the return type and arguments are whatever the target uses, and 198 of them reach an implemented target (104 `operator delete`-family jumps to `WTF::fastFree`, 92 `operator new`-family jumps to `WTF::fastMalloc`, 2 `WKUserMediaPermissionRequest*DeviceUIDs` to `WKMutableArrayCreate`); the other 77 jump to an export that still throws, so they throw as well, and no prototype is claimed for either symbol. Addresses, sizes and bytes come from the 11.00 `libSceNKWebKit.sprx` (SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`), with each NID recomputed from the declared name; only 11.00 was measured.
 
 - [JavaScriptCore C API](../../../core/libs/prx/libSceNKWebKit/src/JscContext.cpp) (libSceNKWebKit) - `JS*` runs on QuickJS-NG (`3rdparty/quickjs`), not JavaScriptCore: there is no JIT and no conservative stack scan, and error messages, stack traces and property order come from QuickJS. An unprotected `JSObjectRef` held only in a native variable or heap structure across `JSGarbageCollect` is collected, where JavaScriptCore keeps it through its stack scan; `JSValueProtect`, a marking constraint, a JavaScript reference or an active callback frame keep it alive. `JSStringRef` values are `libSceJsc` strings.
 - [Dictionary key order](../../../core/libs/prx/libSceNKWebKit/src/Dictionary.cpp) (libSceNKWebKit) - `WKDictionaryCopyKeys` returns keys sorted by UTF-16 code unit, not in the `WTF::HashMap` iteration order of [WKDictionary.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/c/WKDictionary.cpp).
@@ -27,7 +27,7 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7310 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7307 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -346,7 +346,6 @@
 | `WKContextEnableProcessTermination` | `FJB0fZbTUWY` |
 | `WKContextGarbageCollectJavaScriptObjects` | `MBIrQeS3ILw` |
 | `WKContextGetAccessibilityEnabled` | `YREfLD1wwT0` |
-| `WKContextGetApplicationCacheManager` | `PZzcUP8YYkg` |
 | `WKContextGetCacheModel` | `vdM7J5Xjh2A` |
 | `WKContextGetGeolocationManager` | `GJsL9usTdig` |
 | `WKContextGetGlobalStatistics` | `cLN+-CVotuU` |
@@ -2612,7 +2611,6 @@
 | `_ZN7WebCore13MIMETypeCacheD2Ev` | `47WhLC3+uRA` |
 | `_ZN7WebCore13MIMETypeCacheaSERKS0_` | `EbS+N1MbOBw` |
 | `_ZN7WebCore13MIMETypeCachenaEmPv` | `ah7gMVFXK8I` |
-| `_ZN7WebCore13MIMETypeCachenwEm` | `PIa6V635TSQ` |
 | `_ZN7WebCore13MIMETypeCachenwEmPv` | `BwDiCf2Irzg` |
 | `_ZN7WebCore13MediaStrategyC1ERKS0_` | `UoyxMN47fmw` |
 | `_ZN7WebCore13MediaStrategyC1Ev` | `FKp2wB9uPwY` |
@@ -5282,7 +5280,6 @@
 | `_ZN9Inspector18InspectorHeapAgentD0Ev` | `cbxQvl0FscU` |
 | `_ZN9Inspector18InspectorHeapAgentD1Ev` | `nC0Zgj4tVAY` |
 | `_ZN9Inspector18InspectorHeapAgentD2Ev` | `t7Sao1Z9Vgc` |
-| `_ZN9Inspector18InspectorHeapAgentdlEPv` | `HdqkxFL0nGo` |
 | `_ZN9Inspector18InspectorHeapAgentnaEmPv` | `5Z1c0doVn20` |
 | `_ZN9Inspector18InspectorHeapAgentnwEm10NotNullTagPv` | `4CiIyjuiGiE` |
 | `_ZN9Inspector18InspectorHeapAgentnwEmPv` | `DZF93h86bFk` |
