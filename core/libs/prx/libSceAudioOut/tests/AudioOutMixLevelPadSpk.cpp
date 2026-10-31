@@ -164,6 +164,14 @@ void TestRejectedLevels() {
     Require(sceAudioOutSetMixLevelPadSpk(closed, unity) == invalidPort);
 }
 
+void TestPadSpkVolume() {
+    const auto block = Ramp();
+    Require(Play(portTypePadSpeaker, formatS16Mono, block, [](int handle) {
+        Require(sceAudioOutSetPadSpkVolume(handle, 64) == 0);
+        Require(sceAudioOutSetPadSpkVolume(handle, 127) == 0);
+    }) == block);
+}
+
 }
 
 int main() {
@@ -173,5 +181,6 @@ int main() {
     TestLevelWithVolume();
     TestOtherPortType();
     TestRejectedLevels();
+    TestPadSpkVolume();
     return 0;
 }
