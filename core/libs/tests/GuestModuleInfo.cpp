@@ -12,6 +12,10 @@
 #include <source_location>
 #include <string>
 #include <vector>
+#ifdef __APPLE__
+#include <mach-o/getsect.h>
+#include <mach-o/loader.h>
+#endif
 
 static void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (!value) {
@@ -54,10 +58,15 @@ int main(int argc, char** argv) {
     Require(executable);
 #if defined(_WIN32) && defined(__SEH__)
     Require(info.eh_frame_addr == 0 && info.eh_frame_size == 0);
+#elif defined(__APPLE__)
+    unsigned long frameSize = 0;
+    const auto* frames = getsectiondata(reinterpret_cast<const mach_header_64*>(info.segments[0].address), SEG_TEXT, "__eh_frame", &frameSize);
+    Require(info.eh_frame_addr == reinterpret_cast<std::uintptr_t>(frames) && info.eh_frame_size == frameSize);
+    Require(info.eh_frame_hdr_addr == 0 && info.eh_frame_hdr_size == 0);
 #else
     Require(info.eh_frame_addr != 0 && info.eh_frame_size != 0);
 #endif
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
     Require(info.eh_frame_hdr_addr != 0 && info.eh_frame_hdr_size != 0);
 #endif
     Require(info.init_proc_addr == 0 || info.init_proc_addr >= info.segments[0].address);
