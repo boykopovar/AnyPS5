@@ -243,10 +243,6 @@ int APS5_VABI getenv_np() {
 }
 
 APS5_EXPORT("dt8ermYp-Wc", scePosixForWebKit_gethostbyname_r);
-int APS5_VABI scePosixForWebKit_gethostbyname_r() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI mmap_np() {
     NotImplemented_nid_no_patch(__func__);

@@ -9,12 +9,14 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
 #include <source_location>
 #include <barrier>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -96,6 +98,52 @@ int main() {
     *sceNetErrnoLoc() = 77;
     Require(gethostbyname_nid_postfix(std::string(1024, 'a').c_str()) == nullptr);
     Require(*sceNetErrnoLoc() >= 1 && *sceNetErrnoLoc() <= 4);
+    {
+        alignas(8) char reentrant[64];
+        GuestResolver::HostEntry entry{};
+        GuestResolver::HostEntry* result = nullptr;
+        int hostError = 77;
+        const auto* preserved = gethostbyname_nid_postfix("127.0.0.2");
+        Require(preserved && std::strcmp(preserved->name, "127.0.0.2") == 0);
+        Require(scePosixForWebKit_gethostbyname_r("127.0.0.1", &entry, reentrant, 38, &result, &hostError) == 0);
+        Require(result == &entry && hostError == 77 && *sceNetErrnoLoc() == 0);
+        Require(entry.family == 2 && entry.length == 4);
+        auto** pointers = reinterpret_cast<char**>(reentrant);
+        Require(entry.addresses == pointers && pointers[0] == reentrant + 24 && pointers[1] == nullptr);
+        Require(entry.aliases == pointers + 2 && pointers[2] == nullptr);
+        Require(std::memcmp(entry.addresses[0], loopback.data(), loopback.size()) == 0);
+        Require(entry.name == reentrant + 28 && std::strcmp(entry.name, "127.0.0.1") == 0);
+        Require(std::strcmp(preserved->name, "127.0.0.2") == 0);
+
+        Require(scePosixForWebKit_gethostbyname_r("127.0.0.1", &entry, reentrant + 1, 45, &result, &hostError) == 0);
+        Require(result == &entry && reinterpret_cast<char*>(entry.addresses) == reentrant + 8);
+
+        errno = 0;
+        Require(scePosixForWebKit_gethostbyname_r("127.0.0.1", &entry, reentrant, 37, &result, &hostError) == 34);
+        Require(result == nullptr && hostError == -1 && errno == 34 && *sceNetErrnoLoc() == -1);
+        Require(scePosixForWebKit_gethostbyname_r("127.0.0.1", nullptr, nullptr, 0, &result, &hostError) == 34);
+
+        const std::string longNumeric = "127.0.0.1 " + std::string(2000, 'x');
+        std::array<char, 2048> large{};
+        Require(scePosixForWebKit_gethostbyname_r(longNumeric.c_str(), &entry, large.data(), large.size(), &result, &hostError) == 0);
+        Require(std::strlen(entry.name) == 1025);
+
+        hostError = 77;
+        result = &entry;
+        Require(scePosixForWebKit_gethostbyname_r(std::string(1024, 'a').c_str(), &entry, large.data(), large.size(), &result, &hostError) == -1);
+        Require(result == nullptr && hostError >= 1 && hostError <= 4 && hostError == *sceNetErrnoLoc());
+
+        Require(scePosixForWebKit_gethostbyname_r("localhost", &entry, large.data(), large.size(), &result, &hostError) == 0);
+        Require(result == &entry && entry.family == 2 && entry.length == 4 && entry.addresses[0] && entry.aliases);
+
+        bool threw = false;
+        try {
+            scePosixForWebKit_gethostbyname_r(nullptr, &entry, large.data(), large.size(), &result, &hostError);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+    }
     std::array<unsigned char, 16> v4{16, 2, 0x6d, 0x06, 127, 0, 0, 1};
     char host[128]{}, service[32]{};
     Require(getnameinfo_nid_postfix(v4.data(), v4.size(), host, sizeof(host), service, sizeof(service), 10) == 0);
