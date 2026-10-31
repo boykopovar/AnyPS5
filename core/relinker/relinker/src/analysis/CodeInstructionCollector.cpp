@@ -128,6 +128,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             if (header.Type != 1 || (header.Flags & 1) == 0) continue;
             trimToCode(header, header.MappedAddress + header.FileSize, false);
         }
+        for (const auto& function : UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {})) sceFunctions.push_back({function.Begin, function.End});
+        sceFunctions = Codegen::MergeCodeRanges(std::move(sceFunctions));
     }
     std::set<std::uint64_t> roots;
     std::map<std::uint64_t, std::uint64_t> functions;
