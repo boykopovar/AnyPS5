@@ -4,13 +4,20 @@
 #include "prx/libc/include/General.hpp"
 
 #include <cmath>
+#include <algorithm>
+#include <array>
+#include <cstdarg>
 #include <cstdint>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace {
 
@@ -25,8 +32,22 @@ constexpr std::uint64_t SystemMagic = [] {
 
 struct SystemState {
     std::uint64_t magic;
+    void* cpuMemory;
+    std::size_t cpuMemorySize;
+    std::uint32_t index;
     std::uint32_t frameSamples;
     std::uint32_t maxSources;
+    std::uint32_t maxMaterials;
+    std::uint32_t pathCapacityPerSource;
+    float propagationSpeed;
+};
+
+struct SystemLockState {
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::thread::id owner;
+    std::size_t depth = 0;
+    bool destroying = false;
 };
 
 enum class Kind { Room, Portal, Source, Material, Path };
@@ -44,10 +65,16 @@ struct PathState {
 struct Registry {
     std::mutex mutex;
     std::unordered_set<AudioPropagationHandle> systems;
+    std::vector<AudioPropagationHandle> systemOrder;
+    std::array<bool, 64> systemIndices{};
+    std::unordered_map<AudioPropagationHandle, std::shared_ptr<SystemLockState>> systemLocks;
     std::unordered_map<AudioPropagationHandle, Object> objects;
     std::unordered_map<AudioPropagationHandle, Object> orphans;
     std::unordered_map<AudioPropagationHandle, std::array<AudioPropagationHandle, MaxPaths>> sourcePaths;
     std::unordered_map<AudioPropagationHandle, PathState> paths;
+    std::mutex reportMutex;
+    std::condition_variable reportChanged;
+    std::array<std::array<ReportRegistration, 8>, 2> reportHandlers{};
     AudioPropagationHandle next = 1;
 };
 
@@ -55,6 +82,25 @@ Registry& registry() {
     static Registry state;
     return state;
 }
+
+thread_local std::vector<ReportRegistration*> activeReportCallbacks;
+
+struct ActiveReportCall {
+    Registry& state;
+    ReportRegistration& registration;
+
+    ActiveReportCall(Registry& currentState, ReportRegistration& currentRegistration)
+        : state(currentState), registration(currentRegistration) {
+        activeReportCallbacks.push_back(&registration);
+    }
+
+    ~ActiveReportCall() {
+        activeReportCallbacks.pop_back();
+        std::lock_guard lock(state.reportMutex);
+        --registration.activeCalls;
+        state.reportChanged.notify_all();
+    }
+};
 
 void require(bool condition, const char* function) {
     if (!condition) throw std::invalid_argument(std::string(function) + ": invalid argument");
@@ -175,16 +221,47 @@ std::int32_t APS5_VABI sceAudioPropagationSystemCreate(const SystemOptions* opti
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     require(!state.systems.contains(address), __func__);
-    *static_cast<SystemState*>(memory->p_cpu_mem) = SystemState{SystemMagic, options->frameSamples, options->maxSources};
+    const auto freeIndex = std::find(state.systemIndices.begin(), state.systemIndices.end(), false);
+    if (freeIndex == state.systemIndices.end()) return static_cast<std::int32_t>(0x8A700006);
+    const auto index = static_cast<std::uint32_t>(freeIndex - state.systemIndices.begin());
+    *static_cast<SystemState*>(memory->p_cpu_mem) = SystemState{
+        SystemMagic,
+        memory->p_cpu_mem,
+        memory->size_cpu_mem,
+        index,
+        options->frameSamples,
+        options->maxSources,
+        options->maxMaterials,
+        options->reflectionOrder == 1 ? 6u : 36u,
+        options->propagationSpeed,
+    };
     state.systems.insert(address);
+    state.systemOrder.push_back(address);
+    state.systemIndices[index] = true;
+    state.systemLocks.emplace(address, std::make_shared<SystemLockState>());
     *outSystem = address;
     return 0;
 }
 
 std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle system) {
     auto& state = registry();
+    std::shared_ptr<SystemLockState> systemLock;
+    {
+        std::lock_guard lock(state.mutex);
+        requireSystem(state, system, __func__);
+        systemLock = state.systemLocks.at(system);
+    }
+    {
+        std::unique_lock systemGuard(systemLock->mutex);
+        if (systemLock->destroying) return ErrorInvalidHandle;
+        if (systemLock->owner == std::this_thread::get_id()) return ErrorInvalidArgument;
+        systemLock->destroying = true;
+        systemLock->changed.notify_all();
+        systemLock->changed.wait(systemGuard, [&] { return systemLock->depth == 0; });
+    }
     std::lock_guard lock(state.mutex);
-    requireSystem(state, system, __func__);
+    const auto lockFound = state.systemLocks.find(system);
+    if (lockFound == state.systemLocks.end() || lockFound->second != systemLock || !liveSystem(state, system)) return ErrorInvalidHandle;
     std::erase_if(state.paths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
     std::erase_if(state.sourcePaths, [&](const auto& entry) { return state.objects.at(entry.first).system == system; });
     std::erase_if(state.objects, [&](const auto& entry) {
@@ -192,6 +269,10 @@ std::int32_t APS5_VABI sceAudioPropagationSystemDestroy(AudioPropagationHandle s
         if (entry.second.kind != Kind::Path) state.orphans.insert(entry);
         return true;
     });
+    const auto& configuration = *reinterpret_cast<const SystemState*>(system);
+    state.systemIndices[configuration.index] = false;
+    std::erase(state.systemOrder, system);
+    state.systemLocks.erase(system);
     reinterpret_cast<SystemState*>(system)->magic = 0;
     state.systems.erase(system);
     return 0;
@@ -427,7 +508,57 @@ std::int32_t APS5_VABI sceAudioPropagationSourceRender(AudioPropagationHandle sy
 }
 
 int APS5_VABI sceAudioPropagationReportApi(std::uint32_t category, AudioPropagationHandle handle, std::int32_t result, std::int32_t operation, const char* function, const char* format, ...) {
-    NotImplemented_nid_no_patch(__func__);
+    require(category < 2, __func__);
+
+#ifdef _WIN32
+    __builtin_sysv_va_list arguments;
+    __builtin_sysv_va_start(arguments, format);
+#else
+    std::va_list arguments;
+    va_start(arguments, format);
+#endif
+
+    ReportInfo info{};
+    info.size = sizeof(info);
+    info.handle = handle;
+    info.category = category;
+    info.result = result;
+    info.operation = operation;
+    info.function = function;
+    info.format = format;
+    static_assert(sizeof(arguments) == sizeof(info.arguments));
+    std::memcpy(&info.arguments, &arguments, sizeof(info.arguments));
+
+    struct Invocation {
+        ReportRegistration* registration;
+        std::uint64_t generation;
+        ReportHandler handler;
+        void* userData;
+    };
+    auto& state = registry();
+    std::vector<Invocation> invocations;
+    {
+        std::lock_guard lock(state.reportMutex);
+        for (auto& registration : state.reportHandlers[category]) {
+            if (registration.handler) invocations.push_back({&registration, registration.generation, registration.handler, registration.userData});
+        }
+    }
+    for (const auto& invocation : invocations) {
+        auto& registration = *invocation.registration;
+        {
+            std::lock_guard lock(state.reportMutex);
+            if (registration.generation != invocation.generation || registration.handler != invocation.handler || registration.userData != invocation.userData) continue;
+            ++registration.activeCalls;
+        }
+        ActiveReportCall activeCall(state, registration);
+        ReportInfo handlerInfo = info;
+        invocation.handler(&handlerInfo, invocation.userData);
+    }
+#ifdef _WIN32
+    __builtin_sysv_va_end(arguments);
+#else
+    va_end(arguments);
+#endif
     return 0;
 }
 
@@ -442,32 +573,106 @@ int APS5_VABI sceAudioPropagationSourceQueryInfo(AudioPropagationHandle source, 
 }
 
 int APS5_VABI sceAudioPropagationSystemLock(AudioPropagationHandle system) {
-    NotImplemented_nid_no_patch(__func__);
+    auto& state = registry();
+    std::shared_ptr<SystemLockState> systemLock;
+    {
+        std::lock_guard lock(state.mutex);
+        const auto found = state.systemLocks.find(system);
+        if (found == state.systemLocks.end() || !liveSystem(state, system)) return ErrorInvalidHandle;
+        systemLock = found->second;
+    }
+    std::unique_lock lock(systemLock->mutex);
+    const auto currentThread = std::this_thread::get_id();
+    systemLock->changed.wait(lock, [&] { return systemLock->destroying || systemLock->depth == 0 || systemLock->owner == currentThread; });
+    if (systemLock->destroying) return ErrorInvalidHandle;
+    systemLock->owner = currentThread;
+    ++systemLock->depth;
     return 0;
 }
 
 int APS5_VABI sceAudioPropagationSystemQueryInfo(AudioPropagationHandle system, SystemInfo* info, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    if (!liveSystem(state, system) || !info || size != sizeof(SystemInfo)) return ErrorInvalidHandle;
+    const auto& configuration = *reinterpret_cast<const SystemState*>(system);
+    info->cpuMemory = configuration.cpuMemory;
+    info->cpuMemorySize = configuration.cpuMemorySize;
+    info->index = configuration.index;
+    info->frameSamples = configuration.frameSamples;
+    info->parameter24 = 1;
+    info->maxSources = configuration.maxSources;
+    info->maxMaterials = configuration.maxMaterials;
+    info->pathCapacityPerSource = configuration.pathCapacityPerSource;
+    info->propagationSpeed = configuration.propagationSpeed;
     return 0;
 }
 
 int APS5_VABI sceAudioPropagationReportRegisterHandler(std::uint32_t category, ReportHandler handler, void* userData, ReportRegistration** registration) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (category >= 2) return -4;
+    if (!handler) return -2;
+    auto& state = registry();
+    std::lock_guard lock(state.reportMutex);
+    for (auto& slot : state.reportHandlers[category]) {
+        if (!slot.handler && slot.activeCalls == 0) {
+            slot.userData = userData;
+            slot.handler = handler;
+            ++slot.generation;
+            if (registration) *registration = &slot;
+            return 0;
+        }
+    }
+    return -3;
 }
 
 int APS5_VABI sceAudioPropagationReportUnregisterHandler(ReportRegistration* registration) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!registration) return -1;
+    auto& state = registry();
+    std::unique_lock lock(state.reportMutex);
+    for (auto& category : state.reportHandlers) {
+        for (auto& slot : category) {
+            if (&slot == registration && slot.handler) {
+                slot.handler = nullptr;
+                slot.userData = nullptr;
+                const auto activeHere = static_cast<std::size_t>(std::count(activeReportCallbacks.begin(), activeReportCallbacks.end(), &slot));
+                state.reportChanged.wait(lock, [&] { return slot.activeCalls <= activeHere; });
+                return 0;
+            }
+        }
+    }
+    return -1;
 }
 
 int APS5_VABI sceAudioPropagationSystemEnumHandles(AudioPropagationHandle* handles, std::uint32_t capacity) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!handles && capacity != 0) return ErrorInvalidArgument;
+    auto& state = registry();
+    std::lock_guard lock(state.mutex);
+    const auto total = static_cast<std::uint32_t>(state.systemOrder.size());
+    if (handles) {
+        const auto copied = std::min(capacity, total);
+        for (std::uint32_t index = 0; index < copied; ++index) {
+            handles[index] = state.systemOrder[state.systemOrder.size() - index - 1];
+        }
+    }
+    return static_cast<int>(total);
 }
 
 int APS5_VABI sceAudioPropagationSystemUnlock(AudioPropagationHandle system) {
-    NotImplemented_nid_no_patch(__func__);
+    auto& state = registry();
+    std::shared_ptr<SystemLockState> systemLock;
+    {
+        std::lock_guard lock(state.mutex);
+        const auto found = state.systemLocks.find(system);
+        if (found == state.systemLocks.end() || !liveSystem(state, system)) return ErrorInvalidHandle;
+        systemLock = found->second;
+    }
+    {
+        std::lock_guard lock(systemLock->mutex);
+        if (systemLock->owner != std::this_thread::get_id() || systemLock->depth == 0) return ErrorInvalidArgument;
+        if (--systemLock->depth == 0) {
+            systemLock->owner = std::thread::id{};
+            systemLock->changed.notify_all();
+        }
+    }
     return 0;
 }
 
