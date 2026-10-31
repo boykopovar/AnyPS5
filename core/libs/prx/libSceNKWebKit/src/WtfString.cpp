@@ -165,6 +165,7 @@ double APS5_VABI _ZN3WTF8Internal25parseDoubleFromLongStringEPKDsmRm(
 
 namespace NKWebKit {
 void* Allocate(std::size_t size, std::size_t alignment = 16);
+void* TryAllocate(std::size_t size, std::size_t alignment = 16);
 void Deallocate(void* ptr);
 }  // namespace NKWebKit
 
@@ -242,17 +243,26 @@ StringImpl* Retain(StringImpl* impl) {
     return impl;
 }
 
+bool ExceedsMaxLength(unsigned length, bool is8Bit) {
+    return length > std::min<std::size_t>(MaxStringLength, (0xFFFFFFFFULL - sizeof(StringImpl)) / (is8Bit ? 1 : 2));
+}
+
+std::size_t ImplAllocationSize(unsigned length, bool is8Bit) {
+    return std::max<std::size_t>(sizeof(StringImpl), 20 + (is8Bit ? 1 : 2) * std::size_t(length));
+}
+
+StringImpl* ConstructImpl(void* storage, unsigned length, bool is8Bit, void*& characters) {
+    characters = static_cast<unsigned char*>(storage) + 20;
+    return new (storage) StringImpl{2, length, characters, is8Bit ? 4U : 0U};
+}
+
 StringImpl* NewImpl(unsigned length, bool is8Bit, void*& characters) {
     if (!length) {
         characters = nullptr;
         return EmptyImpl();
     }
-    const std::size_t width = is8Bit ? 1 : 2;
-    if (length > std::min<std::size_t>(MaxStringLength, (0xFFFFFFFFULL - sizeof(StringImpl)) / width))
-        throw std::length_error("WTF string exceeds maximum length");
-    auto* storage = static_cast<unsigned char*>(NKWebKit::Allocate(std::max<std::size_t>(sizeof(StringImpl), 20 + width * length)));
-    characters = storage + 20;
-    return new (storage) StringImpl{2, length, characters, is8Bit ? 4U : 0U};
+    if (ExceedsMaxLength(length, is8Bit)) throw std::length_error("WTF string exceeds maximum length");
+    return ConstructImpl(NKWebKit::Allocate(ImplAllocationSize(length, is8Bit)), length, is8Bit, characters);
 }
 
 StringImpl* CopyImpl(StringView view, bool narrow = false) {
@@ -469,11 +479,16 @@ StringImpl* EmptyStringImpl() {
 }
 
 StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters) {
-    if (length > std::min<std::size_t>(MaxStringLength, (0xFFFFFFFFULL - sizeof(StringImpl)) / (is8Bit ? 1 : 2))) {
+    if (!length) {
+        characters = nullptr;
+        return EmptyImpl();
+    }
+    void* storage = ExceedsMaxLength(length, is8Bit) ? nullptr : NKWebKit::TryAllocate(ImplAllocationSize(length, is8Bit));
+    if (!storage) {
         characters = nullptr;
         return nullptr;
     }
-    return NewImpl(length, is8Bit, characters);
+    return ConstructImpl(storage, length, is8Bit, characters);
 }
 
 String SubstringSharingImpl(const String& string, unsigned start, unsigned length) {
@@ -481,7 +496,6 @@ String SubstringSharingImpl(const String& string, unsigned start, unsigned lengt
 }
 
 }  // namespace NKWebKit::WtfAbi
-
 
 extern "C" {
 String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length) {

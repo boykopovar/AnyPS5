@@ -60,4 +60,16 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNKWebKit>")
         endif()
     endforeach()
+
+    add_test_executable(nkwebkit_wtftext_allocation_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/allocation/WtfTextAllocation.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/StringBuilder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfString.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/WtfNumberFormat.cpp)
+    target_include_directories(nkwebkit_wtftext_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(nkwebkit_wtftext_allocation_tests PRIVATE libc)
+    configure_windows_unwind(nkwebkit_wtftext_allocation_tests)
+    add_test(NAME nkwebkit_wtftext_allocation COMMAND nkwebkit_wtftext_allocation_tests)
+    set_tests_properties(nkwebkit_wtftext_allocation PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(nkwebkit_wtftext_allocation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()

@@ -73,7 +73,7 @@ std::u16string Wide(const char* data) {
 }
 
 StringBuilder NewBuilder(bool crashOnOverflow = true) {
-    StringBuilder builder{};
+    StringBuilder builder{String()};
     builder.shouldCrashOnOverflow = crashOnOverflow;
     builder.is8Bit = true;
     return builder;
@@ -85,7 +85,7 @@ void Free(StringBuilder& builder) {
 }
 
 TextStream NewStream(bool multiLine = true, unsigned flags = 0) {
-    TextStream stream{};
+    TextStream stream{NewBuilder()};
     stream.text = NewBuilder();
     stream.formattingFlags = flags;
     stream.multiLineMode = multiLine;
