@@ -353,6 +353,34 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     std::vector<std::vector<std::string>> moduleHostLibraries(images.size());
     std::set<std::string> uniqueHosts;
     const auto hostLibrary = [&](const std::string& name) { return windows || macos ? name : Domain::NeededLibraryName(name); };
+    std::vector<std::filesystem::path> runDirectories;
+    bool runDirectoriesExist = !windows && !macos;
+    for (std::size_t begin = 0; runDirectoriesExist && begin <= runPath.size();) {
+        const auto end = std::min(runPath.find(':', begin), runPath.size());
+        const auto component = std::string_view(runPath).substr(begin, end - begin);
+        std::filesystem::path directory;
+        if (component == "$ORIGIN") directory = outputPath.parent_path();
+        else if (component.starts_with("$ORIGIN/")) directory = outputPath.parent_path() / std::string(component.substr(8));
+        else if (component.starts_with('/')) directory = std::string(component);
+        std::error_code error;
+        runDirectoriesExist = !directory.empty() && std::filesystem::is_directory(directory, error);
+        runDirectories.push_back(std::move(directory));
+        begin = end + 1;
+    }
+    std::set<std::string> omittedDependencies;
+    const auto unavailableUnused = [&](std::size_t index, const std::string& dependency) {
+        if (!runDirectoriesExist || findGuest(dependency) != guestNames.end()) return false;
+        const auto stem = ModuleStem(dependency, windows);
+        if (stem.empty()) return false;
+        const auto& symbols = images[index].Symbols;
+        if (std::any_of(symbols.begin(), symbols.end(), [&](const auto& symbol) { return symbol.Section == 0 && symbol.Library == stem; })) return false;
+        const auto file = hostLibrary(dependency);
+        std::error_code error;
+        if (std::any_of(runDirectories.begin(), runDirectories.end(), [&](const auto& directory) { return std::filesystem::exists(directory / file, error); })) return false;
+        if (omittedDependencies.insert(dependency).second)
+            progress.Message("Warning: " + Io::Utf8Path(images[index].SourcePath) + " needs " + dependency + ", which no module or run path library provides and from which it imports nothing; it is left out of the needed libraries");
+        return true;
+    };
     const auto addHost = [&](const std::string& name, const bool startup) {
         if (findGuest(name) != guestNames.end()) return;
         if (name.empty() || name.find_first_of("/\\:$") != std::string::npos) throw Domain::RelinkerException("Invalid host dependency: " + name);
@@ -362,6 +390,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (std::size_t index = 0; index < images.size(); ++index) {
         auto& hosts = moduleHostLibraries[index];
         for (const auto& dependency : images[index].Dependencies) {
+            if (unavailableUnused(index, dependency)) continue;
             addHost(dependency, windows || !deferred(index));
             if (findGuest(dependency) == guestNames.end()) hosts.push_back(hostLibrary(dependency));
         }
@@ -484,7 +513,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         dynamic.GuestModules.push_back(std::move(runtime));
         std::vector<std::string> neededLibraries;
         for (const auto& name : image.Dependencies)
-            if (findGuest(name) == guestNames.end()) neededLibraries.push_back(hostLibrary(name));
+            if (findGuest(name) == guestNames.end() && !unavailableUnused(index, name)) neededLibraries.push_back(hostLibrary(name));
         artifacts.push_back({target, std::move(output), std::move(imports), image.SourcePath, std::move(neededLibraries)});
         progress.Report({Domain::ProgressStage::Modules, Io::Utf8Path(image.SourcePath), artifacts.size(), order.size()});
     }

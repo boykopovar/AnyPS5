@@ -184,12 +184,40 @@ def check_needed_outside(relinker, work):
                 (case / "locked").chmod(0o755)
 
 
+def check_unavailable_unused(relinker, work):
+    kernel, plugin = b"libkernel.prx", b"missingPlugin.prx"
+    for label, files, expected in (("absent", ("libkernel.prx",), [kernel.decode()]),
+                                   ("present", ("libkernel.prx", "missingPlugin.prx"), [kernel.decode(), plugin.decode()]),
+                                   ("no-directory", None, [kernel.decode(), plugin.decode()])):
+        case = work / f"unavailable-{label}"
+        (case / "prx").mkdir(parents=True)
+        libraries = case / "libs"
+        if files is not None:
+            libraries.mkdir()
+            for name in files:
+                (libraries / name).write_bytes(b"")
+        source = case / "input.elf"
+        source.write_bytes(main_fixture())
+        (case / "prx" / "consumer.prx").write_bytes(module_with_needed((kernel, plugin), (0, 1)))
+        output = case / "output.elf"
+        result = subprocess.run([str(relinker), "--rpath", str(libraries), str(source), str(output)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
+        assert result.returncode == 0, (label, result.stdout, result.stderr)
+        artifact = case / "app0" / "prx" / "consumer.prx.guest.prx"
+        assert needed_libraries(artifact.read_bytes()) == expected, (label, needed_libraries(artifact.read_bytes()))
+        hosts = [name for name in needed_libraries(output.read_bytes()) if not name.startswith("$ORIGIN")]
+        assert hosts == expected, (label, hosts)
+        warned = "missingPlugin.prx, which no module or run path library provides" in result.stdout + result.stderr
+        assert warned == (label == "absent"), (label, result.stdout, result.stderr)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-needed-modules-") as directory:
         work = Path(directory)
         check_guest_needed(relinker, work)
         check_needed_outside(relinker, work)
+        check_unavailable_unused(relinker, work)
 
         def convert(case, windows, needed=NEEDED, repeats=1):
             if not (case / "sce_modules").exists():
