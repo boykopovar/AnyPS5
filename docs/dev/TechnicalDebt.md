@@ -12,7 +12,7 @@ Entries about one library or component are in [debt](debt/), one file per librar
 
 ### Silent stubs
 
-Throughout the project, every function at every stage either **does exactly what it's supposed to or throws an exception**. Everywhere... except:
+Throughout the project, every function at every stage either **does exactly what it's supposed to or throws an exception**. The exceptions are listed under **Silent stubs** in each library's file in [debt](debt/).
 
 ### Unknown function info
 
