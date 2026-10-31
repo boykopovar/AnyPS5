@@ -1,3 +1,4 @@
+#include <unordered_map>
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/parsing/RelrRelocations.hpp>
@@ -327,11 +328,15 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         const auto address = tags.at(addressTag);
         mapped(address, size, 4);
         const auto fileOffset = translate(address, size);
+        std::unordered_map<std::uint64_t, std::vector<std::pair<const std::vector<std::uint8_t>*, std::size_t>>> relocationsAt;
+        for (const auto* table : {&image.Dynamic.RelaData, &image.Dynamic.RelaPltData})
+            for (std::size_t position = 0; position < table->size(); position += 24)
+                relocationsAt[Io::ReadU64(*table, position)].emplace_back(table, position);
         for (std::uint64_t offset = 0; offset < size; offset += 8) {
             bool relocated = false;
-            for (const auto* table : {&image.Dynamic.RelaData, &image.Dynamic.RelaPltData}) {
-                for (std::size_t position = 0; position < table->size(); position += 24) {
-                    if (Io::ReadU64(*table, position) != address + offset) continue;
+            const auto found = relocationsAt.find(address + offset);
+            if (found != relocationsAt.end()) {
+                for (const auto& [table, position] : found->second) {
                     relocated = true;
                     const auto info = Io::ReadU64(*table, position + 8);
                     const auto addend = Io::ReadU64(*table, position + 16);
