@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libwebrtc/include/AudioFrame.hpp"
 #include "prx/libwebrtc/include/ExpFilter.hpp"
 #include "prx/libwebrtc/include/IpAddress.hpp"
 #include "prx/libwebrtc/include/RtcpCommonHeader.hpp"
@@ -300,12 +301,12 @@ int APS5_VABI _ZN6webrtc15AudioSendStream6Config13SendCodecSpecC1EiRKNS_14SdpAud
 int APS5_VABI _ZN6webrtc15AudioSendStream6Config13SendCodecSpecD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10AudioFrame11UpdateFrameEjPKsmiNS0_10SpeechTypeENS0_11VADActivityEm_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10AudioFrame8CopyFromERKS0__nid_postfix(void);
-int APS5_VABI _ZNK6webrtc10AudioFrame5mutedEv_nid_postfix(void);
+bool APS5_VABI _ZNK6webrtc10AudioFrame5mutedEv_nid_postfix(const WebRtcAudioFrame* frame);
 int APS5_VABI _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(void);
-int APS5_VABI _ZNK6webrtc10AudioFrame4dataEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10AudioFrame12mutable_dataEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10AudioFrame4MuteEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc10AudioFrameC1Ev_nid_postfix(void);
+const std::int16_t* APS5_VABI _ZNK6webrtc10AudioFrame4dataEv_nid_postfix(const WebRtcAudioFrame* frame);
+std::int16_t* APS5_VABI _ZN6webrtc10AudioFrame12mutable_dataEv_nid_postfix(WebRtcAudioFrame* frame);
+void APS5_VABI _ZN6webrtc10AudioFrame4MuteEv_nid_postfix(WebRtcAudioFrame* frame);
+void APS5_VABI _ZN6webrtc10AudioFrameC1Ev_nid_postfix(WebRtcAudioFrame* frame);
 int APS5_VABI _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(void);
@@ -360,7 +361,7 @@ int APS5_VABI _ZN6webrtc7rnn_vad6RnnVadD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorD1Ev_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown43(void);
 int APS5_VABI _ZN6webrtc7rnn_vad6RnnVad21ComputeVadProbabilityEN3rtc9ArrayViewIKfLl42EEEb_nid_postfix(void);
-int APS5_VABI _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(void);
+void APS5_VABI _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(WebRtcAudioFrame* frame);
 int APS5_VABI libwebrtcUnknown44(void);
 int APS5_VABI libwebrtcUnknown45(void);
 int APS5_VABI _ZN3rtc11RateTrackerC1Elm_nid_postfix(void);

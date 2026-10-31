@@ -2,6 +2,8 @@ add_library(libwebrtc SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export
 target_include_directories(libwebrtc PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libwebrtc)
 
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioFrame.cpp)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioFrameOperations.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ExpFilter.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/IpAddress.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RtcpCommonHeader.cpp)
