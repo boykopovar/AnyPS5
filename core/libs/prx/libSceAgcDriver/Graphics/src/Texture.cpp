@@ -19,6 +19,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/BufferFormat.hpp"
 #include <algorithm>
@@ -43,6 +45,9 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#if defined(__APPLE__)
+#include <unistd.h>
+#endif
 
 namespace AgcDriver::Graphics {
 
@@ -4218,6 +4223,7 @@ std::uint64_t StorageTexture::storeDrawnRect(const DrawnArea& area, std::span<co
 }
 
 void StorageTexture::Flush() {
+    storeTrappedOverlaps("cache eviction");
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
@@ -4253,6 +4259,29 @@ bool StorageTexture::pendingUnitInside(std::uint64_t address, std::size_t bytes)
 }
 
 namespace {
+
+#if defined(__APPLE__)
+std::atomic<bool> labelTrapsSet{false};
+
+std::uint64_t TrapPage() {
+    static const auto page = static_cast<std::uint64_t>(::getpagesize());
+    return page;
+}
+
+void ResolveLabelTrap(std::uintptr_t begin, std::uintptr_t end) {
+    const auto bytes = static_cast<std::size_t>(end - begin);
+    GuestMemory::FlushGpuWrites(begin, bytes);
+    while (AgcDriver::DriverDetail::DrawPipeline::HeldReads(begin, bytes)) {
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+        GuestMemory::FlushGpuWrites(begin, bytes);
+    }
+}
+
+bool LabelTrapsEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_LABEL_READ_TRAP") == nullptr && GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveLabelTrap);
+    return enabled;
+}
+#endif
 
 void waitForIdlePublish(const char* reason) {
     if (reason == nullptr || std::strcmp(reason, "idle") != 0 || Recorder::InCompletion()) return;
@@ -4322,6 +4351,22 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
                 ++it;
             }
         }
+#if defined(__APPLE__)
+        if (!flush.empty() && labelTrapsSet.load(std::memory_order_relaxed)) {
+            const auto selected = flush.size();
+            for (auto it = pending.textures.begin(); it != pending.textures.end();) {
+                auto* texture = *it;
+                const auto covered = [&](const std::shared_ptr<StorageTexture>& stored) { return stored->overlaps(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)); };
+                if (texture == except || texture == exempt || !texture->readTrapped.load(std::memory_order_acquire) || std::none_of(flush.begin(), flush.begin() + static_cast<std::ptrdiff_t>(selected), covered)) {
+                    ++it;
+                    continue;
+                }
+                texture->dirty = false;
+                if (auto alive = texture->weak_from_this().lock()) flush.push_back(std::move(alive));
+                it = pending.textures.erase(it);
+            }
+        }
+#endif
         // Still pending for the adjacency rule of writeBack until each one is stored.
         for (const auto& texture : flush) pending.flushing.push_back(texture.get());
         pending.flushingCount.store(pending.flushing.size(), std::memory_order_release);
@@ -4723,8 +4768,27 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason) {
     {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
+#if defined(__APPLE__)
+        const bool trap = LabelTrapsEnabled();
+        if (trap) labelTrapsSet.store(true, std::memory_order_relaxed);
+        const auto page = TrapPage();
+        const auto sharesPage = [&](const StorageTexture* texture) {
+            const auto first = texture->descriptor.baseAddress & ~(page - 1);
+            const auto bytes = static_cast<std::size_t>(((texture->descriptor.baseAddress + texture->guestBytes + page - 1) & ~(page - 1)) - first);
+            const auto shares = [&](const StorageTexture* other) { return other != texture && other->overlaps(first, bytes); };
+            const auto sharesStored = [&](const StorageTexture* other) { return shares(other) && (other->descriptor.tileMode == TextureTileMode::kLinear || other->guestBytes <= SmallStoreBytes); };
+            return std::any_of(pending.textures.begin(), pending.textures.end(), sharesStored) || std::any_of(pending.flushing.begin(), pending.flushing.end(), shares);
+        };
+#endif
         for (const auto* texture : pending.textures) {
-            if (texture->descriptor.tileMode == TextureTileMode::kLinear || texture->guestBytes <= SmallStoreBytes) ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+            if (texture->descriptor.tileMode != TextureTileMode::kLinear && texture->guestBytes > SmallStoreBytes) continue;
+#if defined(__APPLE__)
+            if (trap && !sharesPage(texture) && (texture->readTrapped.load(std::memory_order_acquire) || !DirectMemoryAliased_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) && GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) {
+                texture->readTrapped.store(true, std::memory_order_release);
+                continue;
+            }
+#endif
+            ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
     }
     for (const auto& [address, bytes] : ranges) static_cast<void>(FlushPending(address, bytes, nullptr, reason));
@@ -5568,6 +5632,7 @@ bool StorageTexture::FillClear(std::span<const std::uint32_t, 4> pattern, std::u
 }
 
 void StorageTexture::WriteBack() {
+    storeTrappedOverlaps("explicit");
     const auto previous = std::exchange(flushReason, "explicit");
     writeBack(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     flushReason = previous;
@@ -5994,7 +6059,53 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
     return bytes;
 }
 
+void StorageTexture::releaseReadTraps(bool sharingPages) {
+#if defined(__APPLE__)
+    if (!labelTrapsSet.load(std::memory_order_relaxed)) return;
+    const auto release = [](const StorageTexture* texture) {
+        if (texture->readTrapped.exchange(false, std::memory_order_acq_rel)) GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes));
+    };
+    auto& pending = Pending();
+    std::lock_guard lock(pending.mutex);
+    release(this);
+    if (!sharingPages) return;
+    const auto page = TrapPage();
+    const auto first = descriptor.baseAddress & ~(page - 1);
+    const auto bytes = static_cast<std::size_t>(((descriptor.baseAddress + guestBytes + page - 1) & ~(page - 1)) - first);
+    for (const auto* texture : pending.textures) {
+        if (texture != this && texture->overlaps(first, bytes)) release(texture);
+    }
+    for (const auto* texture : pending.flushing) {
+        if (texture != this && texture->overlaps(first, bytes)) release(texture);
+    }
+#else
+    static_cast<void>(sharingPages);
+#endif
+}
+
+void StorageTexture::storeTrappedOverlaps(const char* reason) {
+#if defined(__APPLE__)
+    if (!labelTrapsSet.load(std::memory_order_relaxed)) return;
+    std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
+    {
+        auto& pending = Pending();
+        std::lock_guard lock(pending.mutex);
+        if (!dirty) return;
+        for (const auto* texture : pending.textures) {
+            if (texture != this && texture->readTrapped.load(std::memory_order_acquire) && texture->overlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
+        }
+    }
+    for (const auto& [address, bytes] : ranges) static_cast<void>(FlushPending(address, bytes, nullptr, reason));
+#else
+    static_cast<void>(reason);
+#endif
+}
+
 void StorageTexture::writeBack(std::uint64_t address, std::size_t bytes) {
+    if (readTrapped.load(std::memory_order_acquire)) {
+        address = descriptor.baseAddress;
+        bytes = static_cast<std::size_t>(guestBytes);
+    }
     // Block units are stored per access; an image whose units keep being asked for in pieces (a
     // consumer touching it through many small ranges, each piece re-arming the pending memos of
     // the next dispatch) stores every pending unit once more than `pieces` partial stores fall
@@ -6081,6 +6192,10 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         lastStored = std::max(lastStored, layerBegin(layer) + layerBytes(layer));
     }
     if (lastStored <= firstStored) return;
+    struct ReleaseReadTrap {
+        StorageTexture& texture;
+        ~ReleaseReadTrap() { texture.releaseReadTraps(false); }
+    } releaseReadTrap{*this};
     constexpr std::uint64_t block = 65536;
     const auto spanBegin = firstStored & ~(block - 1);
     const auto spanBlocks = static_cast<std::size_t>((lastStored - spanBegin + block - 1) / block);
@@ -6387,6 +6502,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         ++Profile().storageDirectWriteBacks;
         return;
     }
+    releaseReadTraps(true);
     // A surface whose memory is no longer registered (freed, or re-registered under another
     // allocation: no readable registered range contains it) has nothing to receive its results;
     // the round trip through the CPU below would store stale texels over whatever the memory

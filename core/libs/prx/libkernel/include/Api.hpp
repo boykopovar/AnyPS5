@@ -243,6 +243,7 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int numEntries, i
 int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length);
 int APS5_VABI sceKernelMunlock_nid_postfix(void* address, std::uint64_t length);
 int APS5_VABI sceKernelMunlockall_nid_postfix();
+bool APS5_VABI DirectMemoryAliased_nid_postfix(std::uintptr_t address, std::size_t bytes);
 int APS5_VABI sceKernelJitCreateSharedMemory(const char* name, std::size_t len, int maxProt, int* fdOut);
 int APS5_VABI sceKernelJitCreateAliasOfSharedMemory(int fd, int maxProt, int* fdOut);
 int APS5_VABI sceKernelJitMapSharedMemory(int fd, int prot, void** startOut);

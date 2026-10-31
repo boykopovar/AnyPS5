@@ -415,6 +415,8 @@ private:
     // APS5_BLOCK_WRITEBACK_EACH=1 stores the touched units only).
     void writeBack(std::uint64_t address, std::size_t bytes);
     void writeBackLayers(const std::vector<bool>& layers);
+    void releaseReadTraps(bool sharingPages);
+    void storeTrappedOverlaps(const char* reason);
     bool unchangedSinceBaseline(std::uint64_t from, std::uint64_t to) const;
     void saveBeforeUnwatch();
     void forgetKeptAtUnwatch(std::uint32_t unit);
@@ -677,6 +679,7 @@ private:
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
     bool drawnListed = false;
+    mutable std::atomic<bool> readTrapped{false};
     bool drawnWhole = false;
     bool drawingTarget = false;
     bool pendingFromOthers = false;
