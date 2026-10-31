@@ -156,7 +156,8 @@ int APS5_VABI sceRudpActivate(std::int32_t contextId, const void* address, std::
     if (!g_inited) return RUDP_ERROR_NOT_INITIALIZED;
     if (contextId < 0 || !address) return RUDP_ERROR_INVALID_ARGUMENT;
     static_cast<void>(addressLength);
-    throw std::runtime_error(__func__);
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {

@@ -162,15 +162,6 @@ int main() {
     Require(sceRudpActivate(ctx, nullptr, 0) == static_cast<int>(0x80770004));
     unsigned char address[34]{};
     Require(sceRudpActivate(-1, address, sizeof(address)) == static_cast<int>(0x80770004));
-    bool activationUnsupported = false;
-    try {
-        sceRudpActivate(ctx, address, sizeof(address));
-
-    } catch (const std::runtime_error&) {
-        activationUnsupported = true;
-    }
-    Require(activationUnsupported);
-
     Require(sceRudpBind(ctx, 0, 0, 0) == 0);
 
     Require(sceRudpSetOption(ctx, 0, nullptr, 0) == invalidOption);
