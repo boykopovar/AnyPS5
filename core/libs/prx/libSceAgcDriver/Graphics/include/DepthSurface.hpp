@@ -17,7 +17,7 @@ namespace AgcDriver::Graphics {
 class Texture;
 class StorageTexture;
 
-VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten = true);
+VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, bool depthWritten = true, bool stencilTested = false);
 SampleOrderTarget DepthSurfaceOrderTarget(const Context& context, const DepthTarget& target);
 DepthSampleLocations DepthSurfaceSampleLocations(const Context& context, const DepthTarget& target);
 enum class DepthPlaneScope { Overlapped, Whole };
@@ -38,8 +38,10 @@ bool DirectDepthCopy(const Context& context, VkFormat depthFormat, VkImageAspect
 void SetDirectDepthCopy(bool enabled);
 std::uint64_t DirectDepthCopyCount();
 std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32_t bytesPerTexel, std::uint32_t samples);
-void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt);
+void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt, bool allowPublication = true);
 void AppendHostWrittenDepthRanges(std::uint64_t address, std::size_t bytes, std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges);
+enum class DepthPublicationStage { ReadCaptured, GuestCopied, BeforeCommit, PlaneCommitted, StencilPlaneRead };
+void SetDepthPublicationHookForTest(void (*hook)(DepthPublicationStage));
 bool HasResidentDepthGuards_nid_no_patch();
 void RetireUnmappedDepth_nid_no_patch(std::uintptr_t address, std::size_t bytes);
 void RequireNoNativeDepthFeedback_nid_no_patch(const Context& context, const DepthTarget& target, std::span<const std::shared_ptr<Texture>> sampled);
@@ -81,6 +83,7 @@ std::optional<MemoryValueFill> MatchMemoryValueFill(std::span<const std::uint32_
 void NoteMemoryValueFill(const MemoryValueFill& fill);
 bool DepthSurfaceHolds(const Context& context, const GuestTextureResource& resource, const Texture* texture);
 void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32_t pattern);
+void NoteDepthRenderControl(const DepthRenderControl& draw);
 VkImageAspectFlags HtileFillClears(std::uint32_t pattern, bool stencilInHtile);
 std::uint64_t HtileMetadataBytes(VkExtent2D extent);
 bool HtileFillCovers(std::uint64_t htile, VkExtent2D extent, std::uint64_t address, std::size_t bytes);
