@@ -99,6 +99,10 @@ int APS5_VABI sceVideoOutCursorIsUpdatePending() {
     NotImplemented_nid_no_patch(__func__);
 }
 
+int APS5_VABI sceVideoOutCursorSetHotSpot() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceVideoOutCursorSetPositionStereo() {
     NotImplemented_nid_no_patch(__func__);
 }
