@@ -1831,7 +1831,7 @@ static void EmitNativeF16Modes(SpirvEmitterState& state) {
     }
 }
 
-static std::uint32_t EmitNativeF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value) {
+static std::uint32_t EmitNativeF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value, bool nanPayloadUnused = false) {
     EmitNativeF16Modes(state);
     const auto u32 = TypeU32(state);
     const auto f16 = state.module.Type(spv::OpTypeFloat, 16u);
@@ -1841,6 +1841,7 @@ static std::uint32_t EmitNativeF32ToF16BitsRte(SpirvEmitterState& state, std::ui
     const auto bits = Unary(state, spv::OpBitcast, u32, pair);
     const auto source = Unary(state, spv::OpBitcast, u32, value);
     const auto magnitude = Binary(state, spv::OpBitwiseAnd, u32, source, ConstantU32(state, 0x7fffffffu));
+    if (nanPayloadUnused) return Select(state, u32, Binary(state, spv::OpUGreaterThan, TypeBool(state), magnitude, ConstantU32(state, 0x7f800000u)), ConstantU32(state, 0x7e00u), bits);
     const auto sign = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, source, ConstantU32(state, 16u)), ConstantU32(state, 0x8000u));
     const auto payload = Binary(state, spv::OpShiftRightLogical, u32, Binary(state, spv::OpBitwiseAnd, u32, magnitude, ConstantU32(state, 0x7fffffu)), ConstantU32(state, 13u));
     const auto nan = Binary(state, spv::OpBitwiseOr, u32, ConstantU32(state, 0x7e00u), payload);
@@ -1897,14 +1898,22 @@ std::uint32_t EmitF32ToF16BitsRte(SpirvEmitterState& state, std::uint32_t value)
     return op(spv::OpBitwiseOr, sign, result);
 }
 
-std::uint32_t EmitPackHalf2x16(SpirvEmitterState& state, std::uint32_t arg0) {
+static std::uint32_t PackHalf2x16(SpirvEmitterState& state, std::uint32_t arg0, bool nanPayloadUnused) {
     const auto component = [&](std::uint32_t index) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), value, arg0, index);
-        return EmitF32ToF16BitsRte(state, value);
+        return nanPayloadUnused && NativeF16Rte(state) ? EmitNativeF32ToF16BitsRte(state, value, true) : EmitF32ToF16BitsRte(state, value);
     };
     const auto high = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), component(1u), ConstantU32(state, 16u));
     return Binary(state, spv::OpBitwiseOr, TypeU32(state), component(0u), high);
+}
+
+std::uint32_t EmitPackHalf2x16(SpirvEmitterState& state, std::uint32_t arg0) {
+    return PackHalf2x16(state, arg0, false);
+}
+
+std::uint32_t EmitPackHalf2x16Value(SpirvEmitterState& state, const IrValue& inst, std::uint32_t arg0) {
+    return PackHalf2x16(state, arg0, inst.Flags<FloatConvertFlags>().nanPayloadUnused);
 }
 
 std::uint32_t EmitFPFma32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2) {
@@ -1994,7 +2003,7 @@ static bool OnlyCompared(const IrValue& value) {
 
 std::uint32_t EmitConvertF32F16(SpirvEmitterState& state, const IrValue& inst, std::uint32_t bits) {
     if (NarrowF16Field(*inst.Argument(0))) return EmitF16BitsToF32Decoded(state, bits);
-    return OnlyCompared(inst) ? EmitF16BitsToF32AnyNan(state, bits) : EmitF16BitsToF32(state, bits);
+    return inst.Flags<FloatConvertFlags>().nanPayloadUnused || OnlyCompared(inst) ? EmitF16BitsToF32AnyNan(state, bits) : EmitF16BitsToF32(state, bits);
 }
 
 std::uint32_t EmitCompositeExtractU32x2(SpirvEmitterState& state, std::uint32_t arg0, const IrValue* arg1) {

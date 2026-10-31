@@ -520,6 +520,10 @@ struct PermlaneFlags {
     bool boundControl = false;
 };
 
+struct FloatConvertFlags {
+    bool nanPayloadUnused = false;
+};
+
 struct MemoryFlags {
     std::uint32_t index = 0;
     std::uint32_t pc = 0;

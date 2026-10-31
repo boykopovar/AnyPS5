@@ -67,13 +67,14 @@ void TranslationContext::writeU32Pair(const RdnaOperand& operand, const std::arr
     writeRawU32(offsetOperand(operand, 1u), value[1]);
 }
 
-IrF32 TranslationContext::readF16LaneAsF32(const RdnaOperand& operand, bool highLane, bool packed) {
+IrF32 TranslationContext::readF16LaneAsF32(const RdnaOperand& operand, bool highLane, bool packed, bool nanPayloadUnused) {
     const bool selectHigh = packed ? (highLane ? operand.opSelHi : operand.opSel) : highLane;
     const IrU32 source = readF16SourceBits(operand);
     const IrU32 raw(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&source.Value(), &ir.Constant(selectHigh ? 16u : 0u), &ir.Constant(16u)}));
     const IrU16 bits(ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&raw.Value()}));
     const IrF16 half(ir.Emit(IrOpcode::BitCastF16U16, IrType::F16, {&bits.Value()}));
     IrF32 value(ir.Emit(IrOpcode::ConvertF32F16, IrType::F32, {&half.Value()}));
+    if (nanPayloadUnused) value.Value().SetFlags(FloatConvertFlags{true});
     if (operand.absolute) {
         value = IrF32(ir.Emit(IrOpcode::FPAbs32, IrType::F32, {&value.Value()}));
     }
@@ -104,12 +105,13 @@ IrU32 TranslationContext::readF16SourceBits(const RdnaOperand& operand) {
     return applyBitSourceModifiers(operand, IrU32(ir.Constant(half)));
 }
 
-IrF32 TranslationContext::readF16AsF32(const RdnaOperand& operand) {
+IrF32 TranslationContext::readF16AsF32(const RdnaOperand& operand, bool nanPayloadUnused) {
     const IrU32 source = readF16SourceBits(operand);
     const IrU32 raw = operand.opSel ? IrU32(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&source.Value(), &ir.Constant(16u), &ir.Constant(16u)})) : source;
     const IrU16 bits(ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&raw.Value()}));
     const IrF16 half(ir.Emit(IrOpcode::BitCastF16U16, IrType::F16, {&bits.Value()}));
     IrF32 value(ir.Emit(IrOpcode::ConvertF32F16, IrType::F32, {&half.Value()}));
+    if (nanPayloadUnused) value.Value().SetFlags(FloatConvertFlags{true});
     if (operand.absolute) {
         value = IrF32(ir.Emit(IrOpcode::FPAbs32, IrType::F32, {&value.Value()}));
     }
@@ -154,9 +156,11 @@ IrU32 TranslationContext::readU16AsU32(const RdnaOperand& operand, bool signExte
     return IrU32(ir.Emit(IrOpcode::BitFieldSExtract, IrType::U32, {&raw.Value(), &ir.Constant(0u), &ir.Constant(16u)}));
 }
 
-IrU32 TranslationContext::packHalf2x16(IrF32 low, IrF32 high) {
+IrU32 TranslationContext::packHalf2x16(IrF32 low, IrF32 high, bool nanPayloadUnused) {
     IrValue& pair = ir.Emit(IrOpcode::CompositeConstructF32x2, IrType::F32x2, {&low.Value(), &high.Value()});
-    return IrU32(ir.Emit(IrOpcode::PackHalf2x16, IrType::U32, {&pair}));
+    IrValue& packed = ir.Emit(IrOpcode::PackHalf2x16, IrType::U32, {&pair});
+    if (nanPayloadUnused) packed.SetFlags(FloatConvertFlags{true});
+    return IrU32(packed);
 }
 
 void TranslationContext::write16Bits(const RdnaOperand& operand, IrU32 value) {

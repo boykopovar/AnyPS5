@@ -70,7 +70,7 @@ private:
     void rejectHalfOrDoubleOutputModifier(const RdnaOperand& operand) const;
     IrU32 clampF16Bits(const RdnaOperand& operand, IrU32 bits);
     void writeOperand(const RdnaOperand& operand, IrValue* value);
-    IrU32 packHalf2x16(IrF32 low, IrF32 high);
+    IrU32 packHalf2x16(IrF32 low, IrF32 high, bool nanPayloadUnused = false);
     void write16Bits(const RdnaOperand& operand, IrU32 value);
     void writeF16(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources, IrValue* invalid = nullptr);
     bool directedF16Rounding() const;
@@ -97,8 +97,8 @@ private:
     std::array<IrU32, 2> flushF64Bits(const std::array<IrU32, 2>& bits, std::uint32_t keepBit);
     IrValue& flushTinyF64Result(IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrValue& result);
     IrU64 readF64(const RdnaOperand& operand);
-    IrF32 readF16LaneAsF32(const RdnaOperand& operand, bool highLane, bool packed = false);
-    IrF32 readF16AsF32(const RdnaOperand& operand);
+    IrF32 readF16LaneAsF32(const RdnaOperand& operand, bool highLane, bool packed = false, bool nanPayloadUnused = false);
+    IrF32 readF16AsF32(const RdnaOperand& operand, bool nanPayloadUnused = false);
     IrU32 readF16SourceBits(const RdnaOperand& operand);
     IrF32 readMixF32(const RdnaOperand& operand);
     IrU32 readU16LaneRaw(const RdnaOperand& operand, bool highLane);
