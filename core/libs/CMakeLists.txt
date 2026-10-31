@@ -1215,6 +1215,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_gnm_neo_default_state PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
     endif()
+    add_test_executable(guest_division_prx_abi_tests tests/GuestDivisionPrxAbi.cpp nid/src/NidCompute.cpp nid/src/Sha1.cpp)
+    target_include_directories(guest_division_prx_abi_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
+    configure_host_test_executable(guest_division_prx_abi_tests)
+    target_link_libraries(guest_division_prx_abi_tests PRIVATE ${CMAKE_DL_LIBS})
+    add_custom_target(guest_division_prx_library DEPENDS ${LIBC_PATCHED})
+    add_dependencies(guest_division_prx_abi_tests guest_division_prx_library)
+    add_test(NAME guest_division_prx_abi COMMAND guest_division_prx_abi_tests $<TARGET_FILE:libc> ${PATCHED_DIR}/libc.prx)
+    set_tests_properties(guest_division_prx_abi PROPERTIES TIMEOUT 20)
+
 endif()
 
 include(prx/libSceFreeType/CurveBounds.cmake)
