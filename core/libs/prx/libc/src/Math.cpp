@@ -759,7 +759,6 @@ double APS5_VABI log1p_nid_postfix(double x) {
     const double Lp5 = 1.818357216161805012e-01;
     const double Lp6 = 1.531383769920937332e-01;
     const double Lp7 = 1.479819860511658591e-01;
-    static volatile double vzero = 0.0;
     const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
     const std::int32_t ax = hx & 0x7fffffff;
     std::int32_t k = 1;
@@ -769,9 +768,9 @@ double APS5_VABI log1p_nid_postfix(double x) {
     if (hx < 0x3fda827a) {
         if (ax >= 0x3ff00000) {
             if (x == -1.0) {
-                return -two54 / vzero;
+                return -std::numeric_limits<double>::infinity();
             }
-            errno = EDOM;
+            _Feraise_nid_postfix(0x01);
             return (x - x) / (x - x);
         }
         if (ax < 0x3e200000) {
