@@ -299,6 +299,11 @@ long double ClearLowMantissaWord(long double value) {
     return value;
 }
 
+long double SumAtCallerPrecision(long double high, long double low) {
+    volatile long double sum = high;
+    return sum + low;
+}
+
 constexpr long double AsinNumeratorCoefficients[] = {
     1.66666666666666666631e-01L, -4.16313987993683104320e-01L, 3.69068046323246813704e-01L, -1.36213932016738603108e-01L,
     1.78324189708471965733e-02L, -2.19216428382605211588e-04L, -7.10526623669075243183e-06L,
@@ -310,6 +315,7 @@ constexpr long double AsinDenominatorCoefficients[] = {
 constexpr long double HalfPiHigh = 1.57079632679489661926e+00L;
 constexpr long double HalfPiLow = -2.50827880633416601173e-20L;
 constexpr long double QuarterPiHigh = 7.85398163397448309628e-01L;
+const volatile long double Pi = 3.14159265358979323846264338327950280e+00L;
 
 long double AsinNumerator(long double t) {
     const auto& p = AsinNumeratorCoefficients;
@@ -681,7 +687,46 @@ float APS5_VABI fmaxf_nid_postfix(float x, float y) { return GuestFmax(x, y); }
 long double APS5_VABI fmaxl_nid_postfix(long double x, long double y) { return GuestFmax(x, y); }
 double APS5_VABI fdim_nid_postfix(double x, double y) { return std::fdim(x, y); }
 float APS5_VABI fdimf_nid_postfix(float x, float y) { return std::fdim(x, y); }
-long double APS5_VABI acosl_nid_postfix(long double x) { return std::acos(x); }
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_acosl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_acosl.c */
+long double APS5_VABI acosl_nid_postfix(long double x) {
+    const ExtendedParts parts = SplitExtended(x);
+    const int exponent = parts.signExponent & 0x7fff;
+    const bool negative = (parts.signExponent & 0x8000) != 0;
+    if (exponent >= 0x3fff) {
+        if (exponent == 0x3fff && (parts.mantissa & 0x7fffffffffffffffull) == 0) return negative ? SumAtCallerPrecision(Pi, 2.0L * HalfPiLow) : 0.0L;
+        std::feraiseexcept(FE_INVALID);
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
+    if (exponent < 0x3ffe) {
+        if (exponent < 0x3fff - 65) return SumAtCallerPrecision(HalfPiHigh, HalfPiLow);
+        const long double z = x * x;
+        const long double r = AsinNumerator(z) / AsinDenominator(z);
+        return HalfPiHigh - (x - (HalfPiLow - x * r));
+    }
+    if (negative) {
+        const long double z = (1.0L + x) * 0.5L;
+        const long double s = std::sqrt(z);
+        const long double r = AsinNumerator(z) / AsinDenominator(z);
+        return Pi - 2.0L * (s + (r * s - HalfPiLow));
+    }
+    const long double z = (1.0L - x) * 0.5L;
+    const long double s = std::sqrt(z);
+    const long double high = ClearLowMantissaWord(s);
+    const long double correction = (z - high * high) / (s + high);
+    const long double r = AsinNumerator(z) / AsinDenominator(z);
+    return 2.0L * (high + (r * s + correction));
+}
 long double APS5_VABI acoshl_nid_postfix(long double x) { return std::acosh(x); }
 long double APS5_VABI asinhl_nid_postfix(long double x) { return std::asinh(x); }
 long double APS5_VABI atanhl_nid_postfix(long double x) { return std::atanh(x); }

@@ -1297,6 +1297,70 @@ static void CheckAsinl() {
     *__error_nid_postfix() = 0;
 }
 
+static bool ExtendedBitsAt53Bits(long double (APS5_VABI* function)(long double), std::uint64_t inputMantissa, std::uint16_t inputSignExponent,
+                                 std::uint64_t outputMantissa, std::uint16_t outputSignExponent) {
+    const long double input = MakeExtended(inputMantissa, inputSignExponent);
+    const std::uint16_t saved = X87ControlWord();
+    const auto control = static_cast<std::uint16_t>((saved & ~0x0300u) | 0x0200u);
+    asm volatile("fldcw %0" : : "m"(control) : "memory");
+    const long double result = function(input);
+    const std::uint16_t after = X87ControlWord();
+    asm volatile("fldcw %0" : : "m"(saved) : "memory");
+    return after == control && ExtendedBits(result, outputMantissa, outputSignExponent);
+}
+
+static void CheckAcosl() {
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
+        {0, 0x0000, 0xc90fdaa22168c235ull, 0x3fff}, {0, 0x8000, 0xc90fdaa22168c235ull, 0x3fff},
+        {0x8000000000000000ull, 0x3fbd, 0xc90fdaa22168c235ull, 0x3fff}, {0x8000000000000000ull, 0x3fbe, 0xc90fdaa22168c235ull, 0x3fff},
+        {0x8000000000000000ull, 0xbfbe, 0xc90fdaa22168c235ull, 0x3fff},
+        {0x8000000000000000ull, 0x3ffd, 0xa8b807060a5927f8ull, 0x3fff}, {0x8000000000000000ull, 0xbffd, 0xe967ae3e38785c72ull, 0x3fff},
+        {0xcccccccccccccccdull, 0x3ffb, 0xbc3d91671fac8055ull, 0x3fff},
+        {0x8000000000000000ull, 0x3ffe, 0x860a91c16b9b2c23ull, 0x3fff}, {0x8000000000000000ull, 0xbffe, 0x860a91c16b9b2c23ull, 0x4000},
+        {0xc000000000000000ull, 0x3ffe, 0xb9051c960ecaa429ull, 0x3ffe}, {0xc000000000000000ull, 0xbffe, 0x9ace937c9db6192bull, 0x4000},
+        {0xe666666666666666ull, 0x3ffe, 0xe6ecfc7c9174ca46ull, 0x3ffd}, {0xfd70a3d70a3d70a4ull, 0xbffe, 0xc000df0de008d77cull, 0x4000},
+        {0xffffffffffffffffull, 0x3ffe, 0xb504f333f9de6484ull, 0x3fdf}, {0xffffffffffffffffull, 0xbffe, 0xc90fdaa1c6e6489bull, 0x4000},
+        {0x8000000000000000ull, 0x3fff, 0, 0x0000}, {0x8000000000000000ull, 0xbfff, 0xc90fdaa22168c235ull, 0x4000},
+        {0xc1d51c773e6f53e1ull, 0x3ffd, 0x975d54d5f258ea8aull, 0x3fff}, {0xcdd3484f06240dc9ull, 0xbffe, 0xa04e976af0cf72f5ull, 0x4000},
+        {0xaabe336043197207ull, 0x3ffd, 0x9d8ae5f7320d25aaull, 0x3fff}, {0x848f5ad972ed8af4ull, 0x3ffe, 0x83647f790cc185e8ull, 0x3fff},
+    };
+    for (const auto& test : cases) {
+        *__error_nid_postfix() = 12345;
+        const long double result = acosl_nid_postfix(MakeExtended(test.inputMantissa, test.inputSignExponent));
+        if (!ExtendedBits(result, test.outputMantissa, test.outputSignExponent) || *__error_nid_postfix() != 12345) {
+            std::fprintf(stderr, "Guest acosl failed for %016llx:%04x\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent);
+            std::abort();
+        }
+    }
+    const long double domainErrors[] = {
+        1.5L, -2.0L, MakeExtended(0x8000000000000001ull, 0x3fff), MakeExtended(0x8000000000000001ull, 0xbfff),
+        std::numeric_limits<long double>::max(), std::numeric_limits<long double>::infinity(), -std::numeric_limits<long double>::infinity(),
+        std::numeric_limits<long double>::quiet_NaN(),
+    };
+    for (const long double input : domainErrors) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        *__error_nid_postfix() = 0;
+        Require(std::isnan(acosl_nid_postfix(input)) && *__error_nid_postfix() == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
+    const int rounding = std::fegetround();
+    std::fesetround(FE_DOWNWARD);
+    const long double downward[] = {acosl_nid_postfix(MakeExtended(0xa6f97bbf48a499f5ull, 0xbffe)), acosl_nid_postfix(-0.75L), acosl_nid_postfix(-1.0L)};
+    std::fesetround(rounding);
+    Require(ExtendedBits(downward[0], 0x9201704b764da194ull, 0x4000) && ExtendedBits(downward[1], 0x9ace937c9db6192aull, 0x4000) && ExtendedBits(downward[2], 0xc90fdaa22168c234ull, 0x4000));
+    *__error_nid_postfix() = 0;
+    const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } at53Bits[] = {
+        {0x8000000000000000ull, 0x3fbd, 0xc90fdaa22168c000ull, 0x3fff}, {0x8000000000000000ull, 0x3ffd, 0xa8b807060a592800ull, 0x3fff},
+        {0x8000000000000000ull, 0xbffd, 0xe967ae3e38786000ull, 0x3fff}, {0xc000000000000000ull, 0x3ffe, 0xb9051c960ecaa800ull, 0x3ffe},
+        {0xc000000000000000ull, 0xbffe, 0x9ace937c9db61800ull, 0x4000}, {0x8000000000000000ull, 0xbfff, 0xc90fdaa22168c000ull, 0x4000},
+    };
+    for (const auto& test : at53Bits) {
+        if (!ExtendedBitsAt53Bits(acosl_nid_postfix, test.inputMantissa, test.inputSignExponent, test.outputMantissa, test.outputSignExponent)) {
+            std::fprintf(stderr, "Guest acosl at 53 bits failed for %016llx:%04x\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent);
+            std::abort();
+        }
+    }
+}
+
 static void CheckCbrtfConsoleBits() {
     constexpr std::uint32_t cases[][2] = {
         {0x00000123u, 0x28059605u}, {0x00400327u, 0x2a4b334bu}, {0x3f000555u, 0x3f4b32c7u}, {0x3fc00778u, 0x3f9287e5u},
@@ -2438,6 +2502,7 @@ int main() {
     CheckIntegerConversions();
     CheckCbrtfConsoleBits();
     CheckExtendedMath();
+    CheckAcosl();
     CheckTrigfConsoleBits();
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
     char* end = nullptr;
