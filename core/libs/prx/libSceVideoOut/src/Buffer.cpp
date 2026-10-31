@@ -13,7 +13,8 @@
 AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, const BufferAttributeGroup& group) {
     const auto& attribute = group.attribute;
     if (attribute.reserved0 != 0 || attribute.pad0 != 0 || attribute.reserved1[0] != 0 || attribute.reserved1[1] != 0 || attribute.reserved1[2] != 0) throw std::runtime_error("VideoOut: reserved buffer attribute bits are set");
-    if (attribute.tiling_mode > 1 || (attribute.tiling_mode == 0 && attribute.pitch_in_pixel != 0) || attribute.aspect_ratio != 0 || (attribute.option != VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE && attribute.option != VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY)) throw std::runtime_error("VideoOut: unsupported tiling " + std::to_string(attribute.tiling_mode) + ", pitch " + std::to_string(attribute.pitch_in_pixel) + ", aspect ratio " + std::to_string(attribute.aspect_ratio) + " or buffer option " + std::to_string(attribute.option));
+    const bool ps4GcnTiled = group.ps4 && attribute.tiling_mode == AgcDriver::DisplayTilingGcn;
+    if ((attribute.tiling_mode > 1 && !ps4GcnTiled) || (attribute.tiling_mode == 0 && attribute.pitch_in_pixel != 0) || attribute.aspect_ratio != 0 || (attribute.option != VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE && attribute.option != VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY)) throw std::runtime_error("VideoOut: unsupported tiling " + std::to_string(attribute.tiling_mode) + ", pitch " + std::to_string(attribute.pitch_in_pixel) + ", aspect ratio " + std::to_string(attribute.aspect_ratio) + " or buffer option " + std::to_string(attribute.option));
     const auto hex = [](std::uint64_t value) {
         char text[24];
         std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(value));
@@ -191,12 +192,12 @@ int APS5_VABI sceVideoOutRegisterBuffers(int handle, int bufferIndexStart, void*
     if (attribute->option != 0 || attribute->reserved0 != 0 || attribute->reserved1 != 0) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_OPTION");
     }
-    if (attribute->tiling_mode != 1) {
-        throw std::runtime_error(std::string(__func__) + ": PS4 tiled display buffers are not implemented");
+    if (attribute->tiling_mode > 1) {
+        throw std::runtime_error(std::string(__func__) + ": unsupported PS4 tiling mode " + std::to_string(attribute->tiling_mode));
     }
     BufferAttributeGroup group{};
     group.attribute.pixel_format = Ps5PixelFormat(attribute->pixel_format);
-    group.attribute.tiling_mode = attribute->tiling_mode;
+    group.attribute.tiling_mode = attribute->tiling_mode == 0 ? AgcDriver::DisplayTilingGcn : attribute->tiling_mode;
     group.attribute.aspect_ratio = attribute->aspect_ratio;
     group.attribute.width = attribute->width;
     group.attribute.height = attribute->height;

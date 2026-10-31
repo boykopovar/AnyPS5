@@ -128,7 +128,7 @@ void testLifetime(bool reopen) {
 
 void testPs4Buffers() {
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
-    std::vector<std::byte> allocation(2 * 65536 + 65535);
+    std::vector<std::byte> allocation(4 * 65536 + 65535);
     const auto storage = alignedBuffer(allocation);
     VideoOutBufferAttribute attribute{};
     sceVideoOutSetBufferAttribute(&attribute, 0x80000000u, 1, 0, 64, 64, 64);
@@ -160,8 +160,24 @@ void testPs4Buffers() {
     void* const fourth[1] = {storage.data() + 65536};
     auto tiled = attribute;
     tiled.tiling_mode = 0;
-    tiled.pitch_in_pixel = 0;
-    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tiled); }).find("tiled display buffers are not implemented") != std::string::npos, "a PS4 tiled buffer was accepted");
+    tiled.pitch_in_pixel = 64;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tiled); }).find("pitch is not padded to 128 pixels") != std::string::npos, "a PS4 tiled buffer with an unpadded pitch was accepted");
+    tiled.pitch_in_pixel = 128;
+    check(sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tiled) == 2, "a PS4 GCN tiled buffer was not registered");
+    {
+        const auto cfg = VideoOutDriver::Get().GetConfig(handle);
+        std::lock_guard lock(cfg->mutex);
+        const auto& group = cfg->groups[2];
+        check(group.ps4 && group.attribute.tiling_mode == AgcDriver::DisplayTilingGcn && group.attribute.pitch_in_pixel == 128 &&
+              cfg->buffers[3].groupIndex == 2, "PS4 tiled buffer attributes were not translated to GCN display tiling");
+        const auto display = DescribeVideoOutBuffer(cfg->buffers[3], group);
+        check(display.tilingMode == AgcDriver::DisplayTilingGcn && display.pitchInPixel == 128 && display.alignment == 4096,
+              "PS4 GCN display buffer metadata is wrong");
+    }
+    auto unsupportedTiling = tiled;
+    unsupportedTiling.tiling_mode = 2;
+    check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &unsupportedTiling); }).find("unsupported PS4 tiling mode 2") != std::string::npos,
+          "the legacy PS4 API accepted an internal GCN tiling enum");
     auto tenBit = attribute;
     tenBit.pixel_format = 0x88060000u;
     check(expectFailure([&] { sceVideoOutRegisterBuffers(handle, 3, fourth, 1, &tenBit); }).find("unsupported PS4 pixel format 0x88060000") != std::string::npos, "an unknown PS4 pixel format was accepted");
@@ -178,13 +194,20 @@ void testPs4Buffers() {
     raw.fill(0xaa);
     check(sceVideoOutGetVblankStatus(handle, reinterpret_cast<VideoOutVblankStatus*>(raw.data())) == 0, "the PS4 vblank status failed");
     check(std::all_of(raw.begin() + sizeof(VideoOutVblankStatusPs4), raw.end(), [](std::uint8_t value) { return value == 0xaa; }), "the PS4 vblank status overflowed its 32 bytes");
+    const auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    check(sceVideoOutSubmitFlip(handle, 1, 1, 7) == 0, "the PS4 linear flip was not accepted");
     {
-        const auto cfg = VideoOutDriver::Get().GetConfig(handle);
-        check(sceVideoOutSubmitFlip(handle, 1, 1, 7) == 0, "the PS4 flip was not accepted");
         std::unique_lock lock(cfg->mutex);
-        check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return (cfg->failure && cfg->flipStatus.flipPendingNum == 0) || cfg->flipStatus.count == 1; }), "the PS4 flip did not complete");
+        check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return (cfg->failure && cfg->flipStatus.flipPendingNum == 0) || cfg->flipStatus.count == 1; }), "the PS4 linear flip did not complete");
         if (cfg->failure) std::rethrow_exception(cfg->failure);
-        check(cfg->flipStatus.flipArg == 7 && cfg->flipStatus.currentBuffer == 1, "the PS4 flip status is wrong");
+        check(cfg->flipStatus.flipArg == 7 && cfg->flipStatus.currentBuffer == 1, "the PS4 linear flip status is wrong");
+    }
+    check(sceVideoOutSubmitFlip(handle, 3, 1, 8) == 0, "the PS4 GCN tiled flip was not accepted");
+    {
+        std::unique_lock lock(cfg->mutex);
+        check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return (cfg->failure && cfg->flipStatus.flipPendingNum == 0) || cfg->flipStatus.count == 2; }), "the PS4 GCN tiled flip did not complete");
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+        check(cfg->flipStatus.flipArg == 8 && cfg->flipStatus.currentBuffer == 3, "the PS4 GCN tiled flip status is wrong");
     }
     sceVideoOutClose(handle);
     const int ps5Handle = sceVideoOutOpen(255, 0, 0, nullptr);
@@ -349,6 +372,28 @@ void testDecode() {
             }
         }
     }
+    AgcDriver::DisplayBuffer gcn{65536, 0x8000000000000000ull, 259, 137, AgcDriver::DisplayTilingGcn, 384};
+    std::vector<std::byte> gcnStorage(AgcDriver::DisplayBufferSize(gcn));
+    for (uint32_t y = 0; y < gcn.height; ++y) {
+        for (uint32_t x = 0; x < gcn.width; ++x) {
+            const auto offset = AgcDriver::DisplayBufferOffset(gcn, x, y);
+            gcnStorage[offset] = static_cast<std::byte>(x & 255u);
+            gcnStorage[offset + 1] = static_cast<std::byte>(y & 255u);
+            gcnStorage[offset + 2] = static_cast<std::byte>((x ^ y) & 255u);
+            gcnStorage[offset + 3] = std::byte{255};
+        }
+    }
+    const auto gcnPixels = AgcDriver::DecodeDisplayBuffer(gcn, gcnStorage);
+    for (uint32_t y = 0; y < gcn.height; ++y) {
+        for (uint32_t x = 0; x < gcn.width; ++x) {
+            const auto offset = (static_cast<std::size_t>(y) * gcn.width + x) * 4;
+            check(gcnPixels[offset] == static_cast<std::byte>(x & 255u) &&
+                  gcnPixels[offset + 1] == static_cast<std::byte>(y & 255u) &&
+                  gcnPixels[offset + 2] == static_cast<std::byte>((x ^ y) & 255u) &&
+                  gcnPixels[offset + 3] == std::byte{255},
+                  "GCN tiled display decode changed pixel data");
+        }
+    }
     expectFailure([&] { AgcDriver::DecodeDisplayBuffer(buffer, std::span(tiled).first(tiled.size() - 1)); });
     buffer.pixelFormat = 0;
     expectFailure([&] { AgcDriver::DisplayBufferSize(buffer); });
@@ -358,6 +403,14 @@ void testDecode() {
     buffer.address = std::numeric_limits<uint64_t>::max() & ~uint64_t{65535};
     expectFailure([&] { AgcDriver::DisplayBufferSize(buffer); });
     const VideoOutBuffer registered{0, reinterpret_cast<uint64_t>(tiled.data()), 0};
+    BufferAttributeGroup ps5Gcn{};
+    ps5Gcn.attribute.pixel_format = 0x8000000000000000ull;
+    ps5Gcn.attribute.width = 259;
+    ps5Gcn.attribute.height = 137;
+    ps5Gcn.attribute.tiling_mode = AgcDriver::DisplayTilingGcn;
+    ps5Gcn.attribute.pitch_in_pixel = 384;
+    check(expectFailure([&] { DescribeVideoOutBuffer(registered, ps5Gcn); }).find("unsupported tiling 2") != std::string::npos,
+          "the PS5 buffer API accepted the PS4-only GCN display tiling enum");
     BufferAttributeGroup group{};
     sceVideoOutSetBufferAttribute2(&group.attribute, 0x8000000000000000ull, 0, 259, 137, VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE, 0, 0);
     group.occupied = true;
