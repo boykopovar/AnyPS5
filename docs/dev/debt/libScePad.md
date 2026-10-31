@@ -24,6 +24,7 @@
 
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
 - [scePadSetLightBarBaseBrightness, scePadDisableTriggerEffect](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - return success for known handles without changing hardware states. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
+- [scePadVrControllerRead](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - invalid handle, null buffer and non-positive count follow the standard pad read checks; a known handle writes one zeroed 104-byte sample and returns 1. There is no VR controller hardware and kernel report production is not modelled.
 
 ### Unknown function info
 
