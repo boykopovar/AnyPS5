@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,94 +10,94 @@
 extern "C" std::uint64_t NotImplementedCalls_nid_no_patch();
 
 extern "C" {
-int JSRemoteInspectorDisableAutoStart();
-int WKAccessibilityEnableEnhancedAccessibility();
-int WKContextGetApplicationCacheManager();
-int WKContextGetKeyValueStorageManager();
-int WKContextGetResourceCacheManager();
-int WKContextGetWebsiteDataStore();
-int _ZN3JSC11createErrorEPNS_14JSGlobalObjectENS_9ErrorTypeERKN3WTF6StringE();
-int _ZN3JSC17DeferredWorkTimerD1Ev();
-int _ZN3JSC18GCActivityCallbackD2Ev();
-int _ZN3JSC22EdenGCActivityCallbackD1Ev();
-int _ZN3JSC22EdenGCActivityCallbackD2Ev();
-int _ZN3JSC22FullGCActivityCallbackD1Ev();
-int _ZN3JSC22FullGCActivityCallbackD2Ev();
-int _ZN3JSC32JSDestructibleObjectHeapCellTypeD1Ev();
-int _ZN3JSC32JSDestructibleObjectHeapCellTypeD2Ev();
-int _ZN3JSC6JSLock12DropAllLocksC1ERNS_2VME();
-int _ZN3JSC6JSLock12DropAllLocksC2ERNS_2VME();
-int _ZN7WebCore11EventRegionC1Ev();
-int _ZN7WebCore11EventRegionC2Ev();
-int _ZN7WebCore12ISOWebVTTCueD1Ev();
-int _ZN7WebCore13MIMETypeCacheD1Ev();
-int _ZN7WebCore16HTMLMediaElement15clearMediaCacheERKN3WTF6StringENS1_8WallTimeE();
-int _ZN7WebCore18CustomHeaderFieldsD1Ev();
-int _ZN7WebCore26ISOProtectionSchemeInfoBoxD1Ev();
-int _ZN7WebCore30InspectorInstrumentationWebKit16interceptRequestERNS_14ResourceLoaderEON3WTF8FunctionIFvRKNS_15ResourceRequestEEEE();
-int _ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxC1ERKS0_();
-int _ZN7WebCore5Image12supportsTypeERKN3WTF6StringE();
-int _ZN9Inspector15RemoteInspectorD1Ev();
-int _ZN9Inspector17BackendDispatcherD1Ev();
-int _ZN9Inspector20CSSBackendDispatcherD1Ev();
-int _ZN9Inspector20CSSBackendDispatcherD2Ev();
-int _ZN9Inspector20DOMBackendDispatcherD1Ev();
-int _ZN9Inspector20DOMBackendDispatcherD2Ev();
-int _ZN9Inspector20InjectedScriptModuleD1Ev();
-int _ZN9Inspector20InjectedScriptModuleD2Ev();
-int _ZN9Inspector21HeapBackendDispatcherD1Ev();
-int _ZN9Inspector21HeapBackendDispatcherD2Ev();
-int _ZN9Inspector21PageBackendDispatcherD1Ev();
-int _ZN9Inspector21PageBackendDispatcherD2Ev();
-int _ZN9Inspector22AuditBackendDispatcherD1Ev();
-int _ZN9Inspector22AuditBackendDispatcherD2Ev();
-int _ZN9Inspector22RemoteInspectionTargetD2Ev();
-int _ZN9Inspector23CanvasBackendDispatcherD1Ev();
-int _ZN9Inspector23CanvasBackendDispatcherD2Ev();
-int _ZN9Inspector23TargetBackendDispatcherD1Ev();
-int _ZN9Inspector23TargetBackendDispatcherD2Ev();
-int _ZN9Inspector23WorkerBackendDispatcherD1Ev();
-int _ZN9Inspector23WorkerBackendDispatcherD2Ev();
-int _ZN9Inspector24BrowserBackendDispatcherD1Ev();
-int _ZN9Inspector24BrowserBackendDispatcherD2Ev();
-int _ZN9Inspector24ConsoleBackendDispatcherD1Ev();
-int _ZN9Inspector24ConsoleBackendDispatcherD2Ev();
-int _ZN9Inspector24NetworkBackendDispatcherD1Ev();
-int _ZN9Inspector24NetworkBackendDispatcherD2Ev();
-int _ZN9Inspector24RuntimeBackendDispatcherD1Ev();
-int _ZN9Inspector24RuntimeBackendDispatcherD2Ev();
-int _ZN9Inspector25DatabaseBackendDispatcherD1Ev();
-int _ZN9Inspector25DatabaseBackendDispatcherD2Ev();
-int _ZN9Inspector25DebuggerBackendDispatcherD1Ev();
-int _ZN9Inspector25DebuggerBackendDispatcherD2Ev();
-int _ZN9Inspector25TimelineBackendDispatcherD1Ev();
-int _ZN9Inspector25TimelineBackendDispatcherD2Ev();
-int _ZN9Inspector26AnimationBackendDispatcherD1Ev();
-int _ZN9Inspector26AnimationBackendDispatcherD2Ev();
-int _ZN9Inspector26InspectorBackendDispatcherD1Ev();
-int _ZN9Inspector26InspectorBackendDispatcherD2Ev();
-int _ZN9Inspector26LayerTreeBackendDispatcherD1Ev();
-int _ZN9Inspector26LayerTreeBackendDispatcherD2Ev();
-int _ZN9Inspector27DOMStorageBackendDispatcherD1Ev();
-int _ZN9Inspector27DOMStorageBackendDispatcherD2Ev();
-int _ZN9Inspector28DOMDebuggerBackendDispatcherD1Ev();
-int _ZN9Inspector28DOMDebuggerBackendDispatcherD2Ev();
-int _ZN9Inspector31ScriptProfilerBackendDispatcherD1Ev();
-int _ZN9Inspector31ScriptProfilerBackendDispatcherD2Ev();
-int _ZN9Inspector33ApplicationCacheBackendDispatcherD1Ev();
-int _ZN9Inspector33ApplicationCacheBackendDispatcherD2Ev();
-int _ZNK9Inspector15ScriptCallFrameeqERKS0_();
-void* _ZN3JSC19HeapSnapshotBuildernwEm(unsigned long);
-void* _ZN3JSC19HeapSnapshotBuildernaEm(unsigned long);
-void _ZN3JSC19HeapSnapshotBuilderdlEPv(void*);
-void _ZN3JSC19HeapSnapshotBuilderdaEPv(void*);
-void _ZN3JSC12HeapCellTypeD0Ev(void*);
-void* _ZN7WebCore13MIMETypeCachenwEm(unsigned long);
-void _ZN7WebCore13MIMETypeCachedlEPv(void*);
-void _ZN9Inspector18InspectorHeapAgentdlEPv(void*);
-void* WKMutableArrayCreate();
-void* WKUserMediaPermissionRequestAudioDeviceUIDs();
-void* WKUserMediaPermissionRequestVideoDeviceUIDs();
+int APS5_VABI JSRemoteInspectorDisableAutoStart();
+int APS5_VABI WKAccessibilityEnableEnhancedAccessibility();
+int APS5_VABI WKContextGetApplicationCacheManager();
+int APS5_VABI WKContextGetKeyValueStorageManager();
+int APS5_VABI WKContextGetResourceCacheManager();
+int APS5_VABI WKContextGetWebsiteDataStore();
+int APS5_VABI _ZN3JSC11createErrorEPNS_14JSGlobalObjectENS_9ErrorTypeERKN3WTF6StringE();
+int APS5_VABI _ZN3JSC17DeferredWorkTimerD1Ev();
+int APS5_VABI _ZN3JSC18GCActivityCallbackD2Ev();
+int APS5_VABI _ZN3JSC22EdenGCActivityCallbackD1Ev();
+int APS5_VABI _ZN3JSC22EdenGCActivityCallbackD2Ev();
+int APS5_VABI _ZN3JSC22FullGCActivityCallbackD1Ev();
+int APS5_VABI _ZN3JSC22FullGCActivityCallbackD2Ev();
+int APS5_VABI _ZN3JSC32JSDestructibleObjectHeapCellTypeD1Ev();
+int APS5_VABI _ZN3JSC32JSDestructibleObjectHeapCellTypeD2Ev();
+int APS5_VABI _ZN3JSC6JSLock12DropAllLocksC1ERNS_2VME();
+int APS5_VABI _ZN3JSC6JSLock12DropAllLocksC2ERNS_2VME();
+int APS5_VABI _ZN7WebCore11EventRegionC1Ev();
+int APS5_VABI _ZN7WebCore11EventRegionC2Ev();
+int APS5_VABI _ZN7WebCore12ISOWebVTTCueD1Ev();
+int APS5_VABI _ZN7WebCore13MIMETypeCacheD1Ev();
+int APS5_VABI _ZN7WebCore16HTMLMediaElement15clearMediaCacheERKN3WTF6StringENS1_8WallTimeE();
+int APS5_VABI _ZN7WebCore18CustomHeaderFieldsD1Ev();
+int APS5_VABI _ZN7WebCore26ISOProtectionSchemeInfoBoxD1Ev();
+int APS5_VABI _ZN7WebCore30InspectorInstrumentationWebKit16interceptRequestERNS_14ResourceLoaderEON3WTF8FunctionIFvRKNS_15ResourceRequestEEEE();
+int APS5_VABI _ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxC1ERKS0_();
+int APS5_VABI _ZN7WebCore5Image12supportsTypeERKN3WTF6StringE();
+int APS5_VABI _ZN9Inspector15RemoteInspectorD1Ev();
+int APS5_VABI _ZN9Inspector17BackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector20CSSBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector20CSSBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector20DOMBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector20DOMBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector20InjectedScriptModuleD1Ev();
+int APS5_VABI _ZN9Inspector20InjectedScriptModuleD2Ev();
+int APS5_VABI _ZN9Inspector21HeapBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector21HeapBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector21PageBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector21PageBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector22AuditBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector22AuditBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector22RemoteInspectionTargetD2Ev();
+int APS5_VABI _ZN9Inspector23CanvasBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector23CanvasBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector23TargetBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector23TargetBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector23WorkerBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector23WorkerBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector24BrowserBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector24BrowserBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector24ConsoleBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector24ConsoleBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector24NetworkBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector24NetworkBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector24RuntimeBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector24RuntimeBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector25DatabaseBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector25DatabaseBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector25DebuggerBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector25DebuggerBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector25TimelineBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector25TimelineBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector26AnimationBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector26AnimationBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector26InspectorBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector26InspectorBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector26LayerTreeBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector26LayerTreeBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector27DOMStorageBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector27DOMStorageBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector28DOMDebuggerBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector28DOMDebuggerBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector31ScriptProfilerBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector31ScriptProfilerBackendDispatcherD2Ev();
+int APS5_VABI _ZN9Inspector33ApplicationCacheBackendDispatcherD1Ev();
+int APS5_VABI _ZN9Inspector33ApplicationCacheBackendDispatcherD2Ev();
+int APS5_VABI _ZNK9Inspector15ScriptCallFrameeqERKS0_();
+void* APS5_VABI _ZN3JSC19HeapSnapshotBuildernwEm(std::size_t);
+void* APS5_VABI _ZN3JSC19HeapSnapshotBuildernaEm(std::size_t);
+void APS5_VABI _ZN3JSC19HeapSnapshotBuilderdlEPv(void*);
+void APS5_VABI _ZN3JSC19HeapSnapshotBuilderdaEPv(void*);
+void APS5_VABI _ZN3JSC12HeapCellTypeD0Ev(void*);
+void* APS5_VABI _ZN7WebCore13MIMETypeCachenwEm(std::size_t);
+void APS5_VABI _ZN7WebCore13MIMETypeCachedlEPv(void*);
+void APS5_VABI _ZN9Inspector18InspectorHeapAgentdlEPv(void*);
+void* APS5_VABI WKMutableArrayCreate();
+void* APS5_VABI WKUserMediaPermissionRequestAudioDeviceUIDs();
+void* APS5_VABI WKUserMediaPermissionRequestVideoDeviceUIDs();
 }
 
 static void Check(bool value, int line) {
@@ -108,7 +109,9 @@ static void Check(bool value, int line) {
 
 #define Require(value) Check((value), __LINE__)
 
-static void ExpectStub(int (*forward)(), int line) {
+using StubForward = int (APS5_VABI *)();
+
+static void ExpectStub(StubForward forward, int line) {
     const auto before = NotImplementedCalls_nid_no_patch();
     bool threw = false;
     try {
