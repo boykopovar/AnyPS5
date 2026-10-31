@@ -128,6 +128,11 @@ int APS5_VABI sceKernelGetProcessAbiType() {
     return 0;
 }
 
+int APS5_VABI sceKernelProtectDirectMemoryForPID(int64_t offset, size_t len, int prot, int pid) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }
 
 extern "C" {
