@@ -99,6 +99,7 @@ int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option
     for (std::uint32_t m = 0; m < option.num_modules; m++) {
         const auto moduleId = option.module[m].module_id;
         if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_GAIN && option.module[m].option != nullptr) throw std::runtime_error("NGS2: an option for the custom Gain module is not implemented");
+        if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_REVERB) continue;
         if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) continue;
         if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_GAIN && rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
             throw std::runtime_error("NGS2: custom sampler Gain initialization and lifecycle are not implemented");
@@ -135,6 +136,7 @@ int Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option) {
         voice.userFx.resize(option.num_modules);
         voice.customUserFx.resize(option.num_modules);
         voice.customGain.assign(option.num_modules, {});
+        voice.customReverb.resize(option.num_modules);
         if (hasPitchShift) voice.customPitchShift.resize(option.num_modules);
     }
     for (std::uint32_t m = 0; m < option.num_modules; m++) {
@@ -145,6 +147,11 @@ int Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option) {
             rack.customModuleOptions[m].assign(data, data + info.option->size);
         }
         rack.customModules[m] = {info.module_id, info.source_buffer_id, info.extra_buffer_id, info.dest_buffer_id, info.state_offset, info.state_size, 0, 0};
+        if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_REVERB) {
+            const auto size = info.option == nullptr ? 1u : OptionWord(*info.option);
+            for (auto& voice : rack.voices) voice.customReverb[m] = Ngs2CreateCustomReverb(size);
+            continue;
+        }
         if (option.module[m].module_id == SCE_NGS2_CUSTOM_MODULE_ID_FILTER) continue;
         if (option.module[m].module_id == SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) {
             for (auto& voice : rack.voices) voice.customPitchShift[m].channels.resize(rack.maxChannels);
@@ -215,7 +222,10 @@ static void SetupCustomSubmixer(Ngs2Voice& voice, const Ngs2CustomSubmixerVoiceS
     if (setup.num_input_channels != setup.num_output_channels) throw std::runtime_error("NGS2: custom submixer channel conversion is not implemented");
     if (setup.num_input_channels == 0 || setup.num_input_channels > voice.rack->maxChannels || setup.num_input_channels > NGS2_MAX_CHANNELS) APS5_INVALID_ARG_EX;
     if (Ngs2HasPitchShift(voice)) voice.ResetSetup();
-    else Ngs2ResetUserFx2(voice);
+    else {
+        Ngs2ResetUserFx2(voice);
+        Ngs2ResetCustomReverb(voice);
+    }
     for (auto& gain : voice.customGain) if (gain.configured) gain.lifecycleUnknown = true;
     ++voice.waveformRevision;
     voice.channels = setup.num_input_channels;
@@ -332,6 +342,15 @@ void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         Ngs2SetFilter(voice, filter);
         return;
     }
+    if ((param.id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_REVERB) {
+        if (rackId != SCE_NGS2_RACK_ID_CUSTOM_SAMPLER && rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
+            throw std::invalid_argument("NGS2: voice param " + Ngs2Hex(param.id) + " belongs to another rack");
+        }
+        const auto index = param.id & 0x1f;
+        if (index >= voice.customReverb.size() || !voice.customReverb[index]) APS5_INVALID_ARG_EX;
+        Ngs2SetCustomReverbParams(voice.customReverb[index], ParamAs<Ngs2ReverbVoiceI3DL2Param>(param).i3dl2);
+        return;
+    }
     if ((param.id & ~0x1fu) == SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX2) {
         if (rackId != SCE_NGS2_RACK_ID_CUSTOM_SAMPLER && rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) {
             throw std::invalid_argument("NGS2: voice param " + Ngs2Hex(param.id) + " belongs to another rack");
@@ -361,6 +380,10 @@ void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
     std::vector<float*> channels(voice.channels);
     for (std::uint32_t c = 0; c < voice.channels; c++) channels[c] = voice.samples.data() + static_cast<std::size_t>(c) * grain;
     for (std::size_t m = 0; m < voice.rack->customModuleIds.size(); m++) {
+        if (voice.rack->customModuleIds[m] == SCE_NGS2_CUSTOM_MODULE_ID_REVERB) {
+            voice.hasSamples = Ngs2ProcessCustomReverb(voice, m, grain, sampleRate);
+            continue;
+        }
         if (voice.rack->customModuleIds[m] == SCE_NGS2_CUSTOM_MODULE_ID_DELAY) continue;
         if (voice.rack->customModuleIds[m] == SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) {
             Ngs2ProcessPitchShift(voice, m, grain);
