@@ -5761,6 +5761,7 @@ AgcDriver::Graphics::Context mockContext() {
     context.limits.maxPerStageDescriptorStorageBuffers = 16;
     context.limits.maxPerStageResources = 128;
     context.limits.maxDescriptorSetStorageBuffers = 32;
+    context.storageBufferUpdateAfterBind = true;
     context.limits.maxImageArrayLayers = 2048;
     return context;
 }
@@ -6834,6 +6835,27 @@ void resourceTests() {
         fragment.bindings.front().binding = 1;
         fragment.bindings.front().guestDescriptor = vsharp(guestFirst.data(), 16);
     }
+    {
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        for (std::uint32_t i = 0; i < 12; ++i) vertex.bindings.push_back(makeBinding(Role::GuestBuffers, i, 1, vsharp(guestFirst.data(), 16)));
+        for (std::uint32_t i = 0; i < 12; ++i) fragment.bindings.push_back(makeBinding(Role::GuestBuffers, 12 + i, 1, vsharp(guestSecond.data(), 32)));
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        auto limited = mockContext();
+        limited.limits.maxPerStageDescriptorStorageBuffers = 16;
+        limited.limits.maxDescriptorSetStorageBuffers = 10;
+        limited.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 16;
+        limited.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 20;
+        limited.storageBufferUpdateAfterBind = true;
+        auto cache = std::make_unique<AgcDriver::Graphics::DescriptorCache>(limited);
+        limited.descriptorCache = cache.get();
+        expectFailure([&] { DescribeSetLayouts(limited, shaders); }, "typed heaps exceed descriptor set storage buffer capacity: required 24, device limit 20");
+        vertex.bindings.resize(10);
+        fragment.bindings.resize(10);
+        const auto layouts = DescribeSetLayouts(limited, shaders);
+        Require(layouts.layouts.split, "split layouts expected for separated vertex and fragment buffer bindings");
+        limited.descriptorCache = nullptr;
+    }
 }
 
 void descriptorCacheTests() {
@@ -6903,6 +6925,8 @@ void descriptorCacheTests() {
     Require(mock.live == 0, "the descriptor cache leaked a pool or layout");
     mock = MockVulkan{};
     context.limits.maxDescriptorSetStorageBuffers = 16;
+    context.storageBufferUpdateAfterBind = true;
+    context.descriptorIndexingLimits.maxPerStageDescriptorUpdateAfterBindStorageBuffers = 8192;
     context.descriptorIndexingLimits.maxDescriptorSetUpdateAfterBindStorageBuffers = 8192;
     context.descriptorIndexingLimits.maxPerStageUpdateAfterBindResources = 16384;
     context.limits.maxPerStageDescriptorSampledImages = 2048;
@@ -6941,6 +6965,14 @@ void descriptorCacheTests() {
         cache.Free(larger);
         cache.Free(same);
         expectFailure([&] { cache.Allocate(fittingLayout, fitting, false, 3u); }, "descriptor set exceeds the device's per-set descriptor limit");
+        const std::array<VkDescriptorSetLayoutBinding, 1> excessiveBindings{{{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8193, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
+        const std::array<VkDescriptorBindingFlags, 1> excessiveFlags{VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT};
+        const std::array<std::uint32_t, 5> excessiveKey{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8193, VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT};
+        expectFailure([&] { cache.Layout(excessiveKey, excessiveBindings, true, excessiveFlags); }, "typed heaps exceed per-stage storage buffer capacity");
+        const std::array<VkDescriptorSetLayoutBinding, 1> regularExcessiveBindings{{{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 17, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
+        const std::array<VkDescriptorBindingFlags, 1> regularFlags{0};
+        const std::array<std::uint32_t, 4> regularExcessiveKey{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 17, VK_SHADER_STAGE_FRAGMENT_BIT};
+        expectFailure([&] { cache.Layout(regularExcessiveKey, regularExcessiveBindings, false, regularFlags); }, "typed heaps exceed descriptor set storage buffer capacity");
     }
     Require(mock.live == 0, "the combined descriptor cache leaked a pool or layout");
     mock = MockVulkan{};
