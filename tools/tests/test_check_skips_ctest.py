@@ -21,7 +21,7 @@ class IntentionalSkipTests(unittest.TestCase):
                 f'set_tests_properties(gpu_skip PROPERTIES {property_name} "{property_value}")\n', encoding="utf-8")
             report = root / "report.xml"
             generated = subprocess.run(["ctest", "--test-dir", str(root), "--output-junit", str(report)],
-                                       capture_output=True, text=True, timeout=10)
+                                       capture_output=True, encoding="utf-8", timeout=10)
             self.assertEqual(generated.returncode, 0, generated.stdout + generated.stderr)
             xml = report.read_text(encoding="utf-8")
             self.assertIn('status="notrun"', xml)
@@ -29,7 +29,7 @@ class IntentionalSkipTests(unittest.TestCase):
             for job in ("windows", "linux"):
                 with self.subTest(job=job):
                     checked = subprocess.run([sys.executable, "-I", str(TOOL), str(report), "--job", job, "--require-tests"],
-                                             capture_output=True, text=True, timeout=10)
+                                             capture_output=True, encoding="utf-8", timeout=10)
                     self.assertEqual(checked.returncode, expected, checked.stdout + checked.stderr)
                     self.assertNotIn("Traceback", checked.stderr)
                     self.assertIn("all expected" if expected == 0 else "error: gpu_skip skipped", checked.stdout)
