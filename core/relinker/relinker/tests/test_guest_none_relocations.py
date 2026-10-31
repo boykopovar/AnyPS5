@@ -366,6 +366,8 @@ def main():
                 assert not artifact.exists() and not output.exists(), name
             for name, image, error in invalid_cases_macos(sce):
                 result, artifact, output = convert(f"{sce}-{name}", "macos", image)
+                assert result.returncode == 2 and error in result.stderr, ("macos", sce, name, result.stderr)
+                assert not artifact.exists() and not output.exists(), ("macos", sce, name)
             for name, image, error in invalid_cases_windows(sce):
                 result, artifact, output = convert(f"{sce}-{name}", "windows", image)
                 assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
