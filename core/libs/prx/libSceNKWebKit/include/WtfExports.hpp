@@ -2,6 +2,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+#include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfMemoryTypes.hpp"
 #include <cstddef>
@@ -60,6 +61,24 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl23convertToASCIIUppercaseE
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl6createEPKhj(const unsigned char* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl9substringEjj(const NKWebKit::WtfAbi::StringImpl* self, unsigned start, unsigned length);
+void APS5_VABI _ZN3WTF10TextStream10startGroupEv(NKWebKit::WtfAbi::TextStream* self);
+void APS5_VABI _ZN3WTF10TextStream11writeIndentEv(NKWebKit::WtfAbi::TextStream* self);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10TextStream7releaseEv(NKWebKit::WtfAbi::TextStream* self);
+void APS5_VABI _ZN3WTF10TextStream8endGroupEv(NKWebKit::WtfAbi::TextStream* self);
+void APS5_VABI _ZN3WTF10TextStream8nextLineEv(NKWebKit::WtfAbi::TextStream* self);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEPKc(NKWebKit::WtfAbi::TextStream* self, const char* string);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEPKv(NKWebKit::WtfAbi::TextStream* self, const void* pointer);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsERKNS_6StringE(NKWebKit::WtfAbi::TextStream* self, const NKWebKit::WtfAbi::String& string);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEb(NKWebKit::WtfAbi::TextStream* self, bool value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEc(NKWebKit::WtfAbi::TextStream* self, char value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEd(NKWebKit::WtfAbi::TextStream* self, double value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEf(NKWebKit::WtfAbi::TextStream* self, float value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEi(NKWebKit::WtfAbi::TextStream* self, int value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEj(NKWebKit::WtfAbi::TextStream* self, unsigned value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEl(NKWebKit::WtfAbi::TextStream* self, std::int64_t value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEm(NKWebKit::WtfAbi::TextStream* self, std::uint64_t value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEx(NKWebKit::WtfAbi::TextStream* self, long long value);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTF10TextStreamlsEy(NKWebKit::WtfAbi::TextStream* self, unsigned long long value);
 void* APS5_VABI _ZN3WTF10fastCallocEmm(std::size_t count, std::size_t size);
 void* APS5_VABI _ZN3WTF10fastMallocEm(std::size_t size);
 char* APS5_VABI _ZN3WTF10fastStrDupEPKc(const char* str);
@@ -68,6 +87,12 @@ bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const NKWebKit::WtfA
 void* APS5_VABI _ZN3WTF11fastReallocEPvm(void* ptr, std::size_t size);
 void APS5_VABI _ZN3WTF11jsValueFreeEPv(void* ptr);
 WTF::MonotonicTime APS5_VABI _ZN3WTF13MonotonicTime3nowEv();
+void APS5_VABI _ZN3WTF13StringBuilder11shrinkToFitEv(NKWebKit::WtfAbi::StringBuilder* self);
+void APS5_VABI _ZN3WTF13StringBuilder12appendNumberEf(NKWebKit::WtfAbi::StringBuilder* self, float number);
+void APS5_VABI _ZN3WTF13StringBuilder15reserveCapacityEj(NKWebKit::WtfAbi::StringBuilder* self, unsigned newCapacity);
+void APS5_VABI _ZN3WTF13StringBuilder16appendCharactersEPKDsj(NKWebKit::WtfAbi::StringBuilder* self, const char16_t* characters, unsigned length);
+void APS5_VABI _ZN3WTF13StringBuilder16appendCharactersEPKhj(NKWebKit::WtfAbi::StringBuilder* self, const unsigned char* characters, unsigned length);
+void APS5_VABI _ZN3WTF13StringBuilder22appendQuotedJSONStringERKNS_6StringE(NKWebKit::WtfAbi::StringBuilder* self, const NKWebKit::WtfAbi::String& string);
 NKWebKit::WtfAbi::ProcessPrivileges APS5_VABI _ZN3WTF13allPrivilegesEv();
 void* APS5_VABI _ZN3WTF13jsValueMallocEm(std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastCallocEmm(WTF::TryMallocReturnValue* result, std::size_t count, std::size_t size);
@@ -155,6 +180,8 @@ std::size_t APS5_VABI _ZN3WTF8pageSizeEv();
 void APS5_VABI _ZN3WTF9dataLogFVEPKcP13__va_list_tag(const char* format, void* argList);
 bool APS5_VABI _ZN3WTFeqERKNS_7CStringEPKc(const NKWebKit::WtfAbi::CString& a, const char* b);
 bool APS5_VABI _ZN3WTFeqERKNS_7CStringES2_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTFlsERNS_10TextStreamENS_7SecondsE(NKWebKit::WtfAbi::TextStream& stream, WTF::Seconds seconds);
+NKWebKit::WtfAbi::TextStream& APS5_VABI _ZN3WTFlsERNS_10TextStreamERKNS_3URLE(NKWebKit::WtfAbi::TextStream& stream, const NKWebKit::WtfAbi::URL& url);
 bool APS5_VABI _ZN3WTFltERKNS_7CStringES2_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 bool APS5_VABI _ZN7WebCore21isBackForwardLoadTypeENS_13FrameLoadTypeE(std::uint8_t type);
 bool APS5_VABI _ZN7WebCore8isReloadENS_13FrameLoadTypeE(std::uint8_t type);
@@ -198,6 +225,7 @@ std::size_t APS5_VABI _ZNK3WTF10StringView4findES0_j(const NKWebKit::WtfAbi::Str
 NKWebKit::WtfAbi::CString APS5_VABI _ZNK3WTF10StringView4utf8ENS_14ConversionModeE(const NKWebKit::WtfAbi::StringView* self, unsigned mode);
 bool APS5_VABI _ZNK3WTF10StringView8endsWithEDs(const NKWebKit::WtfAbi::StringView* self, char16_t value);
 WTF::WallTime APS5_VABI _ZNK3WTF13MonotonicTime19approximateWallTimeEv(const WTF::MonotonicTime* self);
+void APS5_VABI _ZNK3WTF13StringBuilder11reifyStringEv(const NKWebKit::WtfAbi::StringBuilder* self);
 WTF::MonotonicTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType13monotonicTimeEv(const WTF::TimeWithDynamicClockType* self);
 WTF::TimeWithDynamicClockType APS5_VABI _ZNK3WTF24TimeWithDynamicClockType16nowWithSameClockEv(const WTF::TimeWithDynamicClockType* self);
 WTF::WallTime APS5_VABI _ZNK3WTF24TimeWithDynamicClockType19approximateWallTimeEv(const WTF::TimeWithDynamicClockType* self);

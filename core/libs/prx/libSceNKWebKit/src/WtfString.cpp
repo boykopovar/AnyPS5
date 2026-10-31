@@ -462,6 +462,27 @@ template<typename T> String IntegerString(T value) {
 
 }  // namespace
 
+namespace NKWebKit::WtfAbi {
+
+StringImpl* EmptyStringImpl() {
+    return EmptyImpl();
+}
+
+StringImpl* TryCreateUninitialized(unsigned length, bool is8Bit, void*& characters) {
+    if (length > std::min<std::size_t>(MaxStringLength, (0xFFFFFFFFULL - sizeof(StringImpl)) / (is8Bit ? 1 : 2))) {
+        characters = nullptr;
+        return nullptr;
+    }
+    return NewImpl(length, is8Bit, characters);
+}
+
+String SubstringSharingImpl(const String& string, unsigned start, unsigned length) {
+    return SharedSubstring(&string, start, length);
+}
+
+}  // namespace NKWebKit::WtfAbi
+
+
 extern "C" {
 String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length) {
     return String(CopyImpl({data, length, false}));
