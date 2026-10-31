@@ -1784,25 +1784,46 @@ static_assert(sizeof(NetSockInfo6) == sizeof(NetSockInfo) && offsetof(NetSockInf
     offsetof(NetSockInfo6, recv_buffer_size) == offsetof(NetSockInfo, recv_buffer_size) && offsetof(NetSockInfo6, local_adr6) == 0x6C &&
     offsetof(NetSockInfo6, remote_adr6) == 0x7C && offsetof(NetSockInfo6, tx_drops) == offsetof(NetSockInfo, tx_drops));
 
-static int sock_buffer_size(const Sock& socket, bool send, std::int32_t& value) {
-    value = send ? socket.snd_buffer : socket.rcv_buffer;
-    if (value != 0) return 0;
-    NativeLength size = sizeof(value);
-    return ::getsockopt(socket.native->value, SOL_SOCKET, send ? SO_SNDBUF : SO_RCVBUF, reinterpret_cast<char*>(&value), &size) == 0 ? 0 : native_error();
-}
+struct SockInfoSource {
+    std::shared_ptr<void> owner;
+    NativeSocket native;
+    int family;
+    int type;
+    bool nonblock;
+    int rcv_buffer;
+    int snd_buffer;
+};
 
-static int fill_sock_info(int s, NetSockInfo& record) {
-    Sock socket;
+static bool find_sock_info_source(int s, SockInfoSource& source) {
     {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(s);
-        if (it == g_socks.end()) return NET_EBADF;
-        socket = it->second;
+        if (it != g_socks.end()) {
+            const Sock& socket = it->second;
+            source = {socket.native, socket.native->value, socket.family, socket.type, socket.native->nonblock, socket.rcv_buffer, socket.snd_buffer};
+            return true;
+        }
     }
+    KernelSocketPoll::Description kernel;
+    if (!KernelDescribeSocket_nid_no_patch(s, &kernel)) return false;
+    source = {kernel.owner, static_cast<NativeSocket>(kernel.native), kernel.family, kernel.type, kernel.nonblocking, 0, 0};
+    return true;
+}
+
+static int sock_buffer_size(const SockInfoSource& socket, bool send, std::int32_t& value) {
+    value = send ? socket.snd_buffer : socket.rcv_buffer;
+    if (value != 0) return 0;
+    NativeLength size = sizeof(value);
+    return ::getsockopt(socket.native, SOL_SOCKET, send ? SO_SNDBUF : SO_RCVBUF, reinterpret_cast<char*>(&value), &size) == 0 ? 0 : native_error();
+}
+
+static int fill_sock_info(int s, NetSockInfo& record) {
+    SockInfoSource socket;
+    if (!find_sock_info_source(s, socket)) return NET_EBADF;
     if (socket.family != NET_AF_INET) return NET_EAFNOSUPPORT;
     sockaddr_in local{};
     NativeLength length = sizeof(local);
-    if (::getsockname(socket.native->value, reinterpret_cast<sockaddr*>(&local), &length) != 0) {
+    if (::getsockname(socket.native, reinterpret_cast<sockaddr*>(&local), &length) != 0) {
 #ifdef _WIN32
         if (WSAGetLastError() != WSAEINVAL) return native_error();
 #else
@@ -1811,7 +1832,7 @@ static int fill_sock_info(int s, NetSockInfo& record) {
     }
     sockaddr_in remote{};
     length = sizeof(remote);
-    if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&remote), &length) != 0) {
+    if (::getpeername(socket.native, reinterpret_cast<sockaddr*>(&remote), &length) != 0) {
         const int error = native_error();
         if (error != NET_ENOTCONN) return error;
     }
@@ -1824,7 +1845,14 @@ static int fill_sock_info(int s, NetSockInfo& record) {
     record.remote_adr = remote.sin_addr.s_addr;
     record.local_port = local.sin_port;
     record.remote_port = remote.sin_port;
-    record.flags = NET_SOCKINFO_F_SELF | (socket.native->nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
+    record.flags = NET_SOCKINFO_F_SELF | (socket.nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
+#ifdef _WIN32
+    u_long pending = 0;
+    if (::ioctlsocket(socket.native, FIONREAD, &pending) == 0) record.recv_queue_length = static_cast<std::int32_t>(pending);
+#else
+    int pending = 0;
+    if (::ioctl(socket.native, FIONREAD, &pending) == 0) record.recv_queue_length = pending;
+#endif
     return 0;
 }
 
@@ -1832,10 +1860,19 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
     if ((flags & ~NET_SOCKINFO_TIME_WAIT) != 0) return fail(NET_EINVAL);
     std::vector<int> listed;
     if (s < 0) {
-        std::lock_guard lk(g_mutex);
-        for (const auto& [descriptor, socket] : g_socks) {
-            if (socket.family == NET_AF_INET) listed.push_back(descriptor);
+        {
+            std::lock_guard lk(g_mutex);
+            for (const auto& [descriptor, socket] : g_socks) {
+                if (socket.family == NET_AF_INET) listed.push_back(descriptor);
+            }
         }
+        std::vector<int> kernel;
+        KernelListSockets_nid_no_patch(&kernel);
+        for (const int descriptor : kernel) {
+            KernelSocketPoll::Description description;
+            if (KernelDescribeSocket_nid_no_patch(descriptor, &description) && description.family == NET_AF_INET) listed.push_back(descriptor);
+        }
+        std::sort(listed.begin(), listed.end());
     }
     if (!info) return s < 0 ? static_cast<int>(listed.size()) : fail(NET_EINVAL);
     if (n < 1) return fail(NET_EINVAL);
@@ -1858,18 +1895,19 @@ int APS5_VABI sceNetGetSockInfo(int s, void* info, int n, int flags) {
 }
 
 static int fill_sock_info6(int s, NetSockInfo6& record, bool includeIpv4) {
-    Sock socket;
+    SockInfoSource socket;
     {
         std::lock_guard lk(g_mutex);
         const auto it = g_socks.find(s);
         if (it == g_socks.end()) return NET_EBADF;
-        socket = it->second;
+        const Sock& registered = it->second;
+        socket = {registered.native, registered.native->value, registered.family, registered.type, registered.native->nonblock, registered.rcv_buffer, registered.snd_buffer};
     }
     const bool ipv6 = socket.family == NET_AF_INET6;
     if (!ipv6 && !(includeIpv4 && socket.family == NET_AF_INET)) return NET_EAFNOSUPPORT;
     sockaddr_storage local{};
     NativeLength length = sizeof(local);
-    if (::getsockname(socket.native->value, reinterpret_cast<sockaddr*>(&local), &length) != 0) {
+    if (::getsockname(socket.native, reinterpret_cast<sockaddr*>(&local), &length) != 0) {
 #ifdef _WIN32
         if (WSAGetLastError() != WSAEINVAL) return native_error();
 #else
@@ -1878,7 +1916,7 @@ static int fill_sock_info6(int s, NetSockInfo6& record, bool includeIpv4) {
     }
     sockaddr_storage remote{};
     length = sizeof(remote);
-    if (::getpeername(socket.native->value, reinterpret_cast<sockaddr*>(&remote), &length) != 0) {
+    if (::getpeername(socket.native, reinterpret_cast<sockaddr*>(&remote), &length) != 0) {
         const int error = native_error();
         if (error != NET_ENOTCONN) return error;
     }
@@ -1887,7 +1925,7 @@ static int fill_sock_info6(int s, NetSockInfo6& record, bool includeIpv4) {
     if (const int error = sock_buffer_size(socket, true, record.send_buffer_size)) return error;
     record.s = s;
     record.socket_type = static_cast<std::int8_t>(socket.type);
-    record.flags = NET_SOCKINFO_F_SELF | (socket.native->nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
+    record.flags = NET_SOCKINFO_F_SELF | (socket.nonblock ? NET_SOCKINFO_F_NONBLOCK : 0);
     if (ipv6) {
         const auto& local6 = reinterpret_cast<const sockaddr_in6&>(local);
         const auto& remote6 = reinterpret_cast<const sockaddr_in6&>(remote);
