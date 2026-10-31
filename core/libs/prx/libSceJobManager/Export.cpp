@@ -12,6 +12,7 @@
 #include "prx/libSceAgc/Acb/include/Memory.hpp"
 #include "prx/libSceAgc/Acb/include/Dispatch.hpp"
 #include "prx/libSceAgc/Acb/include/Control.hpp"
+#include <atomic>
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -277,6 +278,7 @@ struct Manager {
     std::uint32_t workerCount = 0;
     std::uint32_t sleepingWorkers = 0;
     std::uint32_t wakeTokens = 0;
+    std::atomic<std::uint32_t> workEpoch = 0;
     std::uint64_t pendingInvocations = 0;
     std::uint64_t spinTicks = 0;
     std::array<RunQueue, 2> runQueues;
@@ -300,6 +302,7 @@ static_assert(sizeof(Manager) <= StateEnd - StateOffset);
 thread_local Manager* currentWorker = nullptr;
 
 void WakeWorkers(Manager& manager, std::uint32_t invocations, bool publisherCanRun = true) {
+    manager.workEpoch.fetch_add(1, std::memory_order_release);
     const std::uint32_t available = invocations - (publisherCanRun && currentWorker == &manager ? 1u : 0u);
     manager.wakeTokens += std::min(available, manager.sleepingWorkers - manager.wakeTokens);
     if (manager.wakeTokens != 0) manager.work.notify_all();
@@ -813,6 +816,8 @@ bool RunOne(Manager& manager, std::unique_lock<std::mutex>& guard) {
     return true;
 }
 
+constexpr std::uint32_t SpinPauses = 1024;
+
 void* APS5_VABI WorkerEntry(void* argument) {
     Manager& manager = *static_cast<Manager*>(argument);
     currentWorker = &manager;
@@ -825,8 +830,9 @@ void* APS5_VABI WorkerEntry(void* argument) {
         }
         const bool spinning = manager.pendingInvocations != 0 && __rdtsc() - lastWork < manager.spinTicks;
         if (spinning || manager.sleepingWorkers >= manager.workerCount - manager.persistentThreads) {
+            const std::uint32_t epoch = manager.workEpoch.load(std::memory_order_acquire);
             guard.unlock();
-            _mm_pause();
+            for (std::uint32_t pause = 0; pause != SpinPauses && manager.workEpoch.load(std::memory_order_acquire) == epoch; ++pause) _mm_pause();
             guard.lock();
             continue;
         }
@@ -945,6 +951,7 @@ void StopManager(Manager& manager) {
     {
         const std::lock_guard guard(manager.lock);
         manager.running = false;
+        manager.workEpoch.fetch_add(1, std::memory_order_release);
         manager.work.notify_all();
     }
     while (manager.activeWorkers != 0) {
@@ -1018,7 +1025,7 @@ int Initialize(void* self, void* memory, std::uint64_t size, std::uint32_t worke
     std::unique_ptr<Manager, decltype(&DestroyManager)> owner(manager, DestroyManager);
     manager->running = true;
     manager->workerCount = workers;
-    manager->spinTicks = sceKernelGetTscFrequency() / 1000000 * settings.spinMicroseconds;
+    manager->spinTicks = HostTscFrequency_nid_no_patch() / 1000000 * settings.spinMicroseconds;
     for (std::uint32_t index = 0; index < layout.nodes; ++index) std::construct_at(&manager->nodes[index]);
     for (std::uint32_t index = layout.nodes; index > 1; --index) ReturnNode(*manager, &manager->nodes[index - 1]);
     manager->freeSequences = sequences == MaxSequences ? ~std::uint32_t{0} : (std::uint32_t{1} << sequences) - 1;
@@ -1162,6 +1169,7 @@ int APS5_VABI _ZN3sce3Job10JobManager24setPersistentThreadCountEj(void* self, st
     if (count > manager->workerCount) return ManagerInvalidArgument;
     const std::lock_guard guard(manager->lock);
     manager->persistentThreads = count;
+    manager->workEpoch.fetch_add(1, std::memory_order_release);
     return 0;
 }
 

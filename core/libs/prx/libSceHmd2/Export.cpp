@@ -1,3 +1,4 @@
+#include "prx/libSceHmd2/include/LegacyExports.hpp"
 #include "prx/libSceHmd2/include/Api.hpp"
 #include "prx/libSceHmd2/Hmd2.hpp"
 #include "Hmd2.hpp"
@@ -975,5 +976,44 @@ std::int32_t APS5_VABI Hmd2IndexZeroCheckSecondThenZero(std::uint64_t a0, const 
     return BeforeInitialize(0, __func__);
 }
 APS5_EXPORT("wiv8+7ogrq0", Hmd2IndexZeroCheckSecondThenZero);
+
+}
+
+extern "C" {
+
+int APS5_VABI hmd2LegacyUnknown_Prx62Z9TC9M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("Prx62Z9TC9M", hmd2LegacyUnknown_Prx62Z9TC9M_nid_no_patch);
+
+int APS5_VABI hmd2LegacyUnknown_ZIkYdfc5p1o_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZIkYdfc5p1o", hmd2LegacyUnknown_ZIkYdfc5p1o_nid_no_patch);
+
+int APS5_VABI hmd2LegacyUnknown_hvGZSIlA7lk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("hvGZSIlA7lk", hmd2LegacyUnknown_hvGZSIlA7lk_nid_no_patch);
+
+int APS5_VABI hmd2LegacyUnknown_mt1yhLrXOMk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mt1yhLrXOMk", hmd2LegacyUnknown_mt1yhLrXOMk_nid_no_patch);
+
+int APS5_VABI hmd2LegacyUnknown_qug_minus_eu8URpA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qug-eu8URpA", hmd2LegacyUnknown_qug_minus_eu8URpA_nid_no_patch);
+
+int APS5_VABI hmd2LegacyUnknown_rmaZr_minus_K8c_plus_s_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("rmaZr-K8c+s", hmd2LegacyUnknown_rmaZr_minus_K8c_plus_s_nid_no_patch);
+
+int APS5_VABI hmd2LegacyUnknown_y0VEHlxFQFs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("y0VEHlxFQFs", hmd2LegacyUnknown_y0VEHlxFQFs_nid_no_patch);
 
 }

@@ -229,6 +229,19 @@ class PerformanceCompareTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, r"before.jsonl:2:"):
                     performance_compare.load_summary(self.before)
 
+    def test_invalid_worker_busy_percentages_are_rejected_with_location(self):
+        for workers in (None, [], {"worker": "busy"}, {"worker": True},
+                        {"worker": -1}, {"worker": float("inf")}):
+            with self.subTest(workers=workers):
+                self.baseline["worker_busy_pct"] = workers
+                self.write(self.before, self.baseline)
+                with self.assertRaisesRegex(ValueError, r"before.jsonl:2: worker_busy_pct"):
+                    performance_compare.load_summary(self.before)
+
+    def test_worker_busy_share_above_one_hundred_remains_valid(self):
+        self.baseline["worker_busy_pct"] = {"queue worker 0x0": 125.0}
+        self.assertIs(performance_compare.validate(self.baseline), self.baseline)
+
     def test_bad_json_and_missing_file_produce_only_a_cli_error(self):
         self.write(self.after, self.candidate)
         for content in ("{bad json", "[]", "{}", '{"frame_ms": Infinity}'):
@@ -244,6 +257,23 @@ class PerformanceCompareTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_duplicate_json_fields_are_rejected_at_every_object_level(self):
+        record = json.dumps(self.baseline)
+        duplicates = (
+            (record.replace('"commit": "abc123"', '"commit": "wrong", "commit": "abc123"', 1), "commit"),
+            (record.replace('"spec": "frames 600:4"', '"spec": "seconds 0:1", "spec": "frames 600:4"', 1), "spec"),
+            (record.replace('"Driver.Packet": 12.0', '"Driver.Packet": 1.0, "Driver.Packet": 12.0', 1), "Driver.Packet"),
+        )
+        for content, field in duplicates:
+            with self.subTest(field=field):
+                self.before.write_text(content + "\n", encoding="utf-8")
+                original = self.before.read_bytes()
+                with self.assertRaises(ValueError) as raised:
+                    performance_compare.load_summary(self.before)
+                self.assertIn(f"before.jsonl:1: duplicate JSON field: {field!r}", str(raised.exception))
+                self.assertIsInstance(raised.exception.__cause__, ValueError)
+                self.assertEqual(self.before.read_bytes(), original)
 
     def test_percentage_overflow_is_an_error(self):
         self.baseline["gpu_busy_ms_per_present"] = 1e-308

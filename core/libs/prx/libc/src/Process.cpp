@@ -129,6 +129,7 @@ extern "C" void LibcSetEndFlush_nid_no_patch(void (*flush)()) {
 
 extern "C" void LibcRunEndFlush_nid_no_patch() {
     if (const auto flush = endFlush.load(std::memory_order_acquire)) flush();
+    LogFileFlush_nid_no_patch();
 }
 
 extern "C" void LibcSetExitDrain_nid_no_patch(void (*drain)()) {
@@ -229,6 +230,7 @@ void APS5_VABI exit_nid_postfix(int code) {
     LibcRunEndFlush_nid_no_patch();
     std::fprintf(stderr, "[libc] abort() called from %p\n", __builtin_return_address(0));
     std::fflush(nullptr);
+    LogFileFlush_nid_no_patch();
     std::abort();
 }
 

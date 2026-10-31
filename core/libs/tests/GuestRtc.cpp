@@ -913,6 +913,14 @@ int main(int argc, char** argv) {
         Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &pastMaximum, 3) == invalidYear);
         SetTimeZone("XXX+3");
         Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &pastMaximum, 3) == 0 && std::strcmp(precise, "9999-12-31T21:00:00.000-03:00") == 0);
+        SetTimeZone("XXX+23:59");
+        const RtcTick farthest{315537897599999999ull + 1439ull * 60000000ull}, beyond{farthest.tick + 1}, half{1ull << 63};
+        Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &farthest, 6) == 0 && std::strcmp(precise, "9999-12-31T23:59:59.999999-23:59") == 0);
+        for (const RtcTick& tick : {beyond, half, huge}) {
+            std::memset(precise, '#', sizeof(precise));
+            Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &tick, 6) == invalidYear && precise[0] == '#');
+            Require(sceRtcFormatRFC3339PreciseLocalTime(precise, &tick, 7) == invalidValue && precise[0] == '#');
+        }
         SetTimeZone("UTC0");
         Require(sceRtcCompareTick(&first, &second) == -1 && sceRtcCompareTick(&second, &first) == 1 && sceRtcCompareTick(&first, &first) == 0);
         Require(sceRtcCompareTick(nullptr, &first) == invalidPointer && sceRtcCompareTick(&first, nullptr) == invalidPointer);
