@@ -94,6 +94,25 @@ void singleDashIsPositional() {
     require(args.inputPath == "-x" && args.outputPath == "-o", "a single-dash argument was not treated as a positional");
 }
 
+void optionTerminator() {
+    const auto paths = parse({"--", "--help", "--version"});
+    require(paths.inputPath == "--help" && paths.outputPath == "--version" && !paths.showHelp && !paths.showVersion,
+        "options after the terminator were not treated as paths");
+    const auto target = parse({"--windows", "--", "unused-filter=2", "--registry"});
+    require(target.toWindows && target.inputPath == "unused-filter=2" && target.outputPath == "--registry" &&
+        target.unusedFilterLevel == 0 && !target.writeRegistry, "the terminator changed preceding options or parsed a following one");
+    const auto output = parse({"input.elf", "--", "--"});
+    require(output.inputPath == "input.elf" && output.outputPath == "--", "a second terminator was not a literal path");
+    const auto value = parse({"--rpath", "--", "input.elf", "output.elf"});
+    require(value.runPath == "--" && value.outputPath == "output.elf", "an option value ended option parsing");
+    const auto verify = parse({"--verify-patches", "p.toml", "--", "--windows"});
+    require(verify.inputPath == "--windows" && !verify.toWindows, "a verification path was recorded as an option");
+    expectUsage({"--"});
+    expectUsage({"--", "input.elf"});
+    expectThrows({"--", "", "output.elf"}, "input and output paths must be nonempty");
+    expectThrows({"--", "input.elf", "output.elf", "--help"}, "unexpected argument: --help");
+}
+
 void rpath() {
     const auto args = parse({"--rpath", "/custom/libs", "input.elf", "output.elf"});
     require(args.runPath == "/custom/libs", "--rpath value was not captured");
@@ -172,7 +191,6 @@ void unusedFilterBareWordIsUnknown() {
 
 void unknownOption() {
     expectThrows({"--nonexistent", "input.elf", "output.elf"}, "unknown option: --nonexistent");
-    expectThrows({"--", "input.elf", "output.elf"}, "unknown option: --");
 }
 
 void emptyPositionals() {
@@ -360,6 +378,7 @@ int main() {
         trapSdkSyscallStubs();
         positionalsInterleaveWithFlags();
         singleDashIsPositional();
+        optionTerminator();
         rpath();
         rpathConsumesNextTokenVerbatim();
         rpathWithoutValue();
