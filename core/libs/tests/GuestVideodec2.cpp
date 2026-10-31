@@ -1041,11 +1041,11 @@ void testConcurrentOwnership() {
 }
 
 void testParameterSetsBound() {
-    constexpr std::uint8_t Parameters[] = {
-        0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x0a, 0xac, 0xd9,
-        0x44, 0x7f, 0x97, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00, 0x10,
-        0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x22, 0x59, 0x60, 0x00,
-        0x00, 0x00, 0x01, 0x68, 0xeb, 0xe3, 0xcb, 0x22, 0xc0,
+    constexpr std::uint8_t DifferentParameters[] = {
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x0a, 0xda, 0x11,
+        0xec, 0x04, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00,
+        0x0f, 0x03, 0xc4, 0x89, 0xa8, 0x00, 0x00, 0x00, 0x01, 0x68,
+        0xce, 0x0f, 0x2c, 0x80,
     };
     const DecoderConfigInfo config{sizeof(DecoderConfigInfo), 1, CodecAvc, 1, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height), 4, 1};
     DecoderMemoryInfo memory{sizeof(DecoderMemoryInfo)};
@@ -1075,8 +1075,8 @@ void testParameterSetsBound() {
     check(sceVideodec2Decode_nid_postfix(handle, &paramInput, &frame, &output) == 0, "valid parameter unit failed");
     check(!output.isValid && !frame.isAccepted, "parameter unit produced picture");
     std::vector<std::uint8_t> largeParameters(2u * 1024u * 1024u + 1u);
-    for (std::size_t offset = 0; offset + sizeof(Parameters) <= largeParameters.size(); offset += sizeof(Parameters)) {
-        std::memcpy(largeParameters.data() + offset, Parameters, sizeof(Parameters));
+    for (std::size_t offset = 0; offset + sizeof(DifferentParameters) <= largeParameters.size(); offset += sizeof(DifferentParameters)) {
+        std::memcpy(largeParameters.data() + offset, DifferentParameters, sizeof(DifferentParameters));
     }
     const InputData largeInput{sizeof(InputData), largeParameters.data(), largeParameters.size(), 1000, 0, 0};
     bool threw = false;
@@ -1088,6 +1088,16 @@ void testParameterSetsBound() {
     check(threw, "oversized parameter unit did not throw");
     const InputData sliceInput{sizeof(InputData), first.data(), first.size(), 1001, 0, 0xa0};
     check(sceVideodec2Decode_nid_postfix(handle, &sliceInput, &frame, &output) == 0, "slice decode failed after rejected parameter unit");
+    if (!output.isValid) check(sceVideodec2Flush_nid_postfix(handle, &frame, &output) == 0, "flush failed");
+    check(output.isValid && frame.isAccepted, "slice failed to produce picture");
+    auto expected = streamRecord(DisplayOrderUnits[0]);
+    expected.sequenceParameterSetPresentFlag = 0;
+    expected.pictureParameterSetPresentFlag = 0;
+    expected.auDelimiterPresentFlag = 0;
+    expected.ptsData = 1001;
+    expected.dtsData = 0;
+    expected.attachedData = 0xa0;
+    check(avcFields(queryAvc(output)) == avcFields(expected), "AVC picture info differs from original staged state");
     check(sceVideodec2Reset_nid_postfix(handle) == 0, "reset failed");
     check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
 }
