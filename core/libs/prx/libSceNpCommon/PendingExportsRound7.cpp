@@ -1,8 +1,27 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+void copyGuest(const void* source, void* destination, std::size_t size) {
+    if (!source || !GuestCopyIn_nid_no_patch(destination, source, size))
+        throw std::runtime_error("libSceNpCommon comparison operand is unreadable");
+}
+
+void copyGuestOffset(const void* source, std::size_t offset, void* destination, std::size_t size) {
+    const auto address = reinterpret_cast<std::uintptr_t>(source);
+    if (!source || offset > UINTPTR_MAX - address)
+        throw std::runtime_error("libSceNpCommon comparison operand address is invalid");
+    copyGuest(reinterpret_cast<const void*>(address + offset), destination, size);
+}
+
+}
 
 extern "C" {
 
@@ -341,9 +360,12 @@ int APS5_VABI _ZN3sce2np6ThreadD1Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(const void* left, const void* right) {
+    std::array<std::uint8_t, 12> leftId{};
+    std::array<std::uint8_t, 12> rightId{};
+    copyGuest(left, leftId.data(), leftId.size());
+    copyGuestOffset(right, 8, rightId.data(), rightId.size());
+    return std::memcmp(leftId.data(), rightId.data(), leftId.size()) == 0;
 }
 
 int APS5_VABI _ZN3sce2np9EventFlag3SetEm(void) {
@@ -356,9 +378,12 @@ int APS5_VABI _ZNK3sce2np7RingBuf6IsFullEv(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(const void* left, const void* right) {
+    std::array<std::uint8_t, 128> leftSecret{};
+    std::array<std::uint8_t, 128> rightSecret{};
+    copyGuestOffset(left, 8, leftSecret.data(), leftSecret.size());
+    copyGuest(right, rightSecret.data(), rightSecret.size());
+    return std::memcmp(leftSecret.data(), rightSecret.data(), leftSecret.size()) != 0;
 }
 
 int APS5_VABI _ZN3sce2np9LocalFileD0Ev(void) {
