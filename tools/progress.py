@@ -12,6 +12,9 @@ tokenizer_spec = importlib.util.spec_from_file_location("anyps5_cpp_tokenizer", 
 tokenizer = importlib.util.module_from_spec(tokenizer_spec)
 tokenizer_spec.loader.exec_module(tokenizer)
 CPP_TOKEN = tokenizer.CPP_TOKEN
+origin_spec = importlib.util.spec_from_file_location("anyps5_stub_origins", Path(__file__).with_name("stub_origins.py"))
+stub_origins = importlib.util.module_from_spec(origin_spec)
+origin_spec.loader.exec_module(stub_origins)
 
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
@@ -317,6 +320,15 @@ def observed_provenance(library):
 
 def collect_libraries():
     return summarize([scan_library(p, observed_nids(p), observed_provenance(p)) for p in sorted(PRX.iterdir()) if p.is_dir()])
+
+
+def add_origins(libraries, root):
+    for group in libraries["groups"]:
+        names = set(group.get("done_names", ())) | set(group.get("todo_names", ())) | set(group.get("unobserved_names", ()))
+        if names:
+            found = stub_origins.origins(root, PRX / group["name"], names)
+            if found:
+                group["origins"] = dict(sorted(found.items()))
 
 
 def select_libraries(libraries, modules):
@@ -758,6 +770,8 @@ def main(argv=None):
                         help="print a markdown report of the changes between two progress.json files")
     parser.add_argument("--module", action="append", metavar="NAME",
                         help="limit library counts to these core/libs/prx directories; repeat to include several. Shader counts stay complete")
+    parser.add_argument("--origins", action="store_true",
+                        help="add an origin (commit and date of the declaration, from git blame) to every function of each library; needs a git work tree")
     parser.add_argument("--json", action="store_true",
                         help="print the progress.json object to stdout instead of the summary lines")
     try:
@@ -795,6 +809,10 @@ def main(argv=None):
             libraries = select_libraries(libraries, args.module or [])
         except ValueError as error:
             parser.error(str(error))
+        if args.origins:
+            if not stub_origins.available(args.root or ROOT):
+                parser.error(f"--origins needs a git work tree: {args.root or ROOT} is not one")
+            add_origins(libraries, args.root or ROOT)
         if args.output:
             try:
                 write_site(args.output, libraries, shaders)

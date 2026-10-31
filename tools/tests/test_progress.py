@@ -2,6 +2,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -257,6 +258,46 @@ class ProvenanceTagTests(unittest.TestCase):
             path = Path(directory) / "libSceExample.txt"
             path.write_text("AaAaAaAaAaA  # loader\nBbBbBbBbBbB\nAaAaAaAaAaA  # manual: later\n", encoding="utf-8")
             self.assertEqual(progress.read_provenance(path), {"AaAaAaAaAaA": "loader", "BbBbBbBbBbB": "untagged"})
+
+
+class OriginFlagTests(unittest.TestCase):
+    def make_repository(self, root):
+        library = root / "core" / "libs" / "prx" / "libSceA"
+        library.mkdir(parents=True)
+        (library / "Export.cpp").write_text("int APS5_VABI Ready() { return 0; }\nint APS5_VABI Pending() { NotImplemented_nid_no_patch(__func__); }\n", encoding="utf-8")
+        env = {**os.environ, "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": str(root),
+               "GIT_AUTHOR_DATE": "2026-02-03T12:00:00+0000", "GIT_COMMITTER_DATE": "2026-02-03T12:00:00+0000"}
+        for arguments in (["init", "-q"], ["add", "."], ["commit", "-qm", "feat: add"]):
+            subprocess.run(["git", "-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-C", str(root), *arguments],
+                           check=True, capture_output=True, env=env)
+        return subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], check=True, capture_output=True, text=True, env=env).stdout.strip()
+
+    def run_json(self, root, *flags):
+        output = io.StringIO()
+        with patch.object(progress, "collect_shaders", return_value=progress.summarize([])), patch("sys.stdout", output):
+            code = progress.main(["--root", str(root), "--json", *flags])
+        return code, output.getvalue()
+
+    def test_origins_are_added_only_when_asked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sha = self.make_repository(root)
+            plain = json.loads(self.run_json(root)[1])["libraries"]["groups"][0]
+            asked = json.loads(self.run_json(root, "--origins")[1])["libraries"]["groups"][0]
+        self.assertNotIn("origins", plain)
+        self.assertEqual(asked["origins"], {"Pending": {"commit": sha, "date": "2026-02-03"}, "Ready": {"commit": sha, "date": "2026-02-03"}})
+        self.assertEqual({key: value for key, value in asked.items() if key != "origins"}, plain)
+
+    def test_origins_need_a_git_work_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "core" / "libs" / "prx" / "libSceA").mkdir(parents=True)
+            (root / "core" / "libs" / "prx" / "libSceA" / "Export.cpp").write_text("int APS5_VABI Ready() { return 0; }\n", encoding="utf-8")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_json(root, "--origins")
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--origins needs a git work tree", stderr.getvalue())
 
 
 class ObservedTagScanTests(unittest.TestCase):
