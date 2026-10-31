@@ -225,6 +225,10 @@ bool HostSubgroupNarrowerThanWave(const SpirvEmitterState& state) {
     ctx.Fail(inst, (access + " is outside the " + std::to_string(state.hostSubgroupSize) + "-lane host subgroup that runs this wave" + std::to_string(state.program.WaveSize()) + " program at one lane per invocation").c_str());
 }
 
+bool OneLaneWave(const SpirvEmitterState& state) {
+    return HostSubgroupNarrowerThanWave(state) && HostSubgroupSingleLane(state);
+}
+
 struct WaveReduction {
     IrOpcode opcode;
     std::uint32_t identity;
@@ -580,11 +584,17 @@ public:
         return EitherOrder(test, [mask](const IrValue* word, const IrValue* zero) { return word == mask && IsU32(zero, 0u); }) && ownMask(mask, reader);
     }
 
+    bool Address(const IrValue* value) {
+        value = Resolved(value);
+        return Is(value, IrOpcode::ShiftLeftLogical32) && IsU32(value->Argument(1), 2u) && walk(value->Argument(0), LaneKind);
+    }
+
 private:
     static constexpr std::uint32_t LowKind = 0u;
     static constexpr std::uint32_t HighKind = 1u;
     static constexpr std::uint32_t OwnKind = 2u;
     static constexpr std::uint32_t NonEmptyKind = 3u;
+    static constexpr std::uint32_t LaneKind = 4u;
 
     bool ownMask(const IrValue* mask, const IrBlock* reader) {
         return walk(mask, LowKind) && nonEmpty(mask, reader, nullptr);
@@ -605,6 +615,8 @@ private:
             assumed.erase(key);
         } else if (kind == OwnKind) {
             result = exactlyOwn(value);
+        } else if (kind == LaneKind) {
+            result = lane(value);
         } else if (kind != NonEmptyKind) {
             result = ownWord(value, kind);
         }
@@ -675,6 +687,21 @@ private:
         }
     }
 
+    bool lane(const IrValue* value) {
+        if (Is(value, IrOpcode::LaneId)) return true;
+        if (Is(value, IrOpcode::BitwiseAnd32)) return walk(value->Argument(0), LaneKind) || walk(value->Argument(1), LaneKind);
+        return Is(value, IrOpcode::SelectU32) && firstActive(value);
+    }
+
+    bool firstActive(const IrValue* select) {
+        const auto* test = Resolved(select->Argument(0));
+        const IrValue* mask = nullptr;
+        if (!Is(test, IrOpcode::INotEqual32) || !EitherOrder(test, [&](const IrValue* word, const IrValue* zero) { mask = word; return IsU32(zero, 0u); }) || !walk(mask, LowKind) || !walk(select->Argument(2), LaneKind)) return false;
+        const auto first = [mask](const IrValue* value) { return Is(value, IrOpcode::FindILsb32) && Resolved(value->Argument(0)) == mask; };
+        const auto* taken = Resolved(select->Argument(1));
+        return first(taken) || (Is(taken, IrOpcode::IAdd32) && EitherOrder(taken, [&](const IrValue* base, const IrValue* found) { return first(found) && walk(base, LaneKind); }));
+    }
+
     bool ownWord(const IrValue* word, std::uint32_t half) {
         if (word->HasImmediate()) return word->Type() == IrType::U32 && (word->ImmediateU32() & (half == LowKind ? ~1u : ~0u)) == 0u;
         switch (word->Opcode()) {
@@ -686,6 +713,7 @@ private:
             case IrOpcode::BitwiseOr32:
             case IrOpcode::BitwiseXor32: return walk(word->Argument(0), half) && walk(word->Argument(1), half);
             case IrOpcode::SelectU32: return walk(word->Argument(1), half) && walk(word->Argument(2), half);
+            case IrOpcode::ShiftRightLogical32: return walk(word->Argument(0), half);
             default: return false;
         }
     }
@@ -701,6 +729,26 @@ private:
     std::set<std::pair<const IrValue*, std::uint32_t>> assumed;
     std::uint32_t budget = 4096u;
 };
+
+std::optional<std::uint32_t> DppFirstLaneSource(std::uint32_t control) {
+    if ((control & DppMoveFlags::Lanes8) != 0u) return control & 7u;
+    if (control <= 0xffu) return control & 3u;
+    if (control >= 0x101u && control <= 0x10fu) return control & 0xfu;
+    if (control >= 0x121u && control <= 0x12fu) return 16u - (control & 0xfu);
+    if (control == 0x140u) return 15u;
+    if (control == 0x141u) return 7u;
+    if (control >= 0x150u && control <= 0x16fu) return control & 0xfu;
+    return std::nullopt;
+}
+
+std::uint32_t DsSwizzleFirstLaneSource(std::uint32_t control) {
+    if ((control & 0xc000u) == 0xc000u) {
+        const std::uint32_t rotate = (control >> 5u) & 0x1fu;
+        return ((control & 0x400u) != 0u ? 32u - rotate : rotate) & ~control & 0x1fu;
+    }
+    if ((control & 0x8000u) != 0u) return control & 3u;
+    return ((control >> 5u) ^ (control >> 10u)) & 0x1fu;
+}
 
 bool RowShiftFlags(const IrValue* value, std::uint32_t control, bool zeroFill) {
     const auto flags = value->Flags<DppMoveFlags>();
@@ -1502,6 +1550,7 @@ std::uint32_t EmitDppMoveU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto flags = inst.Flags<DppMoveFlags>();
     const auto target = EmitDppTargetLane(state, flags.control);
+    if (const auto lane = DppFirstLaneSource(flags.control); OneLaneWave(state) && lane.value_or(0u) != 0u) FailOutsideHostSubgroup(ctx, inst, "DPP read of lane " + std::to_string(*lane));
     const auto shuffled = ctx.ShuffleInHalf(inst, 0, target.lane);
     if (flags.fetchInactive) {
         return EmitNative<spv::OpSelect, IrType::U32>(state, target.valid, shuffled, ConstantU32(state, 0u));
@@ -1593,6 +1642,11 @@ std::uint32_t EmitPermlane16U32(SpirvValueEmitContext& ctx, const IrValue& inst)
         if (HostSubgroupSingleLane(state) && CrossesElectedMaxScan(inst, state.program)) return ctx.Arg(inst, 0);
         FailOutsideHostSubgroup(ctx, inst, "v_permlanex16_b32 from lanes 16-31");
     }
+    if (!flags.x16 && OneLaneWave(state)) {
+        const auto* select = Resolved(inst.Argument(1));
+        if (select == nullptr || !select->HasImmediate()) FailOutsideHostSubgroup(ctx, inst, "v_permlane16_b32 of a register-selected lane");
+        if (const auto lane = select->ImmediateU32() & 15u; lane != 0u) FailOutsideHostSubgroup(ctx, inst, "v_permlane16_b32 of lane " + std::to_string(lane));
+    }
     const auto subid = EmitSubgroupLocalInvocationId(state);
     const auto row = state.module.AllocateId();
     const auto rowValue = state.module.AllocateId();
@@ -1630,6 +1684,14 @@ std::uint32_t EmitPermlane16U32(SpirvValueEmitContext& ctx, const IrValue& inst)
 
 std::uint32_t EmitBpermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
+    if (OneLaneWave(state)) {
+        const auto* address = Resolved(inst.Argument(1));
+        if (address != nullptr && address->HasImmediate()) {
+            if (const auto lane = (address->ImmediateU32() >> 2u) & 31u; lane != 0u) FailOutsideHostSubgroup(ctx, inst, "ds_bpermute_b32 of lane " + std::to_string(lane));
+        } else if (!OwnLaneSelectorWalk{state.program}.Address(address)) {
+            FailOutsideHostSubgroup(ctx, inst, "ds_bpermute_b32 of a register-selected lane");
+        }
+    }
     const auto source = ctx.Arg(inst, 0);
     const auto shifted = Binary(state, spv::OpShiftRightLogical, TypeU32(state), ctx.Arg(inst, 1), ConstantU32(state, 2u));
     const auto index = Binary(state, spv::OpBitwiseAnd, TypeU32(state), shifted, ConstantU32(state, 31u));
@@ -1661,7 +1723,9 @@ std::uint32_t EmitSwizzleU32(SpirvValueEmitContext& ctx, const IrValue& inst) {
     state.module.AddFunction(spv::OpStore, ctx.scratchU32Variable, ctx.Arg(inst, 0));
     const auto source = EmitNative<spv::OpLoad, IrType::U32>(state, ctx.scratchU32Variable);
     const IrValue* control = inst.Argument(1);
-    const auto target = EmitDsSwizzleTargetLane(state, EmitSubgroupLocalInvocationId(state), control->HasImmediate() ? control->ImmediateU32() : 0u);
+    const auto pattern = control->HasImmediate() ? control->ImmediateU32() : 0u;
+    if (const auto lane = DsSwizzleFirstLaneSource(pattern); OneLaneWave(state) && lane != 0u) FailOutsideHostSubgroup(ctx, inst, "ds_swizzle_b32 of lane " + std::to_string(lane));
+    const auto target = EmitDsSwizzleTargetLane(state, EmitSubgroupLocalInvocationId(state), pattern);
     return EmitDsMaskedLaneRead(state, source, target, ctx.Arg(inst, 2));
 }
 
