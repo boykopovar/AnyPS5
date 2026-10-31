@@ -18,6 +18,10 @@ PRX = ROOT / "core" / "libs" / "prx"
 OPCODES = ROOT / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / "RdnaDecoder" / "RdnaOpcode.hpp"
 ISA = Path(__file__).resolve().parent / "rdna_isa.txt"
 NID = re.compile(r"[A-Za-z0-9+\-]{11}")
+TAGS = ("audit", "loader", "manual")
+AUDIT_DETAIL = re.compile(r"(?:import_audit|audit_dump) \d{4}-\d{2}-\d{2}")
+TAG_COMMENT = re.compile(r"([A-Za-z][\w-]*)(?::\s*(.*))?")
+UNTAGGED = "untagged"
 OBSERVED_RELATIVE = Path("docs/dev/observed")
 OBSERVED = ROOT / OBSERVED_RELATIVE
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
@@ -185,6 +189,42 @@ def manifest_problems(text):
         seen.add(entry)
         previous = max(previous, entry)
     return problems
+
+
+def manifest_tags(text):
+    for number, line in enumerate(text.splitlines(), 1):
+        entry, _, comment = line.partition("#")
+        entry, comment = entry.strip(), comment.strip()
+        if NID.fullmatch(entry) is None:
+            continue
+        match = TAG_COMMENT.fullmatch(comment)
+        if not match or (match.group(2) is None and " " in comment):
+            yield number, entry, UNTAGGED, "", None
+            continue
+        tag, detail = match.group(1), (match.group(2) or "").strip()
+        problem = None
+        if tag not in TAGS:
+            problem = f"unknown provenance tag {tag!r}; use one of {', '.join(TAGS)}"
+        elif tag == "audit" and not AUDIT_DETAIL.fullmatch(detail):
+            problem = "audit needs the tool and the date of the run: audit: import_audit YYYY-MM-DD or audit: audit_dump YYYY-MM-DD"
+        elif tag == "manual" and not detail:
+            problem = "manual needs a written reason: manual: <reason>"
+        yield number, entry, tag, detail, problem
+
+
+def manifest_tag_problems(text):
+    return [(number, problem) for number, _, _, _, problem in manifest_tags(text) if problem]
+
+
+def manifest_untagged(text):
+    return [(number, entry) for number, entry, tag, _, _ in manifest_tags(text) if tag == UNTAGGED]
+
+
+def read_provenance(path):
+    provenance = {}
+    for _, entry, tag, _, _ in manifest_tags(path.read_text(encoding="utf-8-sig")):
+        provenance.setdefault(entry, tag)
+    return provenance
 
 
 def read_manifest(path):

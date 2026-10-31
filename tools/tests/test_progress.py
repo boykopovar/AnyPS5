@@ -232,6 +232,33 @@ class ObservedManifestTests(unittest.TestCase):
         self.assertEqual(progress.manifest_problems(""), [])
 
 
+class ProvenanceTagTests(unittest.TestCase):
+    def test_tags_are_read_with_their_details(self):
+        text = ("# header\nAaAaAaAaAaA  # audit: import_audit 2026-10-31\nBbBbBbBbBbB  # loader\n"
+                "CcCcCcCcCcC  # manual: resolved by name with sceKernelDlsym\nDdDdDdDdDdD\nEeEeEeEeEeE  # seen in a trace\n")
+        self.assertEqual([(entry, tag, detail) for _, entry, tag, detail, _ in progress.manifest_tags(text)], [
+            ("AaAaAaAaAaA", "audit", "import_audit 2026-10-31"), ("BbBbBbBbBbB", "loader", ""),
+            ("CcCcCcCcCcC", "manual", "resolved by name with sceKernelDlsym"), ("DdDdDdDdDdD", "untagged", ""),
+            ("EeEeEeEeEeE", "untagged", "")])
+        self.assertEqual(progress.manifest_tag_problems(text), [])
+        self.assertEqual(progress.manifest_untagged(text), [(5, "DdDdDdDdDdD"), (6, "EeEeEeEeEeE")])
+
+    def test_unknown_tags_and_incomplete_details_are_problems(self):
+        text = ("AaAaAaAaAaA  # evidence: by name\nBbBbBbBbBbB  # audit: some title 2026-10-31\n"
+                "CcCcCcCcCcC  # manual\nDdDdDdDdDdD  # audit: audit_dump 2026-10-31\n")
+        problems = dict(progress.manifest_tag_problems(text))
+        self.assertEqual(sorted(problems), [1, 2, 3])
+        self.assertIn("unknown provenance tag 'evidence'", problems[1])
+        self.assertIn("audit needs the tool and the date", problems[2])
+        self.assertIn("manual needs a written reason", problems[3])
+
+    def test_read_provenance_maps_each_nid_to_its_first_tag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "libSceExample.txt"
+            path.write_text("AaAaAaAaAaA  # loader\nBbBbBbBbBbB\nAaAaAaAaAaA  # manual: later\n", encoding="utf-8")
+            self.assertEqual(progress.read_provenance(path), {"AaAaAaAaAaA": "loader", "BbBbBbBbBbB": "untagged"})
+
+
 class ObservedStubTests(unittest.TestCase):
     def scan(self, source, observed=None):
         with tempfile.TemporaryDirectory() as directory:
