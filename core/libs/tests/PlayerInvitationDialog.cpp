@@ -5,7 +5,7 @@
 
 namespace {
 
-void expect(std::int32_t actual, std::int32_t expected) {
+void expect_nid_no_patch(std::int32_t actual, std::int32_t expected) {
     if (actual != expected) {
         std::abort();
     }
@@ -18,47 +18,56 @@ int main() {
     constexpr auto notInitialized = static_cast<std::int32_t>(0x80B80003u);
     constexpr auto alreadyInitialized = static_cast<std::int32_t>(0x80B80004u);
     constexpr auto notFinished = static_cast<std::int32_t>(0x80B80005u);
+    constexpr auto busy = static_cast<std::int32_t>(0x80B80008u);
     constexpr auto argNull = static_cast<std::int32_t>(0x80B8000Du);
     constexpr std::int32_t userCanceled = 1;
     ScePlayerInvitationDialogResult result{};
-    expect(scePlayerInvitationDialogGetResult(&result), notInitialized);
-    expect(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(None));
-    expect(scePlayerInvitationDialogClose(), 0);
-    expect(scePlayerInvitationDialogTerminate(), notInitialized);
-    expect(scePlayerInvitationDialogOpen(nullptr), argNull);
+    expect_nid_no_patch(scePlayerInvitationDialogGetResult(&result), notInitialized);
+    expect_nid_no_patch(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(None));
+    expect_nid_no_patch(scePlayerInvitationDialogClose(), 0);
+    expect_nid_no_patch(scePlayerInvitationDialogTerminate(), notInitialized);
+    expect_nid_no_patch(scePlayerInvitationDialogOpen(nullptr), argNull);
 
-    expect(scePlayerInvitationDialogInitialize(), 0);
-    expect(scePlayerInvitationDialogInitialize(), alreadyInitialized);
-    expect(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Initialized));
-    expect(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Initialized));
-    expect(scePlayerInvitationDialogGetResult(nullptr), argNull);
-    expect(scePlayerInvitationDialogGetResult(&result), notFinished);
+    expect_nid_no_patch(scePlayerInvitationDialogInitialize(), 0);
+    expect_nid_no_patch(scePlayerInvitationDialogInitialize(), alreadyInitialized);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Initialized));
+    expect_nid_no_patch(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Initialized));
+    expect_nid_no_patch(scePlayerInvitationDialogGetResult(nullptr), argNull);
+    expect_nid_no_patch(scePlayerInvitationDialogGetResult(&result), notFinished);
 
     ScePlayerInvitationDialogParam param{};
-    expect(scePlayerInvitationDialogOpen(nullptr), argNull);
-    expect(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Initialized));
-    expect(scePlayerInvitationDialogOpen(&param), 0);
-    expect(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Running));
-    expect(scePlayerInvitationDialogGetResult(&result), notFinished);
-    expect(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Finished));
+    expect_nid_no_patch(scePlayerInvitationDialogOpen(nullptr), argNull);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Initialized));
+    expect_nid_no_patch(scePlayerInvitationDialogOpen(&param), 0);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Running));
+    expect_nid_no_patch(scePlayerInvitationDialogOpen(&param), busy);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Running));
+    expect_nid_no_patch(scePlayerInvitationDialogOpen(nullptr), argNull);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Running));
+    expect_nid_no_patch(scePlayerInvitationDialogGetResult(&result), notFinished);
+    expect_nid_no_patch(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Finished));
     std::memset(&result, 0xFF, sizeof(result));
-    expect(scePlayerInvitationDialogGetResult(&result), 0);
-    expect(result.errorCode, 0);
-    expect(result.result, userCanceled);
-    for (const std::uint8_t byte : result.reserved) expect(byte, 0);
-    expect(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Finished));
-    expect(scePlayerInvitationDialogOpen(nullptr), argNull);
-    expect(scePlayerInvitationDialogClose(), 0);
-    expect(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Finished));
-    expect(scePlayerInvitationDialogTerminate(), 0);
-    expect(scePlayerInvitationDialogTerminate(), notInitialized);
-    expect(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(None));
-    expect(scePlayerInvitationDialogGetResult(&result), notInitialized);
+    expect_nid_no_patch(scePlayerInvitationDialogGetResult(&result), 0);
+    expect_nid_no_patch(result.errorCode, 0);
+    expect_nid_no_patch(result.result, userCanceled);
+    for (const std::uint8_t byte : result.reserved) expect_nid_no_patch(byte, 0);
+    expect_nid_no_patch(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Finished));
+    expect_nid_no_patch(scePlayerInvitationDialogOpen(nullptr), argNull);
+    expect_nid_no_patch(scePlayerInvitationDialogClose(), 0);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Finished));
+    expect_nid_no_patch(scePlayerInvitationDialogOpen(&param), 0);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Running));
+    expect_nid_no_patch(scePlayerInvitationDialogClose(), 0);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Finished));
+    expect_nid_no_patch(scePlayerInvitationDialogTerminate(), 0);
+    expect_nid_no_patch(scePlayerInvitationDialogTerminate(), notInitialized);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(None));
+    expect_nid_no_patch(scePlayerInvitationDialogGetResult(&result), notInitialized);
 
-    expect(scePlayerInvitationDialogOpen(&param), notInitialized);
-    expect(scePlayerInvitationDialogInitialize(), 0);
-    expect(scePlayerInvitationDialogOpen(&param), 0);
-    expect(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Running));
-    expect(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Finished));
-    expect(scePlayerInvitationDialogTerminate(), 0);
+    expect_nid_no_patch(scePlayerInvitationDialogOpen(&param), notInitialized);
+    expect_nid_no_patch(scePlayerInvitationDialogInitialize(), 0);
+    expect_nid_no_patch(scePlayerInvitationDialogOpen(&param), 0);
+    expect_nid_no_patch(scePlayerInvitationDialogGetStatus(), static_cast<std::int32_t>(Running));
+    expect_nid_no_patch(scePlayerInvitationDialogUpdateStatus(), static_cast<std::int32_t>(Finished));
+    expect_nid_no_patch(scePlayerInvitationDialogTerminate(), 0);
 }
