@@ -209,6 +209,7 @@ std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, s
 bool SyncLeaseWork();
 void CountLeaseOutcome(bool synced, std::uint64_t batchSerial);
 void FinishLeaseWork();
+bool LeaseWorkPending();
 struct LeaseStats {
     std::uint64_t deferred = 0;
     std::uint64_t synced = 0;

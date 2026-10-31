@@ -261,6 +261,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_EXACT_ROBUST_LOADS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | keeps the descriptor-range comparison in direct buffer loads on a device that zeroes past the range |
 | `APS5_NO_FAST_REVALIDATE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | always repeats the resource lookups instead of using the fast proof |
 | `APS5_NO_FILL_CLEAR` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferFill.cpp` |  | disables the clear-through-DCC-keys path in a fill |
+| `APS5_NO_FILL_ELISION` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | records every buffer fill, also a repeat of the last fill of the same range with the same pattern over bytes unchanged since |
 | `APS5_NO_FILL_HLE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferFill.cpp` |  | disables the fill-kernel HLE, so matching fills run as compute |
 | `APS5_NO_FLUSH_PRETEST` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | lists every pending image on FlushPending instead of testing whether a pending unit lies inside the range |
 | `APS5_NO_FOREIGN_WRITERS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/WriteEvidence.cpp` |  | records no draw-written ranges as foreign writers for capture validation |

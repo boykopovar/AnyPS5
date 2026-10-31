@@ -528,6 +528,14 @@ struct VulkanDevice::State {
     // Device-local buffers of a repeated 16-byte fill pattern (FillBuffer), most recently used
     // last; each is filled once by a doubling chain in device memory.
     std::vector<std::pair<std::array<std::uint32_t, 4>, std::shared_ptr<Graphics::DeviceBuffer>>> patternBuffers;
+    struct RepeatedFill {
+        std::size_t bytes = 0;
+        std::array<std::uint32_t, 4> pattern{};
+        std::uint64_t generation = 0;
+        std::uint64_t importSerial = 0;
+        std::uint64_t unwatchSerial = 0;
+    };
+    std::unordered_map<std::uint64_t, RepeatedFill> repeatedFills;
     VkDescriptorSetLayout workgroupMemoryLayout = VK_NULL_HANDLE;
     std::shared_ptr<WorkgroupMemory> workgroupMemory;
     // Compute pipeline objects by variant (and push-constant use), under their own mutex: the
@@ -951,6 +959,7 @@ struct VulkanDevice::State {
             Graphics::ClearImageMirrors(device);
             Graphics::ClearHostImports(device);
             patternBuffers.clear();
+            repeatedFills.clear();
             workgroupMemory.reset();
             if (workgroupMemoryLayout != VK_NULL_HANDLE) reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(deviceProc(device, "vkDestroyDescriptorSetLayout"))(device, workgroupMemoryLayout, nullptr);
             descriptorCache.reset();
@@ -2732,7 +2741,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     // chain), notes (the pending-write note and the write stamp); fills by uniform dword vs
     // 16-byte pattern, with the pattern fills' doubling steps.
     static double decideMs = 0, recordMs = 0, notesMs = 0;
-    static std::uint64_t uniformFills = 0, patternFills = 0, doublingSteps = 0, patternBuffersReused = 0, patternBuffersMade = 0;
+    static std::uint64_t uniformFills = 0, patternFills = 0, doublingSteps = 0, patternBuffersReused = 0, patternBuffersMade = 0, elidedFills = 0, elidedBytes = 0;
     static auto lastReport = std::chrono::steady_clock::now();
     // A 16-byte pattern is copied from a device-local buffer holding it repeated (filled once by a
     // doubling chain in device memory, cached per pattern), one transfer into the import per fill.
@@ -2770,7 +2779,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
         const auto now = std::chrono::steady_clock::now();
         if (now - lastReport > std::chrono::seconds(10)) {
             lastReport = now;
-            AgcDriver::ProfilePrint_nid_no_patch("[fill-sync] fills (cumulative): %llu synced (%llu with a completion label pending) waited %.0f ms, %llu ordered by barrier, %llu with no pending write; phases ms: decide %.0f record %.0f notes %.0f; %llu uniform, %llu pattern (%llu doubling steps in place; pattern buffers reused %llu, made %llu)\n", static_cast<unsigned long long>(synced), static_cast<unsigned long long>(labelSynced), syncedMs, static_cast<unsigned long long>(ordered), static_cast<unsigned long long>(fills - synced - ordered), decideMs, recordMs, notesMs, static_cast<unsigned long long>(uniformFills), static_cast<unsigned long long>(patternFills), static_cast<unsigned long long>(doublingSteps), static_cast<unsigned long long>(patternBuffersReused), static_cast<unsigned long long>(patternBuffersMade));
+            AgcDriver::ProfilePrint_nid_no_patch("[fill-sync] fills (cumulative): %llu synced (%llu with a completion label pending) waited %.0f ms, %llu ordered by barrier, %llu with no pending write; phases ms: decide %.0f record %.0f notes %.0f; %llu uniform, %llu pattern (%llu doubling steps in place; pattern buffers reused %llu, made %llu); %llu repeated fills elided (%.0f MiB)\n", static_cast<unsigned long long>(synced), static_cast<unsigned long long>(labelSynced), syncedMs, static_cast<unsigned long long>(ordered), static_cast<unsigned long long>(fills - synced - ordered), decideMs, recordMs, notesMs, static_cast<unsigned long long>(uniformFills), static_cast<unsigned long long>(patternFills), static_cast<unsigned long long>(doublingSteps), static_cast<unsigned long long>(patternBuffersReused), static_cast<unsigned long long>(patternBuffersMade), static_cast<unsigned long long>(elidedFills), static_cast<double>(elidedBytes) / 1048576.0);
         }
     }
     auto phaseStart = fillStart;
@@ -2786,6 +2795,19 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     recorder.FlushKeyStoresOverlapping(address, bytes);
     const bool uniform = pattern[0] == pattern[1] && pattern[1] == pattern[2] && pattern[2] == pattern[3];
     const std::array<std::uint32_t, 4> patternWords{pattern[0], pattern[1], pattern[2], pattern[3]};
+    static const bool elideRepeats = std::getenv("APS5_NO_FILL_ELISION") == nullptr;
+    const auto importSerial = elideRepeats ? Graphics::HostImportSerial(context, address, bytes, false) : 0;
+    const auto unwatchSerial = GuestMemory::UnwatchSerial();
+    if (elideRepeats) {
+        const auto found = state->repeatedFills.find(address);
+        if (found != state->repeatedFills.end() && found->second.bytes == bytes && found->second.pattern == patternWords && found->second.importSerial == importSerial && found->second.unwatchSerial == unwatchSerial && !Graphics::LeaseWorkPending() && GuestMemory::CollectWritesUncached(address, bytes) != 0 && GuestMemory::UnchangedSince(address, bytes, found->second.generation)) {
+            ++elidedFills;
+            elidedBytes += bytes;
+            found->second.generation = GuestMemory::MarkWritten(address, bytes);
+            phase(notesMs);
+            return true;
+        }
+    }
     std::shared_ptr<Graphics::DeviceBuffer> patternBuffer;
     if (!uniform && !chainInPlace) {
         auto& buffers = state->patternBuffers;
@@ -2874,7 +2896,12 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     phase(recordMs);
     if (uniform) recorder.NotePendingWordFill(address, bytes, pattern[0]);
     else recorder.NotePendingWrite(address, bytes);
-    GuestMemory::MarkWritten(address, bytes);
+    const auto generation = GuestMemory::MarkWritten(address, bytes);
+    if (elideRepeats && generation != 0) {
+        constexpr std::size_t RepeatedFillsKept = 256;
+        if (state->repeatedFills.size() >= RepeatedFillsKept && !state->repeatedFills.contains(address)) state->repeatedFills.clear();
+        state->repeatedFills[address] = {bytes, patternWords, generation, importSerial, unwatchSerial};
+    }
     phase(notesMs);
     return true;
 }

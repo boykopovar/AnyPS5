@@ -3641,6 +3641,13 @@ void FinishLeaseWork() {
     recorder->FinishUpTo(target);
 }
 
+bool LeaseWorkPending() {
+    GuestMemory::AssertGpuLockHeld("LeaseWorkPending");
+    const auto& state = Leases();
+    const auto* recorder = Recorder::Active();
+    return recorder != nullptr && recorder == state.leaseRecorder && state.newestLeaseSerial > recorder->CompletedThrough();
+}
+
 LeaseStats LeaseCounters() {
     auto& state = Leases();
     std::lock_guard lock(state.mutex);
