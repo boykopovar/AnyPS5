@@ -134,6 +134,9 @@ struct TextureCache {
     std::list<CachedTexture> entries;
     std::unordered_map<TextureKey, std::list<CachedTexture>::iterator, TextureKeyHash> index;
     std::unordered_multimap<const StorageTexture*, std::list<CachedTexture>::iterator> views;
+    std::unordered_map<TextureKey, CachedTexture, TextureKeyHash> transient;
+    std::uint64_t transientPresent = 0;
+    std::uint64_t transientBytes = 0;
     std::vector<std::pair<std::vector<std::byte>, std::uint64_t>> spare;
     std::uint64_t spareBytes = 0;
     std::uint64_t bytes = 0;
@@ -147,6 +150,7 @@ struct TextureCache {
         std::uint64_t evicted = 0;
         std::uint64_t passed = 0;
         std::uint64_t stale = 0;
+        std::uint64_t transientHits = 0;
     } counts;
     std::chrono::steady_clock::time_point countsReported = std::chrono::steady_clock::now();
     VkPhysicalDevice budgetDevice = VK_NULL_HANDLE;
@@ -241,6 +245,30 @@ void eraseTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
     ++cache.erasures;
 }
 
+void dropTransient(TextureCache& cache, VkDevice device = VK_NULL_HANDLE) {
+    for (auto it = cache.transient.begin(); it != cache.transient.end();) {
+        if (device != VK_NULL_HANDLE && it->first.device != device) {
+            ++it;
+            continue;
+        }
+        cache.transientBytes -= it->second.bytes.size();
+        if (it->second.texture.use_count() > 1) noteReleased(it->second.texture);
+        it = cache.transient.erase(it);
+    }
+}
+
+void dropTransientBefore(TextureCache& cache, std::uint64_t present) {
+    for (auto it = cache.transient.begin(); it != cache.transient.end();) {
+        if (it->second.present >= present) {
+            ++it;
+            continue;
+        }
+        cache.transientBytes -= it->second.bytes.size();
+        if (it->second.texture.use_count() > 1) noteReleased(it->second.texture);
+        it = cache.transient.erase(it);
+    }
+}
+
 void dropUncachedViews(TextureCache& cache) {
     auto& uncached = Uncached();
     if (!uncached.any.load(std::memory_order_acquire)) return;
@@ -264,6 +292,7 @@ void touchTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
 }
 
 constexpr std::uint64_t SpareSnapshotBytes = 256ull << 20;
+constexpr std::uint64_t TransientSnapshotBytes = 256ull << 20;
 
 void parkSnapshot(TextureCache& cache, std::vector<std::byte>& bytes) {
     const auto size = bytes.size();
@@ -938,57 +967,85 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     std::lock_guard lock(cache.mutex);
     const CacheHold held(sampledCacheHeld);
     dropUncachedViews(cache);
-    std::vector<std::byte> recycled;
-    if (auto it = findTexture(cache, key); it != cache.entries.end()) {
-        if (it->source != nullptr) {
+    if (const auto present = Recorder::Presents(); cache.transientPresent != present) {
+        dropTransientBefore(cache, cache.transientPresent);
+        cache.transientPresent = present;
+    }
+    const auto serves = [&](CachedTexture& entry, bool transient) {
+        if (entry.source != nullptr) {
             // The view follows the storage image, whatever the GPU wrote to it since; guest memory
             // written meanwhile is taken in by refreshing the image. A fast clear the image cannot
             // see (keys, and no pending results to prefer) ends the view: a snapshot holds the clear.
-            if (!stagedFlushed && (source == nullptr || source == it->source) && (source != nullptr || *keys == DccKeys::Uncompressed) && StorageImageServesKeys(*it->source, resource.dccAddress)) {
-                if (!GuestMemory::UnchangedSince(address, bytes, it->source->GenerationFor(address, bytes))) refreshForView(*it->source, resource);
-                if (it->texture->IsDepthCopy()) it->texture->RefreshDepthCopy();
-                it->keys = *keys;
-                touchTexture(cache, it);
-                logLookup({it->texture.get(), resource, guestBytes, *keys, 0, it->source.get()});
-                reportTextureCounters();
-                if (profile) LookupOutcomes::Add(*keys != DccKeys::Uncompressed ? LookupOutcomes::SampledHitClearedView : LookupOutcomes::SampledHitView, start);
-                return it->texture;
-            }
-        } else if (source == nullptr && it->surfaceBytes == guestBytes && it->keys == *keys) {
-            // Unwritten pages need no comparison; partially resident textures compare only committed
-            // pages. The compare goes through the flush hook: it waits for recorded work over the
-            // surface (counted, and named for the [hooksync] line).
-            const auto equalsCommitted = [&] {
-                if (it->bytes.empty()) return false;
-                if (Recorder::SnapshotWriteOverlaps(address, bytes)) counters.pendingReads.fetch_add(1, std::memory_order_relaxed);
-                const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureCompare);
-                return GuestMemory::EqualsCommitted(address, it->bytes);
-            };
-            const auto unchanged = [&] {
-                if (it->committed != committed) return false;
-                return committed.has_value() ? !Recorder::SnapshotWriteOverlaps(address, static_cast<std::size_t>(it->surfaceBytes)) && GuestMemory::UnchangedCommittedSince(*committed, it->generation) : GuestMemory::UnchangedSince(address, static_cast<std::size_t>(it->surfaceBytes), it->generation);
-            };
-            const auto kept = [&] {
-                if (untracked[0] == 0) return false;
-                const bool same = it->untracked == untracked && !Recorder::SnapshotWriteOverlaps(address, bytes);
-                (same ? counters.untrackedKept : counters.untrackedCompared).fetch_add(1, std::memory_order_relaxed);
-                return same;
-            };
-            if ((*keys != DccKeys::Uncompressed && *keys != DccKeys::ClearSingle) || unchanged() || kept() || equalsCommitted()) {
-                it->generation = snapshotGeneration;
-                it->committed = std::move(committed);
-                it->untracked = untracked;
-                touchTexture(cache, it);
-                logLookup({it->texture.get(), resource, guestBytes, *keys, generation, nullptr});
-                reportTextureCounters();
-                if (profile) LookupOutcomes::Add(LookupOutcomes::SampledHitSnapshot, start);
-                return it->texture;
-            }
+            if (stagedFlushed || (source != nullptr && source != entry.source) || (source == nullptr && *keys != DccKeys::Uncompressed) || !StorageImageServesKeys(*entry.source, resource.dccAddress)) return false;
+            if (transient && !entry.source->Cached()) return false;
+            if (!GuestMemory::UnchangedSince(address, bytes, entry.source->GenerationFor(address, bytes))) refreshForView(*entry.source, resource);
+            if (entry.texture->IsDepthCopy()) entry.texture->RefreshDepthCopy();
+            entry.keys = *keys;
+            logLookup({entry.texture.get(), resource, guestBytes, *keys, 0, entry.source.get()});
+            reportTextureCounters();
+            if (profile) LookupOutcomes::Add(*keys != DccKeys::Uncompressed ? LookupOutcomes::SampledHitClearedView : LookupOutcomes::SampledHitView, start);
+            return true;
+        }
+        if (source != nullptr || entry.surfaceBytes != guestBytes || entry.keys != *keys) return false;
+        const auto equalsCommitted = [&] {
+            if (entry.bytes.empty()) return false;
+            if (Recorder::SnapshotWriteOverlaps(address, bytes)) counters.pendingReads.fetch_add(1, std::memory_order_relaxed);
+            const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureCompare);
+            return GuestMemory::EqualsCommitted(address, entry.bytes);
+        };
+        const auto unchanged = [&] {
+            if (entry.committed != committed) return false;
+            return committed.has_value() ? !Recorder::SnapshotWriteOverlaps(address, static_cast<std::size_t>(entry.surfaceBytes)) && GuestMemory::UnchangedCommittedSince(*committed, entry.generation) : GuestMemory::UnchangedSince(address, static_cast<std::size_t>(entry.surfaceBytes), entry.generation);
+        };
+        const auto kept = [&] {
+            if (untracked[0] == 0) return false;
+            const bool same = entry.untracked == untracked && !Recorder::SnapshotWriteOverlaps(address, bytes);
+            (same ? counters.untrackedKept : counters.untrackedCompared).fetch_add(1, std::memory_order_relaxed);
+            return same;
+        };
+        if (!((*keys != DccKeys::Uncompressed && *keys != DccKeys::ClearSingle) || unchanged() || kept() || equalsCommitted())) return false;
+        entry.generation = snapshotGeneration;
+        entry.committed = std::move(committed);
+        entry.untracked = untracked;
+        logLookup({entry.texture.get(), resource, guestBytes, *keys, generation, nullptr});
+        reportTextureCounters();
+        if (profile) LookupOutcomes::Add(LookupOutcomes::SampledHitSnapshot, start);
+        return true;
+    };
+    std::vector<std::byte> recycled;
+    if (auto it = findTexture(cache, key); it != cache.entries.end()) {
+        if (serves(*it, false)) {
+            touchTexture(cache, it);
+            return it->texture;
         }
         if (it->bytes.size() == bytes) recycled = std::move(it->bytes);
         else parkSnapshot(cache, it->bytes);
         eraseTexture(cache, it);
         ++cache.counts.stale;
+    }
+    if (const auto found = cache.transient.find(key); found != cache.transient.end()) {
+        if (serves(found->second, true)) {
+            ++cache.counts.transientHits;
+            auto texture = found->second.texture;
+            if (admitTexture(cache, key, found->second.accounted, sampledBudget(context, cache))) {
+                auto entry = std::move(found->second);
+                cache.transientBytes -= entry.bytes.size();
+                cache.transient.erase(found);
+                cache.bytes += entry.accounted;
+                entry.present = Recorder::Presents();
+                ++cache.counts.inserted;
+                const auto* viewed = entry.source.get();
+                cache.entries.push_front(std::move(entry));
+                cache.index[key] = cache.entries.begin();
+                if (viewed != nullptr) cache.views.emplace(viewed, cache.entries.begin());
+            } else {
+                found->second.present = Recorder::Presents();
+            }
+            return texture;
+        }
+        cache.transientBytes -= found->second.bytes.size();
+        if (found->second.texture.use_count() > 1) noteReleased(found->second.texture);
+        cache.transient.erase(found);
     }
     if (source != nullptr) parkSnapshot(cache, recycled);
     else if (recycled.empty()) recycled = spareSnapshot(cache, bytes);
@@ -1040,11 +1097,14 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     const auto budget = sampledBudget(context, cache);
     auto texture = entry.texture;
     if (!admitTexture(cache, key, entry.accounted, budget)) {
-        noteReleased(texture);
         logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
         reportCacheCounts(cache, budget);
         reportTextureCounters();
         if (profile) LookupOutcomes::Add(source != nullptr ? LookupOutcomes::SampledMadeView : LookupOutcomes::SampledMadeSnapshot, start);
+        if (cache.transientBytes + entry.bytes.size() > TransientSnapshotBytes) parkSnapshot(cache, entry.bytes);
+        cache.transientBytes += entry.bytes.size();
+        entry.present = Recorder::Presents();
+        cache.transient.insert_or_assign(key, std::move(entry));
         return texture;
     }
     cache.bytes += entry.accounted;
@@ -1402,6 +1462,7 @@ void ClearCachedTextures(VkDevice device) {
             if (it->key.device == device) eraseTexture(sampled, it++);
             else ++it;
         }
+        dropTransient(sampled, device);
         sampled.spare.clear();
         sampled.spareBytes = 0;
     }
@@ -1457,6 +1518,16 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         if ((inherited && (!newImage || sampledCacheReclaimable == 0)) || (!inherited && !lock.try_lock())) {
             sampledSkipped = true;
         } else {
+            for (auto it = cache.transient.begin(); it != cache.transient.end() && freed < bytes;) {
+                if (it->second.texture.use_count() != 1) {
+                    ++it;
+                    continue;
+                }
+                freed += it->second.texture->AllocationBytes();
+                ++sampledEntries;
+                cache.transientBytes -= it->second.bytes.size();
+                it = cache.transient.erase(it);
+            }
             for (auto it = cache.entries.end(); it != cache.entries.begin() && freed < bytes;) {
                 --it;
                 if (it->texture.use_count() != 1 || (it->source != nullptr && it->source->Dirty())) continue;

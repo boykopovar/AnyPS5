@@ -886,22 +886,22 @@ void frameTests(const Context& context) {
     std::vector<std::weak_ptr<Texture>> made(frame);
     for (std::size_t surface = 0; surface < frame; ++surface) made[surface] = Sampled(context, block.Surface(surface));
     Require(TextureCacheUsage().sampledEntries == capacity, "a frame of " + std::to_string(frame) + " textures left " + std::to_string(TextureCacheUsage().sampledEntries) + " cached, not the " + std::to_string(capacity) + " the budget holds");
-    for (std::size_t surface = capacity; surface < frame; ++surface) Require(made[surface].expired(), "surface " + std::to_string(surface) + ", used once in a frame whose textures fill the cache, was cached in place of an earlier one");
+    for (std::size_t surface = capacity; surface < frame; ++surface) Require(!made[surface].expired(), "surface " + std::to_string(surface) + ", refused by a cache full of this frame's textures, was not kept for the rest of the frame");
     Recorder::CountPresent();
     std::size_t hits = 0;
     for (std::size_t surface = 0; surface < frame; ++surface) {
         const auto again = Sampled(context, block.Surface(surface));
         hits += again == made[surface].lock();
     }
-    Require(hits == capacity, "the next frame over the same " + std::to_string(frame) + " textures found " + std::to_string(hits) + " of them cached, not the " + std::to_string(capacity) + " the cache kept");
+    Require(hits == frame, "the next frame over the same " + std::to_string(frame) + " textures found " + std::to_string(hits) + " of them, not the " + std::to_string(capacity) + " the cache kept and the " + std::to_string(frame - capacity) + " it refused in the frame before");
     auto refused = Sampled(context, block.Surface(frame - 1u));
-    Require(Sampled(context, block.Surface(frame - 1u)) != refused, "a texture used a second time in the frame was cached in place of one of the frame's textures");
+    Require(Sampled(context, block.Surface(frame - 1u)) == refused, "a texture refused by a cache full of this frame's textures was rebuilt on its second use in the frame");
     Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "the texture used a second time left the cache over its budget");
     refused.reset();
     Recorder::CountPresent();
     std::vector<std::weak_ptr<Texture>> moved(frame);
     for (std::size_t surface = 0; surface < frame; ++surface) moved[surface] = Sampled(context, block.Surface(frame + surface));
-    for (std::size_t surface = 0; surface < frame; ++surface) Require(moved[surface].expired(), "surface " + std::to_string(frame + surface) + ", first used in the frame after the cached textures were, was cached in place of one of them");
+    for (std::size_t surface = 0; surface < frame; ++surface) Require(!moved[surface].expired(), "surface " + std::to_string(frame + surface) + ", first used in the frame after the cached textures were, was not kept for the rest of the frame");
     Require(TextureCacheUsage().sampledEntries == capacity, "a frame over other textures left " + std::to_string(TextureCacheUsage().sampledEntries) + " of the previous frame's textures cached");
     Recorder::CountPresent();
     for (std::size_t surface = 0; surface < frame; ++surface) moved[surface] = Sampled(context, block.Surface(frame + surface));
@@ -968,10 +968,43 @@ void secondUseTests(const Context& context) {
     for (std::size_t surface = 1; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
     Recorder::CountPresent();
     auto first = Sampled(context, block.Surface(capacity));
-    Require(TextureCacheUsage().sampledEntries == capacity && first.use_count() == 1, "the first use in a frame of a texture the cache does not hold was cached in place of one the last frame used");
+    Require(TextureCacheUsage().sampledEntries == capacity, "the first use in a frame of a texture the cache does not hold was cached in place of one the last frame used");
     const auto second = Sampled(context, block.Surface(capacity));
+    Require(second == first, "the second use in a frame of a texture refused on its first use rebuilt it");
     Require(Sampled(context, block.Surface(capacity)) == second, "a texture used a second time in a frame whose least recently used entry is from the last frame was not cached");
     Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "the texture admitted on its second use left the cache over its budget");
+}
+
+void refusedReuseTests(const Context& context) {
+    Block block(context);
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, block.Surface(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u && capacity + 1u < Surfaces && TextureCacheUsage().sampledEntries == 1u, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    for (std::size_t surface = 1; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    Recorder::CountPresent();
+    for (std::size_t surface = 0; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    const auto address = block.Surface(capacity);
+    const auto refused = Sampled(context, address);
+    Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "a texture refused by a cache full of this frame's textures took the cache over its budget");
+    for (std::size_t use = 1; use <= 4u; ++use) Require(Sampled(context, address) == refused, "use " + std::to_string(use) + " in the same frame rebuilt a texture the full cache refused");
+    Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "reusing a refused texture took the cache over its budget");
+    std::memset(reinterpret_cast<void*>(address), 0x3c, SurfaceBytes);
+    const auto changed = Sampled(context, address);
+    Require(changed != refused, "a refused texture was reused after its guest memory changed in the same frame");
+    Require(Sampled(context, address) == changed, "the texture rebuilt after a guest write was not reused for the rest of the frame");
+    Recorder::CountPresent();
+    for (std::size_t surface = 0; surface < capacity; ++surface) Sampled(context, block.Surface(surface));
+    Require(Sampled(context, address) == changed, "a refused texture the next frame used again was rebuilt");
+    Require(TextureCacheUsage().sampledEntries == capacity && TextureCacheUsage().sampledBytes <= Budget, "a refused texture reused in the next frame took the cache over its budget");
+    Recorder::CountPresent();
+    Sampled(context, block.Surface(0));
+    Require(!changed->Released(), "a refused texture used in the frame that just ended was released at its present");
+    Recorder::CountPresent();
+    Sampled(context, block.Surface(0));
+    Require(changed->Released(), "a refused texture no frame used since was not marked released when the next frame ended");
+    ClearCachedTextures(context.device);
 }
 
 void earlyMissTests(const Context& context) {
@@ -1407,6 +1440,7 @@ int main(int argc, char** argv) {
             frameTests(context);
             shrinkTests(context);
             secondUseTests(context);
+            refusedReuseTests(context);
             earlyMissTests(context);
             collidingKeyTests(context);
             spareAgeTests(context);
