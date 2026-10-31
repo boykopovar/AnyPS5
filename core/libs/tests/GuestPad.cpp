@@ -537,7 +537,10 @@ static void CheckTrackerDevices(int handle) {
         Require(!scePadIsDS4Connected(candidate));
         Require(!scePadIsBlasterConnected(candidate));
         Require(!scePadIsMoveConnected(candidate));
+        Require(scePadIsMoveReproductionModel(candidate) == 0);
     }
+    Require(scePadSetTriggerEffectStrength(handle + 1, 0) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetTriggerEffectStrength(handle, 100) == PAD_OK);
 }
 
 static void CheckSystemRemote(int handle) {

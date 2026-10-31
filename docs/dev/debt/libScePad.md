@@ -23,7 +23,8 @@
 ### Silent stubs
 
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
-- [scePadSetLightBarBaseBrightness, scePadDisableTriggerEffect](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - return success for known handles without changing hardware states. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op.
+- [scePadSetLightBarBaseBrightness, scePadDisableTriggerEffect, scePadSetTriggerEffectStrength](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - return success for known handles without changing hardware states. `scePadIsLightBarBaseBrightnessControllable` reports 1 while the modifier is a no-op. Strength is not modeled.
+- [scePadIsMoveReproductionModel](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - returns 0 for any handle, as `scePadIsMoveConnected` reports no Move hardware behind a handle.
 
 ### Unknown function info
 
