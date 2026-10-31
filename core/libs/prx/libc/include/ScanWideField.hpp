@@ -6,9 +6,10 @@
 
 namespace LibcDetail {
 
+std::size_t WideScanCharacterLength(unsigned char lead);
 std::size_t ReadWideScanCharacter(const char* text, char32_t* point);
 bool InWideScanset(const std::string& specifier, char32_t point);
-void RequireNoPositionalWideScan(const char* format);
+void RejectPositionalScan(const char* what);
 
 }
 
