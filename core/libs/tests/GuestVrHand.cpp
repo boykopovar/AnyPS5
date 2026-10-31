@@ -3,10 +3,22 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
+
+template <typename TCall>
+bool ReportsNotImplemented(const char* name, TCall call) {
+    try {
+        call();
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()) == std::string(name) + " not implemented";
+    }
+    return false;
+}
 
 constexpr int kErrInvalidArg = static_cast<int>(0x8a870006);
 constexpr std::uint8_t kFill = 0xaa;
@@ -59,5 +71,13 @@ int main() {
     Require(at4 == 0x10000);
     for (std::size_t index = 8; index < 0x1c; ++index) Require(out[index] == 0);
     for (std::size_t index = 0x1c; index < out.size(); ++index) Require(out[index] == kFill);
+
+    Require(ReportsNotImplemented("sceVrHandInitialize", [] { sceVrHandInitialize(); }));
+    Require(ReportsNotImplemented("sceVrHandFinalize", [] { sceVrHandFinalize(); }));
+    Require(ReportsNotImplemented("sceVrHandStart", [] { sceVrHandStart(); }));
+    Require(ReportsNotImplemented("sceVrHandStop", [] { sceVrHandStop(); }));
+    Require(ReportsNotImplemented("sceVrHandGetMesh", [] { sceVrHandGetMesh(); }));
+    Require(ReportsNotImplemented("sceVrHandGetMeshSize", [] { sceVrHandGetMeshSize(); }));
+    Require(ReportsNotImplemented("sceVrHandGetResult", [] { sceVrHandGetResult(); }));
     return 0;
 }
