@@ -29,9 +29,11 @@ def results(path):
             raise ValueError(f"{path}: testcase {name} is listed more than once")
         skipped, status = case.find("skipped"), case.get("status")
         reason = (skipped.get("message") or "").strip() if skipped is not None else ""
-        if status in SKIPPED_STATUSES or (skipped is not None and (CTEST_SKIP.fullmatch(reason) or status not in FAILED_STATUSES)):
+        if case.find("failure") is not None or case.find("error") is not None:
+            outcome = "failed"
+        elif status in SKIPPED_STATUSES or (skipped is not None and (CTEST_SKIP.fullmatch(reason) or status not in FAILED_STATUSES)):
             outcome = "skipped"
-        elif status in FAILED_STATUSES or case.find("failure") is not None or case.find("error") is not None:
+        elif status in FAILED_STATUSES:
             outcome = "failed"
         else:
             outcome = "passed"
