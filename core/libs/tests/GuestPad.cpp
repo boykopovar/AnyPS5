@@ -228,6 +228,13 @@ static void CheckHandleQueries(int user, int handle) {
     Require(scePadGetBluetoothAddress(closed, &address) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetBluetoothAddress(handle, &address) == notConnected && address == 7);
 
+    alignas(8) std::array<std::uint8_t, 0x40> usbState;
+    usbState.fill(0xaa);
+    Require(scePadGetUsbDetectionState(1, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetUsbDetectionState(1, reinterpret_cast<PadUsbDetectionState*>(usbState.data())) == notConnected);
+    Require(scePadGetUsbDetectionState(0, reinterpret_cast<PadUsbDetectionState*>(usbState.data())) == notConnected);
+    Require(usbState[0] == 0xaa && usbState[0x3f] == 0xaa);
+
     std::array<std::uint8_t, 0x80> leonardo{};
     std::array<std::uint8_t, 0x20> unique;
     unique.fill(0xaa);
@@ -879,6 +886,8 @@ int main() {
     PadMotionSensorPosition earlyPosition{1.0f, 2.0f, 3.0f};
     float earlyRadius = 1.0f;
     std::uint64_t earlyAddress = 7;
+    alignas(8) std::array<std::uint8_t, 0x40> earlyUsbState;
+    earlyUsbState.fill(0xaa);
     std::array<std::uint8_t, 0x80> earlyLeonardo{};
     std::array<std::uint8_t, 0x20> earlyUnique;
     earlyUnique.fill(0xaa);
@@ -887,6 +896,8 @@ int main() {
     Require(scePadGetMotionSensorPosition(PAD_HANDLE, &earlyPosition) == PAD_ERROR_NOT_INITIALIZED && earlyPosition.x == 1.0f && earlyPosition.y == 2.0f && earlyPosition.z == 3.0f);
     Require(scePadGetSphereRadius(PAD_HANDLE, &earlyRadius) == PAD_ERROR_NOT_INITIALIZED && earlyRadius == 1.0f);
     Require(scePadGetBluetoothAddress(PAD_HANDLE, &earlyAddress) == PAD_ERROR_NOT_INITIALIZED && earlyAddress == 7);
+    Require(scePadGetUsbDetectionState(1, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadGetUsbDetectionState(1, reinterpret_cast<PadUsbDetectionState*>(earlyUsbState.data())) == PAD_ERROR_NOT_INITIALIZED && earlyUsbState[0] == 0xaa);
     Require(scePadParseUniqueDataLeonardo(PAD_HANDLE, reinterpret_cast<const PadLeonardoData*>(earlyLeonardo.data()), reinterpret_cast<PadLeonardoUniqueData*>(earlyUnique.data())) == PAD_ERROR_NOT_INITIALIZED && earlyUnique[0] == 0xaa);
     Require(scePadUnknown_n3kSX62fgNo() == static_cast<int>(0x80920005));
     Require(!scePadIsValidHandle(PAD_HANDLE, PAD_PORT_TYPE_STANDARD));
