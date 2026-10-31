@@ -2203,6 +2203,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         const bool exhausted = result == VK_ERROR_OUT_OF_HOST_MEMORY || result == VK_ERROR_OUT_OF_DEVICE_MEMORY;
         if (std::string_view(step) == "vkAllocateMemory") {
             state.allocationFailed = true;
+            if (!exhausted) state.allocationFailures = 0;
             if (exhausted && (++state.allocationFailures >= 3 || state.liveBytes + bytes + budget / 8 >= budget)) {
                 state.ceiling = std::max<std::uint64_t>(state.liveBytes, 1);
                 std::fprintf(stderr, "[gpu] host import budget lowered to the %.1f MiB live after vkAllocateMemory failed %s\n", state.liveBytes / 1048576.0, state.allocationFailures >= 3 ? "3 times in a row" : "within an eighth of the budget");

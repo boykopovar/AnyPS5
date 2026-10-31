@@ -1968,6 +1968,48 @@ void importAllocationErrorTests(const Context& context, VkResult failure, bool n
     ::operator delete(block, std::align_val_t{piece});
 }
 
+void importMixedAllocationErrorTests(const Context& context) {
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t count = 16;
+    auto* block = static_cast<std::uint8_t*>(::operator new(2 * count * piece, std::align_val_t{piece}));
+    auto importing = context;
+    importing.hostImportAlignment = piece;
+    ImportAllocationProbe probe(importing);
+    SetHostImportWindow(0);
+    ClearHostImports(importing.device);
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Add(block + 2 * index * piece, piece, true, true, true);
+    }
+    SetHostImportBudget(64 * piece);
+    std::size_t next = 0;
+    const auto lookup = [&] { return HostImportFor(importing, reinterpret_cast<std::uintptr_t>(block + 2 * next++ * piece), 16) != nullptr; };
+    const auto counted = [] { return HostImportCounters().requesters[static_cast<std::size_t>(ImportRequester::Access)]; };
+    Require(lookup(), "the mixed allocation error test's first import was not made");
+    const auto before = counted();
+    for (const auto failure : {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_INVALID_EXTERNAL_HANDLE, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_UNKNOWN, VK_ERROR_OUT_OF_HOST_MEMORY}) {
+        probe.failure = failure;
+        Require(!lookup(), "an import with an injected mixed allocation failure was made");
+    }
+    const auto after = counted();
+    Require(after.failed - before.failed == 6 && after.refused == before.refused, "interrupted OOM failures lowered the import ceiling");
+    probe.failure = VK_SUCCESS;
+    Require(lookup(), "nonconsecutive OOM failures prevented a later successful import");
+    for (const auto failure : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_HOST_MEMORY}) {
+        probe.failure = failure;
+        Require(!lookup(), "an import with an injected consecutive OOM was made");
+    }
+    probe.failure = VK_SUCCESS;
+    Require(!lookup(), "three consecutive OOM failures did not lower the import ceiling");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t index = 0; index < count; ++index) mutation.Remove(block + 2 * index * piece);
+    }
+    ClearHostImports(importing.device);
+    SetHostImportBudget(0);
+    ::operator delete(block, std::align_val_t{piece});
+}
+
 void importCeilingTests(const Context& context, const BdaTestAccess& access, bool nearBudget) {
     constexpr std::size_t piece = 65536;
     constexpr std::size_t count = 24;
@@ -4581,6 +4623,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
     evictingRefusalJoinTests(context);
     evictingRefusalStepDownTests(context);
     importDeviceBudgetTests();
+    importMixedAllocationErrorTests(context);
     importCeilingTests(context, access, false);
     importCeilingTests(context, access, true);
     for (const auto failure : {VK_ERROR_OUT_OF_HOST_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_INVALID_EXTERNAL_HANDLE, VK_ERROR_UNKNOWN}) {
