@@ -76,6 +76,18 @@ def change_tag(image, tag, value=None, replacement=None):
     raise AssertionError(f"Missing dynamic tag {tag:#x}")
 
 
+def insert_dynamic_tag(image, tag, value):
+    for position in range(0x2000, 0x2200, 16):
+        current, _ = struct.unpack_from("<qQ", image, position)
+        if current == 0:
+            struct.pack_into("<qQ", image, position, tag, value)
+            struct.pack_into("<qQ", image, position + 16, 0, 0)
+            size, = struct.unpack_from("<Q", image, 176 + 32)
+            struct.pack_into("<QQ", image, 176 + 32, size + 16, size + 16)
+            return image
+    raise AssertionError("Missing dynamic terminator")
+
+
 def unsized_lifecycle(rela, sce, initial):
     image = module(rela, sce=sce, lifecycle=True, initial=initial)
     return change_tag(change_tag(image, 27, replacement=0x61000001), 28, replacement=0x61000001)
@@ -138,6 +150,7 @@ def invalid_cases(sce):
     ambiguous = module(plt=[NOOP], sce=sce)
     yield "ambiguous-plt-format", change_tag(ambiguous, 0x61000027 if sce else 3, value=7,
                                             replacement=20 if sce else 0x6100002b), "Missing or ambiguous dynamic tag"
+    yield "unsupported-dynamic-tag-rela", insert_dynamic_tag(module([NOOP], sce=sce), 18, 0), "Unsupported dynamic tag 18"
 
 
 def main():
