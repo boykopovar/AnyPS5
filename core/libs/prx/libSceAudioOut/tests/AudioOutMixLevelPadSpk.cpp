@@ -164,6 +164,25 @@ void TestRejectedLevels() {
     Require(sceAudioOutSetMixLevelPadSpk(closed, unity) == invalidPort);
 }
 
+void TestPadSpkVolume() {
+    std::vector<std::int16_t> block(frames);
+    for (std::uint32_t frame = 0; frame < frames; frame++) block[frame] = frame % 2 == 0 ? 16256 : -16256;
+    const auto played = Play(portTypePadSpeaker, formatS16Mono, block, [](int handle) {
+        Require(sceAudioOutSetMixLevelPadSpk(handle, unity) == 0);
+        Require(sceAudioOutSetPadSpkVolume(handle, 64) == 0);
+    });
+    Require(played.size() == block.size());
+    Require(played[0] == 8192 && played[1] == -8192);
+    Require(Play(portTypeMain, formatS16Mono, block, [](int handle) {
+        Require(sceAudioOutSetPadSpkVolume(handle, 64) == invalidPortType);
+    }) == block);
+    Require(Play(portTypePadSpeaker, formatS16Mono, block, [](int handle) {
+        Require(sceAudioOutSetPadSpkVolume(handle, 128) == invalidMixLevel);
+        Require(sceAudioOutSetPadSpkVolume(handle, -1) == invalidMixLevel);
+        Require(sceAudioOutSetPadSpkVolume(0, 64) == invalidPort);
+    }) == Scaled(block, defaultMixLevel));
+}
+
 }
 
 int main() {
@@ -173,5 +192,6 @@ int main() {
     TestLevelWithVolume();
     TestOtherPortType();
     TestRejectedLevels();
+    TestPadSpkVolume();
     return 0;
 }
