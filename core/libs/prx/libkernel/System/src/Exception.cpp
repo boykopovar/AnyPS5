@@ -1,3 +1,4 @@
+#include "prx/libc/include/GuestGs.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -333,6 +334,7 @@ LONG SuspendTarget(HANDLE native) {
 }
 
 bool RestoringContext(DWORD64 rip) {
+    if (GuestGsIsReplay_nid_no_patch(rip)) return true;
     static const std::array<DWORD64, 2> stubs = [] {
         const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
         return std::array<DWORD64, 2>{reinterpret_cast<DWORD64>(GetProcAddress(ntdll, "NtContinue")), reinterpret_cast<DWORD64>(GetProcAddress(ntdll, "NtContinueEx"))};
