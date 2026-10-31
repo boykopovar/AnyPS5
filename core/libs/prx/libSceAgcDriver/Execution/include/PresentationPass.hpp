@@ -3,6 +3,7 @@
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -43,8 +44,10 @@ private:
     struct Target {
         VkRenderPass renderPass = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipeline heapPipeline = VK_NULL_HANDLE;
     };
-    struct Slot {
+    struct Slot : Graphics::HeapSlotOwner {
+        using Graphics::HeapSlotOwner::ReleaseHeapSlots;
         VkDescriptorSet set = VK_NULL_HANDLE;
         VkImageView source = VK_NULL_HANDLE;
         std::uint32_t width = 0;
@@ -71,11 +74,13 @@ private:
     void releaseDumpTarget(Slot& slot) noexcept;
     void ensureUploadImage(Slot& slot, VkExtent2D extent);
     void releaseUploadImage(Slot& slot) noexcept;
-    void draw(VkCommandBuffer commands, const Slot& slot, const Target& target, VkFramebuffer framebuffer, VkExtent2D extent, VkRect2D scissor, const std::int32_t (&parameters)[9]) const;
+    void draw(VkCommandBuffer commands, Slot& slot, const Target& target, VkFramebuffer framebuffer, VkExtent2D extent, VkRect2D scissor, const std::int32_t (&parameters)[9]) const;
     void release() noexcept;
 
     Graphics::Context context;
+    VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     VkSampler sampler = VK_NULL_HANDLE;
+    bool heap = false;
     VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;

@@ -8,6 +8,7 @@
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include "ImageTableAbi.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include <span>
 #include <initializer_list>
 #include <algorithm>
@@ -1753,6 +1754,11 @@ ScalarBufferDword EmitScalarBufferDword(SpirvEmitterState& state, std::uint32_t 
 }
 
 std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
+    if (state.tableMapAddressed) {
+        const auto value = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), value, EmitStageRingWordPointer(state, RuntimeAbi::RootStageField::TableMap, index), spv::MemoryAccessAlignedMask, 4u);
+        return value;
+    }
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.tableMapVariable, ConstantU32(state, 0u), index);
     const auto value = state.module.AllocateId();
@@ -1895,7 +1901,8 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         result.valid = both(checked, negate(driverRejected));
         result.flags = flags;
         live = selected;
-        state.tableAccess.element = Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase)), element);
+        state.tableAccess.element = state.tableHeap ? Select(state, u32, checked, element, ConstantU32(state, 0u)) : Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase)), element);
+        state.tableAccess.heap = state.tableHeap;
         const auto& sources = state.program.Resources().descriptorSources;
         state.tableAccess.uniform = base.source < sources.size() && sources[base.source].tableColumn.has_value() && sources[base.source].tableColumn->selected;
         if (!state.tableAccess.uniform) DecorateTableNonUniform(state, state.tableAccess.element);

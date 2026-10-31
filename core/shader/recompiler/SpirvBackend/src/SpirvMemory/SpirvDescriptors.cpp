@@ -2,9 +2,12 @@
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include "PipelineSpecialization.hpp"
+#include "ImageTableAbi.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 
@@ -57,11 +60,7 @@ std::uint32_t DescriptorElementPointer(SpirvEmitterState& state, std::uint32_t r
 std::uint32_t RuntimeImageDword(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t member) {
     const auto index = ConstantU32(state, resource);
     const auto dword = Binary(state, spv::OpIAdd, TypeU32(state), ConstantU32(state, state.program.Metadata().bindings.ImageMetadataDword() + member), Binary(state, spv::OpIMul, TypeU32(state), index, ConstantU32(state, sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t))));
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.shaderDataStorageVariable, ConstantU32(state, 0u), dword);
-    const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
-    return value;
+    return EmitShaderDataWordLoad(state, dword);
 }
 
 std::uint32_t RuntimeMipCount(SpirvEmitterState& state, std::uint32_t resource) {
@@ -79,11 +78,49 @@ void DecorateTableNonUniform(SpirvEmitterState& state, std::uint32_t id) {
     state.module.AddAnnotation(spv::OpDecorate, id, spv::DecorationNonUniform);
 }
 
+namespace {
+
+std::uint32_t tableMapWord(SpirvEmitterState& state, std::uint32_t index) {
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, EmitStageRingWordPointer(state, RuntimeAbi::RootStageField::TableMap, index), spv::MemoryAccessAlignedMask, 4u);
+    return value;
+}
+
+std::uint32_t tableHeapSlot(SpirvEmitterState& state, std::uint32_t part, std::uint32_t element, std::uint32_t slots) {
+    const auto u32 = TypeU32(state);
+    const auto base = tableMapWord(state, ConstantU32(state, ImageTableAbi::HeaderElementBase));
+    const auto count = tableMapWord(state, ConstantU32(state, ImageTableAbi::HeaderElementCount));
+    std::uint32_t partBase = base;
+    if (part != 0u && part < 3u) {
+        partBase = Binary(state, spv::OpIAdd, u32, base, Binary(state, spv::OpIMul, u32, count, ConstantU32(state, part)));
+    } else if (part >= 3u) {
+        const auto samplers = tableMapWord(state, ConstantU32(state, ImageTableAbi::HeaderSamplerCount));
+        const auto samplerSpan = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), count, samplers), samplers, count);
+        const auto extra = Binary(state, spv::OpIMul, u32, count, ConstantU32(state, part - 1u));
+        partBase = Binary(state, spv::OpIAdd, u32, Binary(state, spv::OpIAdd, u32, base, samplerSpan), extra);
+    }
+    const auto slot = tableMapWord(state, Binary(state, spv::OpIAdd, u32, partBase, element));
+    const auto fallback = part == 0u ? RuntimeAbi::FirstImageBinding
+                        : part == 1u ? RuntimeAbi::FirstStorageImageBinding
+                        : part == 3u ? RuntimeAbi::FirstAtomicImageBinding
+                        : part == 4u ? RuntimeAbi::FirstAtomic64ImageBinding
+                        : part == 5u ? RuntimeAbi::FirstUintStorageImageBinding
+                                     : 0u;
+    const auto clamped = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), slot, ConstantU32(state, slots)), slot, ConstantU32(state, fallback));
+    DecorateTableNonUniform(state, clamped);
+    return clamped;
+}
+
+}
+
 std::uint32_t TableStorageImagePointer(SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource, std::uint32_t pointerType) {
     const auto found = std::find_if(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
     if (found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "image storage table array was not emitted for the mode");
     const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.element);
+    const auto value = static_cast<std::uint32_t>(kind);
+    const bool uintStorage = value >= RuntimeAbi::FirstUintStorageImageBinding && value < RuntimeAbi::FirstAtomicImageBinding;
+    const auto part = RuntimeAbi::AtomicImageKind(value) ? 3u : RuntimeAbi::Atomic64ImageKind(value) ? 4u : uintStorage ? 5u : 1u;
+    state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.heap ? tableHeapSlot(state, part, state.tableAccess.element, RuntimeAbi::GpuImageHeapSlots) : state.tableAccess.element);
     DecorateTableNonUniform(state, pointer);
     return pointer;
 }
@@ -153,6 +190,40 @@ std::uint32_t ImageViewSizeType(SpirvEmitterState& state, RdnaImageDimension dim
     }
 }
 
+std::uint32_t HeapImageSlot(SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource) {
+    const auto supported = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), spv::CapabilitySampledImageArrayDynamicIndexing) != state.supportedCapabilities.end();
+    if (!supported) ExitDescriptorBindingFailure(state, kind, resource, "the image heap needs image array dynamic indexing, which the device lacks");
+    state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
+    const auto dword = state.program.Metadata().bindings.ImageMetadataDword() + resource * static_cast<std::uint32_t>(sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t)) + static_cast<std::uint32_t>(offsetof(RuntimeAbi::ResourceMetadata, firstElement) / sizeof(std::uint32_t));
+    return LoadHeapSlotWord(state, dword);
+}
+
+std::uint32_t HeapImageSlotWord(SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource, std::uint32_t arrayIndex) {
+    const auto supported = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), spv::CapabilitySampledImageArrayDynamicIndexing) != state.supportedCapabilities.end();
+    if (!supported) ExitDescriptorBindingFailure(state, kind, resource, "the image heap needs image array dynamic indexing, which the device lacks");
+    state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
+    const auto& layout = state.program.Metadata().bindings;
+    auto dword = layout.ImageSlotDword();
+    for (const auto& descriptor : layout.descriptors) {
+        if (descriptor.kind == kind) break;
+        if (state.program.Metadata().bindings.HeapImageKind(descriptor.kind)) dword += static_cast<std::uint32_t>(descriptor.resources.size());
+    }
+    dword += arrayIndex;
+    if (dword >= layout.ShaderDataDwords()) ExitDescriptorBindingFailure(state, kind, resource, "image heap slot word lies outside the shader data");
+    return LoadHeapSlotWord(state, dword);
+}
+
+std::uint32_t StorageElementPointer(SpirvEmitterState& state, std::uint32_t pointerType, std::uint32_t variable, std::uint32_t arrayIndex, DescriptorBindingKind kind, std::uint32_t resource) {
+    if (!state.gpuResolvedImages || !state.program.Metadata().bindings.HeapImageKind(kind)) return DescriptorElementPointer(state, pointerType, variable, arrayIndex, kind, resource, "storage image descriptor array was not emitted");
+    if (variable == 0) ExitDescriptorBindingFailure(state, kind, resource, "storage image heap array was not emitted");
+    const auto supported = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), spv::CapabilityStorageImageArrayDynamicIndexing) != state.supportedCapabilities.end();
+    if (!supported) ExitDescriptorBindingFailure(state, kind, resource, "the storage image heap needs storage image array dynamic indexing, which the device lacks");
+    state.module.EmitCapability(spv::CapabilityStorageImageArrayDynamicIndexing);
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, variable, state.registrationModules ? HeapImageSlot(state, kind, resource) : HeapImageSlotWord(state, kind, resource, arrayIndex));
+    return pointer;
+}
+
 std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t resource) {
     const auto& imageResource = state.runtimeImage != nullptr ? *state.runtimeImage : state.program.Info().images.at(resource);
     if (imageResource.resourceClass != ImageResourceClass::Sampled) {
@@ -165,7 +236,7 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
         const auto found = std::find_if(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
         if (found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "image table array was not emitted for the mode");
         const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.element);
+        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.heap ? tableHeapSlot(state, 0u, state.tableAccess.element, RuntimeAbi::GpuImageHeapSlots) : state.tableAccess.element);
         if (!state.tableAccess.uniform) DecorateTableNonUniform(state, pointer);
         const auto image = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, imageType, image, pointer);
@@ -177,7 +248,13 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
     if (variable == 0) {
         ExitDescriptorBindingFailure(state, kind, resource, "sampled image descriptor array was not emitted");
     }
-    const auto pointer = DescriptorElementPointer(state, pointerType, variable, arrayIndex, kind, resource, "sampled image descriptor array was not emitted");
+    std::uint32_t pointer = 0;
+    if (state.gpuResolvedImages) {
+        pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, variable, state.registrationModules ? HeapImageSlot(state, kind, resource) : HeapImageSlotWord(state, kind, resource, arrayIndex));
+    } else {
+        pointer = DescriptorElementPointer(state, pointerType, variable, arrayIndex, kind, resource, "sampled image descriptor array was not emitted");
+    }
     const auto image = state.module.AllocateId();
     state.module.AddFunction(spv::OpLoad, imageType, image, pointer);
     return image;
@@ -195,7 +272,7 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
         const auto variant = image != nullptr && image->depthCompare ? 2u : 0u;
         const auto element = Binary(state, spv::OpIAdd, TypeU32(state), state.tableAccess.samplerElement, ConstantU32(state, variant + (point ? 1u : 0u)));
         const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.tableSamplerVariable, element);
+        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.tableSamplerVariable, state.tableHeap ? tableHeapSlot(state, 2u, element, RuntimeAbi::GpuSamplerHeapSlots) : element);
         DecorateTableNonUniform(state, pointer);
         const auto loaded = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, samplerType, loaded, pointer);
@@ -203,7 +280,16 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
         return loaded;
     }
     const auto arrayIndex = ResourceForDescriptor(state, DescriptorBindingKind::Samplers, sampler) + (point ? 1u : 0u);
-    const auto pointer = DescriptorElementPointer(state, pointerType, state.samplerVariable, arrayIndex, DescriptorBindingKind::Samplers, sampler, "sampler descriptor array was not emitted");
+    std::uint32_t pointer = 0;
+    if (state.gpuResolvedImages) {
+        if (state.samplerVariable == 0) ExitDescriptorBindingFailure(state, DescriptorBindingKind::Samplers, sampler, "sampler descriptor array was not emitted");
+        state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
+        const auto slot = LoadHeapSlotWord(state, state.program.Metadata().bindings.SamplerSlotDword() + arrayIndex);
+        pointer = state.module.AllocateId();
+        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.samplerVariable, slot);
+    } else {
+        pointer = DescriptorElementPointer(state, pointerType, state.samplerVariable, arrayIndex, DescriptorBindingKind::Samplers, sampler, "sampler descriptor array was not emitted");
+    }
     const auto samplerId = state.module.AllocateId();
     state.module.AddFunction(spv::OpLoad, samplerType, samplerId, pointer);
     return samplerId;
@@ -230,7 +316,7 @@ std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint3
     if (image.table != NoTable) return TableStorageImagePointer(state, kind, resource, pointerType);
     const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
     const auto variable = state.imageVariables.at(ImageBindingIndex(kind));
-    return DescriptorElementPointer(state, pointerType, variable, arrayIndex, kind, resource, "storage image descriptor array was not emitted");
+    return StorageElementPointer(state, pointerType, variable, arrayIndex, kind, resource);
 }
 
 std::uint32_t EmitStorageImageRead(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t coord, std::uint32_t sample) {
@@ -276,7 +362,7 @@ void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std
     const auto arrayIndex = ResourceForDescriptor(state, kind, resource);
     const auto variable = state.imageVariables.at(ImageBindingIndex(kind));
     const auto loadAt = [&](std::uint32_t index) {
-        const auto pointer = DescriptorElementPointer(state, pointerType, variable, index, kind, resource, "storage image descriptor array was not emitted");
+        const auto pointer = StorageElementPointer(state, pointerType, variable, index, kind, resource);
         const auto descriptor = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, imageType, descriptor, pointer);
         return descriptor;

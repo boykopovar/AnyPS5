@@ -375,6 +375,7 @@ public:
     // validation instead of one per run, and every test sees the same snapshot (design13 R1's p0).
     using WriteRanges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
     static std::shared_ptr<const WriteRanges> PendingWriteSnapshot();
+    static bool ReadsSettled(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const WriteRanges* before);
     static bool SnapshotOverlaps(const WriteRanges* snapshot, std::uint64_t address, std::size_t bytes);
     // A label behind pending completions (CPU write-backs the label must not precede): stored to
     // guest memory by a completion action appended to the open batch, or to the newest in-flight
@@ -768,7 +769,6 @@ private:
     PFN_vkCmdResetQueryPool cmdResetQueryPool = nullptr;
     PFN_vkCmdCopyQueryPoolResults cmdCopyQueryPoolResults = nullptr;
     PFN_vkCmdBindPipeline cmdBindPipeline = nullptr;
-    PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
     template<typename TFunction>
     TFunction function(TFunction resolved, const char* name) const {

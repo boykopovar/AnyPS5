@@ -216,7 +216,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        device.ComputeTarget(64),
         {0, 0, 0, 128}
     };
     request.useCache = false;
@@ -442,7 +442,7 @@ void CheckConvertedPreparation(AgcDriver::VulkanDevice& device, const std::uint8
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        device.ComputeTarget(64),
         {0, 0, 0, 128}
     };
     auto converted = request;

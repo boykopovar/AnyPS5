@@ -17,6 +17,15 @@ std::uint32_t StorageBufferType(SpirvEmitterState& state) {
         array);
 }
 
+std::uint32_t ReadOnlyStorageBufferType(SpirvEmitterState& state, std::uint32_t element, std::uint32_t stride) {
+    const auto array = state.module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, stride}}}, element);
+    return state.module.DecoratedType(spv::OpTypeStruct,
+        {{spv::OpDecorate, {spv::DecorationBlock}},
+         {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}},
+         {spv::OpMemberDecorate, {0, spv::DecorationNonWritable}}},
+        array);
+}
+
 std::uint32_t StorageBufferU64Type(SpirvEmitterState& state) {
     const auto array = state.module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 8u}}}, TypeScalarU64(state));
     return state.module.DecoratedType(spv::OpTypeStruct,
@@ -135,6 +144,14 @@ std::uint32_t TypeStorageBufferU8Pointer(SpirvEmitterState& state) {
 
 std::uint32_t TypeStorageBufferU8ElementPointer(SpirvEmitterState& state) {
     return TypePointer(state, spv::StorageClassStorageBuffer, TypeU8(state));
+}
+
+std::uint32_t TypePhysicalReadOnlyBufferPointer(SpirvEmitterState& state, bool wide) {
+    return TypePointer(state, spv::StorageClassPhysicalStorageBuffer, wide ? ReadOnlyStorageBufferType(state, TypeScalarU64(state), 8u) : ReadOnlyStorageBufferType(state, TypeU32(state), 4u));
+}
+
+std::uint32_t TypePhysicalBufferPointer(SpirvEmitterState& state, bool wide) {
+    return TypePointer(state, spv::StorageClassPhysicalStorageBuffer, wide ? StorageBufferU64Type(state) : StorageBufferType(state));
 }
 
 std::uint32_t TypePhysicalU32Pointer(SpirvEmitterState& state) {

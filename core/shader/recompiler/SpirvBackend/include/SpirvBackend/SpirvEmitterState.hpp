@@ -71,6 +71,8 @@ struct MemoryResourceAccess {
     bool addIndexOffset = false;
     std::uint32_t memoryAccess = 0;
     std::uint32_t misalignment = 0;
+    bool physical = false;
+    bool clampedPhysical = false;
 };
 
 struct SpirvTableImageVariable {
@@ -84,6 +86,7 @@ struct SpirvTableAccess {
     std::uint32_t samplerElement = 0;
     bool active = false;
     bool uniform = false;
+    bool heap = false;
 };
 
 struct SpirvEmitterState {
@@ -108,6 +111,10 @@ struct SpirvEmitterState {
     bool depthRangeRemap = false;
     std::uint32_t depthRemapClipIndex = 0;
     bool registrationModules = false;
+    bool gpuResolvedImages = false;
+    std::uint32_t heapDataUniformDwords = 0;
+    bool addressedBuffers = false;
+    std::optional<bool> guestBuffersWritten;
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     bool robustBufferAccess2 = false;
@@ -212,7 +219,13 @@ struct SpirvEmitterState {
     std::uint32_t gdsLength = 0;
     std::uint32_t pushConstantVariable = 0;
     std::uint32_t shaderDataStorageVariable = 0;
+    std::uint32_t shaderDataUniformVariable = 0;
+    std::unordered_map<std::uint32_t, std::uint32_t> heapSlotVariables;
     std::uint32_t flattenedSrtVariable = 0;
+    bool flattenedSrtAddressed = false;
+    bool bdaAddressed = false;
+    bool tableMapAddressed = false;
+    bool tableHeap = false;
     std::uint32_t ldsVariable = 0;
     std::uint32_t ldsBufferVariable = 0;
     std::uint32_t ldsBufferU64Variable = 0;

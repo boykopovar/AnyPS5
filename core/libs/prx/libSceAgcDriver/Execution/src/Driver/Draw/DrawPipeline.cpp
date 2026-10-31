@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
@@ -114,6 +115,15 @@ bool DrawFinisher::PendingKey(std::uint64_t key, std::uint64_t shape) {
     if (!Busy() || !finisherProducer) return false;
     std::lock_guard lock(mutex);
     return std::any_of(pending.begin(), pending.end(), [&](const Pending& held) { return held.key == key || (shape != 0 && held.shape == shape); });
+}
+
+void DrawFinisher::PendingWrites(std::vector<Range>& out) {
+    if (!Busy() || !finisherProducer) return;
+    std::lock_guard lock(mutex);
+    for (const auto& held : pending) {
+        if (held.unknown) out.emplace_back(0, std::numeric_limits<std::uint64_t>::max());
+        else out.insert(out.end(), held.writes.begin(), held.writes.end());
+    }
 }
 
 namespace {
@@ -510,6 +520,15 @@ std::optional<std::uint64_t> DrawPipeline::PendingLabel(std::uint64_t address, s
         return value;
     }
     return std::nullopt;
+}
+
+void DrawPipeline::QueuedWrites(std::vector<Range>& out) {
+    if (DrawFinisher::Overlap()) DrawFinisher::Get().PendingWrites(out);
+    std::lock_guard lock(mutex);
+    for (const auto& item : items) {
+        out.insert(out.end(), item.writes.begin(), item.writes.end());
+        if (item.labelAddress != 0 && !item.labelBytes.empty()) out.emplace_back(item.labelAddress, item.labelAddress + item.labelBytes.size());
+    }
 }
 
 void DrawPipeline::countWrites(const std::vector<Range>& writes, bool added) {
