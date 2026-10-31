@@ -1,5 +1,6 @@
 add_library(libSceIcu SHARED EXCLUDE_FROM_ALL Export.cpp Invariant.cpp Version.cpp Unescape.cpp)
 target_include_directories(libSceIcu PRIVATE ${LIBS_INCLUDE_DIR})
+target_sources(libSceIcu PRIVATE RecoveredInventory.cpp)
 configure_windows_unwind(libSceIcu)
 target_sources(libSceIcu PRIVATE ConverterCallbacks.cpp)
 target_sources(libSceIcu PRIVATE LegacyExports.cpp)
