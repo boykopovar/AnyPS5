@@ -1494,16 +1494,95 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrIN
  return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6Binary4sizeEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
+static constexpr int BinaryInvalidArgument = static_cast<int>(0x80553503);
+static constexpr int BinaryOutOfMemory = static_cast<int>(0x80553504);
+
+static void ResetBinary(CommonBinary* self) {
+    std::free(self->buffer);
+    self->buffer = nullptr;
+    self->size = 0;
+}
+
+static int SetBinary(CommonBinary* self, const void* data, const std::uint64_t size) {
+    if (size == 0) {
+        ResetBinary(self);
+        return 0;
+    }
+    if (data == nullptr) return BinaryInvalidArgument;
+    if (size > SIZE_MAX) return BinaryOutOfMemory;
+    void* buffer = std::malloc(static_cast<std::size_t>(size));
+    if (buffer == nullptr) return BinaryOutOfMemory;
+    std::memcpy(buffer, data, static_cast<std::size_t>(size));
+    std::free(self->buffer);
+    self->buffer = buffer;
+    self->size = size;
     return 0;
 }
 
-const void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(const void* self) {
-    (void)self;
-    NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+static int AppendBinary(CommonBinary* self, const void* data, const std::uint64_t size) {
+    if (size == 0) return 0;
+    if (data == nullptr) return BinaryInvalidArgument;
+    if (size > UINT64_MAX - self->size) return BinaryOutOfMemory;
+    const std::uint64_t total = self->size + size;
+    if (total > SIZE_MAX) return BinaryOutOfMemory;
+    auto* buffer = static_cast<std::uint8_t*>(std::malloc(static_cast<std::size_t>(total)));
+    if (buffer == nullptr) return BinaryOutOfMemory;
+    if (self->size != 0) std::memcpy(buffer, self->buffer, static_cast<std::size_t>(self->size));
+    std::memcpy(buffer + static_cast<std::size_t>(self->size), data, static_cast<std::size_t>(size));
+    std::free(self->buffer);
+    self->buffer = buffer;
+    self->size = total;
+    return 0;
+}
+
+static_assert(sizeof(CommonBinary) == 0x20 && offsetof(CommonBinary, buffer) == 0x08);
+static_assert(offsetof(CommonBinary, size) == 0x10 && offsetof(CommonBinary, libContext) == 0x18);
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6BinaryC1EPNS2_10LibContextE(CommonBinary* self, void* libContext) {
+    self->referenceCount = 0;
+    self->buffer = nullptr;
+    self->size = 0;
+    self->libContext = libContext;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6BinaryC2EPNS2_10LibContextE(CommonBinary* self, void* libContext) {
+    _ZN3sce2Np9CppWebApi6Common6BinaryC1EPNS2_10LibContextE(self, libContext);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6BinaryD1Ev(CommonBinary* self) {
+    ResetBinary(self);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6BinaryD2Ev(CommonBinary* self) {
+    ResetBinary(self);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary5clearEv(CommonBinary* self) {
+    ResetBinary(self);
+}
+
+std::int32_t APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary21intrusive_ptr_add_refEPS3_(CommonBinary* self) {
+    return std::atomic_ref<std::int32_t>(self->referenceCount).fetch_add(1) + 1;
+}
+
+std::int32_t APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary21intrusive_ptr_sub_refEPS3_(CommonBinary* self) {
+    return std::atomic_ref<std::int32_t>(self->referenceCount).fetch_sub(1);
+}
+
+std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6Binary4sizeEv(const CommonBinary* self) {
+    return self->size;
+}
+
+const void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common6Binary9getBinaryEv(const CommonBinary* self) {
+    return self->buffer;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary9setBinaryEPKvm(CommonBinary* self, const void* data, const std::uint64_t size) {
+    return SetBinary(self, data, size);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common6Binary12appendBinaryEPKvm(CommonBinary* self, const void* data, const std::uint64_t size) {
+    return AppendBinary(self, data, size);
 }
 
 
