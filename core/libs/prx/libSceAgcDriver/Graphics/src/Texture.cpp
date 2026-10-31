@@ -5801,6 +5801,10 @@ std::optional<DccKeys> StorageTexture::clearHandOver() {
     return keys;
 }
 
+bool StorageTexture::AnyLayerPending() const {
+    return anyLayerPending();
+}
+
 void StorageTexture::supersedeHandedOver(std::uint32_t first, std::uint32_t count) {
     const auto begin = layerBegin(first);
     const auto end = first + count >= trackedLayers ? descriptor.baseAddress + guestBytes : layerBegin(first + count);

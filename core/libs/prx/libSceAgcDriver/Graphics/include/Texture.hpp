@@ -393,6 +393,7 @@ public:
     std::uint64_t BudgetBytes() const;
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
     VkDeviceSize AllocationBytes() const { return memoryBytes; }
+    bool AnyLayerPending() const;
 
 private:
     std::atomic<std::uint64_t> provedEpoch{0};
