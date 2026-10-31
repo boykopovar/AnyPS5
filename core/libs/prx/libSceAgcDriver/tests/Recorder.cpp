@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -24,6 +25,7 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/WaitMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
@@ -5374,6 +5376,154 @@ void drawSnapshotUploadTests(const Device& device, Recorder& recorder) {
         snapshotRecorder.Sync();
     }
     recorder.Activate();
+}
+
+void ownedDrawInputTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    using Use = Recorder::SnapshotUse;
+    constexpr std::size_t bytes = 2 * 65536;
+    constexpr std::size_t size = 256;
+#ifdef _WIN32
+    void* block = AllocateWatched(bytes, bytes);
+    Require(block != nullptr, "owned draw inputs need a write-watched arena fixture");
+    constexpr bool reusable = true;
+#else
+    void* block = std::aligned_alloc(bytes, bytes);
+    Require(block != nullptr, "cannot allocate the untracked draw input fixture");
+    constexpr bool reusable = false;
+#endif
+    struct Release {
+        void* block;
+        ~Release() {
+#ifdef _WIN32
+            ReleaseWatched(block, bytes);
+#else
+            std::free(block);
+#endif
+        }
+    } release{block};
+    auto context = device.GetContext();
+    context.drawInputsInPlace = false;
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    auto* words = static_cast<std::uint32_t*>(block);
+    for (std::uint32_t i = 0; i < bytes / sizeof(std::uint32_t); ++i) words[i] = i * 3;
+    Unwatch(address, bytes);
+    Require(!Watched(address, bytes), "the owned draw input fixture is still tracked");
+    Require(InPlaceDrawInput(context, address, size, 4) == nullptr, "the copied input fixture was bound in place");
+    const auto copy = [&](Use use = Use::Index32, std::size_t length = 256, std::size_t offset = 0) {
+        auto result = CopyDrawInput(context, &recorder, address + offset, length, 4, use);
+        Require(result.buffer != nullptr && result.buffer->Bytes().size() == length && std::memcmp(result.buffer->Bytes().data(), static_cast<const std::byte*>(block) + offset, length) == 0, "the owned draw input has stale bytes");
+        Require(result.generation == 0, "the untracked copy acquired a tracked generation");
+        return result;
+    };
+    const auto keep = [&](const DrawInputCopy& value, Use use = Use::Index32) {
+        KeepDrawInput(&recorder, address, value, use, 189);
+    };
+    const auto first = copy();
+    Require(!first.reused, "the first owned draw input was reused");
+    keep(first);
+    const auto second = copy();
+    Require(second.reused == reusable, "an unchanged untracked draw input was copied again");
+    if (reusable) Require(second.buffer == first.buffer && second.derived == 189, "an owned index lost its buffer or highest index");
+    BumpCollectEpoch();
+    Require(copy().reused == reusable, "a collect epoch lost an unchanged owned input");
+    words[5] = 0xdead;
+    const auto stored = copy();
+    Require(!stored.reused, "an owned input outlived a CPU store");
+    keep(stored);
+    Require(copy().reused == reusable, "the copy after a CPU store was not kept");
+    MarkWritten(address + 128, 4);
+    const auto marked = copy();
+    Require(!marked.reused, "an owned input outlived an untracked GPU stamp");
+    keep(marked);
+    MarkPossiblyWritten(address + 64, 4);
+    Require(!copy().reused, "an owned input outlived a possible GPU store");
+    const auto beforeStore = copy();
+    words[6] = 0xbeef;
+    keep(beforeStore);
+    Require(!copy().reused, "keeping an old copy armed it after a CPU store");
+    const auto beforeStamp = copy();
+    MarkWritten(address + 128, 4);
+    keep(beforeStamp);
+    Require(!copy().reused, "keeping an old copy refreshed its GPU stamp");
+    const auto beforePending = copy();
+    recorder.NotePendingWrite(address + 32, 4);
+    keep(beforePending);
+    Require(!copy().reused && !recorder.PendingWriteOverlaps(address, size), "an owned input survived a pending GPU writer");
+    const auto afterPending = copy();
+    keep(afterPending);
+    Require(copy().reused == reusable, "the copy after a pending writer was not kept");
+    alignas(64) static std::byte other[64];
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(other, sizeof(other), true, true, true);
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(other);
+    }
+    Require(!copy().reused, "an owned input outlived a registry mutation");
+#ifdef _WIN32
+    const auto beforeCollect = copy();
+    keep(beforeCollect);
+    std::array<void*, bytes / 4096> pages{};
+    auto count = pages.size();
+    Require(GuestArena::GuestArenaCollectWrites_nid_postfix(address, bytes, pages.data(), &count, true), "the clearing collect failed");
+    Require(!copy().reused, "an owned input outlived a clearing collect");
+    const auto beforeProtection = copy();
+    keep(beforeProtection);
+    GuestArena::GuestArenaSetProtection_nid_postfix(address, bytes, PAGE_READWRITE);
+    Require(!copy().reused, "an owned input outlived a protection notification");
+    const auto beforeReset = copy();
+    keep(beforeReset);
+    GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+    std::memset(block, 0x29, bytes);
+    Unwatch(address, bytes);
+    Require(!copy().reused, "an owned input outlived a mapping replacement");
+    GuestArena::GuestArenaPinWritable_nid_postfix(block, bytes);
+    const auto pinned = copy();
+    keep(pinned);
+    Require(!copy().reused, "a pinned input acquired an owned proof");
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(block, bytes);
+#endif
+    const auto vertex = copy(Use::Vertex);
+    keep(vertex, Use::Vertex);
+    Require(copy(Use::Vertex).reused == reusable, "the vertex copy was not kept");
+    Require(!copy(Use::Index16).reused, "an index input reused a vertex copy");
+    const auto exact = copy(Use::Vertex);
+    keep(exact, Use::Vertex);
+    Require(!copy(Use::Vertex, size / 2).reused, "a shorter owned input reused a longer copy");
+    Require(!copy(Use::Vertex, size * 2).reused, "a longer owned input reused a shorter copy");
+    Require(!copy(Use::Vertex, size, 4).reused, "an offset owned input reused another range");
+    const auto restart = copy(Use::Index32Restart);
+    keep(restart, Use::Index32Restart);
+    Require(copy(Use::Index32Restart).reused == reusable, "a restart index copy was not kept");
+    Require(!copy(Use::Index32).reused, "a non-restart input reused restart metadata");
+    if (const auto disabled = RuntimeSwitches::Find("APS5_NO_OWNED_DRAW_INPUTS"); disabled.has_value()) {
+        RuntimeSwitches::Assign(*disabled, true);
+        const auto fresh = copy();
+        keep(fresh);
+        Require(!copy().reused, "the disabled owned input path reused a copy");
+        RuntimeSwitches::Assign(*disabled, false);
+    }
+#ifdef _WIN32
+    if (std::getenv("TEST_OWNED_EVICT") != nullptr) {
+        constexpr std::uint64_t fakeBase = 0x1000000000ull;
+        for (std::size_t i = 0; i < Recorder::DrawInputEntries; ++i)
+            recorder.KeepDrawSnapshot(fakeBase + i * 65536, size, 1, 1, first.buffer, Use::Index32);
+        const auto freshOwned = copy();
+        Require(!freshOwned.reused && !freshOwned.owned.words.empty(), "eviction fixture did not arm an owned draw input");
+        keep(freshOwned);
+    }
+#endif
+#ifdef _WIN32
+    const auto crossing = copy(Use::Index32, 256, 65536 - 128);
+    Require(!crossing.reused && crossing.owned.words.size() == 2, "a draw input spanning two blocks did not arm both");
+    KeepDrawInput(&recorder, address + 65536 - 128, crossing, Use::Index32, 0);
+    Require(copy(Use::Index32, 256, 65536 - 128).reused, "a two-block owned input was not reused");
+#endif
+    recorder.Sync();
 }
 
 void drawInputReuseTests(const Device& device, Recorder& recorder) {
@@ -12913,6 +13063,34 @@ int main(int argc, char** argv) {
                 return 77;
             }
             std::cout << "DCC keys under unit shadows tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--owned-draw-inputs-only") {
+            const bool traceOwned = std::getenv("TEST_OWNED_TRACE") != nullptr;
+            if (traceOwned) AgcDriver::PerformanceTrace::Present(1, 1, nullptr);
+            ownedDrawInputTests(device, recorder);
+            if (traceOwned) {
+#ifdef _WIN32
+                const auto threads = AgcDriver::PerformanceTrace::ThreadTotals();
+                Require(threads.has_value(), "cannot collect owned draw trace totals");
+                std::map<std::string, std::uint64_t> counts;
+                for (const auto& thread : *threads) for (const auto& total : thread.totals) {
+                    if (std::string_view(total.scope).starts_with("OwnedDraw.")) counts[total.scope] += total.count;
+                }
+                Require(counts["OwnedDraw.arm_attempt"] == counts["OwnedDraw.arm_success"] + counts["OwnedDraw.arm_refused"] && counts["OwnedDraw.arm_refused"] != 0 && counts["OwnedDraw.arm_success"] != 0 && counts["OwnedDraw.reused"] != 0 && counts["OwnedDraw.invalidated"] != 0, "owned draw trace missed decisions");
+                Require(counts["OwnedDraw.proof_check"] >= counts["OwnedDraw.arena_check"] && counts["OwnedDraw.arena_check"] != 0 && counts["OwnedDraw.check_blocks_requested"] > counts["OwnedDraw.arena_check"] && counts["OwnedDraw.arm_blocks_requested"] > counts["OwnedDraw.arm_attempt"], "owned draw trace missed proof or block counts");
+                if (std::getenv("TEST_OWNED_EVICT") != nullptr) Require(counts["OwnedDraw.evicted_other_by_owned"] != 0 && counts["OwnedDraw.evicted_other"] != 0, "owned insertion did not count its eviction of a non-owned input");
+#endif
+                if (std::getenv("TEST_OWNED_UNBOUND") != nullptr) {
+                    const auto before = AgcDriver::PerformanceTrace::OwnedDrawUnbound();
+                    std::thread unbound([] { AgcDriver::PerformanceTrace::CountOwnedDraw("OwnedDraw.test_unbound"); });
+                    unbound.join();
+                    Require(AgcDriver::PerformanceTrace::OwnedDrawUnbound() == before + 1, "unbound owned draw event was not recorded");
+                }
+                AgcDriver::PerformanceTrace::Present(1, 1, nullptr);
+                AgcDriver::PerformanceTrace::StopOutput();
+            }
+            std::cout << "Owned draw input tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-inputs-in-place-only") {

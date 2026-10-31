@@ -185,6 +185,24 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(trace_digest.load_summary(path, self.trace)["commit"], "latest")
         self.assertEqual(trace_digest.load_summary(path, self.trace.with_suffix(""))["commit"], "alternate")
 
+    def test_owned_draw_interval_counts_are_preserved(self):
+        first = interval_line(0.0, 30.0, 20.0, 5.0)
+        second = interval_line(30.0, 60.0, 20.0, 5.0)
+        first["owned_draw_counts"] = {"OwnedDraw.arm_attempt": 4, "OwnedDraw.reused": 2}
+        second["owned_draw_counts"] = {"OwnedDraw.arm_attempt": 1}
+        for line in (first, second):
+            trace_digest.validate_interval(line)
+        result = trace_digest.digest_intervals([first, second])
+        self.assertEqual(result["intervals"][0]["owned_draw_counts"], first["owned_draw_counts"])
+        missing = trace_digest.digest_intervals([first, interval_line(30.0, 60.0, 20.0, 5.0)])
+        self.assertIn("| 2 | - | - |", trace_digest.markdown_intervals(missing))
+        text = trace_digest.markdown_intervals(result)
+        self.assertIn("OwnedDraw.arm_attempt", text)
+        self.assertIn("| 2 | 1 | 0 |", text)
+        first["owned_draw_counts"] = {"bad": -1}
+        with self.assertRaises(ValueError):
+            trace_digest.validate_interval(first)
+
     def test_empty_summary_jsonl_files_remain_valid(self):
         path = self.trace.with_name("aps5-summary.jsonl")
         for text in ("", "\n \t\r\n"):
