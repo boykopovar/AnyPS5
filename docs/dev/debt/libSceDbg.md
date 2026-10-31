@@ -1,0 +1,35 @@
+# libSceDbg technical debt
+
+### Unknown function info
+
+The 29 exports in [Export.cpp](../../../core/libs/prx/libSceDbg/Export.cpp) come from the `libSceDbg` list in [claimore22/ps5rs](https://github.com/claimore22/ps5rs/blob/5f252a658ff470bcb2b6cd15205fd8ca64ae4477/data/stubs/by_library/libSceDbg_nosubmission.txt) (commit 5f252a658ff470bcb2b6cd15205fd8ca64ae4477), a catalogue of PS5 symbols per library whose provenance the project does not document, and no PS5 export inventory of this module is available to confirm the list is complete or exact. Every name was kept only because its hash equals the listed NID. Prototypes and behaviour are unverified: every function takes no parameters in the import-resolution convention and throws through `NotImplemented_nid_no_patch`.
+
+- [sceDbgUserChannelPrint](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID 1Qy1jn47QWA)
+- [sceDbgAmprAprGetNumberOfErrors](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID 4F7uYHxulZ4)
+- [sceDbgMapperVirtualQuery](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID 4OqKr5iYCqI)
+- [sceDbgUserChannelPrintf](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID 5huYgqy73xo)
+- [sceDbgAssertionHandler](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID 5sBISBR0ooA)
+- [sceDbgGetSystemSwVersion](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID B4c4qfm3m2c)
+- [sceDbgSetBreakOnWarningState](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID BxQv1DSUaeY)
+- [sceDbgSetBreakOnErrorState](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID CXoCR22n86Q)
+- [sceDbgDeleteExternalTriggerEvent](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID Fhc+DypKzcU)
+- [sceDbgAmprAmmGetNumberOfErrors](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID FvI50-3hoSo)
+- [sceDbgGetModuleInfo](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID G4c6av2TDtc)
+- [sceDbgBacktraceSelf](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID GDX5XhnWKrw)
+- [sceDbgAmprAmmGetErrors](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID HNRCEumA2V8)
+- [sceDbgGetDebugSuspendCount](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID He3luzgOL-w)
+- [sceDbgUserChannelVPrintf](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID MltFJdH0xRM)
+- [sceDbgSetMinimumLogLevel](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID OaQI1HqFAtk)
+- [sceDbgGetModuleList](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID PvIP303tQx4)
+- [sceDbgClearHardwareBreakPoint](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID Q-m9mL4Yznw)
+- [sceDbgAddExternalTriggerEvent](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID SxSEAtl-vow)
+- [sceDbgLoggingHandler](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID To9mmGL+3G8)
+- [sceDbgEnableExtraHeapDebugInfo](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID WBQJDbBxH3E)
+- [sceDbgAmprAprGetErrors](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID ddYgzamMD2U)
+- [sceDbgVLoggingHandler](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID ie2v2DfofTs)
+- [sceDbgGetReleaseCheckMode](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID jaYypweDbyA)
+- [sceDbgSetHardwareBreakPoint](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID kwELJE1qN0o)
+- [sceDbgGetExecutablePath](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID ta-oGegHdTQ)
+- [sceDbgGetCpuGpuFrequencySetting](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID uhJ+bSomPoE)
+- [sceDbgRequireSystemSwVersion](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID v6OElL4DxCo)
+- [sceDbgIsDebuggerAttached](../../../core/libs/prx/libSceDbg/Export.cpp) (libSceDbg) - unknown signature (NID v9ERBDafV60)
